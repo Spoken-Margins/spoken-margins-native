@@ -58,4 +58,21 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(try store.loadInterjections(sessionId: session.id).first?.audioPath, "ij.m4a")
         XCTAssertEqual(try store.loadAIJobs(sessionId: session.id).first?.status, "retryable")
     }
+
+    func testSQLiteStoreListsAndDeletesItemScopedRecords() throws {
+        let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-\(UUID().uuidString).sqlite").path
+        let store = try SQLiteSessionStore(path: path)
+        let keep = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One.", externalReference: nil, status: "ready")
+        let remove = Item(id: "item-import-1", title: "Import", mediaType: "text", text: "Two.", externalReference: nil, status: "ready")
+        try store.seed(item: keep)
+        try store.seed(item: remove)
+        try store.saveSession(Session(id: "session-import", itemId: remove.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: remove.id, position: Position(), completionPercent: 0, playbackRate: 1))
+
+        XCTAssertEqual(Set(try store.listItems().map(\.id)), ["item-pill", "item-import-1"])
+
+        try store.deleteItem(id: remove.id)
+
+        XCTAssertEqual(try store.listItems().map(\.id), ["item-pill"])
+        XCTAssertNil(try store.loadSession(id: "session-import"))
+    }
 }

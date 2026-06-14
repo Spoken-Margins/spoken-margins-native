@@ -9,7 +9,7 @@
 - Added a SQLite-backed repository target with migrations and idempotent JSON record storage for items, sessions, interjections, turns, AI jobs, and Listening Maps.
 - Added AVFoundation/AI provider adapter boundaries while keeping tests deterministic through mock clients.
 - Added Gate 1 trace replay tests over the repository's actual trace and fixture files.
-- Added a SwiftUI app source scaffold for library/import, session controls, discussion, export, diagnostics, reset/seed, release notes, and known issues.
+- Added a SwiftUI app for library/import, item start/delete, session controls, discussion, OpenAI-compatible provider configuration, export, diagnostics, reset/seed, release notes, and known issues.
 - Added `project.yml` and generated `SpokenMarginsNative.xcodeproj` with an iOS app target linked against the local `SessionKit` package.
 - Copied docs, schemas, fixtures, and traces into `Contracts/` as a native-app contract snapshot.
 - Added `scripts/verify-gate1.sh` as the repeatable local verification entrypoint.
@@ -25,7 +25,7 @@ Run:
 
 Current expected result:
 
-- `SessionKitCoreTests`: 3 passing tests.
+- `SessionKitCoreTests`: 4 passing tests.
 - `TraceReplayTests.testGate1TracesReplay`: replays 13 Gate 1 traces.
 - Contract validation: all schemas, fixtures, traces, fixture references, and trace capability requirements pass.
 - iOS simulator build: `SpokenMarginsApp` builds with local ad-hoc simulator signing.
@@ -36,7 +36,7 @@ Current expected result:
 
 - The app builds for iOS Simulator, but a signed installable iPhone/iPad build still requires local team/provisioning configuration.
 - Real microphone permission handling, durable audio file writing, AVAudioSession category/route/interruption handling, Now Playing metadata, and remote commands still need device implementation.
-- OpenAI-compatible settings UI, secure API-key storage, and real network provider execution are adapter boundaries only.
+- OpenAI-compatible settings UI now saves API keys in Keychain, probes `/models`, and uses `/chat/completions` for summary/follow-up generation in the app. It still needs real-device provider validation and richer structured-output handling.
 - Real-device validation has not been run on iPhone/iPad with AirPods, airplane mode, app restart, and provider-unreachable cases.
 
 ## Packaging Note
@@ -45,4 +45,4 @@ Do not copy a top-level `Resources/` directory into the iOS app bundle. Simulato
 
 ## Next Production Step
 
-Wire the app to `SQLiteSessionStore`, implement device audio/recording permissions, and keep `./scripts/verify-gate1.sh` green while adding UI tests and device validation evidence.
+Implement real microphone recording, audio route/interruption handling, Now Playing/remote commands, UI tests, and iPhone/iPad device validation evidence while keeping `./scripts/verify-gate1.sh` green.

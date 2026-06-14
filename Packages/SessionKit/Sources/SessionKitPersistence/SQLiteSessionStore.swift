@@ -66,6 +66,10 @@ public final class SQLiteSessionStore: SessionRepository {
         try loadOptional(kind: "session", id: id)
     }
 
+    public func loadSessions(itemId: String) throws -> [Session] {
+        try loadByItem(kind: "session", itemId: itemId)
+    }
+
     public func saveInterjection(_ interjection: Interjection) throws {
         try save(kind: "interjection", id: interjection.id, sessionId: interjection.sessionId, itemId: interjection.itemId, value: interjection)
     }
@@ -108,6 +112,24 @@ public final class SQLiteSessionStore: SessionRepository {
 
     public func seed(turn: ConversationTurn) throws {
         try saveTurn(turn)
+    }
+
+    public func listItems() throws -> [Item] {
+        try query("SELECT payload FROM records WHERE kind = ? ORDER BY updated_at DESC, id;", ["item"])
+    }
+
+    public func deleteItem(id: String) throws {
+        var statement: OpaquePointer?
+        let sql = "DELETE FROM records WHERE item_id = ? OR (kind = 'item' AND id = ?);"
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SessionKitError.persistenceFailed("prepare_delete_item")
+        }
+        defer { sqlite3_finalize(statement) }
+        bind(statement, index: 1, value: id)
+        bind(statement, index: 2, value: id)
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw SessionKitError.persistenceFailed("step_delete_item")
+        }
     }
 
     private func save<T: Encodable>(kind: String, id: String, sessionId: String?, itemId: String?, value: T) throws {

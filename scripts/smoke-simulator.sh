@@ -42,6 +42,7 @@ xcrun simctl boot "$DEVICE_UDID" 2>/dev/null || true
 xcrun simctl bootstatus "$DEVICE_UDID" -b
 xcrun simctl install "$DEVICE_UDID" "$APP"
 xcrun simctl launch "$DEVICE_UDID" com.spokenmargins.native
+sleep 3
 
 mkdir -p "$ROOT/artifacts/gate1"
 xcrun simctl io "$DEVICE_UDID" screenshot "$ROOT/artifacts/gate1/iphone-launch.png" >/dev/null
