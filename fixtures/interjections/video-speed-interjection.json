@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "interjection.v1",
+  "id": "ij-video-001",
+  "itemId": "item-video-001",
+  "sessionId": "session-video-001",
+  "targetType": "external_media",
+  "targetId": "item-video-001",
+  "chapterId": "ch-video-anecdotes",
+  "createdAt": "2026-06-11T14:09:00.000Z",
+  "roughPercent": 24,
+  "anchor": {
+    "anchorType": "transcript",
+    "startChar": null,
+    "endChar": null,
+    "anchorBefore": "Maybe their diet changed. Maybe their sleep changed.",
+    "anchorAfter": "Maybe their symptoms were about to improve anyway.",
+    "mediaTimeMs": 428000,
+    "playbackRateObserved": 1.75,
+    "transcriptSegmentId": "seg-003",
+    "turnSegmentIndex": null
+  },
+  "audio": {
+    "status": "saved",
+    "path": "interjections/ij-video-001.m4a",
+    "durationMs": 3900
+  },
+  "transcriptionStatus": "transcribed",
+  "transcript": "This objection depends on whether the speaker handles regression to the mean later.",
+  "cleanedTranscript": "This objection depends on whether the speaker handles regression to the mean later.",
+  "status": "active",
+  "error": null
+}

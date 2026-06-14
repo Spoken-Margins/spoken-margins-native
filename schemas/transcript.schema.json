@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spokenmargins.local/schemas/transcript.schema.json",
+  "title": "Transcript",
+  "type": "object",
+  "required": ["schemaVersion", "id", "itemId", "segments"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": "transcript.v1" },
+    "id": { "type": "string", "minLength": 1 },
+    "itemId": { "type": "string", "minLength": 1 },
+    "language": { "type": ["string", "null"] },
+    "source": { "enum": ["provided", "generated_on_device", "generated_remote", "browser_extracted"] },
+    "segments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "startMs", "endMs", "text"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "startMs": { "type": "integer", "minimum": 0 },
+          "endMs": { "type": "integer", "minimum": 0 },
+          "startChar": { "type": ["integer", "null"], "minimum": 0 },
+          "endChar": { "type": ["integer", "null"], "minimum": 0 },
+          "text": { "type": "string", "minLength": 1 },
+          "speaker": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

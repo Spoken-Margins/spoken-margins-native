@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "runtime-capability-profile.v1",
+  "id": "phone-tablet-online",
+  "displayName": "Phone/Tablet Online",
+  "surface": "phone_tablet",
+  "connectivity": "online",
+  "mediaOwnership": "canonical_runtime",
+  "capabilities": {
+    "playback": ["realtime_tts", "prerendered_audio", "native_media", "remote_stream", "assistant_turn_tts", "summary_turn_tts"],
+    "timeline": ["text_char_offsets", "transcript_segments", "media_time", "chapter_timing", "playback_rate_observation"],
+    "interjection": ["record_audio", "capture_text_anchor", "capture_transcript_anchor", "capture_media_anchor", "capture_turn_anchor"],
+    "ai": ["provider_diagnostics", "generate_listening_map", "summarize_interjections", "cleanup_transcript", "continue_discussion", "defer_ai_jobs"],
+    "sync": ["canonical_persistence", "import_offline_events", "transfer_prepared_packages", "browser_session_handoff"],
+    "remoteControl": ["display_snapshot", "send_transport_commands", "send_chapter_jump", "send_interjection_commands", "send_ai_commands"]
+  },
+  "forbiddenCapabilities": [],
+  "notes": ["Canonical full runtime when network and provider configuration are available."]
+}

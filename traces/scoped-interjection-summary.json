@@ -1,0 +1,53 @@
+{
+  "schemaVersion": "session-trace.v1",
+  "name": "scoped-interjection-summary",
+  "description": "Interjection summaries respect source-item scope, AI-turn scope, and explicit selected interjection ids.",
+  "runtimeProfile": "phone-tablet-online",
+  "requiresCapabilities": {
+    "playback": ["summary_turn_tts", "assistant_turn_tts"],
+    "interjection": ["capture_text_anchor", "capture_turn_anchor"],
+    "ai": ["summarize_interjections"],
+    "sync": ["canonical_persistence"]
+  },
+  "fixtures": {
+    "item": "fixtures/items/text-with-listening-map.json",
+    "session": "fixtures/sessions/summary-addendum-discussion.json",
+    "turns": "fixtures/turns/summary-and-response.json",
+    "sourceInterjection": "fixtures/interjections/source-interjection.json",
+    "aiInterjection": "fixtures/interjections/ai-response-interjection.json"
+  },
+  "steps": [
+    {
+      "command": "selectSummaryCandidates",
+      "args": { "scope": { "targetType": "item", "sessionId": "session-pill-discussion" } },
+      "expect": {
+        "includedTargetTypes": ["item"],
+        "excludedTargetTypes": ["turn"],
+        "noCrossSessionInterjections": true
+      }
+    },
+    {
+      "command": "selectSummaryCandidates",
+      "args": { "scope": { "targetType": "turn", "turnId": "turn-response-001", "sessionId": "session-pill-discussion" } },
+      "expect": {
+        "includedTargetIds": ["turn-response-001"],
+        "excludedTargetTypes": ["item"],
+        "noCrossSessionInterjections": true
+      }
+    },
+    {
+      "command": "selectSummaryCandidates",
+      "args": { "scope": { "interjectionIds": ["ij-ai-001"] } },
+      "expect": {
+        "includedInterjectionIds": ["ij-ai-001"],
+        "explicitSelectionOverridesDefaultScope": true
+      }
+    }
+  ],
+  "assertions": [
+    "Source summaries do not accidentally include AI-response notes.",
+    "Turn-focused summaries do not accidentally include original item notes.",
+    "Explicit selection is allowed and testable.",
+    "Summary scope is part of the behavior contract."
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "session-trace.v1",
+  "name": "stable-streaming-speech",
+  "description": "Streaming assistant speech emits stable completed units rather than unstable partial fragments.",
+  "runtimeProfile": "phone-tablet-online",
+  "requiresCapabilities": {
+    "playback": ["assistant_turn_tts"],
+    "ai": ["continue_discussion"],
+    "sync": ["canonical_persistence"]
+  },
+  "fixtures": {
+    "item": "fixtures/items/text-with-listening-map.json",
+    "session": "fixtures/sessions/summary-addendum-discussion.json"
+  },
+  "steps": [
+    {
+      "event": "aiStreamDelta",
+      "args": { "turnId": "turn-stream-001", "content": "<sm_response>First streaming sentence. Second streaming" },
+      "expect": {
+        "spokenUnits": ["First streaming sentence."],
+        "notSpoken": ["Second streaming"],
+        "turnText": "First streaming sentence. Second streaming"
+      }
+    },
+    {
+      "event": "aiStreamDelta",
+      "args": { "turnId": "turn-stream-001", "content": " sentence.</sm_response>" },
+      "expect": {
+        "spokenUnits": ["Second streaming sentence."],
+        "noDuplicateSpeech": true
+      }
+    },
+    {
+      "event": "aiJobCompleted",
+      "args": { "turnId": "turn-stream-001" },
+      "expect": {
+        "turnStatus": "complete",
+        "allCompletedUnitsSpokenOnce": true
+      }
+    }
+  ],
+  "assertions": [
+    "Streaming speech must not read unstable partial fragments.",
+    "Completed units should not be repeated.",
+    "Native implementation may choose a different unit detector if behavior remains stable.",
+    "Assistant text remains visible as it streams even before all of it is spoken."
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "item.v1",
+  "id": "item-links-001",
+  "title": "Links In Spoken Text",
+  "mediaType": "text",
+  "text": "Read the article at https://example.com/a/b?c=d before the next paragraph. A labeled [reference](https://example.com/essay) stays readable. A bare domain like example.org/path should not be read aloud.",
+  "media": null,
+  "externalReference": "https://example.com/a/b?c=d",
+  "externalReferenceType": "url",
+  "createdAt": "2026-06-12T09:00:00.000Z",
+  "updatedAt": "2026-06-12T09:00:00.000Z",
+  "status": "needs_listening_map",
+  "listeningMapId": null,
+  "transcriptId": null
+}

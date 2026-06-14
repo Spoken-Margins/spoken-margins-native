@@ -1,0 +1,662 @@
+{
+  "schemaVersion": "session-export.v1",
+  "item": {
+    "id": "item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4",
+    "title": "AI, jobs, and the next generation",
+    "externalReference": "AI, jobs, and the next generation.md",
+    "includedFullText": true,
+    "text": "---\ntitle: \"AI, jobs, and the next generation\"\nsource: \"https://blogs.microsoft.com/on-the-issues/2026/06/10/ai-jobs-and-the-next-generation/\"\nauthor:\n  - \"[[Brad Smith]]\"\npublished: 2026-06-10\ncreated: 2026-06-12\ndescription: \"Artificial intelligence is reshaping jobs and the future of work. Explore how the next generation can harness AI’s potential while preserving human creativity, dignity, and opportunity.\"\ntags:\n  - \"clippings\"\n---\nIn 1838, the invention of the camera sparked predictions that photography would make artists obsolete. When the noted French painter Paul Delaroche first saw an early photograph on a metal plate, he declared that “From today, painting is dead!” As he reasoned, why would anyone pay an artist to slowly and laboriously paint a scene when a camera could do the job more accurately, more quickly, and at a lower cost?\n\nThis question has echoed through technological shifts and has resurfaced with intensity in recent weeks, as university students graduated on campuses across the United States. Today’s topic obviously is not photography but the societal impact of artificial intelligence. And as graduates booed the mention of AI during commencement addresses, they have provided a powerful reminder of several important truths. To start, people will insist on having a say in deciding when and how AI is used.\n\n### The student message to tech leaders\n\nThe reactions of this year’s graduates are a powerful wake-up call for the tech sector. Hopefully, leaders across our industry will listen and seek to learn from this reaction. For the past half century, the youngest generation of people and workers has led the way in adopting new digital technologies. A new [Microsoft study](https://www.microsoft.com/en-us/research/wp-content/uploads/2026/05/Microsoft-US-AI-Diffusion-Report-2026-Q1.pdf?msockid=13bd05afdaf2693700a31619db4168a8) shows this trend is true with AI. Counties with large college towns and outsized populations between the ages of 18 and 24 have the highest rates of AI adoption in the United States. When people who use a new technology complain about it, we had better take notice.\n\nIt’s perhaps no surprise that college campuses are among the best places to learn about these emerging views firsthand. Over Memorial Day weekend at Princeton University, I found no shortage of discussion and even examples of student action. Graduating seniors have long donned “beer jackets” for celebrations, [each class selecting its own unique design](https://www.dailyprincetonian.com/article/2025/12/princeton-news-stlife-senior-class-jacket-abruptly-chaged-accusations-of-generative-ai). This past year, however, a brief controversy emerged until class officers, responding to a student petition, rejected a popular design because it had been created with the help of AI. In its place, graduates wore jackets labeled both “100 percent cotton” and “100 percent human.”\n\nThe rejection of artificial fibers and artificial intelligence illustrates how human tastes shape market economics even as efficiency and productivity advance. Machines don’t buy products. People do.\n\nStudents and graduates recognize AI’s benefits. But they want to keep AI in its proper place. They rightly believe in the indispensable role of human agency. They want the future to be determined by humans deciding the role of machines, not by machines deciding the role of humans. And they want these decisions to reflect input from a broad community, especially the next generation of the workforce, rather than just a narrow group of elites.\n\nToday’s graduates are sending another powerful message as well: the American Dream has always stood for even more than a better job and greater economic opportunity, although that has been at its core. The American Dream has been founded on the dignity of work and the critical role it plays in giving life purpose. Great countries are built on great economies and great jobs. To those in the tech sector who seemingly want to pursue a future where computers replace jobs and AI becomes more capable than people, the next generation of people has offered a compelling response: “not so fast.”\n\n### The ambitions of people\n\nThe good news is that human ambition is irrepressible. It has been almost 300 years since the start of the first industrial revolution, and technology has changed many times over. But there is more human creativity at work in the world today than ever before.\n\nA trip to an art museum shows this is true even for the impact of the camera on painting. The invention of the camera initially led to a decline in portrait painting. But even that made a comeback. More remarkable was the way accurate photos spurred new forms of artistic expression. By the 1870s, photography’s “artificial eye” led a new generation of artists to portray emotion rather than detail. Impressionist artists captured the effects of light, color, and atmosphere in ways that a camera shutter could not. New artistic movements followed – Post-Impressionism, Fauvism, Cubism, and Surrealism – and continue today, expanding what it means to be an artist. As it turns out, few things are as resilient as human creativity.\n\nIn 1986, I insisted on having a computer on my desk before I accepted a job at a leading law firm in Washington, D.C. For most of the past 40 years, I’ve been part of the tech sector – first as an outside lawyer, then a Microsoft attorney, and since 2001, in the company’s leadership ranks. I’ve long been an informal “liberal arts representative” among a group of extraordinary computer scientists and engineers.\n\nAs I’ve followed technologists across our industry, I’ve often marveled at their vision, intellectual dexterity, and engineering prowess. But I’ve also seen many insightful individuals across the industry repeat two mistakes. First, they frequently *overestimate* the arrival of new technology, especially the pace of its impact. And even more importantly, they *underestimate* the capabilities of people.\n\nHuman capability is neither fixed nor finite. Each discovery creates a stronger foundation that enables people to stand taller and reach higher. People have been proving this for millennia. There came a day when people discovered that a horse could run faster than a human. People learned how to ride horses.\n\n### Real causes for concern\n\nNone of this is meant to dismiss the anxiety of today’s graduates. They’re right to raise concerns and ask hard questions, including about AI and its impact on their future. They face multiple headwinds as they enter the job market. This includes AI automation of tasks in current entry-level positions and, especially in the tech sector, corporate pressure to reduce headcount to help pay for AI’s enormous capital expenditures. It also involves other factors, including geopolitical uncertainty, trade tensions, and correction from over-hiring in the early years of the decade. Like a perfect storm, the wind is blowing from multiple directions.\n\nToday’s graduates have been through a lot. They spent much of their high school years living through a pandemic while studying and socializing at home through a screen. They are digital natives, with all the good and bad that social media, ubiquitous mobile devices, and other technologies have created. Now AI is coming, and they worry that jobs will start to disappear.\n\nSo, what should the next generation – and all the rest of us – do about AI?\n\n### AI in context\n\nFirst, we should put AI in context. No one has a crystal ball for the future, but we all can learn from the past. AI is the latest in a list of technologies that will reshape the economy and society. It has become the next “General Purpose Technology,” a term economists apply to technologies that, like electricity, are applied across the economy. Some of these technologies, including ironworking, machine tools, and digital computing, have profoundly reshaped not just job categories but [economic power among nations](https://press.princeton.edu/books/paperback/9780691260341/technology-and-the-rise-of-great-powers). AI likely will be one of the most important general purpose technologies of the next quarter century. And like previous general purpose technologies, AI will displace some jobs, even as it creates others and changes many of the ways we currently work.\n\nBut it takes time for technology to diffuse across an economy and around the world. There are some who look at the power of AI and predict its massive diffusion in just a few years. It’s always possible that this time will be different, but the world has never previously seen technology diffusion at that pace. The reason is not grounded in technology. It’s people. As Professors Arvind Narayanan and Sayash Kapoor have written, “ [diffusion is limited by the speed of human, organizational, and institutional change](https://knightcolumbia.org/content/ai-as-normal-technology).”\n\nPut in historical context, broad AI transformation over the next quarter century would itself be remarkable. That pace of change appears to be reflected in Microsoft’s own recent data. Our most recent AI Diffusion Report estimates that [17.8 percent of the world’s working age population currently uses generative AI](https://www.microsoft.com/en-us/research/wp-content/uploads/2026/05/Microsoft-AI-Diffusion-Report-2026-Q1.pdf?msockid=13bd05afdaf2693700a31619db4168a8). The rate in the United States is higher than the global average, but still only at 31.3 percent. And as Professor Narayanan has shown, the impact of new technology across a high percentage of work typically lags well behind this type of initial usage rate.\n\nAs the legendary UCLA basketball coach John Wooden, who led his teams to 10 national championships, advised his players two generations ago, we should “be quick, but don’t hurry.” In other words, we should act quickly and decisively and with preparation and purpose. But we need not – and should not – rush in a way that creates mistakes or panic.\n\nThe key is to think things through. One good way to start is to consider some of the insights that have emerged already. For each of us as individuals. For companies and organizations. And for society.\n\n### The implications for individuals\n\nIn the three-and-a-half years since the release of ChatGPT, one initial insight is profound yet unsurprising. AI often is at its best when we use it to strengthen existing human capabilities and endeavors. In short, people can use AI to make *themselves* better.\n\nI see this every day in the work of Microsoft’s AI for Good Lab, which works with non-profits and governments around the world. Firefighters in California are using AI to help spot wildfires more quickly. Legal professionals in Africa are using it to help provide advice to women who don’t have access to a lawyer. Teams in Ukraine are using AI to help identify and remove landmines that threaten civilians. And conservationists around the world are using it to help farmers develop more productive and sustainable agricultural practices.\n\nThere is a clear pattern in these examples. People are acting with ambition. They are using AI not to replace their subject matter expertise but to give it more impact. They are taking their knowledge, passion, and sense of purpose and using AI to help solve problems they care about.\n\nMy colleagues Ryan Roslansky and Aneesh Raman have been focusing on these issues in recent years, based on their longstanding work at LinkedIn. They recently published an important book on the topic, [*Open to Work: How to Get Ahead in the Age of AI*](https://www.linkedin.com/opentowork). In my view, it’s the first book that combines a view on where AI is going with practical advice for individuals.\n\nThe more I’ve thought about it, two of their themes are particularly important. The first is for each of us in the workforce today to think about our job not as a title but a bundle of tasks. Their advice is to write down a list of your tasks and put them into three buckets: the bucket of tasks that AI can do; the bucket of tasks that you can do with AI; and the bucket of tasks that humans must do by themselves.\n\nIf almost everything is in the first bucket, then one should think about pursuing a different type of job. But for most people, most tasks fall into the second bucket. In other words, if I can get AI to do the tasks in the first bucket, then I can focus my attention on the second and third buckets and consider how to use AI as a tool to help become more productive and impactful.\n\nThere’s a second insight in the book that is even more important. In an Age of AI, there are perhaps even more opportunities to distinguish ourselves based on the soft skills that are uniquely human. Ryan and Aneesh point to five, all of which start with the letter C – *curiosity, creativity, compassion, communications, and courage.* Even when AI automates multiple tasks, people must continue to oversee its work. This creates the need for additional human observation and insight. In short, human judgment remains essential.\n\nAll this speaks to one of the questions I hear repeatedly from students and their parents. What should people study to prepare for the future? Call me old fashioned, but I believe people should continue to pursue their passions. Develop expertise in an important field that fascinates you. Keep working hard to master it. At the same time, develop AI fluency so you can use AI to help apply your expertise better than has ever been possible before. This doesn’t mean the future will be easy. It seldom is. But it’s a recipe that will continue to prepare you for success.\n\n### The impact on companies and organizations\n\nThese insights apply as much to organizations as to individuals. After all, employers must thrive for employees to thrive. And successful businesses, like successful individuals, rely on distinctive and often deep expertise – about products, business processes, operating rhythms, and a deep understanding of customers. AI should not replace this foundation; it should strengthen and extend it.\n\nThis can build on where AI technology is going. Organizations can now move beyond chat-based assistants to a network with AI agents that can help employees reason, make decisions, and run workflows across their data and systems.\n\nOrganizations can implement their own AI systems that harness the power of multiple AI models and access their own unique enterprise knowledge. They can strengthen the effectiveness of these systems through AI tools that provide evaluations (“evals”) of a system’s performance and constantly make incremental improvements to it. Like climbing up a hill, each organization can manage an AI system that moves towards better outcomes and higher performance over time. Instead of solely consuming a frontier AI model, organizations can build their own “hill climbing machine” and participate more fully on their own terms in the AI ecosystem.\n\nBy taking this approach, organizations can use AI to accelerate learning rather than replace it. Leaders can use AI to add capabilities inside their organizations, ensuring that their human expertise and judgment remain key competitive differentiators.\n\nThis points to an age-old necessity. Business leaders and individual entrepreneurs must harness the latest technology while protecting their expertise and intellectual property, including through patents, copyrights, and trade secrets. AI adds a new dimension here. The benefits of AI for a business will be short-lived if it transfers and trains someone else’s AI model using a firm’s unique knowledge and expertise. This helps explain why each company needs to develop its own internal AI capabilities and control its own data.\n\nThis is emerging as a critical issue not only for organizations but for today’s graduates, our economies, and even nations. The best way to promote broad economic and job growth is to ensure that every economic sector can harness the power of AI without surrendering its unique expertise. Sovereignty must be preserved not only for countries but for companies. And privacy must be protected not only for individuals but for organizations.\n\n### A broader public conversation\n\nFor individuals and organizations alike, the key is to harness AI’s benefits while preserving timeless human values and economic needs. Given the magnitude of the AI transformation, we’ll need innovative and collaborative efforts that bring the public and private sectors together to help prepare people for success in the Age of AI. This should start with a sobering recognition. The technological, economic, and societal transformations of the past three decades have left too many people behind. We’ll need to try different approaches, built on more shared responsibilities, if we’re going to do better as we move forward.\n\nEven in a time of fractured public discourse, it will be critical to find more ways to bring more people together to develop common solutions. This requires a big tent with a breadth of perspectives. We need to make room not only for technology companies, employers, and governments, but for non-profits, students, the world’s religions, labor leaders, and workers themselves. As Liz Shuler, the President of the AFL-CIO, said recently, “Who knows best how workplaces function and how work gets done than people who work for a living?”\n\n### Our role at Microsoft\n\nAs a company, we’re committed to playing an active part and constructive role in addressing these issues. We bring not only new technologies and ways of working, but perspective born of experience. For more than 50 years, Microsoft has helped workers and organizations adapt to technological changes, whether in offices, labs, classrooms, or factories. Our mission has been to build products to empower people and organizations to achieve more. And then help them put those tools to work.\n\nOur experience gives us determination and even a dose of optimism. We remember when people worried that word processing would lead to the end of jobs for people who typed for a living. But what came next – knowledge work and entirely new industries to support the computer age – transformed what “work” was. When spreadsheets automated calculations, people didn’t do less math. They built more sophisticated financial models. When emails made communication instant, people didn’t write less. They communicated more frequently and with more people. When technology increases supply, human ambition often generates more demand. As humans, we don’t plateau. We expand.\n\nThis isn’t just philosophical. It’s our business model. Workers have been Microsoft’s lifeblood from the start. If the world’s people don’t have jobs, then neither do we. And if we’re not doing our part to help people use technology to pursue better jobs, then we’re not doing the job we were born to do.\n\n### Heeding the next generation’s call\n\nThis context shapes our reaction to recent commencement ceremonies. Graduating students who grimace or even boo at references to AI are telling us what we need to hear, that it’s time once again to raise the bar. That has been a frequent refrain from students for decades. The key is always to channel uncertainty into purposeful steps that build a better future. Across the tech sector and in business, non-profits, and government, we can do precisely that.\n\nI would add a second message for today’s graduates: you’re in a unique position to have a positive impact. You’ve lived through significant challenges. While it may feel unfair that the job market is so uncertain, you were made for this moment. Technology is second nature to your generation. Constant change has taught you how to adapt quickly. As AI reshapes how we work, you don’t need to unlearn decades of habits the way some of us do. You are better equipped to move forward.\n\nTechnology will change, but you can stand firmly and speak loudly for values that are timeless. Agency. Ambition. Dignity. All fulfilled through work and technology that gives us purpose.\n\nDo everything you can to help advance these values."
+  },
+  "session": {
+    "id": "session-26d5702d-1f74-404d-a743-9cbc12fb93fe",
+    "itemId": "item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4",
+    "createdAt": "2026-06-13T01:48:40.266Z",
+    "completedAt": "2026-06-13T02:24:07.190Z",
+    "currentChunkIndex": 17,
+    "completionPercent": 100,
+    "status": "finished"
+  },
+  "listeningMap": {
+    "schemaVersion": "listening-map.v1",
+    "itemTitle": "AI, jobs, and the next generation",
+    "overview": "The article explores the complex impact of AI on jobs and society, highlighting the next generation's mixed feelings that combine recognition of AI’s benefits with concerns over job security and human agency. It stresses that while AI will transform work, human creativity, judgment, and values remain essential. The piece answers some initial anxieties by providing historical context, insights for individuals and organizations, and a call for broad, inclusive conversations and responsible roles for tech companies like Microsoft.",
+    "claims": [
+      {
+        "id": "claim-1",
+        "text": "Technological innovations like AI prompt fears of job displacement, but history shows human creativity and ambition adapt and evolve alongside technology."
+      },
+      {
+        "id": "claim-2",
+        "text": "The next generation accepts AI’s benefits but insists on human control over its role, emphasizing dignity at work and opportunity."
+      },
+      {
+        "id": "claim-3",
+        "text": "AI diffusion is significant but slower than some predict due to human, organizational, and institutional factors limiting rapid change."
+      },
+      {
+        "id": "claim-4",
+        "text": "Individuals can leverage AI to enhance their skills by categorizing tasks and focusing on uniquely human capabilities like creativity and judgment."
+      },
+      {
+        "id": "claim-5",
+        "text": "Organizations should integrate AI to strengthen, not replace, human expertise, controlling their own AI systems and data to preserve competitiveness."
+      },
+      {
+        "id": "claim-6",
+        "text": "A broad public dialogue and collaborative efforts are needed to harness AI positively while addressing societal challenges and inequalities."
+      },
+      {
+        "id": "claim-7",
+        "text": "Microsoft acknowledges its role in supporting workers and organizations through technological transformations, emphasizing human-centered AI development."
+      },
+      {
+        "id": "claim-8",
+        "text": "Graduates’ concerns about AI serve as a call to action to maintain human values of agency, ambition, and dignity amid change."
+      }
+    ],
+    "chapters": [
+      {
+        "id": "ch-1",
+        "title": "Historical Context",
+        "description": "Drawing parallels between the invention of photography and current fears about AI replacing human creativity.",
+        "anchor": "In 1838, the invention of the camera sparked predictions that photography would make artists obsolete."
+      },
+      {
+        "id": "ch-2",
+        "title": "Graduates’ Message",
+        "description": "Examining recent university graduates’ reactions to AI and their demand for human agency and dignity in technology’s role.",
+        "anchor": "The reactions of this year’s graduates are a powerful wake-up call for the tech sector."
+      },
+      {
+        "id": "ch-3",
+        "title": "Human Ambition",
+        "description": "Highlighting the resilience of human creativity and historical underestimations of people’s abilities alongside technology.",
+        "anchor": "The good news is that human ambition is irrepressible."
+      },
+      {
+        "id": "ch-4",
+        "title": "Concerns and Challenges",
+        "description": "Addressing current worries graduates face, including AI job automation, economic uncertainties, and social pressures.",
+        "anchor": "None of this is meant to dismiss the anxiety of today’s graduates."
+      },
+      {
+        "id": "ch-5",
+        "title": "AI in Context",
+        "description": "Placing AI within historical technological progress, emphasizing slower adoption due to human and institutional factors.",
+        "anchor": "First, we should put AI in context."
+      },
+      {
+        "id": "ch-6",
+        "title": "Individual Implications",
+        "description": "Exploring how people can use AI to enhance their abilities and the importance of developing AI fluency along with human skills.",
+        "anchor": "In the three-and-a-half years since the release of ChatGPT, one initial insight is profound yet unsurprising."
+      },
+      {
+        "id": "ch-7",
+        "title": "Organizational Impact",
+        "description": "Discussing how companies can integrate AI to extend their unique expertise while managing proprietary data and capabilities.",
+        "anchor": "These insights apply as much to organizations as to individuals."
+      },
+      {
+        "id": "ch-8",
+        "title": "Public Conversation",
+        "description": "Calling for inclusive collaboration among sectors and voices to ensure AI benefits align with shared human values.",
+        "anchor": "For individuals and organizations alike, the key is to harness AI’s benefits while preserving timeless human values and economic needs."
+      },
+      {
+        "id": "ch-9",
+        "title": "Microsoft’s Role",
+        "description": "Outlining Microsoft’s commitment to supporting workers and organizations through technological transformations with human-centered values.",
+        "anchor": "As a company, we’re committed to playing an active part and constructive role in addressing these issues."
+      },
+      {
+        "id": "ch-10",
+        "title": "Next Generation Call",
+        "description": "Responding to graduates’ concerns as a challenge to preserve human agency, ambition, and dignity in the AI-driven future.",
+        "anchor": "Graduating students who grimace or even boo at references to AI are telling us what we need to hear"
+      }
+    ]
+  },
+  "turns": [
+    {
+      "id": "turn-a3bbc6fd-9287-446d-ade2-2327edc54b83",
+      "sessionId": "session-26d5702d-1f74-404d-a743-9cbc12fb93fe",
+      "role": "assistant",
+      "turnType": "interjection_summary",
+      "status": "complete",
+      "summary": "",
+      "text": "Your interjections reveal a strong emphasis on the enduring scarcity and indispensability of humans in the workforce and technological ecosystems, even as AI advances. You challenge the idea that AI fluency alone is sufficient, instead advocating for focusing on uniquely human capacities—such as judgment, trust, ethical responsibility, and collaboration—that AI cannot easily replace or replicate. You highlight that humans will remain integral not only as critical thinkers but also as parts of broader supply chains and social systems, reinforcing that human presence underpins organizations like Foresight, which depend on enhancing human collaboration and creativity.\n\nYou appear to be pushing back against oversimplified task-oriented views of AI impact, cautioning that focusing narrowly on which tasks AI can do risks neglecting deeper shifts in work meaning and value. Instead, you urge framing around scarce human capabilities that must be deliberately cultivated and protected. You align this with socio-technical perspectives that emphasize redesigning work systems rather than optimizing tools in isolation, raising concerns about potential deskilling if human expertise and relational trust atrophy.\n\nFurthermore, you acknowledge the profound difference in replication speed between humans and technological components (like transistors), reinforcing your stance on human scarcity by pointing out that humans cannot be duplicated or automated at anywhere near comparable scale. Yet you recognize humans do not all have to be \"critical\" but can fill various roles, supporting broader systems and allowing tools like Foresight to function as aids rather than replacements.\n\nOverall, your interjections weave a consistent narrative about how AI integration should prioritize augmenting and cultivating human excellence rather than merely automating leftover tasks. You advocate for organizational practices and cultures that sustain judgment, reflection, and collaboration, noting the risk of superficial rhetoric unless backed by intentional human-capacity infrastructure. Your stance reframes the question from “What can AI do?” to “What uniquely human qualities do we want to cultivate and sustain in an AI-driven future?” This represents a thoughtful, system-aware extension of the article’s themes, emphasizing the depth and context of human roles in the evolution of work.\n\nKey points include: the enduring and irreplaceable role of humans in socio-technical systems; caution against simplistic task-based AI integration; the importance of cultivating scarce human skills and values; recognition of organizational culture’s role in preserving human judgment; and the strategic need for collaborative, thoughtful redesign of human-machine systems.",
+      "chapters": [],
+      "sourceInterjectionIds": [
+        "ij-c7dbb087-b313-44a6-9921-a40dd7d6ce76",
+        "ij-a713eeb9-c161-476f-a309-abfd6aa5ebc6"
+      ],
+      "createdAt": "2026-06-13T02:40:43.794Z",
+      "completedAt": "2026-06-13T02:40:52.430Z"
+    },
+    {
+      "id": "turn-34591529-b3b4-476f-88ce-1c18215d8bb8",
+      "sessionId": "session-26d5702d-1f74-404d-a743-9cbc12fb93fe",
+      "role": "assistant",
+      "turnType": "assistant_response",
+      "status": "complete",
+      "summary": "",
+      "text": "I think the strongest part of your critique is that you are shifting the conversation from “Which tasks can AI do?” to “Which human capacities must we deliberately preserve, deepen, and organize around?” That is a much better strategic question.\n\nThe task-bucketing exercise in the article is useful, but it is also a little dangerous if taken too literally. If people start with tasks, they may end up optimizing around the current workflow, which is exactly the thing AI is likely to destabilize. Worse, they may identify a set of AI-assisted tasks and conclude, “Great, I can become faster at these,” without asking whether those tasks are becoming less scarce, less defensible, and less meaningful over time.\n\nYour instinct is to invert the frame. Start not with tasks, but with scarcity. What is rare, valuable, trusted, situated, relational, judgment-heavy, or ethically accountable? Then ask how AI can support those capacities without hollowing them out. That is a much more resilient way to think about individuals, teams, and organizations like Foresight.\n\nThis connects strongly to Michael Polanyi’s idea of tacit knowledge: “we know more than we can tell.” A lot of valuable human expertise is not just a list of procedures. It lives in taste, timing, pattern recognition, context, trust, and the ability to notice when the formal rules do not fit the situation. Hubert Dreyfus made a related argument about expertise: real mastery often involves embodied, context-sensitive judgment rather than rule-following. Donald Schön’s “reflective practitioner” is relevant too: professionals do not merely apply knowledge; they frame messy situations, act, observe, revise, and learn in motion.\n\nThat is where your critique of “AI fluency” gets important. AI fluency by itself is not a moat. In fact, if everyone learns to prompt generic tools to produce generic outputs, AI fluency can become just another layer of commodification. The more defensible capability is not “I can use AI,” but “I can use AI within a deep practice, with taste, responsibility, and domain judgment.” A novice with AI may produce plausible output. An expert with AI can detect what is missing, what is false, what is inappropriate, and what would actually work.\n\nFor Foresight, the opportunity may be to treat AI not primarily as an automation layer, but as a way to intensify the organization’s scarce human work. That means asking: where does Foresight create value that depends on trust, interpretation, synthesis, facilitation, ethical judgment, or long-horizon thinking? Where do people make sense of ambiguous signals? Where do they help others decide under uncertainty? Where is the work not merely producing an answer, but helping a client, partner, or community understand what kind of answer is needed?\n\nKarl Weick’s work on sensemaking feels especially relevant here. In uncertain environments, organizations are not just processing information; they are constructing meaning together. AI can summarize, classify, simulate, and generate options. But humans still decide what matters, what frame to use, who needs to be involved, what risks are acceptable, and what commitments follow. That sensemaking layer is likely to become more valuable, not less, as machine-generated content becomes abundant.\n\nHere is the challenge I would put back to you, though. “Uniquely human” can become a comforting phrase if it is not operationalized. Organizations often say people are their greatest asset while quietly redesigning work in ways that deskill those same people. If Foresight is in the scarce human-capacity space, it needs practices that actually protect and grow those capacities. Otherwise, AI can absorb the visible outputs while the invisible apprenticeship, judgment formation, and relational trust slowly atrophy.\n\nSo I would distinguish between human-centered rhetoric and human-capacity infrastructure. Human-centered rhetoric says, “AI will free people for higher-value work.” Human-capacity infrastructure asks, “What exact practices make people better at judgment, synthesis, care, courage, and responsibility over time?” That might include peer critique, mentoring, case reviews, red-team exercises, decision journals, reflective retrospectives, client listening rituals, and protected time for deep domain learning. Those are not soft extras. They are the training ground for the scarce capacities you are pointing toward.\n\nThis also connects to socio-technical systems theory, especially the work of Eric Trist and the Tavistock tradition. The core idea is that you cannot optimize the technical system separately from the social system. If an organization drops AI into existing workflows without redesigning roles, norms, accountability, and learning loops, it may get superficial efficiency and deeper fragility. The real question is not “What can the tool do?” It is “What new human-machine system are we creating, and what kind of people will that system produce?”\n\nThat last phrase matters: what kind of people will the system produce? If AI use makes junior people less able to struggle through first principles, less able to write, less able to reason, or less able to sit with ambiguity, then the organization is borrowing productivity from the future. But if AI helps juniors compare alternatives, get feedback, see examples, test assumptions, and enter expert conversations earlier, then it can accelerate apprenticeship. The same tool can either deskill or upskill depending on the surrounding culture.\n\nThis is where I would slightly challenge your optimism about human scarcity. Scarcity is not automatic. Some human capacities remain scarce only if they are cultivated. Judgment, taste, courage, and compassion are not simply innate human properties that survive any workflow redesign. They are habits, and habits are shaped by institutions. So the strategic task is not just to identify what AI cannot do. It is to build an organization where people repeatedly practice the things AI cannot own.\n\nOn your point about organizations experimenting collaboratively with AI, I think you are exactly right. The unit of adoption should not only be the individual worker with a chatbot. The more interesting unit is the team redesigning a workflow together. Individual use often produces scattered hacks. Team use can produce shared protocols: when to use AI, when not to use it, how to check it, how to disclose it, how to preserve accountability, and how to learn from failures.\n\nThis is where work by people like Erik Brynjolfsson is useful, especially the distinction between automation and augmentation. Automation asks how to remove people from a process. Augmentation asks how to make people more capable. But I would add a third category that fits your thinking: cultivation. Cultivation asks how technology can help people and organizations become wiser over time. That is a higher bar than productivity.\n\nA practical version of your argument might be a “human scarcity audit.” Instead of listing tasks only, Foresight could map work across several questions. What parts of this work require situated judgment? What parts require trust or relationship? What parts require moral responsibility? What parts require original framing rather than answer generation? What parts are valuable because a specific human or team stands behind them? Then, for each area, ask whether AI should automate, assist, provoke, document, simulate, or stay out.\n\nI also like your point about steering. Steering may become one of the central human skills in AI-mediated work. But steering is not just prompt engineering. It includes problem framing, constraint setting, source selection, evaluation, escalation, and knowing when not to delegate. Good steering depends on knowing the terrain. Without domain expertise, a person may steer confidently in the wrong direction.\n\nFinally, your note about machines depending on human-managed ecosystems is subtle but important. It pushes back against the fantasy of autonomous technology. Machines do not simply arrive and make decisions in a vacuum. They are embedded in supply chains, energy systems, capital allocation, procurement choices, legal regimes, maintenance practices, and organizational incentives. But that also means human agency has to be exercised at those levels, not only at the level of individual preference. Defaults, budgets, metrics, and platform architectures can make decisions feel inevitable even when they are actually designed.\n\nSo I would sharpen your position this way: the future of work will not be secured by humans merely doing the leftover tasks machines cannot yet perform. That is too defensive. The better aim is to design organizations around scarce human capacities, then use AI selectively to expand the reach, quality, and learning speed of those capacities. The question is not, “How do we stay useful after AI?” The question is, “What forms of human excellence do we want AI-era institutions to cultivate?”",
+      "chapters": [
+        {
+          "id": "ch-1",
+          "title": "Start with scarcity",
+          "description": "Reframes the user's critique as a shift from automatable tasks to scarce human capacities.",
+          "anchor": "Start not with tasks, but with scarcity.",
+          "percent": 8,
+          "startChar": 752,
+          "endChar": 792,
+          "segmentIndex": 0
+        },
+        {
+          "id": "ch-2",
+          "title": "Expertise and tacit knowledge",
+          "description": "Connects the user's ideas to Polanyi, Dreyfus, Schön, and the limits of generic AI fluency.",
+          "anchor": "AI fluency by itself is not a moat.",
+          "percent": 20,
+          "startChar": 1760,
+          "endChar": 1795,
+          "segmentIndex": 1
+        },
+        {
+          "id": "ch-3",
+          "title": "Human-capacity infrastructure",
+          "description": "Challenges vague human-centered rhetoric and argues for practices that cultivate judgment and expertise.",
+          "anchor": "I would distinguish between human-centered rhetoric and human-capacity infrastructure.",
+          "percent": 42,
+          "startChar": 3816,
+          "endChar": 3902,
+          "segmentIndex": 3
+        },
+        {
+          "id": "ch-4",
+          "title": "Team-level AI adoption",
+          "description": "Explores collaborative experimentation, augmentation, cultivation, and a practical human scarcity audit.",
+          "anchor": "The unit of adoption should not only be the individual worker with a chatbot.",
+          "percent": 68,
+          "startChar": 6123,
+          "endChar": 6200,
+          "segmentIndex": 5
+        },
+        {
+          "id": "ch-5",
+          "title": "Designing AI-era institutions",
+          "description": "Concludes that organizations should cultivate human excellence rather than merely preserve leftover human tasks.",
+          "anchor": "The better aim is to design organizations around scarce human capacities",
+          "percent": 96,
+          "startChar": 8680,
+          "endChar": 8752,
+          "segmentIndex": 7
+        }
+      ],
+      "sourceInterjectionIds": [],
+      "createdAt": "2026-06-13T02:27:10.942Z",
+      "completedAt": "2026-06-13T02:28:10.887Z"
+    },
+    {
+      "id": "turn-b304aae2-062f-4c26-90c5-461eb888e41d",
+      "sessionId": "session-26d5702d-1f74-404d-a743-9cbc12fb93fe",
+      "role": "user",
+      "turnType": "user_response",
+      "status": "complete",
+      "summary": "",
+      "text": "Please continue the conversation from my interjections and addendum on the current AI response.\nEngage my ideas directly: expand the strongest parts, challenge weak assumptions, and connect the discussion to relevant thinkers or work where useful.",
+      "chapters": [],
+      "sourceInterjectionIds": [],
+      "createdAt": "2026-06-13T02:27:10.942Z",
+      "completedAt": "2026-06-13T02:27:10.942Z"
+    },
+    {
+      "id": "turn-27efe078-2eb8-4974-912f-ea15c24caabf",
+      "sessionId": "session-26d5702d-1f74-404d-a743-9cbc12fb93fe",
+      "role": "assistant",
+      "turnType": "interjection_summary",
+      "status": "complete",
+      "summary": "",
+      "text": "The user’s interjections show a strong engagement with the article’s themes, consistently emphasizing the centrality and irreplaceability of human agency and expertise in the evolving AI-driven workplace. A key pattern is skepticism toward the assumption that developing AI fluency or automating tasks inherently leads to secure or unique value. The user challenges the advice to bucket tasks for automation by arguing it may unintentionally encourage specializing in automatable work, which risks commodification and displacement. Instead, they advocate deliberately identifying and deepening uniquely human capabilities—those “scarce” elements that machines cannot replicate—as a strategic organizational and individual priority. This perspective aligns with the article’s acknowledgement of human creativity, judgment, and soft skills but pushes for a more explicit focus on preserving and growing these human-centric roles.\n\nAnother notable point is an optimistic framing of the user’s own organization, Foresight, positioning it squarely within the scarce human-capacity space—suggesting that the organization’s value stems from its people and that it will thrive precisely by strengthening uniquely human roles in the face of AI advances. This adds a real-world layer to the article’s abstract claims about human ambition and job transformation.\n\nThe user also engages with the discussion about individuals developing passions and expertise and leveraging AI as a prototyping and productivity tool, confirming that AI supplements rather than replaces expert validation and production-level work. They highlight how AI can expand access to certain skills or coding, raising the importance of “steering” AI properly, thus underscoring ongoing human oversight.\n\nFrom an organizational perspective, the user is curious and somewhat critical about how companies are actually adopting AI, questioning the level of active, collaborative experimentation and rethinking of workflows enabled by AI tools. They are aware of the practical challenges of adoption, including access to coding or automation skills, and emphasize the need for human judgment and continuous evaluation in AI usage.\n\nFinally, the user briefly addresses a subtle point about machines’ dependence on human inputs and replaceable parts, responding to the article’s notion that humans decide machines’ roles—noting that machines do rely on material inputs—a reminder that technology lacks independence from human-managed ecosystems.\n\nOverall, the user’s interjections advocate a human-centered, forward-looking strategy that focuses on cultivating uniquely human competencies, fostering purposeful AI collaboration rather than merely commoditizing work, and ensuring organizational adaptation prioritizes people, not just technology deployment. Follow-up questions to explore might include: How can organizations systematically map and expand uniquely human tasks? What are practical ways to foster experimental group adoption of AI rather than isolated individual use? How can firms safeguard human expertise from AI commodification and loss? How to better bridge the gap between AI prototyping capabilities and production-ready outputs while ensuring expert validation?\n\nThis synthesis highlights how the user deepens, critiques, and contextualizes the article’s ideas, emphasizing actionable human-centric approaches amid AI transformation.",
+      "chapters": [
+        {
+          "id": "ch-1",
+          "title": "Human agency and task scarcity",
+          "description": "User argues uniquely human tasks must be preserved and deepened rather than focusing on automatable tasks.",
+          "anchor": "Instead, they advocate deliberately identifying and deepening uniquely human capabilities",
+          "percent": 16,
+          "startChar": 532,
+          "endChar": 621,
+          "segmentIndex": 0
+        },
+        {
+          "id": "ch-2",
+          "title": "Foresight's human-centered role",
+          "description": "User highlights their organization’s positioning in the scarce human-capacity space as a source of value.",
+          "anchor": "the organization’s value stems from its people and that it will thrive precisely by strengthening uniquely human roles",
+          "percent": 32,
+          "startChar": 1098,
+          "endChar": 1216,
+          "segmentIndex": 1
+        },
+        {
+          "id": "ch-3",
+          "title": "AI as a tool for expertise enhancement",
+          "description": "User confirms AI helps prototyping and productivity but stresses need for human expert steering and validation.",
+          "anchor": "AI supplements rather than replaces expert validation and production-level work",
+          "percent": 45,
+          "startChar": 1521,
+          "endChar": 1600,
+          "segmentIndex": 1
+        },
+        {
+          "id": "ch-4",
+          "title": "Organizational AI adoption challenges",
+          "description": "User queries actual company practices in adopting AI collaboratively and rethinking workflows.",
+          "anchor": "questioning the level of active, collaborative experimentation and rethinking of workflows enabled by AI tools",
+          "percent": 55,
+          "startChar": 1889,
+          "endChar": 1999,
+          "segmentIndex": 1
+        },
+        {
+          "id": "ch-5",
+          "title": "Machines depend on humans",
+          "description": "User reminds that machines depend on human inputs and parts, adding nuance to article’s emphasis on human agency.",
+          "anchor": "machines do rely on material inputs",
+          "percent": 70,
+          "startChar": 2387,
+          "endChar": 2422,
+          "segmentIndex": 2
+        },
+        {
+          "id": "ch-6",
+          "title": "Follow-up questions on human-AI collaboration",
+          "description": "Potential directions to deepen understanding include mapping uniquely human tasks and bridging AI prototyping to production.",
+          "anchor": "How can organizations systematically map and expand uniquely human tasks?",
+          "percent": 84,
+          "startChar": 2858,
+          "endChar": 2931,
+          "segmentIndex": 2
+        }
+      ],
+      "sourceInterjectionIds": [
+        "ij-af76b688-81a8-4827-bbc1-13d5af409e27",
+        "ij-764b49c7-048f-4e67-b34f-95fe715277bd",
+        "ij-7b8bb098-804d-442d-8ec4-03fd54a2ecbe",
+        "ij-59d34f73-5bbc-43f5-a347-08e41337ed36",
+        "ij-b8db2411-c74a-4ac6-a2be-6e3303c57448"
+      ],
+      "createdAt": "2026-06-13T02:22:34.456Z",
+      "completedAt": "2026-06-13T02:22:43.427Z"
+    }
+  ],
+  "timeline": [
+    {
+      "type": "item_chapter",
+      "percent": 2,
+      "chapterId": "ch-1",
+      "title": "Historical Context",
+      "anchor": "In 1838, the invention of the camera sparked predictions that photography would make artists obsolete."
+    },
+    {
+      "type": "item_chapter",
+      "percent": 7,
+      "chapterId": "ch-2",
+      "title": "Graduates’ Message",
+      "anchor": "The reactions of this year’s graduates are a powerful wake-up call for the tech sector."
+    },
+    {
+      "type": "interjection",
+      "interjectionId": "ij-b8db2411-c74a-4ac6-a2be-6e3303c57448",
+      "targetType": "item",
+      "targetId": "item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4",
+      "percent": 11
+    },
+    {
+      "type": "item_chapter",
+      "percent": 21,
+      "chapterId": "ch-3",
+      "title": "Human Ambition",
+      "anchor": "The good news is that human ambition is irrepressible."
+    },
+    {
+      "type": "item_chapter",
+      "percent": 32,
+      "chapterId": "ch-4",
+      "title": "Concerns and Challenges",
+      "anchor": "None of this is meant to dismiss the anxiety of today’s graduates."
+    },
+    {
+      "type": "item_chapter",
+      "percent": 37,
+      "chapterId": "ch-5",
+      "title": "AI in Context",
+      "anchor": "First, we should put AI in context."
+    },
+    {
+      "type": "interjection",
+      "interjectionId": "ij-59d34f73-5bbc-43f5-a347-08e41337ed36",
+      "targetType": "item",
+      "targetId": "item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4",
+      "percent": 41
+    },
+    {
+      "type": "item_chapter",
+      "percent": 51,
+      "chapterId": "ch-6",
+      "title": "Individual Implications",
+      "anchor": "In the three-and-a-half years since the release of ChatGPT, one initial insight is profound yet unsurprising."
+    },
+    {
+      "type": "interjection",
+      "interjectionId": "ij-7b8bb098-804d-442d-8ec4-03fd54a2ecbe",
+      "targetType": "item",
+      "targetId": "item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4",
+      "percent": 63
+    },
+    {
+      "type": "interjection",
+      "interjectionId": "ij-764b49c7-048f-4e67-b34f-95fe715277bd",
+      "targetType": "item",
+      "targetId": "item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4",
+      "percent": 63
+    },
+    {
+      "type": "item_chapter",
+      "percent": 68,
+      "chapterId": "ch-7",
+      "title": "Organizational Impact",
+      "anchor": "These insights apply as much to organizations as to individuals."
+    },
+    {
+      "type": "interjection",
+      "interjectionId": "ij-af76b688-81a8-4827-bbc1-13d5af409e27",
+      "targetType": "item",
+      "targetId": "item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4",
+      "percent": 80
+    },
+    {
+      "type": "item_chapter",
+      "percent": 81,
+      "chapterId": "ch-8",
+      "title": "Public Conversation",
+      "anchor": "For individuals and organizations alike, the key is to harness AI’s benefits while preserving timeless human values and economic needs."
+    },
+    {
+      "type": "item_chapter",
+      "percent": 87,
+      "chapterId": "ch-9",
+      "title": "Microsoft’s Role",
+      "anchor": "As a company, we’re committed to playing an active part and constructive role in addressing these issues."
+    },
+    {
+      "type": "item_chapter",
+      "percent": 94,
+      "chapterId": "ch-10",
+      "title": "Next Generation Call",
+      "anchor": "Graduating students who grimace or even boo at references to AI are telling us what we need to hear"
+    },
+    {
+      "type": "interjection",
+      "interjectionId": "ij-5126d877-33b1-4e11-9c46-9b2d1f491e5a",
+      "targetType": "item",
+      "targetId": "item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4",
+      "percent": 97
+    },
+    {
+      "type": "ai_turn",
+      "turnId": "turn-27efe078-2eb8-4974-912f-ea15c24caabf",
+      "title": "Interjection summary 1",
+      "turnType": "interjection_summary",
+      "status": "complete"
+    },
+    {
+      "type": "ai_turn_chapter",
+      "turnId": "turn-27efe078-2eb8-4974-912f-ea15c24caabf",
+      "chapterId": "ch-1",
+      "percent": 16,
+      "title": "Human agency and task scarcity",
+      "anchor": "Instead, they advocate deliberately identifying and deepening uniquely human capabilities"
+    },
+    {
+      "type": "ai_turn_chapter",
+      "turnId": "turn-27efe078-2eb8-4974-912f-ea15c24caabf",
+      "chapterId": "ch-2",
+      "percent": 32,
+      "title": "Foresight's human-centered role",
+      "anchor": "the organization’s value stems from its people and that it will thrive precisely by strengthening uniquely human roles"
+    },
+    {
+      "type": "ai_turn_chapter",
+      "turnId": "turn-27efe078-2eb8-4974-912f-ea15c24caabf",
+      "chapterId": "ch-3",
+      "percent": 45,
+      "title": "AI as a tool for expertise enhancement",
+      "anchor": "AI supplements rather than replaces expert validation and production-level work"
+    },
+    {
+      "type": "ai_turn_chapter",
+      "turnId": "turn-27efe078-2eb8-4974-912f-ea15c24caabf",
+      "chapterId": "ch-4",
+      "percent": 55,
+      "title": "Organizational AI adoption challenges",
+      "anchor": "questioning the level of active, collaborative experimentation and rethinking of workflows enabled by AI tools"
+    },
+    {
+      "type": "ai_turn_chapter",
+      "turnId": "turn-27efe078-2eb8-4974-912f-ea15c24caabf",
+      "chapterId": "ch-5",
+      "percent": 70,
+      "title": "Machines depend on humans",
+      "anchor": "machines do rely on material inputs"
+    },
+    {
+      "type": "ai_turn_chapter",
+      "turnId": "turn-27efe078-2eb8-4974-912f-ea15c24caabf",
+      "chapterId": "ch-6",
+      "percent": 84,
+      "title": "Follow-up questions on human-AI collaboration",
+      "anchor": "How can organizations systematically map and expand uniquely human tasks?"
+    },
+    {
+      "type": "ai_turn",
+      "turnId": "turn-34591529-b3b4-476f-88ce-1c18215d8bb8",
+      "title": "AI response 1",
+      "turnType": "assistant_response",
+      "status": "complete"
+    },
+    {
+      "type": "ai_turn_chapter",
+      "turnId": "turn-34591529-b3b4-476f-88ce-1c18215d8bb8",
+      "chapterId": "ch-1",
+      "percent": 8,
+      "title": "Start with scarcity",
+      "anchor": "Start not with tasks, but with scarcity."
+    },
+    {
+      "type": "ai_turn_chapter",
+      "turnId": "turn-34591529-b3b4-476f-88ce-1c18215d8bb8",
+      "chapterId": "ch-2",
+      "percent": 20,
+      "title": "Expertise and tacit knowledge",
+      "anchor": "AI fluency by itself is not a moat."
+    },
+    {
+      "type": "interjection",
+      "interjectionId": "ij-a713eeb9-c161-476f-a309-abfd6aa5ebc6",
+      "targetType": "turn",
+      "targetId": "turn-34591529-b3b4-476f-88ce-1c18215d8bb8",
+      "percent": 38
+    },
+    {
+      "type": "ai_turn_chapter",
+      "turnId": "turn-34591529-b3b4-476f-88ce-1c18215d8bb8",
+      "chapterId": "ch-3",
+      "percent": 42,
+      "title": "Human-capacity infrastructure",
+      "anchor": "I would distinguish between human-centered rhetoric and human-capacity infrastructure."
+    },
+    {
+      "type": "ai_turn_chapter",
+      "turnId": "turn-34591529-b3b4-476f-88ce-1c18215d8bb8",
+      "chapterId": "ch-4",
+      "percent": 68,
+      "title": "Team-level AI adoption",
+      "anchor": "The unit of adoption should not only be the individual worker with a chatbot."
+    },
+    {
+      "type": "interjection",
+      "interjectionId": "ij-c7dbb087-b313-44a6-9921-a40dd7d6ce76",
+      "targetType": "turn",
+      "targetId": "turn-34591529-b3b4-476f-88ce-1c18215d8bb8",
+      "percent": 90
+    },
+    {
+      "type": "ai_turn_chapter",
+      "turnId": "turn-34591529-b3b4-476f-88ce-1c18215d8bb8",
+      "chapterId": "ch-5",
+      "percent": 96,
+      "title": "Designing AI-era institutions",
+      "anchor": "The better aim is to design organizations around scarce human capacities"
+    },
+    {
+      "type": "ai_turn",
+      "turnId": "turn-a3bbc6fd-9287-446d-ade2-2327edc54b83",
+      "title": "Interjection summary 2",
+      "turnType": "interjection_summary",
+      "status": "complete"
+    }
+  ],
+  "interjections": [
+    {
+      "id": "ij-b8db2411-c74a-4ac6-a2be-6e3303c57448",
+      "itemId": "item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4",
+      "sessionId": "session-26d5702d-1f74-404d-a743-9cbc12fb93fe",
+      "targetType": "item",
+      "targetId": "item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4",
+      "segmentIndex": null,
+      "roughPercent": 11,
+      "chunkIndex": 2,
+      "chapterTitle": "Graduates’ Message",
+      "anchorBefore": "They want the future to be determined by humans deciding the role of machines, not by machines deciding the role of humans.",
+      "anchorAfter": "And they want these decisions to reflect input from a broad community, especially the next generation of the workforce, rather than just a narrow group of elites.",
+      "transcriptionStatus": "transcribed",
+      "transcript": "I would say that machines actually do need things. They need their replaceable parts and they need their inputs to the products that they produce. I think that's a given.",
+      "audioPath": "/Users/colemiller/Library/Application Support/com.spokenmargins.prototype/interjections/item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4/ij-b8db2411-c74a-4ac6-a2be-6e3303c57448.m4a"
+    },
+    {
+      "id": "ij-a713eeb9-c161-476f-a309-abfd6aa5ebc6",
+      "itemId": "item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4",
+      "sessionId": "session-26d5702d-1f74-404d-a743-9cbc12fb93fe",
+      "targetType": "turn",
+      "targetId": "turn-34591529-b3b4-476f-88ce-1c18215d8bb8",
+      "segmentIndex": 3,
+      "roughPercent": 38,
+      "chunkIndex": 0,
+      "chapterTitle": null,
+      "anchorBefore": "This also connects to socio-technical systems theory, especially the work of Eric Trist and the Tavistock tradition.",
+      "anchorAfter": "The core idea is that you cannot optimize the technical system separately from the social system.",
+      "transcriptionStatus": "transcribed",
+      "transcript": "So just a quick interjection here. In case you've been confused, we are not having a mental breakdown. We are two different people and you're getting one recording of both of us in conversation. Two, foresight, F-O-U-R-S-I-G-H-T is a company that's job is improving human collaboration and creative problem solving. So when we say we are\n tied to the human, we mean we do not have a company if humans aren't around, period. There are some other companies where theoretically they don't need humans to use their products. We do.",
+      "audioPath": "/Users/colemiller/Library/Application Support/com.spokenmargins.prototype/interjections/item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4/ij-a713eeb9-c161-476f-a309-abfd6aa5ebc6.m4a"
+    },
+    {
+      "id": "ij-59d34f73-5bbc-43f5-a347-08e41337ed36",
+      "itemId": "item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4",
+      "sessionId": "session-26d5702d-1f74-404d-a743-9cbc12fb93fe",
+      "targetType": "item",
+      "targetId": "item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4",
+      "segmentIndex": null,
+      "roughPercent": 41,
+      "chunkIndex": 7,
+      "chapterTitle": "AI in Context",
+      "anchorBefore": "msockid=13bd05afdaf2693700a31619db4168a8).",
+      "anchorAfter": "The rate in the United States is higher than the global average, but still only at 31.",
+      "transcriptionStatus": "transcribed",
+      "transcript": "I mean, it's capturing the citation or the website, but it's a little bit irritating. I think that it should just say the caption and then not say the URL. Yeah. Which makes you say the dummy thing. But what I liked about the human cultural wave is that that is actually exactly what foresight and what P3,\n that's exactly your specialty is the change within organizations. Exactly, exactly. And doing it at a human scale with human input. Like, I feel like the story I'm hearing time after time is it's up to, well, like you were saying at Libby, it's up to each individual to figure out how I'm going to use\n this AI agent. I feel like that's, I have not, I've yet to hear, oh, we've got a group of us together on our, in our function or, you know, in our brand team. And we're figuring out what are the best uses and let's run a test. Let's try it. Let's get a couple of us doing this. And what I'm surprised is that they're not using it to rethink their process.\n Because AI allows two things that are interesting to me is one, it allows the people who don't have coding abilities to now have coding abilities. So they could benefit from automating parts of their jobs or tasks that are adjacent to them. Now they can actually prototype that. I'm just going to throw out that you're, you actually, for not being a coder, you actually have a lot of\n training, and it's training you've gotten for yourself and so on and so forth. But you have a pretty, you know, I learned how to code basic, right? Back in the 80s, because you had to, there weren't, there wasn't a pervasive number of tools. But now there are tools upon tools, upon tools available\n and I just question how many people really understand how they could make an app to take on an everyday challenge that they have. I'm raising my hand and I'm not proud of it, but there have been on Macs, you've had the ability for years to write scripts to do\n mundane tasks. I love the idea of it. I just love the idea of it. But when it comes to, okay, well, what's the task? Okay, now create it into the strength. To people who know how to do it, I'm sure it's just as simple as falling off a log. I just never found it accessible.\n What my point is, there may be a lot of people in organizations who just, they need somebody like you for them to talk to and you say, oh, here's how you do it. - Well, and exactly. I think that what is wonderful is that AI is capable of writing really good code, but it benefits if you have defined the interface as well. If you can say, I'm going to be inputting a\n in voice and I want out a structured text in the form of a CSV and it can write code for you. So you're not actually putting AI in the loop. You're putting a script in the loop that you can audit. So if it fails, you can actually. And I think that that's the superpower is that teaching people how AI can give them more capability is awesome. I think that there's been too much\n popularity of putting AI in everything. So it's now in the loop and a bunch of things. And I think that's silly because AI is going to keep on improving. And so the AI you have in the loop, one, it might disappear because they stopped giving you that model and now the model is going to behave differently. Or two, it's going to cost a lot of money because you are using it when it was subsidized. - Right, that's interesting.",
+      "audioPath": "/Users/colemiller/Library/Application Support/com.spokenmargins.prototype/interjections/item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4/ij-59d34f73-5bbc-43f5-a347-08e41337ed36.m4a"
+    },
+    {
+      "id": "ij-7b8bb098-804d-442d-8ec4-03fd54a2ecbe",
+      "itemId": "item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4",
+      "sessionId": "session-26d5702d-1f74-404d-a743-9cbc12fb93fe",
+      "targetType": "item",
+      "targetId": "item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4",
+      "segmentIndex": null,
+      "roughPercent": 63,
+      "chunkIndex": 11,
+      "chapterTitle": "Individual Implications",
+      "anchorBefore": "After all, employers must thrive for employees to thrive.",
+      "anchorAfter": "And successful businesses, like successful individuals, rely on distinctive and often deep expertise – about products, business processes, operating rhythms, and a deep understanding of customers.",
+      "transcriptionStatus": "transcribed",
+      "transcript": "Third bucket is very, very bringing your unique human capacities to bear. And she just started courage, empathy, creativity, insight, judgment. Yeah, I think it's interesting. And what I am noticing is that that ask for split your job into task, that's actually a new index that economists at the US Bureau layer\n statistics have created. And they've made it because the internet came along. And everyone's like, Oh, the internet created GDP. Except I ask you, where are the encyclopedia people? No one buys an encyclopedia anymore. And as a result, encyclopedia has dropped off of GDP. So actually the internet shrink GDP for encyclopedia. And so that's when these economists were like, well, that's not right. Because clearly GDP\n increased. And we are still getting this. Like I'm getting this service of an encyclopedia. I'm just not paying money for it, which is even better than having to pay money for an encyclopedia. And so what they did is they started looking at splitting jobs into tasks. And the task of an encyclopedist still exists. And we still use them. And there are all these databases that are used and curated and charged money. It's just that that database\n for a encyclopedia, no one exists. And the task of distributing your encyclopedia gone. But that was the specific task of distributing your encyclopedia, whereas distributing your enterprise level software, that's still a subscription job. But it's interesting that that bucket of tasks is exactly what economists do.\n The splitting, what are the left for human is also exactly why people are, the economists are skeptical that we're going to see a boom. And then suddenly the economy is completely different. It's because the economy will always be slowed down by the weakest link. And right now, the weakest link is doctors and teachers and lawyers. Because as the internet has automated so many things, it hasn't automated the production of code.\n supply of good medical advice and being able to get treatment. And that's why we're seeing all of these other people than doctors who are now being given capacity to treat is because you just can't automate that job. And there are reasonable ideas for how you can automate tasks of a doctor's job now with AI, which is really cool. But it's very hard to imagine a world where, oh, yeah, the doctor's completely gone and they've been fully replaced.\n I'm sorry. Yeah. And you could imagine how parts of their job could be automated, but it's very hard to imagine. And you can also look then backwards 30 years and see that the job is very much similar. We've seen parts of those jobs get automated right now and maybe they don't have to write down into the electronic health record. They can dictate into it. They can just listen and then the electronic health record automatically creates a notice and all they have to do is prove.\n That's nice, but that's not a significant portion of the job. That's a tiny fraction. I think if you talk to doctors like Marcy should have said the advent of computers has actually blossomed the amount of red tape that they have to engage in. Because now, well, we can analyze all this data and who's going to implement\n put it. They end up having to bring their laptops into patient interactions, and they're having to be typing the entire time, getting codes and getting things. It's like not the highest and best use of being a doctor. But it's gone and reverse from getting more efficient. Somebody is getting\n more data, but it sure isn't the front line practitioners.",
+      "audioPath": "/Users/colemiller/Library/Application Support/com.spokenmargins.prototype/interjections/item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4/ij-7b8bb098-804d-442d-8ec4-03fd54a2ecbe.m4a"
+    },
+    {
+      "id": "ij-764b49c7-048f-4e67-b34f-95fe715277bd",
+      "itemId": "item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4",
+      "sessionId": "session-26d5702d-1f74-404d-a743-9cbc12fb93fe",
+      "targetType": "item",
+      "targetId": "item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4",
+      "segmentIndex": null,
+      "roughPercent": 63,
+      "chunkIndex": 11,
+      "chapterTitle": "Individual Implications",
+      "anchorBefore": "After all, employers must thrive for employees to thrive.",
+      "anchorAfter": "And successful businesses, like successful individuals, rely on distinctive and often deep expertise – about products, business processes, operating rhythms, and a deep understanding of customers.",
+      "transcriptionStatus": "transcribed",
+      "transcript": "book Renaissance, which is on that side table. He has a whole section just on that. And it sounds like she's actually quoting them, because that's what he actually the way he phrases them. Call me old-fashioned, but I think a person should study what they're passionate about. With that, exactly, is that then you,\n become an expert in that area and how you use AI will be to create things around that and to interact with that mindset. Yeah. I think that makes sense. And what I think is interesting is so in engineering, we have this idea of verification and validation. Verification is you built it right. And then validation is you built the right thing. And what I think is interesting is that if you are interested in a subject, even if you have absolutely no idea, you love planes,\n you're not an engineer. You have no idea what aerodynamics are, but you just like planes. AI is really good at prototyping, really looking good at prototyping. It is not necessarily up there for producing production something. It's not good at creating a production level book, production level code. It's not quite there. It's getting a lot closer in certain fields. There's not that. What it requires is steering. And it requires steering by experts. If you want to make something production level,\n you need an expert to verify that it was built right. But when you are just a hobbyist and you're interested in something, it is incredible because it can build prototypes. And then you, as a just a hobbyist, can validate that the prototype does what you want. You can't actually see under the hood and verify that it was built right. You have absolutely no idea, but you can actually see the function of that it is doing what I want. At least electronically. Electronically, exactly. Well, or text, right?\n Or it could be, the point is that you can visually or audit for early or whatever validate that, oh, this is doing what I want. Now, it might be made out of duct tape and paper mache and the moment they start draining, it just falls apart. But what's super cool is that now you've validated that this is actually kind of cool. And I now want to figure out how to verify that it is made right next time. And that's where exactly. If you're interested, suddenly you're just going to have\n boundless energy to be validating and experimenting. But then it's the expertise that you would build by getting an education in that. It would help you verify that you've now actually built things correctly. And I just think that's kind of cool.",
+      "audioPath": "/Users/colemiller/Library/Application Support/com.spokenmargins.prototype/interjections/item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4/ij-764b49c7-048f-4e67-b34f-95fe715277bd.m4a"
+    },
+    {
+      "id": "ij-af76b688-81a8-4827-bbc1-13d5af409e27",
+      "itemId": "item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4",
+      "sessionId": "session-26d5702d-1f74-404d-a743-9cbc12fb93fe",
+      "targetType": "item",
+      "targetId": "item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4",
+      "segmentIndex": null,
+      "roughPercent": 80,
+      "chunkIndex": 14,
+      "chapterTitle": "Organizational Impact",
+      "anchorBefore": "We need to make room not only for technology companies, employers, and governments, but for non-profits, students, the world’s religions, labor leaders, and workers themselves.",
+      "anchorAfter": "As Liz Shuler, the President of the AFL-CIO, said recently, “Who knows best how workplaces function and how work gets done than people who work for a living?",
+      "transcriptionStatus": "transcribed",
+      "transcript": "I think that is an absolute race to the bottom. Because didn't they just say, look at your tasks and put them into buckets, what can be automated and what can't be? If you're trying to develop expertise in an AI, you are implicitly trying to develop tasks that can be automated, which also means that it can be automated by someone else. So I feel like you should do the exact opposite. You should look at your task and figure out what are the human things in my company, just like you did for the individual, and start thinking, how can we make that more of our capability? Because that is what is going to be\n scarce. If you can automate so much, the scarce part is going to be the human part. And that is why I think foresight is uniquely positioned. And just so you know dictation, it's F-O-U-R-S-I-G-H-D is uniquely positioned because what does foresight do? They focus on the people. And we have no idea where people are going to be in the economy in the future. But all we know is that foresight is for the people. And so\n that is where we will be. And we're going to be at the scarce points. And if we are in a fully automated economy where there's nothing that anyone has to do, then wonderful. We'll still eat with the people. We're going to have fun with the people. I love that framing of it. That's really great. But that's why I feel very comfortable in terms of like, oh, what's the world? The seeds are so rough. It's stormy. It's like, well, I know what foresight does. We do people.\n All right. Where are we going to be? Where are the people? I love that framing of the three buckets. Foresight is in the two and three bucket. And that's where organizations need to focus. I'm just saying what you just said. And that foresight is there where the people are. And even if AI goes nuts, foresight's still with the people.\n And that's our value proposition. Yeah, that's excellent.",
+      "audioPath": "/Users/colemiller/Library/Application Support/com.spokenmargins.prototype/interjections/item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4/ij-af76b688-81a8-4827-bbc1-13d5af409e27.m4a"
+    },
+    {
+      "id": "ij-c7dbb087-b313-44a6-9921-a40dd7d6ce76",
+      "itemId": "item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4",
+      "sessionId": "session-26d5702d-1f74-404d-a743-9cbc12fb93fe",
+      "targetType": "turn",
+      "targetId": "turn-34591529-b3b4-476f-88ce-1c18215d8bb8",
+      "segmentIndex": 7,
+      "roughPercent": 90,
+      "chunkIndex": 0,
+      "chapterTitle": null,
+      "anchorBefore": "”",
+      "anchorAfter": null,
+      "transcriptionStatus": "transcribed",
+      "transcript": "I just want to put in that when I said humans are going to be scarce, I mean I have not yet come across a technology that is able to replicate humans as quickly as we are able to replicate transistors. Until that happens, I will stand strong on my comment about human scarcity. When I am talking about that humans will be around, I'm not even saying that they have to be a critical person.\n part of a supply chain. Humans will just be going around doing things. Why? Because that tends to be what we do. And as long as they keep on going around doing things, we will have as foresight something to help them with.",
+      "audioPath": "/Users/colemiller/Library/Application Support/com.spokenmargins.prototype/interjections/item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4/ij-c7dbb087-b313-44a6-9921-a40dd7d6ce76.m4a"
+    },
+    {
+      "id": "ij-5126d877-33b1-4e11-9c46-9b2d1f491e5a",
+      "itemId": "item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4",
+      "sessionId": "session-26d5702d-1f74-404d-a743-9cbc12fb93fe",
+      "targetType": "item",
+      "targetId": "item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4",
+      "segmentIndex": null,
+      "roughPercent": 97,
+      "chunkIndex": 17,
+      "chapterTitle": "Next Generation Call",
+      "anchorBefore": "Do everything you can to help advance these values.",
+      "anchorAfter": null,
+      "transcriptionStatus": "transcribed",
+      "transcript": "So I personally don't think Microsoft is with the people because I think Microsoft is with the businesses. Their job is to make businesses work and to give technology to the business. They're not giving it to the people. They happen to be giving it to the people right now, but I think if they could automate business processes, they will. And I think that is one of the things that they're going to be able to supply and lock in companies to is companies are going to be using the AI with\n Microsoft. And then Microsoft will be able to say, hey, by the way, we now have enough data about your company. We know how to automate this entire process. So that's my thought.",
+      "audioPath": "/Users/colemiller/Library/Application Support/com.spokenmargins.prototype/interjections/item-cf283ad5-38a4-40d8-9c80-2f5cdd6514b4/ij-5126d877-33b1-4e11-9c46-9b2d1f491e5a.m4a"
+    }
+  ]
+}

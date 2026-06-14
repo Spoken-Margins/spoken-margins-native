@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "watch-sync-event.v1",
+  "id": "watch-event-position-001",
+  "watchPackageId": "watch-package-pill-001",
+  "sessionId": "session-watch-pill-001",
+  "itemId": "item-pill",
+  "eventType": "playback_position",
+  "createdAt": "2026-06-11T12:33:00.000Z",
+  "payload": {
+    "mediaTimeMs": 62000,
+    "chapterId": "ch-process",
+    "transcriptSegmentId": "seg-pill-004",
+    "playbackRate": 1,
+    "audioFileName": null,
+    "audioDurationMs": null,
+    "error": null
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "listening-map.v1",
+  "id": "map-pill-invalid-anchor",
+  "itemId": "item-pill",
+  "itemTitle": "You Can't Inspect the Pill",
+  "overview": "Trust should come from inspectable process.",
+  "claims": [
+    {
+      "id": "claim-1",
+      "text": "Anecdotes are weak evidence."
+    }
+  ],
+  "chapters": [
+    {
+      "id": "ch-bad",
+      "title": "Invented anchor",
+      "description": "This chapter intentionally uses an anchor not present in the item.",
+      "anchor": "This exact sentence does not exist in the item.",
+      "resolved": null
+    }
+  ]
+}

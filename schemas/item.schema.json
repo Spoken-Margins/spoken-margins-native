@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spokenmargins.local/schemas/item.schema.json",
+  "title": "Item",
+  "type": "object",
+  "required": ["schemaVersion", "id", "title", "mediaType", "createdAt", "updatedAt", "status"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": "item.v1" },
+    "id": { "type": "string", "minLength": 1 },
+    "title": { "type": "string", "minLength": 1 },
+    "mediaType": { "enum": ["text", "transcript_backed_media"] },
+    "text": { "type": ["string", "null"] },
+    "media": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["sourceType"],
+      "properties": {
+        "sourceType": { "enum": ["browser_video", "browser_audio", "podcast", "file_audio", "external_url"] },
+        "url": { "type": ["string", "null"] },
+        "durationMs": { "type": ["integer", "null"], "minimum": 0 },
+        "nativeMediaId": { "type": ["string", "null"] }
+      }
+    },
+    "externalReference": { "type": ["string", "null"] },
+    "externalReferenceType": { "enum": ["obsidian", "url", "plain", "none"] },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "status": { "enum": ["needs_listening_map", "ready", "in_progress", "finished", "map_needs_repair"] },
+    "listeningMapId": { "type": ["string", "null"] },
+    "transcriptId": { "type": ["string", "null"] }
+  }
+}
