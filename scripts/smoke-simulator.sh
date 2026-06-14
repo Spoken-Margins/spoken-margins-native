@@ -44,6 +44,18 @@ xcrun simctl install "$DEVICE_UDID" "$APP"
 xcrun simctl launch "$DEVICE_UDID" com.spokenmargins.native
 sleep 3
 
+DEVICE_LINE="$(xcrun simctl list devices | grep "$DEVICE_UDID" | head -1 || true)"
+DEVICE_NAME="${DEVICE_LINE% (*}"
+DEVICE_NAME="${DEVICE_NAME#"${DEVICE_NAME%%[![:space:]]*}"}"
+SCREENSHOT_NAME="${SCREENSHOT_NAME:-}"
+if [[ -z "$SCREENSHOT_NAME" ]]; then
+  if [[ "$DEVICE_NAME" == iPad* ]]; then
+    SCREENSHOT_NAME="ipad-launch.png"
+  else
+    SCREENSHOT_NAME="iphone-launch.png"
+  fi
+fi
+
 mkdir -p "$ROOT/artifacts/gate1"
-xcrun simctl io "$DEVICE_UDID" screenshot "$ROOT/artifacts/gate1/iphone-launch.png" >/dev/null
-echo "Simulator smoke passed. Screenshot: $ROOT/artifacts/gate1/iphone-launch.png"
+xcrun simctl io "$DEVICE_UDID" screenshot "$ROOT/artifacts/gate1/$SCREENSHOT_NAME" >/dev/null
+echo "Simulator smoke passed on ${DEVICE_NAME:-$DEVICE_UDID}. Screenshot: $ROOT/artifacts/gate1/$SCREENSHOT_NAME"

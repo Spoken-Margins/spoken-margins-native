@@ -30,6 +30,7 @@ struct Gate1RootView: View {
 
 private struct HomeScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @FocusState private var focusedField: Field?
 
     private enum Field {
@@ -40,14 +41,35 @@ private struct HomeScreen: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    header
-                    StatusBanner()
-                    createItem
-                    queue
+                Group {
+                    if horizontalSizeClass == .regular {
+                        HStack(alignment: .top, spacing: 24) {
+                            VStack(alignment: .leading, spacing: 22) {
+                                header
+                                StatusBanner()
+                                createItem
+                            }
+                            .frame(maxWidth: 620, alignment: .topLeading)
+
+                            VStack(alignment: .leading, spacing: 22) {
+                                Color.clear.frame(height: 154)
+                                queue
+                            }
+                            .frame(maxWidth: 520, alignment: .topLeading)
+                        }
+                        .frame(maxWidth: 1180, alignment: .topLeading)
+                    } else {
+                        VStack(alignment: .leading, spacing: 22) {
+                            header
+                            StatusBanner()
+                            createItem
+                            queue
+                        }
+                    }
                 }
                 .padding(20)
             }
+            .accessibilityIdentifier("home.screen")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -55,6 +77,7 @@ private struct HomeScreen: View {
                         Image(systemName: "gearshape")
                     }
                     .accessibilityLabel("Settings")
+                    .accessibilityIdentifier("home.settings.button")
                 }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
@@ -81,6 +104,7 @@ private struct HomeScreen: View {
                 TextField("Title", text: $model.importTitle)
                     .textFieldStyle(.roundedBorder)
                     .focused($focusedField, equals: .title)
+                    .accessibilityIdentifier("create.title.field")
                 TextEditor(text: $model.importText)
                     .frame(minHeight: 180)
                     .padding(8)
@@ -88,6 +112,7 @@ private struct HomeScreen: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppColors.border))
                     .focused($focusedField, equals: .text)
+                    .accessibilityIdentifier("create.text.editor")
                 Button(action: {
                     focusedField = nil
                     model.importTextItem()
@@ -95,6 +120,7 @@ private struct HomeScreen: View {
                     Label("Create And Start", systemImage: "plus")
                 }
                 .buttonStyle(PrimaryButtonStyle())
+                .accessibilityIdentifier("create.start.button")
             }
         }
     }
@@ -107,6 +133,7 @@ private struct HomeScreen: View {
                 Spacer()
                 Button("Reset Samples", action: model.resetAndSeed)
                     .buttonStyle(SecondaryButtonStyle())
+                    .accessibilityIdentifier("reset.samples.button")
             }
             if model.libraryItems.isEmpty {
                 ProductPanel {
@@ -132,6 +159,7 @@ private struct HomeScreen: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityIdentifier("queue.row.\(item.id)")
 
                             Button {
                                 model.startItem(id: item.id)
@@ -141,6 +169,7 @@ private struct HomeScreen: View {
                             }
                             .buttonStyle(IconButtonStyle())
                             .accessibilityLabel("Start \(item.title)")
+                            .accessibilityIdentifier("queue.start.\(item.id)")
 
                             if item.canDelete {
                                 Button(role: .destructive) {
@@ -151,6 +180,7 @@ private struct HomeScreen: View {
                                 }
                                 .buttonStyle(DangerIconButtonStyle())
                                 .accessibilityLabel("Delete \(item.title)")
+                                .accessibilityIdentifier("queue.delete.\(item.id)")
                             }
                         }
                     }
@@ -178,11 +208,13 @@ private struct ItemScreen: View {
                 }
                 .padding(20)
             }
+            .accessibilityIdentifier("item.screen")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(action: model.openHome) {
                         Label("Home", systemImage: "arrow.left")
                     }
+                    .accessibilityIdentifier("item.home.button")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     if model.selectedItem.id.hasPrefix("item-import-") {
@@ -191,6 +223,7 @@ private struct ItemScreen: View {
                         } label: {
                             Label("Delete", systemImage: "trash")
                         }
+                        .accessibilityIdentifier("item.delete.button")
                     }
                 }
             }
@@ -231,6 +264,7 @@ private struct ItemScreen: View {
                     Label("Read Item", systemImage: "play")
                 }
                 .buttonStyle(SecondaryButtonStyle())
+                .accessibilityIdentifier("item.read.button")
             }
         }
     }
@@ -305,41 +339,63 @@ private struct ItemScreen: View {
                 Label("Start Listening", systemImage: "play.fill")
             }
             .buttonStyle(PrimaryButtonStyle())
+            .accessibilityIdentifier("item.start.button")
             Button(action: model.openExport) {
                 Label("Export", systemImage: "square.and.arrow.up")
             }
             .buttonStyle(SecondaryButtonStyle())
+            .accessibilityIdentifier("item.export.button")
         }
     }
 }
 
 private struct PlaybackScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var followUp = "Can you respond to that objection?"
     @FocusState private var followUpFocused: Bool
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 20) {
-                    watchSurface
-                    timeline
-                    conversation
-                    StatusBanner()
+                Group {
+                    if horizontalSizeClass == .regular {
+                        HStack(alignment: .top, spacing: 24) {
+                            watchSurface
+                                .frame(width: 430)
+                            VStack(spacing: 20) {
+                                timeline
+                                conversation
+                                StatusBanner()
+                            }
+                            .frame(maxWidth: 680)
+                        }
+                        .frame(maxWidth: 1160, alignment: .topLeading)
+                    } else {
+                        VStack(spacing: 20) {
+                            watchSurface
+                            timeline
+                            conversation
+                            StatusBanner()
+                        }
+                    }
                 }
                 .padding(20)
             }
+            .accessibilityIdentifier("playback.screen")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(action: model.openHome) {
                         Label("Home", systemImage: "house")
                     }
+                    .accessibilityIdentifier("playback.home.button")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(action: model.openExport) {
                         Image(systemName: "square.and.arrow.up")
                     }
                     .disabled(!model.hasActiveSession)
+                    .accessibilityIdentifier("playback.export.button")
                 }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
@@ -371,6 +427,7 @@ private struct PlaybackScreen: View {
                 }
                 .buttonStyle(RoundPlaybackButtonStyle())
                 .disabled(!model.hasActiveSession)
+                .accessibilityIdentifier("playback.back.button")
 
                 ZStack {
                     Circle()
@@ -385,6 +442,7 @@ private struct PlaybackScreen: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(AppColors.text)
+                    .accessibilityIdentifier("playback.play.button")
                 }
                 .frame(width: 108, height: 108)
                 .background(Circle().fill(AppColors.accentSoft))
@@ -394,6 +452,7 @@ private struct PlaybackScreen: View {
                 }
                 .buttonStyle(RoundPlaybackButtonStyle())
                 .disabled(!model.hasActiveSession)
+                .accessibilityIdentifier("playback.forward.button")
             }
 
             Text("Session \(model.snapshot.progressPercent)%")
@@ -409,6 +468,7 @@ private struct PlaybackScreen: View {
                             Label("Done", systemImage: "checkmark")
                         }
                         .buttonStyle(PrimaryButtonStyle())
+                        .accessibilityIdentifier("interjection.done.button")
                     }
                 }
             } else {
@@ -419,6 +479,7 @@ private struct PlaybackScreen: View {
                     }
                     .buttonStyle(WatchSecondaryButtonStyle())
                     .disabled(!model.hasActiveSession)
+                    .accessibilityIdentifier("playback.summary.button")
 
                     Button(action: model.beginInterjection) {
                         Label(model.snapshot.phase == .finished ? "Add Addendum" : "Interject", systemImage: "mic")
@@ -426,12 +487,14 @@ private struct PlaybackScreen: View {
                     }
                     .buttonStyle(InterjectButtonStyle())
                     .disabled(!model.hasActiveSession)
+                    .accessibilityIdentifier("playback.interject.button")
                 }
                 Button(action: model.summarize) {
                     Label("Discuss", systemImage: "play")
                 }
                 .buttonStyle(LightButtonStyle())
                 .disabled(!model.hasActiveSession)
+                .accessibilityIdentifier("playback.discuss.button")
             }
         }
         .padding(24)
@@ -469,6 +532,7 @@ private struct PlaybackScreen: View {
                 }
             }
         }
+        .accessibilityIdentifier("timeline.section")
     }
 
     private var conversation: some View {
@@ -502,6 +566,7 @@ private struct PlaybackScreen: View {
                 TextField("Continue the conversation...", text: $followUp, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .focused($followUpFocused)
+                    .accessibilityIdentifier("conversation.followup.field")
                 HStack {
                     Button("Submit") {
                         followUpFocused = false
@@ -509,12 +574,15 @@ private struct PlaybackScreen: View {
                     }
                     .buttonStyle(PrimaryButtonStyle())
                     .disabled(!model.hasActiveSession)
+                    .accessibilityIdentifier("conversation.submit.button")
                     Button("Retry AI", action: model.retryPendingAI)
                         .buttonStyle(SecondaryButtonStyle())
                         .disabled(!model.hasActiveSession)
+                        .accessibilityIdentifier("conversation.retry.button")
                 }
             }
         }
+        .accessibilityIdentifier("conversation.section")
     }
 }
 
@@ -537,16 +605,21 @@ private struct SettingsScreen: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .focused($focusedField, equals: .baseURL)
+                        .accessibilityIdentifier("provider.baseURL.field")
                     TextField("Model", text: $model.providerModel)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .focused($focusedField, equals: .model)
+                        .accessibilityIdentifier("provider.model.field")
                     SecureField("API Key", text: $model.providerAPIKey)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .focused($focusedField, equals: .apiKey)
+                        .accessibilityIdentifier("provider.apiKey.field")
                     Button("Save Provider Key", action: model.saveProviderSettings)
+                        .accessibilityIdentifier("provider.save.button")
                     Button("Probe Provider", action: model.probeProvider)
+                        .accessibilityIdentifier("provider.probe.button")
                     LabeledContent("Probe", value: model.providerProbeStatus)
                 }
                 Section("Validation") {
@@ -554,8 +627,11 @@ private struct SettingsScreen: View {
                         Text("Phone/Tablet Online").tag("phone-tablet-online")
                         Text("Phone/Tablet Offline").tag("phone-tablet-offline")
                     }
+                    .accessibilityIdentifier("runtime.profile.picker")
                     Button("Reset Seed Data", action: model.resetAndSeed)
+                        .accessibilityIdentifier("settings.reset.button")
                     Button("Refresh Diagnostics", action: model.refreshDiagnostics)
+                        .accessibilityIdentifier("settings.diagnostics.button")
                 }
                 Section("Diagnostics") {
                     ForEach(model.diagnostics.keys.sorted(), id: \.self) { key in
@@ -568,12 +644,14 @@ private struct SettingsScreen: View {
                     }
                 }
             }
+            .accessibilityIdentifier("settings.screen")
             .navigationTitle("Settings")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(action: model.openHome) {
                         Label("Home", systemImage: "arrow.left")
                     }
+                    .accessibilityIdentifier("settings.home.button")
                 }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
@@ -598,23 +676,28 @@ private struct ExportScreen: View {
                         Button("Build Session Export", action: model.buildExport)
                             .buttonStyle(PrimaryButtonStyle())
                             .disabled(!model.hasActiveSession)
+                            .accessibilityIdentifier("export.build.button")
                         Button("Item", action: { model.openItem(id: model.selectedItem.id) })
                             .buttonStyle(SecondaryButtonStyle())
+                            .accessibilityIdentifier("export.item.button")
                     }
                     ProductPanel {
                         Text(model.exportPreview.isEmpty ? "No export yet." : model.exportPreview)
                             .font(.system(.caption, design: .monospaced))
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityIdentifier("export.preview")
                     }
                 }
                 .padding(20)
             }
+            .accessibilityIdentifier("export.screen")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(action: model.openHome) {
                         Label("Home", systemImage: "arrow.left")
                     }
+                    .accessibilityIdentifier("export.home.button")
                 }
             }
         }

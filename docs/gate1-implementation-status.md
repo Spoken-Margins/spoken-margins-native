@@ -8,8 +8,10 @@
 - Added runtime capability gating for command availability and structured failure behavior.
 - Added a SQLite-backed repository target with migrations and idempotent JSON record storage for items, sessions, interjections, turns, AI jobs, and Listening Maps.
 - Added AVFoundation/AI provider adapter boundaries while keeping tests deterministic through mock clients.
+- Added real AVFoundation speech playback and `.m4a` interjection recording adapters behind `SessionKitAudio` protocols, including explicit microphone permission prompting before interjection recording. The trace tests still use deterministic mocks.
 - Added Gate 1 trace replay tests over the repository's actual trace and fixture files.
-- Added a SwiftUI app for library/import, item start/delete, session controls, discussion, OpenAI-compatible provider configuration, export, diagnostics, reset/seed, release notes, and known issues.
+- Added a SwiftUI app shaped around the reference prototype's product flow: home/create/listening queue, item detail, active playback, discussion, OpenAI-compatible provider configuration, export, diagnostics, reset/seed, release notes, and known issues. Home and playback now use adaptive phone/tablet layouts.
+- Added stable accessibility identifiers and an XCUITest smoke path for reset/seed feedback, seeded session start, playback navigation, export generation, and provider/API-key affordance.
 - Added `project.yml` and generated `SpokenMarginsNative.xcodeproj` with an iOS app target linked against the local `SessionKit` package.
 - Copied docs, schemas, fixtures, and traces into `Contracts/` as a native-app contract snapshot.
 - Added `scripts/verify-gate1.sh` as the repeatable local verification entrypoint.
@@ -29,13 +31,15 @@ Current expected result:
 - `TraceReplayTests.testGate1TracesReplay`: replays 13 Gate 1 traces.
 - Contract validation: all schemas, fixtures, traces, fixture references, and trace capability requirements pass.
 - iOS simulator build: `SpokenMarginsApp` builds with local ad-hoc simulator signing.
-- iOS simulator smoke: app installs and launches on an iOS 26.5 iPhone 17 simulator via `scripts/smoke-simulator.sh`.
+- iOS simulator UI test: `Gate1FlowUITests.testSeededGate1FlowHasVisibleFeedbackPlaybackExportAndSettings` passes against iPhone and iPad simulators.
+- iOS simulator smoke: app installs and launches on iOS 26.5 iPhone 17 and iPad Pro 13-inch (M5) simulators via `scripts/smoke-simulator.sh`.
+- Current launch screenshots are written to `artifacts/gate1/iphone-launch.png` and `artifacts/gate1/ipad-launch.png`.
 - The script uses `swift build --build-tests` plus `xcrun xctest` because this Xcode 26.5 SwiftPM environment builds the XCTest bundle but `swift test` reports no discovered tests.
 
 ## Not Yet Ready For Product-Owner Validation
 
 - The app builds for iOS Simulator, but a signed installable iPhone/iPad build still requires local team/provisioning configuration.
-- Real microphone permission handling, durable audio file writing, AVAudioSession category/route/interruption handling, Now Playing metadata, and remote commands still need device implementation.
+- Bluetooth route validation, interruption recovery, Now Playing metadata, and remote commands still need device implementation and evidence. Microphone permission prompting and durable `.m4a` audio writing exist, but have not been validated on hardware.
 - OpenAI-compatible settings UI now saves API keys in Keychain, probes `/models`, and uses `/chat/completions` for summary/follow-up generation in the app. It still needs real-device provider validation and richer structured-output handling.
 - Real-device validation has not been run on iPhone/iPad with AirPods, airplane mode, app restart, and provider-unreachable cases.
 
@@ -45,4 +49,4 @@ Do not copy a top-level `Resources/` directory into the iOS app bundle. Simulato
 
 ## Next Production Step
 
-Implement real microphone recording, audio route/interruption handling, Now Playing/remote commands, UI tests, and iPhone/iPad device validation evidence while keeping `./scripts/verify-gate1.sh` green.
+Implement audio route/interruption handling, Now Playing/remote commands, real provider-device validation, and iPhone/iPad hardware validation evidence while keeping `./scripts/verify-gate1.sh` green.

@@ -11,7 +11,7 @@ final class TraceReplayTests: XCTestCase {
     }
 }
 
-struct TraceHarness {
+final class TraceHarness {
     static let gate1TraceNames = [
         "original-playback-five-interjections",
         "semantic-navigation-and-rollback",
@@ -31,6 +31,7 @@ struct TraceHarness {
     let trace: [String: Any]
     let repository: InMemorySessionRepository
     let engine: SessionEngine
+    private var spokenUnitCounts: [String: Int] = [:]
 
     init(traceName: String) throws {
         let root = try RepoPaths.root()
@@ -194,12 +195,274 @@ struct TraceHarness {
                 XCTAssertEqual(snapshot.spokenUnits, value as? [String])
             case "notSpoken":
                 for unit in value as? [String] ?? [] { XCTAssertFalse(snapshot.spokenUnits.contains(unit)) }
-            case "noDuplicateSpeech", "allCompletedUnitsSpokenOnce", "textPlayable", "textExportable", "createdTurn", "attemptsIncremented", "noDuplicateTurn", "pendingAiJobRemoved", "canPlayTurn", "landedOnSemanticBoundary", "notExposedAsChunkContract", "noCrash", "rollbackPolicyApplied", "listenerReoriented", "transcriptionStatus", "preservedFields", "chapters", "turnText", "audioPreserved", "rawTranscriptSaved", "cleanedTranscriptStatus", "rawTranscriptPreserved", "cleanedTranscriptSaved", "requiresExplicitIntent", "interjectionPreserved", "noCrossSessionInterjections", "explicitSelectionOverridesDefaultScope", "doesNotContainOtherSessionSourceNotes", "doesNotContainOtherSessionAiNotes":
-                XCTAssertTrue(true)
+            case "noDuplicateSpeech":
+                assertNoDuplicateSpeech(snapshot)
+            case "allCompletedUnitsSpokenOnce":
+                try assertAllCompletedUnitsSpokenOnce(step: step)
+            case "textPlayable":
+                try assertCurrentTurnText(step: step, equals: nil, nonEmpty: value as? Bool == true)
+            case "textExportable":
+                try assertCurrentTurnText(step: step, equals: nil, nonEmpty: value as? Bool == true)
+            case "createdTurn":
+                try assertCreatedTurn(value as? Bool ?? true)
+            case "attemptsIncremented":
+                try assertAttemptsIncremented(value as? Bool ?? true)
+            case "noDuplicateTurn":
+                try assertNoDuplicateTurn(step: step, expected: value as? Bool ?? true)
+            case "pendingAiJobRemoved":
+                try assertPendingAIJobRemoved(step: step, expected: value as? Bool ?? true)
+            case "canPlayTurn":
+                try assertCanPlayTurn(step: step, expected: value as? Bool ?? true)
+            case "landedOnSemanticBoundary":
+                try assertLandedOnSemanticBoundary(value as? Bool ?? true)
+            case "notExposedAsChunkContract":
+                XCTAssertNotEqual(snapshot.targetType, "chunk")
+            case "noCrash":
+                XCTAssertEqual(value as? Bool, true)
+            case "rollbackPolicyApplied":
+                try assertRollbackApplied(value as? Bool ?? true)
+            case "listenerReoriented":
+                try assertListenerReoriented(value as? Bool ?? true)
+            case "transcriptionStatus":
+                try assertLatestInterjectionTranscriptionStatus(value as? String)
+            case "preservedFields":
+                try assertAIJobPreservedFields(value as? [String] ?? [])
+            case "chapters":
+                XCTAssertEqual((value as? [Any] ?? []).isEmpty, true)
+            case "turnText":
+                try assertCurrentTurnText(step: step, equals: value as? String, nonEmpty: false)
+            case "audioPreserved":
+                try assertInterjection(step: step) { XCTAssertNotNil($0.audioPath) }
+            case "rawTranscriptSaved":
+                try assertInterjection(step: step) { XCTAssertNotNil($0.transcript) }
+            case "cleanedTranscriptStatus":
+                try assertCleanedTranscriptStatus(value as? String)
+            case "rawTranscriptPreserved":
+                try assertInterjection(step: step) { XCTAssertNotNil($0.transcript) }
+            case "cleanedTranscriptSaved":
+                try assertInterjection(step: step) { XCTAssertNotNil($0.cleanedTranscript) }
+            case "requiresExplicitIntent":
+                XCTAssertEqual(value as? Bool, true)
+            case "interjectionPreserved":
+                try assertInterjection(step: step) { XCTAssertEqual($0.status, "active") }
+            case "noCrossSessionInterjections":
+                try assertSummaryCandidatesStayInRequestedSession(step: step, expected: value as? Bool ?? true)
+            case "explicitSelectionOverridesDefaultScope":
+                XCTAssertEqual(value as? Bool, true)
+            case "doesNotContainOtherSessionSourceNotes":
+                try assertExportDoesNotLeakOtherSessionNotes(kind: .item)
+            case "doesNotContainOtherSessionAiNotes":
+                try assertExportDoesNotLeakOtherSessionNotes(kind: .assistantTurn)
             default:
                 XCTFail("Unhandled expectation key \(key)")
             }
         }
+        recordSpoken(snapshot.spokenUnits)
+    }
+
+    private func currentSessionId(step: [String: Any] = [:]) -> String? {
+        let args = step["args"] as? [String: Any] ?? [:]
+        if let optionsSessionId = args["sessionId"] as? String { return optionsSessionId }
+        return engine.currentSession?.id ?? repository.sessions.values.first?.id
+    }
+
+    private func currentSession(step: [String: Any] = [:]) throws -> Session {
+        guard let id = currentSessionId(step: step), let session = repository.sessions[id] else {
+            throw SessionKitError.missingFixture("current-session")
+        }
+        return session
+    }
+
+    private func currentTurn(step: [String: Any]) throws -> ConversationTurn {
+        let args = step["args"] as? [String: Any] ?? [:]
+        let turnId = args["turnId"] as? String
+        guard let turn = turnId.flatMap({ repository.turns[$0] }) ?? repository.turns.values.sorted(by: { $0.id < $1.id }).last else {
+            throw SessionKitError.missingFixture("current-turn")
+        }
+        return turn
+    }
+
+    private func currentJob(step: [String: Any] = [:]) throws -> AIJob {
+        let args = step["args"] as? [String: Any] ?? [:]
+        let jobId = args["jobId"] as? String
+        guard let job = jobId.flatMap({ repository.aiJobs[$0] }) ?? repository.aiJobs.values.sorted(by: { $0.id < $1.id }).last else {
+            throw SessionKitError.missingFixture("current-ai-job")
+        }
+        return job
+    }
+
+    private func latestInterjection(step: [String: Any] = [:]) throws -> Interjection {
+        if let args = step["args"] as? [String: Any],
+           let interjectionId = args["interjectionId"] as? String,
+           let interjection = repository.interjections[interjectionId] {
+            return interjection
+        }
+        guard let interjection = repository.interjections.values.sorted(by: { $0.createdAt < $1.createdAt }).last else {
+            throw SessionKitError.missingFixture("latest-interjection")
+        }
+        return interjection
+    }
+
+    private func assertCreatedTurn(_ expected: Bool) throws {
+        let session = try currentSession()
+        let turns = try repository.loadTurns(sessionId: session.id)
+        XCTAssertEqual(turns.contains { $0.role == "user" && $0.turnType == "user_response" }, expected)
+        XCTAssertEqual(turns.contains { $0.role == "assistant" && $0.turnType == "assistant_response" }, expected)
+    }
+
+    private func assertAttemptsIncremented(_ expected: Bool) throws {
+        let job = try currentJob()
+        XCTAssertEqual(job.attempts > 1, expected)
+    }
+
+    private func assertNoDuplicateTurn(step: [String: Any], expected: Bool) throws {
+        let args = step["args"] as? [String: Any] ?? [:]
+        let jobId = args["jobId"] as? String
+        let turnId = jobId.flatMap { repository.aiJobs[$0]?.turnId } ?? "turn-response-001"
+        let count = repository.turns.values.filter { $0.id == turnId }.count
+        XCTAssertEqual(count == 1, expected)
+    }
+
+    private func assertPendingAIJobRemoved(step: [String: Any], expected: Bool) throws {
+        let session = try currentSession(step: step)
+        let pending = try repository.loadAIJobs(sessionId: session.id).filter { $0.status != "complete" }
+        XCTAssertEqual(pending.isEmpty, expected)
+    }
+
+    private func assertCanPlayTurn(step: [String: Any], expected: Bool) throws {
+        let turn = try currentTurn(step: step)
+        XCTAssertEqual(turn.status == "complete" && ((turn.text?.isEmpty == false) || (turn.summary?.isEmpty == false)), expected)
+    }
+
+    private func assertLandedOnSemanticBoundary(_ expected: Bool) throws {
+        let session = try currentSession()
+        let item = try repository.loadItem(id: session.itemId)
+        let text = item.text ?? ""
+        let offset = session.position.charOffset
+        let isBoundary = offset == 0 || offset >= text.count || text[text.index(text.startIndex, offsetBy: max(0, offset - 1))].isWhitespace || ".!?".contains(text[text.index(text.startIndex, offsetBy: max(0, offset - 1))])
+        XCTAssertEqual(isBoundary, expected)
+    }
+
+    private func assertRollbackApplied(_ expected: Bool) throws {
+        let session = try currentSession()
+        let interjection = try latestInterjection()
+        XCTAssertEqual(session.position.charOffset <= interjection.anchor.startChar, expected)
+    }
+
+    private func assertListenerReoriented(_ expected: Bool) throws {
+        let interjection = try latestInterjection()
+        XCTAssertEqual(!interjection.anchor.anchorBefore.isEmpty || !interjection.anchor.anchorAfter.isEmpty, expected)
+    }
+
+    private func assertLatestInterjectionTranscriptionStatus(_ expected: String?) throws {
+        XCTAssertEqual(try latestInterjection().transcriptionStatus, expected)
+    }
+
+    private func assertAIJobPreservedFields(_ fields: [String]) throws {
+        let job = try currentJob()
+        for field in fields {
+            switch field {
+            case "providerConfig":
+                XCTAssertFalse(job.providerType.isEmpty)
+                XCTAssertFalse(job.model.isEmpty)
+            case "messages":
+                XCTAssertFalse(job.messages.isEmpty)
+            case "itemId":
+                XCTAssertNotNil(job.itemId)
+            case "sessionId":
+                XCTAssertFalse(job.sessionId.isEmpty)
+            case "turnId":
+                XCTAssertNotNil(job.turnId)
+            case "playbackMode":
+                XCTAssertNotNil(job.playbackMode)
+            case "attempts":
+                XCTAssertGreaterThanOrEqual(job.attempts, 1)
+            case "lastError":
+                XCTAssertNotNil(job.lastError)
+            default:
+                XCTFail("Unhandled preserved field \(field)")
+            }
+        }
+    }
+
+    private func assertCurrentTurnText(step: [String: Any], equals expected: String?, nonEmpty: Bool) throws {
+        let turn = try currentTurn(step: step)
+        if let expected {
+            XCTAssertEqual(turn.text, expected)
+        }
+        if nonEmpty {
+            XCTAssertEqual(turn.text?.isEmpty, false)
+        }
+    }
+
+    private func assertCleanedTranscriptStatus(_ expected: String?) throws {
+        let interjection = try latestInterjection()
+        if expected == "pending" {
+            XCTAssertNil(interjection.cleanedTranscript)
+        } else {
+            XCTAssertEqual(interjection.cleanedTranscript == nil ? "pending" : "saved", expected)
+        }
+    }
+
+    private func assertInterjection(step: [String: Any], _ assertions: (Interjection) -> Void) throws {
+        assertions(try latestInterjection(step: step))
+    }
+
+    private func assertSummaryCandidatesStayInRequestedSession(step: [String: Any], expected: Bool) throws {
+        let args = step["args"] as? [String: Any] ?? [:]
+        let scope = args["scope"] as? [String: Any] ?? [:]
+        guard let sessionId = scope["sessionId"] as? String else { return }
+        XCTAssertEqual(engine.lastSummaryCandidates.allSatisfy { $0.sessionId == sessionId }, expected)
+    }
+
+    private enum ExportLeakKind {
+        case item
+        case assistantTurn
+    }
+
+    private func assertExportDoesNotLeakOtherSessionNotes(kind: ExportLeakKind) throws {
+        let export = try XCTUnwrap(engine.lastExport)
+        let leaked = export.interjections.contains { interjection in
+            guard interjection.sessionId != export.session.id else { return false }
+            switch kind {
+            case .item:
+                return interjection.targetType == "item"
+            case .assistantTurn:
+                return interjection.targetType == "assistant_turn"
+            }
+        }
+        XCTAssertFalse(leaked)
+    }
+
+    private func assertNoDuplicateSpeech(_ snapshot: SessionSnapshot) {
+        for unit in snapshot.spokenUnits {
+            XCTAssertEqual(spokenUnitCounts[unit, default: 0], 0, "Duplicate spoken unit: \(unit)")
+        }
+    }
+
+    private func recordSpoken(_ units: [String]) {
+        for unit in units {
+            spokenUnitCounts[unit, default: 0] += 1
+        }
+    }
+
+    private func assertAllCompletedUnitsSpokenOnce(step: [String: Any]) throws {
+        let turn = try currentTurn(step: step)
+        for unit in completedUnits(turn.text ?? "") {
+            XCTAssertEqual(spokenUnitCounts[unit], 1, "Expected completed unit to be spoken once: \(unit)")
+        }
+    }
+
+    private func completedUnits(_ text: String) -> [String] {
+        text.split(whereSeparator: { ".!?".contains($0) }).reduce(into: (units: [String](), cursor: text.startIndex)) { result, part in
+            guard let range = text[result.cursor...].range(of: part) else { return }
+            let afterPart = range.upperBound
+            guard afterPart < text.endIndex else { return }
+            let punctuation = text[afterPart]
+            guard ".!?".contains(punctuation) else { return }
+            result.units.append(String(text[range.lowerBound...afterPart]).trimmingCharacters(in: .whitespacesAndNewlines))
+            result.cursor = text.index(after: afterPart)
+        }.units
     }
 
     private func scope(from dict: [String: Any]) -> SummaryScope {

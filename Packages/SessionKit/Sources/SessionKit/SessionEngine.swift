@@ -388,6 +388,7 @@ public final class SessionEngine {
         try updateInterjection(interjectionId) { interjection in
             interjection.transcript = transcript
             interjection.transcriptionStatus = "transcribed"
+            interjection.cleanedTranscript = nil
             interjection.displayText = transcript
         }
         return snapshot

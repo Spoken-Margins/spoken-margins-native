@@ -15,14 +15,27 @@
 		AB149D16A2A0482B581B0847 /* SessionKitAI in Frameworks */ = {isa = PBXBuildFile; productRef = E7C7184F382A54BFB372015B /* SessionKitAI */; };
 		B3715F09AB0080AF916931F3 /* Gate1RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 479B709AF5D74954043B0852 /* Gate1RootView.swift */; };
 		B401E3D73FFFC3B4CCD67491 /* SessionKitAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 34C621C37AF71E6ED22B1045 /* SessionKitAudio */; };
+		BB2EB8B4A269BF2F25903797 /* Gate1FlowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB4DFB911729FD28E4C7545B /* Gate1FlowUITests.swift */; };
 		F719B3F555F883823A6AEED5 /* SessionKitPersistence in Frameworks */ = {isa = PBXBuildFile; productRef = 16898C6F40FB4FDCA4DE8C38 /* SessionKitPersistence */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		963ADC976C25142403CB77BF /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A73E853E04F4F4AC37DBA1E5 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A7009410088927EF7A55F0A3;
+			remoteInfo = SpokenMarginsApp;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		465089CBB611D338A74CAE8A /* Gate1AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1AppModel.swift; sourceTree = "<group>"; };
 		479B709AF5D74954043B0852 /* Gate1RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1RootView.swift; sourceTree = "<group>"; };
-		9FEFBCF337DFC7DB102DAD5B /* SpokenMarginsApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = SpokenMarginsApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		9028714E249043B12F2CD95D /* SpokenMarginsAppUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = SpokenMarginsAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		9FEFBCF337DFC7DB102DAD5B /* SpokenMarginsApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SpokenMarginsApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A3466DCC99E6E887F6A0C536 /* SpokenMarginsApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpokenMarginsApp.swift; sourceTree = "<group>"; };
+		AB4DFB911729FD28E4C7545B /* Gate1FlowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1FlowUITests.swift; sourceTree = "<group>"; };
 		C271766FC941B68CA12F2DAC /* SessionKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SessionKit; path = Packages/SessionKit; sourceTree = SOURCE_ROOT; };
 		DA64F144F04CC7A9F436B28E /* traces */ = {isa = PBXFileReference; lastKnownFileType = folder; name = traces; path = Contracts/traces; sourceTree = SOURCE_ROOT; };
 		F8F6B4F91AA36C9513801753 /* fixtures */ = {isa = PBXFileReference; lastKnownFileType = folder; name = fixtures; path = Contracts/fixtures; sourceTree = SOURCE_ROOT; };
@@ -50,6 +63,7 @@
 				DA64F144F04CC7A9F436B28E /* traces */,
 				8B9C00DF1535B22C10054D68 /* Packages */,
 				5B74E9616092FD1489F4F709 /* Sources */,
+				98E649561F0300EDFCF26FFC /* SpokenMarginsAppUITests */,
 				FD1F64C96AF6992C79DA59C5 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -71,6 +85,15 @@
 			path = Packages;
 			sourceTree = "<group>";
 		};
+		98E649561F0300EDFCF26FFC /* SpokenMarginsAppUITests */ = {
+			isa = PBXGroup;
+			children = (
+				AB4DFB911729FD28E4C7545B /* Gate1FlowUITests.swift */,
+			);
+			name = SpokenMarginsAppUITests;
+			path = App/SpokenMarginsAppUITests;
+			sourceTree = "<group>";
+		};
 		D15CBB1FE227CDEA3CB64746 /* SpokenMarginsApp */ = {
 			isa = PBXGroup;
 			children = (
@@ -85,6 +108,7 @@
 			isa = PBXGroup;
 			children = (
 				9FEFBCF337DFC7DB102DAD5B /* SpokenMarginsApp.app */,
+				9028714E249043B12F2CD95D /* SpokenMarginsAppUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -92,6 +116,24 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		62CEABDB2B6F38CA17ED8324 /* SpokenMarginsAppUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A5E5810EA62CAF95BB825543 /* Build configuration list for PBXNativeTarget "SpokenMarginsAppUITests" */;
+			buildPhases = (
+				F81135D15A53AC24988E0084 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				62E7EA863D0ACE72306CE403 /* PBXTargetDependency */,
+			);
+			name = SpokenMarginsAppUITests;
+			packageProductDependencies = (
+			);
+			productName = SpokenMarginsAppUITests;
+			productReference = 9028714E249043B12F2CD95D /* SpokenMarginsAppUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		A7009410088927EF7A55F0A3 /* SpokenMarginsApp */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 4949394CF75C0D346DBBC761 /* Build configuration list for PBXNativeTarget "SpokenMarginsApp" */;
@@ -124,9 +166,8 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
-					A7009410088927EF7A55F0A3 = {
-						DevelopmentTeam = "";
-						ProvisioningStyle = Manual;
+					62CEABDB2B6F38CA17ED8324 = {
+						TestTargetID = A7009410088927EF7A55F0A3;
 					};
 				};
 			};
@@ -148,6 +189,7 @@
 			projectRoot = "";
 			targets = (
 				A7009410088927EF7A55F0A3 /* SpokenMarginsApp */,
+				62CEABDB2B6F38CA17ED8324 /* SpokenMarginsAppUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -175,22 +217,39 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		F81135D15A53AC24988E0084 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BB2EB8B4A269BF2F25903797 /* Gate1FlowUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		62E7EA863D0ACE72306CE403 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A7009410088927EF7A55F0A3 /* SpokenMarginsApp */;
+			targetProxy = 963ADC976C25142403CB77BF /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		1D56C8451E4EAA749869CB17 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CODE_SIGN_STYLE = Manual;
-				DEVELOPMENT_TEAM = "";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				INFOPLIST_FILE = App/SpokenMarginsApp/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.native;
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -201,20 +260,55 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CODE_SIGN_STYLE = Manual;
-				DEVELOPMENT_TEAM = "";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				INFOPLIST_FILE = App/SpokenMarginsApp/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.native;
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
+		};
+		866ECB2E4F82D11C2557B43C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.native.uitests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = SpokenMarginsApp;
+			};
+			name = Release;
+		};
+		A238D1353669402041911FBE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.native.uitests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = SpokenMarginsApp;
+			};
+			name = Debug;
 		};
 		ADE243F580CD33DEF50E88E5 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -352,6 +446,15 @@
 			buildConfigurations = (
 				ADE243F580CD33DEF50E88E5 /* Debug */,
 				D41D0CAA3154DCD183925C6A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		A5E5810EA62CAF95BB825543 /* Build configuration list for PBXNativeTarget "SpokenMarginsAppUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A238D1353669402041911FBE /* Debug */,
+				866ECB2E4F82D11C2557B43C /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

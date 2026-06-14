@@ -45,6 +45,18 @@ targets:
         NSSpeechRecognitionUsageDescription: Spoken Margins may transcribe spoken interjections when enabled.
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: true
+  SpokenMarginsAppUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: App/SpokenMarginsAppUITests
+    dependencies:
+      - target: SpokenMarginsApp
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.uitests
+        TEST_TARGET_NAME: SpokenMarginsApp
 schemes:
   SpokenMarginsApp:
     build:
@@ -54,3 +66,5 @@ schemes:
       config: Debug
     test:
       config: Debug
+      targets:
+        - SpokenMarginsAppUITests

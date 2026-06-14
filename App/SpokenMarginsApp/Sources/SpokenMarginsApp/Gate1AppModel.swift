@@ -52,7 +52,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var providerProbeStatus = "Not checked"
     @Published var knownIssues = [
         "Gate 1 simulator app builds; signed device installation still requires local team/provisioning configuration.",
-        "System recording adapter is still a boundary stub; real microphone capture needs the next device pass."
+        "Now Playing metadata and remote command handling still need the next device pass."
     ]
 
     private var engine: SessionEngine?
@@ -198,16 +198,23 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func beginInterjection() {
-        run { engine in
-            snapshot = try engine.beginInterjection()
-            refreshSelectedItem()
-            reportSuccess("Recording interjection.")
+        Task {
+            let granted = await SystemRecordingClient.requestRecordPermission()
+            guard granted else {
+                reportFailure("Microphone access is required to record interjections. Enable microphone access in Settings and try again.")
+                return
+            }
+            run { engine in
+                snapshot = try engine.beginInterjection()
+                refreshSelectedItem()
+                reportSuccess("Recording interjection.")
+            }
         }
     }
 
     func finishInterjection() {
         run { engine in
-            snapshot = try engine.finishInterjection(audioRef: "interjections/device-\(Date().timeIntervalSince1970).m4a")
+            snapshot = try engine.finishInterjection(audioRef: nil)
             refreshSelectedItem()
             reportSuccess("Saved interjection.")
         }
