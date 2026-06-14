@@ -25,6 +25,13 @@ Initial development should prove:
 - `traces/`: behavior traces the native implementation should replay
 - `references/prototype-exports/`: real prototype exports kept as product references, not yet production fixtures
 
+Key planning documents:
+
+- `docs/native-kickoff-plan.md`: first engineering implementation plan
+- `docs/parity-test-plan.md`: verification strategy through schemas, fixtures, and traces
+- `docs/product-validation-plan.md`: product-owner validation gates for interface-level acceptance
+- `docs/prototype-lessons.md`: prototype lessons to preserve, abstract, or leave behind
+
 ## First Engineering Move
 
 Create a Swift package named `SessionKit` and a trace replay test target.

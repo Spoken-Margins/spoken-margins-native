@@ -14,6 +14,7 @@ Create a new clean repository for the native app, seeded only with:
 - `docs/sessionkit-contract.md`
 - `docs/media-transcript-model.md`
 - `docs/parity-test-plan.md`
+- `docs/product-validation-plan.md`
 - `docs/storage-and-migrations.md`
 - `docs/native-kickoff-plan.md`
 - `schemas/`
@@ -165,3 +166,5 @@ The native kickoff is successful when:
 - recording an interjection creates a durable audio file and queued sync event
 - commands are gated by the active runtime capability profile
 - no AI, transcription, or network is required
+
+Engineering verification is necessary but not sufficient. Product validation gates are defined separately in `docs/product-validation-plan.md`; they should be used when a milestone is ready for product-owner acceptance.
