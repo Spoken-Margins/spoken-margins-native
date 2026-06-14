@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spokenmargins.local/schemas/listening-map.schema.json",
+  "title": "ListeningMap",
+  "type": "object",
+  "required": ["schemaVersion", "id", "itemId", "overview", "claims", "chapters"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": "listening-map.v1" },
+    "id": { "type": "string", "minLength": 1 },
+    "itemId": { "type": "string", "minLength": 1 },
+    "itemTitle": { "type": ["string", "null"] },
+    "overview": { "type": "string", "minLength": 1 },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "text"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "text": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "chapters": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "title", "description", "anchor"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "title": { "type": "string", "minLength": 1 },
+          "description": { "type": "string", "minLength": 1 },
+          "anchor": { "type": "string", "minLength": 1 },
+          "resolved": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": ["anchorType", "percent"],
+            "properties": {
+              "anchorType": { "enum": ["text", "transcript", "media"] },
+              "startChar": { "type": ["integer", "null"], "minimum": 0 },
+              "endChar": { "type": ["integer", "null"], "minimum": 0 },
+              "startMs": { "type": ["integer", "null"], "minimum": 0 },
+              "endMs": { "type": ["integer", "null"], "minimum": 0 },
+              "transcriptSegmentId": { "type": ["string", "null"] },
+              "percent": { "type": "integer", "minimum": 0, "maximum": 100 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

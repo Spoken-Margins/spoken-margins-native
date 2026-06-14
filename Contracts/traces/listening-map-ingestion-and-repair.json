@@ -1,0 +1,61 @@
+{
+  "schemaVersion": "session-trace.v1",
+  "name": "listening-map-ingestion-and-repair",
+  "description": "Listening Map ingestion tolerates common AI JSON wrappers and produces repair diagnostics for invalid maps.",
+  "runtimeProfile": "phone-tablet-online",
+  "requiresCapabilities": {
+    "timeline": ["text_char_offsets", "chapter_timing"],
+    "ai": ["generate_listening_map"],
+    "sync": ["canonical_persistence"]
+  },
+  "fixtures": {
+    "item": "fixtures/items/text-with-listening-map.json",
+    "validMap": "fixtures/maps/valid-listening-map.json",
+    "invalidMap": "fixtures/maps/invalid-anchor-map.json",
+    "duplicateAnchorMap": "fixtures/maps/duplicate-anchor-map.json"
+  },
+  "steps": [
+    {
+      "command": "ingestListeningMap",
+      "args": { "inputStyle": "chat_wrapped_fenced_json" },
+      "expect": {
+        "mapAccepted": true,
+        "warnings": ["surrounding_text_ignored", "markdown_fence_ignored"],
+        "anchorsResolved": true
+      }
+    },
+    {
+      "command": "ingestListeningMap",
+      "args": { "inputStyle": "smart_quote_json_delimiters" },
+      "expect": {
+        "mapAccepted": true,
+        "warnings": ["smart_quotes_normalized"],
+        "validCurlyQuotesInsideStringsPreserved": true
+      }
+    },
+    {
+      "command": "ingestListeningMap",
+      "args": { "fixture": "fixtures/maps/invalid-anchor-map.json" },
+      "expect": {
+        "mapAccepted": false,
+        "status": "map_needs_repair",
+        "diagnosticsContain": ["unresolved_anchor", "repairable"]
+      }
+    },
+    {
+      "command": "ingestListeningMap",
+      "args": { "fixture": "fixtures/maps/duplicate-anchor-map.json" },
+      "expect": {
+        "mapAccepted": false,
+        "status": "map_needs_repair",
+        "diagnosticsContain": ["duplicate_anchor", "repairable"]
+      }
+    }
+  ],
+  "assertions": [
+    "Robust JSON ingestion is required, but parser implementation is not prescribed.",
+    "Smart quote handling must not corrupt valid curly quotes inside JSON string values.",
+    "Invalid maps preserve diagnostics for repair.",
+    "A bad map must not corrupt the source item or existing session data."
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "schemaVersion": "session-trace.v1",
+  "name": "watch-chapter-navigation",
+  "description": "Watch surface displays chapter context and jumps between resolved Listening Map chapters.",
+  "runtimeProfile": "watch-tethered",
+  "requiresCapabilities": {
+    "timeline": ["chapter_timing"],
+    "interjection": ["delegate_interjection_to_canonical_runtime"],
+    "remoteControl": ["display_snapshot", "send_transport_commands", "send_chapter_jump", "send_interjection_commands"]
+  },
+  "fixtures": {
+    "item": "fixtures/items/text-with-listening-map.json",
+    "listeningMap": "fixtures/maps/valid-listening-map.json"
+  },
+  "steps": [
+    {
+      "event": "sessionSnapshotReceived",
+      "expect": { "chapterTitle": "Reasonable distrust", "compactSurfaceReady": true }
+    },
+    {
+      "command": "jumpToChapter",
+      "args": { "chapterId": "ch-anecdotes" },
+      "expect": { "chapterTitle": "Anecdotes mislead", "targetType": "item_text_tts" }
+    },
+    {
+      "command": "skipForward",
+      "args": { "unit": "chapter" },
+      "expect": { "chapterTitle": "Inspect process", "targetType": "item_text_tts" }
+    },
+    {
+      "command": "skipForward",
+      "args": { "unit": "chapter" },
+      "expect": { "chapterTitle": "Inspect process", "noCrash": true }
+    }
+  ],
+  "assertions": [
+    "Chapter jumps use resolved anchors.",
+    "Boundary chapter navigation is idempotent.",
+    "Compact surface never needs the current source excerpt."
+  ]
+}

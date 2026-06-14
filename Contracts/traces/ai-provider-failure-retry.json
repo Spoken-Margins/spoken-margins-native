@@ -1,0 +1,60 @@
+{
+  "schemaVersion": "session-trace.v1",
+  "name": "ai-provider-failure-retry",
+  "description": "Provider failure creates a retryable AI job that preserves request context and updates the existing turn on retry.",
+  "runtimeProfile": "phone-tablet-online",
+  "requiresCapabilities": {
+    "playback": ["assistant_turn_tts"],
+    "ai": ["continue_discussion", "defer_ai_jobs"],
+    "sync": ["canonical_persistence"]
+  },
+  "fixtures": {
+    "item": "fixtures/items/text-with-listening-map.json",
+    "session": "fixtures/sessions/summary-addendum-discussion.json",
+    "turns": "fixtures/turns/summary-and-response.json"
+  },
+  "steps": [
+    {
+      "command": "submitFollowup",
+      "args": { "input": { "type": "text", "text": "Can you respond to that objection?" } },
+      "expect": {
+        "phase": "conversation",
+        "createdTurn": true,
+        "pendingAiJobKind": "assistant_response"
+      }
+    },
+    {
+      "event": "aiProviderFailed",
+      "args": { "error": "Could not contact AI provider" },
+      "expect": {
+        "turnStatus": "pending",
+        "pendingAiJobStatus": "retryable",
+        "preservedFields": ["providerConfig", "messages", "itemId", "sessionId", "turnId", "playbackMode", "attempts", "lastError"]
+      }
+    },
+    {
+      "command": "retryAiJob",
+      "args": { "jobId": "job-assistant-response-001" },
+      "expect": {
+        "attemptsIncremented": true,
+        "turnStatus": "streaming",
+        "noDuplicateTurn": true
+      }
+    },
+    {
+      "event": "aiJobCompleted",
+      "args": { "turnId": "turn-response-001" },
+      "expect": {
+        "turnStatus": "complete",
+        "pendingAiJobRemoved": true,
+        "canPlayTurn": true
+      }
+    }
+  ],
+  "assertions": [
+    "AI failure preserves enough context to retry the same request.",
+    "Retry updates the existing job and turn.",
+    "Retry does not duplicate conversation state.",
+    "Completed retry can continue into playback."
+  ]
+}

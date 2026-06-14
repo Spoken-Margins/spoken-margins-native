@@ -1,0 +1,56 @@
+name: SpokenMarginsNative
+options:
+  bundleIdPrefix: com.spokenmargins
+  deploymentTarget:
+    iOS: "18.0"
+packages:
+  SessionKit:
+    path: Packages/SessionKit
+targets:
+  SpokenMarginsApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: App/SpokenMarginsApp/Sources
+      - path: Contracts/fixtures
+        type: folder
+      - path: Contracts/traces
+        type: folder
+    dependencies:
+      - package: SessionKit
+        product: SessionKit
+      - package: SessionKit
+        product: SessionKitPersistence
+      - package: SessionKit
+        product: SessionKitAudio
+      - package: SessionKit
+        product: SessionKitAI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native
+        CODE_SIGN_STYLE: Manual
+        DEVELOPMENT_TEAM: ""
+        INFOPLIST_FILE: App/SpokenMarginsApp/Info.plist
+        SWIFT_VERSION: "6.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+    info:
+      path: App/SpokenMarginsApp/Info.plist
+      properties:
+        CFBundleDisplayName: Spoken Margins
+        CFBundleShortVersionString: "0.1"
+        CFBundleVersion: "1"
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        NSMicrophoneUsageDescription: Spoken Margins records spoken interjections during listening sessions.
+        NSSpeechRecognitionUsageDescription: Spoken Margins may transcribe spoken interjections when enabled.
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
+schemes:
+  SpokenMarginsApp:
+    build:
+      targets:
+        SpokenMarginsApp: all
+    run:
+      config: Debug
+    test:
+      config: Debug

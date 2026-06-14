@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "item.v1",
+  "id": "item-pill",
+  "title": "You Can't Inspect the Pill",
+  "mediaType": "text",
+  "text": "Opening distrust is reasonable. Maybe their diet changed. Maybe their sleep changed. Maybe their symptoms were about to improve anyway. The paper trail around the medicine is what can be inspected.",
+  "media": null,
+  "externalReference": "[[You Can't Inspect the Pill]]",
+  "externalReferenceType": "obsidian",
+  "createdAt": "2026-06-11T12:00:00.000Z",
+  "updatedAt": "2026-06-11T12:00:00.000Z",
+  "status": "needs_listening_map",
+  "listeningMapId": null,
+  "transcriptId": null
+}

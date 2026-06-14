@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spokenmargins.local/schemas/session.schema.json",
+  "title": "Session",
+  "type": "object",
+  "required": ["schemaVersion", "id", "itemId", "createdAt", "status", "phase", "currentTarget"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": "session.v1" },
+    "id": { "type": "string", "minLength": 1 },
+    "itemId": { "type": "string", "minLength": 1 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "completedAt": { "type": ["string", "null"], "format": "date-time" },
+    "status": { "enum": ["in_progress", "finished", "abandoned"] },
+    "phase": {
+      "enum": [
+        "idle",
+        "item_playback",
+        "recording_interjection",
+        "interjection_summary",
+        "summary_playback",
+        "addendum_capture",
+        "ai_response_playback",
+        "conversation",
+        "finished",
+        "abandoned"
+      ]
+    },
+    "completionPercent": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "currentTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetType", "targetId", "position"],
+      "properties": {
+        "targetType": {
+          "enum": ["item_text_tts", "transcript_backed_media", "assistant_turn_tts", "summary_turn_tts", "browser_owned_media"]
+        },
+        "targetId": { "type": "string", "minLength": 1 },
+        "position": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "charOffset": { "type": ["integer", "null"], "minimum": 0 },
+            "mediaTimeMs": { "type": ["integer", "null"], "minimum": 0 },
+            "segmentIndex": { "type": ["integer", "null"], "minimum": 0 },
+            "chapterId": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+    "playbackRate": { "type": "number", "minimum": 0.25, "maximum": 4 }
+  }
+}

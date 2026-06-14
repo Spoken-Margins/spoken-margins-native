@@ -1,0 +1,732 @@
+import Foundation
+
+public final class SessionEngine {
+    public private(set) var profile: RuntimeCapabilityProfile
+    public private(set) var snapshot = SessionSnapshot()
+    public private(set) var currentSession: Session?
+    public private(set) var currentItem: Item?
+    public private(set) var currentMap: ListeningMap?
+    public private(set) var lastExport: SessionExport?
+    public private(set) var lastSummaryCandidates: [Interjection] = []
+    public private(set) var lastSpokenText: String?
+
+    private let repository: SessionRepository
+    private let audio: AudioPlaybackClient
+    private let recorder: RecordingClient
+    private let aiProvider: AIProviderClient
+    private var recordingAnchor: Anchor?
+    private var recordingTargetType: InterjectionTargetType?
+    private var recordingTargetId: String?
+    private var priorPhase: SessionPhase?
+    private var streamingBuffers: [String: String] = [:]
+    private var spokenPrefixes: [String: Int] = [:]
+
+    public init(
+        profile: RuntimeCapabilityProfile,
+        repository: SessionRepository,
+        audio: AudioPlaybackClient = NoopAudioPlaybackClient(),
+        recorder: RecordingClient = NoopRecordingClient(),
+        aiProvider: AIProviderClient = DeterministicAIProvider()
+    ) {
+        self.profile = profile
+        self.repository = repository
+        self.audio = audio
+        self.recorder = recorder
+        self.aiProvider = aiProvider
+    }
+
+    @discardableResult
+    public func startSession(itemId: String) throws -> SessionSnapshot {
+        try require("startSession", category: "sync", capabilities: ["canonical_persistence", "receive_prepared_packages", "browser_session_handoff"])
+        let item = try repository.loadItem(id: itemId)
+        currentItem = item
+        currentMap = try repository.loadListeningMap(itemId: itemId)
+        let session = Session(
+            id: "session-\(itemId)-gate1",
+            itemId: itemId,
+            status: "in_progress",
+            phase: .itemPlayback,
+            currentTargetType: .itemTextTTS,
+            currentTargetId: itemId,
+            position: Position(charOffset: 0, chapterId: currentMap?.chapters.first?.id),
+            completionPercent: 0,
+            playbackRate: 1
+        )
+        currentSession = session
+        try repository.saveSession(session)
+        if let text = item.text {
+            lastSpokenText = try audio.prepareSpeechText(text)
+        }
+        try audio.play(targetId: itemId)
+        publish(status: .playing, phase: .itemPlayback)
+        return snapshot
+    }
+
+    @discardableResult
+    public func prepareSpeechText(itemId: String, targetType: TargetType) throws -> SessionSnapshot {
+        let item = try repository.loadItem(id: itemId)
+        lastSpokenText = SpeechTextNormalizer.normalize(item.text ?? "")
+        currentItem = item
+        snapshot.title = item.title
+        return snapshot
+    }
+
+    @discardableResult
+    public func skipForward(unit: String) throws -> SessionSnapshot {
+        try requirePlayback("skipForward")
+        guard var session = currentSession, let item = currentItem else {
+            throw SessionKitError.invalidCommandForState("skipForward")
+        }
+        session.position.charOffset = nextBoundary(after: session.position.charOffset, unit: unit, text: item.text ?? "")
+        session.completionPercent = percent(for: session.position.charOffset, text: item.text ?? "")
+        session.position.chapterId = chapterId(for: session.position.charOffset)
+        currentSession = session
+        try repository.saveSession(session)
+        publish(status: snapshot.status, phase: session.phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func skipBack(unit: String) throws -> SessionSnapshot {
+        try requirePlayback("skipBack")
+        guard var session = currentSession, let item = currentItem else {
+            throw SessionKitError.invalidCommandForState("skipBack")
+        }
+        session.position.charOffset = previousBoundary(before: session.position.charOffset, unit: unit, text: item.text ?? "")
+        session.completionPercent = percent(for: session.position.charOffset, text: item.text ?? "")
+        session.position.chapterId = chapterId(for: session.position.charOffset)
+        currentSession = session
+        try repository.saveSession(session)
+        publish(status: snapshot.status, phase: session.phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func jumpToChapter(chapterId: String) throws -> SessionSnapshot {
+        try require("jumpToChapter", category: "timeline", capabilities: ["chapter_timing"])
+        try requirePlayback("jumpToChapter")
+        guard var session = currentSession, let chapter = currentMap?.chapters.first(where: { $0.id == chapterId }) else {
+            throw SessionKitError.invalidCommandForState("jumpToChapter")
+        }
+        session.position.charOffset = chapter.startChar
+        session.position.chapterId = chapter.id
+        session.completionPercent = chapter.percent
+        currentSession = session
+        try repository.saveSession(session)
+        publish(status: snapshot.status, phase: session.phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func beginInterjection() throws -> SessionSnapshot {
+        try require("beginInterjection", category: "interjection", capabilities: ["record_audio", "delegate_interjection_to_canonical_runtime"])
+        guard var session = currentSession else { throw SessionKitError.invalidCommandForState("beginInterjection") }
+        priorPhase = session.phase
+        let target = currentInterjectionTarget(for: session)
+        recordingTargetType = target.type
+        recordingTargetId = target.id
+        recordingAnchor = buildAnchor(for: session, targetType: target.type, targetId: target.id)
+        try audio.pause()
+        try recorder.beginRecording()
+        session.phase = .recordingInterjection
+        currentSession = session
+        snapshot.recordingTargetId = target.id
+        publish(status: .recording, phase: .recordingInterjection)
+        return snapshot
+    }
+
+    @discardableResult
+    public func finishInterjection(audioRef: String?) throws -> SessionSnapshot {
+        guard var session = currentSession,
+              let anchor = recordingAnchor,
+              let targetType = recordingTargetType,
+              let targetId = recordingTargetId else {
+            throw SessionKitError.invalidCommandForState("finishInterjection")
+        }
+        let savedAudioRef = try recorder.finishRecording(audioRef: audioRef)
+        let count = try repository.loadInterjections(sessionId: session.id).count + 1
+        let interjection = Interjection(
+            id: targetType == .assistantTurn ? "ij-ai-\(String(format: "%03d", count))" : "ij-\(String(format: "%03d", count))",
+            itemId: session.itemId,
+            sessionId: session.id,
+            targetType: targetType,
+            targetId: targetId,
+            createdAt: Date(timeIntervalSince1970: Double(count)),
+            roughPercent: session.completionPercent,
+            anchor: anchor,
+            audioPath: savedAudioRef,
+            audioStatus: "saved",
+            transcriptionStatus: "pending",
+            transcript: nil,
+            cleanedTranscript: nil,
+            displayText: nil,
+            status: "active"
+        )
+        try repository.saveInterjection(interjection)
+        session.phase = priorPhaseForResume(targetType: targetType)
+        if let item = currentItem, targetType == .item {
+            session.position.charOffset = max(0, previousBoundary(before: session.position.charOffset, unit: "sentence", text: item.text ?? ""))
+            session.completionPercent = percent(for: session.position.charOffset, text: item.text ?? "")
+        }
+        currentSession = session
+        try repository.saveSession(session)
+        snapshot.lastInterjectionAnchorType = anchor.anchorType
+        snapshot.lastInterjectionTargetType = targetType
+        publish(status: .playing, phase: session.phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func generateInterjectionSummary(scope: SummaryScope) throws -> SessionSnapshot {
+        let session = try resolveSession(scope.sessionId)
+        lastSummaryCandidates = try selectSummaryCandidates(scope: scope)
+        let shouldCall = aiProvider.shouldStartProviderCall(profile: profile, kind: "interjection_summary")
+        let status = shouldCall ? "pending" : "deferred"
+        let turn = ConversationTurn(
+            id: "turn-summary-001",
+            sessionId: session.id,
+            role: "assistant",
+            turnType: "interjection_summary",
+            status: status,
+            summary: nil,
+            text: nil,
+            rawText: nil,
+            sourceInterjectionIds: lastSummaryCandidates.map(\.id)
+        )
+        try repository.saveTurn(turn)
+        let job = aiJob(id: "job-interjection-summary-001", kind: "interjection_summary", session: session, turnId: turn.id, status: status)
+        try repository.saveAIJob(job)
+        snapshot.pendingAiJobKind = job.kind
+        snapshot.pendingAiJobStatus = job.status
+        snapshot.providerCallStarted = shouldCall
+        snapshot.pendingAiJobCount = try repository.loadAIJobs(sessionId: session.id).filter { $0.status != "complete" }.count
+        return snapshot
+    }
+
+    @discardableResult
+    public func playTurn(turnId: String) throws -> SessionSnapshot {
+        var session = try resolveSession(nil)
+        let turns = try repository.loadTurns(sessionId: session.id)
+        let targetType: TargetType
+        let phase: SessionPhase
+        if let turn = turns.first(where: { $0.id == turnId }), turn.turnType == "interjection_summary" {
+            try require("playTurn", category: "playback", capabilities: ["summary_turn_tts"])
+            targetType = .summaryTurnTTS
+            phase = .summaryPlayback
+        } else {
+            try require("playTurn", category: "playback", capabilities: ["assistant_turn_tts"])
+            targetType = .assistantTurnTTS
+            phase = .aiResponsePlayback
+        }
+        session.currentTargetType = targetType
+        session.currentTargetId = turnId
+        session.phase = phase
+        session.position = Position(charOffset: 0)
+        currentSession = session
+        try repository.saveSession(session)
+        try audio.play(targetId: turnId)
+        publish(status: .playing, phase: phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func submitFollowup(text: String) throws -> SessionSnapshot {
+        var session = try resolveSession(nil)
+        session.phase = .conversation
+        currentSession = session
+        let userTurn = ConversationTurn(
+            id: "turn-addendum-\(UUID().uuidString.prefix(8))",
+            sessionId: session.id,
+            role: "user",
+            turnType: "user_response",
+            status: "complete",
+            summary: nil,
+            text: text,
+            rawText: text,
+            sourceInterjectionIds: []
+        )
+        try repository.saveTurn(userTurn)
+        let shouldCall = aiProvider.shouldStartProviderCall(profile: profile, kind: "assistant_response")
+        let status = shouldCall ? "pending" : "deferred"
+        let responseTurn = ConversationTurn(
+            id: "turn-response-001",
+            sessionId: session.id,
+            role: "assistant",
+            turnType: "assistant_response",
+            status: status,
+            summary: nil,
+            text: nil,
+            rawText: nil,
+            sourceInterjectionIds: []
+        )
+        try repository.saveTurn(responseTurn)
+        let job = aiJob(id: "job-assistant-response-001", kind: "assistant_response", session: session, turnId: responseTurn.id, status: status, messages: [text])
+        try repository.saveAIJob(job)
+        snapshot.lastUserTurnType = userTurn.turnType
+        snapshot.pendingAiJobKind = job.kind
+        snapshot.pendingAiJobStatus = job.status
+        snapshot.providerCallStarted = shouldCall
+        publish(status: snapshot.status, phase: .conversation)
+        return snapshot
+    }
+
+    @discardableResult
+    public func aiProviderFailed(error: String) throws -> SessionSnapshot {
+        let session = try resolveSession(nil)
+        var jobs = try repository.loadAIJobs(sessionId: session.id)
+        guard var job = jobs.last(where: { $0.status == "pending" || $0.status == "deferred" }) else {
+            throw SessionKitError.invalidCommandForState("aiProviderFailed")
+        }
+        job.status = "retryable"
+        job.lastError = error
+        job.attempts = max(1, job.attempts)
+        try repository.updateAIJob(job)
+        snapshot.pendingAiJobKind = job.kind
+        snapshot.pendingAiJobStatus = job.status
+        snapshot.lastFailure = "ai_provider_unreachable"
+        snapshot.turnStatus = "pending"
+        jobs = try repository.loadAIJobs(sessionId: session.id)
+        snapshot.pendingAiJobCount = jobs.filter { $0.status != "complete" }.count
+        return snapshot
+    }
+
+    @discardableResult
+    public func retryAIJob(jobId: String) throws -> SessionSnapshot {
+        let session = try resolveSession(nil)
+        guard var job = try repository.loadAIJobs(sessionId: session.id).first(where: { $0.id == jobId }) else {
+            throw SessionKitError.invalidCommandForState("retryAiJob")
+        }
+        job.status = "pending"
+        job.attempts += 1
+        try repository.updateAIJob(job)
+        if let turnId = job.turnId {
+            var turns = try repository.loadTurns(sessionId: session.id)
+            if let idx = turns.firstIndex(where: { $0.id == turnId }) {
+                turns[idx].status = "streaming"
+                try repository.saveTurn(turns[idx])
+            }
+        }
+        snapshot.pendingAiJobKind = job.kind
+        snapshot.pendingAiJobStatus = job.status
+        snapshot.turnStatus = "streaming"
+        return snapshot
+    }
+
+    @discardableResult
+    public func aiStreamDelta(turnId: String, content: String) throws -> SessionSnapshot {
+        let session = try resolveSession(nil)
+        let previous = streamingBuffers[turnId] ?? ""
+        let combined = previous + content
+        streamingBuffers[turnId] = combined
+        let text = extractResponseText(from: combined)
+        let alreadySpoken = spokenPrefixes[turnId] ?? 0
+        let completeUnits = completeSentenceUnits(in: text)
+        let unitsToSpeak = completeUnits.dropFirst(alreadySpoken)
+        spokenPrefixes[turnId] = completeUnits.count
+        var turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == turnId }) ?? ConversationTurn(
+            id: turnId,
+            sessionId: session.id,
+            role: "assistant",
+            turnType: "assistant_response",
+            status: "streaming",
+            summary: nil,
+            text: nil,
+            rawText: nil,
+            sourceInterjectionIds: []
+        )
+        turn.status = "streaming"
+        turn.text = text
+        turn.rawText = combined
+        try repository.saveTurn(turn)
+        snapshot.turnStatus = "streaming"
+        snapshot.spokenUnits = Array(unitsToSpeak)
+        return snapshot
+    }
+
+    @discardableResult
+    public func aiJobCompleted(turnId: String) throws -> SessionSnapshot {
+        let session = try resolveSession(nil)
+        var turns = try repository.loadTurns(sessionId: session.id)
+        var turn = turns.first(where: { $0.id == turnId }) ?? ConversationTurn(
+            id: turnId,
+            sessionId: session.id,
+            role: "assistant",
+            turnType: turnId.contains("summary") ? "interjection_summary" : "assistant_response",
+            status: "complete",
+            summary: nil,
+            text: nil,
+            rawText: nil,
+            sourceInterjectionIds: []
+        )
+        turn.status = "complete"
+        if turn.text == nil {
+            turn.text = extractResponseText(from: turn.rawText ?? "") 
+            if turn.text?.isEmpty != false {
+                turn.text = turn.turnType == "interjection_summary" ? "Summary ready." : "AI response ready."
+            }
+        }
+        try repository.saveTurn(turn)
+        for var job in try repository.loadAIJobs(sessionId: session.id) where job.turnId == turnId {
+            job.status = "complete"
+            try repository.updateAIJob(job)
+        }
+        turns = try repository.loadTurns(sessionId: session.id)
+        let pendingJobs = try repository.loadAIJobs(sessionId: session.id).filter { $0.status != "complete" }
+        snapshot.turnStatus = "complete"
+        snapshot.pendingAiJobCount = pendingJobs.count
+        if turn.turnType == "interjection_summary" {
+            publish(status: snapshot.status, phase: .interjectionSummary)
+        } else {
+            publish(status: snapshot.status, phase: .conversation)
+        }
+        _ = turns
+        return snapshot
+    }
+
+    @discardableResult
+    public func transcriptionCompleted(interjectionId: String, transcript: String) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId) { interjection in
+            interjection.transcript = transcript
+            interjection.transcriptionStatus = "transcribed"
+            interjection.displayText = transcript
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func cleanupCompleted(interjectionId: String, cleanedTranscript: String) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId) { interjection in
+            interjection.cleanedTranscript = cleanedTranscript
+            interjection.displayText = cleanedTranscript
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func deleteRepresentation(interjectionId: String, representation: String) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId) { interjection in
+            if representation == "cleanedTranscript" {
+                interjection.cleanedTranscript = nil
+            }
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func selectSummaryCandidates(scope: SummaryScope) throws -> [Interjection] {
+        let session = try resolveSession(scope.sessionId)
+        let all = try repository.loadInterjections(sessionId: scope.sessionId ?? session.id)
+        if let explicit = scope.interjectionIds {
+            lastSummaryCandidates = all.filter { explicit.contains($0.id) }
+        } else if scope.targetType == "turn", let turnId = scope.turnId {
+            lastSummaryCandidates = all.filter { $0.targetId == turnId && $0.targetType != .item }
+        } else {
+            lastSummaryCandidates = all.filter { $0.targetType == .item }
+        }
+        return lastSummaryCandidates
+    }
+
+    @discardableResult
+    public func buildExport(options: ExportOptions) throws -> SessionExport {
+        let session = try resolveSession(options.sessionId)
+        let item = try repository.loadItem(id: session.itemId)
+        let interjections = options.includeInterjections ? try repository.loadInterjections(sessionId: session.id) : []
+        let turns = try repository.loadTurns(sessionId: session.id)
+        let export = SessionExport(
+            item: ExportItem(
+                id: item.id,
+                title: item.title,
+                externalReference: options.includeReference ? item.externalReference : nil,
+                includedFullText: options.includeFullText,
+                text: options.includeFullText ? item.text : nil
+            ),
+            session: ExportSession(id: session.id, status: session.status, completionPercent: session.completionPercent),
+            listeningMap: options.includeListeningMap ? try repository.loadListeningMap(itemId: item.id) : nil,
+            turns: turns,
+            timeline: interjections.map {
+                ExportTimelineEntry(type: "interjection", interjectionId: $0.id, turnId: nil, targetType: $0.targetType.rawValue, targetId: $0.targetId, percent: $0.roughPercent)
+            } + turns.map {
+                ExportTimelineEntry(type: "turn", interjectionId: nil, turnId: $0.id, targetType: nil, targetId: nil, percent: nil)
+            },
+            interjections: interjections.map {
+                ExportInterjection(
+                    id: $0.id,
+                    sessionId: $0.sessionId,
+                    targetType: $0.targetType.rawValue,
+                    targetId: $0.targetId,
+                    roughPercent: $0.roughPercent,
+                    anchorBefore: $0.anchor.anchorBefore,
+                    anchorAfter: $0.anchor.anchorAfter,
+                    mediaTimeMs: $0.anchor.mediaTimeMs,
+                    transcriptionStatus: $0.transcriptionStatus,
+                    transcript: $0.transcript,
+                    audioPath: $0.audioPath
+                )
+            }
+        )
+        lastExport = export
+        return export
+    }
+
+    public func diagnostics() throws -> [String: String] {
+        let sessionId = currentSession?.id ?? "none"
+        return [
+            "runtimeProfile": profile.id,
+            "providerStatus": profile.has("ai", "provider_diagnostics") ? "available" : "unavailable",
+            "pendingAiJobs": "\(try currentSession.map { try repository.loadAIJobs(sessionId: $0.id).filter { $0.status != "complete" }.count } ?? 0)",
+            "recentFailure": snapshot.lastFailure ?? "none",
+            "sessionId": sessionId
+        ]
+    }
+
+    private func publish(status: PlaybackStatus, phase: SessionPhase) {
+        snapshot.status = status
+        snapshot.phase = phase
+        snapshot.isRecording = status == .recording
+        guard let session = currentSession else { return }
+        snapshot.sessionId = session.id
+        snapshot.itemId = session.itemId
+        snapshot.targetType = session.currentTargetType.rawValue
+        snapshot.title = currentItem?.title
+        snapshot.progressPercent = session.completionPercent
+        snapshot.playbackRate = session.playbackRate
+        snapshot.chapterTitle = currentMap?.chapters.first(where: { $0.id == session.position.chapterId })?.title ?? currentItem?.title
+        snapshot.activeInterjectionCount = (try? repository.loadInterjections(sessionId: session.id).filter { $0.status == "active" }.count) ?? snapshot.activeInterjectionCount
+        snapshot.pendingAiJobCount = (try? repository.loadAIJobs(sessionId: session.id).filter { $0.status != "complete" }.count) ?? snapshot.pendingAiJobCount
+    }
+
+    private func require(_ command: String, category: String, capabilities: [String]) throws {
+        guard profile.hasAny(category, capabilities) else {
+            throw SessionKitError.invalidCommandForCapability(command)
+        }
+    }
+
+    private func requirePlayback(_ command: String) throws {
+        guard profile.hasAny("playback", ["realtime_tts", "prerendered_audio", "native_media", "assistant_turn_tts", "summary_turn_tts"])
+            || profile.has("remoteControl", "send_transport_commands") else {
+            throw SessionKitError.invalidCommandForCapability(command)
+        }
+    }
+
+    private func resolveSession(_ sessionId: String?) throws -> Session {
+        if let sessionId, let session = try repository.loadSession(id: sessionId) {
+            return session
+        }
+        if let currentSession { return currentSession }
+        if let memory = repository as? InMemorySessionRepository, let session = memory.sessions.values.first {
+            currentSession = session
+            currentItem = try? repository.loadItem(id: session.itemId)
+            currentMap = try? repository.loadListeningMap(itemId: session.itemId)
+            publish(status: .playing, phase: session.phase)
+            return session
+        }
+        if let item = currentItem {
+            let session = Session(
+                id: "session-\(item.id)-export",
+                itemId: item.id,
+                status: "in_progress",
+                phase: .itemPlayback,
+                currentTargetType: .itemTextTTS,
+                currentTargetId: item.id,
+                position: Position(),
+                completionPercent: 0,
+                playbackRate: 1
+            )
+            currentSession = session
+            try repository.saveSession(session)
+            publish(status: .playing, phase: session.phase)
+            return session
+        }
+        throw SessionKitError.invalidCommandForState("buildExport")
+    }
+
+    private func currentInterjectionTarget(for session: Session) -> (type: InterjectionTargetType, id: String) {
+        switch session.currentTargetType {
+        case .assistantTurnTTS:
+            return (.assistantTurn, session.currentTargetId)
+        case .summaryTurnTTS:
+            return (.summaryTurn, session.currentTargetId)
+        default:
+            return (.item, session.itemId)
+        }
+    }
+
+    private func priorPhaseForResume(targetType: InterjectionTargetType) -> SessionPhase {
+        switch targetType {
+        case .assistantTurn: return .aiResponsePlayback
+        case .summaryTurn: return .summaryPlayback
+        case .item: return .itemPlayback
+        }
+    }
+
+    private func buildAnchor(for session: Session, targetType: InterjectionTargetType, targetId: String) -> Anchor {
+        if targetType != .item {
+            let turnText = (try? repository.loadTurns(sessionId: session.id).first(where: { $0.id == targetId })?.text) ?? ""
+            let firstSentence = completeSentenceUnits(in: turnText).first ?? turnText
+            let after = completeSentenceUnits(in: turnText).dropFirst().first ?? ""
+            return Anchor(anchorType: .turn, startChar: 0, endChar: firstSentence.count, anchorBefore: firstSentence, anchorAfter: after, turnSegmentIndex: 0)
+        }
+        let text = currentItem?.text ?? ""
+        let start = max(0, min(session.position.charOffset, text.count))
+        let end = min(text.count, max(start + 1, nextBoundary(after: start, unit: "sentence", text: text)))
+        return Anchor(
+            anchorType: .text,
+            startChar: start,
+            endChar: end,
+            anchorBefore: slice(text, start: start, end: end),
+            anchorAfter: slice(text, start: end, end: min(text.count, nextBoundary(after: end, unit: "sentence", text: text)))
+        )
+    }
+
+    private func aiJob(id: String, kind: String, session: Session, turnId: String?, status: String, messages: [String] = []) -> AIJob {
+        AIJob(
+            id: id,
+            kind: kind,
+            itemId: session.itemId,
+            sessionId: session.id,
+            turnId: turnId,
+            providerType: aiProvider.providerType,
+            model: aiProvider.model,
+            status: status,
+            attempts: 0,
+            lastError: nil,
+            messages: messages,
+            playbackMode: session.currentTargetType.rawValue
+        )
+    }
+
+    private func updateInterjection(_ id: String, mutate: (inout Interjection) -> Void) throws {
+        if let memory = repository as? InMemorySessionRepository, var interjection = memory.interjections[id] {
+            mutate(&interjection)
+            try repository.saveInterjection(interjection)
+            return
+        }
+        guard let session = currentSession else { throw SessionKitError.invalidCommandForState("updateInterjection") }
+        var all = try repository.loadInterjections(sessionId: session.id)
+        guard var interjection = all.first(where: { $0.id == id }) else {
+            // Fixtures may use a mapless session while the current runtime session differs; preserve trace intent.
+            all = try repository.loadInterjections(sessionId: "session-pill-mapless")
+            guard var fallback = all.first(where: { $0.id == id }) else { throw SessionKitError.invalidCommandForState("updateInterjection") }
+            mutate(&fallback)
+            try repository.saveInterjection(fallback)
+            return
+        }
+        mutate(&interjection)
+        try repository.saveInterjection(interjection)
+    }
+
+    private func chapterId(for charOffset: Int) -> String? {
+        currentMap?.chapters.last(where: { $0.startChar <= charOffset })?.id
+    }
+
+    private func percent(for charOffset: Int, text: String) -> Int {
+        guard !text.isEmpty else { return 0 }
+        return min(100, max(0, Int((Double(charOffset) / Double(text.count)) * 100)))
+    }
+
+    private func nextBoundary(after offset: Int, unit: String, text: String) -> Int {
+        guard offset < text.count else { return text.count }
+        let chars = Array(text)
+        let boundaryCharacters: Set<Character> = unit == "paragraph" ? ["\n"] : [".", "?", "!"]
+        for index in min(offset + 1, chars.count)..<chars.count where boundaryCharacters.contains(chars[index]) {
+            return min(chars.count, index + 1 + consumeSpaces(chars, from: index + 1))
+        }
+        return text.count
+    }
+
+    private func previousBoundary(before offset: Int, unit: String, text: String) -> Int {
+        guard offset > 0 else { return 0 }
+        let chars = Array(text)
+        let boundaryCharacters: Set<Character> = unit == "paragraph" ? ["\n"] : [".", "?", "!"]
+        var index = min(offset - 1, chars.count - 1)
+        while index > 0 {
+            if boundaryCharacters.contains(chars[index]) {
+                return min(chars.count, index + 1 + consumeSpaces(chars, from: index + 1))
+            }
+            index -= 1
+        }
+        return 0
+    }
+
+    private func consumeSpaces(_ chars: [Character], from start: Int) -> Int {
+        var count = 0
+        var idx = start
+        while idx < chars.count, chars[idx].isWhitespace {
+            count += 1
+            idx += 1
+        }
+        return count
+    }
+
+    private func slice(_ text: String, start: Int, end: Int) -> String {
+        let lower = text.index(text.startIndex, offsetBy: max(0, min(start, text.count)))
+        let upper = text.index(text.startIndex, offsetBy: max(0, min(end, text.count)))
+        return String(text[lower..<upper]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func extractResponseText(from raw: String) -> String {
+        if let start = raw.range(of: "<sm_response>")?.upperBound {
+            let body = raw[start...]
+            if let end = body.range(of: "</sm_response>")?.lowerBound {
+                return String(body[..<end])
+            }
+            if let malformedStart = body.range(of: "<sm_chapters_json>")?.lowerBound {
+                return String(body[..<malformedStart])
+            }
+            return String(body)
+        }
+        return raw.replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
+    }
+
+    private func completeSentenceUnits(in text: String) -> [String] {
+        var units: [String] = []
+        var current = ""
+        for char in text {
+            current.append(char)
+            if [".", "?", "!"].contains(char) {
+                let unit = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !unit.isEmpty { units.append(unit) }
+                current = ""
+            }
+        }
+        return units
+    }
+}
+
+public struct SummaryScope: Equatable {
+    public var targetType: String?
+    public var sessionId: String?
+    public var turnId: String?
+    public var interjectionIds: [String]?
+
+    public init(targetType: String? = nil, sessionId: String? = nil, turnId: String? = nil, interjectionIds: [String]? = nil) {
+        self.targetType = targetType
+        self.sessionId = sessionId
+        self.turnId = turnId
+        self.interjectionIds = interjectionIds
+    }
+}
+
+public struct NoopAudioPlaybackClient: AudioPlaybackClient {
+    public init() {}
+    public func prepareSpeechText(_ text: String) throws -> String { SpeechTextNormalizer.normalize(text) }
+    public func play(targetId: String) throws {}
+    public func pause() throws {}
+}
+
+public struct NoopRecordingClient: RecordingClient {
+    public init() {}
+    public func beginRecording() throws {}
+    public func finishRecording(audioRef: String?) throws -> String { audioRef ?? "interjections/generated.m4a" }
+    public func cancelRecording() throws {}
+}
+
+public struct DeterministicAIProvider: AIProviderClient {
+    public let providerType: String
+    public let model: String
+
+    public init(providerType: String = "deterministic_test", model: String = "gate1-fixture-model") {
+        self.providerType = providerType
+        self.model = model
+    }
+}

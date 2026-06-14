@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spokenmargins.local/schemas/ai-job.schema.json",
+  "title": "AIJob",
+  "type": "object",
+  "required": ["schemaVersion", "id", "kind", "sessionId", "provider", "status", "createdAt", "updatedAt"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": "ai-job.v1" },
+    "id": { "type": "string", "minLength": 1 },
+    "kind": { "enum": ["listening_map", "interjection_summary", "assistant_response", "transcript_cleanup", "addendum_cleanup"] },
+    "itemId": { "type": ["string", "null"] },
+    "sessionId": { "type": "string", "minLength": 1 },
+    "turnId": { "type": ["string", "null"] },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["providerType", "model"],
+      "properties": {
+        "providerType": { "enum": ["openai_compatible", "apple_foundation"] },
+        "baseUrl": { "type": ["string", "null"] },
+        "model": { "type": "string", "minLength": 1 },
+        "apiKeyRef": { "type": ["string", "null"] }
+      }
+    },
+    "status": { "enum": ["pending", "running", "complete", "failed", "cancelled"] },
+    "attempts": { "type": "integer", "minimum": 0 },
+    "lastError": { "type": ["string", "null"] },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" }
+  }
+}

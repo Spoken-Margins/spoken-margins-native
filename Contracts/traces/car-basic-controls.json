@@ -1,0 +1,41 @@
+{
+  "schemaVersion": "session-trace.v1",
+  "name": "car-basic-controls",
+  "description": "Basic car interface supports only play/pause, skip back, and skip forward.",
+  "runtimeProfile": "car-basic",
+  "requiresCapabilities": {
+    "remoteControl": ["display_snapshot", "send_transport_commands"]
+  },
+  "fixtures": {
+    "item": "fixtures/items/text-with-listening-map.json"
+  },
+  "steps": [
+    {
+      "event": "sessionSnapshotReceived",
+      "expect": { "status": "playing" }
+    },
+    {
+      "command": "togglePlayPause",
+      "expect": { "status": "paused" }
+    },
+    {
+      "command": "togglePlayPause",
+      "expect": { "status": "playing" }
+    },
+    {
+      "command": "skipBack",
+      "args": { "unit": "time_15s" },
+      "expect": { "targetType": "item_text_tts", "noCrash": true }
+    },
+    {
+      "command": "skipForward",
+      "args": { "unit": "time_30s" },
+      "expect": { "targetType": "item_text_tts", "noCrash": true }
+    }
+  ],
+  "assertions": [
+    "No unsupported chapter UI is required in basic car mode.",
+    "Interjection requires a configured basic-car gesture before driving.",
+    "Transport commands are safe at playback boundaries."
+  ]
+}

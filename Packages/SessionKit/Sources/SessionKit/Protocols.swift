@@ -1,0 +1,46 @@
+import Foundation
+
+public protocol SessionRepository {
+    func loadItem(id: String) throws -> Item
+    func loadListeningMap(itemId: String) throws -> ListeningMap?
+    func saveSession(_ session: Session) throws
+    func loadSession(id: String) throws -> Session?
+    func saveInterjection(_ interjection: Interjection) throws
+    func loadInterjections(sessionId: String) throws -> [Interjection]
+    func saveTurn(_ turn: ConversationTurn) throws
+    func loadTurns(sessionId: String) throws -> [ConversationTurn]
+    func saveAIJob(_ job: AIJob) throws
+    func loadAIJobs(sessionId: String) throws -> [AIJob]
+    func updateAIJob(_ job: AIJob) throws
+}
+
+public protocol AudioPlaybackClient {
+    func prepareSpeechText(_ text: String) throws -> String
+    func play(targetId: String) throws
+    func pause() throws
+}
+
+public protocol RecordingClient {
+    func beginRecording() throws
+    func finishRecording(audioRef: String?) throws -> String
+    func cancelRecording() throws
+}
+
+public protocol AIProviderClient {
+    var providerType: String { get }
+    var model: String { get }
+    func shouldStartProviderCall(profile: RuntimeCapabilityProfile, kind: String) -> Bool
+}
+
+public extension AIProviderClient {
+    func shouldStartProviderCall(profile: RuntimeCapabilityProfile, kind: String) -> Bool {
+        switch kind {
+        case "interjection_summary":
+            return profile.has("ai", "summarize_interjections")
+        case "assistant_response":
+            return profile.has("ai", "continue_discussion")
+        default:
+            return false
+        }
+    }
+}

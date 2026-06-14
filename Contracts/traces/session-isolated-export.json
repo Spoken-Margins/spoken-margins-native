@@ -1,0 +1,40 @@
+{
+  "schemaVersion": "session-trace.v1",
+  "name": "session-isolated-export",
+  "description": "Exporting one session from a multi-session item does not leak interjections or AI turns from another session.",
+  "runtimeProfile": "phone-tablet-online",
+  "requiresCapabilities": {
+    "timeline": ["text_char_offsets"],
+    "sync": ["canonical_persistence"]
+  },
+  "fixtures": {
+    "item": "fixtures/items/text-mapless.json",
+    "session": "fixtures/sessions/five-interjections-mapless.json",
+    "export": "fixtures/exports/mapless-session.json"
+  },
+  "steps": [
+    {
+      "command": "buildExport",
+      "args": {
+        "sessionId": "session-pill-mapless",
+        "includeFullText": false,
+        "includeReference": true,
+        "includeListeningMap": false,
+        "includeInterjections": true
+      },
+      "expect": {
+        "sessionId": "session-pill-mapless",
+        "containsOnlySessionInterjections": true,
+        "containsOnlySessionTurns": true,
+        "doesNotContainOtherSessionSourceNotes": true,
+        "doesNotContainOtherSessionAiNotes": true
+      }
+    }
+  ],
+  "assertions": [
+    "Items can have multiple sessions.",
+    "Session export is isolated by default.",
+    "Cross-session export requires an explicit option.",
+    "AI-response interjections follow the same session isolation rule as source interjections."
+  ]
+}

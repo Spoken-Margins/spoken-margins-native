@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spokenmargins.local/schemas/runtime-capability-profile.schema.json",
+  "title": "RuntimeCapabilityProfile",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "id",
+    "displayName",
+    "surface",
+    "connectivity",
+    "mediaOwnership",
+    "capabilities",
+    "forbiddenCapabilities"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": "runtime-capability-profile.v1" },
+    "id": { "type": "string", "minLength": 1 },
+    "displayName": { "type": "string", "minLength": 1 },
+    "surface": { "enum": ["phone_tablet", "watch", "browser_extension", "lock_screen_widget", "car_basic", "carplay"] },
+    "connectivity": { "enum": ["online", "offline", "tethered", "untethered", "browser_page"] },
+    "mediaOwnership": { "enum": ["canonical_runtime", "prepared_local_runtime", "remote_control_only", "browser_owned", "mixed"] },
+    "capabilities": {
+      "type": "object",
+      "required": ["playback", "timeline", "interjection", "ai", "sync", "remoteControl"],
+      "additionalProperties": false,
+      "properties": {
+        "playback": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "realtime_tts",
+              "prerendered_audio",
+              "native_media",
+              "browser_owned_media",
+              "remote_stream",
+              "assistant_turn_tts",
+              "summary_turn_tts"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "timeline": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "text_char_offsets",
+              "transcript_segments",
+              "media_time",
+              "chapter_timing",
+              "playback_rate_observation"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "interjection": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "record_audio",
+              "capture_text_anchor",
+              "capture_transcript_anchor",
+              "capture_media_anchor",
+              "capture_turn_anchor",
+              "queue_offline_interjections",
+              "delegate_interjection_to_canonical_runtime"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "ai": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "provider_diagnostics",
+              "generate_listening_map",
+              "summarize_interjections",
+              "cleanup_transcript",
+              "continue_discussion",
+              "defer_ai_jobs"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "sync": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "canonical_persistence",
+              "queue_offline_events",
+              "import_offline_events",
+              "transfer_prepared_packages",
+              "receive_prepared_packages",
+              "browser_session_handoff"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "remoteControl": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "display_snapshot",
+              "send_transport_commands",
+              "send_chapter_jump",
+              "send_interjection_commands",
+              "send_ai_commands"
+            ]
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "forbiddenCapabilities": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "notes": { "type": "array", "items": { "type": "string" } }
+  }
+}
