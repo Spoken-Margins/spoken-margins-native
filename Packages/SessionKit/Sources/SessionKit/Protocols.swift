@@ -19,7 +19,19 @@ public protocol SessionRepository {
 public protocol AudioPlaybackClient {
     func prepareSpeechText(_ text: String) throws -> String
     func play(targetId: String) throws
+    func play(targetId: String, from charOffset: Int) throws
     func pause() throws
+    func stop() throws
+}
+
+public extension AudioPlaybackClient {
+    func play(targetId: String, from charOffset: Int) throws {
+        try play(targetId: targetId)
+    }
+
+    func stop() throws {
+        try pause()
+    }
 }
 
 public protocol RecordingClient {

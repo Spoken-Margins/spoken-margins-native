@@ -46,6 +46,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var selectedProfileId = "phone-tablet-online"
     @Published var importTitle = "Gate 1 Article With Links"
     @Published var importText = "Read the background at https://example.com/long/url before continuing. A labeled [reference](https://example.com/essay) should stay readable while raw URLs are skipped."
+    @Published var listeningMapJSON = ""
     @Published var providerBaseURL = UserDefaults.standard.string(forKey: "providerBaseURL") ?? "https://api.openai.com/v1"
     @Published var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-4.1-mini"
     @Published var providerAPIKey = KeychainStore.load(service: "SpokenMargins", account: "OpenAICompatibleAPIKey") ?? ""
@@ -58,6 +59,7 @@ final class Gate1AppModel: ObservableObject {
     private var engine: SessionEngine?
     private var store: SQLiteSessionStore?
     private var activeItemId = "item-pill"
+    private let transcriptionClient = SystemSpeechTranscriptionClient()
     private let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -165,6 +167,24 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    func applyListeningMapJSON() {
+        do {
+            let store = try requireStore()
+            var item = try store.loadItem(id: activeItemId)
+            let map = try parseListeningMapJSON(listeningMapJSON, item: item)
+            try store.saveListeningMap(map)
+            item.status = "ready"
+            try store.saveItem(item)
+            libraryItems = try loadLibraryRows(store: store)
+            selectedItem = try loadItemDetail(id: activeItemId, store: store)
+            diagnostics["lastAppliedMap"] = map.id
+            diagnostics["lastAppliedMapChapters"] = "\(map.chapters.count)"
+            reportSuccess("Applied Listening Map.")
+        } catch {
+            reportFailure(error, context: "Listening Map validation failed")
+        }
+    }
+
     func jumpToChapter(_ chapter: Chapter) {
         run { engine in
             if !hasActiveSession {
@@ -178,6 +198,11 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func openHome() {
+        if hasActiveSession {
+            run { engine in
+                snapshot = try engine.stopPlayback()
+            }
+        }
         screen = .home
     }
 
@@ -197,6 +222,7 @@ final class Gate1AppModel: ObservableObject {
             let store = try requireStore()
             activeItemId = id
             selectedItem = try loadItemDetail(id: id, store: store)
+            listeningMapJSON = ""
             screen = .item
             reportSuccess("Opened \(selectedItem.title).")
         } catch {
@@ -266,16 +292,52 @@ final class Gate1AppModel: ObservableObject {
         run { engine in
             snapshot = try engine.finishInterjection(audioRef: nil)
             refreshSelectedItem()
-            reportSuccess("Saved interjection. Transcription pending.")
+            if let interjection = latestInterjectionNeedingTranscription() {
+                scheduleTranscription(for: interjection)
+            }
+            reportSuccess("Saved interjection. Transcribing.")
+        }
+    }
+
+    func cancelInterjection() {
+        run { engine in
+            snapshot = try engine.cancelInterjection()
+            refreshSelectedItem()
+            reportSuccess("Cancelled interjection.")
+        }
+    }
+
+    func endSession() {
+        run { engine in
+            snapshot = try engine.endSession()
+            refreshSelectedItem()
+            reportSuccess("Ended session.")
         }
     }
 
     func summarize() {
         run { engine in
             snapshot = try engine.generateInterjectionSummary(scope: SummaryScope(targetType: "item"))
-            submitProviderJobIfNeeded(kind: "interjection_summary", turnId: "turn-summary-001", messages: [summaryPrompt()])
+            submitProviderJobIfNeeded(kind: "interjection_summary", turnId: "turn-summary-001", messages: [summaryPrompt(interjections: engine.lastSummaryCandidates)])
             refreshSelectedItem()
             reportSuccess(snapshot.pendingAiJobStatus == "deferred" ? "Summary queued for later." : "Summary job started.")
+        }
+    }
+
+    func discuss() {
+        if let turn = selectedItem.turns.last(where: { $0.role == "assistant" && $0.status == "complete" && (($0.text?.isEmpty == false) || ($0.summary?.isEmpty == false)) }) {
+            playTurn(turn)
+        } else {
+            summarize()
+        }
+    }
+
+    func playTurn(_ turn: ConversationTurn) {
+        run { engine in
+            snapshot = try engine.playTurn(turnId: turn.id)
+            refreshSelectedItem()
+            screen = .playback
+            reportSuccess("Playing \(turnTitleText(turn)).")
         }
     }
 
@@ -298,7 +360,7 @@ final class Gate1AppModel: ObservableObject {
             }
             snapshot = try engine.retryAIJob(jobId: job.id)
             let turnId = job.turnId ?? (job.kind == "interjection_summary" ? "turn-summary-001" : "turn-response-001")
-            let messages = job.messages.isEmpty ? [job.kind == "interjection_summary" ? summaryPrompt() : "Continue the discussion."] : job.messages
+            let messages = job.messages.isEmpty ? [job.kind == "interjection_summary" ? summaryPrompt(interjections: engine.lastSummaryCandidates) : "Continue the discussion."] : job.messages
             submitProviderJobIfNeeded(kind: job.kind, turnId: turnId, messages: messages, force: true)
             refreshSelectedItem()
             reportSuccess("Retrying \(job.kind).")
@@ -312,6 +374,22 @@ final class Gate1AppModel: ObservableObject {
             exportPreview = String(data: data, encoding: .utf8) ?? ""
             screen = .export
             reportSuccess("Built session export.")
+        }
+    }
+
+    func deleteTranscript(interjection: Interjection) {
+        run { engine in
+            snapshot = try engine.deleteRepresentation(interjectionId: interjection.id, representation: "transcript")
+            refreshSelectedItem()
+            reportSuccess("Deleted transcript.")
+        }
+    }
+
+    func deleteInterjection(_ interjection: Interjection) {
+        run { engine in
+            snapshot = try engine.deleteInterjection(interjectionId: interjection.id)
+            refreshSelectedItem()
+            reportSuccess("Deleted interjection.")
         }
     }
 
@@ -330,8 +408,17 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["providerBaseURL"] = providerBaseURL
         diagnostics["providerModel"] = providerModel
         diagnostics["apiKeyConfigured"] = providerAPIKey.isEmpty ? "false" : "true"
-        screen = .settings
-        reportSuccess("Provider settings saved.")
+        if rebuildEngineForCurrentSettings() {
+            screen = .settings
+            reportSuccess("Provider settings saved.")
+        }
+    }
+
+    func runtimeProfileChanged() {
+        diagnostics["runtimeProfile"] = selectedProfileId
+        if rebuildEngineForCurrentSettings() {
+            reportSuccess("Runtime profile set to \(selectedProfileId).")
+        }
     }
 
     func probeProvider() {
@@ -385,6 +472,17 @@ final class Gate1AppModel: ObservableObject {
             try operation(engine)
         } catch {
             reportFailure(error)
+        }
+    }
+
+    private func rebuildEngineForCurrentSettings() -> Bool {
+        guard let store else { return true }
+        do {
+            engine = try makeEngine(store: store)
+            return true
+        } catch {
+            reportFailure(error, context: "Runtime profile update failed")
+            return false
         }
     }
 
@@ -503,10 +601,38 @@ final class Gate1AppModel: ObservableObject {
         reportFailure(userMessage)
     }
 
-    private func summaryPrompt() -> String {
+    private func latestInterjectionNeedingTranscription() -> Interjection? {
         guard let sessionId = snapshot.sessionId,
-              let interjections = try? store?.loadInterjections(sessionId: sessionId),
-              !interjections.isEmpty else {
+              let interjections = try? store?.loadInterjections(sessionId: sessionId) else { return nil }
+        return interjections.last { $0.transcriptionStatus == "pending" && $0.audioPath != nil }
+    }
+
+    private func scheduleTranscription(for interjection: Interjection) {
+        guard let audioPath = interjection.audioPath else { return }
+        Task {
+            do {
+                let transcript = try await transcriptionClient.transcribe(audioPath: audioPath)
+                await MainActor.run {
+                    run { engine in
+                        snapshot = try engine.transcriptionCompleted(interjectionId: interjection.id, transcript: transcript)
+                        refreshSelectedItem()
+                        reportSuccess("Transcribed interjection.")
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    run { engine in
+                        snapshot = try engine.transcriptionFailed(interjectionId: interjection.id, error: String(describing: error))
+                        refreshSelectedItem()
+                        reportFailure("Audio saved. Transcript failed.")
+                    }
+                }
+            }
+        }
+    }
+
+    private func summaryPrompt(interjections: [Interjection]) -> String {
+        guard !interjections.isEmpty else {
             return "Summarize the current Spoken Margins interjections for the active item. If no transcript exists yet, say what can be inferred from the saved anchors and audio references."
         }
         let lines = interjections.map { interjection in
@@ -519,6 +645,112 @@ final class Gate1AppModel: ObservableObject {
             ].joined(separator: "\n")
         }.joined(separator: "\n\n")
         return "Summarize these Spoken Margins interjections and identify follow-up questions:\n\n\(lines)"
+    }
+
+    private func turnTitleText(_ turn: ConversationTurn) -> String {
+        switch turn.turnType {
+        case "interjection_summary":
+            return "summary"
+        case "assistant_response":
+            return "AI response"
+        default:
+            return "turn"
+        }
+    }
+
+    private func parseListeningMapJSON(_ raw: String, item: Item) throws -> ListeningMap {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw ManualListeningMapError.empty
+        }
+        guard let data = trimmed.data(using: .utf8) else {
+            throw ManualListeningMapError.invalidUTF8
+        }
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ManualListeningMapError.rootMustBeObject
+        }
+        guard root["schemaVersion"] as? String == "listening-map.v1" else {
+            throw ManualListeningMapError.invalidSchema
+        }
+        guard let overview = root["overview"] as? String,
+              !overview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ManualListeningMapError.missingOverview
+        }
+        guard let rawChapters = root["chapters"] as? [[String: Any]], !rawChapters.isEmpty else {
+            throw ManualListeningMapError.missingChapters
+        }
+        guard let text = item.text, !text.isEmpty else {
+            throw ManualListeningMapError.itemHasNoText
+        }
+
+        var ids = Set<String>()
+        let chapters = try rawChapters.map { chapterObject in
+            guard let id = chapterObject["id"] as? String,
+                  !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw ManualListeningMapError.missingChapterId
+            }
+            guard ids.insert(id).inserted else {
+                throw ManualListeningMapError.duplicateChapterId(id)
+            }
+            guard let title = chapterObject["title"] as? String,
+                  !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw ManualListeningMapError.missingChapterTitle(id)
+            }
+            guard let description = chapterObject["description"] as? String,
+                  !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw ManualListeningMapError.missingChapterDescription(id)
+            }
+            if let start = chapterObject["startChar"] as? Int,
+               let end = chapterObject["endChar"] as? Int {
+                return try validatedChapter(id: id, title: title, start: start, end: end, text: text)
+            }
+            guard let anchor = (chapterObject["anchor"] as? String) ?? (chapterObject["anchorText"] as? String),
+                  !anchor.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw ManualListeningMapError.missingChapterAnchor(id)
+            }
+            let range = try resolveAnchor(anchor, in: text, chapterId: id)
+            let start = text.distance(from: text.startIndex, to: range.lowerBound)
+            let end = text.distance(from: text.startIndex, to: range.upperBound)
+            return try validatedChapter(id: id, title: title, start: start, end: end, text: text)
+        }
+        .sorted { lhs, rhs in
+            if lhs.startChar == rhs.startChar {
+                return lhs.id < rhs.id
+            }
+            return lhs.startChar < rhs.startChar
+        }
+
+        return ListeningMap(
+            id: "map-\(item.id)-manual",
+            itemId: item.id,
+            overview: overview.trimmingCharacters(in: .whitespacesAndNewlines),
+            chapters: chapters
+        )
+    }
+
+    private func validatedChapter(id: String, title: String, start: Int, end: Int, text: String) throws -> Chapter {
+        guard start >= 0, end > start, end <= text.count else {
+            throw ManualListeningMapError.invalidChapterRange(id)
+        }
+        let percent = text.isEmpty ? 0 : Int((Double(start) / Double(text.count)) * 100)
+        return Chapter(
+            id: id,
+            title: title.trimmingCharacters(in: .whitespacesAndNewlines),
+            startChar: start,
+            endChar: end,
+            percent: min(100, max(0, percent))
+        )
+    }
+
+    private func resolveAnchor(_ anchor: String, in text: String, chapterId: String) throws -> Range<String.Index> {
+        let trimmedAnchor = anchor.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let exact = text.range(of: trimmedAnchor) {
+            return exact
+        }
+        if let folded = text.range(of: trimmedAnchor, options: [.caseInsensitive, .diacriticInsensitive]) {
+            return folded
+        }
+        throw ManualListeningMapError.anchorNotFound(chapterId)
     }
 
     private func reportSuccess(_ message: String) {
@@ -550,7 +782,7 @@ final class Gate1AppModel: ObservableObject {
         let map = try store.loadListeningMap(itemId: id)
         let sessions = try store.loadSessions(itemId: id)
         let activeSessionId = snapshot.sessionId ?? sessions.first?.id
-        let interjections = activeSessionId.flatMap { try? store.loadInterjections(sessionId: $0) } ?? []
+        let interjections = activeSessionId.flatMap { try? store.loadInterjections(sessionId: $0).filter { $0.status == "active" } } ?? []
         let turns = activeSessionId.flatMap { try? store.loadTurns(sessionId: $0) } ?? []
         return ItemDetailState(
             id: item.id,
@@ -636,6 +868,56 @@ private enum ProviderCallError: Error, CustomStringConvertible {
             return "HTTP \(status): \(body.prefix(240))"
         case .emptyResponse:
             return "empty_response"
+        }
+    }
+}
+
+private enum ManualListeningMapError: Error, CustomStringConvertible {
+    case empty
+    case invalidUTF8
+    case rootMustBeObject
+    case invalidSchema
+    case missingOverview
+    case missingChapters
+    case itemHasNoText
+    case missingChapterId
+    case duplicateChapterId(String)
+    case missingChapterTitle(String)
+    case missingChapterDescription(String)
+    case missingChapterAnchor(String)
+    case anchorNotFound(String)
+    case invalidChapterRange(String)
+
+    var description: String {
+        switch self {
+        case .empty:
+            return "manual_map_empty"
+        case .invalidUTF8:
+            return "manual_map_invalid_utf8"
+        case .rootMustBeObject:
+            return "manual_map_root_must_be_object"
+        case .invalidSchema:
+            return "manual_map_schemaVersion_must_be_listening-map.v1"
+        case .missingOverview:
+            return "manual_map_missing_overview"
+        case .missingChapters:
+            return "manual_map_missing_chapters"
+        case .itemHasNoText:
+            return "manual_map_item_has_no_text"
+        case .missingChapterId:
+            return "manual_map_missing_chapter_id"
+        case .duplicateChapterId(let id):
+            return "manual_map_duplicate_chapter_id:\(id)"
+        case .missingChapterTitle(let id):
+            return "manual_map_missing_chapter_title:\(id)"
+        case .missingChapterDescription(let id):
+            return "manual_map_missing_chapter_description:\(id)"
+        case .missingChapterAnchor(let id):
+            return "manual_map_missing_chapter_anchor:\(id)"
+        case .anchorNotFound(let id):
+            return "manual_map_anchor_not_found:\(id)"
+        case .invalidChapterRange(let id):
+            return "manual_map_invalid_chapter_range:\(id)"
         }
     }
 }

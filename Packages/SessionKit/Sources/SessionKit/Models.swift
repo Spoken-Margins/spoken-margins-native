@@ -108,6 +108,14 @@ public struct Chapter: Codable, Equatable, Sendable {
     public var startChar: Int
     public var endChar: Int
     public var percent: Int
+
+    public init(id: String, title: String, startChar: Int, endChar: Int, percent: Int) {
+        self.id = id
+        self.title = title
+        self.startChar = startChar
+        self.endChar = endChar
+        self.percent = percent
+    }
 }
 
 public struct ListeningMap: Codable, Equatable, Sendable {
@@ -115,6 +123,13 @@ public struct ListeningMap: Codable, Equatable, Sendable {
     public var itemId: String
     public var overview: String
     public var chapters: [Chapter]
+
+    public init(id: String, itemId: String, overview: String, chapters: [Chapter]) {
+        self.id = id
+        self.itemId = itemId
+        self.overview = overview
+        self.chapters = chapters
+    }
 }
 
 public struct Position: Codable, Equatable, Sendable {

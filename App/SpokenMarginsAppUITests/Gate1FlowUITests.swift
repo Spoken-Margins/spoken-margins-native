@@ -48,7 +48,39 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(app.buttons["provider.save.button"].exists)
     }
 
+    func testManualListeningMapJSONCanBeAppliedFromItemScreen() throws {
+        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
+
+        let seededItem = app.buttons["queue.row.item-pill"]
+        XCTAssertTrue(seededItem.waitForExistence(timeout: 4))
+        seededItem.tap()
+        XCTAssertTrue(element("item.screen").waitForExistence(timeout: 4))
+
+        let editor = scrollToElement("item.mapJSON.editor")
+        editor.tap()
+        editor.typeText(Self.manualListeningMapJSON)
+
+        let apply = scrollToElement("item.applyMap.button")
+        apply.tap()
+
+        XCTAssertTrue(app.staticTexts["Applied Listening Map."].waitForExistence(timeout: 4))
+        XCTAssertTrue(scrollToElement("chapter.jump.manual-process").exists)
+    }
+
     private func element(_ identifier: String) -> XCUIElement {
         app.descendants(matching: .any)[identifier]
     }
+
+    private func scrollToElement(_ identifier: String) -> XCUIElement {
+        let candidate = element(identifier)
+        for _ in 0..<6 where !candidate.isHittable {
+            app.swipeUp()
+        }
+        XCTAssertTrue(candidate.waitForExistence(timeout: 4), "Missing \(identifier)")
+        return candidate
+    }
+
+    private static let manualListeningMapJSON = """
+    {"schemaVersion":"listening-map.v1","overview":"Manual validation map.","chapters":[{"id":"manual-opening","title":"Manual Opening","description":"The item grants distrust.","anchor":"Opening distrust is reasonable."},{"id":"manual-process","title":"Manual Process","description":"The item shifts the inspection target.","anchor":"The paper trail around the medicine is what can be inspected."}]}
+    """
 }

@@ -58,10 +58,7 @@ public final class SessionEngine {
         )
         currentSession = session
         try repository.saveSession(session)
-        if let text = item.text {
-            lastSpokenText = try audio.prepareSpeechText(text)
-        }
-        try audio.play(targetId: itemId)
+        try playCurrentTarget(session)
         publish(status: .playing, phase: .itemPlayback)
         return snapshot
     }
@@ -83,8 +80,18 @@ public final class SessionEngine {
         guard let session = currentSession else {
             throw SessionKitError.invalidCommandForState("resumePlayback")
         }
-        try audio.play(targetId: session.currentTargetId)
+        try playCurrentTarget(session)
         publish(status: .playing, phase: session.phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func stopPlayback() throws -> SessionSnapshot {
+        guard let session = currentSession else {
+            throw SessionKitError.invalidCommandForState("stopPlayback")
+        }
+        try audio.stop()
+        publish(status: .paused, phase: session.phase)
         return snapshot
     }
 
@@ -133,6 +140,9 @@ public final class SessionEngine {
         session.position.chapterId = chapterId(for: session.position.charOffset)
         currentSession = session
         try repository.saveSession(session)
+        if snapshot.status == .playing {
+            try playCurrentTarget(session)
+        }
         publish(status: snapshot.status, phase: session.phase)
         return snapshot
     }
@@ -148,6 +158,9 @@ public final class SessionEngine {
         session.position.chapterId = chapterId(for: session.position.charOffset)
         currentSession = session
         try repository.saveSession(session)
+        if snapshot.status == .playing {
+            try playCurrentTarget(session)
+        }
         publish(status: snapshot.status, phase: session.phase)
         return snapshot
     }
@@ -164,6 +177,9 @@ public final class SessionEngine {
         session.completionPercent = chapter.percent
         currentSession = session
         try repository.saveSession(session)
+        if snapshot.status == .playing {
+            try playCurrentTarget(session)
+        }
         publish(status: snapshot.status, phase: session.phase)
         return snapshot
     }
@@ -226,6 +242,29 @@ public final class SessionEngine {
         }
         currentSession = session
         try repository.saveSession(session)
+        try playCurrentTarget(session)
+        publish(status: .playing, phase: session.phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func cancelInterjection() throws -> SessionSnapshot {
+        guard var session = currentSession else {
+            throw SessionKitError.invalidCommandForState("cancelInterjection")
+        }
+        try recorder.cancelRecording()
+        session.phase = priorPhase ?? priorPhaseForResume(targetType: recordingTargetType ?? .item)
+        if let item = currentItem, recordingTargetType ?? .item == .item {
+            session.position.charOffset = max(0, previousBoundary(before: session.position.charOffset, unit: "sentence", text: item.text ?? ""))
+            session.completionPercent = percent(for: session.position.charOffset, text: item.text ?? "")
+            session.position.chapterId = chapterId(for: session.position.charOffset)
+        }
+        recordingAnchor = nil
+        recordingTargetType = nil
+        recordingTargetId = nil
+        currentSession = session
+        try repository.saveSession(session)
+        try playCurrentTarget(session)
         publish(status: .playing, phase: session.phase)
         return snapshot
     }
@@ -278,7 +317,7 @@ public final class SessionEngine {
         session.position = Position(charOffset: 0)
         currentSession = session
         try repository.saveSession(session)
-        try audio.play(targetId: turnId)
+        try playCurrentTarget(session)
         publish(status: .playing, phase: phase)
         return snapshot
     }
@@ -449,6 +488,16 @@ public final class SessionEngine {
     }
 
     @discardableResult
+    public func transcriptionFailed(interjectionId: String, error: String) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId) { interjection in
+            interjection.transcriptionStatus = "failed"
+            interjection.displayText = "Audio saved. Transcript failed."
+        }
+        snapshot.lastFailure = "transcription_failed:\(error)"
+        return snapshot
+    }
+
+    @discardableResult
     public func cleanupCompleted(interjectionId: String, cleanedTranscript: String) throws -> SessionSnapshot {
         try updateInterjection(interjectionId) { interjection in
             interjection.cleanedTranscript = cleanedTranscript
@@ -462,8 +511,37 @@ public final class SessionEngine {
         try updateInterjection(interjectionId) { interjection in
             if representation == "cleanedTranscript" {
                 interjection.cleanedTranscript = nil
+                interjection.displayText = interjection.transcript
+            } else if representation == "transcript" {
+                interjection.transcript = nil
+                interjection.cleanedTranscript = nil
+                interjection.displayText = nil
+                interjection.transcriptionStatus = interjection.audioPath == nil ? "failed" : "pending"
             }
         }
+        return snapshot
+    }
+
+    @discardableResult
+    public func deleteInterjection(interjectionId: String) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId) { interjection in
+            interjection.status = "deleted"
+        }
+        publish(status: snapshot.status, phase: snapshot.phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func endSession() throws -> SessionSnapshot {
+        guard var session = currentSession else {
+            throw SessionKitError.invalidCommandForState("endSession")
+        }
+        try audio.stop()
+        session.status = "finished"
+        session.phase = .finished
+        currentSession = session
+        try repository.saveSession(session)
+        publish(status: .idle, phase: .finished)
         return snapshot
     }
 
@@ -672,6 +750,27 @@ public final class SessionEngine {
 
     private func chapterId(for charOffset: Int) -> String? {
         currentMap?.chapters.last(where: { $0.startChar <= charOffset })?.id
+    }
+
+    private func playCurrentTarget(_ session: Session) throws {
+        let text = try playbackText(for: session)
+        lastSpokenText = try audio.prepareSpeechText(text)
+        try audio.play(targetId: session.currentTargetId, from: session.position.charOffset)
+    }
+
+    private func playbackText(for session: Session) throws -> String {
+        switch session.currentTargetType {
+        case .itemTextTTS, .transcriptBackedMedia, .browserOwnedMedia:
+            if currentItem?.id != session.itemId {
+                currentItem = try repository.loadItem(id: session.itemId)
+            }
+            return currentItem?.text ?? ""
+        case .summaryTurnTTS, .assistantTurnTTS:
+            guard let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == session.currentTargetId }) else {
+                throw SessionKitError.invalidCommandForState("playTurn")
+            }
+            return turn.summary ?? turn.text ?? turn.rawText ?? ""
+        }
     }
 
     private func generatedListeningMap(for item: Item) -> ListeningMap {

@@ -76,6 +76,29 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertNil(try store.loadSession(id: "session-import"))
     }
 
+    func testSQLiteStoreReplacesListeningMapForItem() throws {
+        let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-\(UUID().uuidString).sqlite").path
+        let store = try SQLiteSessionStore(path: path)
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two.", externalReference: nil, status: "ready")
+        try store.seed(item: item)
+        try store.saveListeningMap(ListeningMap(
+            id: "map-original",
+            itemId: item.id,
+            overview: "Original",
+            chapters: [Chapter(id: "original", title: "Original", startChar: 0, endChar: 4, percent: 0)]
+        ))
+        try store.saveListeningMap(ListeningMap(
+            id: "map-manual",
+            itemId: item.id,
+            overview: "Manual",
+            chapters: [Chapter(id: "manual-process", title: "Manual Process", startChar: 5, endChar: 9, percent: 50)]
+        ))
+
+        let loaded = try XCTUnwrap(try store.loadListeningMap(itemId: item.id))
+        XCTAssertEqual(loaded.id, "map-manual")
+        XCTAssertEqual(loaded.chapters.map(\.id), ["manual-process"])
+    }
+
     func testManualListeningMapGenerationPersistsMapAndEnablesChapterJump() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
@@ -137,7 +160,8 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(resumed.status, .playing)
         XCTAssertEqual(offsetAfterPause, offsetBeforePause)
         XCTAssertEqual(try XCTUnwrap(engine.currentSession?.position.charOffset), offsetBeforePause)
-        XCTAssertEqual(audio.playedTargets, [item.id, item.id])
+        XCTAssertEqual(audio.playedTargets, [item.id, item.id, item.id])
+        XCTAssertEqual(audio.playedOffsets, [0, offsetBeforePause, offsetBeforePause])
     }
 
     func testFinishInterjectionSchedulesTranscriptionAfterAudioIsSaved() throws {
@@ -165,18 +189,76 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(transcriber.scheduledInterjectionIds, [interjection.id])
         XCTAssertEqual(engine.lastScheduledTranscriptionInterjectionId, interjection.id)
     }
+
+    func testPlayTurnPreparesTurnTextInsteadOfReusingItemText() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts", "summary_turn_tts", "assistant_turn_tts"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "Original item text.", externalReference: nil, status: "ready")
+        let session = Session(id: "session-pill", itemId: item.id, status: "in_progress", phase: .conversation, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 0, playbackRate: 1)
+        let summary = ConversationTurn(id: "turn-summary-001", sessionId: session.id, role: "assistant", turnType: "interjection_summary", status: "complete", summary: nil, text: "Summary text should be spoken.", rawText: nil, sourceInterjectionIds: [])
+        let response = ConversationTurn(id: "turn-response-001", sessionId: session.id, role: "assistant", turnType: "assistant_response", status: "complete", summary: nil, text: "Response text should be spoken.", rawText: nil, sourceInterjectionIds: [])
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session], turns: [summary.id: summary, response.id: response])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.playTurn(turnId: summary.id)
+        XCTAssertEqual(audio.preparedTexts.last, "Summary text should be spoken.")
+        XCTAssertEqual(engine.snapshot.targetType, "summary_turn_tts")
+
+        _ = try engine.playTurn(turnId: response.id)
+        XCTAssertEqual(audio.preparedTexts.last, "Response text should be spoken.")
+        XCTAssertEqual(engine.snapshot.targetType, "assistant_turn_tts")
+    }
+
+    func testCancelInterjectionDoesNotCreateInterjectionAndResumes() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "interjection": ["record_audio"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two.", externalReference: nil, status: "ready")
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo)
+
+        _ = try engine.startSession(itemId: item.id)
+        _ = try engine.beginInterjection()
+        let snapshot = try engine.cancelInterjection()
+
+        XCTAssertEqual(snapshot.phase, .itemPlayback)
+        XCTAssertEqual(snapshot.status, .playing)
+        XCTAssertEqual(try repo.loadInterjections(sessionId: "session-\(item.id)-gate1").count, 0)
+    }
 }
 
 private final class RecordingAudioClient: AudioPlaybackClient {
     var playedTargets: [String] = []
+    var playedOffsets: [Int] = []
+    var preparedTexts: [String] = []
     var pauseCount = 0
 
     func prepareSpeechText(_ text: String) throws -> String {
-        SpeechTextNormalizer.normalize(text)
+        preparedTexts.append(text)
+        return SpeechTextNormalizer.normalize(text)
     }
 
     func play(targetId: String) throws {
         playedTargets.append(targetId)
+        playedOffsets.append(0)
+    }
+
+    func play(targetId: String, from charOffset: Int) throws {
+        playedTargets.append(targetId)
+        playedOffsets.append(charOffset)
     }
 
     func pause() throws {

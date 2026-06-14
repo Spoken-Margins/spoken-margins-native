@@ -202,6 +202,7 @@ private struct ItemScreen: View {
                     if !model.selectedItem.overview.isEmpty {
                         overview
                     }
+                    listeningMapTools
                     chapters
                     sessions
                     actions
@@ -259,19 +260,50 @@ private struct ItemScreen: View {
                     .font(.body)
                     .lineSpacing(4)
                 Button {
-                    model.generateListeningMap()
-                } label: {
-                    Label("Generate Listening Map", systemImage: "sparkles")
-                }
-                .buttonStyle(SecondaryButtonStyle())
-                .accessibilityIdentifier("item.generateMap.button")
-                Button {
                     model.startItem(id: model.selectedItem.id)
                 } label: {
                     Label("Read Item", systemImage: "play")
                 }
                 .buttonStyle(SecondaryButtonStyle())
                 .accessibilityIdentifier("item.read.button")
+            }
+        }
+    }
+
+    private var listeningMapTools: some View {
+        ProductPanel {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Label("Listening Map", systemImage: "map")
+                        .font(.headline)
+                    Spacer()
+                }
+                Button {
+                    model.generateListeningMap()
+                } label: {
+                    Label("Generate Listening Map", systemImage: "sparkles")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .accessibilityIdentifier("item.generateMap.button")
+                Text("Listening Map JSON")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppColors.secondaryText)
+                TextEditor(text: $model.listeningMapJSON)
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(minHeight: 130)
+                    .padding(8)
+                    .background(AppColors.inputBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppColors.border))
+                    .accessibilityIdentifier("item.mapJSON.editor")
+                Button {
+                    model.applyListeningMapJSON()
+                } label: {
+                    Label("Apply Listening Map JSON", systemImage: "checkmark.circle")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .disabled(model.listeningMapJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityIdentifier("item.applyMap.button")
             }
         }
     }
@@ -373,6 +405,7 @@ private struct PlaybackScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var followUp = "Can you respond to that objection?"
+    @State private var selectedInterjection: Interjection?
     @FocusState private var followUpFocused: Bool
 
     var body: some View {
@@ -411,11 +444,19 @@ private struct PlaybackScreen: View {
                     .accessibilityIdentifier("playback.home.button")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(action: model.openExport) {
-                        Image(systemName: "square.and.arrow.up")
+                    HStack {
+                        Button(action: model.endSession) {
+                            Image(systemName: "stop.fill")
+                        }
+                        .disabled(!model.hasActiveSession)
+                        .accessibilityLabel("End Session")
+                        .accessibilityIdentifier("playback.end.button")
+                        Button(action: model.openExport) {
+                            Image(systemName: "square.and.arrow.up")
+                        }
+                        .disabled(!model.hasActiveSession)
+                        .accessibilityIdentifier("playback.export.button")
                     }
-                    .disabled(!model.hasActiveSession)
-                    .accessibilityIdentifier("playback.export.button")
                 }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
@@ -423,6 +464,10 @@ private struct PlaybackScreen: View {
                 }
             }
             .scrollDismissesKeyboard(.interactively)
+            .sheet(item: $selectedInterjection) { interjection in
+                InterjectionDetailView(interjection: interjection)
+                    .environmentObject(model)
+            }
         }
     }
 
@@ -489,6 +534,11 @@ private struct PlaybackScreen: View {
                         }
                         .buttonStyle(PrimaryButtonStyle())
                         .accessibilityIdentifier("interjection.done.button")
+                        Button(action: model.cancelInterjection) {
+                            Label("Cancel", systemImage: "xmark")
+                        }
+                        .buttonStyle(LightButtonStyle())
+                        .accessibilityIdentifier("interjection.cancel.button")
                     }
                 }
             } else {
@@ -509,7 +559,7 @@ private struct PlaybackScreen: View {
                     .disabled(!model.hasActiveSession)
                     .accessibilityIdentifier("playback.interject.button")
                 }
-                Button(action: model.summarize) {
+                Button(action: model.discuss) {
                     Label("Discuss", systemImage: "play")
                 }
                 .buttonStyle(LightButtonStyle())
@@ -537,28 +587,49 @@ private struct PlaybackScreen: View {
                         .foregroundStyle(AppColors.secondaryText)
                 }
             } else {
-                ForEach(model.selectedItem.chapters, id: \.id) { chapter in
-                    Button {
-                        model.jumpToChapter(chapter)
-                    } label: {
-                        TimelineRow(percent: "\(chapter.percent)%", title: chapter.title, subtitle: chapter.id)
+                ForEach(timelineEntries) { entry in
+                    switch entry {
+                    case .chapter(let chapter):
+                        Button {
+                            model.jumpToChapter(chapter)
+                        } label: {
+                            TimelineRow(percent: "\(chapter.percent)%", title: chapter.title, subtitle: chapter.id)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("timeline.chapter.jump.\(chapter.id)")
+                    case .interjection(let interjection):
+                        Button {
+                            selectedInterjection = interjection
+                        } label: {
+                            TimelineRow(
+                                percent: "\(interjection.roughPercent)%",
+                                title: interjection.displayText ?? interjection.transcript ?? interjection.audioStatus,
+                                subtitle: "\(interjection.targetType.rawValue) · \(interjection.transcriptionStatus)"
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("timeline.interjection.\(interjection.id)")
+                    case .turn(let turn):
+                        TimelineRow(percent: "AI", title: turnTitle(turn), subtitle: turn.status)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("timeline.chapter.jump.\(chapter.id)")
-                }
-                ForEach(model.selectedItem.interjections, id: \.id) { interjection in
-                    TimelineRow(
-                        percent: "Note",
-                        title: interjection.displayText ?? interjection.transcript ?? interjection.audioStatus,
-                        subtitle: "\(interjection.targetType.rawValue) · \(interjection.transcriptionStatus)"
-                    )
-                }
-                ForEach(model.selectedItem.turns, id: \.id) { turn in
-                    TimelineRow(percent: "AI", title: turnTitle(turn), subtitle: turn.status)
                 }
             }
         }
         .accessibilityIdentifier("timeline.section")
+    }
+
+    private var timelineEntries: [PlaybackTimelineEntry] {
+        (
+            model.selectedItem.chapters.map { PlaybackTimelineEntry.chapter($0) } +
+            model.selectedItem.interjections.map { PlaybackTimelineEntry.interjection($0) } +
+            model.selectedItem.turns.map { PlaybackTimelineEntry.turn($0) }
+        )
+        .sorted { lhs, rhs in
+            if lhs.percent == rhs.percent {
+                return lhs.sortRank < rhs.sortRank
+            }
+            return lhs.percent < rhs.percent
+        }
     }
 
     private var conversation: some View {
@@ -580,6 +651,17 @@ private struct PlaybackScreen: View {
                                 Text(turnTitle(turn))
                                     .font(.headline)
                                 Spacer()
+                                if turn.role == "assistant", turn.status == "complete" {
+                                    Button {
+                                        model.playTurn(turn)
+                                    } label: {
+                                        Image(systemName: "play.fill")
+                                            .frame(width: 34, height: 34)
+                                    }
+                                    .buttonStyle(IconButtonStyle())
+                                    .accessibilityLabel("Play \(turnTitle(turn))")
+                                    .accessibilityIdentifier("conversation.playTurn.\(turn.id)")
+                                }
                                 Pill(turn.status)
                             }
                             Text(turn.summary ?? turn.text ?? turn.rawText ?? "")
@@ -654,6 +736,9 @@ private struct SettingsScreen: View {
                         Text("Phone/Tablet Offline").tag("phone-tablet-offline")
                     }
                     .accessibilityIdentifier("runtime.profile.picker")
+                    .onChange(of: model.selectedProfileId) { _, _ in
+                        model.runtimeProfileChanged()
+                    }
                     Button("Reset Seed Data", action: model.resetAndSeed)
                         .accessibilityIdentifier("settings.reset.button")
                     Button("Refresh Diagnostics", action: model.refreshDiagnostics)
@@ -730,6 +815,91 @@ private struct ExportScreen: View {
     }
 }
 
+private enum PlaybackTimelineEntry: Identifiable {
+    case chapter(Chapter)
+    case interjection(Interjection)
+    case turn(ConversationTurn)
+
+    var id: String {
+        switch self {
+        case .chapter(let chapter): return "chapter-\(chapter.id)"
+        case .interjection(let interjection): return "interjection-\(interjection.id)"
+        case .turn(let turn): return "turn-\(turn.id)"
+        }
+    }
+
+    var percent: Int {
+        switch self {
+        case .chapter(let chapter): return chapter.percent
+        case .interjection(let interjection): return interjection.roughPercent
+        case .turn: return 101
+        }
+    }
+
+    var sortRank: Int {
+        switch self {
+        case .chapter: return 0
+        case .interjection: return 1
+        case .turn: return 2
+        }
+    }
+}
+
+private struct InterjectionDetailView: View {
+    @EnvironmentObject private var model: Gate1AppModel
+    @Environment(\.dismiss) private var dismiss
+    let interjection: Interjection
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Status") {
+                    LabeledContent("Transcription", value: interjection.transcriptionStatus)
+                    LabeledContent("Audio", value: interjection.audioPath ?? "none")
+                    LabeledContent("Session", value: interjection.sessionId)
+                    LabeledContent("Target", value: "\(interjection.targetType.rawValue):\(interjection.targetId)")
+                }
+                Section("Transcript") {
+                    Text(interjection.cleanedTranscript ?? interjection.transcript ?? "No transcript yet.")
+                        .textSelection(.enabled)
+                    Button("Delete Transcript") {
+                        model.deleteTranscript(interjection: interjection)
+                        dismiss()
+                    }
+                    .disabled(interjection.transcript == nil && interjection.cleanedTranscript == nil)
+                    .accessibilityIdentifier("interjection.detail.deleteTranscript")
+                }
+                Section("Anchors") {
+                    Text("Before")
+                        .font(.headline)
+                    Text(interjection.anchor.anchorBefore.isEmpty ? "None" : interjection.anchor.anchorBefore)
+                        .textSelection(.enabled)
+                    Text("After")
+                        .font(.headline)
+                    Text(interjection.anchor.anchorAfter.isEmpty ? "None" : interjection.anchor.anchorAfter)
+                        .textSelection(.enabled)
+                }
+                Section {
+                    Button(role: .destructive) {
+                        model.deleteInterjection(interjection)
+                        dismiss()
+                    } label: {
+                        Label("Delete Interjection", systemImage: "trash")
+                    }
+                    .accessibilityIdentifier("interjection.detail.delete")
+                }
+            }
+            .navigationTitle("Interjection")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Close") { dismiss() }
+                        .accessibilityIdentifier("interjection.detail.close")
+                }
+            }
+        }
+    }
+}
+
 private struct ProductPanel<Content: View>: View {
     @ViewBuilder let content: Content
 
@@ -742,6 +912,8 @@ private struct ProductPanel<Content: View>: View {
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppColors.border))
     }
 }
+
+extension Interjection: @retroactive Identifiable {}
 
 private struct PlainPanelButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {

@@ -1,0 +1,661 @@
+{
+  "schemaVersion": "gate-readiness.v1",
+  "gate": "gate1-phone-tablet-core-session",
+  "generatedAt": "2026-06-14",
+  "statusLegend": {
+    "ready": "Implemented, reachable through the product surface, covered by meaningful automated checks, and has runtime evidence appropriate to the behavior.",
+    "partial": "Some core behavior exists, but user reachability, persistence proof, negative checks, device evidence, or production fidelity is missing.",
+    "not_ready": "Required behavior is missing, not reachable, or contradicted by implementation."
+  },
+  "readinessRule": "A model object, status enum, protocol, trace event, or test injection is not implementation evidence unless a production runtime path can cause the behavior from a user action.",
+  "behaviors": [
+    {
+      "id": "G1-ITEM-IMPORT",
+      "title": "Text item import or creation",
+      "specSources": [
+        "docs/product-validation-plan.md:72",
+        "docs/product-validation-plan.md:96",
+        "docs/prototype-spec.md:599"
+      ],
+      "userPath": "Home -> Create Item -> Create And Start",
+      "corePath": "Gate1AppModel.importTextItem -> SQLiteSessionStore.seed(item:) -> SessionEngine.startSession",
+      "durableEffect": "item record and session record stored in SQLite",
+      "positiveEvidence": [
+        "App/SpokenMarginsAppUITests/Gate1FlowUITests.swift: test smoke covers seeded start, not imported item",
+        "Manual code inspection: imported item status is needs_listening_map and starts a session"
+      ],
+      "negativeEvidence": [],
+      "falsificationFindings": [
+        "No UI test creates a new imported item and inspects persisted item/session state.",
+        "External reference is hardcoded to manual-import; the user cannot enter the external reference described by the export flow."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-MAP-LOAD",
+      "title": "Load existing Listening Map",
+      "specSources": [
+        "docs/product-validation-plan.md:73",
+        "docs/prototype-spec.md:638"
+      ],
+      "userPath": "Seeded item opens with resolved chapters",
+      "corePath": "SessionEngine.startSession -> repository.loadListeningMap",
+      "durableEffect": "ListeningMap loaded from fixture/SQLite and reflected in session snapshot",
+      "positiveEvidence": [
+        "TraceReplayTests covers traces seeded with fixtures/maps/valid-listening-map.json",
+        "SessionEngine.startSession initializes Position.chapterId from currentMap"
+      ],
+      "negativeEvidence": [],
+      "falsificationFindings": [
+        "UI smoke test verifies timeline exists but not that map rows are loaded from durable map data."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-MAP-GENERATE-MANUAL",
+      "title": "Manual Listening Map generation in app",
+      "specSources": [
+        "docs/prototype-spec.md:730",
+        "docs/prototype-spec.md:737"
+      ],
+      "userPath": "Item detail -> Generate Listening Map",
+      "corePath": "Gate1AppModel.generateListeningMap -> SessionEngine.generateListeningMap",
+      "durableEffect": "ListeningMap saved and item status promoted to ready",
+      "positiveEvidence": [
+        "SessionKitCoreTests.testManualListeningMapGenerationPersistsMapAndEnablesChapterJump"
+      ],
+      "negativeEvidence": [],
+      "falsificationFindings": [
+        "Generated map is deterministic sentence splitting, not provider-backed AI Listening Map generation.",
+        "Manual paste validation now exists, but provider-backed strict JSON generation remains unproven.",
+        "No UI test presses Generate Listening Map and verifies the new rows."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-MAP-VALIDATION-REPAIR",
+      "title": "Listening Map validation and repair reports",
+      "specSources": [
+        "docs/prototype-spec.md:276",
+        "docs/prototype-spec.md:638"
+      ],
+      "userPath": "Item detail -> Listening Map JSON -> Apply Listening Map JSON",
+      "corePath": "Gate1AppModel.applyListeningMapJSON -> parseListeningMapJSON -> SQLiteSessionStore.saveListeningMap/saveItem",
+      "durableEffect": "valid ListeningMap saved and item status promoted to ready; invalid maps are rejected before persistence",
+      "positiveEvidence": [
+        "scripts/validate-contracts.py validates repository fixtures against JSON Schema",
+        "Gate1AppModel.parseListeningMapJSON requires schemaVersion listening-map.v1, overview, chapters, unique ids, title, description, and resolvable anchors",
+        "Gate1FlowUITests.testManualListeningMapJSONCanBeAppliedFromItemScreen applies valid map JSON through the product surface",
+        "SessionKitCoreTests.testSQLiteStoreReplacesListeningMapForItem verifies a newly applied map becomes the active item map"
+      ],
+      "negativeEvidence": [
+        "No UI test pastes malformed maps through the product surface.",
+        "No structured repair report model exists beyond user-visible validation errors."
+      ],
+      "falsificationFindings": [
+        "Product validation exists but does not yet provide a multi-issue repair report or provider-output repair loop."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-MAPLESS-SESSION",
+      "title": "Mapless playback and mapless interjection/export usefulness",
+      "specSources": [
+        "docs/product-validation-plan.md:74",
+        "docs/prototype-spec.md:378",
+        "docs/prototype-spec.md:496"
+      ],
+      "userPath": "Create imported item without map -> playback",
+      "corePath": "SessionEngine.startSession with currentMap nil; buildExport without Listening Map",
+      "durableEffect": "session and interjections can exist without map",
+      "positiveEvidence": [
+        "traces/mapless-session-export.json",
+        "fixtures/exports/mapless-session.json"
+      ],
+      "negativeEvidence": [],
+      "falsificationFindings": [
+        "No UI test validates imported mapless playback or mapless export.",
+        "Current UI timeline empty state does not expose mapless interjection evidence until recording is performed."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-TTS-URL-CLEANUP",
+      "title": "TTS URL cleanup while preserving source text",
+      "specSources": [
+        "docs/product-validation-plan.md:76",
+        "docs/sessionkit-contract.md:162"
+      ],
+      "userPath": "Create/start item containing raw URL and Markdown link",
+      "corePath": "SpeechTextNormalizer.normalize; SystemSpeechPlaybackClient.prepareSpeechText",
+      "durableEffect": "source item text unchanged; spoken text stripped of URLs",
+      "positiveEvidence": [
+        "SessionKitCoreTests.testSpeechNormalizationPreservesSource",
+        "traces/tts-link-normalization.json"
+      ],
+      "negativeEvidence": [],
+      "falsificationFindings": [
+        "Core behavior is covered; runtime audible evidence is not captured."
+      ],
+      "status": "ready"
+    },
+    {
+      "id": "G1-APP-OWNED-TTS",
+      "title": "App-owned TTS production playback",
+      "specSources": [
+        "docs/product-validation-plan.md:75",
+        "docs/sessionkit-contract.md:153"
+      ],
+      "userPath": "Playback play/pause button",
+      "corePath": "SessionEngine.startSession/resumePlayback -> SystemSpeechPlaybackClient.play",
+      "durableEffect": "playback snapshot should only report playing after native playback starts",
+      "positiveEvidence": [
+        "iOS simulator app builds",
+        "SystemSpeechPlaybackClient uses AVSpeechSynthesizer"
+      ],
+      "negativeEvidence": [
+        "No device evidence proves AVSpeechSynthesizer actually starts before the playing snapshot is published.",
+        "No progress callback updates Session.position while long text is being spoken."
+      ],
+      "falsificationFindings": [
+        "Playback now restarts from requested offsets and selects Siri/enhanced voices where available, but hardware/audio-route evidence is still required."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-PLAY-PAUSE-PRESERVE-POSITION",
+      "title": "Play/pause preserves source position",
+      "specSources": [
+        "docs/sessionkit-contract.md:157",
+        "docs/prototype-spec.md:626"
+      ],
+      "userPath": "Playback center play/pause button",
+      "corePath": "Gate1AppModel.playPause -> SessionEngine.pause/resumePlayback",
+      "durableEffect": "session position unchanged across pause/resume",
+      "positiveEvidence": [
+        "SessionKitCoreTests.testPauseAndResumePreserveSourcePosition"
+      ],
+      "negativeEvidence": [],
+      "falsificationFindings": [
+        "The test verifies SessionKit position and adapter offset requests, but no device evidence proves natural pause/resume over a long article."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-CHAPTER-JUMP",
+      "title": "Tap chapter jumps to resolved chapter anchor",
+      "specSources": [
+        "docs/product-validation-plan.md:77",
+        "docs/prototype-spec.md:448",
+        "docs/sessionkit-contract.md:183"
+      ],
+      "userPath": "Item chapter rows or playback timeline chapter rows",
+      "corePath": "Gate1AppModel.jumpToChapter -> SessionEngine.jumpToChapter",
+      "durableEffect": "session.position.charOffset/chapterId/completionPercent updated",
+      "positiveEvidence": [
+        "SessionKitCoreTests.testManualListeningMapGenerationPersistsMapAndEnablesChapterJump",
+        "traces/watch-chapter-navigation.json"
+      ],
+      "negativeEvidence": [
+        "No UI test taps chapter row and checks resulting state.",
+        "No device evidence proves the audible transition feels natural."
+      ],
+      "falsificationFindings": [
+        "SessionKit now asks audio to restart from the chapter offset, but this still needs UI/device validation."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-SKIP-BACK-FORWARD",
+      "title": "Skip back/forward moves predictably",
+      "specSources": [
+        "docs/product-validation-plan.md:78",
+        "docs/sessionkit-contract.md:177"
+      ],
+      "userPath": "Playback back/forward buttons",
+      "corePath": "Gate1AppModel.skipBack/skipForward -> SessionEngine.skipBack/skipForward",
+      "durableEffect": "session.position moves to semantic boundaries and stays within boundaries",
+      "positiveEvidence": [
+        "traces/semantic-navigation-and-rollback.json",
+        "Gate1FlowUITests taps back/forward and checks status messages"
+      ],
+      "negativeEvidence": [
+        "UI test does not inspect position movement.",
+        "No tests cover skip while recording, finished, loading, or paused.",
+        "No device evidence proves repeated skip feels predictable."
+      ],
+      "falsificationFindings": [
+        "Core state movement now restarts audio from the new offset; product feel remains unvalidated."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-INTERJECTION-BEGIN",
+      "title": "Begin interjection pauses playback and starts recording",
+      "specSources": [
+        "docs/product-validation-plan.md:79",
+        "docs/sessionkit-contract.md:187",
+        "docs/prototype-spec.md:390"
+      ],
+      "userPath": "Playback -> Interject",
+      "corePath": "Gate1AppModel.beginInterjection -> SystemRecordingClient.requestRecordPermission -> SessionEngine.beginInterjection",
+      "durableEffect": "session phase recording_interjection; recording target and anchor captured",
+      "positiveEvidence": [
+        "TraceReplayTests covers beginInterjection in multiple traces"
+      ],
+      "negativeEvidence": [
+        "No UI/device test grants microphone permission and records.",
+        "No failure-path test for recording permission denied in UI."
+      ],
+      "falsificationFindings": [
+        "Simulator traces use mock recording; production recording is not validated on hardware."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-INTERJECTION-DONE",
+      "title": "Done saves audio, creates interjection, schedules transcription, resumes",
+      "specSources": [
+        "docs/prototype-spec.md:399",
+        "docs/sessionkit-contract.md:189"
+      ],
+      "userPath": "Recording state -> Done",
+      "corePath": "Gate1AppModel.finishInterjection -> SessionEngine.finishInterjection",
+      "durableEffect": "interjection record saved with audioPath, transcriptionStatus pending, scheduler called, session resumes",
+      "positiveEvidence": [
+        "SessionKitCoreTests.testFinishInterjectionSchedulesTranscriptionAfterAudioIsSaved",
+        "traces/original-playback-five-interjections.json"
+      ],
+      "negativeEvidence": [
+        "No concrete speech-recognition transcriber exists.",
+        "No UI/device test verifies a durable m4a file on disk.",
+        "No negative test proves active interjection is not created when audio save fails."
+      ],
+      "falsificationFindings": [
+        "The scheduler hook is present, but transcription is deferred/no-op by default."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-INTERJECTION-CANCEL",
+      "title": "Cancel interjection discards audio and resumes",
+      "specSources": [
+        "docs/prototype-spec.md:407",
+        "docs/sessionkit-contract.md:193"
+      ],
+      "userPath": "Recording state -> Cancel",
+      "corePath": "Gate1AppModel.cancelInterjection -> SessionEngine.cancelInterjection",
+      "durableEffect": "recording is discarded, no interjection record is created, playback resumes from rollback point",
+      "positiveEvidence": [
+        "SessionKitCoreTests.testCancelInterjectionDoesNotCreateInterjectionAndResumes"
+      ],
+      "negativeEvidence": [
+        "No UI/device test validates Cancel with a real recording."
+      ],
+      "falsificationFindings": [
+        "Cancel is implemented and reachable; real recording evidence is still needed."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-ROLLBACK-RESUME",
+      "title": "Rollback/resume reorients listener after interjection",
+      "specSources": [
+        "docs/product-validation-plan.md:80",
+        "docs/sessionkit-contract.md:189",
+        "docs/sessionkit-contract.md:191"
+      ],
+      "userPath": "Finish interjection",
+      "corePath": "SessionEngine.finishInterjection sets charOffset to previous sentence",
+      "durableEffect": "session position rolls back and phase resumes",
+      "positiveEvidence": [
+        "traces/semantic-navigation-and-rollback.json"
+      ],
+      "negativeEvidence": [
+        "Rollback policy is not stored with session or package.",
+        "No runtime audio evidence proves listener hears enough rollback context."
+      ],
+      "falsificationFindings": [
+        "Audio is now asked to restart from the rolled-back offset; policy configurability and device evidence remain."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-MULTIPLE-INTERJECTIONS",
+      "title": "At least five interjections in one session",
+      "specSources": [
+        "docs/product-validation-plan.md:81",
+        "docs/product-validation-plan.md:98",
+        "docs/prototype-spec.md:600"
+      ],
+      "userPath": "Repeat Interject -> Done five times",
+      "corePath": "SessionEngine.beginInterjection/finishInterjection",
+      "durableEffect": "five active interjections linked to same session",
+      "positiveEvidence": [
+        "traces/original-playback-five-interjections.json"
+      ],
+      "negativeEvidence": [
+        "No UI/device test records five real interjections.",
+        "Generated interjection IDs are count-based and may collide after deletion or concurrent writes."
+      ],
+      "falsificationFindings": [
+        "Core trace exists; production recording loop has not been validated."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-TIMELINE-SORT-DETAIL",
+      "title": "Timeline ordering, chapter/interjection rows, detail, delete transcript/interjection",
+      "specSources": [
+        "docs/prototype-spec.md:424",
+        "docs/prototype-spec.md:430",
+        "docs/prototype-spec.md:449"
+      ],
+      "userPath": "Playback timeline",
+      "corePath": "Gate1RootView.timeline; SessionEngine.deleteRepresentation only handles cleanedTranscript",
+      "durableEffect": "timeline rows should be sorted and detail actions should mutate interjection records",
+      "positiveEvidence": [],
+      "negativeEvidence": [
+        "Chapter rows omit one-line description.",
+        "No UI test opens interjection detail or exercises delete actions."
+      ],
+      "falsificationFindings": [
+        "Timeline sort/detail/delete paths are now present, but need UI test and description metadata support."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-TRANSCRIPTION-LIFECYCLE",
+      "title": "Async transcription pending/transcribed/failed lifecycle",
+      "specSources": [
+        "docs/prototype-spec.md:681",
+        "docs/sessionkit-contract.md:296"
+      ],
+      "userPath": "Finish interjection -> SystemSpeechTranscriptionClient transcribes saved audio",
+      "corePath": "Gate1AppModel.scheduleTranscription -> SystemSpeechTranscriptionClient -> SessionEngine.transcriptionCompleted/transcriptionFailed",
+      "durableEffect": "interjection transcript/cleanedTranscript fields updated without losing audio",
+      "positiveEvidence": [
+        "traces/interjection-representation-lifecycles.json",
+        "SystemSpeechTranscriptionClient uses Speech.framework SFSpeechURLRecognitionRequest"
+      ],
+      "negativeEvidence": [
+        "No device/simulator test records audio and proves Speech.framework returns a transcript.",
+        "No cleanup/summarization pass runs after raw transcription."
+      ],
+      "falsificationFindings": [
+        "Transcription is no longer just a trace injection, but it still needs runtime evidence with real audio."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-SUMMARY-GENERATE",
+      "title": "Generate interjection summary",
+      "specSources": [
+        "docs/product-validation-plan.md:82",
+        "docs/product-validation-plan.md:100",
+        "docs/sessionkit-contract.md:199"
+      ],
+      "userPath": "Playback sparkles button or Discuss button",
+      "corePath": "Gate1AppModel.summarize -> SessionEngine.generateInterjectionSummary -> submitProviderJobIfNeeded",
+      "durableEffect": "summary turn and AI job persisted",
+      "positiveEvidence": [
+        "traces/scoped-interjection-summary.json",
+        "traces/interject-into-summary-then-discuss.json"
+      ],
+      "negativeEvidence": [
+        "No UI test creates interjections and generates a summary.",
+        "Repeated summaries use fixed turn/job IDs."
+      ],
+      "falsificationFindings": [
+        "The app now sends scoped summary candidates; repeated summary IDs and UI/provider evidence remain."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-SUMMARY-PLAYBACK",
+      "title": "Listen to the interjection summary",
+      "specSources": [
+        "docs/product-validation-plan.md:83",
+        "docs/product-validation-plan.md:101",
+        "docs/sessionkit-contract.md:209"
+      ],
+      "userPath": "Conversation assistant row play button or Discuss button",
+      "corePath": "SessionEngine.playTurn(turnId:)",
+      "durableEffect": "session target changes to summary_turn_tts",
+      "positiveEvidence": [
+        "traces/interject-into-summary-then-discuss.json calls playTurn",
+        "SessionKitCoreTests.testPlayTurnPreparesTurnTextInsteadOfReusingItemText"
+      ],
+      "negativeEvidence": [
+        "No UI test generates a summary and taps the play-turn control.",
+        "No device evidence validates summary TTS quality."
+      ],
+      "falsificationFindings": [
+        "Summary playback is now reachable and prepares turn text; runtime validation remains."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-INTERJECT-INTO-SUMMARY",
+      "title": "Interject into summary playback",
+      "specSources": [
+        "docs/product-validation-plan.md:84",
+        "docs/product-validation-plan.md:102",
+        "docs/prototype-spec.md:802"
+      ],
+      "userPath": "Play summary -> Interject -> Done",
+      "corePath": "SessionEngine.playTurn(summary) -> beginInterjection -> finishInterjection",
+      "durableEffect": "interjection targetType summary_turn",
+      "positiveEvidence": [
+        "traces/interject-into-summary-then-discuss.json"
+      ],
+      "negativeEvidence": [
+        "No app test for summary-targeted interjection."
+      ],
+      "falsificationFindings": [
+        "The product path now exists; it needs UI/device evidence."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-FOLLOWUP",
+      "title": "Addendum/follow-up submission",
+      "specSources": [
+        "docs/product-validation-plan.md:86",
+        "docs/sessionkit-contract.md:211"
+      ],
+      "userPath": "Conversation text field -> Submit",
+      "corePath": "Gate1AppModel.followUp -> SessionEngine.submitFollowup -> submitProviderJobIfNeeded",
+      "durableEffect": "user turn, assistant response turn, AI job persisted",
+      "positiveEvidence": [
+        "traces/interject-into-summary-then-discuss.json",
+        "traces/ai-provider-failure-retry.json"
+      ],
+      "negativeEvidence": [
+        "UI test does not submit follow-up or inspect turns/jobs.",
+        "Input supports typed text only, not cleaned transcript or saved audio addendum."
+      ],
+      "falsificationFindings": [
+        "Basic typed follow-up exists; broader contract input forms are missing."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-AI-DISCUSSION-RESPONSE",
+      "title": "AI discussion response",
+      "specSources": [
+        "docs/product-validation-plan.md:87",
+        "docs/prototype-spec.md:802"
+      ],
+      "userPath": "Conversation Submit with configured provider",
+      "corePath": "SessionEngine.submitFollowup -> provider /chat/completions -> aiStreamDelta -> aiJobCompleted",
+      "durableEffect": "assistant_response turn text stored and exportable",
+      "positiveEvidence": [
+        "traces/stable-streaming-speech.json",
+        "traces/ai-malformed-structure-preserves-text.json"
+      ],
+      "negativeEvidence": [
+        "No live provider validation evidence.",
+        "No UI test covers provider success."
+      ],
+      "falsificationFindings": [
+        "Assistant response playback is now reachable through turn play controls; provider/device evidence remains."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-INTERJECT-INTO-AI-RESPONSE",
+      "title": "Interject into AI response playback",
+      "specSources": [
+        "docs/product-validation-plan.md:87",
+        "docs/prototype-spec.md:790"
+      ],
+      "userPath": "Play assistant response -> Interject -> Done",
+      "corePath": "SessionEngine.playTurn(assistant_response) -> beginInterjection -> finishInterjection",
+      "durableEffect": "interjection targetType assistant_turn",
+      "positiveEvidence": [
+        "traces/ai-response-interjection.json"
+      ],
+      "negativeEvidence": [
+        "No UI test or device evidence."
+      ],
+      "falsificationFindings": [
+        "The product path now exists; it needs UI/device evidence."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-AI-FAILURE-RETRY",
+      "title": "Retryable AI failure and recovery",
+      "specSources": [
+        "docs/product-validation-plan.md:88",
+        "docs/product-validation-plan.md:106"
+      ],
+      "userPath": "Provider failure -> Retry AI button",
+      "corePath": "markProviderFailure -> SessionEngine.aiProviderFailed; retryPendingAI -> retryAIJob",
+      "durableEffect": "AI job status retryable then pending; attempts incremented; messages preserved",
+      "positiveEvidence": [
+        "traces/ai-provider-failure-retry.json"
+      ],
+      "negativeEvidence": [
+        "No UI/provider failure test.",
+        "Retry button is on playback conversation surface, not Settings despite device-validation docs mentioning pending tasks in Settings."
+      ],
+      "falsificationFindings": [
+        "Core recovery exists; product recovery evidence is incomplete."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-OFFLINE-DEGRADED",
+      "title": "Offline degraded behavior",
+      "specSources": [
+        "docs/product-validation-plan.md:89",
+        "docs/prototype-spec.md:730"
+      ],
+      "userPath": "Settings runtime profile picker -> Phone/Tablet Offline",
+      "corePath": "loadProfile(phone-tablet-offline) -> capability gating/deferred AI jobs",
+      "durableEffect": "AI jobs deferred; interjection audio preserved",
+      "positiveEvidence": [
+        "traces/phone-offline-deferred-ai.json"
+      ],
+      "negativeEvidence": [
+        "No UI test switches offline profile and verifies deferred jobs.",
+        "No airplane-mode/device evidence."
+      ],
+      "falsificationFindings": [
+        "Changing the profile now rebuilds the engine; deferred-job behavior still needs product evidence."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-SESSION-ISOLATED-EXPORT",
+      "title": "Session-isolated export",
+      "specSources": [
+        "docs/product-validation-plan.md:90",
+        "docs/product-validation-plan.md:107",
+        "docs/sessionkit-contract.md:244"
+      ],
+      "userPath": "Playback/Export -> Build Session Export",
+      "corePath": "Gate1AppModel.buildExport -> SessionEngine.buildExport",
+      "durableEffect": "export contains only selected session turns/interjections",
+      "positiveEvidence": [
+        "traces/session-isolated-export.json",
+        "Gate1FlowUITests opens export and checks preview exists"
+      ],
+      "negativeEvidence": [
+        "UI export test does not create two sessions and prove isolation.",
+        "App export options are fixed: includeListeningMap false, includeFullText false, includeInterjections true.",
+        "No Markdown export path exists."
+      ],
+      "falsificationFindings": [
+        "Core isolation is covered by trace; product export surface is narrower than spec."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-HOME-STOPS-SPEECH",
+      "title": "Home stops current speech and exits playback",
+      "specSources": [
+        "docs/prototype-spec.md:384"
+      ],
+      "userPath": "Playback toolbar Home",
+      "corePath": "Gate1AppModel.openHome -> SessionEngine.stopPlayback",
+      "durableEffect": "speech should stop and screen should become home",
+      "positiveEvidence": [
+        "App code calls stopPlayback before switching home when a session is active"
+      ],
+      "negativeEvidence": [
+        "No UI test proves speech stops."
+      ],
+      "falsificationFindings": [
+        "Home now stops the audio client, but runtime evidence is still needed."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-END-SESSION",
+      "title": "End session command",
+      "specSources": [
+        "docs/sessionkit-contract.md:132",
+        "docs/prototype-spec.md:779"
+      ],
+      "userPath": "Playback toolbar -> End Session",
+      "corePath": "Gate1AppModel.endSession -> SessionEngine.endSession",
+      "durableEffect": "session status should become finished",
+      "positiveEvidence": [
+        "SessionEngine.endSession exists and app toolbar exposes playback.end.button"
+      ],
+      "negativeEvidence": [
+        "No automated test verifies persisted finished session and stopped audio."
+      ],
+      "falsificationFindings": [
+        "End session is implemented and reachable; persistence/runtime evidence remains."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-DEVICE-EVIDENCE",
+      "title": "Phone/tablet runtime evidence with microphone, audio route, provider, offline mode",
+      "specSources": [
+        "docs/product-validation-plan.md:70",
+        "docs/device-validation.md:26"
+      ],
+      "userPath": "Manual device validation",
+      "corePath": "scripts/verify-gate1.sh and scripts/smoke-simulator.sh",
+      "durableEffect": "artifacts/gate1 screenshots/logs and device notes",
+      "positiveEvidence": [
+        "artifacts/gate1/iphone-launch.png",
+        "artifacts/gate1/ipad-launch.png"
+      ],
+      "negativeEvidence": [
+        "Existing evidence is simulator launch, not full Gate 1 flow.",
+        "No real-device microphone, AirPods, interruption, provider, or airplane-mode validation evidence."
+      ],
+      "falsificationFindings": [
+        "Gate 1 is a phone/tablet core-session gate; current evidence is insufficient for production-owner validation."
+      ],
+      "status": "not_ready"
+    }
+  ]
+}

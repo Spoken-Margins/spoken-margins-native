@@ -63,6 +63,7 @@ public final class SQLiteSessionStore: SessionRepository {
     }
 
     public func saveListeningMap(_ map: ListeningMap) throws {
+        try deleteRecords(kind: "listening_map", itemId: map.itemId)
         try save(kind: "listening_map", id: map.id, sessionId: nil, itemId: map.itemId, value: map)
     }
 
@@ -137,6 +138,20 @@ public final class SQLiteSessionStore: SessionRepository {
         bind(statement, index: 2, value: id)
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw SessionKitError.persistenceFailed("step_delete_item")
+        }
+    }
+
+    private func deleteRecords(kind: String, itemId: String) throws {
+        var statement: OpaquePointer?
+        let sql = "DELETE FROM records WHERE kind = ? AND item_id = ?;"
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SessionKitError.persistenceFailed("prepare_delete_records")
+        }
+        defer { sqlite3_finalize(statement) }
+        bind(statement, index: 1, value: kind)
+        bind(statement, index: 2, value: itemId)
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw SessionKitError.persistenceFailed("step_delete_records")
         }
     }
 
