@@ -75,4 +75,119 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(try store.listItems().map(\.id), ["item-pill"])
         XCTAssertNil(try store.loadSession(id: "session-import"))
     }
+
+    func testManualListeningMapGenerationPersistsMapAndEnablesChapterJump() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "timeline": ["chapter_timing"],
+                "ai": ["generate_listening_map"]
+            ]
+        )
+        let item = Item(
+            id: "item-generated",
+            title: "Generated",
+            mediaType: "text",
+            text: "Opening context is first. The middle explains the claim. The ending gives the consequence.",
+            externalReference: nil,
+            status: "needs_listening_map"
+        )
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo)
+
+        _ = try engine.startSession(itemId: item.id)
+        _ = try engine.generateListeningMap(itemId: item.id)
+
+        let map = try XCTUnwrap(try repo.loadListeningMap(itemId: item.id))
+        XCTAssertEqual(map.chapters.count, 3)
+        XCTAssertEqual(try repo.loadItem(id: item.id).status, "ready")
+
+        let target = map.chapters[1]
+        let snapshot = try engine.jumpToChapter(chapterId: target.id)
+        XCTAssertEqual(snapshot.chapterTitle, target.title)
+        XCTAssertEqual(repo.sessions["session-\(item.id)-gate1"]?.position.charOffset, target.startChar)
+    }
+
+    func testPauseAndResumePreserveSourcePosition() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "timeline": ["chapter_timing"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two. Three.", externalReference: nil, status: "ready")
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let audio = RecordingAudioClient()
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        _ = try engine.skipForward(unit: "sentence")
+        let offsetBeforePause = try XCTUnwrap(engine.currentSession?.position.charOffset)
+        let paused = try engine.pause()
+        let offsetAfterPause = try XCTUnwrap(engine.currentSession?.position.charOffset)
+        let resumed = try engine.resumePlayback()
+
+        XCTAssertEqual(paused.status, .paused)
+        XCTAssertEqual(resumed.status, .playing)
+        XCTAssertEqual(offsetAfterPause, offsetBeforePause)
+        XCTAssertEqual(try XCTUnwrap(engine.currentSession?.position.charOffset), offsetBeforePause)
+        XCTAssertEqual(audio.playedTargets, [item.id, item.id])
+    }
+
+    func testFinishInterjectionSchedulesTranscriptionAfterAudioIsSaved() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "interjection": ["record_audio"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two.", externalReference: nil, status: "ready")
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let transcriber = RecordingTranscriptionClient()
+        let engine = SessionEngine(profile: profile, repository: repo, transcriber: transcriber)
+
+        _ = try engine.startSession(itemId: item.id)
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: "interjections/ij-001.m4a")
+
+        let interjection = try XCTUnwrap(try repo.loadInterjections(sessionId: "session-\(item.id)-gate1").first)
+        XCTAssertEqual(interjection.audioPath, "interjections/ij-001.m4a")
+        XCTAssertEqual(interjection.transcriptionStatus, "pending")
+        XCTAssertEqual(transcriber.scheduledInterjectionIds, [interjection.id])
+        XCTAssertEqual(engine.lastScheduledTranscriptionInterjectionId, interjection.id)
+    }
+}
+
+private final class RecordingAudioClient: AudioPlaybackClient {
+    var playedTargets: [String] = []
+    var pauseCount = 0
+
+    func prepareSpeechText(_ text: String) throws -> String {
+        SpeechTextNormalizer.normalize(text)
+    }
+
+    func play(targetId: String) throws {
+        playedTargets.append(targetId)
+    }
+
+    func pause() throws {
+        pauseCount += 1
+    }
+}
+
+private final class RecordingTranscriptionClient: TranscriptionClient {
+    var scheduledInterjectionIds: [String] = []
+
+    func scheduleTranscription(interjection: Interjection) throws {
+        scheduledInterjectionIds.append(interjection.id)
+    }
 }

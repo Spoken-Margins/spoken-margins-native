@@ -29,8 +29,16 @@ public final class InMemorySessionRepository: SessionRepository {
         return item
     }
 
+    public func saveItem(_ item: Item) throws {
+        items[item.id] = item
+    }
+
     public func loadListeningMap(itemId: String) throws -> ListeningMap? {
         mapsByItemId[itemId]
+    }
+
+    public func saveListeningMap(_ map: ListeningMap) throws {
+        mapsByItemId[map.itemId] = map
     }
 
     public func saveSession(_ session: Session) throws {

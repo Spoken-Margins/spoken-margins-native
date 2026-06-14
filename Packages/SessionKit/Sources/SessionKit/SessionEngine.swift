@@ -9,10 +9,12 @@ public final class SessionEngine {
     public private(set) var lastExport: SessionExport?
     public private(set) var lastSummaryCandidates: [Interjection] = []
     public private(set) var lastSpokenText: String?
+    public private(set) var lastScheduledTranscriptionInterjectionId: String?
 
     private let repository: SessionRepository
     private let audio: AudioPlaybackClient
     private let recorder: RecordingClient
+    private let transcriber: TranscriptionClient
     private let aiProvider: AIProviderClient
     private var recordingAnchor: Anchor?
     private var recordingTargetType: InterjectionTargetType?
@@ -26,12 +28,14 @@ public final class SessionEngine {
         repository: SessionRepository,
         audio: AudioPlaybackClient = NoopAudioPlaybackClient(),
         recorder: RecordingClient = NoopRecordingClient(),
+        transcriber: TranscriptionClient = DeferredTranscriptionClient(),
         aiProvider: AIProviderClient = DeterministicAIProvider()
     ) {
         self.profile = profile
         self.repository = repository
         self.audio = audio
         self.recorder = recorder
+        self.transcriber = transcriber
         self.aiProvider = aiProvider
     }
 
@@ -63,11 +67,58 @@ public final class SessionEngine {
     }
 
     @discardableResult
+    public func pause() throws -> SessionSnapshot {
+        try requirePlayback("pause")
+        guard let session = currentSession else {
+            throw SessionKitError.invalidCommandForState("pause")
+        }
+        try audio.pause()
+        publish(status: .paused, phase: session.phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func resumePlayback() throws -> SessionSnapshot {
+        try requirePlayback("resumePlayback")
+        guard let session = currentSession else {
+            throw SessionKitError.invalidCommandForState("resumePlayback")
+        }
+        try audio.play(targetId: session.currentTargetId)
+        publish(status: .playing, phase: session.phase)
+        return snapshot
+    }
+
+    @discardableResult
     public func prepareSpeechText(itemId: String, targetType: TargetType) throws -> SessionSnapshot {
         let item = try repository.loadItem(id: itemId)
         lastSpokenText = SpeechTextNormalizer.normalize(item.text ?? "")
         currentItem = item
         snapshot.title = item.title
+        return snapshot
+    }
+
+    @discardableResult
+    public func generateListeningMap(itemId: String) throws -> SessionSnapshot {
+        try require("generateListeningMap", category: "ai", capabilities: ["generate_listening_map"])
+        var item = try repository.loadItem(id: itemId)
+        let map = generatedListeningMap(for: item)
+        try repository.saveListeningMap(map)
+        if item.status == "needs_listening_map" {
+            item.status = "ready"
+            try repository.saveItem(item)
+        }
+        if currentItem?.id == itemId || currentSession?.itemId == itemId {
+            currentItem = item
+            currentMap = map
+            if var session = currentSession, session.itemId == itemId {
+                session.position.chapterId = chapterId(for: session.position.charOffset)
+                currentSession = session
+                try repository.saveSession(session)
+                publish(status: snapshot.status, phase: session.phase)
+            } else {
+                snapshot.title = item.title
+            }
+        }
         return snapshot
     }
 
@@ -163,15 +214,18 @@ public final class SessionEngine {
             status: "active"
         )
         try repository.saveInterjection(interjection)
+        try transcriber.scheduleTranscription(interjection: interjection)
+        lastScheduledTranscriptionInterjectionId = interjection.id
+        snapshot.lastInterjectionAnchorType = anchor.anchorType
+        snapshot.lastInterjectionTargetType = targetType
         session.phase = priorPhaseForResume(targetType: targetType)
         if let item = currentItem, targetType == .item {
             session.position.charOffset = max(0, previousBoundary(before: session.position.charOffset, unit: "sentence", text: item.text ?? ""))
             session.completionPercent = percent(for: session.position.charOffset, text: item.text ?? "")
+            session.position.chapterId = chapterId(for: session.position.charOffset)
         }
         currentSession = session
         try repository.saveSession(session)
-        snapshot.lastInterjectionAnchorType = anchor.anchorType
-        snapshot.lastInterjectionTargetType = targetType
         publish(status: .playing, phase: session.phase)
         return snapshot
     }
@@ -620,6 +674,75 @@ public final class SessionEngine {
         currentMap?.chapters.last(where: { $0.startChar <= charOffset })?.id
     }
 
+    private func generatedListeningMap(for item: Item) -> ListeningMap {
+        let text = item.text ?? ""
+        let starts = generatedChapterStarts(for: text)
+        let chapters = starts.enumerated().map { index, start in
+            let end = index + 1 < starts.count ? starts[index + 1] : text.count
+            let title = generatedChapterTitle(text: text, start: start, end: end, index: index)
+            return Chapter(
+                id: "ch-generated-\(String(format: "%02d", index + 1))",
+                title: title,
+                startChar: start,
+                endChar: max(start, end),
+                percent: percent(for: start, text: text)
+            )
+        }
+        return ListeningMap(
+            id: "map-\(item.id)-generated",
+            itemId: item.id,
+            overview: generatedOverview(for: item, chapters: chapters),
+            chapters: chapters
+        )
+    }
+
+    private func generatedChapterStarts(for text: String) -> [Int] {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [0] }
+        let sentenceStarts = sentenceStartOffsets(in: text)
+        guard sentenceStarts.count > 8 else { return sentenceStarts }
+        let targetCount = min(12, max(5, Int((Double(text.count) / 900.0).rounded(.up))))
+        let stride = max(1, Int((Double(sentenceStarts.count) / Double(targetCount)).rounded(.up)))
+        var starts = sentenceStarts.enumerated().compactMap { index, start in
+            index % stride == 0 ? start : nil
+        }
+        if starts.first != 0 { starts.insert(0, at: 0) }
+        return Array(starts.prefix(12))
+    }
+
+    private func sentenceStartOffsets(in text: String) -> [Int] {
+        let chars = Array(text)
+        var starts = [0]
+        var index = 0
+        while index < chars.count {
+            if ".!?".contains(chars[index]) {
+                let next = index + 1 + consumeSpaces(chars, from: index + 1)
+                if next < chars.count {
+                    starts.append(next)
+                }
+            }
+            index += 1
+        }
+        return Array(NSOrderedSet(array: starts)) as? [Int] ?? starts
+    }
+
+    private func generatedChapterTitle(text: String, start: Int, end: Int, index: Int) -> String {
+        let raw = slice(text, start: start, end: min(end, nextBoundary(after: start, unit: "sentence", text: text)))
+        let words = raw
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .split(separator: " ")
+            .prefix(6)
+            .joined(separator: " ")
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".!?;:,"))
+        return words.isEmpty ? "Chapter \(index + 1)" : words
+    }
+
+    private func generatedOverview(for item: Item, chapters: [Chapter]) -> String {
+        if chapters.isEmpty {
+            return "Generated Listening Map for \(item.title)."
+        }
+        return "Generated Listening Map with \(chapters.count) chapter\(chapters.count == 1 ? "" : "s") for \(item.title)."
+    }
+
     private func percent(for charOffset: Int, text: String) -> Int {
         guard !text.isEmpty else { return 0 }
         return min(100, max(0, Int((Double(charOffset) / Double(text.count)) * 100)))
@@ -720,6 +843,11 @@ public struct NoopRecordingClient: RecordingClient {
     public func beginRecording() throws {}
     public func finishRecording(audioRef: String?) throws -> String { audioRef ?? "interjections/generated.m4a" }
     public func cancelRecording() throws {}
+}
+
+public struct DeferredTranscriptionClient: TranscriptionClient {
+    public init() {}
+    public func scheduleTranscription(interjection: Interjection) throws {}
 }
 
 public struct DeterministicAIProvider: AIProviderClient {

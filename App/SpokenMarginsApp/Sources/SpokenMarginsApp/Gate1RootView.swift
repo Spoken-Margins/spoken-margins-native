@@ -259,6 +259,13 @@ private struct ItemScreen: View {
                     .font(.body)
                     .lineSpacing(4)
                 Button {
+                    model.generateListeningMap()
+                } label: {
+                    Label("Generate Listening Map", systemImage: "sparkles")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .accessibilityIdentifier("item.generateMap.button")
+                Button {
                     model.startItem(id: model.selectedItem.id)
                 } label: {
                     Label("Read Item", systemImage: "play")
@@ -278,12 +285,23 @@ private struct ItemScreen: View {
             }
             if model.selectedItem.chapters.isEmpty {
                 ProductPanel {
-                    Text("Mapless playback is available.")
-                        .foregroundStyle(AppColors.secondaryText)
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Mapless playback is available.")
+                            .foregroundStyle(AppColors.secondaryText)
+                        Button {
+                            model.generateListeningMap()
+                        } label: {
+                            Label("Generate Listening Map", systemImage: "sparkles")
+                        }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .accessibilityIdentifier("chapters.generateMap.button")
+                    }
                 }
             } else {
                 ForEach(model.selectedItem.chapters, id: \.id) { chapter in
-                    ProductPanel {
+                    Button {
+                        model.jumpToChapter(chapter)
+                    } label: {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("\(chapter.percent)%")
                                 .font(.headline)
@@ -292,6 +310,8 @@ private struct ItemScreen: View {
                                 .font(.headline)
                         }
                     }
+                    .buttonStyle(PlainPanelButtonStyle())
+                    .accessibilityIdentifier("chapter.jump.\(chapter.id)")
                 }
             }
         }
@@ -436,7 +456,7 @@ private struct PlaybackScreen: View {
                         .trim(from: 0, to: CGFloat(max(0, min(100, model.snapshot.progressPercent))) / 100)
                         .stroke(AppColors.accent, style: StrokeStyle(lineWidth: 12, lineCap: .round))
                         .rotationEffect(.degrees(-90))
-                    Button(action: model.start) {
+                    Button(action: model.playPause) {
                         Image(systemName: model.snapshot.status == .playing ? "pause.fill" : "play.fill")
                             .font(.title)
                     }
@@ -518,7 +538,13 @@ private struct PlaybackScreen: View {
                 }
             } else {
                 ForEach(model.selectedItem.chapters, id: \.id) { chapter in
-                    TimelineRow(percent: "\(chapter.percent)%", title: chapter.title, subtitle: chapter.id)
+                    Button {
+                        model.jumpToChapter(chapter)
+                    } label: {
+                        TimelineRow(percent: "\(chapter.percent)%", title: chapter.title, subtitle: chapter.id)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("timeline.chapter.jump.\(chapter.id)")
                 }
                 ForEach(model.selectedItem.interjections, id: \.id) { interjection in
                     TimelineRow(
@@ -712,6 +738,17 @@ private struct ProductPanel<Content: View>: View {
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.white)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppColors.border))
+    }
+}
+
+private struct PlainPanelButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.white.opacity(configuration.isPressed ? 0.72 : 1))
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppColors.border))
     }

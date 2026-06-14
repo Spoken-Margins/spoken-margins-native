@@ -127,6 +127,56 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    func playPause() {
+        if snapshot.status == .playing {
+            pause()
+        } else if hasActiveSession {
+            resumePlayback()
+        } else {
+            start()
+        }
+    }
+
+    func pause() {
+        run { engine in
+            snapshot = try engine.pause()
+            refreshSelectedItem()
+            reportSuccess("Paused.")
+        }
+    }
+
+    func resumePlayback() {
+        run { engine in
+            snapshot = try engine.resumePlayback()
+            refreshSelectedItem()
+            reportSuccess("Resumed.")
+        }
+    }
+
+    func generateListeningMap() {
+        run { engine in
+            snapshot = try engine.generateListeningMap(itemId: activeItemId)
+            if let store {
+                libraryItems = try loadLibraryRows(store: store)
+            }
+            refreshSelectedItem()
+            diagnostics["lastGeneratedMapItem"] = activeItemId
+            reportSuccess("Generated Listening Map.")
+        }
+    }
+
+    func jumpToChapter(_ chapter: Chapter) {
+        run { engine in
+            if !hasActiveSession {
+                snapshot = try engine.startSession(itemId: activeItemId)
+            }
+            snapshot = try engine.jumpToChapter(chapterId: chapter.id)
+            refreshSelectedItem()
+            screen = .playback
+            reportSuccess("Jumped to \(chapter.title).")
+        }
+    }
+
     func openHome() {
         screen = .home
     }
@@ -216,7 +266,7 @@ final class Gate1AppModel: ObservableObject {
         run { engine in
             snapshot = try engine.finishInterjection(audioRef: nil)
             refreshSelectedItem()
-            reportSuccess("Saved interjection.")
+            reportSuccess("Saved interjection. Transcription pending.")
         }
     }
 

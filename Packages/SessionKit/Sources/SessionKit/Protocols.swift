@@ -2,7 +2,9 @@ import Foundation
 
 public protocol SessionRepository {
     func loadItem(id: String) throws -> Item
+    func saveItem(_ item: Item) throws
     func loadListeningMap(itemId: String) throws -> ListeningMap?
+    func saveListeningMap(_ map: ListeningMap) throws
     func saveSession(_ session: Session) throws
     func loadSession(id: String) throws -> Session?
     func saveInterjection(_ interjection: Interjection) throws
@@ -24,6 +26,10 @@ public protocol RecordingClient {
     func beginRecording() throws
     func finishRecording(audioRef: String?) throws -> String
     func cancelRecording() throws
+}
+
+public protocol TranscriptionClient {
+    func scheduleTranscription(interjection: Interjection) throws
 }
 
 public protocol AIProviderClient {

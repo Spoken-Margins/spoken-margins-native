@@ -53,9 +53,17 @@ public final class SQLiteSessionStore: SessionRepository {
         try load(kind: "item", id: id)
     }
 
+    public func saveItem(_ item: Item) throws {
+        try save(kind: "item", id: item.id, sessionId: nil, itemId: item.id, value: item)
+    }
+
     public func loadListeningMap(itemId: String) throws -> ListeningMap? {
         let maps: [ListeningMap] = try loadByItem(kind: "listening_map", itemId: itemId)
         return maps.first
+    }
+
+    public func saveListeningMap(_ map: ListeningMap) throws {
+        try save(kind: "listening_map", id: map.id, sessionId: nil, itemId: map.itemId, value: map)
     }
 
     public func saveSession(_ session: Session) throws {
@@ -99,11 +107,11 @@ public final class SQLiteSessionStore: SessionRepository {
     }
 
     public func seed(item: Item) throws {
-        try save(kind: "item", id: item.id, sessionId: nil, itemId: item.id, value: item)
+        try saveItem(item)
     }
 
     public func seed(map: ListeningMap) throws {
-        try save(kind: "listening_map", id: map.id, sessionId: nil, itemId: map.itemId, value: map)
+        try saveListeningMap(map)
     }
 
     public func seed(interjection: Interjection) throws {
