@@ -1,5 +1,6 @@
 import SwiftUI
 import SessionKit
+import UniformTypeIdentifiers
 
 struct Gate1RootView: View {
     @EnvironmentObject private var model: Gate1AppModel
@@ -32,6 +33,7 @@ private struct HomeScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @FocusState private var focusedField: Field?
+    @State private var isImportingObsidianFiles = false
 
     private enum Field {
         case title
@@ -85,6 +87,18 @@ private struct HomeScreen: View {
                 }
             }
             .scrollDismissesKeyboard(.interactively)
+            .fileImporter(
+                isPresented: $isImportingObsidianFiles,
+                allowedContentTypes: [UTType(filenameExtension: "md") ?? .plainText],
+                allowsMultipleSelection: true
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    model.importObsidianMarkdownFiles(urls: urls)
+                case .failure(let error):
+                    model.reportImportFailure(error)
+                }
+            }
         }
     }
 
@@ -121,6 +135,14 @@ private struct HomeScreen: View {
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .accessibilityIdentifier("create.start.button")
+                Button {
+                    focusedField = nil
+                    isImportingObsidianFiles = true
+                } label: {
+                    Label("Import Obsidian Files", systemImage: "doc.badge.plus")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .accessibilityIdentifier("obsidian.import.button")
             }
         }
     }
@@ -701,6 +723,9 @@ private struct SettingsScreen: View {
     private enum Field {
         case baseURL
         case model
+        case mapModel
+        case summaryModel
+        case conversationModel
         case apiKey
     }
 
@@ -719,6 +744,21 @@ private struct SettingsScreen: View {
                         .autocorrectionDisabled()
                         .focused($focusedField, equals: .model)
                         .accessibilityIdentifier("provider.model.field")
+                    TextField("Listening Map Model", text: $model.listeningMapModel)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .focused($focusedField, equals: .mapModel)
+                        .accessibilityIdentifier("provider.mapModel.field")
+                    TextField("Summary Model", text: $model.summaryModel)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .focused($focusedField, equals: .summaryModel)
+                        .accessibilityIdentifier("provider.summaryModel.field")
+                    TextField("Conversation Model", text: $model.conversationModel)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .focused($focusedField, equals: .conversationModel)
+                        .accessibilityIdentifier("provider.conversationModel.field")
                     SecureField("API Key", text: $model.providerAPIKey)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()

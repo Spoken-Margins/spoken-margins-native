@@ -635,6 +635,54 @@
       "status": "partial"
     },
     {
+      "id": "G1-OBSIDIAN-BULK-IMPORT",
+      "title": "Bulk import Obsidian Web Clipper Markdown files as items",
+      "specSources": [
+        "docs/prototype-spec.md:730",
+        "docs/prototype-spec.md:857"
+      ],
+      "userPath": "Home -> Import Obsidian Files -> select one or more .md files",
+      "corePath": "Gate1AppModel.importObsidianMarkdownFiles -> ObsidianMarkdownParser.parse -> SQLiteSessionStore.saveItem",
+      "durableEffect": "one item per successfully parsed Markdown file; title/source metadata preserved; item text cleaned for listening",
+      "positiveEvidence": [
+        "SessionKitCoreTests.testObsidianWebClipperImportCleansTranscriptTimestampsAndMetadata",
+        "SessionKitCoreTests.testObsidianWebClipperImportCleansBlogMarkdownLinks",
+        "Home screen exposes obsidian.import.button with native multi-file importer"
+      ],
+      "negativeEvidence": [
+        "No UI test drives the native document picker.",
+        "Raw original Markdown is not stored separately from cleaned listening text."
+      ],
+      "falsificationFindings": [
+        "Parser handles YAML frontmatter, Web Clipper source/title, Markdown links, image-only embeds, timestamp indexes, and transcript timestamp prefixes; device/files-provider evidence remains."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-AI-MODEL-ROUTING",
+      "title": "Separate AI models for Listening Map, summary, and conversation",
+      "specSources": [
+        "docs/prototype-spec.md:312",
+        "docs/sessionkit-contract.md:215"
+      ],
+      "userPath": "Settings -> Provider -> Listening Map Model / Summary Model / Conversation Model",
+      "corePath": "Gate1AppModel.modelForAIJob -> makeChatCompletionsRequest",
+      "durableEffect": "provider request uses the configured model for each job kind; pending AI job model is updated where a job exists",
+      "positiveEvidence": [
+        "Settings screen exposes provider.mapModel.field, provider.summaryModel.field, and provider.conversationModel.field",
+        "Listening Map provider generation uses listeningMapModel with one parser-informed retry",
+        "Summary and follow-up calls route through summaryModel and conversationModel"
+      ],
+      "negativeEvidence": [
+        "No provider integration test asserts outgoing model payloads.",
+        "Listening Map generation does not yet persist an AIJob record for provider attempts."
+      ],
+      "falsificationFindings": [
+        "Routing is implemented in the app request path, but provider-observed evidence and retry/export assertions remain missing."
+      ],
+      "status": "partial"
+    },
+    {
       "id": "G1-DEVICE-EVIDENCE",
       "title": "Phone/tablet runtime evidence with microphone, audio route, provider, offline mode",
       "specSources": [

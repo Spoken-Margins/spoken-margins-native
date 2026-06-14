@@ -11,6 +11,63 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertTrue(source.contains("https://example.com/x"))
     }
 
+    func testObsidianWebClipperImportCleansTranscriptTimestampsAndMetadata() throws {
+        let markdown = """
+        ---
+        title: "Sarah Paine - Why Putin and Xi can't escape geography"
+        source: "https://www.youtube.com/watch?v=OS1NZLgKM2c&list=TLPQMTAwNjIwMjZENlo5qll1wg&index=11"
+        tags:
+          - "clippings"
+        ---
+        ![](https://www.youtube.com/watch?v=OS1NZLgKM2c)
+
+        𝐓𝐈𝐌𝐄𝐒𝐓𝐀𝐌𝐏𝐒
+        00:00:00 - Setting the stage
+        00:12:10 - The continental powers
+
+        ## Transcript
+
+        ### Setting the stage
+
+        **0:00** · Good evening. It's such a pleasure to be with you.
+        **0:29** · Geopolitics is the influence of geography on politics.
+        """
+
+        let parsed = try ObsidianMarkdownParser.parse(fileName: "Sarah Paine.md", contents: markdown)
+
+        XCTAssertEqual(parsed.title, "Sarah Paine - Why Putin and Xi can't escape geography")
+        XCTAssertEqual(parsed.source, "https://www.youtube.com/watch?v=OS1NZLgKM2c&list=TLPQMTAwNjIwMjZENlo5qll1wg&index=11")
+        XCTAssertFalse(parsed.text.contains("Timestamps"))
+        XCTAssertFalse(parsed.text.contains("00:00:00"))
+        XCTAssertFalse(parsed.text.contains("0:29"))
+        XCTAssertFalse(parsed.text.contains("youtube.com"))
+        XCTAssertTrue(parsed.text.contains("Good evening."))
+        XCTAssertTrue(parsed.text.contains("Geopolitics is the influence"))
+    }
+
+    func testObsidianWebClipperImportCleansBlogMarkdownLinks() throws {
+        let markdown = """
+        ---
+        title: "We’ve Been Thinking About AI All Wrong"
+        source: "https://www.foursightonline.com/blog/weve-been-thinking-about-ai-all-wrong"
+        ---
+        Last May, someone said:
+
+        > We think of AI as a tool.
+
+        For more information go to [https://atdconference.td.org](https://atdconference.td.org/)
+        [See the platform](https://www.foursightonline.com/the-platform-old)
+        """
+
+        let parsed = try ObsidianMarkdownParser.parse(fileName: "clip.md", contents: markdown)
+
+        XCTAssertEqual(parsed.title, "We’ve Been Thinking About AI All Wrong")
+        XCTAssertTrue(parsed.text.contains("We think of AI as a tool."))
+        XCTAssertTrue(parsed.text.contains("See the platform"))
+        XCTAssertFalse(parsed.text.contains("---"))
+        XCTAssertFalse(parsed.text.contains("https://"))
+    }
+
     func testCapabilityGateRejectsUnsupportedCommand() throws {
         let profile = RuntimeCapabilityProfile(
             id: "lock-screen-widget",

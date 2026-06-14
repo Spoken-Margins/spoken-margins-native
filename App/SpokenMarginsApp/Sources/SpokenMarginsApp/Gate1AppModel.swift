@@ -49,6 +49,9 @@ final class Gate1AppModel: ObservableObject {
     @Published var listeningMapJSON = ""
     @Published var providerBaseURL = UserDefaults.standard.string(forKey: "providerBaseURL") ?? "https://api.openai.com/v1"
     @Published var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-4.1-mini"
+    @Published var listeningMapModel = UserDefaults.standard.string(forKey: "listeningMapModel") ?? UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-4.1-mini"
+    @Published var summaryModel = UserDefaults.standard.string(forKey: "summaryModel") ?? UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-4.1-mini"
+    @Published var conversationModel = UserDefaults.standard.string(forKey: "conversationModel") ?? UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-4.1-mini"
     @Published var providerAPIKey = KeychainStore.load(service: "SpokenMargins", account: "OpenAICompatibleAPIKey") ?? ""
     @Published var providerProbeStatus = "Not checked"
     @Published var knownIssues = [
@@ -118,6 +121,57 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    func importObsidianMarkdownFiles(urls: [URL]) {
+        do {
+            let store = try requireStore()
+            var imported: [Item] = []
+            var failures: [String] = []
+            for (index, url) in urls.enumerated() {
+                let didAccess = url.startAccessingSecurityScopedResource()
+                defer {
+                    if didAccess {
+                        url.stopAccessingSecurityScopedResource()
+                    }
+                }
+                do {
+                    let raw = try String(contentsOf: url, encoding: .utf8)
+                    let parsed = try ObsidianMarkdownParser.parse(fileName: url.lastPathComponent, contents: raw)
+                    let item = Item(
+                        id: obsidianItemId(fileName: url.lastPathComponent, index: index),
+                        title: parsed.title,
+                        mediaType: "text",
+                        text: parsed.text,
+                        externalReference: parsed.source ?? url.lastPathComponent,
+                        status: "needs_listening_map"
+                    )
+                    try store.saveItem(item)
+                    imported.append(item)
+                } catch {
+                    failures.append("\(url.lastPathComponent): \(error)")
+                }
+            }
+            guard !imported.isEmpty else {
+                reportFailure(failures.isEmpty ? "No Markdown files were imported." : failures.joined(separator: "\n"))
+                return
+            }
+            self.engine = try makeEngine(store: store)
+            activeItemId = imported.first?.id ?? activeItemId
+            libraryItems = try loadLibraryRows(store: store)
+            selectedItem = try loadItemDetail(id: activeItemId, store: store)
+            diagnostics["lastObsidianImportCount"] = "\(imported.count)"
+            diagnostics["lastObsidianImportFailures"] = "\(failures.count)"
+            screen = .home
+            let suffix = failures.isEmpty ? "" : " \(failures.count) failed."
+            reportSuccess("Imported \(imported.count) Obsidian file\(imported.count == 1 ? "" : "s").\(suffix)")
+        } catch {
+            reportFailure(error, context: "Obsidian import failed")
+        }
+    }
+
+    func reportImportFailure(_ error: Error) {
+        reportFailure(error, context: "File import failed")
+    }
+
     func start() {
         run { engine in
             snapshot = try engine.startSession(itemId: activeItemId)
@@ -156,6 +210,68 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func generateListeningMap() {
+        guard !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            run { engine in
+                snapshot = try engine.generateListeningMap(itemId: activeItemId)
+                if let store {
+                    libraryItems = try loadLibraryRows(store: store)
+                }
+                refreshSelectedItem()
+                diagnostics["lastGeneratedMapItem"] = activeItemId
+                diagnostics["lastListeningMapMode"] = "local_deterministic"
+                reportSuccess("Generated local Listening Map.")
+            }
+            return
+        }
+
+        statusMessage = "Calling \(modelForAIJob(kind: "listening_map")) for Listening Map."
+        lastError = nil
+        Task {
+            await generateProviderListeningMap()
+        }
+    }
+
+    private func generateProviderListeningMap() async {
+        do {
+            let store = try requireStore()
+            var item = try store.loadItem(id: activeItemId)
+            guard let text = item.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw ManualListeningMapError.itemHasNoText
+            }
+            let model = modelForAIJob(kind: "listening_map")
+            diagnostics["lastListeningMapModel"] = model
+            let firstPrompt = listeningMapPrompt(sourceText: text)
+            let firstResponse = try await callProvider(messages: [firstPrompt], model: model, systemPrompt: systemPromptForAIJob(kind: "listening_map"))
+            do {
+                try saveProviderListeningMapResponse(firstResponse, item: &item, store: store)
+                diagnostics["lastListeningMapRepairAttempt"] = "0"
+                reportSuccess("Generated Listening Map with \(model).")
+            } catch {
+                let repairPrompt = listeningMapRepairPrompt(sourceText: text, invalidResponse: firstResponse, error: String(describing: error))
+                let repairedResponse = try await callProvider(messages: [repairPrompt], model: model, systemPrompt: systemPromptForAIJob(kind: "listening_map"))
+                try saveProviderListeningMapResponse(repairedResponse, item: &item, store: store)
+                diagnostics["lastListeningMapRepairAttempt"] = "1"
+                diagnostics["lastListeningMapInitialError"] = String(describing: error)
+                reportSuccess("Generated repaired Listening Map with \(model).")
+            }
+        } catch {
+            reportFailure(error, context: "Listening Map generation failed")
+        }
+    }
+
+    private func saveProviderListeningMapResponse(_ response: String, item: inout Item, store: SQLiteSessionStore) throws {
+        let map = try parseListeningMapJSON(response, item: item)
+        try store.saveListeningMap(map)
+        item.status = "ready"
+        try store.saveItem(item)
+        libraryItems = try loadLibraryRows(store: store)
+        selectedItem = try loadItemDetail(id: item.id, store: store)
+        listeningMapJSON = response
+        diagnostics["lastGeneratedMapItem"] = item.id
+        diagnostics["lastListeningMapMode"] = "provider"
+    }
+
+    private func generateLocalListeningMap() {
         run { engine in
             snapshot = try engine.generateListeningMap(itemId: activeItemId)
             if let store {
@@ -344,7 +460,7 @@ final class Gate1AppModel: ObservableObject {
     func followUp(_ text: String) {
         run { engine in
             snapshot = try engine.submitFollowup(text: text)
-            submitProviderJobIfNeeded(kind: "assistant_response", turnId: "turn-response-001", messages: [text])
+            submitProviderJobIfNeeded(kind: "assistant_response", turnId: "turn-response-001", messages: [conversationPrompt(followUp: text)])
             refreshSelectedItem()
             reportSuccess(snapshot.pendingAiJobStatus == "deferred" ? "Follow-up queued for later." : "Follow-up submitted.")
         }
@@ -404,9 +520,15 @@ final class Gate1AppModel: ObservableObject {
     func saveProviderSettings() {
         UserDefaults.standard.set(providerBaseURL, forKey: "providerBaseURL")
         UserDefaults.standard.set(providerModel, forKey: "providerModel")
+        UserDefaults.standard.set(listeningMapModel, forKey: "listeningMapModel")
+        UserDefaults.standard.set(summaryModel, forKey: "summaryModel")
+        UserDefaults.standard.set(conversationModel, forKey: "conversationModel")
         KeychainStore.save(providerAPIKey, service: "SpokenMargins", account: "OpenAICompatibleAPIKey")
         diagnostics["providerBaseURL"] = providerBaseURL
         diagnostics["providerModel"] = providerModel
+        diagnostics["listeningMapModel"] = listeningMapModel
+        diagnostics["summaryModel"] = summaryModel
+        diagnostics["conversationModel"] = conversationModel
         diagnostics["apiKeyConfigured"] = providerAPIKey.isEmpty ? "false" : "true"
         if rebuildEngineForCurrentSettings() {
             screen = .settings
@@ -521,12 +643,14 @@ final class Gate1AppModel: ObservableObject {
             screen = .settings
             return
         }
-        guard let request = makeChatCompletionsRequest(messages: messages) else {
+        let selectedModel = modelForAIJob(kind: kind)
+        recordModelForPendingJob(kind: kind, model: selectedModel)
+        guard let request = makeChatCompletionsRequest(messages: messages, model: selectedModel, systemPrompt: systemPromptForAIJob(kind: kind)) else {
             markProviderFailure("provider_url_invalid", userMessage: "AI provider URL is invalid.")
             screen = .settings
             return
         }
-        statusMessage = "Calling provider for \(kind)."
+        statusMessage = "Calling \(selectedModel) for \(kind)."
         lastError = nil
         Task {
             do {
@@ -556,7 +680,23 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func makeChatCompletionsRequest(messages: [String]) -> URLRequest? {
+    private func callProvider(messages: [String], model: String, systemPrompt: String) async throws -> String {
+        guard !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ProviderCallError.missingAPIKey
+        }
+        guard let request = makeChatCompletionsRequest(messages: messages, model: model, systemPrompt: systemPrompt) else {
+            throw ProviderCallError.invalidURL
+        }
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else {
+            let body = String(data: data, encoding: .utf8) ?? "HTTP \(status)"
+            throw ProviderCallError.http(status, body)
+        }
+        return try decodeProviderText(data)
+    }
+
+    private func makeChatCompletionsRequest(messages: [String], model: String, systemPrompt: String) -> URLRequest? {
         let trimmed = providerBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard let url = URL(string: "\(trimmed)/chat/completions") else { return nil }
@@ -565,13 +705,80 @@ final class Gate1AppModel: ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(providerAPIKey)", forHTTPHeaderField: "Authorization")
         let payload = ChatCompletionRequest(
-            model: providerModel,
-            messages: [ChatMessage(role: "system", content: "You are the Spoken Margins Gate 1 assistant. Preserve user source meaning, answer concisely, and make failures explicit.")] +
+            model: model,
+            messages: [ChatMessage(role: "system", content: systemPrompt)] +
                 messages.map { ChatMessage(role: "user", content: $0) },
             temperature: 0.2
         )
         request.httpBody = try? JSONEncoder().encode(payload)
         return request
+    }
+
+    private func modelForAIJob(kind: String) -> String {
+        let configured: String
+        switch kind {
+        case "listening_map":
+            configured = listeningMapModel
+        case "interjection_summary":
+            configured = summaryModel
+        case "assistant_response":
+            configured = conversationModel
+        default:
+            configured = providerModel
+        }
+        let trimmed = configured.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? providerModel : trimmed
+    }
+
+    private func systemPromptForAIJob(kind: String) -> String {
+        switch kind {
+        case "listening_map":
+            return "Return only strict JSON for the requested Listening Map. Do not wrap the response in Markdown."
+        case "interjection_summary":
+            return """
+            You are having a Spoken Margins listening-session debrief with the user.
+            Summarize patterns in the user's interjections and identify the key points they are making in relation to the source.
+            Do not merely summarize the source. Use the source text as context.
+
+            Respond exactly:
+            <sm_response>
+            A text-to-speech friendly synthesis of the user's engagement with the source.
+            </sm_response>
+            <sm_chapters_json>
+            {"schemaVersion":"assistant-response-map.v1","chapters":[...]}
+            </sm_chapters_json>
+
+            Do not include sm_summary. Chapter anchors must be exact phrases from your response.
+            """
+        case "assistant_response":
+            return """
+            You are continuing a Spoken Margins listening session.
+
+            Respond exactly:
+            <sm_response>
+            Your full spoken response.
+            </sm_response>
+            <sm_chapters_json>
+            {"schemaVersion":"assistant-response-map.v1","chapters":[...]}
+            </sm_chapters_json>
+
+            Do not include sm_summary. The response should be useful for immediate text-to-speech.
+            Chapter anchors must be exact phrases from the full response.
+            """
+        default:
+            return "You are the Spoken Margins Gate 1 assistant. Preserve user source meaning, answer concisely, and make failures explicit."
+        }
+    }
+
+    private func recordModelForPendingJob(kind: String, model: String) {
+        guard let sessionId = snapshot.sessionId,
+              let store,
+              var job = try? store.loadAIJobs(sessionId: sessionId).last(where: { $0.kind == kind && $0.status != "complete" }) else {
+            return
+        }
+        job.model = model
+        try? store.updateAIJob(job)
+        diagnostics["last\(kind.replacingOccurrences(of: "_", with: " ").capitalized.replacingOccurrences(of: " ", with: ""))Model"] = model
     }
 
     private func decodeProviderText(_ data: Data) throws -> String {
@@ -585,6 +792,45 @@ final class Gate1AppModel: ObservableObject {
             return raw
         }
         throw ProviderCallError.emptyResponse
+    }
+
+    private func listeningMapPrompt(sourceText: String) -> String {
+        """
+        Create a Listening Map for the item content below.
+        The user will listen to this content through text-to-speech. The interface may eventually be as small as an Apple Watch, so the map must support quick navigation and situational awareness.
+        Return only strict JSON. Use schemaVersion "listening-map.v1".
+        Requirements: brief overview, main claims, navigable chapters, exact anchors copied from source, no invented anchors, no percent estimates.
+        ITEM CONTENT:
+        <<<
+        \(sourceText)
+        >>>
+        """
+    }
+
+    private func listeningMapRepairPrompt(sourceText: String, invalidResponse: String, error: String) -> String {
+        """
+        Repair the Listening Map JSON below. Return only strict JSON with schemaVersion "listening-map.v1".
+
+        Parser/validator error:
+        \(error)
+
+        Requirements:
+        - Keep only JSON. No Markdown fences.
+        - Every chapter must have id, title, description, and anchor.
+        - Every anchor must be an exact phrase copied from ITEM CONTENT.
+        - Do not include percent estimates.
+        - Prefer preserving the previous chapter intent if the anchor can be fixed.
+
+        INVALID RESPONSE:
+        <<<
+        \(invalidResponse)
+        >>>
+
+        ITEM CONTENT:
+        <<<
+        \(sourceText)
+        >>>
+        """
     }
 
     private func markProviderFailure(_ error: String, userMessage: String) {
@@ -632,19 +878,65 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func summaryPrompt(interjections: [Interjection]) -> String {
-        guard !interjections.isEmpty else {
-            return "Summarize the current Spoken Margins interjections for the active item. If no transcript exists yet, say what can be inferred from the saved anchors and audio references."
-        }
-        let lines = interjections.map { interjection in
-            [
-                "id=\(interjection.id)",
-                "target=\(interjection.targetType.rawValue):\(interjection.targetId)",
-                "anchorBefore=\(interjection.anchor.anchorBefore)",
-                "transcript=\(interjection.cleanedTranscript ?? interjection.transcript ?? "pending")",
-                "audio=\(interjection.audioPath ?? "none")"
-            ].joined(separator: "\n")
-        }.joined(separator: "\n\n")
-        return "Summarize these Spoken Margins interjections and identify follow-up questions:\n\n\(lines)"
+        """
+        I would like to have a session with you, the article, and my interjections below.
+        \(sessionContextJSON(interjections: interjections, currentFollowUp: nil))
+        """
+    }
+
+    private func conversationPrompt(followUp: String) -> String {
+        """
+        Respond to the user's current follow-up in the context of the source, Listening Map, interjections, and recent session turns.
+        Focus on the user's thinking and questions. Do not summarize the source unless needed.
+        \(sessionContextJSON(interjections: selectedItem.interjections, currentFollowUp: followUp))
+        """
+    }
+
+    private func sessionContextJSON(interjections: [Interjection], currentFollowUp: String?) -> String {
+        let map: [String: Any] = [
+            "schemaVersion": currentFollowUp == nil ? "session-export.v1" : "conversation-context.v1",
+            "item": [
+                "id": selectedItem.id,
+                "title": selectedItem.title,
+                "externalReference": selectedItem.externalReference,
+                "text": selectedItem.text
+            ],
+            "listeningMap": [
+                "overview": selectedItem.overview,
+                "chapters": selectedItem.chapters.map { chapter in
+                    [
+                        "id": chapter.id,
+                        "title": chapter.title,
+                        "startChar": chapter.startChar,
+                        "endChar": chapter.endChar
+                    ]
+                }
+            ],
+            "interjections": interjections.map { interjection in
+                [
+                    "id": interjection.id,
+                    "targetType": interjection.targetType.rawValue,
+                    "targetId": interjection.targetId,
+                    "anchorBefore": interjection.anchor.anchorBefore,
+                    "anchorAfter": interjection.anchor.anchorAfter,
+                    "transcriptionStatus": interjection.transcriptionStatus,
+                    "transcript": interjection.cleanedTranscript ?? interjection.transcript ?? "pending",
+                    "audioPath": interjection.audioPath ?? ""
+                ]
+            },
+            "recentTurns": selectedItem.turns.suffix(6).map { turn in
+                [
+                    "id": turn.id,
+                    "role": turn.role,
+                    "turnType": turn.turnType,
+                    "status": turn.status,
+                    "text": turn.summary ?? turn.text ?? turn.rawText ?? ""
+                ]
+            },
+            "currentFollowUp": currentFollowUp.map { $0 as Any } ?? NSNull()
+        ]
+        let data = (try? JSONSerialization.data(withJSONObject: map, options: [.prettyPrinted, .sortedKeys])) ?? Data()
+        return String(data: data, encoding: .utf8) ?? "{}"
     }
 
     private func turnTitleText(_ turn: ConversationTurn) -> String {
@@ -658,15 +950,29 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    private func obsidianItemId(fileName: String, index: Int) -> String {
+        let base = (fileName as NSString).deletingPathExtension
+            .lowercased()
+            .replacingOccurrences(of: #"[^a-z0-9]+"#, with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return "item-obsidian-\(Int(Date().timeIntervalSince1970))-\(index)-\(base.isEmpty ? "clip" : base)"
+    }
+
     private func parseListeningMapJSON(_ raw: String, item: Item) throws -> ListeningMap {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = repairedJSONObjectString(from: raw)
         guard !trimmed.isEmpty else {
             throw ManualListeningMapError.empty
         }
         guard let data = trimmed.data(using: .utf8) else {
             throw ManualListeningMapError.invalidUTF8
         }
-        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        let parsed: Any
+        do {
+            parsed = try JSONSerialization.jsonObject(with: data)
+        } catch {
+            throw ManualListeningMapError.jsonParseFailed(String(describing: error))
+        }
+        guard let root = parsed as? [String: Any] else {
             throw ManualListeningMapError.rootMustBeObject
         }
         guard root["schemaVersion"] as? String == "listening-map.v1" else {
@@ -726,6 +1032,24 @@ final class Gate1AppModel: ObservableObject {
             overview: overview.trimmingCharacters(in: .whitespacesAndNewlines),
             chapters: chapters
         )
+    }
+
+    private func repairedJSONObjectString(from raw: String) -> String {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasPrefix("```") {
+            text = text.replacingOccurrences(of: #"^```(?:json)?\s*"#, with: "", options: .regularExpression)
+            text = text.replacingOccurrences(of: #"\s*```$"#, with: "", options: .regularExpression)
+        }
+        if let first = text.firstIndex(of: "{"), let last = text.lastIndex(of: "}"), first <= last {
+            text = String(text[first...last])
+        }
+        text = text
+            .replacingOccurrences(of: "“", with: "\"")
+            .replacingOccurrences(of: "”", with: "\"")
+            .replacingOccurrences(of: "‘", with: "'")
+            .replacingOccurrences(of: "’", with: "'")
+            .replacingOccurrences(of: #",\s*([}\]])"#, with: "$1", options: .regularExpression)
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func validatedChapter(id: String, title: String, start: Int, end: Int, text: String) throws -> Chapter {
@@ -861,6 +1185,8 @@ private struct ChatCompletionResponse: Decodable {
 private enum ProviderCallError: Error, CustomStringConvertible {
     case http(Int, String)
     case emptyResponse
+    case invalidURL
+    case missingAPIKey
 
     var description: String {
         switch self {
@@ -868,6 +1194,10 @@ private enum ProviderCallError: Error, CustomStringConvertible {
             return "HTTP \(status): \(body.prefix(240))"
         case .emptyResponse:
             return "empty_response"
+        case .invalidURL:
+            return "provider_url_invalid"
+        case .missingAPIKey:
+            return "provider_api_key_missing"
         }
     }
 }
@@ -887,6 +1217,7 @@ private enum ManualListeningMapError: Error, CustomStringConvertible {
     case missingChapterAnchor(String)
     case anchorNotFound(String)
     case invalidChapterRange(String)
+    case jsonParseFailed(String)
 
     var description: String {
         switch self {
@@ -918,6 +1249,8 @@ private enum ManualListeningMapError: Error, CustomStringConvertible {
             return "manual_map_anchor_not_found:\(id)"
         case .invalidChapterRange(let id):
             return "manual_map_invalid_chapter_range:\(id)"
+        case .jsonParseFailed(let error):
+            return "manual_map_json_parse_failed:\(error)"
         }
     }
 }
