@@ -95,7 +95,10 @@ final class Gate1AppModel: ObservableObject {
     private let transcriptionClient = SystemSpeechTranscriptionClient()
     #if canImport(AVFoundation)
     private let speechPreviewSynthesizer = AVSpeechSynthesizer()
-    private var kokoroPreviewPlayer: AVAudioPlayer?
+    private let kokoroPreviewEngine = AVAudioEngine()
+    private let kokoroPreviewNode = AVAudioPlayerNode()
+    private var isKokoroPreviewNodeAttached = false
+    private var isKokoroPreviewNodeConnected = false
     #endif
     let speechVoiceOptions = Gate1AppModel.availableSpeechVoiceOptions()
     private let encoder: JSONEncoder = {
@@ -103,6 +106,7 @@ final class Gate1AppModel: ObservableObject {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return encoder
     }()
+    private static let kokoroRenderQueue = DispatchQueue(label: "SpokenMargins.KokoroRender", qos: .userInitiated)
 
     private static func availableSpeechVoiceOptions() -> [SpeechVoiceChoice] {
         #if canImport(AVFoundation)
@@ -288,6 +292,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func start() {
+        stopSpeechPreviews()
         run { engine in
             snapshot = try engine.startSession(itemId: activeItemId)
             if let store {
@@ -317,6 +322,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func resumePlayback() {
+        stopSpeechPreviews()
         run { engine in
             snapshot = try engine.resumePlayback()
             refreshSelectedItem()
@@ -421,6 +427,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func jumpToChapter(_ chapter: Chapter) {
+        stopSpeechPreviews()
         run { engine in
             if !hasActiveSession {
                 snapshot = try engine.startSession(itemId: activeItemId)
@@ -570,6 +577,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func playTurn(_ turn: ConversationTurn) {
+        stopSpeechPreviews()
         run { engine in
             snapshot = try engine.playTurn(turnId: turn.id)
             refreshSelectedItem()
@@ -749,12 +757,11 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["kokoroStatus"] = kokoroStatus
 
         let voiceName = kokoroVoiceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "am_echo" : kokoroVoiceName
-        let itemId = selectedItem.id.isEmpty ? activeItemId : selectedItem.id
         let sourceText = selectedItem.text.isEmpty
             ? "Spoken Margins Kokoro preview. This path pre-renders neural speech on device and falls back to system speech when unavailable."
-            : String(selectedItem.text.prefix(700))
+            : kokoroRenderChunk(from: selectedItem.text)
 
-        Task.detached { [voiceName, itemId, sourceText] in
+        Self.kokoroRenderQueue.async { [voiceName, sourceText] in
             #if canImport(SessionKitKokoro) && canImport(AVFoundation)
             do {
                 guard KokoroNarrationRenderer.isRuntimeSupported else {
@@ -785,16 +792,15 @@ final class Gate1AppModel: ObservableObject {
                     voicesURL: voicesURL,
                     outputDirectory: outputDirectory
                 )
-                let result = try renderer.render(
+                let result = try renderer.renderSamples(
                     text: sourceText,
-                    itemId: itemId,
-                    chunkId: "preview",
                     voiceName: voiceName,
                     speed: 1.0
                 )
-                await MainActor.run {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
                     do {
-                        try self.playKokoroPreview(url: result.audioURL)
+                        try self.playKokoroPreview(samples: result.samples, sampleRate: result.sampleRate)
                         self.kokoroStatus = "Rendered \(String(format: "%.1f", result.duration))s with \(voiceName)"
                         self.diagnostics["kokoroStatus"] = self.kokoroStatus
                         self.diagnostics["lastSpeechPreview"] = "Kokoro \(voiceName)"
@@ -807,7 +813,8 @@ final class Gate1AppModel: ObservableObject {
                     self.isRenderingKokoroPreview = false
                 }
             } catch {
-                await MainActor.run {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
                     self.kokoroStatus = error.localizedDescription
                     self.diagnostics["kokoroStatus"] = self.kokoroStatus
                     self.isRenderingKokoroPreview = false
@@ -815,7 +822,8 @@ final class Gate1AppModel: ObservableObject {
                 }
             }
             #else
-            await MainActor.run {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
                 self.kokoroStatus = "Kokoro renderer is not linked in this build."
                 self.diagnostics["kokoroStatus"] = self.kokoroStatus
                 self.isRenderingKokoroPreview = false
@@ -920,6 +928,7 @@ final class Gate1AppModel: ObservableObject {
     private func previewSpeech(label: String, mode: AppSpeechPreviewMode) {
         #if canImport(AVFoundation)
         do {
+            stopKokoroPreview()
             if speechPreviewSynthesizer.isSpeaking {
                 speechPreviewSynthesizer.stopSpeaking(at: .immediate)
             }
@@ -952,7 +961,17 @@ final class Gate1AppModel: ObservableObject {
     }
 
     #if canImport(AVFoundation)
-    private func playKokoroPreview(url: URL) throws {
+    private func stopSpeechPreviews() {
+        if speechPreviewSynthesizer.isSpeaking {
+            speechPreviewSynthesizer.stopSpeaking(at: .immediate)
+        }
+        stopKokoroPreview()
+    }
+
+    private func playKokoroPreview(samples: [Float], sampleRate: Double) throws {
+        guard !samples.isEmpty, sampleRate.isFinite, sampleRate > 0 else {
+            throw KokoroNarrationError.emptyAudio
+        }
         if speechPreviewSynthesizer.isSpeaking {
             speechPreviewSynthesizer.stopSpeaking(at: .immediate)
         }
@@ -960,10 +979,50 @@ final class Gate1AppModel: ObservableObject {
         try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
         try AVAudioSession.sharedInstance().setActive(true)
         #endif
-        kokoroPreviewPlayer = try AVAudioPlayer(contentsOf: url)
-        kokoroPreviewPlayer?.prepareToPlay()
-        kokoroPreviewPlayer?.play()
+        stopKokoroPreview()
+        if !isKokoroPreviewNodeAttached {
+            kokoroPreviewEngine.attach(kokoroPreviewNode)
+            isKokoroPreviewNodeAttached = true
+        }
+        let frameCount = AVAudioFrameCount(samples.count)
+        guard let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: sampleRate,
+            channels: 1,
+            interleaved: false
+        ) else {
+            throw KokoroNarrationError.cannotCreateAudioFormat
+        }
+        if !isKokoroPreviewNodeConnected {
+            kokoroPreviewEngine.connect(kokoroPreviewNode, to: kokoroPreviewEngine.mainMixerNode, format: format)
+            isKokoroPreviewNodeConnected = true
+        }
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
+            throw KokoroNarrationError.cannotCreateAudioBuffer
+        }
+        buffer.frameLength = frameCount
+        guard let channel = buffer.floatChannelData?[0] else {
+            throw KokoroNarrationError.cannotCreateAudioBuffer
+        }
+        samples.withUnsafeBufferPointer { source in
+            if let baseAddress = source.baseAddress {
+                channel.update(from: baseAddress, count: source.count)
+            }
+        }
+        if !kokoroPreviewEngine.isRunning {
+            try kokoroPreviewEngine.start()
+        }
+        kokoroPreviewNode.scheduleBuffer(buffer, at: nil, options: .interrupts)
+        kokoroPreviewNode.play()
     }
+
+    private func stopKokoroPreview() {
+        if kokoroPreviewNode.isPlaying {
+            kokoroPreviewNode.stop()
+        }
+    }
+    #else
+    private func stopSpeechPreviews() {}
     #endif
 
     private func applicationSupportDirectory() throws -> URL {
@@ -1710,7 +1769,14 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func reportFailure(_ error: Error, context: String? = nil) {
-        reportFailure([context, error.localizedDescription].compactMap { $0 }.joined(separator: ": "))
+        let message: String
+        if let localized = error as? LocalizedError,
+           let description = localized.errorDescription {
+            message = description
+        } else {
+            message = String(describing: error)
+        }
+        reportFailure([context, message].compactMap { $0 }.joined(separator: ": "))
     }
 
     private func reportFailure(_ message: String) {
@@ -1878,6 +1944,28 @@ private enum ManualListeningMapError: Error, CustomStringConvertible {
             return "manual_map_json_parse_failed:\(error)"
         }
     }
+}
+
+private func kokoroRenderChunk(from text: String, maxCharacters: Int = 360) -> String {
+    let trimmed = SpeechTextNormalizer.normalize(text)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.count > maxCharacters else { return trimmed }
+
+    let hardLimit = trimmed.index(trimmed.startIndex, offsetBy: maxCharacters)
+    let prefix = String(trimmed[..<hardLimit])
+    let minimumUsefulLength = min(120, maxCharacters / 2)
+    let boundaryCharacters = CharacterSet(charactersIn: ".!?\n;:")
+    if let boundary = prefix.rangeOfCharacter(from: boundaryCharacters, options: .backwards),
+       prefix.distance(from: prefix.startIndex, to: boundary.upperBound) >= minimumUsefulLength {
+        return String(prefix[..<boundary.upperBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    if let whitespace = prefix.rangeOfCharacter(from: .whitespacesAndNewlines, options: .backwards),
+       prefix.distance(from: prefix.startIndex, to: whitespace.lowerBound) >= minimumUsefulLength {
+        return String(prefix[..<whitespace.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    return prefix.trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 #if canImport(AVFoundation)

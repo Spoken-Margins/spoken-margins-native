@@ -864,16 +864,10 @@ private struct SettingsScreen: View {
                         .buttonStyle(SecondaryButtonStyle())
                         .accessibilityIdentifier("settings.preview.assistiveTech.button")
                     }
-                    Picker("TTS Mode", selection: $model.ttsMode) {
-                        Text("System Immediate").tag("systemImmediate")
-                        Text("Kokoro When Ready").tag("kokoroWhenReady")
-                        Text("Kokoro Only").tag("kokoroOnly")
-                    }
-                    .accessibilityIdentifier("settings.ttsMode.picker")
-                    .onChange(of: model.ttsMode) { _, _ in
-                        model.settingsValueChanged()
-                        model.saveSpeechSettings()
-                    }
+                    LabeledContent("Session TTS", value: "System speech")
+                    Text("Kokoro is preview-only while on-device rendering is stabilized.")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
                     TextField("Kokoro Voice", text: $model.kokoroVoiceName)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
