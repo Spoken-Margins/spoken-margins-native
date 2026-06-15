@@ -14,17 +14,26 @@
 		47FC5E80C0248169596370EB /* Gate1AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 465089CBB611D338A74CAE8A /* Gate1AppModel.swift */; };
 		494516F7C1ACBC6BFE79A10E /* SpokenMarginsApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3466DCC99E6E887F6A0C536 /* SpokenMarginsApp.swift */; };
 		4E6FB0DDBCB68D2D82D1E744 /* Gate1RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 479B709AF5D74954043B0852 /* Gate1RootView.swift */; };
+		548BD2D708492064E577609A /* Gate1PlaybackAutoplayQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEA49CC89858E441644E7DE /* Gate1PlaybackAutoplayQueue.swift */; };
+		5C5B4D174DE7B2498F0E6C60 /* Gate1ProviderRequestFactoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39B769830FC9CEAAF89CF8EC /* Gate1ProviderRequestFactoryTests.swift */; };
 		698482F8A43C210AC1F3A6A6 /* Gate1AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 465089CBB611D338A74CAE8A /* Gate1AppModel.swift */; };
 		6C3AD65F618F4FBE42AB6A31 /* fixtures in Resources */ = {isa = PBXBuildFile; fileRef = F8F6B4F91AA36C9513801753 /* fixtures */; };
+		8ED02630F01D36F842770734 /* Gate1ProviderRequestFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B8DDB409E3390A07A7DC3C2 /* Gate1ProviderRequestFactory.swift */; };
 		98C1D838FF777C91715BC276 /* fixtures in Resources */ = {isa = PBXBuildFile; fileRef = F8F6B4F91AA36C9513801753 /* fixtures */; };
+		A701D4E1CD8EF569C4E6A579 /* Gate1SummaryEligibility.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12CA39E2FF10DDA3392AF6B /* Gate1SummaryEligibility.swift */; };
+		A978B4713391C8A80029DD08 /* SessionKit in Frameworks */ = {isa = PBXBuildFile; productRef = 857D6087011D0775305B56B7 /* SessionKit */; };
 		AAB68653F4DD558C2D9EC643 /* traces in Resources */ = {isa = PBXBuildFile; fileRef = DA64F144F04CC7A9F436B28E /* traces */; };
 		AB149D16A2A0482B581B0847 /* SessionKitAI in Frameworks */ = {isa = PBXBuildFile; productRef = E7C7184F382A54BFB372015B /* SessionKitAI */; };
+		B050B954A751497BC8F152AF /* Gate1SummaryEligibility.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12CA39E2FF10DDA3392AF6B /* Gate1SummaryEligibility.swift */; };
 		B093BDECC1C87F2F3A50E82B /* SessionKitPersistence in Frameworks */ = {isa = PBXBuildFile; productRef = C784747BDB8A5137FEF98189 /* SessionKitPersistence */; };
 		B3715F09AB0080AF916931F3 /* Gate1RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 479B709AF5D74954043B0852 /* Gate1RootView.swift */; };
 		B401E3D73FFFC3B4CCD67491 /* SessionKitAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 34C621C37AF71E6ED22B1045 /* SessionKitAudio */; };
 		BB2EB8B4A269BF2F25903797 /* Gate1FlowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB4DFB911729FD28E4C7545B /* Gate1FlowUITests.swift */; };
 		CA41517A9A4DED30A499324F /* SessionKitAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 8C20788E476DF1465D360599 /* SessionKitAudio */; };
+		D6A8DCA36ED03426D6771AEC /* Gate1PlaybackAutoplayQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CECE96EA9D24248FFE111D5D /* Gate1PlaybackAutoplayQueueTests.swift */; };
 		DC1A734B98645EA97AC772B6 /* SessionKit in Frameworks */ = {isa = PBXBuildFile; productRef = BD06F9B7880DC707F13F6CA5 /* SessionKit */; };
+		E6A2617BB582B87498D902FC /* Gate1PlaybackAutoplayQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEA49CC89858E441644E7DE /* Gate1PlaybackAutoplayQueue.swift */; };
+		E6B52B9A3D95BC1983406E0F /* Gate1ProviderRequestFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B8DDB409E3390A07A7DC3C2 /* Gate1ProviderRequestFactory.swift */; };
 		F719B3F555F883823A6AEED5 /* SessionKitPersistence in Frameworks */ = {isa = PBXBuildFile; productRef = 16898C6F40FB4FDCA4DE8C38 /* SessionKitPersistence */; };
 		FC58647CFC86F748AC0C788F /* traces in Resources */ = {isa = PBXBuildFile; fileRef = DA64F144F04CC7A9F436B28E /* traces */; };
 /* End PBXBuildFile section */
@@ -37,17 +46,30 @@
 			remoteGlobalIDString = A7009410088927EF7A55F0A3;
 			remoteInfo = SpokenMarginsApp;
 		};
+		F625FA2FAF467445A7BBD4AF /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A73E853E04F4F4AC37DBA1E5 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A7009410088927EF7A55F0A3;
+			remoteInfo = SpokenMarginsApp;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		39B769830FC9CEAAF89CF8EC /* Gate1ProviderRequestFactoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1ProviderRequestFactoryTests.swift; sourceTree = "<group>"; };
+		3B8DDB409E3390A07A7DC3C2 /* Gate1ProviderRequestFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1ProviderRequestFactory.swift; sourceTree = "<group>"; };
 		465089CBB611D338A74CAE8A /* Gate1AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1AppModel.swift; sourceTree = "<group>"; };
 		479B709AF5D74954043B0852 /* Gate1RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1RootView.swift; sourceTree = "<group>"; };
+		560C4E54442E123E42855A02 /* SpokenMarginsAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SpokenMarginsAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		869D8B5B01B1CDEDC9433BB5 /* SpokenMarginsAppDevice.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SpokenMarginsAppDevice.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		9028714E249043B12F2CD95D /* SpokenMarginsAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SpokenMarginsAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		9FEFBCF337DFC7DB102DAD5B /* SpokenMarginsApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SpokenMarginsApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A12CA39E2FF10DDA3392AF6B /* Gate1SummaryEligibility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1SummaryEligibility.swift; sourceTree = "<group>"; };
 		A3466DCC99E6E887F6A0C536 /* SpokenMarginsApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpokenMarginsApp.swift; sourceTree = "<group>"; };
 		AB4DFB911729FD28E4C7545B /* Gate1FlowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1FlowUITests.swift; sourceTree = "<group>"; };
+		BEEA49CC89858E441644E7DE /* Gate1PlaybackAutoplayQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1PlaybackAutoplayQueue.swift; sourceTree = "<group>"; };
 		C271766FC941B68CA12F2DAC /* SessionKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SessionKit; path = Packages/SessionKit; sourceTree = SOURCE_ROOT; };
+		CECE96EA9D24248FFE111D5D /* Gate1PlaybackAutoplayQueueTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1PlaybackAutoplayQueueTests.swift; sourceTree = "<group>"; };
 		DA64F144F04CC7A9F436B28E /* traces */ = {isa = PBXFileReference; lastKnownFileType = folder; name = traces; path = Contracts/traces; sourceTree = SOURCE_ROOT; };
 		F8F6B4F91AA36C9513801753 /* fixtures */ = {isa = PBXFileReference; lastKnownFileType = folder; name = fixtures; path = Contracts/fixtures; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
@@ -62,6 +84,14 @@
 				CA41517A9A4DED30A499324F /* SessionKitAudio in Frameworks */,
 				0BE5F908EA204F6ABABC7BA5 /* SessionKitAI in Frameworks */,
 				3B3CF4DC4FDEFD6D41E0C7BF /* SessionKitKokoro in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9979BD104DB63D154D889313 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A978B4713391C8A80029DD08 /* SessionKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -86,6 +116,7 @@
 				DA64F144F04CC7A9F436B28E /* traces */,
 				8B9C00DF1535B22C10054D68 /* Packages */,
 				5B74E9616092FD1489F4F709 /* Sources */,
+				B5EC003462D25F198668E729 /* SpokenMarginsAppTests */,
 				98E649561F0300EDFCF26FFC /* SpokenMarginsAppUITests */,
 				FD1F64C96AF6992C79DA59C5 /* Products */,
 			);
@@ -117,11 +148,24 @@
 			path = App/SpokenMarginsAppUITests;
 			sourceTree = "<group>";
 		};
+		B5EC003462D25F198668E729 /* SpokenMarginsAppTests */ = {
+			isa = PBXGroup;
+			children = (
+				CECE96EA9D24248FFE111D5D /* Gate1PlaybackAutoplayQueueTests.swift */,
+				39B769830FC9CEAAF89CF8EC /* Gate1ProviderRequestFactoryTests.swift */,
+			);
+			name = SpokenMarginsAppTests;
+			path = App/SpokenMarginsAppTests;
+			sourceTree = "<group>";
+		};
 		D15CBB1FE227CDEA3CB64746 /* SpokenMarginsApp */ = {
 			isa = PBXGroup;
 			children = (
 				465089CBB611D338A74CAE8A /* Gate1AppModel.swift */,
+				BEEA49CC89858E441644E7DE /* Gate1PlaybackAutoplayQueue.swift */,
+				3B8DDB409E3390A07A7DC3C2 /* Gate1ProviderRequestFactory.swift */,
 				479B709AF5D74954043B0852 /* Gate1RootView.swift */,
+				A12CA39E2FF10DDA3392AF6B /* Gate1SummaryEligibility.swift */,
 				A3466DCC99E6E887F6A0C536 /* SpokenMarginsApp.swift */,
 			);
 			path = SpokenMarginsApp;
@@ -132,6 +176,7 @@
 			children = (
 				9FEFBCF337DFC7DB102DAD5B /* SpokenMarginsApp.app */,
 				869D8B5B01B1CDEDC9433BB5 /* SpokenMarginsAppDevice.app */,
+				560C4E54442E123E42855A02 /* SpokenMarginsAppTests.xctest */,
 				9028714E249043B12F2CD95D /* SpokenMarginsAppUITests.xctest */,
 			);
 			name = Products;
@@ -140,6 +185,26 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		0C1262C036365A89EA21B9E9 /* SpokenMarginsAppTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D0E23C85CD209A1D372F819A /* Build configuration list for PBXNativeTarget "SpokenMarginsAppTests" */;
+			buildPhases = (
+				B306228098EDB4F2FB74E5AE /* Sources */,
+				9979BD104DB63D154D889313 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				98FB2C8CE0863440FF28FA76 /* PBXTargetDependency */,
+			);
+			name = SpokenMarginsAppTests;
+			packageProductDependencies = (
+				857D6087011D0775305B56B7 /* SessionKit */,
+			);
+			productName = SpokenMarginsAppTests;
+			productReference = 560C4E54442E123E42855A02 /* SpokenMarginsAppTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		62CEABDB2B6F38CA17ED8324 /* SpokenMarginsAppUITests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A5E5810EA62CAF95BB825543 /* Build configuration list for PBXNativeTarget "SpokenMarginsAppUITests" */;
@@ -238,6 +303,7 @@
 			targets = (
 				A7009410088927EF7A55F0A3 /* SpokenMarginsApp */,
 				8B1554837D7120DFC3B77EF0 /* SpokenMarginsAppDevice */,
+				0C1262C036365A89EA21B9E9 /* SpokenMarginsAppTests */,
 				62CEABDB2B6F38CA17ED8324 /* SpokenMarginsAppUITests */,
 			);
 		};
@@ -270,7 +336,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				47FC5E80C0248169596370EB /* Gate1AppModel.swift in Sources */,
+				E6A2617BB582B87498D902FC /* Gate1PlaybackAutoplayQueue.swift in Sources */,
+				E6B52B9A3D95BC1983406E0F /* Gate1ProviderRequestFactory.swift in Sources */,
 				B3715F09AB0080AF916931F3 /* Gate1RootView.swift in Sources */,
+				A701D4E1CD8EF569C4E6A579 /* Gate1SummaryEligibility.swift in Sources */,
 				0DAA140F81BAE637A596E552 /* SpokenMarginsApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -280,8 +349,20 @@
 			buildActionMask = 2147483647;
 			files = (
 				698482F8A43C210AC1F3A6A6 /* Gate1AppModel.swift in Sources */,
+				548BD2D708492064E577609A /* Gate1PlaybackAutoplayQueue.swift in Sources */,
+				8ED02630F01D36F842770734 /* Gate1ProviderRequestFactory.swift in Sources */,
 				4E6FB0DDBCB68D2D82D1E744 /* Gate1RootView.swift in Sources */,
+				B050B954A751497BC8F152AF /* Gate1SummaryEligibility.swift in Sources */,
 				494516F7C1ACBC6BFE79A10E /* SpokenMarginsApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B306228098EDB4F2FB74E5AE /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D6A8DCA36ED03426D6771AEC /* Gate1PlaybackAutoplayQueueTests.swift in Sources */,
+				5C5B4D174DE7B2498F0E6C60 /* Gate1ProviderRequestFactoryTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -300,6 +381,11 @@
 			isa = PBXTargetDependency;
 			target = A7009410088927EF7A55F0A3 /* SpokenMarginsApp */;
 			targetProxy = 963ADC976C25142403CB77BF /* PBXContainerItemProxy */;
+		};
+		98FB2C8CE0863440FF28FA76 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A7009410088927EF7A55F0A3 /* SpokenMarginsApp */;
+			targetProxy = F625FA2FAF467445A7BBD4AF /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -323,6 +409,24 @@
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
+		};
+		4024577D06E314D9452C7807 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				DEVELOPMENT_TEAM = J8SWC6J3VY;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.native.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SpokenMarginsApp.app/SpokenMarginsApp";
+			};
+			name = Release;
 		};
 		6A6B275A3D9D2C9D348AECE8 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -524,6 +628,24 @@
 			};
 			name = Release;
 		};
+		DB2B3610C2680F04A69721A8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				DEVELOPMENT_TEAM = J8SWC6J3VY;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.native.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SpokenMarginsApp.app/SpokenMarginsApp";
+			};
+			name = Debug;
+		};
 		F0ED159E067C71210D5566EB /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -588,6 +710,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
+		D0E23C85CD209A1D372F819A /* Build configuration list for PBXNativeTarget "SpokenMarginsAppTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DB2B3610C2680F04A69721A8 /* Debug */,
+				4024577D06E314D9452C7807 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
@@ -605,6 +736,10 @@
 		34C621C37AF71E6ED22B1045 /* SessionKitAudio */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SessionKitAudio;
+		};
+		857D6087011D0775305B56B7 /* SessionKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SessionKit;
 		};
 		8C20788E476DF1465D360599 /* SessionKitAudio */ = {
 			isa = XCSwiftPackageProductDependency;

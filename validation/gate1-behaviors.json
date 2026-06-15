@@ -581,15 +581,15 @@
       "durableEffect": "export contains only selected session turns/interjections",
       "positiveEvidence": [
         "traces/session-isolated-export.json",
-        "Gate1FlowUITests opens export and checks preview exists"
+        "Gate1FlowUITests opens export and checks preview exists",
+        "Gate1FlowUITests.testExportAfterTwoSessionsStaysSessionIsolated"
       ],
       "negativeEvidence": [
-        "UI export test does not create two sessions and prove isolation.",
         "App export options are fixed: includeListeningMap false, includeFullText false, includeInterjections true.",
         "No Markdown export path exists."
       ],
       "falsificationFindings": [
-        "Core isolation is covered by trace; product export surface is narrower than spec."
+        "Core isolation and repeated-session UI export isolation are covered; product export options remain narrower than spec."
       ],
       "status": "partial"
     },
@@ -671,14 +671,17 @@
       "positiveEvidence": [
         "Settings screen exposes provider.mapModel.field, provider.summaryModel.field, and provider.conversationModel.field",
         "Listening Map provider generation uses listeningMapModel with one parser-informed retry",
-        "Summary and follow-up calls route through summaryModel and conversationModel"
+        "Summary and follow-up calls route through summaryModel and conversationModel",
+        "Gate1ProviderRequestFactoryTests.testModelRoutingUsesThreeGate1ActivitiesAndListeningMapFallback",
+        "Gate1ProviderRequestFactoryTests.testChatCompletionsRequestEncodesSystemThenUserMessages",
+        "Gate1ProviderRequestFactoryTests.testConversationPromptMakesCurrentFollowupPrimary"
       ],
       "negativeEvidence": [
-        "No provider integration test asserts outgoing model payloads.",
+        "No live provider integration evidence is attached.",
         "Listening Map generation does not yet persist an AIJob record for provider attempts."
       ],
       "falsificationFindings": [
-        "Routing is implemented in the app request path, but provider-observed evidence and retry/export assertions remain missing."
+        "Routing and request payloads are covered by app unit tests; live provider evidence and retry/export assertions remain missing."
       ],
       "status": "partial"
     },
@@ -716,14 +719,18 @@
       "positiveEvidence": [
         "SessionKitCoreTests.testAIJobCompletedPreservesActivePlaybackPhase",
         "SessionKitCoreTests.testSummaryPlaybackPublishesCurrentTargetProgressSeparateFromSourceProgress",
-        "Gate1AppModel only drains pending generated turns after active playback is no longer playing"
+        "Gate1PlaybackAutoplayQueueTests.testSourceFinishAllowsQueuedSummaryToAutoplay",
+        "Gate1PlaybackAutoplayQueueTests.testInterjectionSummaryFinishAllowsQueuedDiscussionToAutoplay",
+        "Gate1PlaybackAutoplayQueueTests.testManualTimelineNavigationClearsPendingAutoplay",
+        "Gate1PlaybackAutoplayQueueTests.testMultipleGeneratedTurnsDrainFIFO",
+        "Gate1PlaybackAutoplayQueueTests.testSummaryRegenerationIsBlockedUntilNewInterjectionExistsForCurrentTarget"
       ],
       "negativeEvidence": [
         "No simulator UI test yet drives a full provider completion while audio is active.",
         "Real device evidence is still needed for native audio completion timing."
       ],
       "falsificationFindings": [
-        "Core/app sequencing is implemented, but end-to-end provider/audio evidence remains partial."
+        "Core/app queue policy is covered by focused tests, but end-to-end provider/audio evidence remains partial."
       ],
       "status": "partial"
     },
@@ -740,37 +747,16 @@
       "positiveEvidence": [
         "SessionKitCoreTests.testAssistantPlayableTextSpeaksSummaryBeforeResponse",
         "SessionKitCoreTests.testAICompletionParsesSummaryResponseAndChapters",
+        "SessionKitCoreTests.testMalformedAIChaptersPreserveResponseText",
         "SessionKitCoreTests.testJumpToAssistantTurnChapterUsesSummaryPrefaceOffset",
-        "SessionKitCoreTests.testPlaySourceFromBeginningWorksWithoutListeningMap"
+        "SessionKitCoreTests.testPlaySourceFromBeginningWorksWithoutListeningMap",
+        "Gate1FlowUITests.testGeneratedTurnTimelineRowsAreLabeledAndTappable"
       ],
       "negativeEvidence": [
-        "No UI test yet seeds a generated AI turn with chapters and taps the primary timeline row."
+        "No real-device evidence proves long AI response navigation during audible playback."
       ],
       "falsificationFindings": [
-        "Core behavior and product controls exist; UI automation should still cover the timeline path."
-      ],
-      "status": "partial"
-    },
-    {
-      "id": "G1-KOKORO-SIMULATOR-STUB-DEVICE-EVIDENCE",
-      "title": "Kokoro is simulator-testable through a deterministic stub and validated on device through real Metal playback",
-      "specSources": [
-        "docs/gate1-implementation-status.md",
-        "Packages/SessionKit/Sources/SessionKitKokoro/KokoroNarrationRenderer.swift"
-      ],
-      "userPath": "Settings -> TTS Mode -> Kokoro; device validation imports Kokoro assets and previews/plays generated audio",
-      "corePath": "Gate1AppModel.makeAudioPlaybackClient -> FakeGeneratedSpeechPlaybackClient on simulator or KokoroSpeechPlaybackClient on supported device builds",
-      "durableEffect": "simulator verification can exercise generated-speech completion semantics without linking Metal-only runtime code",
-      "positiveEvidence": [
-        "SpokenMarginsApp builds under iOS Simulator after xcodegen regeneration",
-        "FakeGeneratedSpeechPlaybackClient implements AudioPlaybackClient completion and offset reporting"
-      ],
-      "negativeEvidence": [
-        "Real Kokoro/Metal playback still requires hardware validation evidence.",
-        "The generated Xcode project intentionally keeps Kokoro out of the simulator app dependency graph."
-      ],
-      "falsificationFindings": [
-        "Simulator CI is unblocked; Kokoro remains partial until real-device render/playback evidence is attached."
+        "Core behavior, malformed chapter degradation, and simulator UI navigation are covered; device audio evidence remains."
       ],
       "status": "partial"
     },

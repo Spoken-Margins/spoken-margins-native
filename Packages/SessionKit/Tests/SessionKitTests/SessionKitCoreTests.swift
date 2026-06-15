@@ -677,6 +677,32 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(turn.chapters?.first?.id, "ch-1")
     }
 
+    func testMalformedAIChaptersPreserveResponseText() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["assistant_turn_tts"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "Source.", externalReference: nil, status: "ready")
+        let session = Session(id: "session-pill", itemId: item.id, status: "in_progress", phase: .conversation, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 0, playbackRate: 1)
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session])
+        let engine = SessionEngine(profile: profile, repository: repo)
+
+        _ = try engine.aiStreamDelta(
+            turnId: "turn-response-001",
+            content: "<sm_summary>Intro.</sm_summary><sm_response>Keep this usable response.</sm_response><sm_chapters_json>{bad json</sm_chapters_json>"
+        )
+        _ = try engine.aiJobCompleted(turnId: "turn-response-001")
+
+        let turn = try XCTUnwrap(try repo.loadTurns(sessionId: session.id).first)
+        XCTAssertEqual(turn.summary, "Intro.")
+        XCTAssertEqual(turn.text, "Keep this usable response.")
+        XCTAssertEqual(turn.chapters, [])
+    }
+
     func testJumpToAssistantTurnChapterUsesSummaryPrefaceOffset() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
@@ -724,6 +750,60 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.sourceProgressPercent, 100)
         XCTAssertLessThan(snapshot.currentPlaybackProgressPercent, 100)
         XCTAssertEqual(snapshot.chapterTitle, "Interjection Summary 1")
+    }
+
+    func testSummaryTurnCompletionPausesWithoutChangingSourceCompletion() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["summary_turn_tts"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "Source complete.", externalReference: nil, status: "ready")
+        let session = Session(id: "session-pill", itemId: item.id, status: "in_progress", phase: .finished, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(charOffset: item.text?.count ?? 0), completionPercent: 100, playbackRate: 1)
+        let turn = ConversationTurn(id: "turn-summary-001", sessionId: session.id, role: "assistant", turnType: "interjection_summary", status: "complete", summary: nil, text: "Summary.", rawText: nil, chapters: nil, sourceInterjectionIds: [])
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session], turns: [turn.id: turn])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.inspectSession(sessionId: session.id)
+        _ = try engine.playTurn(turnId: turn.id)
+        audio.completedTargetIds.insert(turn.id)
+        let snapshot = try engine.syncPlaybackProgress()
+
+        XCTAssertEqual(snapshot.status, .paused)
+        XCTAssertEqual(snapshot.phase, .summaryPlayback)
+        XCTAssertEqual(snapshot.targetType, TargetType.summaryTurnTTS.rawValue)
+        XCTAssertEqual(snapshot.sourceProgressPercent, 100)
+    }
+
+    func testAssistantTurnCompletionPausesInAIResponsePlayback() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["assistant_turn_tts"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "Source complete.", externalReference: nil, status: "ready")
+        let session = Session(id: "session-pill", itemId: item.id, status: "in_progress", phase: .finished, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(charOffset: item.text?.count ?? 0), completionPercent: 100, playbackRate: 1)
+        let turn = ConversationTurn(id: "turn-response-001", sessionId: session.id, role: "assistant", turnType: "assistant_response", status: "complete", summary: nil, text: "Response.", rawText: nil, chapters: nil, sourceInterjectionIds: [])
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session], turns: [turn.id: turn])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.inspectSession(sessionId: session.id)
+        _ = try engine.playTurn(turnId: turn.id)
+        audio.completedTargetIds.insert(turn.id)
+        let snapshot = try engine.syncPlaybackProgress()
+
+        XCTAssertEqual(snapshot.status, .paused)
+        XCTAssertEqual(snapshot.phase, .aiResponsePlayback)
+        XCTAssertEqual(snapshot.targetType, TargetType.assistantTurnTTS.rawValue)
+        XCTAssertEqual(snapshot.sourceProgressPercent, 100)
     }
 
     func testFirstChapterJumpSkipsListeningMapSummaryPreface() throws {
@@ -874,6 +954,35 @@ final class SessionKitCoreTests: XCTestCase {
         let interjection = try XCTUnwrap(try repo.loadInterjections(sessionId: session.id).first)
         XCTAssertEqual(interjection.targetType, .assistantTurn)
         XCTAssertEqual(interjection.anchor.anchorBefore, "Second point has the detail.")
+        XCTAssertEqual(audio.playedOffsets.last, "Brief intro.\n\nFirst response. ".count)
+    }
+
+    func testCancelAssistantInterjectionResumesNearRecordedTurnOffsetWithoutSavingInterjection() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["assistant_turn_tts"],
+                "interjection": ["record_audio"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "Source.", externalReference: nil, status: "ready")
+        let session = Session(id: "session-pill", itemId: item.id, status: "in_progress", phase: .conversation, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 100, playbackRate: 1)
+        let responseText = "First response. Second point has the detail. Third point closes."
+        let turn = ConversationTurn(id: "turn-response-001", sessionId: session.id, role: "assistant", turnType: "assistant_response", status: "complete", summary: "Brief intro.", text: responseText, rawText: nil, chapters: nil, sourceInterjectionIds: [])
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session], turns: [turn.id: turn])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.playTurn(turnId: turn.id)
+        audio.currentOffset = "Brief intro.\n\nFirst response. Second".count
+        _ = try engine.beginInterjection()
+        let snapshot = try engine.cancelInterjection()
+
+        XCTAssertEqual(snapshot.phase, .aiResponsePlayback)
+        XCTAssertEqual(snapshot.targetType, TargetType.assistantTurnTTS.rawValue)
+        XCTAssertEqual(try repo.loadInterjections(sessionId: session.id).count, 0)
         XCTAssertEqual(audio.playedOffsets.last, "Brief intro.\n\nFirst response. ".count)
     }
 

@@ -72,6 +72,60 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(scrollToElement("chapter.jump.manual-process").exists)
     }
 
+    func testGeneratedTurnTimelineRowsAreLabeledAndTappable() throws {
+        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
+        let reset = app.buttons["reset.samples.button"]
+        XCTAssertTrue(reset.waitForExistence(timeout: 4))
+        reset.tap()
+
+        let seededStart = app.buttons["queue.start.item-pill"]
+        XCTAssertTrue(seededStart.waitForExistence(timeout: 4))
+        seededStart.tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 4))
+
+        XCTAssertTrue(scrollToStaticText("Can you respond to my interjection?").exists)
+        XCTAssertTrue(app.staticTexts["YOU"].exists)
+        XCTAssertTrue(scrollToStaticText("AI Response 1").exists)
+        XCTAssertTrue(app.staticTexts["AI"].exists)
+        XCTAssertFalse(app.staticTexts["Play full generated response"].exists)
+
+        let aiResponse = scrollToButton(containingLabel: "Here is a quick response to your interjection.")
+        aiResponse.tap()
+        XCTAssertTrue(app.staticTexts["Playing AI response."].waitForExistence(timeout: 4))
+
+        let aiChapter = scrollToButton(containingLabel: "Timeline Navigation")
+        aiChapter.tap()
+        XCTAssertTrue(app.staticTexts["Jumped to Timeline Navigation."].waitForExistence(timeout: 4))
+    }
+
+    func testExportAfterTwoSessionsStaysSessionIsolated() throws {
+        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
+        let reset = app.buttons["reset.samples.button"]
+        XCTAssertTrue(reset.waitForExistence(timeout: 4))
+        reset.tap()
+
+        let seededStart = app.buttons["queue.start.item-pill"]
+        XCTAssertTrue(seededStart.waitForExistence(timeout: 4))
+        seededStart.tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 4))
+        app.buttons["playback.export.button"].tap()
+        XCTAssertTrue(element("export.screen").waitForExistence(timeout: 4))
+        let firstExport = element("export.preview").label
+        XCTAssertTrue(firstExport.contains("\"session\""))
+
+        app.buttons["export.home.button"].tap()
+        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 4))
+        XCTAssertTrue(seededStart.waitForExistence(timeout: 4))
+        seededStart.tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 4))
+        app.buttons["playback.export.button"].tap()
+        XCTAssertTrue(element("export.screen").waitForExistence(timeout: 4))
+        let secondExport = element("export.preview").label
+
+        XCTAssertTrue(secondExport.contains("\"session\""))
+        XCTAssertNotEqual(firstExport, secondExport)
+    }
+
     private func element(_ identifier: String) -> XCUIElement {
         app.descendants(matching: .any)[identifier]
     }
@@ -82,6 +136,25 @@ final class Gate1FlowUITests: XCTestCase {
             app.swipeUp()
         }
         XCTAssertTrue(candidate.waitForExistence(timeout: 4), "Missing \(identifier)")
+        return candidate
+    }
+
+    private func scrollToStaticText(_ text: String) -> XCUIElement {
+        let candidate = app.staticTexts[text]
+        for _ in 0..<6 where !candidate.isHittable {
+            app.swipeUp()
+        }
+        XCTAssertTrue(candidate.waitForExistence(timeout: 4), "Missing \(text)")
+        return candidate
+    }
+
+    private func scrollToButton(containingLabel text: String) -> XCUIElement {
+        let predicate = NSPredicate(format: "label CONTAINS %@", text)
+        let candidate = app.buttons.matching(predicate).firstMatch
+        for _ in 0..<6 where !candidate.isHittable {
+            app.swipeUp()
+        }
+        XCTAssertTrue(candidate.waitForExistence(timeout: 4), "Missing button containing \(text)")
         return candidate
     }
 

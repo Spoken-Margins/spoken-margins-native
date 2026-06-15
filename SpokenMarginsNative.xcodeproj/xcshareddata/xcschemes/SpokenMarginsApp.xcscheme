@@ -44,6 +44,17 @@
             parallelizable = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
+               BlueprintIdentifier = "0C1262C036365A89EA21B9E9"
+               BuildableName = "SpokenMarginsAppTests.xctest"
+               BlueprintName = "SpokenMarginsAppTests"
+               ReferencedContainer = "container:SpokenMarginsNative.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
                BlueprintIdentifier = "62CEABDB2B6F38CA17ED8324"
                BuildableName = "SpokenMarginsAppUITests.xctest"
                BlueprintName = "SpokenMarginsAppUITests"

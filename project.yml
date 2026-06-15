@@ -100,6 +100,21 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.uitests
         TEST_TARGET_NAME: SpokenMarginsApp
+  SpokenMarginsAppTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: App/SpokenMarginsAppTests
+    dependencies:
+      - target: SpokenMarginsApp
+      - package: SessionKit
+        product: SessionKit
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.tests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/SpokenMarginsApp.app/SpokenMarginsApp"
+        BUNDLE_LOADER: "$(TEST_HOST)"
 schemes:
   SpokenMarginsApp:
     build:
@@ -110,6 +125,7 @@ schemes:
     test:
       config: Debug
       targets:
+        - SpokenMarginsAppTests
         - SpokenMarginsAppUITests
   SpokenMarginsAppDevice:
     build:

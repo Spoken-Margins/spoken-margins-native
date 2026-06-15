@@ -18,7 +18,7 @@ Runtime profiles exercised: phone-tablet-online, phone-tablet-offline
 - AI-turn interjection summary does not interrupt current AI response playback: TBD.
 - Primary timeline AI turn and AI chapter rows are tappable: TBD.
 - Airplane mode provider deferral: TBD.
-- Real Kokoro asset import, render, memory check, and playback on hardware: TBD.
+- System speech playback for source, summary, and AI response: TBD.
 - Export reviewed for session isolation: TBD.
 
 ## Product Owner Flow
@@ -41,13 +41,13 @@ Runtime profiles exercised: phone-tablet-online, phone-tablet-offline
 16. Interject into the AI response, summarize that interjection, and confirm the new summary does not interrupt the active AI response.
 17. Tap AI turn and AI chapter rows from the primary timeline.
 18. Simulate provider failure or offline mode and confirm pending AI work is recoverable.
-19. Switch to Kokoro on device, import model/voices, run memory check, preview voice, and play a source item.
+19. Confirm system speech plays source, generated summaries, and AI responses with the expected progress indicator.
 20. Export the session and confirm another session's notes do not leak in.
 
 ## Known Issues
 
 - Signed device installation still requires local team/provisioning configuration.
-- Real AVFoundation recording, Speech transcription, and Kokoro/Metal playback need hardware evidence before product-owner validation.
+- AVFoundation recording and Speech transcription need attached device evidence before product-owner validation. Kokoro/Metal is deferred from Gate 1.
 - Real OpenAI-compatible provider calls are wired in app settings but still need device/provider evidence.
 
 Product-owner result:

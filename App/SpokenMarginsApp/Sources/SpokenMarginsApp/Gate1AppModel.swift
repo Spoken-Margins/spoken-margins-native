@@ -99,7 +99,7 @@ final class Gate1AppModel: ObservableObject {
     private var activeItemId = "item-pill"
     private var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-4.1-mini"
     private var playbackProgressTask: Task<Void, Never>?
-    private var pendingAutoPlayTurnIds: [String] = []
+    private var pendingAutoPlayQueue = Gate1PlaybackAutoplayQueue()
     private let transcriptionClient = SystemSpeechTranscriptionClient()
     #if canImport(AVFoundation)
     private let speechPreviewSynthesizer = AVSpeechSynthesizer()
@@ -351,6 +351,9 @@ final class Gate1AppModel: ObservableObject {
         stopSpeechPreviews()
         run { engine in
             snapshot = try engine.startSession(itemId: activeItemId)
+            if let store, let sessionId = snapshot.sessionId {
+                try seedUITestingGeneratedTimelineIfNeeded(sessionId: sessionId, engine: engine, store: store)
+            }
             if let store {
                 selectedItem = try loadItemDetail(id: activeItemId, store: store)
             }
@@ -737,15 +740,11 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func playPendingTurnIfReady(completedCurrentAudio: Bool = false) {
-        guard let turnId = pendingAutoPlayTurnIds.first,
-              let engine else {
-            return
-        }
-        guard shouldPlayPendingTurnNow(turnId: turnId, completedCurrentAudio: completedCurrentAudio) else {
+        guard let engine,
+              let turnId = pendingAutoPlayQueue.popReadyTurn(snapshot: snapshot, completedCurrentAudio: completedCurrentAudio) else {
             return
         }
         do {
-            pendingAutoPlayTurnIds.removeFirst()
             updatePendingAutoPlayDiagnostics(reason: "draining_queue")
             try playTurn(turnId, engine: engine, clearsPendingQueue: false)
             reportSuccess("Playing generated response.")
@@ -755,36 +754,28 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func shouldDeferGeneratedTurnPlayback(turnId: String) -> Bool {
-        snapshot.status == .playing && snapshot.targetId != turnId
+        pendingAutoPlayQueue.shouldDeferGeneratedTurnPlayback(snapshot: snapshot, turnId: turnId)
     }
 
     private func shouldPlayPendingTurnNow(turnId: String, completedCurrentAudio: Bool = false) -> Bool {
-        guard snapshot.targetId != turnId else { return false }
-        if completedCurrentAudio {
-            return true
-        }
-        if snapshot.phase == .finished {
-            return true
-        }
-        return snapshot.status != .playing
+        pendingAutoPlayQueue.shouldPlayPendingTurnNow(snapshot: snapshot, turnId: turnId, completedCurrentAudio: completedCurrentAudio)
     }
 
     private func enqueuePendingAutoPlayTurn(_ turnId: String) {
-        guard !pendingAutoPlayTurnIds.contains(turnId) else { return }
-        pendingAutoPlayTurnIds.append(turnId)
+        pendingAutoPlayQueue.enqueue(turnId)
         updatePendingAutoPlayDiagnostics(reason: "waiting_for_current_audio")
     }
 
     private func clearPendingAutoPlayTurns() {
-        pendingAutoPlayTurnIds.removeAll()
+        pendingAutoPlayQueue.clear()
         diagnostics["pendingAutoPlayTurnId"] = nil
         diagnostics["pendingAutoPlayQueue"] = "0"
         diagnostics["pendingAutoPlayReason"] = nil
     }
 
     private func updatePendingAutoPlayDiagnostics(reason: String) {
-        diagnostics["pendingAutoPlayTurnId"] = pendingAutoPlayTurnIds.first
-        diagnostics["pendingAutoPlayQueue"] = "\(pendingAutoPlayTurnIds.count)"
+        diagnostics["pendingAutoPlayTurnId"] = pendingAutoPlayQueue.first
+        diagnostics["pendingAutoPlayQueue"] = "\(pendingAutoPlayQueue.count)"
         diagnostics["pendingAutoPlayReason"] = reason
     }
 
@@ -1258,7 +1249,7 @@ final class Gate1AppModel: ObservableObject {
 
     var isSummarizingInterjections: Bool {
         latestPendingJob(kind: "interjection_summary") != nil ||
-        pendingAutoPlayTurnIds.contains(where: { $0.contains("summary") }) ||
+        pendingAutoPlayQueue.contains(where: { $0.contains("summary") }) ||
         snapshot.targetType == TargetType.summaryTurnTTS.rawValue
     }
 
@@ -1414,20 +1405,12 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func unsummarizedInterjectionsForCurrentTarget() -> [Interjection] {
-        let summarized = Set(selectedItem.turns
-            .filter { $0.turnType == "interjection_summary" && $0.status != "failed" }
-            .flatMap(\.sourceInterjectionIds))
-        let targetType = currentPlaybackTargetType
-        let targetId = currentPlaybackTargetId
-        return selectedItem.interjections.filter { interjection in
-            guard !summarized.contains(interjection.id) else { return false }
-            switch targetType {
-            case TargetType.summaryTurnTTS.rawValue, TargetType.assistantTurnTTS.rawValue:
-                return interjection.targetId == targetId && interjection.targetType != .item
-            default:
-                return interjection.targetType == .item
-            }
-        }
+        Gate1SummaryEligibility.unsummarizedInterjections(
+            turns: selectedItem.turns,
+            interjections: selectedItem.interjections,
+            currentTargetType: currentPlaybackTargetType,
+            currentTargetId: currentPlaybackTargetId
+        )
     }
 
     private var currentPlaybackTargetType: String {
@@ -1558,7 +1541,7 @@ final class Gate1AppModel: ObservableObject {
                         } else {
                             try autoPlayCompletedTurn(kind: kind, turnId: turnId, engine: engine)
                         }
-                        reportSuccess(pendingAutoPlayTurnIds.contains(turnId) ? "Provider response saved. Playback will start when the current audio finishes." : "Provider response saved.")
+                        reportSuccess(pendingAutoPlayQueue.contains { $0 == turnId } ? "Provider response saved. Playback will start when the current audio finishes." : "Provider response saved.")
                     } catch {
                         reportFailure(error, context: "Provider response persistence failed")
                     }
@@ -1588,37 +1571,23 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func makeChatCompletionsRequest(messages: [String], model: String, systemPrompt: String) -> URLRequest? {
-        let trimmed = providerBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let url = URL(string: "\(trimmed)/chat/completions") else { return nil }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(providerAPIKey)", forHTTPHeaderField: "Authorization")
-        let payload = ChatCompletionRequest(
+        Gate1ProviderRequestFactory.makeChatCompletionsRequest(
+            baseURL: providerBaseURL,
+            apiKey: providerAPIKey,
+            messages: messages,
             model: model,
-            messages: [ChatMessage(role: "system", content: systemPrompt)] +
-                messages.map { ChatMessage(role: "user", content: $0) },
-            temperature: 0.2
+            systemPrompt: systemPrompt
         )
-        request.httpBody = try? JSONEncoder().encode(payload)
-        return request
     }
 
     private func modelForAIJob(kind: String) -> String {
-        let configured: String
-        switch kind {
-        case "listening_map":
-            configured = listeningMapModel
-        case "interjection_summary":
-            configured = summaryModel
-        case "assistant_response":
-            configured = conversationModel
-        default:
-            configured = fallbackProviderModel()
-        }
-        let trimmed = configured.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? fallbackProviderModel() : trimmed
+        Gate1ProviderRequestFactory.modelForAIJob(
+            kind: kind,
+            listeningMapModel: listeningMapModel,
+            summaryModel: summaryModel,
+            conversationModel: conversationModel,
+            fallbackProviderModel: fallbackProviderModel()
+        )
     }
 
     private func fallbackProviderModel() -> String {
@@ -1631,52 +1600,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func systemPromptForAIJob(kind: String) -> String {
-        switch kind {
-        case "listening_map":
-            return "Return only strict JSON for the requested Listening Map. Do not wrap the response in Markdown."
-        case "interjection_summary":
-            return """
-            You are having a Spoken Margins listening-session debrief with the user.
-            Summarize patterns in the user's interjections and identify the key points they are making in relation to the source.
-            Do not merely summarize the source. Use the source text as context.
-
-            Respond exactly:
-            <sm_summary>
-            A short spoken introduction to the response.
-            </sm_summary>
-            <sm_response>
-            A text-to-speech friendly synthesis of the user's engagement with the source.
-            </sm_response>
-            <sm_chapters_json>
-            {"schemaVersion":"assistant-response-map.v1","chapters":[...]}
-            </sm_chapters_json>
-
-            Chapter anchors must be exact phrases from your response.
-            """
-        case "assistant_response":
-            return """
-            You are continuing a Spoken Margins listening session.
-            The user's current follow-up is the primary request. Answer it first, before re-summarizing prior context.
-            If the user asks for a specific format, length, or consolidation, satisfy that request at the beginning of the response.
-
-            Respond exactly:
-            <sm_summary>
-            A short spoken introduction to the response.
-            </sm_summary>
-            <sm_response>
-            Your full spoken response.
-            </sm_response>
-            <sm_chapters_json>
-            {"schemaVersion":"assistant-response-map.v1","chapters":[...]}
-            </sm_chapters_json>
-
-            The response should be useful for immediate text-to-speech.
-            If the full response has more than one meaningful section, include 2-5 useful chapters with concise titles.
-            Chapter anchors must be exact phrases from the full response and should point to the section starts.
-            """
-        default:
-            return "You are the Spoken Margins Gate 1 assistant. Preserve user source meaning, answer concisely, and make failures explicit."
-        }
+        Gate1ProviderRequestFactory.systemPromptForAIJob(kind: kind)
     }
 
     private func recordModelForPendingJob(kind: String, model: String) {
@@ -1812,12 +1736,10 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func conversationPrompt(followUp: String) -> String {
-        """
-        Respond to the user's current follow-up first, in the context of the source, Listening Map, interjections, and recent session turns.
-        Focus on the user's thinking and questions. Do not summarize the source unless needed.
-        If the follow-up asks for a specific deliverable, provide that deliverable before additional commentary.
-        \(sessionContextJSON(interjections: selectedItem.interjections, currentFollowUp: followUp))
-        """
+        Gate1ProviderRequestFactory.conversationPrompt(
+            followUp: followUp,
+            contextJSON: sessionContextJSON(interjections: selectedItem.interjections, currentFollowUp: followUp)
+        )
     }
 
     private func sessionContextJSON(interjections: [Interjection], currentFollowUp: String?) -> String {
@@ -2213,6 +2135,24 @@ final class Gate1AppModel: ObservableObject {
         if let detail = try? loadItemDetail(id: activeItemId, store: store) {
             selectedItem = detail
         }
+    }
+
+    private func seedUITestingGeneratedTimelineIfNeeded(sessionId: String, engine: SessionEngine, store: SQLiteSessionStore) throws {
+        guard CommandLine.arguments.contains("--ui-testing"),
+              try store.loadTurns(sessionId: sessionId).isEmpty else {
+            return
+        }
+        _ = try engine.submitFollowup(text: "Can you respond to my interjection?")
+        _ = try engine.aiStreamDelta(
+            turnId: "turn-response-001",
+            content: """
+            <sm_summary>Here is a quick response to your interjection.</sm_summary>
+            <sm_response>Here is a quick response to your interjection. First, your test is checking whether generated turns stay easy to navigate. Second, the response chapters should remain tappable in the main timeline.</sm_response>
+            <sm_chapters_json>{"schemaVersion":"assistant-response-map.v1","chapters":[{"id":"ai-ch-1","title":"Quick Response","anchor":"Here is a quick response"},{"id":"ai-ch-2","title":"Timeline Navigation","anchor":"Second, the response chapters"}]}</sm_chapters_json>
+            """
+        )
+        _ = try engine.aiJobCompleted(turnId: "turn-response-001")
+        snapshot = try engine.inspectSession(sessionId: sessionId)
     }
 
     private func loadItemDetail(id: String, store: SQLiteSessionStore) throws -> ItemDetailState {

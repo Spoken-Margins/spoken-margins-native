@@ -2,7 +2,7 @@
 
 Use this checklist after `./scripts/verify-gate1.sh` passes. Record device model, iOS version, build SHA, provider, audio route, and pass/fail notes for each item.
 
-Use the `SpokenMarginsAppDevice` scheme for real Kokoro validation. The default `SpokenMarginsApp` scheme is simulator-safe and does not link the MLX/Kokoro package graph.
+Use the default `SpokenMarginsApp` scheme for Gate 1 device validation. Gate 1 TTS evidence is system speech. The separate `SpokenMarginsAppDevice` scheme preserves Kokoro/MLX work for a later gate and is not required for Gate 1.
 
 ## Required Device Pass
 
@@ -17,13 +17,13 @@ Use the `SpokenMarginsAppDevice` scheme for real Kokoro validation. The default 
 - Confirm AI turn rows and AI chapter rows in the primary timeline are tappable.
 - Configure a real OpenAI-compatible provider, run Listening Map generation, summary generation, follow-up, provider failure, and retry.
 - Enable airplane mode or provider-unreachable mode and confirm pending AI work is recoverable.
-- In the `SpokenMarginsAppDevice` build, switch TTS mode to Kokoro, import `kokoro-v1_0.safetensors` and `voices.npz`, run memory check, preview voice, and play a source item.
-- Validate Bluetooth/AirPods route, interruption recovery, Now Playing metadata, and remote commands if those are in the build being presented.
+- Confirm system speech starts, pauses, resumes, skips, and plays generated summaries/AI responses with the expected target labels and progress.
+- Validate Bluetooth/AirPods route and interruption recovery if available in the build being presented.
 - Export the session after creating a second session for the same item; confirm no interjections or turns leak across sessions.
 
 ## Evidence To Attach
 
 - `./scripts/verify-gate1.sh` terminal log.
 - Device screen recordings for source playback -> summary auto-play and AI response -> AI-targeted summary queuing.
-- Screenshots of provider settings, Kokoro asset status, diagnostics, and export preview.
+- Screenshot or recording evidence for microphone allowed/denied, saved `.m4a`, Speech transcription result, provider settings, provider success/failure/retry, offline deferred recovery, diagnostics, and export preview.
 - Notes for any pass-with-issues result, including exact date, device, route, and reproduction steps.

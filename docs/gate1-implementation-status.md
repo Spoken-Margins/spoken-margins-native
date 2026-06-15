@@ -11,7 +11,7 @@
 - Added a SQLite-backed repository target with migrations and idempotent JSON record storage for items, sessions, interjections, turns, AI jobs, and Listening Maps.
 - Added AVFoundation/AI provider adapter boundaries while keeping tests deterministic through mock clients.
 - Added real AVFoundation speech playback and `.m4a` interjection recording adapters behind `SessionKitAudio` protocols, including explicit microphone permission prompting before interjection recording. The trace tests still use deterministic mocks.
-- Added a simulator-safe Kokoro stub path plus a separate `SpokenMarginsAppDevice` scheme for real Kokoro/MLX validation on physical devices.
+- Preserved the separate `SpokenMarginsAppDevice` scheme for future Kokoro/MLX validation while keeping Gate 1 simulator and system-speech validation independent of Kokoro.
 - Added Gate 1 trace replay tests over the repository's actual trace and fixture files.
 - Added a SwiftUI app shaped around the reference prototype's product flow: home/create/listening queue, item detail, active playback, discussion, OpenAI-compatible provider configuration, export, diagnostics, reset/seed, release notes, and known issues. Home and playback now use adaptive phone/tablet layouts.
 - Added stable accessibility identifiers and XCUITest paths for reset/seed feedback, seeded session start, playback navigation, export generation, provider/API-key affordance, and manual Listening Map JSON application.
@@ -30,7 +30,8 @@ Run:
 
 Current expected result:
 
-- `SessionKitCoreTests`: 35 passing tests.
+- `SessionKitCoreTests`: 39 passing tests.
+- `SpokenMarginsAppTests`: 9 passing app-level playback queue and provider request tests.
 - `TraceReplayTests.testGate1TracesReplay`: replays 13 Gate 1 traces.
 - Contract validation: all schemas, fixtures, traces, fixture references, and trace capability requirements pass.
 - iOS simulator build: `SpokenMarginsApp` builds with local ad-hoc simulator signing.
@@ -42,9 +43,9 @@ Current expected result:
 ## Not Yet Ready For Product-Owner Validation
 
 - The app builds for iOS Simulator from regenerated `project.yml`, but a signed installable iPhone/iPad build still requires local team/provisioning configuration.
-- Bluetooth route validation, interruption recovery, Now Playing metadata, and remote commands still need device implementation and evidence. Microphone permission prompting and durable `.m4a` audio writing exist, but have not been validated on hardware.
+- Bluetooth route validation and interruption recovery still need device evidence. Microphone permission prompting and durable `.m4a` audio writing exist; Speech transcription may be accepted with attached user/device evidence for Gate 1.
 - OpenAI-compatible settings UI now saves API keys in Keychain, probes `/models`, and uses `/chat/completions` for Listening Map, summary, and follow-up generation in the app. It still needs real-device provider validation and richer structured-output evidence.
-- Real Kokoro/Metal rendering is preserved in the `SpokenMarginsAppDevice` scheme but requires hardware validation; simulator CI uses the deterministic generated-speech stub.
+- Kokoro/Metal rendering is deferred from Gate 1. The implementation is preserved in the `SpokenMarginsAppDevice` scheme for later hardware validation, but Gate 1 TTS evidence is system speech.
 - Real-device validation has not been run on iPhone/iPad with AirPods, airplane mode, app restart, and provider-unreachable cases.
 
 ## Packaging Note
@@ -53,4 +54,4 @@ Do not copy a top-level `Resources/` directory into the iOS app bundle. Simulato
 
 ## Next Production Step
 
-Add hardware validation evidence for microphone/Speech, provider success/failure, offline deferral, real Kokoro/Metal playback, audio route/interruption behavior, and Now Playing/remote commands while keeping `./scripts/verify-gate1.sh` green.
+Add Gate 1 validation evidence for microphone/Speech transcription, system speech playback, provider success/failure, offline deferral, export isolation, and audio route/interruption behavior while keeping `./scripts/verify-gate1.sh` green. Kokoro evidence moves to a later gate.
