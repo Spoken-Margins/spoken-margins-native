@@ -785,7 +785,6 @@ private struct SettingsScreen: View {
 
     private enum Field {
         case baseURL
-        case model
         case mapModel
         case summaryModel
         case conversationModel
@@ -803,11 +802,6 @@ private struct SettingsScreen: View {
                         .autocorrectionDisabled()
                         .focused($focusedField, equals: .baseURL)
                         .accessibilityIdentifier("provider.baseURL.field")
-                    TextField("Fallback Model", text: $model.providerModel)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .focused($focusedField, equals: .model)
-                        .accessibilityIdentifier("provider.model.field")
                     TextField("Listening Map Model", text: $model.listeningMapModel)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -835,7 +829,6 @@ private struct SettingsScreen: View {
                     LabeledContent("Probe", value: model.providerProbeStatus)
                 }
                 .onChange(of: model.providerBaseURL) { _, _ in model.settingsValueChanged() }
-                .onChange(of: model.providerModel) { _, _ in model.settingsValueChanged() }
                 .onChange(of: model.listeningMapModel) { _, _ in model.settingsValueChanged() }
                 .onChange(of: model.summaryModel) { _, _ in model.settingsValueChanged() }
                 .onChange(of: model.conversationModel) { _, _ in model.settingsValueChanged() }

@@ -3,8 +3,7 @@ import Security
 import SessionKit
 import SessionKitAI
 import SessionKitAudio
-#if targetEnvironment(simulator)
-#elseif canImport(SessionKitKokoro)
+#if KOKORO_DEVICE && !targetEnvironment(simulator)
 import SessionKitKokoro
 #endif
 import SessionKitPersistence
@@ -76,7 +75,6 @@ final class Gate1AppModel: ObservableObject {
     @Published var listeningMapJSON = ""
     @Published var isGeneratingListeningMap = false
     @Published var providerBaseURL = UserDefaults.standard.string(forKey: "providerBaseURL") ?? "https://api.openai.com/v1"
-    @Published var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-4.1-mini"
     @Published var listeningMapModel = UserDefaults.standard.string(forKey: "listeningMapModel") ?? UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-4.1-mini"
     @Published var summaryModel = UserDefaults.standard.string(forKey: "summaryModel") ?? UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-4.1-mini"
     @Published var conversationModel = UserDefaults.standard.string(forKey: "conversationModel") ?? UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-4.1-mini"
@@ -100,6 +98,7 @@ final class Gate1AppModel: ObservableObject {
     private var engine: SessionEngine?
     private var store: SQLiteSessionStore?
     private var activeItemId = "item-pill"
+    private var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-4.1-mini"
     private var playbackProgressTask: Task<Void, Never>?
     private var pendingAutoPlayTurnId: String?
     private let transcriptionClient = SystemSpeechTranscriptionClient()
@@ -815,6 +814,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func saveProviderSettings() {
+        providerModel = fallbackProviderModel()
         UserDefaults.standard.set(providerBaseURL, forKey: "providerBaseURL")
         UserDefaults.standard.set(providerModel, forKey: "providerModel")
         UserDefaults.standard.set(listeningMapModel, forKey: "listeningMapModel")
@@ -829,7 +829,7 @@ final class Gate1AppModel: ObservableObject {
         UserDefaults.standard.set(kokoroChunkCharacters, forKey: "kokoroChunkCharacters")
         KeychainStore.save(providerAPIKey, service: "SpokenMargins", account: "OpenAICompatibleAPIKey")
         diagnostics["providerBaseURL"] = providerBaseURL
-        diagnostics["providerModel"] = providerModel
+        diagnostics["fallbackModel"] = providerModel
         diagnostics["listeningMapModel"] = listeningMapModel
         diagnostics["summaryModel"] = summaryModel
         diagnostics["conversationModel"] = conversationModel
@@ -888,7 +888,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func refreshKokoroAssetStatus() {
-        #if canImport(SessionKitKokoro) && !targetEnvironment(simulator)
+        #if KOKORO_DEVICE && !targetEnvironment(simulator)
         do {
             let applicationSupportURL = try applicationSupportDirectory()
             let assets = KokoroNarrationRenderer.installedAssets(applicationSupportDirectory: applicationSupportURL)
@@ -930,7 +930,7 @@ final class Gate1AppModel: ObservableObject {
         let sourceText = "Spoken Margins Kokoro preview. This is a short on-device voice test."
 
         Task.detached { [voiceName, cacheLimitBytes, kokoroSpeed, itemId, sourceText] in
-            #if canImport(SessionKitKokoro) && !targetEnvironment(simulator) && canImport(AVFoundation)
+            #if KOKORO_DEVICE && !targetEnvironment(simulator) && canImport(AVFoundation)
             do {
                 guard KokoroNarrationRenderer.isRuntimeSupported else {
                     throw KokoroNarrationError.unavailableOnSimulator
@@ -1029,7 +1029,7 @@ final class Gate1AppModel: ObservableObject {
         let sourceText = "Spoken Margins Kokoro memory check. This renders twice without playback."
 
         Task.detached { [voiceName, cacheLimitBytes, itemId, sourceText] in
-            #if canImport(SessionKitKokoro) && !targetEnvironment(simulator)
+            #if KOKORO_DEVICE && !targetEnvironment(simulator)
             do {
                 guard KokoroNarrationRenderer.isRuntimeSupported else {
                     throw KokoroNarrationError.unavailableOnSimulator
@@ -1138,7 +1138,7 @@ final class Gate1AppModel: ObservableObject {
 
     func settingsValueChanged() {
         diagnostics["providerBaseURL"] = providerBaseURL
-        diagnostics["defaultModel"] = providerModel
+        diagnostics["fallbackModel"] = fallbackProviderModel()
         diagnostics["listeningMapModel"] = listeningMapModel
         diagnostics["summaryModel"] = summaryModel
         diagnostics["conversationModel"] = conversationModel
@@ -1372,7 +1372,7 @@ final class Gate1AppModel: ObservableObject {
         let profile = try loadProfile(id: selectedProfileId)
         let provider: AIProviderClient
         if let url = URL(string: providerBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)) {
-            provider = OpenAICompatibleProvider(baseURL: url, model: providerModel, apiKeyReference: providerAPIKey.isEmpty ? nil : "keychain:SpokenMargins/OpenAICompatibleAPIKey")
+            provider = OpenAICompatibleProvider(baseURL: url, model: fallbackProviderModel(), apiKeyReference: providerAPIKey.isEmpty ? nil : "keychain:SpokenMargins/OpenAICompatibleAPIKey")
         } else {
             provider = FixtureAIProvider()
         }
@@ -1392,7 +1392,7 @@ final class Gate1AppModel: ObservableObject {
             return FakeGeneratedSpeechPlaybackClient()
         }
         #endif
-        #if canImport(SessionKitKokoro) && !targetEnvironment(simulator) && canImport(AVFoundation)
+        #if KOKORO_DEVICE && !targetEnvironment(simulator) && canImport(AVFoundation)
         if ttsMode == "kokoro" {
             let supportDirectory = try applicationSupportDirectory()
             let cachesDirectory = try FileManager.default.url(
@@ -1527,10 +1527,19 @@ final class Gate1AppModel: ObservableObject {
         case "assistant_response":
             configured = conversationModel
         default:
-            configured = providerModel
+            configured = fallbackProviderModel()
         }
         let trimmed = configured.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? providerModel : trimmed
+        return trimmed.isEmpty ? fallbackProviderModel() : trimmed
+    }
+
+    private func fallbackProviderModel() -> String {
+        let listeningMapFallback = listeningMapModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !listeningMapFallback.isEmpty {
+            return listeningMapFallback
+        }
+        let storedFallback = providerModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        return storedFallback.isEmpty ? "gpt-4.1-mini" : storedFallback
     }
 
     private func systemPromptForAIJob(kind: String) -> String {
@@ -2268,7 +2277,7 @@ private enum ManualListeningMapError: Error, CustomStringConvertible {
     }
 }
 
-#if canImport(SessionKitKokoro) && !targetEnvironment(simulator) && canImport(AVFoundation)
+#if KOKORO_DEVICE && !targetEnvironment(simulator) && canImport(AVFoundation)
 private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, AVAudioPlayerDelegate, @unchecked Sendable {
     private let fallback = SystemSpeechPlaybackClient()
     private let applicationSupportDirectory: URL
@@ -2653,7 +2662,6 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
 
     private func configureAppActivityObservers() {
         #if canImport(UIKit)
-        appIsActive = UIApplication.shared.applicationState == .active
         let center = NotificationCenter.default
         activityObservers.append(center.addObserver(
             forName: UIApplication.didBecomeActiveNotification,

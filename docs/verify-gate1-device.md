@@ -2,6 +2,8 @@
 
 Use this checklist after `./scripts/verify-gate1.sh` passes. Record device model, iOS version, build SHA, provider, audio route, and pass/fail notes for each item.
 
+Use the `SpokenMarginsAppDevice` scheme for real Kokoro validation. The default `SpokenMarginsApp` scheme is simulator-safe and does not link the MLX/Kokoro package graph.
+
 ## Required Device Pass
 
 - Install a signed iPhone build and a signed iPad build from the same commit.
@@ -15,7 +17,7 @@ Use this checklist after `./scripts/verify-gate1.sh` passes. Record device model
 - Confirm AI turn rows and AI chapter rows in the primary timeline are tappable.
 - Configure a real OpenAI-compatible provider, run Listening Map generation, summary generation, follow-up, provider failure, and retry.
 - Enable airplane mode or provider-unreachable mode and confirm pending AI work is recoverable.
-- Switch TTS mode to Kokoro, import `kokoro-v1_0.safetensors` and `voices.npz`, run memory check, preview voice, and play a source item.
+- In the `SpokenMarginsAppDevice` build, switch TTS mode to Kokoro, import `kokoro-v1_0.safetensors` and `voices.npz`, run memory check, preview voice, and play a source item.
 - Validate Bluetooth/AirPods route, interruption recovery, Now Playing metadata, and remote commands if those are in the build being presented.
 - Export the session after creating a second session for the same item; confirm no interjections or turns leak across sessions.
 

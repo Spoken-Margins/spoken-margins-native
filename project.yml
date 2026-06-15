@@ -45,6 +45,49 @@ targets:
         NSSpeechRecognitionUsageDescription: Spoken Margins may transcribe spoken interjections when enabled.
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: true
+  SpokenMarginsAppDevice:
+    type: application
+    platform: iOS
+    supportedDestinations:
+      - iOS
+    sources:
+      - path: App/SpokenMarginsApp/Sources
+      - path: Contracts/fixtures
+        type: folder
+      - path: Contracts/traces
+        type: folder
+    dependencies:
+      - package: SessionKit
+        product: SessionKit
+      - package: SessionKit
+        product: SessionKitPersistence
+      - package: SessionKit
+        product: SessionKitAudio
+      - package: SessionKit
+        product: SessionKitAI
+      - package: SessionKit
+        product: SessionKitKokoro
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native
+        CODE_SIGN_STYLE: Manual
+        DEVELOPMENT_TEAM: ""
+        INFOPLIST_FILE: App/SpokenMarginsApp/Info.plist
+        SWIFT_VERSION: "6.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        OTHER_SWIFT_FLAGS: "$(inherited) -D KOKORO_DEVICE"
+    info:
+      path: App/SpokenMarginsApp/Info.plist
+      properties:
+        CFBundleDisplayName: Spoken Margins
+        CFBundleShortVersionString: "0.1"
+        CFBundleVersion: "1"
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        NSMicrophoneUsageDescription: Spoken Margins records spoken interjections during listening sessions.
+        NSSpeechRecognitionUsageDescription: Spoken Margins may transcribe spoken interjections when enabled.
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
   SpokenMarginsAppUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -68,3 +111,9 @@ schemes:
       config: Debug
       targets:
         - SpokenMarginsAppUITests
+  SpokenMarginsAppDevice:
+    build:
+      targets:
+        SpokenMarginsAppDevice: all
+    run:
+      config: Debug
