@@ -1,6 +1,6 @@
 # Gate 1 Readiness Matrix
 
-Date: 2026-06-14
+Date: 2026-06-15
 
 This matrix is an adversarial readiness check for Gate 1: Phone/Tablet Core Session. It is derived from `docs/product-validation-plan.md`, `docs/prototype-spec.md`, and `docs/sessionkit-contract.md`.
 
@@ -22,7 +22,7 @@ python3 scripts/audit-gate1-readiness.py --strict
 | Status | Count |
 |---|---:|
 | Ready | 1 |
-| Partial | 29 |
+| Partial | 33 |
 | Not Ready | 1 |
 
 Gate 1 is **not ready for product-owner validation**.
@@ -61,20 +61,24 @@ Gate 1 is **not ready for product-owner validation**.
 | G1-END-SESSION | End session | Playback End Session | `endSession` | Partial | Command and UI exist; persistence/runtime test evidence remains. |
 | G1-OBSIDIAN-BULK-IMPORT | Bulk import Obsidian Markdown clips | Home -> Import Obsidian Files | `ObsidianMarkdownParser`, `importObsidianMarkdownFiles` | Partial | Parser tests cover nasty clip shapes; native document-picker UI/device evidence and raw-source storage remain. |
 | G1-AI-MODEL-ROUTING | Separate map/summary/conversation models | Settings provider fields | `modelForAIJob`, provider request builder | Partial | Runtime routing exists; provider-observed payload tests and Listening Map job persistence remain. |
+| G1-OVERVIEW-PREFACE-PLAYBACK | Listening Map overview plays before source audio | Start item with Listening Map | `startSession`, `playbackText` | Partial | Core test proves prepared text includes overview; device audible evidence remains. |
+| G1-PREPARED-SUMMARY-SEQUENCING | Prepared source summaries wait for item completion; AI-turn summaries do not interrupt active AI playback | Prepare/generate summary during playback | `autoPlayCompletedTurn`, `playPendingTurnIfReady` | Partial | Core/app policy exists, but full provider/audio UI evidence remains. |
+| G1-AI-TURN-TIMELINE-NAVIGATION | AI turns and AI-turn chapters are playable from primary timeline | Playback timeline AI rows | `playTurn`, `jumpToTurnChapter` | Partial | Core tests and product controls exist; UI automation should still tap seeded AI timeline rows. |
+| G1-KOKORO-SIMULATOR-STUB-DEVICE-EVIDENCE | Kokoro simulator stub plus real device evidence | Settings TTS Mode -> Kokoro | `FakeGeneratedSpeechPlaybackClient`, `KokoroSpeechPlaybackClient` | Partial | Simulator CI is unblocked; real Metal render/playback evidence remains. |
 | G1-DEVICE-EVIDENCE | Phone/tablet runtime evidence | Manual device pass | Verification scripts | Not Ready | Existing artifacts are launch screenshots, not full microphone/TTS/provider/offline validation. |
 
 ## Highest-Risk Findings
 
 1. **Device evidence is not sufficient.** Simulator launch/build evidence does not validate microphone, audio route, Speech.framework transcription, provider behavior, offline behavior, or actual audible rollback.
 2. **Listening Map validation is still shallow.** A user-facing paste/validate path and valid-map UI test exist, but malformed-map UI coverage, structured multi-issue repair reports, and provider-output repair loops are missing.
-3. **Many newly wired runtime paths still need UI tests.** Summary playback, AI-response playback, Cancel, interjection detail, End Session, and offline profile changes are now reachable but not yet proven through UI automation.
-4. **Playback progress is not continuously tracked.** Offset-aware restart exists for skip/jump/rollback, but long-form progress still relies on command boundaries rather than AVSpeechSynthesizer delegate progress.
-5. **Real ingestion needs device/files-provider evidence.** Obsidian clip parsing is covered in SessionKit, but native bulk import still needs a Files/iCloud validation pass.
+3. **Generated playback sequencing needs end-to-end evidence.** Core/app policy now queues generated turns until active audio completion, but provider-driven UI validation and device audio completion evidence remain.
+4. **Many newly wired runtime paths still need UI tests.** Summary playback, AI-response playback, AI timeline rows, Cancel, interjection detail, End Session, and offline profile changes are reachable but not fully proven through UI automation.
+5. **Real ingestion and Kokoro need device/files-provider evidence.** Obsidian clip parsing and simulator Kokoro stubbing are covered, but native Files/iCloud and real Metal playback validation remain.
 
 ## Minimum Fix Set Before Product Validation
 
 1. Add structured Listening Map repair reporting and UI tests for malformed pasted maps, or explicitly remove the repair loop from Gate 1 scope.
 2. Add product UI tests that assert state/persistence changes, not only visible controls.
 3. Add device validation evidence for microphone recording, Speech.framework transcription, saved audio files, Siri/enhanced voice quality, route/interruption behavior, provider failure/retry, and offline deferred jobs.
-4. Add AVSpeechSynthesizer delegate progress tracking if Gate 1 validation requires live progress instead of command-boundary progress.
+4. Add UI automation for generated source-summary auto-play, AI-turn summary queuing, and tappable AI turn/chapter timeline rows.
 5. Add provider payload tests for per-task model routing and Listening Map parser-informed retry.

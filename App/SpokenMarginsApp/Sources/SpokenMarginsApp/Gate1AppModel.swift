@@ -3,7 +3,8 @@ import Security
 import SessionKit
 import SessionKitAI
 import SessionKitAudio
-#if canImport(SessionKitKokoro)
+#if targetEnvironment(simulator)
+#elseif canImport(SessionKitKokoro)
 import SessionKitKokoro
 #endif
 import SessionKitPersistence
@@ -679,6 +680,17 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    func jumpToTurnChapter(turn: ConversationTurn, chapter: Chapter) {
+        stopSpeechPreviews()
+        pendingAutoPlayTurnId = nil
+        run { engine in
+            snapshot = try engine.jumpToTurnChapter(turnId: turn.id, chapterId: chapter.id)
+            refreshSelectedItem()
+            screen = .playback
+            reportSuccess("Jumped to \(chapter.title).")
+        }
+    }
+
     private func playTurn(_ turnId: String, engine: SessionEngine) throws {
         stopSpeechPreviews()
         pendingAutoPlayTurnId = nil
@@ -703,7 +715,7 @@ final class Gate1AppModel: ObservableObject {
               let engine else {
             return
         }
-        guard snapshot.status != .playing || snapshot.phase == .finished || snapshot.progressPercent >= 100 else {
+        guard snapshot.status != .playing || snapshot.phase == .finished else {
             return
         }
         do {
@@ -718,10 +730,19 @@ final class Gate1AppModel: ObservableObject {
         snapshot.status == .playing && snapshot.targetId != turnId
     }
 
+    private func latestPendingJob(kind: String) -> AIJob? {
+        guard let sessionId = snapshot.sessionId,
+              let jobs = try? store?.loadAIJobs(sessionId: sessionId) else {
+            return nil
+        }
+        return jobs.last { $0.kind == kind && $0.status != "complete" }
+    }
+
     func followUp(_ text: String) {
         run { engine in
             snapshot = try engine.submitFollowup(text: text)
-            submitProviderJobIfNeeded(kind: "assistant_response", turnId: "turn-response-001", messages: [conversationPrompt(followUp: text)])
+            let turnId = latestPendingJob(kind: "assistant_response")?.turnId ?? "turn-response-001"
+            submitProviderJobIfNeeded(kind: "assistant_response", turnId: turnId, messages: [conversationPrompt(followUp: text)])
             refreshSelectedItem()
             reportSuccess(snapshot.pendingAiJobStatus == "deferred" ? "Follow-up queued for later." : "Follow-up submitted.")
         }
@@ -867,7 +888,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func refreshKokoroAssetStatus() {
-        #if canImport(SessionKitKokoro)
+        #if canImport(SessionKitKokoro) && !targetEnvironment(simulator)
         do {
             let applicationSupportURL = try applicationSupportDirectory()
             let assets = KokoroNarrationRenderer.installedAssets(applicationSupportDirectory: applicationSupportURL)
@@ -909,7 +930,7 @@ final class Gate1AppModel: ObservableObject {
         let sourceText = "Spoken Margins Kokoro preview. This is a short on-device voice test."
 
         Task.detached { [voiceName, cacheLimitBytes, kokoroSpeed, itemId, sourceText] in
-            #if canImport(SessionKitKokoro) && canImport(AVFoundation)
+            #if canImport(SessionKitKokoro) && !targetEnvironment(simulator) && canImport(AVFoundation)
             do {
                 guard KokoroNarrationRenderer.isRuntimeSupported else {
                     throw KokoroNarrationError.unavailableOnSimulator
@@ -1008,7 +1029,7 @@ final class Gate1AppModel: ObservableObject {
         let sourceText = "Spoken Margins Kokoro memory check. This renders twice without playback."
 
         Task.detached { [voiceName, cacheLimitBytes, itemId, sourceText] in
-            #if canImport(SessionKitKokoro)
+            #if canImport(SessionKitKokoro) && !targetEnvironment(simulator)
             do {
                 guard KokoroNarrationRenderer.isRuntimeSupported else {
                     throw KokoroNarrationError.unavailableOnSimulator
@@ -1365,7 +1386,13 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func makeAudioPlaybackClient() throws -> AudioPlaybackClient {
-        #if canImport(SessionKitKokoro) && canImport(AVFoundation)
+        #if targetEnvironment(simulator)
+        if ttsMode == "kokoro" {
+            diagnostics["sessionTTS"] = "Kokoro simulator stub"
+            return FakeGeneratedSpeechPlaybackClient()
+        }
+        #endif
+        #if canImport(SessionKitKokoro) && !targetEnvironment(simulator) && canImport(AVFoundation)
         if ttsMode == "kokoro" {
             let supportDirectory = try applicationSupportDirectory()
             let cachesDirectory = try FileManager.default.url(
@@ -1517,6 +1544,9 @@ final class Gate1AppModel: ObservableObject {
             Do not merely summarize the source. Use the source text as context.
 
             Respond exactly:
+            <sm_summary>
+            A short spoken introduction to the response.
+            </sm_summary>
             <sm_response>
             A text-to-speech friendly synthesis of the user's engagement with the source.
             </sm_response>
@@ -1524,13 +1554,16 @@ final class Gate1AppModel: ObservableObject {
             {"schemaVersion":"assistant-response-map.v1","chapters":[...]}
             </sm_chapters_json>
 
-            Do not include sm_summary. Chapter anchors must be exact phrases from your response.
+            Chapter anchors must be exact phrases from your response.
             """
         case "assistant_response":
             return """
             You are continuing a Spoken Margins listening session.
 
             Respond exactly:
+            <sm_summary>
+            A short spoken introduction to the response.
+            </sm_summary>
             <sm_response>
             Your full spoken response.
             </sm_response>
@@ -1538,7 +1571,7 @@ final class Gate1AppModel: ObservableObject {
             {"schemaVersion":"assistant-response-map.v1","chapters":[...]}
             </sm_chapters_json>
 
-            Do not include sm_summary. The response should be useful for immediate text-to-speech.
+            The response should be useful for immediate text-to-speech.
             Chapter anchors must be exact phrases from the full response.
             """
         default:
@@ -2235,7 +2268,7 @@ private enum ManualListeningMapError: Error, CustomStringConvertible {
     }
 }
 
-#if canImport(SessionKitKokoro) && canImport(AVFoundation)
+#if canImport(SessionKitKokoro) && !targetEnvironment(simulator) && canImport(AVFoundation)
 private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, AVAudioPlayerDelegate, @unchecked Sendable {
     private let fallback = SystemSpeechPlaybackClient()
     private let applicationSupportDirectory: URL
@@ -2777,6 +2810,72 @@ private extension KokoroSourceSlice {
         KokoroSourceSlice(text: text, sourceLength: sourceLength, boundary: boundary)
     }
 }
+
+#if targetEnvironment(simulator)
+private final class FakeGeneratedSpeechPlaybackClient: AudioPlaybackClient, @unchecked Sendable {
+    private let lock = NSLock()
+    private var preparedText = ""
+    private var currentOffsetValue = 0
+    private var completedTargetId: String?
+    private var playingTargetId: String?
+
+    func prepareSpeechText(_ text: String) throws -> String {
+        let normalized = SpeechTextNormalizer.normalize(text)
+        lock.lock()
+        preparedText = normalized
+        lock.unlock()
+        return normalized
+    }
+
+    func play(targetId: String) throws {
+        try play(targetId: targetId, from: 0)
+    }
+
+    func play(targetId: String, from charOffset: Int) throws {
+        lock.lock()
+        playingTargetId = targetId
+        completedTargetId = nil
+        currentOffsetValue = max(0, min(charOffset, preparedText.count))
+        lock.unlock()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            if self.playingTargetId == targetId {
+                self.currentOffsetValue = self.preparedText.count
+                self.completedTargetId = targetId
+            }
+            self.lock.unlock()
+        }
+    }
+
+    func currentCharOffset() -> Int? {
+        lock.lock()
+        let offset = currentOffsetValue
+        lock.unlock()
+        return offset
+    }
+
+    func isPlaybackComplete(targetId: String) -> Bool {
+        lock.lock()
+        let complete = completedTargetId == targetId
+        lock.unlock()
+        return complete
+    }
+
+    func pause() throws {
+        lock.lock()
+        playingTargetId = nil
+        lock.unlock()
+    }
+
+    func stop() throws {
+        lock.lock()
+        playingTargetId = nil
+        completedTargetId = nil
+        lock.unlock()
+    }
+}
+#endif
 
 #if canImport(AVFoundation)
 private func voiceQualityName(_ voice: AVSpeechSynthesisVoice) -> String {

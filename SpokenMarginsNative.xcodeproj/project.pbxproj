@@ -16,7 +16,6 @@
 		B3715F09AB0080AF916931F3 /* Gate1RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 479B709AF5D74954043B0852 /* Gate1RootView.swift */; };
 		B401E3D73FFFC3B4CCD67491 /* SessionKitAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 34C621C37AF71E6ED22B1045 /* SessionKitAudio */; };
 		BB2EB8B4A269BF2F25903797 /* Gate1FlowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB4DFB911729FD28E4C7545B /* Gate1FlowUITests.swift */; };
-		D1A36A09CB7B4E8D81753713 /* SessionKitKokoro in Frameworks */ = {isa = PBXBuildFile; productRef = A165746E1241477689C2A3E9 /* SessionKitKokoro */; };
 		F719B3F555F883823A6AEED5 /* SessionKitPersistence in Frameworks */ = {isa = PBXBuildFile; productRef = 16898C6F40FB4FDCA4DE8C38 /* SessionKitPersistence */; };
 /* End PBXBuildFile section */
 
@@ -34,7 +33,7 @@
 		465089CBB611D338A74CAE8A /* Gate1AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1AppModel.swift; sourceTree = "<group>"; };
 		479B709AF5D74954043B0852 /* Gate1RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1RootView.swift; sourceTree = "<group>"; };
 		9028714E249043B12F2CD95D /* SpokenMarginsAppUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = SpokenMarginsAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		9FEFBCF337DFC7DB102DAD5B /* SpokenMarginsApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SpokenMarginsApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		9FEFBCF337DFC7DB102DAD5B /* SpokenMarginsApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = SpokenMarginsApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A3466DCC99E6E887F6A0C536 /* SpokenMarginsApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpokenMarginsApp.swift; sourceTree = "<group>"; };
 		AB4DFB911729FD28E4C7545B /* Gate1FlowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1FlowUITests.swift; sourceTree = "<group>"; };
 		C271766FC941B68CA12F2DAC /* SessionKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SessionKit; path = Packages/SessionKit; sourceTree = SOURCE_ROOT; };
@@ -51,7 +50,6 @@
 				F719B3F555F883823A6AEED5 /* SessionKitPersistence in Frameworks */,
 				B401E3D73FFFC3B4CCD67491 /* SessionKitAudio in Frameworks */,
 				AB149D16A2A0482B581B0847 /* SessionKitAI in Frameworks */,
-				D1A36A09CB7B4E8D81753713 /* SessionKitKokoro in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -154,7 +152,6 @@
 				16898C6F40FB4FDCA4DE8C38 /* SessionKitPersistence */,
 				34C621C37AF71E6ED22B1045 /* SessionKitAudio */,
 				E7C7184F382A54BFB372015B /* SessionKitAI */,
-				A165746E1241477689C2A3E9 /* SessionKitKokoro */,
 			);
 			productName = SpokenMarginsApp;
 			productReference = 9FEFBCF337DFC7DB102DAD5B /* SpokenMarginsApp.app */;
@@ -171,6 +168,10 @@
 				TargetAttributes = {
 					62CEABDB2B6F38CA17ED8324 = {
 						TestTargetID = A7009410088927EF7A55F0A3;
+					};
+					A7009410088927EF7A55F0A3 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Manual;
 					};
 				};
 			};
@@ -243,16 +244,15 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_IDENTITY = "Apple Development";
-				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = J8SWC6J3VY;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Manual;
+				DEVELOPMENT_TEAM = "";
 				INFOPLIST_FILE = App/SpokenMarginsApp/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.native;
-				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -263,16 +263,15 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_IDENTITY = "Apple Development";
-				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = J8SWC6J3VY;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Manual;
+				DEVELOPMENT_TEAM = "";
 				INFOPLIST_FILE = App/SpokenMarginsApp/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.native;
-				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -479,10 +478,6 @@
 		34C621C37AF71E6ED22B1045 /* SessionKitAudio */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SessionKitAudio;
-		};
-		A165746E1241477689C2A3E9 /* SessionKitKokoro */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = SessionKitKokoro;
 		};
 		E7C7184F382A54BFB372015B /* SessionKitAI */ = {
 			isa = XCSwiftPackageProductDependency;

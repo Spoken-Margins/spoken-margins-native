@@ -683,6 +683,96 @@
       "status": "partial"
     },
     {
+      "id": "G1-OVERVIEW-PREFACE-PLAYBACK",
+      "title": "Listening Map overview plays before source audio",
+      "specSources": [
+        "docs/prototype-spec.md:344",
+        "/Users/colemiller/Documents/GitHub/interject/src/App.tsx"
+      ],
+      "userPath": "Start item playback for an item with a Listening Map overview",
+      "corePath": "SessionEngine.startSession -> playbackText -> itemPlaybackPreface",
+      "durableEffect": "source item text remains unchanged while the spoken item target includes the overview preface",
+      "positiveEvidence": [
+        "SessionKitCoreTests.testStartSessionSpeaksListeningMapOverviewBeforeItemText"
+      ],
+      "negativeEvidence": [
+        "No device evidence proves the overview is audibly spoken before long-form source TTS."
+      ],
+      "falsificationFindings": [
+        "Core behavior is covered; hardware playback evidence is still required."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-PREPARED-SUMMARY-SEQUENCING",
+      "title": "Prepared source summaries wait for item completion and AI-turn summaries do not interrupt active AI playback",
+      "specSources": [
+        "/Users/colemiller/Documents/GitHub/interject/src/App.tsx",
+        "/Users/colemiller/Documents/GitHub/interject/src/App.test.tsx"
+      ],
+      "userPath": "Prepare summary during source playback; summarize interjections during AI response playback",
+      "corePath": "Gate1AppModel.autoPlayCompletedTurn/playPendingTurnIfReady -> SessionEngine.aiJobCompleted/playTurn",
+      "durableEffect": "pending generated turn id is retained until active audio completes, then playback target changes to the generated turn",
+      "positiveEvidence": [
+        "SessionKitCoreTests.testAIJobCompletedPreservesActivePlaybackPhase",
+        "Gate1AppModel only drains pending generated turns after active playback is no longer playing"
+      ],
+      "negativeEvidence": [
+        "No simulator UI test yet drives a full provider completion while audio is active.",
+        "Real device evidence is still needed for native audio completion timing."
+      ],
+      "falsificationFindings": [
+        "Core/app sequencing is implemented, but end-to-end provider/audio evidence remains partial."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-AI-TURN-TIMELINE-NAVIGATION",
+      "title": "AI turns and AI-turn chapters are playable from the primary timeline",
+      "specSources": [
+        "/Users/colemiller/Documents/GitHub/interject/src/App.test.tsx:331",
+        "/Users/colemiller/Documents/GitHub/interject/src/App.tsx:3137"
+      ],
+      "userPath": "Playback -> Timeline -> AI turn or AI chapter row",
+      "corePath": "Gate1RootView.timeline -> Gate1AppModel.playTurn/jumpToTurnChapter -> SessionEngine.playTurn/jumpToTurnChapter",
+      "durableEffect": "session current target changes to summary_turn_tts or assistant_turn_tts with chapter offset when provided",
+      "positiveEvidence": [
+        "SessionKitCoreTests.testAssistantPlayableTextSpeaksSummaryBeforeResponse",
+        "SessionKitCoreTests.testAICompletionParsesSummaryResponseAndChapters",
+        "SessionKitCoreTests.testJumpToAssistantTurnChapterUsesSummaryPrefaceOffset"
+      ],
+      "negativeEvidence": [
+        "No UI test yet seeds a generated AI turn with chapters and taps the primary timeline row."
+      ],
+      "falsificationFindings": [
+        "Core behavior and product controls exist; UI automation should still cover the timeline path."
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "G1-KOKORO-SIMULATOR-STUB-DEVICE-EVIDENCE",
+      "title": "Kokoro is simulator-testable through a deterministic stub and validated on device through real Metal playback",
+      "specSources": [
+        "docs/gate1-implementation-status.md",
+        "Packages/SessionKit/Sources/SessionKitKokoro/KokoroNarrationRenderer.swift"
+      ],
+      "userPath": "Settings -> TTS Mode -> Kokoro; device validation imports Kokoro assets and previews/plays generated audio",
+      "corePath": "Gate1AppModel.makeAudioPlaybackClient -> FakeGeneratedSpeechPlaybackClient on simulator or KokoroSpeechPlaybackClient on supported device builds",
+      "durableEffect": "simulator verification can exercise generated-speech completion semantics without linking Metal-only runtime code",
+      "positiveEvidence": [
+        "SpokenMarginsApp builds under iOS Simulator after xcodegen regeneration",
+        "FakeGeneratedSpeechPlaybackClient implements AudioPlaybackClient completion and offset reporting"
+      ],
+      "negativeEvidence": [
+        "Real Kokoro/Metal playback still requires hardware validation evidence.",
+        "The generated Xcode project intentionally keeps Kokoro out of the simulator app dependency graph."
+      ],
+      "falsificationFindings": [
+        "Simulator CI is unblocked; Kokoro remains partial until real-device render/playback evidence is attached."
+      ],
+      "status": "partial"
+    },
+    {
       "id": "G1-DEVICE-EVIDENCE",
       "title": "Phone/tablet runtime evidence with microphone, audio route, provider, offline mode",
       "specSources": [

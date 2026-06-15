@@ -34,7 +34,7 @@
     },
     {
       "command": "retryAiJob",
-      "args": { "jobId": "job-assistant-response-001" },
+      "args": { "jobId": "job-assistant-response-002" },
       "expect": {
         "attemptsIncremented": true,
         "turnStatus": "streaming",
@@ -43,7 +43,7 @@
     },
     {
       "event": "aiJobCompleted",
-      "args": { "turnId": "turn-response-001" },
+      "args": { "turnId": "turn-response-002" },
       "expect": {
         "turnStatus": "complete",
         "pendingAiJobRemoved": true,

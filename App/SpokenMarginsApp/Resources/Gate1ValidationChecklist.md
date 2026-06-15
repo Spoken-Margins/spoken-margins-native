@@ -10,9 +10,15 @@ Runtime profiles exercised: phone-tablet-online, phone-tablet-offline
 
 - `SessionKitCoreTests`: must pass.
 - `TraceReplayTests.testGate1TracesReplay`: must pass all Gate 1 traces.
+- `Gate1FlowUITests`: must pass on iPhone and iPad simulators through `./scripts/verify-gate1.sh`.
 - SQLite migration/persistence smoke test: must pass.
 - Device microphone permission allowed and denied: TBD.
+- System TTS overview preface before source playback: TBD.
+- Prepared source summary auto-plays only after item audio completion: TBD.
+- AI-turn interjection summary does not interrupt current AI response playback: TBD.
+- Primary timeline AI turn and AI chapter rows are tappable: TBD.
 - Airplane mode provider deferral: TBD.
+- Real Kokoro asset import, render, memory check, and playback on hardware: TBD.
 - Export reviewed for session isolation: TBD.
 
 ## Product Owner Flow
@@ -22,24 +28,27 @@ Runtime profiles exercised: phone-tablet-online, phone-tablet-offline
 3. Load seeded fixtures.
 4. Create or import a text item containing a long URL and a Markdown link.
 5. Start playback and confirm URLs are not spoken while source text remains intact.
-6. Jump between Listening Map chapters.
-7. Skip back and forward repeatedly.
-8. Record at least five interjections during source playback.
-9. Confirm playback resumes with enough context after each interjection.
-10. Generate an interjection summary.
-11. Listen to the summary.
-12. Interject into the summary.
-13. Add an addendum or follow-up.
-14. Continue discussion with AI.
-15. Interject into the AI response.
-16. Simulate provider failure or offline mode and confirm pending AI work is recoverable.
-17. Export the session and confirm another session's notes do not leak in.
+6. Confirm the Listening Map overview is spoken before the article body begins.
+7. Jump between Listening Map chapters.
+8. Skip back and forward repeatedly.
+9. Record at least five interjections during source playback.
+10. Confirm playback resumes with enough context after each interjection.
+11. Generate an interjection summary while source audio is still playing and confirm it waits until item audio completes.
+12. Listen to the summary from the primary timeline.
+13. Interject into the summary.
+14. Add an addendum or follow-up.
+15. Continue discussion with AI and confirm the AI introduction summary is spoken before the full response.
+16. Interject into the AI response, summarize that interjection, and confirm the new summary does not interrupt the active AI response.
+17. Tap AI turn and AI chapter rows from the primary timeline.
+18. Simulate provider failure or offline mode and confirm pending AI work is recoverable.
+19. Switch to Kokoro on device, import model/voices, run memory check, preview voice, and play a source item.
+20. Export the session and confirm another session's notes do not leak in.
 
 ## Known Issues
 
-- Installable Xcode project and signing are not yet generated in this repository.
-- Real AVFoundation recording and microphone permission UI are represented by adapter boundaries and need device wiring before product-owner validation.
-- Real OpenAI-compatible provider calls are represented by provider abstraction and deterministic test provider until app settings are wired.
+- Signed device installation still requires local team/provisioning configuration.
+- Real AVFoundation recording, Speech transcription, and Kokoro/Metal playback need hardware evidence before product-owner validation.
+- Real OpenAI-compatible provider calls are wired in app settings but still need device/provider evidence.
 
 Product-owner result:
 - Pass

@@ -31,6 +31,7 @@ public struct ExportTimelineEntry: Codable, Equatable {
     public var targetType: String?
     public var targetId: String?
     public var percent: Int?
+    public var chapterId: String?
 }
 
 public struct ExportInterjection: Codable, Equatable {

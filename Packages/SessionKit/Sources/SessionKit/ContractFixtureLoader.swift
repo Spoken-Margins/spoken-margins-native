@@ -99,6 +99,15 @@ public enum ContractFixtureLoader {
                 summary: object["summary"] as? String,
                 text: object["text"] as? String,
                 rawText: object["rawText"] as? String,
+                chapters: (object["chapters"] as? [[String: Any]])?.map { chapter in
+                    Chapter(
+                        id: chapter["id"] as? String ?? "",
+                        title: chapter["title"] as? String ?? "",
+                        startChar: chapter["startChar"] as? Int ?? 0,
+                        endChar: chapter["endChar"] as? Int ?? 0,
+                        percent: chapter["percent"] as? Int ?? 0
+                    )
+                },
                 sourceInterjectionIds: object["sourceInterjectionIds"] as? [String] ?? []
             )
         }

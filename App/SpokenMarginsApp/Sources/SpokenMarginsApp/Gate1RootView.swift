@@ -645,7 +645,7 @@ private struct PlaybackScreen: View {
                     .font(.headline)
                 Spacer()
             }
-            if model.selectedItem.chapters.isEmpty && model.selectedItem.interjections.isEmpty {
+            if timelineEntries.isEmpty {
                 ProductPanel {
                     Text("No chapters or interjections yet.")
                         .foregroundStyle(AppColors.secondaryText)
@@ -674,7 +674,21 @@ private struct PlaybackScreen: View {
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("timeline.interjection.\(interjection.id)")
                     case .turn(let turn):
-                        TimelineRow(percent: "AI", title: turnTitle(turn), subtitle: turn.status)
+                        Button {
+                            model.playTurn(turn)
+                        } label: {
+                            TimelineRow(percent: "AI", title: turnTitle(turn), subtitle: turn.summary ?? turn.text ?? turn.status)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("timeline.turn.play.\(turn.id)")
+                    case .turnChapter(let turn, let chapter):
+                        Button {
+                            model.jumpToTurnChapter(turn: turn, chapter: chapter)
+                        } label: {
+                            TimelineRow(percent: "AI \(chapter.percent)%", title: chapter.title, subtitle: turnTitle(turn))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("timeline.turnChapter.jump.\(turn.id).\(chapter.id)")
                     }
                 }
             }
@@ -683,10 +697,8 @@ private struct PlaybackScreen: View {
     }
 
     private var timelineEntries: [PlaybackTimelineEntry] {
-        (
-            model.selectedItem.chapters.map { PlaybackTimelineEntry.chapter($0) } +
-            model.selectedItem.interjections.map { PlaybackTimelineEntry.interjection($0) } +
-            model.selectedItem.turns.map { PlaybackTimelineEntry.turn($0) }
+        let sourceEntries = (model.selectedItem.chapters.map { PlaybackTimelineEntry.chapter($0) } +
+            model.selectedItem.interjections.filter { $0.targetType == .item }.map { PlaybackTimelineEntry.interjection($0) }
         )
         .sorted { lhs, rhs in
             if lhs.percent == rhs.percent {
@@ -694,6 +706,14 @@ private struct PlaybackScreen: View {
             }
             return lhs.percent < rhs.percent
         }
+        let turnEntries = model.selectedItem.turns.flatMap { turn -> [PlaybackTimelineEntry] in
+            [PlaybackTimelineEntry.turn(turn)] +
+            (turn.chapters ?? []).map { PlaybackTimelineEntry.turnChapter(turn, $0) } +
+            model.selectedItem.interjections
+                .filter { $0.targetId == turn.id && $0.targetType != .item }
+                .map { PlaybackTimelineEntry.interjection($0) }
+        }
+        return sourceEntries + turnEntries
     }
 
     private var conversation: some View {
@@ -1067,28 +1087,32 @@ private enum PlaybackTimelineEntry: Identifiable {
     case chapter(Chapter)
     case interjection(Interjection)
     case turn(ConversationTurn)
+    case turnChapter(ConversationTurn, Chapter)
 
     var id: String {
         switch self {
         case .chapter(let chapter): return "chapter-\(chapter.id)"
         case .interjection(let interjection): return "interjection-\(interjection.id)"
         case .turn(let turn): return "turn-\(turn.id)"
+        case .turnChapter(let turn, let chapter): return "turn-chapter-\(turn.id)-\(chapter.id)"
         }
     }
 
     var percent: Int {
         switch self {
         case .chapter(let chapter): return chapter.percent
-        case .interjection(let interjection): return interjection.roughPercent
+        case .interjection(let interjection): return interjection.targetType == .item ? interjection.roughPercent : 101
         case .turn: return 101
+        case .turnChapter: return 101
         }
     }
 
     var sortRank: Int {
         switch self {
         case .chapter: return 0
-        case .interjection: return 1
+        case .interjection(let interjection): return interjection.targetType == .item ? 1 : 4
         case .turn: return 2
+        case .turnChapter: return 3
         }
     }
 }

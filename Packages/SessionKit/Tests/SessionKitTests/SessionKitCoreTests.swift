@@ -188,7 +188,7 @@ final class SessionKitCoreTests: XCTestCase {
         let target = map.chapters[1]
         let snapshot = try engine.jumpToChapter(chapterId: target.id)
         XCTAssertEqual(snapshot.chapterTitle, target.title)
-        XCTAssertEqual(repo.sessions["session-\(item.id)-gate1"]?.position.charOffset, target.startChar)
+        XCTAssertEqual(engine.currentSession?.position.charOffset, target.startChar)
     }
 
     func testStartSessionSpeaksListeningMapOverviewBeforeItemText() throws {
@@ -384,7 +384,7 @@ final class SessionKitCoreTests: XCTestCase {
 
         _ = try engine.startSession(itemId: item.id)
         audio.currentOffset = 0
-        _ = try engine.generateInterjectionSummary(scope: SummaryScope(targetType: "item", sessionId: "session-\(item.id)-gate1"))
+        _ = try engine.generateInterjectionSummary(scope: SummaryScope(targetType: "item", sessionId: engine.currentSession?.id))
         _ = try engine.aiStreamDelta(turnId: "turn-summary-001", content: "<sm_response>Summary text.</sm_response>")
         let snapshot = try engine.aiJobCompleted(turnId: "turn-summary-001")
 
@@ -412,7 +412,7 @@ final class SessionKitCoreTests: XCTestCase {
         _ = try engine.beginInterjection()
         _ = try engine.finishInterjection(audioRef: "interjections/ij-001.m4a")
 
-        let interjection = try XCTUnwrap(try repo.loadInterjections(sessionId: "session-\(item.id)-gate1").first)
+        let interjection = try XCTUnwrap(try repo.loadInterjections(sessionId: try XCTUnwrap(engine.currentSession?.id)).first)
         XCTAssertEqual(interjection.audioPath, "interjections/ij-001.m4a")
         XCTAssertEqual(interjection.transcriptionStatus, "pending")
         XCTAssertEqual(transcriber.scheduledInterjectionIds, [interjection.id])
@@ -460,7 +460,7 @@ final class SessionKitCoreTests: XCTestCase {
             Chapter(id: "ch-1", title: "One", startChar: 0, endChar: 5, percent: 0),
             Chapter(id: "ch-2", title: "Two", startChar: 5, endChar: 16, percent: 31)
         ])
-        let summary = ConversationTurn(id: "turn-summary-001", sessionId: "session-\(item.id)-gate1", role: "assistant", turnType: "interjection_summary", status: "complete", summary: nil, text: "Summary text.", rawText: nil, sourceInterjectionIds: [])
+        let summary = ConversationTurn(id: "turn-summary-001", sessionId: "session-\(item.id)-gate1-001", role: "assistant", turnType: "interjection_summary", status: "complete", summary: nil, text: "Summary text.", rawText: nil, sourceInterjectionIds: [])
         let audio = RecordingAudioClient()
         let repo = InMemorySessionRepository(items: [item.id: item], mapsByItemId: [item.id: map], turns: [summary.id: summary])
         let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
@@ -545,7 +545,124 @@ final class SessionKitCoreTests: XCTestCase {
 
         XCTAssertEqual(snapshot.phase, .itemPlayback)
         XCTAssertEqual(snapshot.status, .playing)
-        XCTAssertEqual(try repo.loadInterjections(sessionId: "session-\(item.id)-gate1").count, 0)
+        XCTAssertEqual(try repo.loadInterjections(sessionId: try XCTUnwrap(engine.currentSession?.id)).count, 0)
+    }
+
+    func testRepeatedStartsCreateDistinctSessionsForSameItem() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two.", externalReference: nil, status: "ready")
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo)
+
+        _ = try engine.startSession(itemId: item.id)
+        let first = try XCTUnwrap(engine.currentSession?.id)
+        _ = try engine.startSession(itemId: item.id)
+        let second = try XCTUnwrap(engine.currentSession?.id)
+
+        XCTAssertNotEqual(first, second)
+        XCTAssertEqual(Set(repo.sessions.keys), [first, second])
+    }
+
+    func testRepeatedFollowupsCreateDistinctAssistantTurnsAndJobs() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "ai": ["continue_discussion"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two.", externalReference: nil, status: "ready")
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo)
+
+        _ = try engine.startSession(itemId: item.id)
+        _ = try engine.submitFollowup(text: "First")
+        _ = try engine.submitFollowup(text: "Second")
+
+        let sessionId = try XCTUnwrap(engine.currentSession?.id)
+        let responseTurns = try repo.loadTurns(sessionId: sessionId).filter { $0.turnType == "assistant_response" }.map(\.id).sorted()
+        let jobs = try repo.loadAIJobs(sessionId: sessionId).filter { $0.kind == "assistant_response" }.map(\.id).sorted()
+        XCTAssertEqual(responseTurns, ["turn-response-001", "turn-response-002"])
+        XCTAssertEqual(jobs, ["job-assistant-response-001", "job-assistant-response-002"])
+    }
+
+    func testAssistantPlayableTextSpeaksSummaryBeforeResponse() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["assistant_turn_tts"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "Source.", externalReference: nil, status: "ready")
+        let session = Session(id: "session-pill", itemId: item.id, status: "in_progress", phase: .conversation, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 0, playbackRate: 1)
+        let response = ConversationTurn(id: "turn-response-001", sessionId: session.id, role: "assistant", turnType: "assistant_response", status: "complete", summary: "Brief intro.", text: "Full response.", rawText: nil, sourceInterjectionIds: [])
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session], turns: [response.id: response])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.playTurn(turnId: response.id)
+
+        XCTAssertEqual(audio.preparedTexts.last, "Brief intro.\n\nFull response.")
+    }
+
+    func testAICompletionParsesSummaryResponseAndChapters() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["assistant_turn_tts"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "Source.", externalReference: nil, status: "ready")
+        let session = Session(id: "session-pill", itemId: item.id, status: "in_progress", phase: .conversation, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 0, playbackRate: 1)
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session])
+        let engine = SessionEngine(profile: profile, repository: repo)
+
+        _ = try engine.aiStreamDelta(
+            turnId: "turn-response-001",
+            content: "<sm_summary>Two parts.</sm_summary><sm_response>Hello world. Second point.</sm_response><sm_chapters_json>{\"schemaVersion\":\"assistant-response-map.v1\",\"chapters\":[{\"id\":\"ch-1\",\"title\":\"Opening\",\"anchor\":\"Hello world.\"}]}</sm_chapters_json>"
+        )
+        _ = try engine.aiJobCompleted(turnId: "turn-response-001")
+
+        let turn = try XCTUnwrap(try repo.loadTurns(sessionId: session.id).first)
+        XCTAssertEqual(turn.summary, "Two parts.")
+        XCTAssertEqual(turn.text, "Hello world. Second point.")
+        XCTAssertEqual(turn.chapters?.first?.id, "ch-1")
+    }
+
+    func testJumpToAssistantTurnChapterUsesSummaryPrefaceOffset() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["assistant_turn_tts"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "Source.", externalReference: nil, status: "ready")
+        let session = Session(id: "session-pill", itemId: item.id, status: "in_progress", phase: .conversation, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 0, playbackRate: 1)
+        let chapter = Chapter(id: "ch-2", title: "Second", startChar: 16, endChar: 29, percent: 50)
+        let response = ConversationTurn(id: "turn-response-001", sessionId: session.id, role: "assistant", turnType: "assistant_response", status: "complete", summary: "Brief intro.", text: "First response. Second point.", rawText: nil, chapters: [chapter], sourceInterjectionIds: [])
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session], turns: [response.id: response])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.jumpToTurnChapter(turnId: response.id, chapterId: chapter.id)
+
+        XCTAssertEqual(audio.preparedTexts.last, "Brief intro.\n\nFirst response. Second point.")
+        XCTAssertEqual(audio.playedOffsets.last, "Brief intro.\n\n".count + chapter.startChar)
     }
 }
 

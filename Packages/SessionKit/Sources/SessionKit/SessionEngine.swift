@@ -51,7 +51,7 @@ public final class SessionEngine {
         currentItem = item
         currentMap = try repository.loadListeningMap(itemId: itemId)
         let session = Session(
-            id: "session-\(itemId)-gate1",
+            id: nextSessionId(itemId: itemId),
             itemId: itemId,
             status: "in_progress",
             phase: .itemPlayback,
@@ -349,6 +349,7 @@ public final class SessionEngine {
             summary: nil,
             text: nil,
             rawText: nil,
+            chapters: nil,
             sourceInterjectionIds: lastSummaryCandidates.map(\.id)
         )
         try repository.saveTurn(turn)
@@ -388,6 +389,32 @@ public final class SessionEngine {
     }
 
     @discardableResult
+    public func jumpToTurnChapter(turnId: String, chapterId: String) throws -> SessionSnapshot {
+        var session = try resolveSession(nil)
+        let turns = try repository.loadTurns(sessionId: session.id)
+        guard let turn = turns.first(where: { $0.id == turnId }),
+              let chapter = turn.chapters?.first(where: { $0.id == chapterId }) else {
+            throw SessionKitError.invalidCommandForState("jumpToTurnChapter")
+        }
+        if turn.turnType == "interjection_summary" {
+            try require("jumpToTurnChapter", category: "playback", capabilities: ["summary_turn_tts"])
+            session.currentTargetType = .summaryTurnTTS
+            session.phase = .summaryPlayback
+        } else {
+            try require("jumpToTurnChapter", category: "playback", capabilities: ["assistant_turn_tts"])
+            session.currentTargetType = .assistantTurnTTS
+            session.phase = .aiResponsePlayback
+        }
+        session.currentTargetId = turnId
+        session.position = Position(charOffset: chapter.startChar, chapterId: chapter.id)
+        currentSession = session
+        try repository.saveSession(session)
+        try playCurrentTarget(session)
+        publish(status: .playing, phase: session.phase)
+        return snapshot
+    }
+
+    @discardableResult
     public func submitFollowup(text: String) throws -> SessionSnapshot {
         var session = try resolveSession(nil)
         session.phase = .conversation
@@ -401,13 +428,16 @@ public final class SessionEngine {
             summary: nil,
             text: text,
             rawText: text,
+            chapters: nil,
             sourceInterjectionIds: []
         )
         try repository.saveTurn(userTurn)
         let shouldCall = aiProvider.shouldStartProviderCall(profile: profile, kind: "assistant_response")
         let status = shouldCall ? "pending" : "deferred"
+        let responseIndex = try repository.loadTurns(sessionId: session.id).filter { $0.turnType == "assistant_response" }.count + 1
+        let responseTurnId = "turn-response-\(String(format: "%03d", responseIndex))"
         let responseTurn = ConversationTurn(
-            id: "turn-response-001",
+            id: responseTurnId,
             sessionId: session.id,
             role: "assistant",
             turnType: "assistant_response",
@@ -415,10 +445,11 @@ public final class SessionEngine {
             summary: nil,
             text: nil,
             rawText: nil,
+            chapters: nil,
             sourceInterjectionIds: []
         )
         try repository.saveTurn(responseTurn)
-        let job = aiJob(id: "job-assistant-response-001", kind: "assistant_response", session: session, turnId: responseTurn.id, status: status, messages: [text])
+        let job = aiJob(id: "job-assistant-response-\(String(format: "%03d", responseIndex))", kind: "assistant_response", session: session, turnId: responseTurn.id, status: status, messages: [text])
         try repository.saveAIJob(job)
         snapshot.lastUserTurnType = userTurn.turnType
         snapshot.pendingAiJobKind = job.kind
@@ -476,7 +507,8 @@ public final class SessionEngine {
         let previous = streamingBuffers[turnId] ?? ""
         let combined = previous + content
         streamingBuffers[turnId] = combined
-        let text = extractResponseText(from: combined)
+        let parsed = parseSectionedResponse(from: combined)
+        let text = parsed.response
         let alreadySpoken = spokenPrefixes[turnId] ?? 0
         let completeUnits = completeSentenceUnits(in: text)
         let unitsToSpeak = completeUnits.dropFirst(alreadySpoken)
@@ -490,9 +522,11 @@ public final class SessionEngine {
             summary: nil,
             text: nil,
             rawText: nil,
+            chapters: nil,
             sourceInterjectionIds: []
         )
         turn.status = "streaming"
+        turn.summary = parsed.summary
         turn.text = text
         turn.rawText = combined
         try repository.saveTurn(turn)
@@ -514,14 +548,22 @@ public final class SessionEngine {
             summary: nil,
             text: nil,
             rawText: nil,
+            chapters: nil,
             sourceInterjectionIds: []
         )
         turn.status = "complete"
+        let parsed = parseSectionedResponse(from: turn.rawText ?? "")
+        if turn.summary == nil || turn.summary?.isEmpty == true {
+            turn.summary = parsed.summary
+        }
         if turn.text == nil {
-            turn.text = extractResponseText(from: turn.rawText ?? "") 
+            turn.text = parsed.response
             if turn.text?.isEmpty != false {
                 turn.text = turn.turnType == "interjection_summary" ? "Summary ready." : "AI response ready."
             }
+        }
+        if turn.chapters == nil || turn.chapters?.isEmpty == true {
+            turn.chapters = parsed.chapters
         }
         try repository.saveTurn(turn)
         for var job in try repository.loadAIJobs(sessionId: session.id) where job.turnId == turnId {
@@ -645,11 +687,7 @@ public final class SessionEngine {
             session: ExportSession(id: session.id, status: session.status, completionPercent: session.completionPercent),
             listeningMap: options.includeListeningMap ? try repository.loadListeningMap(itemId: item.id) : nil,
             turns: turns,
-            timeline: interjections.map {
-                ExportTimelineEntry(type: "interjection", interjectionId: $0.id, turnId: nil, targetType: $0.targetType.rawValue, targetId: $0.targetId, percent: $0.roughPercent)
-            } + turns.map {
-                ExportTimelineEntry(type: "turn", interjectionId: nil, turnId: $0.id, targetType: nil, targetId: nil, percent: nil)
-            },
+            timeline: exportTimeline(interjections: interjections, turns: turns),
             interjections: interjections.map {
                 ExportInterjection(
                     id: $0.id,
@@ -668,6 +706,23 @@ public final class SessionEngine {
         )
         lastExport = export
         return export
+    }
+
+    private func exportTimeline(interjections: [Interjection], turns: [ConversationTurn]) -> [ExportTimelineEntry] {
+        let sourceInterjections = interjections.filter { $0.targetType == .item }.map {
+            ExportTimelineEntry(type: "interjection", interjectionId: $0.id, turnId: nil, targetType: $0.targetType.rawValue, targetId: $0.targetId, percent: $0.roughPercent, chapterId: nil)
+        }
+        let turnEntries = turns.flatMap { turn -> [ExportTimelineEntry] in
+            let base = ExportTimelineEntry(type: "ai_turn", interjectionId: nil, turnId: turn.id, targetType: nil, targetId: nil, percent: nil, chapterId: nil)
+            let chapters = (turn.chapters ?? []).map {
+                ExportTimelineEntry(type: "ai_turn_chapter", interjectionId: nil, turnId: turn.id, targetType: nil, targetId: nil, percent: $0.percent, chapterId: $0.id)
+            }
+            let turnInterjections = interjections.filter { $0.targetId == turn.id && $0.targetType != .item }.map {
+                ExportTimelineEntry(type: "interjection", interjectionId: $0.id, turnId: nil, targetType: $0.targetType.rawValue, targetId: $0.targetId, percent: $0.roughPercent, chapterId: nil)
+            }
+            return [base] + chapters + turnInterjections
+        }
+        return sourceInterjections + turnEntries
     }
 
     public func diagnostics() throws -> [String: String] {
@@ -741,6 +796,14 @@ public final class SessionEngine {
             return session
         }
         throw SessionKitError.invalidCommandForState("buildExport")
+    }
+
+    private func nextSessionId(itemId: String) -> String {
+        if let memory = repository as? InMemorySessionRepository {
+            let next = memory.sessions.values.filter { $0.itemId == itemId }.count + 1
+            return "session-\(itemId)-gate1-\(String(format: "%03d", next))"
+        }
+        return "session-\(itemId)-\(UUID().uuidString)"
     }
 
     private func currentInterjectionTarget(for session: Session) -> (type: InterjectionTargetType, id: String) {
@@ -864,12 +927,23 @@ public final class SessionEngine {
 
     private func playbackPlan(for session: Session) throws -> PlaybackPlan {
         let text = try playbackText(for: session)
+        if session.currentTargetType == .summaryTurnTTS || session.currentTargetType == .assistantTurnTTS,
+           let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == session.currentTargetId }) {
+            return PlaybackPlan(text: text, audioOffset: turnAudioOffset(for: turn, responseOffset: session.position.charOffset))
+        }
         guard session.currentTargetType == .itemTextTTS else {
             return PlaybackPlan(text: text, audioOffset: session.position.charOffset)
         }
         let prefixLength = itemPlaybackPreface().count
         let audioOffset = session.position.charOffset == 0 ? 0 : prefixLength + session.position.charOffset
         return PlaybackPlan(text: text, audioOffset: audioOffset)
+    }
+
+    private func turnAudioOffset(for turn: ConversationTurn, responseOffset: Int) -> Int {
+        let summary = turn.summary?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let text = turn.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !summary.isEmpty, !text.isEmpty else { return responseOffset }
+        return summary.count + 2 + responseOffset
     }
 
     private func playbackText(for session: Session) throws -> String {
@@ -887,8 +961,19 @@ public final class SessionEngine {
             guard let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == session.currentTargetId }) else {
                 throw SessionKitError.invalidCommandForState("playTurn")
             }
-            return turn.summary ?? turn.text ?? turn.rawText ?? ""
+            return playableText(for: turn)
         }
+    }
+
+    private func playableText(for turn: ConversationTurn) -> String {
+        let summary = turn.summary?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let text = turn.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !summary.isEmpty, !text.isEmpty {
+            return "\(summary)\n\n\(text)"
+        }
+        if !text.isEmpty { return text }
+        if !summary.isEmpty { return summary }
+        return turn.rawText ?? ""
     }
 
     private func itemPlaybackPreface() -> String {
@@ -1078,6 +1163,55 @@ public final class SessionEngine {
             return String(body)
         }
         return raw.replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
+    }
+
+    private struct ParsedAssistantResponse {
+        var summary: String?
+        var response: String
+        var chapters: [Chapter]
+    }
+
+    private func parseSectionedResponse(from raw: String) -> ParsedAssistantResponse {
+        let summary = extractTag("sm_summary", from: raw)
+        let response = extractResponseText(from: raw)
+        let chapters = extractAssistantChapters(from: raw, responseText: response)
+        return ParsedAssistantResponse(summary: summary?.isEmpty == true ? nil : summary, response: response, chapters: chapters)
+    }
+
+    private func extractTag(_ tag: String, from raw: String) -> String? {
+        guard let start = raw.range(of: "<\(tag)>")?.upperBound else { return nil }
+        let body = raw[start...]
+        guard let end = body.range(of: "</\(tag)>")?.lowerBound else {
+            return String(body).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return String(body[..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func extractAssistantChapters(from raw: String, responseText: String) -> [Chapter] {
+        guard let json = extractTag("sm_chapters_json", from: raw),
+              let data = json.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["schemaVersion"] as? String == "assistant-response-map.v1",
+              let rawChapters = object["chapters"] as? [[String: Any]] else {
+            return []
+        }
+        return rawChapters.enumerated().compactMap { _, object in
+            guard let id = object["id"] as? String,
+                  let title = object["title"] as? String,
+                  let anchor = object["anchor"] as? String,
+                  let range = responseText.range(of: anchor) else {
+                return nil
+            }
+            let start = responseText.distance(from: responseText.startIndex, to: range.lowerBound)
+            let end = responseText.distance(from: responseText.startIndex, to: range.upperBound)
+            return Chapter(
+                id: id,
+                title: title,
+                startChar: start,
+                endChar: end,
+                percent: percent(for: start, text: responseText)
+            )
+        }
     }
 
     private func completeSentenceUnits(in text: String) -> [String] {

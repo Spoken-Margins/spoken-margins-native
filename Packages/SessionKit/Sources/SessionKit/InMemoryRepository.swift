@@ -62,7 +62,7 @@ public final class InMemorySessionRepository: SessionRepository {
     }
 
     public func loadTurns(sessionId: String) throws -> [ConversationTurn] {
-        turns.values.filter { $0.sessionId == sessionId }
+        turns.values.filter { $0.sessionId == sessionId }.sorted { $0.id < $1.id }
     }
 
     public func saveAIJob(_ job: AIJob) throws {
@@ -70,7 +70,7 @@ public final class InMemorySessionRepository: SessionRepository {
     }
 
     public func loadAIJobs(sessionId: String) throws -> [AIJob] {
-        aiJobs.values.filter { $0.sessionId == sessionId }
+        aiJobs.values.filter { $0.sessionId == sessionId }.sorted { $0.id < $1.id }
     }
 
     public func updateAIJob(_ job: AIJob) throws {

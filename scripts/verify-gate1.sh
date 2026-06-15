@@ -28,11 +28,11 @@ PHONE_UDID="${PHONE_UDID:-${DEVICE_UDID:-}}"
 IPAD_UDID="${IPAD_UDID:-}"
 
 if [[ -z "$PHONE_UDID" ]]; then
-  PHONE_UDID="$(xcrun simctl list devices available | awk '/iPhone 17 \\(/ { gsub(/[()]/, "", $NF); print $NF; exit }')"
+  PHONE_UDID="$(xcrun simctl list devices available | sed -nE '/iPhone 17 / { s/.*\(([0-9A-Fa-f-]{36})\).*/\1/p; q; }')"
 fi
 
 if [[ -z "$IPAD_UDID" ]]; then
-  IPAD_UDID="$(xcrun simctl list devices available | awk '/iPad/ { gsub(/[()]/, "", $NF); print $NF; exit }')"
+  IPAD_UDID="$(xcrun simctl list devices available | sed -nE '/iPad/ { s/.*\(([0-9A-Fa-f-]{36})\).*/\1/p; q; }')"
 fi
 
 if [[ -z "$PHONE_UDID" ]]; then
@@ -60,7 +60,7 @@ run_ui_test() {
     -destination "id=$udid" \
     CODE_SIGNING_ALLOWED=YES \
     CODE_SIGN_IDENTITY='-' \
-    -only-testing:SpokenMarginsAppUITests/Gate1FlowUITests/testSeededGate1FlowHasVisibleFeedbackPlaybackExportAndSettings \
+    -only-testing:SpokenMarginsAppUITests/Gate1FlowUITests \
     -quiet \
     test
 }

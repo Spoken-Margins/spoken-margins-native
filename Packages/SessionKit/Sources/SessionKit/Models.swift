@@ -207,6 +207,7 @@ public struct ConversationTurn: Codable, Equatable, Sendable {
     public var summary: String?
     public var text: String?
     public var rawText: String?
+    public var chapters: [Chapter]? = nil
     public var sourceInterjectionIds: [String]
 }
 
