@@ -3,6 +3,9 @@ import Security
 import SessionKit
 import SessionKitAI
 import SessionKitAudio
+#if canImport(SessionKitKokoro)
+import SessionKitKokoro
+#endif
 import SessionKitPersistence
 #if canImport(UIKit)
 import UIKit
@@ -75,6 +78,10 @@ final class Gate1AppModel: ObservableObject {
     @Published var skipUnit = UserDefaults.standard.string(forKey: "skipUnit") ?? "paragraph"
     @Published var speechRate = UserDefaults.standard.double(forKey: "speechRate") == 0 ? 0.5 : UserDefaults.standard.double(forKey: "speechRate")
     @Published var speechVoiceIdentifier = UserDefaults.standard.string(forKey: "speechVoiceIdentifier") ?? ""
+    @Published var ttsMode = UserDefaults.standard.string(forKey: "ttsMode") ?? "systemImmediate"
+    @Published var kokoroVoiceName = UserDefaults.standard.string(forKey: "kokoroVoiceName") ?? "am_echo"
+    @Published var kokoroStatus = "Not checked"
+    @Published var isRenderingKokoroPreview = false
     @Published var providerAPIKey = KeychainStore.load(service: "SpokenMargins", account: "OpenAICompatibleAPIKey") ?? ""
     @Published var providerProbeStatus = "Not checked"
     @Published var knownIssues = [
@@ -88,6 +95,7 @@ final class Gate1AppModel: ObservableObject {
     private let transcriptionClient = SystemSpeechTranscriptionClient()
     #if canImport(AVFoundation)
     private let speechPreviewSynthesizer = AVSpeechSynthesizer()
+    private var kokoroPreviewPlayer: AVAudioPlayer?
     #endif
     let speechVoiceOptions = Gate1AppModel.availableSpeechVoiceOptions()
     private let encoder: JSONEncoder = {
@@ -219,6 +227,64 @@ final class Gate1AppModel: ObservableObject {
 
     func reportImportFailure(_ error: Error) {
         reportFailure(error, context: "File import failed")
+    }
+
+    func importKokoroAssets(urls: [URL]) {
+        guard !urls.isEmpty else {
+            reportFailure("No Kokoro asset files were selected.")
+            return
+        }
+
+        do {
+            let assetsDirectory = try kokoroAssetsDirectory()
+            try FileManager.default.createDirectory(at: assetsDirectory, withIntermediateDirectories: true)
+
+            var copiedModel = false
+            var copiedVoices = false
+            var ignored: [String] = []
+
+            for url in urls {
+                let didAccess = url.startAccessingSecurityScopedResource()
+                defer {
+                    if didAccess {
+                        url.stopAccessingSecurityScopedResource()
+                    }
+                }
+
+                let lowercasedName = url.lastPathComponent.lowercased()
+                let destinationName: String?
+                if lowercasedName == "kokoro-v1_0.safetensors" || url.pathExtension.lowercased() == "safetensors" {
+                    destinationName = "kokoro-v1_0.safetensors"
+                } else if lowercasedName == "voices.npz" || url.pathExtension.lowercased() == "npz" {
+                    destinationName = "voices.npz"
+                } else {
+                    destinationName = nil
+                }
+
+                guard let destinationName else {
+                    ignored.append(url.lastPathComponent)
+                    continue
+                }
+
+                let destinationURL = assetsDirectory.appending(path: destinationName)
+                if FileManager.default.fileExists(atPath: destinationURL.path) {
+                    try FileManager.default.removeItem(at: destinationURL)
+                }
+                try FileManager.default.copyItem(at: url, to: destinationURL)
+                copiedModel = copiedModel || destinationName == "kokoro-v1_0.safetensors"
+                copiedVoices = copiedVoices || destinationName == "voices.npz"
+            }
+
+            refreshKokoroAssetStatus()
+            let ignoredSuffix = ignored.isEmpty ? "" : " Ignored: \(ignored.joined(separator: ", "))."
+            if copiedModel || copiedVoices {
+                reportSuccess("Imported Kokoro asset\(copiedModel && copiedVoices ? "s" : "").\(ignoredSuffix)")
+            } else {
+                reportFailure("No Kokoro assets were imported. Select kokoro-v1_0.safetensors and voices.npz.\(ignoredSuffix)")
+            }
+        } catch {
+            reportFailure(error, context: "Kokoro asset import failed")
+        }
     }
 
     func start() {
@@ -582,6 +648,7 @@ final class Gate1AppModel: ObservableObject {
             diagnostics = try engine.diagnostics()
             diagnostics["providerProbe"] = providerProbeStatus
             settingsValueChanged()
+            refreshKokoroAssetStatus()
             reportSuccess("Diagnostics refreshed.")
         }
     }
@@ -595,6 +662,8 @@ final class Gate1AppModel: ObservableObject {
         UserDefaults.standard.set(skipUnit, forKey: "skipUnit")
         UserDefaults.standard.set(speechRate, forKey: "speechRate")
         UserDefaults.standard.set(speechVoiceIdentifier, forKey: "speechVoiceIdentifier")
+        UserDefaults.standard.set(ttsMode, forKey: "ttsMode")
+        UserDefaults.standard.set(kokoroVoiceName, forKey: "kokoroVoiceName")
         KeychainStore.save(providerAPIKey, service: "SpokenMargins", account: "OpenAICompatibleAPIKey")
         diagnostics["providerBaseURL"] = providerBaseURL
         diagnostics["providerModel"] = providerModel
@@ -604,6 +673,8 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["skipUnit"] = skipUnit
         diagnostics["speechRate"] = String(format: "%.2f", speechRate)
         diagnostics["speechVoice"] = speechVoiceDescription
+        diagnostics["ttsMode"] = ttsMode
+        diagnostics["kokoroVoice"] = kokoroVoiceName
         diagnostics["apiKeyConfigured"] = providerAPIKey.isEmpty ? "false" : "true"
         if rebuildEngineForCurrentSettings() {
             screen = .settings
@@ -614,8 +685,12 @@ final class Gate1AppModel: ObservableObject {
     func saveSpeechSettings() {
         UserDefaults.standard.set(speechRate, forKey: "speechRate")
         UserDefaults.standard.set(speechVoiceIdentifier, forKey: "speechVoiceIdentifier")
+        UserDefaults.standard.set(ttsMode, forKey: "ttsMode")
+        UserDefaults.standard.set(kokoroVoiceName, forKey: "kokoroVoiceName")
         diagnostics["speechRate"] = String(format: "%.2f", speechRate)
         diagnostics["speechVoice"] = speechVoiceDescription
+        diagnostics["ttsMode"] = ttsMode
+        diagnostics["kokoroVoice"] = kokoroVoiceName
     }
 
     func previewSpokenContentVoice() {
@@ -637,6 +712,119 @@ final class Gate1AppModel: ObservableObject {
         previewSpeech(label: "assistive technology settings", mode: .assistiveTechnology)
     }
 
+    func refreshKokoroAssetStatus() {
+        #if canImport(SessionKitKokoro)
+        do {
+            let applicationSupportURL = try applicationSupportDirectory()
+            let assets = KokoroNarrationRenderer.installedAssets(applicationSupportDirectory: applicationSupportURL)
+            let hasModel = assets.modelURL != nil
+            let hasVoices = assets.voicesURL != nil
+            diagnostics["kokoroModel"] = hasModel ? "installed" : "missing"
+            diagnostics["kokoroVoices"] = hasVoices ? "installed" : "missing"
+            if hasModel && hasVoices {
+                kokoroStatus = "Assets installed."
+            } else if hasModel {
+                kokoroStatus = "Model installed; voices.npz missing."
+            } else if hasVoices {
+                kokoroStatus = "Voices installed; kokoro-v1_0.safetensors missing."
+            } else {
+                kokoroStatus = "Import kokoro-v1_0.safetensors and voices.npz."
+            }
+            diagnostics["kokoroStatus"] = kokoroStatus
+        } catch {
+            kokoroStatus = "Asset check failed: \(error.localizedDescription)"
+            diagnostics["kokoroStatus"] = kokoroStatus
+        }
+        #else
+        kokoroStatus = "Kokoro renderer is not linked in this build."
+        diagnostics["kokoroStatus"] = kokoroStatus
+        #endif
+    }
+
+    func previewKokoroVoice() {
+        guard !isRenderingKokoroPreview else { return }
+        saveSpeechSettings()
+        isRenderingKokoroPreview = true
+        kokoroStatus = "Rendering..."
+        diagnostics["kokoroStatus"] = kokoroStatus
+
+        let voiceName = kokoroVoiceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "am_echo" : kokoroVoiceName
+        let itemId = selectedItem.id.isEmpty ? activeItemId : selectedItem.id
+        let sourceText = selectedItem.text.isEmpty
+            ? "Spoken Margins Kokoro preview. This path pre-renders neural speech on device and falls back to system speech when unavailable."
+            : String(selectedItem.text.prefix(700))
+
+        Task.detached { [voiceName, itemId, sourceText] in
+            #if canImport(SessionKitKokoro) && canImport(AVFoundation)
+            do {
+                guard KokoroNarrationRenderer.isRuntimeSupported else {
+                    throw KokoroNarrationError.unavailableOnSimulator
+                }
+                let applicationSupportURL = try FileManager.default.url(
+                    for: .applicationSupportDirectory,
+                    in: .userDomainMask,
+                    appropriateFor: nil,
+                    create: true
+                )
+                let assets = KokoroNarrationRenderer.installedAssets(applicationSupportDirectory: applicationSupportURL)
+                guard let modelURL = assets.modelURL else {
+                    throw KokoroNarrationError.missingModel
+                }
+                guard let voicesURL = assets.voicesURL else {
+                    throw KokoroNarrationError.missingVoices
+                }
+                let cachesURL = try FileManager.default.url(
+                    for: .cachesDirectory,
+                    in: .userDomainMask,
+                    appropriateFor: nil,
+                    create: true
+                )
+                let outputDirectory = cachesURL.appending(path: "KokoroPreview", directoryHint: .isDirectory)
+                let renderer = try KokoroNarrationRenderer(
+                    modelURL: modelURL,
+                    voicesURL: voicesURL,
+                    outputDirectory: outputDirectory
+                )
+                let result = try renderer.render(
+                    text: sourceText,
+                    itemId: itemId,
+                    chunkId: "preview",
+                    voiceName: voiceName,
+                    speed: 1.0
+                )
+                await MainActor.run {
+                    do {
+                        try self.playKokoroPreview(url: result.audioURL)
+                        self.kokoroStatus = "Rendered \(String(format: "%.1f", result.duration))s with \(voiceName)"
+                        self.diagnostics["kokoroStatus"] = self.kokoroStatus
+                        self.diagnostics["lastSpeechPreview"] = "Kokoro \(voiceName)"
+                        self.reportSuccess("Previewing Kokoro \(voiceName).")
+                    } catch {
+                        self.kokoroStatus = "Playback failed: \(error.localizedDescription)"
+                        self.diagnostics["kokoroStatus"] = self.kokoroStatus
+                        self.reportFailure(error, context: "Kokoro preview playback failed")
+                    }
+                    self.isRenderingKokoroPreview = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.kokoroStatus = error.localizedDescription
+                    self.diagnostics["kokoroStatus"] = self.kokoroStatus
+                    self.isRenderingKokoroPreview = false
+                    self.reportFailure(error, context: "Kokoro preview failed")
+                }
+            }
+            #else
+            await MainActor.run {
+                self.kokoroStatus = "Kokoro renderer is not linked in this build."
+                self.diagnostics["kokoroStatus"] = self.kokoroStatus
+                self.isRenderingKokoroPreview = false
+                self.reportFailure("Kokoro renderer is not linked in this build.")
+            }
+            #endif
+        }
+    }
+
     func runtimeProfileChanged() {
         diagnostics["runtimeProfile"] = selectedProfileId
         if rebuildEngineForCurrentSettings() {
@@ -653,6 +841,8 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["skipUnit"] = skipUnit
         diagnostics["speechRate"] = String(format: "%.2f", speechRate)
         diagnostics["speechVoice"] = speechVoiceDescription
+        diagnostics["ttsMode"] = ttsMode
+        diagnostics["kokoroVoice"] = kokoroVoiceName
     }
 
     func probeProvider() {
@@ -759,6 +949,34 @@ final class Gate1AppModel: ObservableObject {
         #else
         reportFailure("Speech preview unavailable on this platform.")
         #endif
+    }
+
+    #if canImport(AVFoundation)
+    private func playKokoroPreview(url: URL) throws {
+        if speechPreviewSynthesizer.isSpeaking {
+            speechPreviewSynthesizer.stopSpeaking(at: .immediate)
+        }
+        #if os(iOS)
+        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try AVAudioSession.sharedInstance().setActive(true)
+        #endif
+        kokoroPreviewPlayer = try AVAudioPlayer(contentsOf: url)
+        kokoroPreviewPlayer?.prepareToPlay()
+        kokoroPreviewPlayer?.play()
+    }
+    #endif
+
+    private func applicationSupportDirectory() throws -> URL {
+        try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+    }
+
+    private func kokoroAssetsDirectory() throws -> URL {
+        try applicationSupportDirectory().appending(path: "Kokoro", directoryHint: .isDirectory)
     }
 
     private func summaryScopeForCurrentTarget() -> SummaryScope {
@@ -1492,7 +1710,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func reportFailure(_ error: Error, context: String? = nil) {
-        reportFailure([context, String(describing: error)].compactMap { $0 }.joined(separator: ": "))
+        reportFailure([context, error.localizedDescription].compactMap { $0 }.joined(separator: ": "))
     }
 
     private func reportFailure(_ message: String) {

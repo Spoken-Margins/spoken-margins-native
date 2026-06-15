@@ -16,6 +16,7 @@
 		B3715F09AB0080AF916931F3 /* Gate1RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 479B709AF5D74954043B0852 /* Gate1RootView.swift */; };
 		B401E3D73FFFC3B4CCD67491 /* SessionKitAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 34C621C37AF71E6ED22B1045 /* SessionKitAudio */; };
 		BB2EB8B4A269BF2F25903797 /* Gate1FlowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB4DFB911729FD28E4C7545B /* Gate1FlowUITests.swift */; };
+		D1A36A09CB7B4E8D81753713 /* SessionKitKokoro in Frameworks */ = {isa = PBXBuildFile; productRef = A165746E1241477689C2A3E9 /* SessionKitKokoro */; };
 		F719B3F555F883823A6AEED5 /* SessionKitPersistence in Frameworks */ = {isa = PBXBuildFile; productRef = 16898C6F40FB4FDCA4DE8C38 /* SessionKitPersistence */; };
 /* End PBXBuildFile section */
 
@@ -50,6 +51,7 @@
 				F719B3F555F883823A6AEED5 /* SessionKitPersistence in Frameworks */,
 				B401E3D73FFFC3B4CCD67491 /* SessionKitAudio in Frameworks */,
 				AB149D16A2A0482B581B0847 /* SessionKitAI in Frameworks */,
+				D1A36A09CB7B4E8D81753713 /* SessionKitKokoro in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -152,6 +154,7 @@
 				16898C6F40FB4FDCA4DE8C38 /* SessionKitPersistence */,
 				34C621C37AF71E6ED22B1045 /* SessionKitAudio */,
 				E7C7184F382A54BFB372015B /* SessionKitAI */,
+				A165746E1241477689C2A3E9 /* SessionKitKokoro */,
 			);
 			productName = SpokenMarginsApp;
 			productReference = 9FEFBCF337DFC7DB102DAD5B /* SpokenMarginsApp.app */;
@@ -476,6 +479,10 @@
 		34C621C37AF71E6ED22B1045 /* SessionKitAudio */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SessionKitAudio;
+		};
+		A165746E1241477689C2A3E9 /* SessionKitKokoro */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SessionKitKokoro;
 		};
 		E7C7184F382A54BFB372015B /* SessionKitAI */ = {
 			isa = XCSwiftPackageProductDependency;

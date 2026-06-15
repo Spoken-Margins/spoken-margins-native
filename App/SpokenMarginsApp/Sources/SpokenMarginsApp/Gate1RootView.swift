@@ -753,6 +753,7 @@ private struct PlaybackScreen: View {
 
 private struct SettingsScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
+    @State private var isImportingKokoroAssets = false
     @FocusState private var focusedField: Field?
 
     private enum Field {
@@ -762,6 +763,7 @@ private struct SettingsScreen: View {
         case summaryModel
         case conversationModel
         case apiKey
+        case kokoroVoice
     }
 
     var body: some View {
@@ -862,6 +864,47 @@ private struct SettingsScreen: View {
                         .buttonStyle(SecondaryButtonStyle())
                         .accessibilityIdentifier("settings.preview.assistiveTech.button")
                     }
+                    Picker("TTS Mode", selection: $model.ttsMode) {
+                        Text("System Immediate").tag("systemImmediate")
+                        Text("Kokoro When Ready").tag("kokoroWhenReady")
+                        Text("Kokoro Only").tag("kokoroOnly")
+                    }
+                    .accessibilityIdentifier("settings.ttsMode.picker")
+                    .onChange(of: model.ttsMode) { _, _ in
+                        model.settingsValueChanged()
+                        model.saveSpeechSettings()
+                    }
+                    TextField("Kokoro Voice", text: $model.kokoroVoiceName)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .focused($focusedField, equals: .kokoroVoice)
+                        .accessibilityIdentifier("settings.kokoroVoice.field")
+                        .onChange(of: model.kokoroVoiceName) { _, _ in
+                            model.settingsValueChanged()
+                            model.saveSpeechSettings()
+                        }
+                    Button {
+                        isImportingKokoroAssets = true
+                    } label: {
+                        Label("Import Kokoro Assets", systemImage: "square.and.arrow.down")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .accessibilityIdentifier("settings.import.kokoroAssets.button")
+                    Text("Expected: kokoro-v1_0.safetensors, roughly hundreds of MB, and voices.npz, roughly tens of MB. Individual .pt voice files are not enough for this renderer.")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                    Button {
+                        model.previewKokoroVoice()
+                    } label: {
+                        Label(
+                            model.isRenderingKokoroPreview ? "Rendering Kokoro Preview" : "Render Kokoro Preview",
+                            systemImage: "waveform"
+                        )
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .disabled(model.isRenderingKokoroPreview)
+                    .accessibilityIdentifier("settings.preview.kokoro.button")
+                    LabeledContent("Kokoro", value: model.kokoroStatus)
                     Picker("Skip Increment", selection: $model.skipUnit) {
                         Text("Sentence").tag("sentence")
                         Text("Paragraph").tag("paragraph")
@@ -898,6 +941,24 @@ private struct SettingsScreen: View {
             }
             .accessibilityIdentifier("settings.screen")
             .navigationTitle("Settings")
+            .onAppear {
+                model.refreshKokoroAssetStatus()
+            }
+            .fileImporter(
+                isPresented: $isImportingKokoroAssets,
+                allowedContentTypes: [
+                    UTType(filenameExtension: "safetensors") ?? .data,
+                    UTType(filenameExtension: "npz") ?? .data
+                ],
+                allowsMultipleSelection: true
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    model.importKokoroAssets(urls: urls)
+                case .failure(let error):
+                    model.reportImportFailure(error)
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(action: model.openHome) {
