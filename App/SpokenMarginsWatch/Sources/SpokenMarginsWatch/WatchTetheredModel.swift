@@ -1,11 +1,18 @@
 import Foundation
 import SessionKit
-import WatchConnectivity
+@preconcurrency import WatchConnectivity
 
+@MainActor
 final class WatchTetheredModel: NSObject, ObservableObject, WCSessionDelegate {
     @Published var snapshot: CompactControlSnapshot?
     @Published var status = "Connecting"
     @Published var lastError: String?
+
+    private struct IncomingPayload: Sendable {
+        var type: String?
+        var snapshotData: Data?
+        var errorMessage: String?
+    }
 
     private let session: WCSession? = WCSession.isSupported() ? WCSession.default : nil
 
@@ -103,49 +110,65 @@ final class WatchTetheredModel: NSObject, ObservableObject, WCSessionDelegate {
         }
         status = "Sending"
         session.sendMessage(message, replyHandler: nil) { [weak self] error in
-            DispatchQueue.main.async {
-                self?.lastError = error.localizedDescription
+            let message = error.localizedDescription
+            Task { @MainActor in
+                self?.lastError = message
                 self?.status = "Send failed"
             }
         }
     }
 
-    func session(
+    nonisolated func session(
         _ session: WCSession,
         activationDidCompleteWith activationState: WCSessionActivationState,
         error: Error?
     ) {
-        DispatchQueue.main.async {
-            self.status = error.map { "Activation failed: \($0.localizedDescription)" } ?? "Connected"
-            self.handle(message: session.receivedApplicationContext)
+        let status = error.map { "Activation failed: \($0.localizedDescription)" } ?? "Connected"
+        let payload = Self.payload(from: session.receivedApplicationContext)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.status = status
+            self.handle(payload)
             self.refresh()
         }
     }
 
-    func sessionReachabilityDidChange(_ session: WCSession) {
-        DispatchQueue.main.async {
-            self.status = session.isReachable ? "Connected" : "Open iPhone app"
-            if session.isReachable {
+    nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
+        let reachable = session.isReachable
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.status = reachable ? "Connected" : "Open iPhone app"
+            if reachable {
                 self.refresh()
             }
         }
     }
 
-    func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
-        DispatchQueue.main.async {
-            self.handle(message: applicationContext)
+    nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
+        let payload = Self.payload(from: applicationContext)
+        Task { @MainActor [weak self] in
+            self?.handle(payload)
         }
     }
 
-    func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
-        DispatchQueue.main.async {
-            self.handle(message: message)
+    nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
+        let payload = Self.payload(from: message)
+        Task { @MainActor [weak self] in
+            self?.handle(payload)
         }
     }
 
-    private func handle(message: [String: Any]) {
-        guard let type = message["type"] as? String else { return }
-        if type == "snapshot", let data = message["snapshot"] as? Data {
+    nonisolated private static func payload(from message: [String: Any]) -> IncomingPayload {
+        IncomingPayload(
+            type: message["type"] as? String,
+            snapshotData: message["snapshot"] as? Data,
+            errorMessage: message["error"] as? String
+        )
+    }
+
+    private func handle(_ payload: IncomingPayload) {
+        guard let type = payload.type else { return }
+        if type == "snapshot", let data = payload.snapshotData {
             do {
                 snapshot = try JSONDecoder().decode(CompactControlSnapshot.self, from: data)
                 status = "Ready"
@@ -155,7 +178,7 @@ final class WatchTetheredModel: NSObject, ObservableObject, WCSessionDelegate {
                 status = "Decode failed"
             }
         } else if type == "error" {
-            lastError = message["error"] as? String
+            lastError = payload.errorMessage
             status = "Phone error"
         }
     }
