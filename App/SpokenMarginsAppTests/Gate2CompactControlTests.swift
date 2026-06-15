@@ -44,4 +44,21 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertEqual(model.snapshot.status, .paused)
         XCTAssertEqual(model.diagnostics["gate2LastCommand"], "togglePlayPause")
     }
+
+    func testWidgetCommandQueueBuffersAndDrainsCommands() {
+        let suiteName = "Gate2CompactCommandQueueTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        Gate2CompactCommandQueue.enqueue(command: "togglePlayPause", id: "first", defaults: defaults)
+        Gate2CompactCommandQueue.enqueue(command: "skipForward", id: "second", defaults: defaults)
+
+        let drained = Gate2CompactCommandQueue.drain(defaults: defaults)
+
+        XCTAssertEqual(drained.map(\.id), ["first", "second"])
+        XCTAssertEqual(drained.map(\.command), ["togglePlayPause", "skipForward"])
+        XCTAssertTrue(Gate2CompactCommandQueue.drain(defaults: defaults).isEmpty)
+    }
 }

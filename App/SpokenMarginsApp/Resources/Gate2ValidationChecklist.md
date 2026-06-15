@@ -18,7 +18,8 @@ Runtime profiles exercised: phone-tablet-online, lock-screen-widget
 - Now Playing Lock Screen item/chapter/playback display: TBD.
 - Now Playing pause/resume/skip back/skip forward while locked: TBD.
 - Live Activity item/chapter/status/progress display: TBD.
-- Live Activity item/chapter/status/progress display only; no misleading local command buttons: TBD.
+- Live Activity pause/resume/skip back/skip forward buttons enqueue commands without opening the app: TBD.
+- App Group entitlement is present in both app and widget provisioning profiles: TBD.
 - Begin/finish compact interjection with correct session/anchor visible after unlock: TBD.
 - Background audio continuity while locked and after interjection rollback: TBD.
 - Microphone-denied compact interjection failure is understandable and recoverable: TBD.
@@ -34,15 +35,16 @@ Runtime profiles exercised: phone-tablet-online, lock-screen-widget
 6. Confirm Now Playing shows the item title, chapter/target, playback state, and progress.
 7. Pause and resume from the Lock Screen or Control Center.
 8. Skip back and forward from the Lock Screen or Control Center.
-9. Confirm the Live Activity shows the same item, chapter/target, status, recording state, and progress without presenting unsupported custom buttons.
-10. Unlock the phone and confirm the active app session is still attached to the correct session and nearby anchor after Control Center transport commands.
-11. Confirm source playback resumes with rollback context after normal in-app interjection.
-12. Deny microphone permission and confirm compact interjection is rejected honestly in the app.
-13. Repeat with AirPods connected and during an audio interruption.
+9. Confirm the Live Activity shows the same item, chapter/target, status, recording state, and progress.
+10. Tap pause/resume, skip back, and skip forward from the Live Activity, then confirm playback changes without first opening the app.
+11. Unlock the phone and confirm the active app session is still attached to the correct session and nearby anchor after Control Center and Live Activity transport commands.
+12. Confirm source playback resumes with rollback context after normal in-app interjection.
+13. Deny microphone permission and confirm compact interjection is rejected honestly in the app.
+14. Repeat with AirPods connected and during an audio interruption.
 
 ## Known Issues
 
-- Custom Live Activity command buttons are intentionally hidden until they can delegate without pretending to own playback, recording, persistence, or AI.
+- Live Activity command buttons use `LiveActivityIntent`/`AudioPlaybackIntent` plus the shared App Group command queue. A real-device pass still needs to prove that the background audio process drains commands quickly while the phone is locked.
 - Real Lock Screen, Live Activity, background audio, route-change, and microphone-permission evidence requires a signed physical-device pass.
 
 Product-owner result:

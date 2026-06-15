@@ -14,6 +14,8 @@ import UIKit
 @MainActor
 final class Gate2CompactControlController {
     private var dispatcher: CompactControlDispatcher?
+    private var queuedCommandTask: Task<Void, Never>?
+    private var queuedCommandHandler: (@MainActor (CompactControlCommand) -> Void)?
     private let nowPlaying = Gate2NowPlayingController()
     private let liveActivity = Gate2LiveActivityController()
     private(set) var lastCommand: CompactControlCommand?
@@ -34,13 +36,16 @@ final class Gate2CompactControlController {
             canonicalRuntime: canonicalRuntime,
             defaultSkipUnit: skipUnit
         )
+        queuedCommandHandler = commandHandler
         nowPlaying.installRemoteCommandHandlers(commandHandler: commandHandler)
+        installQueuedWidgetCommandProcessor()
         publishCurrentSnapshot()
         lastResult = "configured"
     }
 
     func update(snapshot: SessionSnapshot) {
         guard dispatcher != nil else { return }
+        drainQueuedWidgetCommands()
         publishCurrentSnapshot()
     }
 
@@ -74,6 +79,28 @@ final class Gate2CompactControlController {
         guard let snapshot = dispatcher?.snapshot() else { return }
         nowPlaying.publish(snapshot)
         liveActivity.publish(snapshot)
+    }
+
+    private func installQueuedWidgetCommandProcessor() {
+        queuedCommandTask?.cancel()
+        queuedCommandTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                self?.drainQueuedWidgetCommands()
+                try? await Task.sleep(for: .milliseconds(400))
+            }
+        }
+    }
+
+    private func drainQueuedWidgetCommands() {
+        guard let queuedCommandHandler else { return }
+        let queuedCommands = Gate2CompactCommandQueue.drain()
+        guard !queuedCommands.isEmpty else { return }
+        for queuedCommand in queuedCommands {
+            guard let command = CompactControlCommand(rawValue: queuedCommand.command) else {
+                continue
+            }
+            queuedCommandHandler(command)
+        }
     }
 }
 

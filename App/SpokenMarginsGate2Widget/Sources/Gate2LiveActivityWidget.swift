@@ -1,4 +1,5 @@
 import ActivityKit
+import AppIntents
 import SwiftUI
 import WidgetKit
 
@@ -61,16 +62,55 @@ private struct Gate2LiveActivityView: View {
                 .tint(.green)
 
             HStack(spacing: 12) {
-                Image(systemName: "gobackward.15")
-                Image(systemName: state.status == "playing" ? "pause.fill" : "play.fill")
-                Image(systemName: "goforward.15")
+                Button(intent: Gate2CompactPlaybackIntent(command: "skipBack")) {
+                    Image(systemName: "gobackward.15")
+                }
+                Button(intent: Gate2CompactPlaybackIntent(command: "togglePlayPause")) {
+                    Image(systemName: state.status == "playing" ? "pause.fill" : "play.fill")
+                }
+                Button(intent: Gate2CompactPlaybackIntent(command: "skipForward")) {
+                    Image(systemName: "goforward.15")
+                }
                 Spacer()
                 Image(systemName: state.isRecording ? "checkmark" : "mic.fill")
             }
+            .buttonStyle(.plain)
             .font(.headline)
             .foregroundStyle(.white.opacity(0.74))
         }
         .padding()
+    }
+}
+
+struct Gate2CompactPlaybackIntent: LiveActivityIntent, AudioPlaybackIntent {
+    static let title: LocalizedStringResource = "Spoken Margins Playback"
+    static let description = IntentDescription("Controls Spoken Margins playback from the Live Activity.")
+    static let openAppWhenRun = false
+
+    @Parameter(title: "Command")
+    var command: String
+
+    init() {
+        command = "togglePlayPause"
+    }
+
+    init(command: String) {
+        self.command = command
+    }
+
+    func perform() async throws -> some IntentResult {
+        guard Gate2CompactCommandQueue.enqueue(command: command) else {
+            throw Gate2CompactPlaybackIntentError.appGroupUnavailable
+        }
+        return .result()
+    }
+}
+
+private enum Gate2CompactPlaybackIntentError: LocalizedError {
+    case appGroupUnavailable
+
+    var errorDescription: String? {
+        "Spoken Margins controls are unavailable because the shared App Group is not configured."
     }
 }
 
