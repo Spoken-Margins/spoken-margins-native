@@ -100,6 +100,7 @@ final class Gate1AppModel: ObservableObject {
     private var store: SQLiteSessionStore?
     private var activeItemId = "item-pill"
     private var playbackProgressTask: Task<Void, Never>?
+    private var pendingAutoPlayTurnId: String?
     private let transcriptionClient = SystemSpeechTranscriptionClient()
     #if canImport(AVFoundation)
     private let speechPreviewSynthesizer = AVSpeechSynthesizer()
@@ -162,6 +163,7 @@ final class Gate1AppModel: ObservableObject {
                         if updated != self.snapshot {
                             self.snapshot = updated
                         }
+                        self.playPendingTurnIfReady()
                     } catch {
                         self.diagnostics["playbackProgressSyncError"] = String(describing: error)
                     }
@@ -473,6 +475,7 @@ final class Gate1AppModel: ObservableObject {
 
     func jumpToChapter(_ chapter: Chapter) {
         stopSpeechPreviews()
+        pendingAutoPlayTurnId = nil
         run { engine in
             if !hasActiveSession {
                 snapshot = try engine.startSession(itemId: activeItemId)
@@ -522,10 +525,53 @@ final class Gate1AppModel: ObservableObject {
         start()
     }
 
+    func openSession(_ session: Session) {
+        stopSpeechPreviews()
+        do {
+            let store = try requireStore()
+            activeItemId = session.itemId
+            if engine == nil {
+                engine = try makeEngine(store: store)
+            }
+            guard let engine else { return }
+            if hasActiveSession {
+                _ = try? engine.stopPlayback()
+            }
+            snapshot = try engine.inspectSession(sessionId: session.id)
+            selectedItem = try loadItemDetail(id: session.itemId, store: store)
+            screen = .playback
+            reportSuccess("Opened session at \(session.completionPercent)% complete.")
+        } catch {
+            reportFailure(error, context: "Open session failed")
+        }
+    }
+
+    func resumeSession(_ session: Session) {
+        stopSpeechPreviews()
+        do {
+            let store = try requireStore()
+            activeItemId = session.itemId
+            if engine == nil {
+                engine = try makeEngine(store: store)
+            }
+            guard let engine else { return }
+            if hasActiveSession {
+                _ = try? engine.stopPlayback()
+            }
+            _ = try engine.inspectSession(sessionId: session.id)
+            snapshot = try engine.resumePlayback()
+            selectedItem = try loadItemDetail(id: session.itemId, store: store)
+            screen = .playback
+            reportSuccess("Resumed session at \(session.completionPercent)% complete.")
+        } catch {
+            reportFailure(error, context: "Resume session failed")
+        }
+    }
+
     func deleteItem(id: String) {
         do {
             let store = try requireStore()
-            guard id.hasPrefix("item-import-") else {
+            guard isUserImportedItem(id) else {
                 reportFailure("Seeded fixture items cannot be deleted. Use reset to restore the Gate 1 fixture set.")
                 return
             }
@@ -554,7 +600,11 @@ final class Gate1AppModel: ObservableObject {
 
     func skipForward() {
         run { engine in
-            snapshot = try engine.skipForward(unit: skipUnit)
+            if ttsMode == "kokoro" {
+                snapshot = try engine.skipForward(unit: skipUnit, minimumDistance: kokoroSkipForwardMinimumDistance)
+            } else {
+                snapshot = try engine.skipForward(unit: skipUnit)
+            }
             refreshSelectedItem()
             reportSuccess("Skipped forward.")
         }
@@ -624,11 +674,48 @@ final class Gate1AppModel: ObservableObject {
     func playTurn(_ turn: ConversationTurn) {
         stopSpeechPreviews()
         run { engine in
-            snapshot = try engine.playTurn(turnId: turn.id)
-            refreshSelectedItem()
-            screen = .playback
+            try playTurn(turn.id, engine: engine)
             reportSuccess("Playing \(turnTitleText(turn)).")
         }
+    }
+
+    private func playTurn(_ turnId: String, engine: SessionEngine) throws {
+        stopSpeechPreviews()
+        pendingAutoPlayTurnId = nil
+        snapshot = try engine.playTurn(turnId: turnId)
+        refreshSelectedItem()
+        screen = .playback
+    }
+
+    private func autoPlayCompletedTurn(kind: String, turnId: String, engine: SessionEngine) throws {
+        guard kind == "interjection_summary" || kind == "assistant_response" else { return }
+        if shouldDeferGeneratedTurnPlayback(turnId: turnId) {
+            pendingAutoPlayTurnId = turnId
+            diagnostics["pendingAutoPlayTurnId"] = turnId
+            diagnostics["pendingAutoPlayReason"] = "waiting_for_current_audio"
+            return
+        }
+        try playTurn(turnId, engine: engine)
+    }
+
+    private func playPendingTurnIfReady() {
+        guard let turnId = pendingAutoPlayTurnId,
+              let engine else {
+            return
+        }
+        guard snapshot.status != .playing || snapshot.phase == .finished || snapshot.progressPercent >= 100 else {
+            return
+        }
+        do {
+            try playTurn(turnId, engine: engine)
+            reportSuccess("Playing generated response.")
+        } catch {
+            reportFailure(error, context: "Auto-play generated response failed")
+        }
+    }
+
+    private func shouldDeferGeneratedTurnPlayback(turnId: String) -> Bool {
+        snapshot.status == .playing && snapshot.targetId != turnId
     }
 
     func followUp(_ text: String) {
@@ -1114,6 +1201,10 @@ final class Gate1AppModel: ObservableObject {
         Int(max(80, min(360, kokoroChunkCharacters)).rounded())
     }
 
+    var kokoroSkipForwardMinimumDistance: Int {
+        max(220, kokoroChunkCharacterLimit * 2)
+    }
+
     var currentChapter: Chapter? {
         selectedItem.chapters.last { $0.percent <= snapshot.progressPercent } ?? selectedItem.chapters.first
     }
@@ -1304,9 +1395,13 @@ final class Gate1AppModel: ObservableObject {
                 id: item.id,
                 title: item.title,
                 status: item.status,
-                canDelete: item.id.hasPrefix("item-import-")
+                canDelete: isUserImportedItem(item.id)
             )
         }
+    }
+
+    private func isUserImportedItem(_ id: String) -> Bool {
+        id.hasPrefix("item-import-") || id.hasPrefix("item-obsidian-")
     }
 
     private func submitProviderJobIfNeeded(kind: String, turnId: String, messages: [String], force: Bool = false) {
@@ -1337,14 +1432,18 @@ final class Gate1AppModel: ObservableObject {
                 await MainActor.run {
                     do {
                         guard let engine else { return }
+                        let shouldDeferPlayback = shouldDeferGeneratedTurnPlayback(turnId: turnId)
                         snapshot = try engine.aiStreamDelta(turnId: turnId, content: text)
                         snapshot = try engine.aiJobCompleted(turnId: turnId)
-                        if kind == "interjection_summary",
-                           snapshot.progressPercent >= 100 {
-                            snapshot = try engine.playTurn(turnId: turnId)
-                        }
                         refreshSelectedItem()
-                        reportSuccess("Provider response saved.")
+                        if shouldDeferPlayback {
+                            pendingAutoPlayTurnId = turnId
+                            diagnostics["pendingAutoPlayTurnId"] = turnId
+                            diagnostics["pendingAutoPlayReason"] = "waiting_for_current_audio"
+                        } else {
+                            try autoPlayCompletedTurn(kind: kind, turnId: turnId, engine: engine)
+                        }
+                        reportSuccess(pendingAutoPlayTurnId == turnId ? "Provider response saved. Playback will start when the item finishes." : "Provider response saved.")
                     } catch {
                         reportFailure(error, context: "Provider response persistence failed")
                     }
@@ -2156,6 +2255,8 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
     private var currentChunkLength = 0
     private var currentChunkBoundary = KokoroChunkBoundary.hard
     private var fallbackIsActive = false
+    private var completedTargetId: String?
+    private var playbackComplete = false
     private var renderedCache: [Int: URL] = [:]
     private var inFlightOffsets = Set<Int>()
     private var pendingAutoplayOffset: Int?
@@ -2228,6 +2329,17 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
         return start + Int((Double(length) * fraction).rounded(.down))
     }
 
+    func isPlaybackComplete(targetId: String) -> Bool {
+        lock.lock()
+        let isFallbackActive = fallbackIsActive
+        let isComplete = playbackComplete && completedTargetId == targetId
+        lock.unlock()
+        if isFallbackActive {
+            return fallback.isPlaybackComplete(targetId: targetId)
+        }
+        return isComplete
+    }
+
     func pause() throws {
         player?.pause()
         try fallback.pause()
@@ -2242,6 +2354,8 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
         renderedCache.removeAll()
         inFlightOffsets.removeAll()
         pendingAutoplayOffset = nil
+        completedTargetId = nil
+        playbackComplete = false
         lock.unlock()
         try fallback.stop()
     }
@@ -2259,6 +2373,12 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
         guard let targetId,
               nextOffset < sourceCount,
               let request = renderRequest(targetId: targetId, startOffset: nextOffset, id: requestId) else {
+            lock.lock()
+            currentStartOffset = sourceCount
+            currentChunkLength = 0
+            completedTargetId = targetId
+            playbackComplete = true
+            lock.unlock()
             return
         }
         if let cachedURL {
@@ -2291,6 +2411,8 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
         renderedCache.removeAll()
         inFlightOffsets.removeAll()
         pendingAutoplayOffset = nil
+        completedTargetId = nil
+        playbackComplete = false
         currentTargetId = targetId
         lock.unlock()
 
@@ -2556,6 +2678,8 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
                 return
             }
             fallbackIsActive = true
+            playbackComplete = false
+            completedTargetId = nil
             currentStartOffset = charOffset
             currentChunkLength = 0
             lock.unlock()

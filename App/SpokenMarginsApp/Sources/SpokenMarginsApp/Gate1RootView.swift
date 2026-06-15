@@ -1,6 +1,9 @@
 import SwiftUI
 import SessionKit
 import UniformTypeIdentifiers
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct Gate1RootView: View {
     @EnvironmentObject private var model: Gate1AppModel
@@ -240,7 +243,7 @@ private struct ItemScreen: View {
                     .accessibilityIdentifier("item.home.button")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    if model.selectedItem.id.hasPrefix("item-import-") {
+                    if model.selectedItem.id.hasPrefix("item-import-") || model.selectedItem.id.hasPrefix("item-obsidian-") {
                         Button(role: .destructive) {
                             model.deleteItem(id: model.selectedItem.id)
                         } label: {
@@ -386,22 +389,30 @@ private struct ItemScreen: View {
                 ForEach(model.selectedItem.sessions, id: \.id) { session in
                     ProductPanel {
                         HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(session.status)
-                                    .font(.headline)
-                                Text("\(session.completionPercent)% complete")
-                                    .font(.subheadline)
-                                    .foregroundStyle(AppColors.secondaryText)
-                            }
-                            Spacer()
                             Button {
-                                model.startItem(id: session.itemId)
+                                model.openSession(session)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(session.status)
+                                        .font(.headline)
+                                    Text("\(session.completionPercent)% complete")
+                                        .font(.subheadline)
+                                        .foregroundStyle(AppColors.secondaryText)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("session.inspect.\(session.id)")
+
+                            Button {
+                                model.resumeSession(session)
                             } label: {
                                 Label("Resume", systemImage: "play")
                             }
                             .buttonStyle(SecondaryButtonStyle())
                         }
                     }
+                    .accessibilityIdentifier("session.row.\(session.id)")
                 }
             }
         }
@@ -555,10 +566,6 @@ private struct PlaybackScreen: View {
                 .disabled(!model.hasActiveSession)
                 .accessibilityIdentifier("playback.forward.button")
             }
-
-            Text("Session \(model.snapshot.progressPercent)%")
-                .font(.subheadline)
-                .foregroundStyle(AppColors.watchSecondary)
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
@@ -1148,7 +1155,8 @@ private struct ProductPanel<Content: View>: View {
         content
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.white)
+            .foregroundStyle(AppColors.text)
+            .background(AppColors.panel)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppColors.border))
     }
@@ -1161,7 +1169,8 @@ private struct PlainPanelButtonStyle: ButtonStyle {
         configuration.label
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.white.opacity(configuration.isPressed ? 0.72 : 1))
+            .foregroundStyle(AppColors.text)
+            .background(AppColors.panel.opacity(configuration.isPressed ? 0.72 : 1))
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppColors.border))
     }
@@ -1221,6 +1230,7 @@ private struct Pill: View {
     var body: some View {
         Text(text)
             .font(.subheadline)
+            .foregroundStyle(AppColors.text)
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
             .background(AppColors.softGreen)
@@ -1242,19 +1252,32 @@ private func turnTitle(_ turn: ConversationTurn) -> String {
 }
 
 private enum AppColors {
-    static let background = Color(red: 0.96, green: 0.97, blue: 0.94)
-    static let inputBackground = Color(red: 0.98, green: 0.99, blue: 0.97)
-    static let border = Color(red: 0.84, green: 0.87, blue: 0.81)
-    static let text = Color(red: 0.09, green: 0.13, blue: 0.11)
-    static let secondaryText = Color(red: 0.38, green: 0.44, blue: 0.41)
-    static let green = Color(red: 0.13, green: 0.43, blue: 0.30)
-    static let softGreen = Color(red: 0.91, green: 0.94, blue: 0.88)
-    static let accent = Color(red: 0.48, green: 0.82, blue: 0.59)
-    static let accentSoft = Color(red: 0.67, green: 0.91, blue: 0.72)
+    static let background = dynamicColor(light: (0.96, 0.97, 0.94), dark: (0.07, 0.09, 0.08))
+    static let panel = dynamicColor(light: (1.00, 1.00, 1.00), dark: (0.13, 0.16, 0.14))
+    static let inputBackground = dynamicColor(light: (0.98, 0.99, 0.97), dark: (0.10, 0.12, 0.11))
+    static let border = dynamicColor(light: (0.84, 0.87, 0.81), dark: (0.28, 0.34, 0.30))
+    static let text = dynamicColor(light: (0.09, 0.13, 0.11), dark: (0.92, 0.95, 0.91))
+    static let secondaryText = dynamicColor(light: (0.38, 0.44, 0.41), dark: (0.66, 0.72, 0.68))
+    static let green = dynamicColor(light: (0.13, 0.43, 0.30), dark: (0.50, 0.84, 0.62))
+    static let softGreen = dynamicColor(light: (0.91, 0.94, 0.88), dark: (0.18, 0.25, 0.20))
+    static let accent = dynamicColor(light: (0.48, 0.82, 0.59), dark: (0.56, 0.89, 0.67))
+    static let accentSoft = dynamicColor(light: (0.67, 0.91, 0.72), dark: (0.25, 0.39, 0.28))
     static let watchBackground = Color(red: 0.09, green: 0.13, blue: 0.11)
     static let watchControl = Color(red: 0.18, green: 0.24, blue: 0.21)
     static let watchSecondary = Color(red: 0.69, green: 0.75, blue: 0.70)
-    static let dangerBackground = Color(red: 0.96, green: 0.88, blue: 0.86)
+    static let dangerText = dynamicColor(light: (0.55, 0.13, 0.11), dark: (1.00, 0.55, 0.48))
+    static let dangerBackground = dynamicColor(light: (0.96, 0.88, 0.86), dark: (0.34, 0.15, 0.13))
+
+    private static func dynamicColor(light: (Double, Double, Double), dark: (Double, Double, Double)) -> Color {
+        #if canImport(UIKit)
+        return Color(UIColor { traits in
+            let values = traits.userInterfaceStyle == .dark ? dark : light
+            return UIColor(red: values.0, green: values.1, blue: values.2, alpha: 1)
+        })
+        #else
+        return Color(red: light.0, green: light.1, blue: light.2)
+        #endif
+    }
 }
 
 private struct PrimaryButtonStyle: ButtonStyle {
@@ -1288,7 +1311,7 @@ private struct LightButtonStyle: ButtonStyle {
             .padding(.horizontal, 14)
             .frame(minHeight: 42)
             .foregroundStyle(AppColors.text)
-            .background(Color.white.opacity(configuration.isPressed ? 0.75 : 1))
+            .background(AppColors.panel.opacity(configuration.isPressed ? 0.75 : 1))
             .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
@@ -1305,7 +1328,7 @@ private struct IconButtonStyle: ButtonStyle {
 private struct DangerIconButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .foregroundStyle(Color(red: 0.55, green: 0.13, blue: 0.11))
+            .foregroundStyle(AppColors.dangerText)
             .background(AppColors.dangerBackground.opacity(configuration.isPressed ? 0.7 : 1))
             .clipShape(RoundedRectangle(cornerRadius: 8))
     }

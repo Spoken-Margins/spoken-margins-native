@@ -21,6 +21,7 @@ public protocol AudioPlaybackClient {
     func play(targetId: String) throws
     func play(targetId: String, from charOffset: Int) throws
     func currentCharOffset() -> Int?
+    func isPlaybackComplete(targetId: String) -> Bool
     func pause() throws
     func stop() throws
 }
@@ -36,6 +37,10 @@ public extension AudioPlaybackClient {
 
     func currentCharOffset() -> Int? {
         nil
+    }
+
+    func isPlaybackComplete(targetId: String) -> Bool {
+        false
     }
 }
 

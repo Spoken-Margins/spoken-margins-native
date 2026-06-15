@@ -191,6 +191,31 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(repo.sessions["session-\(item.id)-gate1"]?.position.charOffset, target.startChar)
     }
 
+    func testStartSessionSpeaksListeningMapOverviewBeforeItemText() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "timeline": ["chapter_timing"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two.", externalReference: nil, status: "ready")
+        let map = ListeningMap(id: "map-pill", itemId: item.id, overview: "This item contrasts one with two.", chapters: [
+            Chapter(id: "ch-1", title: "One", startChar: 0, endChar: 5, percent: 0)
+        ])
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], mapsByItemId: [item.id: map])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+
+        XCTAssertEqual(audio.preparedTexts.last, "Overview. This item contrasts one with two.\n\nOne. Two.")
+        XCTAssertEqual(audio.playedOffsets.last, 0)
+        XCTAssertEqual(engine.lastSpokenText, "Overview. This item contrasts one with two. One. Two.")
+    }
+
     func testPauseAndResumePreserveSourcePosition() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
@@ -245,6 +270,30 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(audio.playedOffsets.last, 17)
     }
 
+    func testSkipForwardCanRequireMinimumDistanceForChunkedPlayback() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "timeline": ["chapter_timing"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two. Three. Four. Five. Six.", externalReference: nil, status: "ready")
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let audio = RecordingAudioClient()
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentOffset = 2
+        let snapshot = try engine.skipForward(unit: "sentence", minimumDistance: 12)
+
+        XCTAssertGreaterThan(snapshot.progressPercent, 50)
+        XCTAssertEqual(try XCTUnwrap(engine.currentSession?.position.charOffset), 17)
+        XCTAssertEqual(audio.playedOffsets.last, 17)
+    }
+
     func testSkipBackUsesCurrentAudioPositionAndPreviousBoundaryIsStrict() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
@@ -291,6 +340,57 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.progressPercent, 45)
         XCTAssertEqual(try XCTUnwrap(engine.currentSession?.position.charOffset), 10)
         XCTAssertEqual(audio.playedOffsets, [0])
+    }
+
+    func testSyncPlaybackProgressMarksItemFinishedWhenAudioCompletes() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "timeline": ["chapter_timing"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two.", externalReference: nil, status: "ready")
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let audio = RecordingAudioClient()
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.completedTargetIds.insert(item.id)
+        let snapshot = try engine.syncPlaybackProgress()
+
+        XCTAssertEqual(snapshot.status, .paused)
+        XCTAssertEqual(snapshot.phase, .finished)
+        XCTAssertEqual(snapshot.progressPercent, 100)
+        XCTAssertEqual(try XCTUnwrap(engine.currentSession?.position.charOffset), try XCTUnwrap(item.text).count)
+    }
+
+    func testAIJobCompletedPreservesActivePlaybackPhase() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "ai": ["summarize_interjections"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two.", externalReference: nil, status: "ready")
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let audio = RecordingAudioClient()
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentOffset = 0
+        _ = try engine.generateInterjectionSummary(scope: SummaryScope(targetType: "item", sessionId: "session-\(item.id)-gate1"))
+        _ = try engine.aiStreamDelta(turnId: "turn-summary-001", content: "<sm_response>Summary text.</sm_response>")
+        let snapshot = try engine.aiJobCompleted(turnId: "turn-summary-001")
+
+        XCTAssertEqual(snapshot.status, .playing)
+        XCTAssertEqual(snapshot.phase, .itemPlayback)
+        XCTAssertEqual(snapshot.targetType, TargetType.itemTextTTS.rawValue)
     }
 
     func testFinishInterjectionSchedulesTranscriptionAfterAudioIsSaved() throws {
@@ -343,6 +443,59 @@ final class SessionKitCoreTests: XCTestCase {
         _ = try engine.playTurn(turnId: response.id)
         XCTAssertEqual(audio.preparedTexts.last, "Response text should be spoken.")
         XCTAssertEqual(engine.snapshot.targetType, "assistant_turn_tts")
+    }
+
+    func testJumpToChapterFromSummaryPlaybackReturnsToItemText() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts", "summary_turn_tts"],
+                "timeline": ["chapter_timing"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two. Three.", externalReference: nil, status: "ready")
+        let map = ListeningMap(id: "map-pill", itemId: item.id, overview: "Map", chapters: [
+            Chapter(id: "ch-1", title: "One", startChar: 0, endChar: 5, percent: 0),
+            Chapter(id: "ch-2", title: "Two", startChar: 5, endChar: 16, percent: 31)
+        ])
+        let summary = ConversationTurn(id: "turn-summary-001", sessionId: "session-\(item.id)-gate1", role: "assistant", turnType: "interjection_summary", status: "complete", summary: nil, text: "Summary text.", rawText: nil, sourceInterjectionIds: [])
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], mapsByItemId: [item.id: map], turns: [summary.id: summary])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        _ = try engine.playTurn(turnId: summary.id)
+        let snapshot = try engine.jumpToChapter(chapterId: "ch-2")
+
+        XCTAssertEqual(snapshot.phase, .itemPlayback)
+        XCTAssertEqual(snapshot.targetType, TargetType.itemTextTTS.rawValue)
+        XCTAssertEqual(audio.preparedTexts.last, "Overview. Map\n\nOne. Two. Three.")
+        XCTAssertEqual(audio.playedOffsets.last, "Overview. Map\n\n".count + 5)
+    }
+
+    func testInspectSessionDoesNotStartPlayback() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two.", externalReference: nil, status: "ready")
+        let session = Session(id: "session-existing", itemId: item.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(charOffset: 5), completionPercent: 45, playbackRate: 1)
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        let snapshot = try engine.inspectSession(sessionId: session.id)
+
+        XCTAssertEqual(snapshot.status, .paused)
+        XCTAssertEqual(snapshot.progressPercent, 45)
+        XCTAssertEqual(snapshot.targetId, item.id)
+        XCTAssertTrue(audio.playedOffsets.isEmpty)
     }
 
     func testInterjectionsOnAssistantTurnCanBeSummarizedAfterItemSummary() throws {
@@ -402,6 +555,7 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     var preparedTexts: [String] = []
     var pauseCount = 0
     var currentOffset: Int?
+    var completedTargetIds = Set<String>()
 
     func prepareSpeechText(_ text: String) throws -> String {
         preparedTexts.append(text)
@@ -424,6 +578,10 @@ private final class RecordingAudioClient: AudioPlaybackClient {
 
     func currentCharOffset() -> Int? {
         currentOffset
+    }
+
+    func isPlaybackComplete(targetId: String) -> Bool {
+        completedTargetIds.contains(targetId)
     }
 }
 

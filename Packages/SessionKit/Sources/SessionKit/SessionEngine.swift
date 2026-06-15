@@ -23,6 +23,11 @@ public final class SessionEngine {
     private var streamingBuffers: [String: String] = [:]
     private var spokenPrefixes: [String: Int] = [:]
 
+    private struct PlaybackPlan {
+        var text: String
+        var audioOffset: Int
+    }
+
     public init(
         profile: RuntimeCapabilityProfile,
         repository: SessionRepository,
@@ -97,16 +102,22 @@ public final class SessionEngine {
 
     @discardableResult
     public func syncPlaybackProgress() throws -> SessionSnapshot {
-        guard var session = currentSession, let item = currentItem else {
+        guard var session = currentSession else {
             return snapshot
         }
-        let updated = syncSessionPositionFromAudio(session, item: item)
-        if updated.position != session.position || updated.completionPercent != session.completionPercent {
+        let playbackCompleted = audio.isPlaybackComplete(targetId: session.currentTargetId)
+        var updated = syncSessionPositionFromAudio(session, item: currentItem)
+        if playbackCompleted {
+            updated = markPlaybackComplete(updated, item: currentItem)
+        }
+        if updated.position != session.position
+            || updated.completionPercent != session.completionPercent
+            || updated.phase != session.phase {
             session = updated
             currentSession = session
             try repository.saveSession(session)
         }
-        publish(status: snapshot.status, phase: session.phase)
+        publish(status: playbackCompleted ? .paused : snapshot.status, phase: session.phase)
         return snapshot
     }
 
@@ -146,22 +157,34 @@ public final class SessionEngine {
 
     @discardableResult
     public func skipForward(unit: String) throws -> SessionSnapshot {
+        return try skipForward(unit: unit, minimumDistance: 0)
+    }
+
+    @discardableResult
+    public func skipForward(unit: String, minimumDistance: Int) throws -> SessionSnapshot {
         try requirePlayback("skipForward")
         guard var session = currentSession, let item = currentItem else {
             throw SessionKitError.invalidCommandForState("skipForward")
         }
         session = syncSessionPositionFromAudio(session, item: item)
-        session.position.charOffset = nextBoundary(after: session.position.charOffset, unit: unit, text: item.text ?? "")
-        session.completionPercent = percent(for: session.position.charOffset, text: item.text ?? "")
+        let text = item.text ?? ""
+        let baseline = session.position.charOffset
+        let firstBoundary = nextBoundary(after: baseline, unit: unit, text: text)
+        if minimumDistance > 0, firstBoundary < min(text.count, baseline + minimumDistance) {
+            session.position.charOffset = nextBoundary(after: min(text.count, baseline + minimumDistance), unit: unit, text: text)
+        } else {
+            session.position.charOffset = firstBoundary
+        }
+        session.completionPercent = percent(for: session.position.charOffset, text: text)
         session.position.chapterId = chapterId(for: session.position.charOffset)
-        if session.position.charOffset >= (item.text ?? "").count {
+        if session.position.charOffset >= text.count {
             session.phase = .finished
         }
         currentSession = session
         try repository.saveSession(session)
-        if snapshot.status == .playing, session.position.charOffset < (item.text ?? "").count {
+        if snapshot.status == .playing, session.position.charOffset < text.count {
             try playCurrentTarget(session)
-        } else if session.position.charOffset >= (item.text ?? "").count {
+        } else if session.position.charOffset >= text.count {
             try audio.stop()
         }
         publish(status: session.phase == .finished ? .paused : snapshot.status, phase: session.phase)
@@ -197,6 +220,9 @@ public final class SessionEngine {
         guard var session = currentSession, let chapter = currentMap?.chapters.first(where: { $0.id == chapterId }) else {
             throw SessionKitError.invalidCommandForState("jumpToChapter")
         }
+        session.currentTargetType = .itemTextTTS
+        session.currentTargetId = session.itemId
+        session.phase = .itemPlayback
         session.position.charOffset = chapter.startChar
         session.position.chapterId = chapter.id
         session.completionPercent = chapter.percent
@@ -206,6 +232,18 @@ public final class SessionEngine {
             try playCurrentTarget(session)
         }
         publish(status: snapshot.status, phase: session.phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func inspectSession(sessionId: String) throws -> SessionSnapshot {
+        guard let session = try repository.loadSession(id: sessionId) else {
+            throw SessionKitError.invalidCommandForState("inspectSession")
+        }
+        currentSession = session
+        currentItem = try repository.loadItem(id: session.itemId)
+        currentMap = try repository.loadListeningMap(itemId: session.itemId)
+        publish(status: .paused, phase: session.phase)
         return snapshot
     }
 
@@ -494,11 +532,15 @@ public final class SessionEngine {
         let pendingJobs = try repository.loadAIJobs(sessionId: session.id).filter { $0.status != "complete" }
         snapshot.turnStatus = "complete"
         snapshot.pendingAiJobCount = pendingJobs.count
-        if turn.turnType == "interjection_summary" {
-            publish(status: snapshot.status, phase: .interjectionSummary)
+        let nextPhase: SessionPhase
+        if snapshot.status == .playing, audio.currentCharOffset() != nil {
+            nextPhase = session.phase
+        } else if turn.turnType == "interjection_summary" {
+            nextPhase = .interjectionSummary
         } else {
-            publish(status: snapshot.status, phase: .conversation)
+            nextPhase = .conversation
         }
+        publish(status: snapshot.status, phase: nextPhase)
         _ = turns
         return snapshot
     }
@@ -781,23 +823,53 @@ public final class SessionEngine {
     }
 
     private func playCurrentTarget(_ session: Session) throws {
-        let text = try playbackText(for: session)
-        lastSpokenText = try audio.prepareSpeechText(text)
-        try audio.play(targetId: session.currentTargetId, from: session.position.charOffset)
+        let plan = try playbackPlan(for: session)
+        lastSpokenText = try audio.prepareSpeechText(plan.text)
+        try audio.play(targetId: session.currentTargetId, from: plan.audioOffset)
     }
 
-    private func syncSessionPositionFromAudio(_ session: Session, item: Item) -> Session {
+    private func syncSessionPositionFromAudio(_ session: Session, item: Item?) -> Session {
         guard session.currentTargetType == .itemTextTTS,
               let offset = audio.currentCharOffset(),
-              offset >= 0,
-              offset <= (item.text ?? "").count else {
+              offset >= 0 else {
             return session
         }
+        let sourceOffset = itemSourceOffset(forAudioOffset: offset)
+        guard sourceOffset <= (item?.text ?? "").count else { return session }
         var updated = session
-        updated.position.charOffset = max(0, min(offset, item.text?.count ?? 0))
-        updated.completionPercent = percent(for: updated.position.charOffset, text: item.text ?? "")
+        updated.position.charOffset = max(0, min(sourceOffset, item?.text?.count ?? 0))
+        updated.completionPercent = percent(for: updated.position.charOffset, text: item?.text ?? "")
         updated.position.chapterId = chapterId(for: updated.position.charOffset)
         return updated
+    }
+
+    private func markPlaybackComplete(_ session: Session, item: Item?) -> Session {
+        var updated = session
+        switch session.currentTargetType {
+        case .itemTextTTS:
+            let text = item?.text ?? ""
+            updated.position.charOffset = text.count
+            updated.position.chapterId = chapterId(for: text.count)
+            updated.completionPercent = 100
+            updated.phase = .finished
+        case .transcriptBackedMedia, .browserOwnedMedia:
+            updated.phase = .finished
+        case .summaryTurnTTS:
+            updated.phase = .summaryPlayback
+        case .assistantTurnTTS:
+            updated.phase = .aiResponsePlayback
+        }
+        return updated
+    }
+
+    private func playbackPlan(for session: Session) throws -> PlaybackPlan {
+        let text = try playbackText(for: session)
+        guard session.currentTargetType == .itemTextTTS else {
+            return PlaybackPlan(text: text, audioOffset: session.position.charOffset)
+        }
+        let prefixLength = itemPlaybackPreface().count
+        let audioOffset = session.position.charOffset == 0 ? 0 : prefixLength + session.position.charOffset
+        return PlaybackPlan(text: text, audioOffset: audioOffset)
     }
 
     private func playbackText(for session: Session) throws -> String {
@@ -806,13 +878,34 @@ public final class SessionEngine {
             if currentItem?.id != session.itemId {
                 currentItem = try repository.loadItem(id: session.itemId)
             }
-            return currentItem?.text ?? ""
+            let itemText = currentItem?.text ?? ""
+            guard session.currentTargetType == .itemTextTTS else {
+                return itemText
+            }
+            return itemPlaybackPreface() + itemText
         case .summaryTurnTTS, .assistantTurnTTS:
             guard let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == session.currentTargetId }) else {
                 throw SessionKitError.invalidCommandForState("playTurn")
             }
             return turn.summary ?? turn.text ?? turn.rawText ?? ""
         }
+    }
+
+    private func itemPlaybackPreface() -> String {
+        guard let overview = currentMap?.overview.trimmingCharacters(in: .whitespacesAndNewlines),
+              !overview.isEmpty else {
+            return ""
+        }
+        return "Overview. \(overview)\n\n"
+    }
+
+    private func itemSourceOffset(forAudioOffset audioOffset: Int) -> Int {
+        let prefixLength = itemPlaybackPreface().count
+        guard prefixLength > 0 else { return audioOffset }
+        if audioOffset <= prefixLength {
+            return 0
+        }
+        return audioOffset - prefixLength
     }
 
     private func generatedListeningMap(for item: Item) -> ListeningMap {

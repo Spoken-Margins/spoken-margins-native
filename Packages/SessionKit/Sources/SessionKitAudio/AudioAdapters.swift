@@ -38,6 +38,8 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
     private var lastTargetId: String?
     private var lastStartOffset = 0
     private var currentOffset: Int?
+    private var completedTargetId: String?
+    private var playbackComplete = false
     private var paused = false
     private let voiceIdentifier: String?
     private let speechRate: Float
@@ -118,6 +120,8 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         lastTargetId = targetId
         lastStartOffset = charOffset
         currentOffset = charOffset
+        completedTargetId = nil
+        playbackComplete = false
         paused = false
         synthesizer.speak(utterance)
         #else
@@ -170,10 +174,16 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         currentOffset
     }
 
+    public func isPlaybackComplete(targetId: String) -> Bool {
+        playbackComplete && completedTargetId == targetId
+    }
+
     public func stop() throws {
         #if canImport(AVFoundation)
         synthesizer.stopSpeaking(at: .immediate)
         paused = false
+        playbackComplete = false
+        completedTargetId = nil
         #if os(iOS) || os(watchOS)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         #endif
@@ -250,6 +260,23 @@ extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
         utterance: AVSpeechUtterance
     ) {
         currentOffset = lastStartOffset + max(0, characterRange.location)
+    }
+
+    public func speechSynthesizer(
+        _ synthesizer: AVSpeechSynthesizer,
+        didFinish utterance: AVSpeechUtterance
+    ) {
+        currentOffset = preparedSourceText.count
+        completedTargetId = lastTargetId
+        playbackComplete = true
+    }
+
+    public func speechSynthesizer(
+        _ synthesizer: AVSpeechSynthesizer,
+        didCancel utterance: AVSpeechUtterance
+    ) {
+        playbackComplete = false
+        completedTargetId = nil
     }
 }
 #endif
