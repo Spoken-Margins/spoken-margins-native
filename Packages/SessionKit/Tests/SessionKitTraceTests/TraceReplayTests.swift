@@ -16,6 +16,13 @@ final class TraceReplayTests: XCTestCase {
             try harness.replay()
         }
     }
+
+    func testGate3TracesReplay() throws {
+        for traceName in TraceHarness.gate3TraceNames {
+            let harness = try TraceHarness(traceName: traceName)
+            try harness.replay()
+        }
+    }
 }
 
 final class TraceHarness {
@@ -39,6 +46,10 @@ final class TraceHarness {
         "lock-screen-widget-controls"
     ]
 
+    static let gate3TraceNames = [
+        "watch-chapter-navigation"
+    ]
+
     let trace: [String: Any]
     let repository: InMemorySessionRepository
     let engine: SessionEngine
@@ -54,7 +65,7 @@ final class TraceHarness {
         let repo = InMemorySessionRepository()
         try Fixtures.seed(trace: trace, into: repo)
         self.repository = repo
-        if runtimeProfile == "lock-screen-widget" {
+        if runtimeProfile == "lock-screen-widget" || runtimeProfile == "watch-tethered" {
             let canonicalProfile = try Fixtures.profile(id: "phone-tablet-online")
             let surfaceProfile = try Fixtures.profile(id: runtimeProfile)
             let canonicalEngine = SessionEngine(profile: canonicalProfile, repository: repo, audio: TraceAudio(), recorder: TraceRecorder())
@@ -102,7 +113,12 @@ final class TraceHarness {
         if let commandName = step["command"] as? String,
            let command = CompactControlCommand(rawValue: commandName) {
             let args = step["args"] as? [String: Any] ?? [:]
-            let result = try compactDispatcher.dispatch(command, chapterId: args["chapterId"] as? String)
+            let result = try compactDispatcher.dispatch(
+                command,
+                chapterId: args["chapterId"] as? String,
+                unit: args["unit"] as? String,
+                followUpText: args["text"] as? String
+            )
             lastCompactResult = result
             return result.snapshot
         }
@@ -330,10 +346,20 @@ final class TraceHarness {
                 XCTAssertEqual(snapshot.status.rawValue, value as? String)
             case "phase":
                 XCTAssertEqual(snapshot.phase.rawValue, value as? String)
+            case "targetType":
+                XCTAssertEqual(snapshot.targetType, value as? String)
+            case "pendingAiJobKind":
+                XCTAssertEqual(snapshot.pendingAiJobKind, value as? String)
+            case "pendingAiJobStatus":
+                XCTAssertEqual(snapshot.pendingAiJobStatus, value as? String)
+            case "lastUserTurnType":
+                XCTAssertEqual(snapshot.lastUserTurnType, value as? String)
             case "compactSurfaceReady":
                 XCTAssertEqual(snapshot.compactSurfaceReady, value as? Bool)
             case "delegatedToCanonicalRuntime":
                 XCTAssertEqual(lastCompactResult?.delegatedToCanonicalRuntime, value as? Bool)
+            case "noCrash":
+                XCTAssertEqual(value as? Bool, true)
             default:
                 XCTFail("Unhandled compact expectation key \(key)")
             }

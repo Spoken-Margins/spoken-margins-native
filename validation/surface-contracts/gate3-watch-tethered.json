@@ -13,6 +13,7 @@
     "sessionId",
     "itemId",
     "targetType",
+    "targetId",
     "status",
     "phase",
     "title",
@@ -21,9 +22,32 @@
     "isRecording",
     "activeInterjectionCount",
     "pendingAiJobCount",
+    "pendingAiJobKind",
+    "pendingAiJobStatus",
+    "lastUserTurnType",
     "availableCommands"
   ],
   "commands": [
+    {
+      "id": "togglePlayPause",
+      "delegationMode": "delegated_to_canonical_runtime",
+      "exposed": true,
+      "requiredCapabilities": {
+        "remoteControl": ["send_transport_commands"]
+      },
+      "backendCommand": "SessionEngine.togglePlayPause",
+      "notes": "Watch uses the same single play/pause control shape as the iPhone playback surface; phone/tablet executes the toggle and returns a refreshed compact snapshot."
+    },
+    {
+      "id": "play",
+      "delegationMode": "delegated_to_canonical_runtime",
+      "exposed": true,
+      "requiredCapabilities": {
+        "remoteControl": ["send_transport_commands"]
+      },
+      "backendCommand": "SessionEngine.resumePlayback",
+      "notes": "Watch sends a play intent to the canonical phone/tablet runtime and expects a refreshed compact snapshot response."
+    },
     {
       "id": "pause",
       "delegationMode": "delegated_to_canonical_runtime",
@@ -32,17 +56,7 @@
         "remoteControl": ["send_transport_commands"]
       },
       "backendCommand": "SessionEngine.pause",
-      "notes": "Watch sends transport intent; phone/tablet owns playback."
-    },
-    {
-      "id": "resumePlayback",
-      "delegationMode": "delegated_to_canonical_runtime",
-      "exposed": true,
-      "requiredCapabilities": {
-        "remoteControl": ["send_transport_commands"]
-      },
-      "backendCommand": "SessionEngine.resumePlayback",
-      "notes": "May be surfaced as play or play/pause in watch UI."
+      "notes": "Watch sends a pause intent to the canonical phone/tablet runtime and expects a refreshed compact snapshot response."
     },
     {
       "id": "skipForward",
@@ -51,7 +65,8 @@
       "requiredCapabilities": {
         "remoteControl": ["send_transport_commands"]
       },
-      "backendCommand": "SessionEngine.skipForward"
+      "backendCommand": "SessionEngine.skipForward",
+      "notes": "Watch sends a forward navigation intent to the canonical phone/tablet runtime and expects a refreshed compact snapshot response."
     },
     {
       "id": "skipBack",
@@ -60,7 +75,8 @@
       "requiredCapabilities": {
         "remoteControl": ["send_transport_commands"]
       },
-      "backendCommand": "SessionEngine.skipBack"
+      "backendCommand": "SessionEngine.skipBack",
+      "notes": "Watch sends a backward navigation intent to the canonical phone/tablet runtime and expects a refreshed compact snapshot response."
     },
     {
       "id": "jumpToChapter",
@@ -70,7 +86,8 @@
         "timeline": ["chapter_timing"],
         "remoteControl": ["send_chapter_jump"]
       },
-      "backendCommand": "SessionEngine.jumpToChapter"
+      "backendCommand": "SessionEngine.jumpToChapter",
+      "notes": "Watch sends the selected resolved chapter id to the canonical phone/tablet runtime and expects a refreshed compact snapshot response."
     },
     {
       "id": "beginInterjection",
@@ -80,7 +97,8 @@
         "interjection": ["delegate_interjection_to_canonical_runtime"],
         "remoteControl": ["send_interjection_commands"]
       },
-      "backendCommand": "SessionEngine.beginInterjection"
+      "backendCommand": "SessionEngine.beginInterjection",
+      "notes": "Watch sends a delegated recording start intent; phone/tablet owns microphone, anchoring, persistence, and the refreshed compact snapshot."
     },
     {
       "id": "finishInterjection",
@@ -90,17 +108,28 @@
         "interjection": ["delegate_interjection_to_canonical_runtime"],
         "remoteControl": ["send_interjection_commands"]
       },
-      "backendCommand": "SessionEngine.finishInterjection"
+      "backendCommand": "SessionEngine.finishInterjection",
+      "notes": "Watch sends a delegated recording finish intent; phone/tablet saves the anchored interjection and returns the refreshed compact snapshot."
     },
     {
       "id": "generateInterjectionSummary",
-      "delegationMode": "unsupported",
-      "exposed": false,
+      "delegationMode": "delegated_to_canonical_runtime",
+      "exposed": true,
       "requiredCapabilities": {
         "remoteControl": ["send_ai_commands"]
       },
       "backendCommand": "SessionEngine.generateInterjectionSummary",
-      "notes": "Documented as unavailable until the steward accepts AI command exposure for Watch."
+      "notes": "Watch exposes the iPhone summary sparkles action as a delegated AI intent; phone/tablet owns summary eligibility, provider calls, persistence, and pending job state."
+    },
+    {
+      "id": "submitFollowup",
+      "delegationMode": "delegated_to_canonical_runtime",
+      "exposed": true,
+      "requiredCapabilities": {
+        "remoteControl": ["send_ai_commands"]
+      },
+      "backendCommand": "SessionEngine.submitFollowup",
+      "notes": "Watch exposes the iPhone Discuss action as a delegated follow-up intent; phone/tablet owns prompt context, provider calls, persistence, and pending job state."
     }
   ],
   "traces": [
@@ -115,18 +144,33 @@
     {
       "id": "watch-compact-available-commands",
       "title": "Publish state-aware available commands for compact Watch UI",
-      "status": "open",
-      "details": "Watch should not infer control availability from raw capabilities alone."
+      "status": "resolved",
+      "details": "CompactControlSnapshot now publishes availableCommands from state-aware compact exposed commands after command dispatch and snapshot reads."
+    },
+    {
+      "id": "watch-trace-replay-support",
+      "title": "Replay watch-tethered traces through compact dispatcher",
+      "status": "resolved",
+      "details": "Trace replay runs watch-tethered with a canonical phone-tablet-online runtime plus CompactControlDispatcher, similar to lock-screen-widget."
     },
     {
       "id": "watch-delegated-recording-lifecycle",
       "title": "Clarify delegated interjection recording lifecycle",
-      "status": "open",
-      "details": "Contract needs explicit snapshot states for delegated begin/finish while the phone owns microphone and persistence."
+      "status": "resolved",
+      "details": "Gate 3 trace replay verifies beginInterjection reports recording_interjection and finishInterjection returns to item_playback through the canonical phone/tablet runtime."
+    },
+    {
+      "id": "watch-chapter-skip-semantics",
+      "title": "Decide Watch chapter skip semantics",
+      "status": "resolved",
+      "details": "Compact dispatch now passes skip units through and SessionEngine supports chapter-unit skip behavior for text items with Listening Maps."
     }
   ],
   "notes": [
-    "Gate 3 does not own playback, recording, AI, or persistence locally.",
-    "Gate 3 must not require Xcode project edits until the steward creates a Watch target scaffold."
+    "Gate 3 does not own playback, recording, AI provider calls, persistence, transcription, or sync locally.",
+    "Gate 3 must not require Xcode project edits until the steward creates a Watch target scaffold.",
+    "The Watch playback interface should mirror the iPhone playback surface: brief chapter or generated-turn label, skip back, play/pause, skip forward, interject, AI summary, and Discuss.",
+    "The Watch compact snapshot should contain current item, target, chapter, playback status, progress, recording state, pending AI job state, last user turn type, and availableCommands; it must not require the current source excerpt.",
+    "traces/watch-chapter-navigation.json covers play/pause, chapter jump, chapter skip, boundary idempotence, delegated interjection, AI summary, and Discuss."
   ]
 }

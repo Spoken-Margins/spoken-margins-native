@@ -195,12 +195,16 @@ public final class SessionEngine {
         }
         session = syncSessionPositionFromAudio(session, item: item)
         let text = item.text ?? ""
-        let baseline = session.position.charOffset
-        let firstBoundary = nextBoundary(after: baseline, unit: unit, text: text)
-        if minimumDistance > 0, firstBoundary < min(text.count, baseline + minimumDistance) {
-            session.position.charOffset = nextBoundary(after: min(text.count, baseline + minimumDistance), unit: unit, text: text)
+        if unit == "chapter" {
+            session.position.charOffset = nextChapterBoundary(after: session.position.charOffset, text: text)
         } else {
-            session.position.charOffset = firstBoundary
+            let baseline = session.position.charOffset
+            let firstBoundary = nextBoundary(after: baseline, unit: unit, text: text)
+            if minimumDistance > 0, firstBoundary < min(text.count, baseline + minimumDistance) {
+                session.position.charOffset = nextBoundary(after: min(text.count, baseline + minimumDistance), unit: unit, text: text)
+            } else {
+                session.position.charOffset = firstBoundary
+            }
         }
         session.completionPercent = percent(for: session.position.charOffset, text: text)
         session.position.chapterId = chapterId(for: session.position.charOffset)
@@ -231,8 +235,13 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("skipBack")
         }
         session = syncSessionPositionFromAudio(session, item: item)
-        session.position.charOffset = previousBoundary(before: session.position.charOffset, unit: unit, text: item.text ?? "")
-        session.completionPercent = percent(for: session.position.charOffset, text: item.text ?? "")
+        let text = item.text ?? ""
+        if unit == "chapter" {
+            session.position.charOffset = previousChapterBoundary(before: session.position.charOffset)
+        } else {
+            session.position.charOffset = previousBoundary(before: session.position.charOffset, unit: unit, text: text)
+        }
+        session.completionPercent = percent(for: session.position.charOffset, text: text)
         session.position.chapterId = chapterId(for: session.position.charOffset)
         if session.phase == .finished {
             session.phase = .itemPlayback
@@ -1076,6 +1085,26 @@ public final class SessionEngine {
 
     private func chapterId(for charOffset: Int) -> String? {
         currentMap?.chapters.last(where: { $0.startChar <= charOffset })?.id
+    }
+
+    private func nextChapterBoundary(after charOffset: Int, text: String) -> Int {
+        guard let chapters = currentMap?.chapters, !chapters.isEmpty else {
+            return nextBoundary(after: charOffset, unit: "paragraph", text: text)
+        }
+        if let chapter = chapters.first(where: { $0.startChar > charOffset }) {
+            return chapter.startChar
+        }
+        return text.count
+    }
+
+    private func previousChapterBoundary(before charOffset: Int) -> Int {
+        guard let chapters = currentMap?.chapters, !chapters.isEmpty else {
+            return 0
+        }
+        if let chapter = chapters.last(where: { $0.startChar < charOffset }) {
+            return chapter.startChar
+        }
+        return 0
     }
 
     private func playCurrentTarget(_ session: Session) throws {

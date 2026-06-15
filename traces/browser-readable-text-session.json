@@ -1,0 +1,40 @@
+{
+  "schemaVersion": "session-trace.v1",
+  "name": "browser-readable-text-session",
+  "description": "Browser extension packages readable page text as a URL-backed text item for app continuation.",
+  "runtimeProfile": "browser-text",
+  "requiresCapabilities": {
+    "playback": ["realtime_tts"],
+    "timeline": ["text_char_offsets"],
+    "sync": ["browser_session_handoff"]
+  },
+  "fixtures": {
+    "item": "fixtures/items/browser-text-readable-page.json"
+  },
+  "steps": [
+    {
+      "command": "importBrowserText",
+      "args": {
+        "captureMode": "readable_page",
+        "title": "Inspecting Process Instead of Anecdotes",
+        "externalReference": "https://example.com/process-review",
+        "externalReferenceType": "url",
+        "text": "Anecdotes are easy to collect and hard to inspect. A useful review follows the process, the paper trail, and the points where evidence can be checked."
+      },
+      "expect": {
+        "itemMediaType": "text",
+        "externalReferenceType": "url",
+        "targetType": "item_text_tts"
+      }
+    },
+    {
+      "command": "startSession",
+      "args": { "itemId": "item-browser-process-readable" },
+      "expect": { "phase": "item_playback", "status": "playing" }
+    }
+  ],
+  "assertions": [
+    "Readable page capture becomes a normal URL-backed text item.",
+    "Browser text capture can continue in the app without browser media capabilities."
+  ]
+}
