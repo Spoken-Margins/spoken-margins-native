@@ -212,7 +212,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         let utterance = AVSpeechUtterance(string: text)
         switch mode {
         case .spokenContent:
-            break
+            utterance.rate = currentSpeechSettings().rate
         case .appVoice(let voiceIdentifier, let rate):
             utterance.rate = rate
             if let voiceIdentifier,

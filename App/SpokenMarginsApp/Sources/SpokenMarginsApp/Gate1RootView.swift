@@ -881,6 +881,32 @@ private struct SettingsScreen: View {
                         .onChange(of: model.kokoroVoiceName) { _, _ in
                             model.speechSettingsChanged()
                         }
+                    VStack(alignment: .leading) {
+                        HStack {
+                            Text("Kokoro MLX Cache")
+                            Spacer()
+                            Text("\(Int(model.kokoroCacheLimitMB.rounded())) MB")
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
+                        Slider(value: $model.kokoroCacheLimitMB, in: 64...1024, step: 64)
+                            .accessibilityIdentifier("settings.kokoroCacheLimit.slider")
+                    }
+                    .onChange(of: model.kokoroCacheLimitMB) { _, _ in
+                        model.speechSettingsChanged()
+                    }
+                    VStack(alignment: .leading) {
+                        HStack {
+                            Text("Kokoro Chunk Size")
+                            Spacer()
+                            Text("\(Int(model.kokoroChunkCharacters.rounded())) chars")
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
+                        Slider(value: $model.kokoroChunkCharacters, in: 80...360, step: 20)
+                            .accessibilityIdentifier("settings.kokoroChunkCharacters.slider")
+                    }
+                    .onChange(of: model.kokoroChunkCharacters) { _, _ in
+                        model.speechSettingsChanged()
+                    }
                     Button {
                         isImportingKokoroAssets = true
                     } label: {

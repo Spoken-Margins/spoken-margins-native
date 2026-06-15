@@ -52,6 +52,7 @@ public enum KokoroNarrationError: Error, LocalizedError, Equatable {
     case missingVoice(String)
     case emptyText
     case emptyAudio
+    case unsafeAudio(String)
     case cannotCreateAudioFormat
     case cannotCreateAudioBuffer
 
@@ -69,6 +70,8 @@ public enum KokoroNarrationError: Error, LocalizedError, Equatable {
             return "Kokoro preview text is empty."
         case .emptyAudio:
             return "Kokoro rendered no audio samples."
+        case .unsafeAudio(let reason):
+            return "Kokoro rendered unsafe audio: \(reason)."
         case .cannotCreateAudioFormat:
             return "Kokoro could not create an audio format."
         case .cannotCreateAudioBuffer:
@@ -97,7 +100,7 @@ public final class KokoroNarrationRenderer {
 
     public static var isRuntimeSupported: Bool { true }
 
-    public static func configureMemoryForDiagnostics(cacheLimitBytes: Int = 20 * 1024 * 1024) -> KokoroMemorySnapshot {
+    public static func configureMemoryForDiagnostics(cacheLimitBytes: Int = 256 * 1024 * 1024) -> KokoroMemorySnapshot {
         Memory.cacheLimit = cacheLimitBytes
         Memory.clearCache()
         return memorySnapshot()
@@ -183,15 +186,17 @@ public final class KokoroNarrationRenderer {
             text: normalized,
             speed: speed
         )
-        guard !samples.isEmpty else {
+        let playableSamples = try Self.sanitizedAudioSamples(samples)
+        guard !playableSamples.isEmpty else {
             throw KokoroNarrationError.emptyAudio
         }
         let safeName = [itemId, chunkId, voiceName]
             .joined(separator: "-")
             .replacingOccurrences(of: #"[^A-Za-z0-9._-]+"#, with: "-", options: .regularExpression)
-        let audioURL = outputDirectory.appending(path: "\(safeName).caf")
-        try writeAudio(samples: samples, to: audioURL)
-        let duration = Double(samples.count) / Self.sampleRate
+        let audioURL = outputDirectory.appending(path: "\(safeName)-\(UUID().uuidString).caf")
+        try? FileManager.default.removeItem(at: audioURL)
+        try writeAudio(samples: playableSamples, to: audioURL)
+        let duration = Double(playableSamples.count) / Self.sampleRate
         let renderDuration = Date().timeIntervalSince(startedAt)
         _ = renderDuration
         return KokoroNarrationResult(
@@ -230,6 +235,107 @@ public final class KokoroNarrationRenderer {
         )
         try audioFile.write(from: buffer)
     }
+
+    private static func sanitizedAudioSamples(_ samples: [Float]) throws -> [Float] {
+        guard !samples.isEmpty else { return [] }
+        var output = samples.map { sample -> Float in
+            guard sample.isFinite else { return 0 }
+            return min(0.98, max(-0.98, sample))
+        }
+        let mean = output.reduce(Float(0), +) / Float(output.count)
+        if abs(mean) > 0.001 {
+            output = output.map { min(0.98, max(-0.98, $0 - mean)) }
+        }
+        try rejectUnsafeAudio(output)
+        output = speechBandLimited(output)
+        let fadeCount = min(output.count / 2, max(1, Int(Self.sampleRate * 0.005)))
+        guard fadeCount > 1 else { return output }
+        for index in 0..<fadeCount {
+            let scale = Float(index) / Float(fadeCount)
+            output[index] *= scale
+            output[output.count - 1 - index] *= scale
+        }
+        return output
+    }
+
+    private static func rejectUnsafeAudio(_ samples: [Float]) throws {
+        guard samples.count > 256 else { return }
+        let meanAbs = samples.reduce(Float(0)) { $0 + abs($1) } / Float(samples.count)
+        guard meanAbs > 0.0005 else { return }
+        var zeroCrossings = 0
+        var totalDelta = Float(0)
+        var peak = Float(0)
+        var previous = samples[0]
+        for sample in samples.dropFirst() {
+            if (previous < 0 && sample >= 0) || (previous >= 0 && sample < 0) {
+                zeroCrossings += 1
+            }
+            totalDelta += abs(sample - previous)
+            peak = max(peak, abs(sample))
+            previous = sample
+        }
+        let zeroCrossingRate = Float(zeroCrossings) / Float(samples.count - 1)
+        let derivativeRatio = (totalDelta / Float(samples.count - 1)) / meanAbs
+        if peak > 0.95 && zeroCrossingRate > 0.28 && derivativeRatio > 1.05 {
+            throw KokoroNarrationError.unsafeAudio("high_frequency_spike")
+        }
+        if zeroCrossingRate > 0.42 && derivativeRatio > 1.25 {
+            throw KokoroNarrationError.unsafeAudio("pathological_high_frequency")
+        }
+    }
+
+    private static func speechBandLimited(_ samples: [Float]) -> [Float] {
+        var filtered = samples
+        for frequency in [4_200.0, 4_800.0, 5_600.0, 6_400.0, 7_200.0, 8_400.0, 9_600.0, 10_800.0] {
+            filtered = notchFiltered(filtered, frequency: frequency, quality: 18)
+        }
+        for _ in 0..<4 {
+            filtered = onePoleLowPass(filtered, cutoff: 4_800)
+        }
+        return filtered.map { min(0.98, max(-0.98, $0)) }
+    }
+
+    private static func onePoleLowPass(_ samples: [Float], cutoff: Double) -> [Float] {
+        guard var previous = samples.first else { return samples }
+        let dt = 1.0 / Self.sampleRate
+        let rc = 1.0 / (2.0 * Double.pi * cutoff)
+        let alpha = Float(dt / (rc + dt))
+        return samples.map { sample in
+            previous += alpha * (sample - previous)
+            return previous
+        }
+    }
+
+    private static func notchFiltered(_ samples: [Float], frequency: Double, quality: Double) -> [Float] {
+        guard !samples.isEmpty, frequency > 0, frequency < Self.sampleRate / 2 else { return samples }
+        let omega = 2.0 * Double.pi * frequency / Self.sampleRate
+        let alpha = sin(omega) / (2.0 * quality)
+        let b0 = 1.0
+        let b1 = -2.0 * cos(omega)
+        let b2 = 1.0
+        let a0 = 1.0 + alpha
+        let a1 = -2.0 * cos(omega)
+        let a2 = 1.0 - alpha
+
+        let nb0 = Float(b0 / a0)
+        let nb1 = Float(b1 / a0)
+        let nb2 = Float(b2 / a0)
+        let na1 = Float(a1 / a0)
+        let na2 = Float(a2 / a0)
+
+        var x1 = Float(0)
+        var x2 = Float(0)
+        var y1 = Float(0)
+        var y2 = Float(0)
+        return samples.map { x0 in
+            let y0 = nb0 * x0 + nb1 * x1 + nb2 * x2 - na1 * y1 - na2 * y2
+            x2 = x1
+            x1 = x0
+            y2 = y1
+            y1 = y0
+            return y0
+        }
+    }
 }
 #else
 public final class KokoroNarrationRenderer {
@@ -242,7 +348,7 @@ public final class KokoroNarrationRenderer {
 
     public static var isRuntimeSupported: Bool { false }
 
-    public static func configureMemoryForDiagnostics(cacheLimitBytes: Int = 20 * 1024 * 1024) -> KokoroMemorySnapshot {
+    public static func configureMemoryForDiagnostics(cacheLimitBytes: Int = 256 * 1024 * 1024) -> KokoroMemorySnapshot {
         KokoroMemorySnapshot(activeMemory: 0, cacheMemory: 0, peakMemory: 0)
     }
 

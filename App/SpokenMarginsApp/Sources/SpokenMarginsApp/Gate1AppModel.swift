@@ -80,6 +80,8 @@ final class Gate1AppModel: ObservableObject {
     @Published var speechVoiceIdentifier = UserDefaults.standard.string(forKey: "speechVoiceIdentifier") ?? ""
     @Published var ttsMode = UserDefaults.standard.string(forKey: "ttsMode") ?? "systemImmediate"
     @Published var kokoroVoiceName = UserDefaults.standard.string(forKey: "kokoroVoiceName") ?? "am_echo"
+    @Published var kokoroCacheLimitMB = UserDefaults.standard.double(forKey: "kokoroCacheLimitMB") == 0 ? 256 : UserDefaults.standard.double(forKey: "kokoroCacheLimitMB")
+    @Published var kokoroChunkCharacters = UserDefaults.standard.double(forKey: "kokoroChunkCharacters") == 0 ? 180 : UserDefaults.standard.double(forKey: "kokoroChunkCharacters")
     @Published var kokoroStatus = "Not checked"
     @Published var isRenderingKokoroPreview = false
     @Published var isRunningKokoroMemoryCheck = false
@@ -668,6 +670,8 @@ final class Gate1AppModel: ObservableObject {
         UserDefaults.standard.set(speechVoiceIdentifier, forKey: "speechVoiceIdentifier")
         UserDefaults.standard.set(ttsMode, forKey: "ttsMode")
         UserDefaults.standard.set(kokoroVoiceName, forKey: "kokoroVoiceName")
+        UserDefaults.standard.set(kokoroCacheLimitMB, forKey: "kokoroCacheLimitMB")
+        UserDefaults.standard.set(kokoroChunkCharacters, forKey: "kokoroChunkCharacters")
         KeychainStore.save(providerAPIKey, service: "SpokenMargins", account: "OpenAICompatibleAPIKey")
         diagnostics["providerBaseURL"] = providerBaseURL
         diagnostics["providerModel"] = providerModel
@@ -679,6 +683,8 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["speechVoice"] = speechVoiceDescription
         diagnostics["ttsMode"] = ttsMode
         diagnostics["kokoroVoice"] = kokoroVoiceName
+        diagnostics["kokoroCacheLimitMB"] = String(format: "%.0f", kokoroCacheLimitMB)
+        diagnostics["kokoroChunkCharacters"] = String(format: "%.0f", kokoroChunkCharacters)
         diagnostics["apiKeyConfigured"] = providerAPIKey.isEmpty ? "false" : "true"
         if rebuildEngineForCurrentSettings() {
             screen = .settings
@@ -691,10 +697,14 @@ final class Gate1AppModel: ObservableObject {
         UserDefaults.standard.set(speechVoiceIdentifier, forKey: "speechVoiceIdentifier")
         UserDefaults.standard.set(ttsMode, forKey: "ttsMode")
         UserDefaults.standard.set(kokoroVoiceName, forKey: "kokoroVoiceName")
+        UserDefaults.standard.set(kokoroCacheLimitMB, forKey: "kokoroCacheLimitMB")
+        UserDefaults.standard.set(kokoroChunkCharacters, forKey: "kokoroChunkCharacters")
         diagnostics["speechRate"] = String(format: "%.2f", speechRate)
         diagnostics["speechVoice"] = speechVoiceDescription
         diagnostics["ttsMode"] = ttsMode
         diagnostics["kokoroVoice"] = kokoroVoiceName
+        diagnostics["kokoroCacheLimitMB"] = String(format: "%.0f", kokoroCacheLimitMB)
+        diagnostics["kokoroChunkCharacters"] = String(format: "%.0f", kokoroChunkCharacters)
     }
 
     func speechSettingsChanged() {
@@ -759,10 +769,12 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["kokoroStatus"] = kokoroStatus
 
         let voiceName = kokoroVoiceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "am_echo" : kokoroVoiceName
+        let cacheLimitBytes = kokoroCacheLimitBytes
+        let kokoroSpeed = Float(speechRate / 0.5)
         let itemId = selectedItem.id.isEmpty ? activeItemId : selectedItem.id
         let sourceText = "Spoken Margins Kokoro preview. This is a short on-device voice test."
 
-        Task.detached { [voiceName, itemId, sourceText] in
+        Task.detached { [voiceName, cacheLimitBytes, kokoroSpeed, itemId, sourceText] in
             #if canImport(SessionKitKokoro) && canImport(AVFoundation)
             do {
                 guard KokoroNarrationRenderer.isRuntimeSupported else {
@@ -792,22 +804,32 @@ final class Gate1AppModel: ObservableObject {
                     create: true
                 )
                 let outputDirectory = cachesURL.appending(path: "KokoroPreview", directoryHint: .isDirectory)
+                let configured = KokoroNarrationRenderer.configureMemoryForDiagnostics(cacheLimitBytes: cacheLimitBytes)
+                NSLog("SpokenMargins Kokoro preview memory configured %@", configured.description)
                 let renderer = try KokoroNarrationRenderer(
                     modelURL: modelURL,
                     voicesURL: voicesURL,
                     outputDirectory: outputDirectory
                 )
+                let before = KokoroNarrationRenderer.memorySnapshot()
                 let result = try renderer.render(
                     text: sourceText,
                     itemId: itemId,
                     chunkId: "preview",
                     voiceName: voiceName,
-                    speed: 1.0
+                    speed: kokoroSpeed
                 )
+                let after = KokoroNarrationRenderer.memorySnapshot()
+                let final = KokoroNarrationRenderer.clearMemoryCache()
+                NSLog("SpokenMargins Kokoro preview memory before=%@ after=%@ final=%@", before.description, after.description, final.description)
                 await MainActor.run {
                     do {
                         self.kokoroStatus = "Kokoro rendered. Starting playback..."
                         self.diagnostics["kokoroStatus"] = self.kokoroStatus
+                        self.diagnostics["kokoroMemory.preview.configured"] = configured.description
+                        self.diagnostics["kokoroMemory.preview.before"] = before.description
+                        self.diagnostics["kokoroMemory.preview.after"] = after.description
+                        self.diagnostics["kokoroMemory.preview.final"] = final.description
                         try self.playKokoroPreview(url: result.audioURL)
                         self.kokoroStatus = "Rendered \(String(format: "%.1f", result.duration))s with \(voiceName)"
                         self.diagnostics["kokoroStatus"] = self.kokoroStatus
@@ -847,10 +869,11 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["kokoroStatus"] = kokoroStatus
 
         let voiceName = kokoroVoiceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "am_echo" : kokoroVoiceName
+        let cacheLimitBytes = kokoroCacheLimitBytes
         let itemId = selectedItem.id.isEmpty ? activeItemId : selectedItem.id
         let sourceText = "Spoken Margins Kokoro memory check. This renders twice without playback."
 
-        Task.detached { [voiceName, itemId, sourceText] in
+        Task.detached { [voiceName, cacheLimitBytes, itemId, sourceText] in
             #if canImport(SessionKitKokoro)
             do {
                 guard KokoroNarrationRenderer.isRuntimeSupported else {
@@ -876,7 +899,8 @@ final class Gate1AppModel: ObservableObject {
                     create: true
                 )
                 let outputDirectory = cachesURL.appending(path: "KokoroMemoryCheck", directoryHint: .isDirectory)
-                let configured = KokoroNarrationRenderer.configureMemoryForDiagnostics()
+                let configured = KokoroNarrationRenderer.configureMemoryForDiagnostics(cacheLimitBytes: cacheLimitBytes)
+                NSLog("SpokenMargins Kokoro memory check configured %@", configured.description)
                 await MainActor.run {
                     self.kokoroStatus = "Memory check configured: \(configured)"
                     self.diagnostics["kokoroMemory.configured"] = configured.description
@@ -968,6 +992,8 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["speechVoice"] = speechVoiceDescription
         diagnostics["ttsMode"] = ttsMode
         diagnostics["kokoroVoice"] = kokoroVoiceName
+        diagnostics["kokoroCacheLimitMB"] = String(format: "%.0f", kokoroCacheLimitMB)
+        diagnostics["kokoroChunkCharacters"] = String(format: "%.0f", kokoroChunkCharacters)
     }
 
     func probeProvider() {
@@ -1026,6 +1052,14 @@ final class Gate1AppModel: ObservableObject {
         return speechVoiceIdentifier
     }
 
+    var kokoroCacheLimitBytes: Int {
+        Int(max(64, min(1024, kokoroCacheLimitMB)).rounded()) * 1024 * 1024
+    }
+
+    var kokoroChunkCharacterLimit: Int {
+        Int(max(80, min(360, kokoroChunkCharacters)).rounded())
+    }
+
     var currentChapter: Chapter? {
         selectedItem.chapters.last { $0.percent <= snapshot.progressPercent } ?? selectedItem.chapters.first
     }
@@ -1056,7 +1090,7 @@ final class Gate1AppModel: ObservableObject {
             let utterance = AVSpeechUtterance(string: "Spoken Margins preview. This is the \(label) path.")
             switch mode {
             case .spokenContent:
-                break
+                utterance.rate = Float(speechRate)
             case .appVoice(let voiceIdentifier, let rate):
                 utterance.rate = rate
                 if let voiceIdentifier,
@@ -1064,6 +1098,7 @@ final class Gate1AppModel: ObservableObject {
                     utterance.voice = configuredVoice
                 }
             case .assistiveTechnology:
+                utterance.rate = Float(speechRate)
                 utterance.prefersAssistiveTechnologySettings = true
             }
             speechPreviewSynthesizer.speak(utterance)
@@ -1199,7 +1234,9 @@ final class Gate1AppModel: ObservableObject {
                 applicationSupportDirectory: supportDirectory,
                 outputDirectory: cachesDirectory.appending(path: "KokoroPlayback", directoryHint: .isDirectory),
                 voiceName: kokoroVoiceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "am_echo" : kokoroVoiceName,
-                speed: Float(speechRate / 0.5)
+                speed: Float(speechRate / 0.5),
+                cacheLimitBytes: kokoroCacheLimitBytes,
+                maxCharacters: kokoroChunkCharacterLimit
             )
         }
         #endif
@@ -2052,8 +2089,9 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
     private let outputDirectory: URL
     private let voiceName: String
     private let speed: Float
+    private let cacheLimitBytes: Int
     private let maxCharacters: Int
-    private let renderQueue = DispatchQueue(label: "spoken-margins.kokoro.playback")
+    private let renderQueue = DispatchQueue(label: "spoken-margins.kokoro.playback", qos: .userInitiated)
     private let lock = NSLock()
 
     private var preparedSourceText = ""
@@ -2063,20 +2101,38 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
     private var currentStartOffset = 0
     private var currentChunkLength = 0
     private var fallbackIsActive = false
+    private var renderedCache: [Int: URL] = [:]
+    private var inFlightOffsets = Set<Int>()
+    private var pendingAutoplayOffset: Int?
+    private var appIsActive = true
+    #if canImport(UIKit)
+    private var activityObservers: [NSObjectProtocol] = []
+    #endif
 
     init(
         applicationSupportDirectory: URL,
         outputDirectory: URL,
         voiceName: String,
         speed: Float,
+        cacheLimitBytes: Int,
         maxCharacters: Int = 360
     ) {
         self.applicationSupportDirectory = applicationSupportDirectory
         self.outputDirectory = outputDirectory
         self.voiceName = voiceName
         self.speed = max(0.65, min(1.35, speed))
+        self.cacheLimitBytes = cacheLimitBytes
         self.maxCharacters = maxCharacters
         super.init()
+        configureAppActivityObservers()
+    }
+
+    deinit {
+        #if canImport(UIKit)
+        for observer in activityObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        #endif
     }
 
     func prepareSpeechText(_ text: String) throws -> String {
@@ -2128,6 +2184,9 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
         player?.stop()
         player = nil
         fallbackIsActive = false
+        renderedCache.removeAll()
+        inFlightOffsets.removeAll()
+        pendingAutoplayOffset = nil
         lock.unlock()
         try fallback.stop()
     }
@@ -2138,11 +2197,22 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
         let nextOffset = currentStartOffset + max(1, currentChunkLength)
         let targetId = currentTargetId
         let sourceCount = preparedSourceText.count
+        let cachedURL = renderedCache.removeValue(forKey: nextOffset)
+        let requestId = generation
         lock.unlock()
-        guard let targetId, nextOffset < sourceCount, let request = nextRequest(targetId: targetId, from: nextOffset) else {
+        guard let targetId,
+              nextOffset < sourceCount,
+              let request = renderRequest(targetId: targetId, startOffset: nextOffset, id: requestId) else {
             return
         }
-        enqueueRender(request)
+        if let cachedURL {
+            playRenderedAudio(cachedURL, request: request)
+        } else {
+            lock.lock()
+            pendingAutoplayOffset = nextOffset
+            lock.unlock()
+            enqueueRender(request, shouldPlayWhenReady: false)
+        }
     }
 
     private struct RenderRequest: Sendable {
@@ -2161,16 +2231,24 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
         player?.stop()
         player = nil
         fallbackIsActive = false
+        renderedCache.removeAll()
+        inFlightOffsets.removeAll()
+        pendingAutoplayOffset = nil
         currentTargetId = targetId
         lock.unlock()
 
+        return renderRequest(targetId: targetId, startOffset: charOffset, id: requestId, source: source)
+    }
+
+    private func renderRequest(targetId: String, startOffset: Int, id: UUID, source: String? = nil) -> RenderRequest? {
+        let source = source ?? currentPreparedSourceText()
         guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        let clampedOffset = max(0, min(charOffset, source.count))
+        let clampedOffset = max(0, min(startOffset, source.count))
         guard clampedOffset < source.count else { return nil }
         let slice = kokoroSourceSlice(from: source, startOffset: clampedOffset, maxCharacters: maxCharacters)
         guard !slice.text.isEmpty, slice.sourceLength > 0 else { return nil }
         return RenderRequest(
-            id: requestId,
+            id: id,
             targetId: targetId,
             startOffset: clampedOffset,
             sourceLength: slice.sourceLength,
@@ -2178,36 +2256,134 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
         )
     }
 
-    private func enqueueRender(_ request: RenderRequest) {
-        renderQueue.async { [applicationSupportDirectory, outputDirectory, voiceName, speed] in
+    private func currentPreparedSourceText() -> String {
+        lock.lock()
+        let source = preparedSourceText
+        lock.unlock()
+        return source
+    }
+
+    private func enqueueRender(_ request: RenderRequest, shouldPlayWhenReady: Bool = true) {
+        guard canSubmitKokoroRender() else {
+            playFallback(targetId: request.targetId, from: request.startOffset, requestId: request.id)
+            return
+        }
+        lock.lock()
+        if renderedCache[request.startOffset] != nil || inFlightOffsets.contains(request.startOffset) {
+            if !shouldPlayWhenReady {
+                lock.unlock()
+                return
+            }
+        }
+        inFlightOffsets.insert(request.startOffset)
+        lock.unlock()
+
+        renderQueue.async { [weak self, applicationSupportDirectory, outputDirectory, voiceName, speed, cacheLimitBytes] in
+            guard let self else { return }
+            guard self.canSubmitKokoroRender() else {
+                DispatchQueue.main.async {
+                    self.renderFailed(request: request)
+                    self.playFallback(targetId: request.targetId, from: request.startOffset, requestId: request.id)
+                }
+                return
+            }
             do {
                 let assets = KokoroNarrationRenderer.installedAssets(applicationSupportDirectory: applicationSupportDirectory)
                 guard let modelURL = assets.modelURL else { throw KokoroNarrationError.missingModel }
                 guard let voicesURL = assets.voicesURL else { throw KokoroNarrationError.missingVoices }
-                _ = KokoroNarrationRenderer.configureMemoryForDiagnostics()
+                let configured = KokoroNarrationRenderer.configureMemoryForDiagnostics(cacheLimitBytes: cacheLimitBytes)
+                let before = KokoroNarrationRenderer.memorySnapshot()
+                let preview = request.text
+                    .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                    .prefix(120)
+                NSLog(
+                    "SpokenMargins Kokoro render start target=%@ offset=%d chars=%d configured=%@ before=%@ text=\"%@\"",
+                    request.targetId,
+                    request.startOffset,
+                    request.sourceLength,
+                    configured.description,
+                    before.description,
+                    String(preview)
+                )
                 let renderer = try KokoroNarrationRenderer(
                     modelURL: modelURL,
                     voicesURL: voicesURL,
                     outputDirectory: outputDirectory
                 )
+                guard self.canSubmitKokoroRender() else {
+                    DispatchQueue.main.async {
+                        self.renderFailed(request: request)
+                        self.playFallback(targetId: request.targetId, from: request.startOffset, requestId: request.id)
+                    }
+                    return
+                }
+                let renderSpeed = Self.currentKokoroSpeed(defaultSpeed: speed)
                 let result = try renderer.render(
                     text: request.text,
                     itemId: request.targetId,
                     chunkId: "offset-\(request.startOffset)",
                     voiceName: voiceName,
-                    speed: speed
+                    speed: renderSpeed
                 )
-                _ = KokoroNarrationRenderer.clearMemoryCache()
+                let after = KokoroNarrationRenderer.memorySnapshot()
+                let final = KokoroNarrationRenderer.clearMemoryCache()
+                NSLog(
+                    "SpokenMargins Kokoro render finish target=%@ offset=%d duration=%.2f tokens=%d speed=%.2f after=%@ final=%@",
+                    request.targetId,
+                    request.startOffset,
+                    result.duration,
+                    result.tokenCount,
+                    renderSpeed,
+                    after.description,
+                    final.description
+                )
                 DispatchQueue.main.async {
-                    self.playRenderedAudio(result.audioURL, request: request)
+                    self.renderCompleted(audioURL: result.audioURL, request: request, shouldPlayWhenReady: shouldPlayWhenReady)
                 }
             } catch {
-                _ = KokoroNarrationRenderer.clearMemoryCache()
+                let final = KokoroNarrationRenderer.clearMemoryCache()
+                NSLog(
+                    "SpokenMargins Kokoro render failed target=%@ offset=%d error=%@ final=%@",
+                    request.targetId,
+                    request.startOffset,
+                    error.localizedDescription,
+                    final.description
+                )
                 DispatchQueue.main.async {
+                    self.renderFailed(request: request)
                     self.playFallback(targetId: request.targetId, from: request.startOffset, requestId: request.id)
                 }
             }
         }
+    }
+
+    private func renderCompleted(audioURL: URL, request: RenderRequest, shouldPlayWhenReady: Bool) {
+        lock.lock()
+        inFlightOffsets.remove(request.startOffset)
+        guard generation == request.id else {
+            lock.unlock()
+            return
+        }
+        let shouldAutoplay = shouldPlayWhenReady || pendingAutoplayOffset == request.startOffset
+        if shouldAutoplay {
+            pendingAutoplayOffset = nil
+        } else {
+            renderedCache[request.startOffset] = audioURL
+        }
+        lock.unlock()
+
+        if shouldAutoplay {
+            playRenderedAudio(audioURL, request: request)
+        }
+    }
+
+    private func renderFailed(request: RenderRequest) {
+        lock.lock()
+        inFlightOffsets.remove(request.startOffset)
+        if pendingAutoplayOffset == request.startOffset {
+            pendingAutoplayOffset = nil
+        }
+        lock.unlock()
     }
 
     private func playRenderedAudio(_ audioURL: URL, request: RenderRequest) {
@@ -2234,9 +2410,78 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
             fallbackIsActive = false
             lock.unlock()
             nextPlayer.play()
+            prefetchNextChunk(after: request)
         } catch {
             playFallback(targetId: request.targetId, from: request.startOffset, requestId: request.id)
         }
+    }
+
+    private func prefetchNextChunk(after request: RenderRequest) {
+        let nextOffset = request.startOffset + max(1, request.sourceLength)
+        lock.lock()
+        let sourceCount = preparedSourceText.count
+        let targetId = currentTargetId
+        let currentGeneration = generation
+        lock.unlock()
+        guard currentGeneration == request.id,
+              let targetId,
+              nextOffset < sourceCount,
+              let nextRequest = renderRequest(targetId: targetId, startOffset: nextOffset, id: currentGeneration) else {
+            return
+        }
+        enqueueRender(nextRequest, shouldPlayWhenReady: false)
+    }
+
+    private func configureAppActivityObservers() {
+        #if canImport(UIKit)
+        appIsActive = UIApplication.shared.applicationState == .active
+        let center = NotificationCenter.default
+        activityObservers.append(center.addObserver(
+            forName: UIApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.setAppIsActive(true)
+        })
+        activityObservers.append(center.addObserver(
+            forName: UIApplication.willResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.setAppIsActive(false)
+        })
+        activityObservers.append(center.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.setAppIsActive(false)
+        })
+        #endif
+    }
+
+    private func setAppIsActive(_ isActive: Bool) {
+        lock.lock()
+        appIsActive = isActive
+        if !isActive {
+            renderedCache.removeAll()
+            inFlightOffsets.removeAll()
+            pendingAutoplayOffset = nil
+        }
+        lock.unlock()
+    }
+
+    private func canSubmitKokoroRender() -> Bool {
+        lock.lock()
+        let isActive = appIsActive
+        lock.unlock()
+        return isActive
+    }
+
+    private static func currentKokoroSpeed(defaultSpeed: Float) -> Float {
+        let storedRate = UserDefaults.standard.double(forKey: "speechRate")
+        guard storedRate > 0 else { return defaultSpeed }
+        return Float(max(0.65, min(1.35, storedRate / 0.5)))
     }
 
     private func playFallback(targetId: String, from charOffset: Int, requestId: UUID? = nil) {
