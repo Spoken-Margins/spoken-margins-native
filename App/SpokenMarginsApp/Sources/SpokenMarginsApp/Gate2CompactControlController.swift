@@ -7,6 +7,9 @@ import ActivityKit
 #if canImport(MediaPlayer)
 import MediaPlayer
 #endif
+#if canImport(UIKit)
+import UIKit
+#endif
 
 @MainActor
 final class Gate2CompactControlController {
@@ -148,24 +151,32 @@ private final class Gate2NowPlayingController {
         ]
         info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = snapshot.playbackRate
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-        MPNowPlayingInfoCenter.default().playbackState = snapshot.status == .playing ? .playing : .paused
         #endif
     }
 
     func installRemoteCommandHandlers(commandHandler: @escaping @MainActor (CompactControlCommand) -> Void) {
         #if canImport(MediaPlayer)
+        #if canImport(UIKit)
+        UIApplication.shared.beginReceivingRemoteControlEvents()
+        #endif
         let center = MPRemoteCommandCenter.shared()
         center.playCommand.removeTarget(nil)
         center.pauseCommand.removeTarget(nil)
         center.togglePlayPauseCommand.removeTarget(nil)
         center.skipBackwardCommand.removeTarget(nil)
         center.skipForwardCommand.removeTarget(nil)
+        center.previousTrackCommand.removeTarget(nil)
+        center.nextTrackCommand.removeTarget(nil)
+        center.stopCommand.removeTarget(nil)
 
         center.playCommand.isEnabled = true
         center.pauseCommand.isEnabled = true
         center.togglePlayPauseCommand.isEnabled = true
         center.skipBackwardCommand.isEnabled = true
         center.skipForwardCommand.isEnabled = true
+        center.previousTrackCommand.isEnabled = true
+        center.nextTrackCommand.isEnabled = true
+        center.stopCommand.isEnabled = true
         center.skipBackwardCommand.preferredIntervals = [15]
         center.skipForwardCommand.preferredIntervals = [15]
 
@@ -187,6 +198,18 @@ private final class Gate2NowPlayingController {
         }
         center.skipForwardCommand.addTarget { _ in
             Task { @MainActor in commandHandler(.skipForward) }
+            return .success
+        }
+        center.previousTrackCommand.addTarget { _ in
+            Task { @MainActor in commandHandler(.skipBack) }
+            return .success
+        }
+        center.nextTrackCommand.addTarget { _ in
+            Task { @MainActor in commandHandler(.skipForward) }
+            return .success
+        }
+        center.stopCommand.addTarget { _ in
+            Task { @MainActor in commandHandler(.togglePlayPause) }
             return .success
         }
         isConfigured = true

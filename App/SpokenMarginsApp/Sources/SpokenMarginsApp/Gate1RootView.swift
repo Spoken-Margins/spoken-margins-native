@@ -646,9 +646,9 @@ private struct PlaybackScreen: View {
                 .accessibilityIdentifier("playback.discuss.button")
             }
 
-            #if DEBUG
-            gate2CompactValidation
-            #endif
+            if ProcessInfo.processInfo.arguments.contains("--ui-testing") {
+                gate2CompactValidation
+            }
         }
         .padding(24)
         .frame(maxWidth: 430)
@@ -657,7 +657,6 @@ private struct PlaybackScreen: View {
         .shadow(color: .black.opacity(0.18), radius: 22, y: 12)
     }
 
-    #if DEBUG
     private var gate2CompactValidation: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Gate 2 Compact")
@@ -698,7 +697,6 @@ private struct PlaybackScreen: View {
         }
         .padding(.top, 8)
     }
-    #endif
 
     private var playbackProgressLabel: String {
         let current = "\(model.snapshot.currentPlaybackProgressPercent)% current"

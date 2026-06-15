@@ -1,28 +1,6 @@
 import ActivityKit
-import AppIntents
 import SwiftUI
 import WidgetKit
-
-struct Gate2CompactCommandIntent: LiveActivityIntent {
-    static let title: LocalizedStringResource = "Spoken Margins Compact Command"
-    static let description = IntentDescription("Opens Spoken Margins so the phone runtime can handle a compact control command.")
-    static let openAppWhenRun = true
-
-    @Parameter(title: "Command")
-    var command: String
-
-    init() {
-        command = "togglePlayPause"
-    }
-
-    init(command: String) {
-        self.command = command
-    }
-
-    func perform() async throws -> some IntentResult {
-        .result(opensIntent: OpenURLIntent(Gate2CompactCommandURL.url(command: command)))
-    }
-}
 
 struct Gate2LiveActivityWidget: Widget {
     var body: some WidgetConfiguration {
@@ -83,22 +61,14 @@ private struct Gate2LiveActivityView: View {
                 .tint(.green)
 
             HStack(spacing: 12) {
-                Button(intent: Gate2CompactCommandIntent(command: "skipBack")) {
-                    Image(systemName: "gobackward.15")
-                }
-                Button(intent: Gate2CompactCommandIntent(command: "togglePlayPause")) {
-                    Image(systemName: state.status == "playing" ? "pause.fill" : "play.fill")
-                }
-                Button(intent: Gate2CompactCommandIntent(command: "skipForward")) {
-                    Image(systemName: "goforward.15")
-                }
+                Image(systemName: "gobackward.15")
+                Image(systemName: state.status == "playing" ? "pause.fill" : "play.fill")
+                Image(systemName: "goforward.15")
                 Spacer()
-                Button(intent: Gate2CompactCommandIntent(command: state.isRecording ? "finishInterjection" : "beginInterjection")) {
-                    Image(systemName: state.isRecording ? "checkmark" : "mic.fill")
-                }
+                Image(systemName: state.isRecording ? "checkmark" : "mic.fill")
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.green)
+            .font(.headline)
+            .foregroundStyle(.white.opacity(0.74))
         }
         .padding()
     }
