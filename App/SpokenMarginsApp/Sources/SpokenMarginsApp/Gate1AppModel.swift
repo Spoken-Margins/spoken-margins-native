@@ -163,11 +163,16 @@ final class Gate1AppModel: ObservableObject {
                     }
                     guard let engine = self.engine else { return }
                     do {
+                        let previousStatus = self.snapshot.status
+                        let previousTargetId = self.snapshot.targetId
                         let updated = try engine.syncPlaybackProgress()
+                        let completedCurrentAudio = previousStatus == .playing &&
+                            updated.status == .paused &&
+                            previousTargetId == updated.targetId
                         if updated != self.snapshot {
                             self.snapshot = updated
                         }
-                        self.playPendingTurnIfReady()
+                        self.playPendingTurnIfReady(completedCurrentAudio: completedCurrentAudio)
                     } catch {
                         self.diagnostics["playbackProgressSyncError"] = String(describing: error)
                     }
@@ -731,12 +736,12 @@ final class Gate1AppModel: ObservableObject {
         try playTurn(turnId, engine: engine)
     }
 
-    private func playPendingTurnIfReady() {
+    private func playPendingTurnIfReady(completedCurrentAudio: Bool = false) {
         guard let turnId = pendingAutoPlayTurnIds.first,
               let engine else {
             return
         }
-        guard shouldPlayPendingTurnNow(turnId: turnId) else {
+        guard shouldPlayPendingTurnNow(turnId: turnId, completedCurrentAudio: completedCurrentAudio) else {
             return
         }
         do {
@@ -753,8 +758,11 @@ final class Gate1AppModel: ObservableObject {
         snapshot.status == .playing && snapshot.targetId != turnId
     }
 
-    private func shouldPlayPendingTurnNow(turnId: String) -> Bool {
+    private func shouldPlayPendingTurnNow(turnId: String, completedCurrentAudio: Bool = false) -> Bool {
         guard snapshot.targetId != turnId else { return false }
+        if completedCurrentAudio {
+            return true
+        }
         if snapshot.phase == .finished {
             return true
         }
@@ -1648,6 +1656,8 @@ final class Gate1AppModel: ObservableObject {
         case "assistant_response":
             return """
             You are continuing a Spoken Margins listening session.
+            The user's current follow-up is the primary request. Answer it first, before re-summarizing prior context.
+            If the user asks for a specific format, length, or consolidation, satisfy that request at the beginning of the response.
 
             Respond exactly:
             <sm_summary>
@@ -1661,7 +1671,8 @@ final class Gate1AppModel: ObservableObject {
             </sm_chapters_json>
 
             The response should be useful for immediate text-to-speech.
-            Chapter anchors must be exact phrases from the full response.
+            If the full response has more than one meaningful section, include 2-5 useful chapters with concise titles.
+            Chapter anchors must be exact phrases from the full response and should point to the section starts.
             """
         default:
             return "You are the Spoken Margins Gate 1 assistant. Preserve user source meaning, answer concisely, and make failures explicit."
@@ -1802,8 +1813,9 @@ final class Gate1AppModel: ObservableObject {
 
     private func conversationPrompt(followUp: String) -> String {
         """
-        Respond to the user's current follow-up in the context of the source, Listening Map, interjections, and recent session turns.
+        Respond to the user's current follow-up first, in the context of the source, Listening Map, interjections, and recent session turns.
         Focus on the user's thinking and questions. Do not summarize the source unless needed.
+        If the follow-up asks for a specific deliverable, provide that deliverable before additional commentary.
         \(sessionContextJSON(interjections: selectedItem.interjections, currentFollowUp: followUp))
         """
     }

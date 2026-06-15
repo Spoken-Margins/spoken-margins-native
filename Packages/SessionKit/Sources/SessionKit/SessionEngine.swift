@@ -340,6 +340,9 @@ public final class SessionEngine {
     public func beginInterjection() throws -> SessionSnapshot {
         try require("beginInterjection", category: "interjection", capabilities: ["record_audio", "delegate_interjection_to_canonical_runtime"])
         guard var session = currentSession else { throw SessionKitError.invalidCommandForState("beginInterjection") }
+        session = try syncCurrentPositionFromAudio(session)
+        currentSession = session
+        try repository.saveSession(session)
         priorPhase = session.phase
         let target = currentInterjectionTarget(for: session)
         recordingTargetType = target.type
@@ -391,6 +394,10 @@ public final class SessionEngine {
             session.position.charOffset = max(0, previousBoundary(before: session.position.charOffset, unit: "sentence", text: item.text ?? ""))
             session.completionPercent = percent(for: session.position.charOffset, text: item.text ?? "")
             session.position.chapterId = chapterId(for: session.position.charOffset)
+        } else if let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == targetId }) {
+            let text = generatedTurnNavigationText(for: turn)
+            session.position.charOffset = max(0, previousBoundary(before: session.position.charOffset, unit: "sentence", text: text))
+            session.position.chapterId = turn.chapters?.last(where: { $0.startChar <= session.position.charOffset })?.id
         }
         currentSession = session
         try repository.saveSession(session)
@@ -410,6 +417,11 @@ public final class SessionEngine {
             session.position.charOffset = max(0, previousBoundary(before: session.position.charOffset, unit: "sentence", text: item.text ?? ""))
             session.completionPercent = percent(for: session.position.charOffset, text: item.text ?? "")
             session.position.chapterId = chapterId(for: session.position.charOffset)
+        } else if let targetId = recordingTargetId,
+                  let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == targetId }) {
+            let text = generatedTurnNavigationText(for: turn)
+            session.position.charOffset = max(0, previousBoundary(before: session.position.charOffset, unit: "sentence", text: text))
+            session.position.chapterId = turn.chapters?.last(where: { $0.startChar <= session.position.charOffset })?.id
         }
         recordingAnchor = nil
         recordingTargetType = nil
@@ -990,10 +1002,20 @@ public final class SessionEngine {
 
     private func buildAnchor(for session: Session, targetType: InterjectionTargetType, targetId: String) -> Anchor {
         if targetType != .item {
-            let turnText = (try? repository.loadTurns(sessionId: session.id).first(where: { $0.id == targetId })?.text) ?? ""
-            let firstSentence = completeSentenceUnits(in: turnText).first ?? turnText
-            let after = completeSentenceUnits(in: turnText).dropFirst().first ?? ""
-            return Anchor(anchorType: .turn, startChar: 0, endChar: firstSentence.count, anchorBefore: firstSentence, anchorAfter: after, turnSegmentIndex: 0)
+            let turn = try? repository.loadTurns(sessionId: session.id).first(where: { $0.id == targetId })
+            let turnText = turn.map { generatedTurnNavigationText(for: $0) } ?? ""
+            let start = max(0, min(session.position.charOffset, turnText.count))
+            let sentenceStart = previousBoundary(before: start, unit: "sentence", text: turnText)
+            let end = min(turnText.count, max(sentenceStart + 1, nextBoundary(after: start, unit: "sentence", text: turnText)))
+            let segmentIndex = completeSentenceUnits(in: slice(turnText, start: 0, end: sentenceStart)).count
+            return Anchor(
+                anchorType: .turn,
+                startChar: sentenceStart,
+                endChar: end,
+                anchorBefore: slice(turnText, start: sentenceStart, end: end),
+                anchorAfter: slice(turnText, start: end, end: min(turnText.count, nextBoundary(after: end, unit: "sentence", text: turnText))),
+                turnSegmentIndex: segmentIndex
+            )
         }
         let text = currentItem?.text ?? ""
         let start = max(0, min(session.position.charOffset, text.count))
@@ -1089,6 +1111,17 @@ public final class SessionEngine {
         updated.position.charOffset = max(0, min(turnResponseOffset(for: turn, audioOffset: offset), text.count))
         updated.position.chapterId = turn.chapters?.last(where: { $0.startChar <= updated.position.charOffset })?.id
         return updated
+    }
+
+    private func syncCurrentPositionFromAudio(_ session: Session) throws -> Session {
+        switch session.currentTargetType {
+        case .itemTextTTS:
+            return syncSessionPositionFromAudio(session, item: currentItem)
+        case .summaryTurnTTS, .assistantTurnTTS:
+            return try syncGeneratedTurnPositionFromAudio(session)
+        case .transcriptBackedMedia, .browserOwnedMedia:
+            return session
+        }
     }
 
     private func markPlaybackComplete(_ session: Session, item: Item?) -> Session {

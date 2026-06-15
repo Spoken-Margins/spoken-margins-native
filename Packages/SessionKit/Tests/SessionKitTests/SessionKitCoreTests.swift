@@ -848,6 +848,35 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(audio.playedOffsets.last, "Brief intro.\n\nFirst".count)
     }
 
+    func testAssistantInterjectionResumesNearRecordedTurnOffset() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["assistant_turn_tts"],
+                "interjection": ["record_audio"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "Source.", externalReference: nil, status: "ready")
+        let session = Session(id: "session-pill", itemId: item.id, status: "in_progress", phase: .conversation, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 100, playbackRate: 1)
+        let responseText = "First response. Second point has the detail. Third point closes."
+        let turn = ConversationTurn(id: "turn-response-001", sessionId: session.id, role: "assistant", turnType: "assistant_response", status: "complete", summary: "Brief intro.", text: responseText, rawText: nil, chapters: nil, sourceInterjectionIds: [])
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session], turns: [turn.id: turn])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.playTurn(turnId: turn.id)
+        audio.currentOffset = "Brief intro.\n\nFirst response. Second".count
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: "interjections/ij-ai-001.m4a")
+
+        let interjection = try XCTUnwrap(try repo.loadInterjections(sessionId: session.id).first)
+        XCTAssertEqual(interjection.targetType, .assistantTurn)
+        XCTAssertEqual(interjection.anchor.anchorBefore, "Second point has the detail.")
+        XCTAssertEqual(audio.playedOffsets.last, "Brief intro.\n\nFirst response. ".count)
+    }
+
     func testPlaySourceFromBeginningWorksWithoutListeningMap() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
