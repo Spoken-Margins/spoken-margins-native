@@ -694,7 +694,9 @@ final class Gate1AppModel: ObservableObject {
 
     func discuss(followUp: String) {
         let trimmed = followUp.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.followUp(trimmed.isEmpty ? "Respond to my interjections and addenda in this listening session." : trimmed)
+        let currentInterjections = currentDiscussionInterjections()
+        let request = Gate1DiscussionContext.primaryRequest(explicitFollowUp: trimmed, currentInterjections: currentInterjections)
+        submitDiscussionFollowUp(request, explicitFollowUp: trimmed, primaryInterjections: currentInterjections)
     }
 
     func playTurn(_ turn: ConversationTurn) {
@@ -788,10 +790,22 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func followUp(_ text: String) {
+        submitDiscussionFollowUp(text, explicitFollowUp: text, primaryInterjections: currentDiscussionInterjections())
+    }
+
+    private func submitDiscussionFollowUp(_ text: String, explicitFollowUp: String, primaryInterjections: [Interjection]) {
         run { engine in
             snapshot = try engine.submitFollowup(text: text)
             let turnId = latestPendingJob(kind: "assistant_response")?.turnId ?? "turn-response-001"
-            submitProviderJobIfNeeded(kind: "assistant_response", turnId: turnId, messages: [conversationPrompt(followUp: text)])
+            submitProviderJobIfNeeded(
+                kind: "assistant_response",
+                turnId: turnId,
+                messages: [conversationPrompt(
+                    followUp: text,
+                    explicitFollowUp: explicitFollowUp,
+                    primaryInterjections: primaryInterjections
+                )]
+            )
             refreshSelectedItem()
             reportSuccess(snapshot.pendingAiJobStatus == "deferred" ? "Follow-up queued for later." : "Follow-up submitted.")
         }
@@ -1735,16 +1749,26 @@ final class Gate1AppModel: ObservableObject {
         """
     }
 
-    private func conversationPrompt(followUp: String) -> String {
+    private func conversationPrompt(followUp: String, explicitFollowUp: String, primaryInterjections: [Interjection]) -> String {
         Gate1ProviderRequestFactory.conversationPrompt(
             followUp: followUp,
-            contextJSON: sessionContextJSON(interjections: selectedItem.interjections, currentFollowUp: followUp)
+            contextJSON: sessionContextJSON(
+                interjections: selectedItem.interjections,
+                currentFollowUp: followUp,
+                explicitFollowUp: explicitFollowUp,
+                primaryInterjections: primaryInterjections
+            )
         )
     }
 
-    private func sessionContextJSON(interjections: [Interjection], currentFollowUp: String?) -> String {
+    private func sessionContextJSON(
+        interjections: [Interjection],
+        currentFollowUp: String?,
+        explicitFollowUp: String? = nil,
+        primaryInterjections: [Interjection] = []
+    ) -> String {
         let map: [String: Any] = [
-            "schemaVersion": currentFollowUp == nil ? "session-export.v1" : "conversation-context.v1",
+            "schemaVersion": currentFollowUp == nil ? "session-export.v1" : "conversation-context.v2",
             "item": [
                 "id": selectedItem.id,
                 "title": selectedItem.title,
@@ -1774,6 +1798,29 @@ final class Gate1AppModel: ObservableObject {
                     "audioPath": interjection.audioPath ?? ""
                 ]
             },
+            "primaryUserIntent": currentFollowUp.map { followUp in
+                [
+                    "source": Gate1DiscussionContext.primaryIntentSource(
+                        explicitFollowUp: explicitFollowUp ?? "",
+                        currentInterjections: primaryInterjections
+                    ),
+                    "request": followUp,
+                    "targetType": currentPlaybackTargetType,
+                    "targetId": currentPlaybackTargetId ?? "",
+                    "target": currentDiscussionTargetContext(),
+                    "interjections": primaryInterjections.map { interjection in
+                        [
+                            "id": interjection.id,
+                            "targetType": interjection.targetType.rawValue,
+                            "targetId": interjection.targetId,
+                            "anchorBefore": interjection.anchor.anchorBefore,
+                            "anchorAfter": interjection.anchor.anchorAfter,
+                            "transcriptionStatus": interjection.transcriptionStatus,
+                            "transcript": interjection.cleanedTranscript ?? interjection.transcript ?? "pending"
+                        ]
+                    }
+                ] as [String: Any]
+            } ?? NSNull(),
             "recentTurns": selectedItem.turns.suffix(6).map { turn in
                 [
                     "id": turn.id,
@@ -1787,6 +1834,41 @@ final class Gate1AppModel: ObservableObject {
         ]
         let data = (try? JSONSerialization.data(withJSONObject: map, options: [.prettyPrinted, .sortedKeys])) ?? Data()
         return String(data: data, encoding: .utf8) ?? "{}"
+    }
+
+    private func currentDiscussionInterjections() -> [Interjection] {
+        Gate1DiscussionContext.currentTargetInterjections(
+            interjections: selectedItem.interjections,
+            currentTargetType: currentPlaybackTargetType,
+            currentTargetId: currentPlaybackTargetId,
+            itemId: selectedItem.id
+        )
+    }
+
+    private func currentDiscussionTargetContext() -> [String: Any] {
+        let targetType = currentPlaybackTargetType
+        let targetId = currentPlaybackTargetId ?? ""
+        switch targetType {
+        case TargetType.summaryTurnTTS.rawValue, TargetType.assistantTurnTTS.rawValue:
+            if let turn = selectedItem.turns.first(where: { $0.id == targetId }) {
+                return [
+                    "id": turn.id,
+                    "targetType": targetType,
+                    "role": turn.role,
+                    "turnType": turn.turnType,
+                    "summary": turn.summary ?? "",
+                    "text": turn.text ?? turn.rawText ?? ""
+                ]
+            }
+        default:
+            break
+        }
+        return [
+            "id": selectedItem.id,
+            "targetType": TargetType.itemTextTTS.rawValue,
+            "title": selectedItem.title,
+            "overview": selectedItem.overview
+        ]
     }
 
     private func turnTitleText(_ turn: ConversationTurn) -> String {

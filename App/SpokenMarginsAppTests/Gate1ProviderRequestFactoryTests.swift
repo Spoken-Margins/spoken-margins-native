@@ -19,10 +19,11 @@ final class Gate1ProviderRequestFactoryTests: XCTestCase {
         let followUp = "Please consolidate my point in two sentences."
         let prompt = Gate1ProviderRequestFactory.conversationPrompt(
             followUp: followUp,
-            contextJSON: #"{"currentFollowUp":"\#(followUp)","recentTurns":[]}"#
+            contextJSON: #"{"primaryUserIntent":{"request":"\#(followUp)"},"recentTurns":[]}"#
         )
 
-        XCTAssertTrue(prompt.contains("current follow-up first"))
+        XCTAssertTrue(prompt.contains("Respond to the primaryUserIntent first"))
+        XCTAssertTrue(prompt.contains("Do not re-review the article or conversation unless the primaryUserIntent asks for that"))
         XCTAssertTrue(prompt.contains(followUp))
     }
 
