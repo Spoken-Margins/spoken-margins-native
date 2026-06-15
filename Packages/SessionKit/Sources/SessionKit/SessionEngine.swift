@@ -75,6 +75,14 @@ public final class SessionEngine {
     }
 
     @discardableResult
+    public func togglePlayPause() throws -> SessionSnapshot {
+        if snapshot.status == .playing {
+            return try pause()
+        }
+        return try resumePlayback()
+    }
+
+    @discardableResult
     public func pause() throws -> SessionSnapshot {
         try requirePlayback("pause")
         guard var session = currentSession else {

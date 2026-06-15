@@ -645,6 +645,10 @@ private struct PlaybackScreen: View {
                 .disabled(!model.hasActiveSession)
                 .accessibilityIdentifier("playback.discuss.button")
             }
+
+            #if DEBUG
+            gate2CompactValidation
+            #endif
         }
         .padding(24)
         .frame(maxWidth: 430)
@@ -652,6 +656,49 @@ private struct PlaybackScreen: View {
         .clipShape(RoundedRectangle(cornerRadius: 34))
         .shadow(color: .black.opacity(0.18), radius: 22, y: 12)
     }
+
+    #if DEBUG
+    private var gate2CompactValidation: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Gate 2 Compact")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(AppColors.watchSecondary)
+            Text(model.gate2CompactSnapshot?.chapterTitle ?? "No compact snapshot")
+                .font(.caption)
+                .foregroundStyle(.white)
+                .accessibilityIdentifier("gate2.compact.chapter")
+            HStack(spacing: 8) {
+                Button {
+                    model.dispatchGate2CompactCommand(.skipBack)
+                } label: {
+                    Image(systemName: "gobackward.15")
+                }
+                .buttonStyle(WatchSecondaryButtonStyle())
+                .accessibilityLabel("Gate 2 Compact Skip Back")
+                .accessibilityIdentifier("gate2.compact.back.button")
+
+                Button {
+                    model.dispatchGate2CompactCommand(.togglePlayPause)
+                } label: {
+                    Image(systemName: "playpause")
+                }
+                .buttonStyle(WatchSecondaryButtonStyle())
+                .accessibilityLabel("Gate 2 Compact Play Pause")
+                .accessibilityIdentifier("gate2.compact.playPause.button")
+
+                Button {
+                    model.dispatchGate2CompactCommand(.skipForward)
+                } label: {
+                    Image(systemName: "goforward.15")
+                }
+                .buttonStyle(WatchSecondaryButtonStyle())
+                .accessibilityLabel("Gate 2 Compact Skip Forward")
+                .accessibilityIdentifier("gate2.compact.forward.button")
+            }
+        }
+        .padding(.top, 8)
+    }
+    #endif
 
     private var playbackProgressLabel: String {
         let current = "\(model.snapshot.currentPlaybackProgressPercent)% current"

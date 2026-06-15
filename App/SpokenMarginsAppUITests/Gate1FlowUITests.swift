@@ -126,6 +126,27 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertNotEqual(firstExport, secondExport)
     }
 
+    func testGate2CompactValidationControlsDelegateTransportCommands() throws {
+        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
+        let reset = app.buttons["reset.samples.button"]
+        XCTAssertTrue(reset.waitForExistence(timeout: 4))
+        reset.tap()
+
+        let seededStart = app.buttons["queue.start.item-pill"]
+        XCTAssertTrue(seededStart.waitForExistence(timeout: 4))
+        seededStart.tap()
+
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["Gate 2 Compact"].waitForExistence(timeout: 4))
+        XCTAssertTrue(element("gate2.compact.chapter").label.contains("Reasonable distrust"))
+
+        app.buttons["gate2.compact.playPause.button"].tap()
+        XCTAssertTrue(app.staticTexts["Compact control togglePlayPause delegated."].waitForExistence(timeout: 4))
+
+        app.buttons["gate2.compact.forward.button"].tap()
+        XCTAssertTrue(app.staticTexts["Compact control skipForward delegated."].waitForExistence(timeout: 4))
+    }
+
     private func element(_ identifier: String) -> XCUIElement {
         app.descendants(matching: .any)[identifier]
     }

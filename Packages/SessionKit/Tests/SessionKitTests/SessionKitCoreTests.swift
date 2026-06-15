@@ -82,6 +82,85 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertThrowsError(try engine.startSession(itemId: "item-pill"))
     }
 
+    func testCompactControlSnapshotExposesOnlyDelegatedCommands() throws {
+        let surfaceProfile = RuntimeCapabilityProfile(
+            id: "lock-screen-widget",
+            displayName: "Lock Screen / Widget",
+            capabilities: [
+                "timeline": ["chapter_timing"],
+                "interjection": ["delegate_interjection_to_canonical_runtime"],
+                "remoteControl": ["display_snapshot", "send_transport_commands", "send_chapter_jump", "send_interjection_commands"]
+            ],
+            forbiddenCapabilities: ["record_audio", "summarize_interjections", "continue_discussion"]
+        )
+        let engine = try compactControlEngine()
+        _ = try engine.startSession(itemId: "item-pill")
+
+        let dispatcher = CompactControlDispatcher(surfaceProfile: surfaceProfile, canonicalRuntime: engine)
+        let snapshot = dispatcher.snapshot()
+
+        XCTAssertEqual(snapshot.title, "Pill")
+        XCTAssertEqual(snapshot.chapterTitle, "Opening")
+        XCTAssertTrue(snapshot.compactSurfaceReady)
+        XCTAssertTrue(snapshot.exposedCommands.contains(.togglePlayPause))
+        XCTAssertTrue(snapshot.exposedCommands.contains(.jumpToChapter))
+        XCTAssertTrue(snapshot.exposedCommands.contains(.beginInterjection))
+        XCTAssertFalse(snapshot.exposedCommands.contains(.finishInterjection))
+    }
+
+    func testCompactControlCommandsDelegateToCanonicalRuntime() throws {
+        let surfaceProfile = RuntimeCapabilityProfile(
+            id: "lock-screen-widget",
+            displayName: "Lock Screen / Widget",
+            capabilities: [
+                "timeline": ["chapter_timing"],
+                "interjection": ["delegate_interjection_to_canonical_runtime"],
+                "remoteControl": ["display_snapshot", "send_transport_commands", "send_chapter_jump", "send_interjection_commands"]
+            ]
+        )
+        let engine = try compactControlEngine()
+        _ = try engine.startSession(itemId: "item-pill")
+        let dispatcher = CompactControlDispatcher(surfaceProfile: surfaceProfile, canonicalRuntime: engine)
+
+        let paused = try dispatcher.dispatch(.togglePlayPause)
+        XCTAssertTrue(paused.delegatedToCanonicalRuntime)
+        XCTAssertEqual(paused.snapshot.status, .paused)
+
+        let jumped = try dispatcher.dispatch(.jumpToChapter, chapterId: "ch-middle")
+        XCTAssertTrue(jumped.delegatedToCanonicalRuntime)
+        XCTAssertEqual(jumped.snapshot.chapterTitle, "Middle")
+
+        let recording = try dispatcher.dispatch(.beginInterjection)
+        XCTAssertTrue(recording.delegatedToCanonicalRuntime)
+        XCTAssertEqual(recording.snapshot.phase, .recordingInterjection)
+        XCTAssertFalse(recording.snapshot.exposedCommands.contains(.beginInterjection))
+        XCTAssertTrue(recording.snapshot.exposedCommands.contains(.finishInterjection))
+
+        let finished = try dispatcher.dispatch(.finishInterjection)
+        XCTAssertTrue(finished.delegatedToCanonicalRuntime)
+        XCTAssertEqual(finished.snapshot.phase, .itemPlayback)
+        XCTAssertEqual(finished.snapshot.status, .playing)
+        XCTAssertEqual(engine.currentSession?.itemId, "item-pill")
+    }
+
+    func testCompactControlRejectsUnsupportedSurfaceCommands() throws {
+        let surfaceProfile = RuntimeCapabilityProfile(
+            id: "car-basic",
+            displayName: "Basic Car",
+            capabilities: ["remoteControl": ["display_snapshot", "send_transport_commands"]]
+        )
+        let engine = try compactControlEngine()
+        _ = try engine.startSession(itemId: "item-pill")
+        let dispatcher = CompactControlDispatcher(surfaceProfile: surfaceProfile, canonicalRuntime: engine)
+
+        XCTAssertThrowsError(try dispatcher.dispatch(.jumpToChapter, chapterId: "ch-middle")) { error in
+            XCTAssertEqual(error as? SessionKitError, .invalidCommandForCapability("jumpToChapter"))
+        }
+        XCTAssertThrowsError(try dispatcher.dispatch(.beginInterjection)) { error in
+            XCTAssertEqual(error as? SessionKitError, .invalidCommandForCapability("beginInterjection"))
+        }
+    }
+
     func testSQLiteStorePersistsCoreRecords() throws {
         let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-\(UUID().uuidString).sqlite").path
         let store = try SQLiteSessionStore(path: path)
@@ -114,6 +193,33 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(try store.loadSession(id: session.id), session)
         XCTAssertEqual(try store.loadInterjections(sessionId: session.id).first?.audioPath, "ij.m4a")
         XCTAssertEqual(try store.loadAIJobs(sessionId: session.id).first?.status, "retryable")
+    }
+
+    private func compactControlEngine() throws -> SessionEngine {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone / Tablet Online",
+            capabilities: [
+                "playback": ["realtime_tts", "assistant_turn_tts", "summary_turn_tts"],
+                "timeline": ["text_char_offsets", "chapter_timing"],
+                "interjection": ["record_audio", "capture_text_anchor", "capture_turn_anchor"],
+                "ai": ["summarize_interjections", "continue_discussion"],
+                "sync": ["canonical_persistence"],
+                "remoteControl": ["display_snapshot", "send_transport_commands", "send_chapter_jump", "send_interjection_commands"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two. Three. Four.", externalReference: nil, status: "ready")
+        let map = ListeningMap(
+            id: "map-pill",
+            itemId: item.id,
+            overview: "Overview.",
+            chapters: [
+                Chapter(id: "ch-opening", title: "Opening", startChar: 0, endChar: 8, percent: 0),
+                Chapter(id: "ch-middle", title: "Middle", startChar: 10, endChar: 22, percent: 50)
+            ]
+        )
+        let repo = InMemorySessionRepository(items: [item.id: item], mapsByItemId: [item.id: map])
+        return SessionEngine(profile: profile, repository: repo)
     }
 
     func testSQLiteStoreListsAndDeletesItemScopedRecords() throws {

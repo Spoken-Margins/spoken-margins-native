@@ -9,6 +9,13 @@ final class TraceReplayTests: XCTestCase {
             try harness.replay()
         }
     }
+
+    func testGate2TracesReplay() throws {
+        for traceName in TraceHarness.gate2TraceNames {
+            let harness = try TraceHarness(traceName: traceName)
+            try harness.replay()
+        }
+    }
 }
 
 final class TraceHarness {
@@ -28,9 +35,15 @@ final class TraceHarness {
         "interjection-representation-lifecycles"
     ]
 
+    static let gate2TraceNames = [
+        "lock-screen-widget-controls"
+    ]
+
     let trace: [String: Any]
     let repository: InMemorySessionRepository
     let engine: SessionEngine
+    private let compactDispatcher: CompactControlDispatcher?
+    private var lastCompactResult: CompactControlResult?
     private var spokenUnitCounts: [String: Int] = [:]
 
     init(traceName: String) throws {
@@ -38,19 +51,64 @@ final class TraceHarness {
         let traceURL = root.appending(path: "traces/\(traceName).json")
         self.trace = try JSON.object(at: traceURL)
         let runtimeProfile = trace["runtimeProfile"] as? String ?? "phone-tablet-online"
-        let profile = try Fixtures.profile(id: runtimeProfile)
         let repo = InMemorySessionRepository()
         try Fixtures.seed(trace: trace, into: repo)
         self.repository = repo
-        self.engine = SessionEngine(profile: profile, repository: repo, audio: TraceAudio(), recorder: TraceRecorder())
+        if runtimeProfile == "lock-screen-widget" {
+            let canonicalProfile = try Fixtures.profile(id: "phone-tablet-online")
+            let surfaceProfile = try Fixtures.profile(id: runtimeProfile)
+            let canonicalEngine = SessionEngine(profile: canonicalProfile, repository: repo, audio: TraceAudio(), recorder: TraceRecorder())
+            self.engine = canonicalEngine
+            self.compactDispatcher = CompactControlDispatcher(surfaceProfile: surfaceProfile, canonicalRuntime: canonicalEngine)
+        } else {
+            let profile = try Fixtures.profile(id: runtimeProfile)
+            self.engine = SessionEngine(profile: profile, repository: repo, audio: TraceAudio(), recorder: TraceRecorder())
+            self.compactDispatcher = nil
+        }
     }
 
     func replay() throws {
         let steps = try XCTUnwrap(trace["steps"] as? [[String: Any]])
         for step in steps {
-            let snapshot = try apply(step: step)
-            try assert(step: step, snapshot: snapshot)
+            if compactDispatcher != nil {
+                let snapshot = try applyCompact(step: step)
+                try assertCompact(step: step, snapshot: snapshot)
+            } else {
+                let snapshot = try apply(step: step)
+                try assert(step: step, snapshot: snapshot)
+            }
         }
+    }
+
+    private func applyCompact(step: [String: Any]) throws -> CompactControlSnapshot {
+        guard let compactDispatcher else {
+            throw SessionKitError.invalidCommandForState("compactDispatcher")
+        }
+
+        if let event = step["event"] as? String {
+            switch event {
+            case "sessionSnapshotReceived":
+                if engine.currentSession == nil {
+                    let itemId = try XCTUnwrap(repository.items.values.sorted { $0.id < $1.id }.first?.id)
+                    _ = try engine.startSession(itemId: itemId)
+                }
+                return compactDispatcher.snapshot()
+            default:
+                XCTFail("Unsupported compact trace event \(event)")
+                return compactDispatcher.snapshot()
+            }
+        }
+
+        if let commandName = step["command"] as? String,
+           let command = CompactControlCommand(rawValue: commandName) {
+            let args = step["args"] as? [String: Any] ?? [:]
+            let result = try compactDispatcher.dispatch(command, chapterId: args["chapterId"] as? String)
+            lastCompactResult = result
+            return result.snapshot
+        }
+
+        XCTFail("Compact trace step lacks command or event")
+        return compactDispatcher.snapshot()
     }
 
     private func apply(step: [String: Any]) throws -> SessionSnapshot {
@@ -258,6 +316,28 @@ final class TraceHarness {
             }
         }
         recordSpoken(snapshot.spokenUnits)
+    }
+
+    private func assertCompact(step: [String: Any], snapshot: CompactControlSnapshot) throws {
+        let expect = step["expect"] as? [String: Any] ?? [:]
+        for (key, value) in expect {
+            switch key {
+            case "title":
+                XCTAssertEqual(snapshot.title, value as? String)
+            case "chapterTitle":
+                XCTAssertEqual(snapshot.chapterTitle, value as? String)
+            case "status":
+                XCTAssertEqual(snapshot.status.rawValue, value as? String)
+            case "phase":
+                XCTAssertEqual(snapshot.phase.rawValue, value as? String)
+            case "compactSurfaceReady":
+                XCTAssertEqual(snapshot.compactSurfaceReady, value as? Bool)
+            case "delegatedToCanonicalRuntime":
+                XCTAssertEqual(lastCompactResult?.delegatedToCanonicalRuntime, value as? Bool)
+            default:
+                XCTFail("Unhandled compact expectation key \(key)")
+            }
+        }
     }
 
     private func currentSessionId(step: [String: Any] = [:]) -> String? {

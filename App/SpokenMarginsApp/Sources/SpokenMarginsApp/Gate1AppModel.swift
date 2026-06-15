@@ -61,8 +61,10 @@ final class Gate1AppModel: ObservableObject {
     @Published var snapshot = SessionSnapshot() {
         didSet {
             reconcilePlaybackProgressTicker()
+            updateGate2CompactState()
         }
     }
+    @Published var gate2CompactSnapshot: CompactControlSnapshot?
     @Published var diagnostics: [String: String] = [:]
     @Published var statusMessage = "Ready."
     @Published var lastError: String?
@@ -91,11 +93,12 @@ final class Gate1AppModel: ObservableObject {
     @Published var providerProbeStatus = "Not checked"
     @Published var knownIssues = [
         "Gate 1 simulator app builds; signed device installation still requires local team/provisioning configuration.",
-        "Now Playing metadata and remote command handling still need the next device pass."
+        "Gate 2 Now Playing and Live Activity controls require signed real-device validation."
     ]
 
     private var engine: SessionEngine?
     private var store: SQLiteSessionStore?
+    private let gate2CompactControls = Gate2CompactControlController()
     private var activeItemId = "item-pill"
     private var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-4.1-mini"
     private var playbackProgressTask: Task<Void, Never>?
@@ -196,7 +199,7 @@ final class Gate1AppModel: ObservableObject {
             try store.seed(item: item)
             try store.seed(map: map)
             self.store = store
-            self.engine = try makeEngine(store: store)
+            installEngine(try makeEngine(store: store))
             activeItemId = item.id
             snapshot = SessionSnapshot()
             libraryItems = try loadLibraryRows(store: store)
@@ -225,7 +228,7 @@ final class Gate1AppModel: ObservableObject {
                 status: "needs_listening_map"
             )
             try store.seed(item: item)
-            self.engine = try makeEngine(store: store)
+            installEngine(try makeEngine(store: store))
             activeItemId = item.id
             snapshot = try engine?.startSession(itemId: item.id) ?? SessionSnapshot()
             libraryItems = try loadLibraryRows(store: store)
@@ -271,7 +274,7 @@ final class Gate1AppModel: ObservableObject {
                 reportFailure(failures.isEmpty ? "No Markdown files were imported." : failures.joined(separator: "\n"))
                 return
             }
-            self.engine = try makeEngine(store: store)
+            installEngine(try makeEngine(store: store))
             activeItemId = imported.first?.id ?? activeItemId
             libraryItems = try loadLibraryRows(store: store)
             selectedItem = try loadItemDetail(id: activeItemId, store: store)
@@ -557,7 +560,7 @@ final class Gate1AppModel: ObservableObject {
             let store = try requireStore()
             activeItemId = session.itemId
             if engine == nil {
-                engine = try makeEngine(store: store)
+                installEngine(try makeEngine(store: store))
             }
             guard let engine else { return }
             if hasActiveSession {
@@ -578,7 +581,7 @@ final class Gate1AppModel: ObservableObject {
             let store = try requireStore()
             activeItemId = session.itemId
             if engine == nil {
-                engine = try makeEngine(store: store)
+                installEngine(try makeEngine(store: store))
             }
             guard let engine else { return }
             if hasActiveSession {
@@ -880,10 +883,35 @@ final class Gate1AppModel: ObservableObject {
         run { engine in
             diagnostics = try engine.diagnostics()
             diagnostics["providerProbe"] = providerProbeStatus
+            diagnostics.merge(gate2CompactControls.diagnostics(), uniquingKeysWith: { _, new in new })
             settingsValueChanged()
             refreshKokoroAssetStatus()
             reportSuccess("Diagnostics refreshed.")
         }
+    }
+
+    func dispatchGate2CompactCommand(_ command: CompactControlCommand, chapterId: String? = nil) {
+        if command == .beginInterjection {
+            Task {
+                let granted = await SystemRecordingClient.requestRecordPermission()
+                guard granted else {
+                    reportFailure("Microphone access is required to record interjections from compact controls.")
+                    return
+                }
+                performGate2CompactCommand(command, chapterId: chapterId)
+            }
+            return
+        }
+        performGate2CompactCommand(command, chapterId: chapterId)
+    }
+
+    func handleGate2CompactURL(_ url: URL) {
+        guard let rawCommand = Gate2CompactCommandURL.command(from: url),
+              let command = CompactControlCommand(rawValue: rawCommand) else {
+            reportFailure("Unsupported compact control URL.")
+            return
+        }
+        dispatchGate2CompactCommand(command)
     }
 
     func saveProviderSettings() {
@@ -1325,6 +1353,53 @@ final class Gate1AppModel: ObservableObject {
         selectedItem.chapters.last { $0.percent <= snapshot.sourceProgressPercent } ?? selectedItem.chapters.first
     }
 
+    private func installEngine(_ engine: SessionEngine) {
+        self.engine = engine
+        configureGate2CompactControls(for: engine)
+    }
+
+    private func configureGate2CompactControls(for engine: SessionEngine) {
+        do {
+            let surfaceProfile = try loadProfile(id: "lock-screen-widget")
+            gate2CompactControls.configure(
+                canonicalRuntime: engine,
+                surfaceProfile: surfaceProfile,
+                skipUnit: skipUnit
+            ) { [weak self] command in
+                self?.dispatchGate2CompactCommand(command)
+            }
+            updateGate2CompactState()
+            diagnostics.merge(gate2CompactControls.diagnostics(), uniquingKeysWith: { _, new in new })
+        } catch {
+            diagnostics["gate2CompactSurface"] = "configuration_failed"
+            diagnostics["gate2CompactError"] = String(describing: error)
+        }
+    }
+
+    private func updateGate2CompactState() {
+        gate2CompactControls.update(snapshot: snapshot)
+        gate2CompactSnapshot = gate2CompactControls.snapshot
+        diagnostics.merge(gate2CompactControls.diagnostics(), uniquingKeysWith: { _, new in new })
+    }
+
+    private func performGate2CompactCommand(_ command: CompactControlCommand, chapterId: String? = nil) {
+        do {
+            let result = try gate2CompactControls.dispatch(command, chapterId: chapterId)
+            if let engine {
+                snapshot = engine.snapshot
+            } else {
+                updateGate2CompactState()
+            }
+            refreshSelectedItem()
+            if command == .finishInterjection, let interjection = latestInterjectionNeedingTranscription() {
+                scheduleTranscription(for: interjection)
+            }
+            reportSuccess("Compact control \(command.rawValue) \(result.delegatedToCanonicalRuntime ? "delegated" : "handled").")
+        } catch {
+            reportFailure(error, context: "Compact control failed")
+        }
+    }
+
     private func run(_ operation: (SessionEngine) throws -> Void) {
         if engine == nil {
             resetAndSeed()
@@ -1447,7 +1522,7 @@ final class Gate1AppModel: ObservableObject {
     private func rebuildEngineForCurrentSettings() -> Bool {
         guard let store else { return true }
         do {
-            engine = try makeEngine(store: store)
+            installEngine(try makeEngine(store: store))
             return true
         } catch {
             reportFailure(error, context: "Runtime profile update failed")

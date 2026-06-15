@@ -8,6 +8,9 @@ struct SpokenMarginsApp: App {
         WindowGroup {
             Gate1RootView()
                 .environmentObject(model)
+                .onOpenURL { url in
+                    model.handleGate2CompactURL(url)
+                }
         }
     }
 }
