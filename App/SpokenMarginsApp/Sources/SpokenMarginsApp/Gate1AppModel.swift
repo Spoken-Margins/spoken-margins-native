@@ -58,7 +58,11 @@ private enum AppSpeechPreviewMode {
 @MainActor
 final class Gate1AppModel: ObservableObject {
     @Published var screen: Gate1Screen = .home
-    @Published var snapshot = SessionSnapshot()
+    @Published var snapshot = SessionSnapshot() {
+        didSet {
+            reconcilePlaybackProgressTicker()
+        }
+    }
     @Published var diagnostics: [String: String] = [:]
     @Published var statusMessage = "Ready."
     @Published var lastError: String?
@@ -95,6 +99,7 @@ final class Gate1AppModel: ObservableObject {
     private var engine: SessionEngine?
     private var store: SQLiteSessionStore?
     private var activeItemId = "item-pill"
+    private var playbackProgressTask: Task<Void, Never>?
     private let transcriptionClient = SystemSpeechTranscriptionClient()
     #if canImport(AVFoundation)
     private let speechPreviewSynthesizer = AVSpeechSynthesizer()
@@ -126,6 +131,48 @@ final class Gate1AppModel: ObservableObject {
         #else
         return []
         #endif
+    }
+
+    deinit {
+        playbackProgressTask?.cancel()
+    }
+
+    private func reconcilePlaybackProgressTicker() {
+        if snapshot.status == .playing {
+            startPlaybackProgressTicker()
+        } else {
+            stopPlaybackProgressTicker()
+        }
+    }
+
+    private func startPlaybackProgressTicker() {
+        guard playbackProgressTask == nil else { return }
+        playbackProgressTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                await MainActor.run {
+                    guard let self else { return }
+                    guard self.snapshot.status == .playing else {
+                        self.stopPlaybackProgressTicker()
+                        return
+                    }
+                    guard let engine = self.engine else { return }
+                    do {
+                        let updated = try engine.syncPlaybackProgress()
+                        if updated != self.snapshot {
+                            self.snapshot = updated
+                        }
+                    } catch {
+                        self.diagnostics["playbackProgressSyncError"] = String(describing: error)
+                    }
+                }
+            }
+        }
+    }
+
+    private func stopPlaybackProgressTicker() {
+        playbackProgressTask?.cancel()
+        playbackProgressTask = nil
     }
 
     func resetAndSeed() {
@@ -1050,6 +1097,13 @@ final class Gate1AppModel: ObservableObject {
             return "\(voice.name) (\(voice.language), \(voice.quality))"
         }
         return speechVoiceIdentifier
+    }
+
+    var speechRateDescription: String {
+        if ttsMode == "kokoro" {
+            return String(format: "Kokoro %.2fx", max(0.65, min(1.75, speechRate / 0.5)))
+        }
+        return String(format: "System %.2f", speechRate)
     }
 
     var kokoroCacheLimitBytes: Int {
@@ -2100,6 +2154,7 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
     private var currentTargetId: String?
     private var currentStartOffset = 0
     private var currentChunkLength = 0
+    private var currentChunkBoundary = KokoroChunkBoundary.hard
     private var fallbackIsActive = false
     private var renderedCache: [Int: URL] = [:]
     private var inFlightOffsets = Set<Int>()
@@ -2120,7 +2175,7 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
         self.applicationSupportDirectory = applicationSupportDirectory
         self.outputDirectory = outputDirectory
         self.voiceName = voiceName
-        self.speed = max(0.65, min(1.35, speed))
+        self.speed = max(0.65, min(1.75, speed))
         self.cacheLimitBytes = cacheLimitBytes
         self.maxCharacters = maxCharacters
         super.init()
@@ -2198,6 +2253,7 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
         let targetId = currentTargetId
         let sourceCount = preparedSourceText.count
         let cachedURL = renderedCache.removeValue(forKey: nextOffset)
+        let transitionDelay = currentChunkBoundary.transitionDelay
         let requestId = generation
         lock.unlock()
         guard let targetId,
@@ -2206,7 +2262,7 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
             return
         }
         if let cachedURL {
-            playRenderedAudio(cachedURL, request: request)
+            playRenderedAudio(cachedURL, request: request, delay: transitionDelay)
         } else {
             lock.lock()
             pendingAutoplayOffset = nextOffset
@@ -2221,6 +2277,7 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
         var startOffset: Int
         var sourceLength: Int
         var text: String
+        var boundary: KokoroChunkBoundary
     }
 
     private func nextRequest(targetId: String, from charOffset: Int) -> RenderRequest? {
@@ -2252,7 +2309,8 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
             targetId: targetId,
             startOffset: clampedOffset,
             sourceLength: slice.sourceLength,
-            text: slice.text
+            text: slice.text,
+            boundary: slice.boundary
         )
     }
 
@@ -2297,10 +2355,11 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
                     .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
                     .prefix(120)
                 NSLog(
-                    "SpokenMargins Kokoro render start target=%@ offset=%d chars=%d configured=%@ before=%@ text=\"%@\"",
+                    "SpokenMargins Kokoro render start target=%@ offset=%d chars=%d boundary=%@ configured=%@ before=%@ text=\"%@\"",
                     request.targetId,
                     request.startOffset,
                     request.sourceLength,
+                    request.boundary.rawValue,
                     configured.description,
                     before.description,
                     String(preview)
@@ -2386,7 +2445,7 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
         lock.unlock()
     }
 
-    private func playRenderedAudio(_ audioURL: URL, request: RenderRequest) {
+    private func playRenderedAudio(_ audioURL: URL, request: RenderRequest, delay: TimeInterval = 0) {
         lock.lock()
         guard generation == request.id else {
             lock.unlock()
@@ -2407,9 +2466,14 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
             currentTargetId = request.targetId
             currentStartOffset = request.startOffset
             currentChunkLength = request.sourceLength
+            currentChunkBoundary = request.boundary
             fallbackIsActive = false
             lock.unlock()
-            nextPlayer.play()
+            if delay > 0 {
+                nextPlayer.play(atTime: nextPlayer.deviceCurrentTime + delay)
+            } else {
+                nextPlayer.play()
+            }
             prefetchNextChunk(after: request)
         } catch {
             playFallback(targetId: request.targetId, from: request.startOffset, requestId: request.id)
@@ -2481,7 +2545,7 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
     private static func currentKokoroSpeed(defaultSpeed: Float) -> Float {
         let storedRate = UserDefaults.standard.double(forKey: "speechRate")
         guard storedRate > 0 else { return defaultSpeed }
-        return Float(max(0.65, min(1.35, storedRate / 0.5)))
+        return Float(max(0.65, min(1.75, storedRate / 0.5)))
     }
 
     private func playFallback(targetId: String, from charOffset: Int, requestId: UUID? = nil) {
@@ -2505,6 +2569,30 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
 }
 #endif
 
+private enum KokoroChunkBoundary: String, Sendable {
+    case sentence
+    case comma
+    case whitespace
+    case hard
+
+    var transitionDelay: TimeInterval {
+        switch self {
+        case .sentence:
+            return 0.12
+        case .comma:
+            return 0.05
+        case .whitespace, .hard:
+            return 0
+        }
+    }
+}
+
+private struct KokoroSourceSlice: Sendable {
+    var text: String
+    var sourceLength: Int
+    var boundary: KokoroChunkBoundary
+}
+
 private func kokoroRenderChunk(from text: String, maxCharacters: Int = 360) -> String {
     let trimmed = SpeechTextNormalizer.normalize(text)
         .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2512,42 +2600,58 @@ private func kokoroRenderChunk(from text: String, maxCharacters: Int = 360) -> S
 
     let hardLimit = trimmed.index(trimmed.startIndex, offsetBy: maxCharacters)
     let prefix = String(trimmed[..<hardLimit])
-    let minimumUsefulLength = min(120, maxCharacters / 2)
-    let boundaryCharacters = CharacterSet(charactersIn: ".!?\n;:")
-    if let boundary = prefix.rangeOfCharacter(from: boundaryCharacters, options: .backwards),
-       prefix.distance(from: prefix.startIndex, to: boundary.upperBound) >= minimumUsefulLength {
-        return String(prefix[..<boundary.upperBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    if let whitespace = prefix.rangeOfCharacter(from: .whitespacesAndNewlines, options: .backwards),
-       prefix.distance(from: prefix.startIndex, to: whitespace.lowerBound) >= minimumUsefulLength {
-        return String(prefix[..<whitespace.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    return prefix.trimmingCharacters(in: .whitespacesAndNewlines)
+    return kokoroSelectChunkPrefix(prefix, maxCharacters: maxCharacters).text
 }
 
-private func kokoroSourceSlice(from source: String, startOffset: Int, maxCharacters: Int) -> (text: String, sourceLength: Int) {
+private func kokoroSourceSlice(from source: String, startOffset: Int, maxCharacters: Int) -> KokoroSourceSlice {
     let clampedOffset = max(0, min(startOffset, source.count))
     let start = source.index(source.startIndex, offsetBy: clampedOffset)
     let remainingLength = source.distance(from: start, to: source.endIndex)
     let length = min(maxCharacters, remainingLength)
     let hardEnd = source.index(start, offsetBy: length)
     let prefix = String(source[start..<hardEnd])
-    let minimumUsefulLength = min(120, maxCharacters / 2)
-    let boundaryCharacters = CharacterSet(charactersIn: ".!?\n;:")
-    let selected: String
-    if let boundary = prefix.rangeOfCharacter(from: boundaryCharacters, options: .backwards),
-       prefix.distance(from: prefix.startIndex, to: boundary.upperBound) >= minimumUsefulLength {
-        selected = String(prefix[..<boundary.upperBound])
-    } else if let whitespace = prefix.rangeOfCharacter(from: .whitespacesAndNewlines, options: .backwards),
-              prefix.distance(from: prefix.startIndex, to: whitespace.lowerBound) >= minimumUsefulLength {
-        selected = String(prefix[..<whitespace.lowerBound])
-    } else {
-        selected = prefix
+    let selected = kokoroSelectChunkPrefix(prefix, maxCharacters: maxCharacters)
+    return KokoroSourceSlice(
+        text: selected.text,
+        sourceLength: max(0, selected.sourceLength),
+        boundary: selected.boundary
+    )
+}
+
+private func kokoroSelectChunkPrefix(_ prefix: String, maxCharacters: Int) -> KokoroSourceSlice {
+    let minimumUsefulLength = min(80, max(24, maxCharacters / 3))
+    let sentenceCharacters = CharacterSet(charactersIn: ".!?\n;:")
+    if let sentence = kokoroBoundary(in: prefix, characters: sentenceCharacters, includeBoundary: true, minimumUsefulLength: minimumUsefulLength) {
+        return sentence.withBoundary(.sentence)
     }
+
+    if let comma = kokoroBoundary(in: prefix, characters: CharacterSet(charactersIn: ","), includeBoundary: true, minimumUsefulLength: minimumUsefulLength) {
+        return comma.withBoundary(.comma)
+    }
+
+    if let whitespace = kokoroBoundary(in: prefix, characters: .whitespacesAndNewlines, includeBoundary: false, minimumUsefulLength: minimumUsefulLength) {
+        return whitespace.withBoundary(.whitespace)
+    }
+
+    let normalized = SpeechTextNormalizer.normalize(prefix).trimmingCharacters(in: .whitespacesAndNewlines)
+    return KokoroSourceSlice(text: normalized, sourceLength: prefix.count, boundary: .hard)
+}
+
+private func kokoroBoundary(in prefix: String, characters: CharacterSet, includeBoundary: Bool, minimumUsefulLength: Int) -> KokoroSourceSlice? {
+    guard let range = prefix.rangeOfCharacter(from: characters, options: .backwards) else { return nil }
+    let end = includeBoundary ? range.upperBound : range.lowerBound
+    guard prefix.distance(from: prefix.startIndex, to: end) >= minimumUsefulLength else { return nil }
+    let selected = String(prefix[..<end])
     let normalized = SpeechTextNormalizer.normalize(selected).trimmingCharacters(in: .whitespacesAndNewlines)
-    return (normalized, max(0, selected.count))
+    guard !normalized.isEmpty else { return nil }
+    let sourceLength = prefix.distance(from: prefix.startIndex, to: range.upperBound)
+    return KokoroSourceSlice(text: normalized, sourceLength: sourceLength, boundary: .hard)
+}
+
+private extension KokoroSourceSlice {
+    func withBoundary(_ boundary: KokoroChunkBoundary) -> KokoroSourceSlice {
+        KokoroSourceSlice(text: text, sourceLength: sourceLength, boundary: boundary)
+    }
 }
 
 #if canImport(AVFoundation)

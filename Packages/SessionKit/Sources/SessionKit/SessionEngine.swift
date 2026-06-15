@@ -96,6 +96,21 @@ public final class SessionEngine {
     }
 
     @discardableResult
+    public func syncPlaybackProgress() throws -> SessionSnapshot {
+        guard var session = currentSession, let item = currentItem else {
+            return snapshot
+        }
+        let updated = syncSessionPositionFromAudio(session, item: item)
+        if updated.position != session.position || updated.completionPercent != session.completionPercent {
+            session = updated
+            currentSession = session
+            try repository.saveSession(session)
+        }
+        publish(status: snapshot.status, phase: session.phase)
+        return snapshot
+    }
+
+    @discardableResult
     public func prepareSpeechText(itemId: String, targetType: TargetType) throws -> SessionSnapshot {
         let item = try repository.loadItem(id: itemId)
         lastSpokenText = SpeechTextNormalizer.normalize(item.text ?? "")
@@ -779,7 +794,7 @@ public final class SessionEngine {
             return session
         }
         var updated = session
-        updated.position.charOffset = max(updated.position.charOffset, offset)
+        updated.position.charOffset = max(0, min(offset, item.text?.count ?? 0))
         updated.completionPercent = percent(for: updated.position.charOffset, text: item.text ?? "")
         updated.position.chapterId = chapterId(for: updated.position.charOffset)
         return updated
@@ -903,7 +918,10 @@ public final class SessionEngine {
         var index = min(offset - 1, chars.count - 1)
         while index > 0 {
             if boundaryCharacters.contains(chars[index]) {
-                return min(chars.count, index + 1 + consumeSpaces(chars, from: index + 1))
+                let boundary = min(chars.count, index + 1 + consumeSpaces(chars, from: index + 1))
+                if boundary < offset {
+                    return boundary
+                }
             }
             index -= 1
         }
@@ -929,7 +947,10 @@ public final class SessionEngine {
         var index = min(offset - 1, chars.count - 1)
         while index > 0 {
             if chars[index] == "\n" {
-                return min(chars.count, index + 1 + consumeSpaces(chars, from: index + 1))
+                let boundary = min(chars.count, index + 1 + consumeSpaces(chars, from: index + 1))
+                if boundary < offset {
+                    return boundary
+                }
             }
             index -= 1
         }

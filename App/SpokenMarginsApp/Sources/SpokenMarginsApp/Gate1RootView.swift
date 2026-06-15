@@ -566,11 +566,11 @@ private struct PlaybackScreen: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(AppColors.watchSecondary)
                     Spacer()
-                    Text(String(format: "%.2fx", model.speechRate))
+                    Text(model.speechRateDescription)
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(AppColors.watchSecondary)
                 }
-                Slider(value: $model.speechRate, in: 0.35...0.65, step: 0.01)
+                Slider(value: $model.speechRate, in: 0.35...0.85, step: 0.01)
                     .accessibilityIdentifier("playback.speechRate.slider")
                     .onChange(of: model.speechRate) { _, _ in
                         model.saveSpeechSettings()
@@ -828,10 +828,10 @@ private struct SettingsScreen: View {
                         HStack {
                             Text("Speaking Rate")
                             Spacer()
-                            Text(String(format: "%.2fx", model.speechRate))
+                            Text(model.speechRateDescription)
                                 .foregroundStyle(AppColors.secondaryText)
                         }
-                        Slider(value: $model.speechRate, in: 0.35...0.65, step: 0.01)
+                        Slider(value: $model.speechRate, in: 0.35...0.85, step: 0.01)
                             .accessibilityIdentifier("settings.speechRate.slider")
                     }
                     .onChange(of: model.speechRate) { _, _ in

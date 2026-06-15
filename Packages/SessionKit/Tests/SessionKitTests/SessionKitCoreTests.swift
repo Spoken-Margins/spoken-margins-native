@@ -245,6 +245,54 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(audio.playedOffsets.last, 17)
     }
 
+    func testSkipBackUsesCurrentAudioPositionAndPreviousBoundaryIsStrict() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "timeline": ["chapter_timing"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two. Three.", externalReference: nil, status: "ready")
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let audio = RecordingAudioClient()
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentOffset = 10
+        let snapshot = try engine.skipBack(unit: "sentence")
+
+        XCTAssertEqual(snapshot.progressPercent, 31)
+        XCTAssertEqual(try XCTUnwrap(engine.currentSession?.position.charOffset), 5)
+        XCTAssertEqual(audio.playedOffsets.last, 5)
+    }
+
+    func testSyncPlaybackProgressPublishesCurrentAudioPosition() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "timeline": ["chapter_timing"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two. Three. Four.", externalReference: nil, status: "ready")
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let audio = RecordingAudioClient()
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentOffset = 10
+        let snapshot = try engine.syncPlaybackProgress()
+
+        XCTAssertEqual(snapshot.progressPercent, 45)
+        XCTAssertEqual(try XCTUnwrap(engine.currentSession?.position.charOffset), 10)
+        XCTAssertEqual(audio.playedOffsets, [0])
+    }
+
     func testFinishInterjectionSchedulesTranscriptionAfterAudioIsSaved() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
