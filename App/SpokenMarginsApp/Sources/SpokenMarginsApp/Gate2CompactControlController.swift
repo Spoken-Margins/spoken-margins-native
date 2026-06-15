@@ -67,6 +67,7 @@ final class Gate2CompactControlController {
             "gate2CompactSurface": snapshot?.compactSurfaceReady == true ? "ready" : "not_ready",
             "gate2SurfaceProfile": snapshot?.surfaceProfileId ?? "none",
             "gate2NowPlaying": nowPlaying.isConfigured ? "configured" : "not_configured",
+            "gate2LastRemoteCommand": nowPlaying.lastRemoteCommand,
             "gate2LiveActivity": liveActivity.status,
             "gate2LastCommand": lastCommand?.rawValue ?? "none",
             "gate2LastResult": lastResult,
@@ -166,6 +167,7 @@ private final class Gate2LiveActivityController {
 @MainActor
 private final class Gate2NowPlayingController {
     private(set) var isConfigured = false
+    private(set) var lastRemoteCommand = "none"
 
     func publish(_ snapshot: CompactControlSnapshot) {
         #if canImport(MediaPlayer)
@@ -174,7 +176,8 @@ private final class Gate2NowPlayingController {
             MPMediaItemPropertyAlbumTitle: snapshot.chapterTitle ?? "Session",
             MPNowPlayingInfoPropertyElapsedPlaybackTime: Double(snapshot.currentPlaybackProgressPercent),
             MPMediaItemPropertyPlaybackDuration: 100,
-            MPNowPlayingInfoPropertyPlaybackRate: snapshot.status == .playing ? snapshot.playbackRate : 0
+            MPNowPlayingInfoPropertyPlaybackRate: snapshot.status == .playing ? snapshot.playbackRate : 0,
+            MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue
         ]
         info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = snapshot.playbackRate
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
@@ -208,35 +211,59 @@ private final class Gate2NowPlayingController {
         center.skipForwardCommand.preferredIntervals = [15]
 
         center.playCommand.addTarget { _ in
-            Task { @MainActor in commandHandler(.togglePlayPause) }
+            Task { @MainActor [weak self] in
+                self?.lastRemoteCommand = "play"
+                commandHandler(.play)
+            }
             return .success
         }
         center.pauseCommand.addTarget { _ in
-            Task { @MainActor in commandHandler(.togglePlayPause) }
+            Task { @MainActor [weak self] in
+                self?.lastRemoteCommand = "pause"
+                commandHandler(.pause)
+            }
             return .success
         }
         center.togglePlayPauseCommand.addTarget { _ in
-            Task { @MainActor in commandHandler(.togglePlayPause) }
+            Task { @MainActor [weak self] in
+                self?.lastRemoteCommand = "togglePlayPause"
+                commandHandler(.togglePlayPause)
+            }
             return .success
         }
         center.skipBackwardCommand.addTarget { _ in
-            Task { @MainActor in commandHandler(.skipBack) }
+            Task { @MainActor [weak self] in
+                self?.lastRemoteCommand = "skipBack"
+                commandHandler(.skipBack)
+            }
             return .success
         }
         center.skipForwardCommand.addTarget { _ in
-            Task { @MainActor in commandHandler(.skipForward) }
+            Task { @MainActor [weak self] in
+                self?.lastRemoteCommand = "skipForward"
+                commandHandler(.skipForward)
+            }
             return .success
         }
         center.previousTrackCommand.addTarget { _ in
-            Task { @MainActor in commandHandler(.skipBack) }
+            Task { @MainActor [weak self] in
+                self?.lastRemoteCommand = "previousTrack"
+                commandHandler(.skipBack)
+            }
             return .success
         }
         center.nextTrackCommand.addTarget { _ in
-            Task { @MainActor in commandHandler(.skipForward) }
+            Task { @MainActor [weak self] in
+                self?.lastRemoteCommand = "nextTrack"
+                commandHandler(.skipForward)
+            }
             return .success
         }
         center.stopCommand.addTarget { _ in
-            Task { @MainActor in commandHandler(.togglePlayPause) }
+            Task { @MainActor [weak self] in
+                self?.lastRemoteCommand = "stop"
+                commandHandler(.pause)
+            }
             return .success
         }
         isConfigured = true

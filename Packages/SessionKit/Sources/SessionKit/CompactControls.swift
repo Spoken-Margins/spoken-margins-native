@@ -1,6 +1,8 @@
 import Foundation
 
 public enum CompactControlCommand: String, Codable, CaseIterable, Equatable, Sendable {
+    case play
+    case pause
     case togglePlayPause
     case skipBack
     case skipForward
@@ -105,6 +107,10 @@ public final class CompactControlDispatcher {
         try validate(command)
         let updated: SessionSnapshot
         switch command {
+        case .play:
+            updated = try canonicalRuntime.resumePlayback()
+        case .pause:
+            updated = try canonicalRuntime.pause()
         case .togglePlayPause:
             updated = try canonicalRuntime.togglePlayPause()
         case .skipBack:
@@ -132,7 +138,7 @@ public final class CompactControlDispatcher {
         }
 
         switch command {
-        case .togglePlayPause, .skipBack, .skipForward:
+        case .play, .pause, .togglePlayPause, .skipBack, .skipForward:
             guard surfaceProfile.has("remoteControl", "send_transport_commands") else {
                 throw SessionKitError.invalidCommandForCapability(command.rawValue)
             }
@@ -153,7 +159,7 @@ public final class CompactControlDispatcher {
         let canDisplay = surfaceProfile.has("remoteControl", "display_snapshot")
         let commands = CompactControlCommand.allCases.filter { command in
             switch command {
-            case .togglePlayPause, .skipBack, .skipForward:
+            case .play, .pause, .togglePlayPause, .skipBack, .skipForward:
                 return surfaceProfile.has("remoteControl", "send_transport_commands")
             case .jumpToChapter:
                 return surfaceProfile.has("timeline", "chapter_timing")

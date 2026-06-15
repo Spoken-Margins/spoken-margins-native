@@ -13,6 +13,8 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertEqual(model.gate2CompactSnapshot?.title, "You Can't Inspect the Pill")
         XCTAssertEqual(model.gate2CompactSnapshot?.chapterTitle, "Reasonable distrust")
         XCTAssertEqual(model.gate2CompactSnapshot?.compactSurfaceReady, true)
+        XCTAssertTrue(model.gate2CompactSnapshot?.exposedCommands.contains(.play) == true)
+        XCTAssertTrue(model.gate2CompactSnapshot?.exposedCommands.contains(.pause) == true)
         XCTAssertTrue(model.gate2CompactSnapshot?.exposedCommands.contains(.togglePlayPause) == true)
         XCTAssertTrue(model.gate2CompactSnapshot?.exposedCommands.contains(.beginInterjection) == true)
     }
@@ -27,6 +29,18 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertEqual(model.snapshot.status, .paused)
         XCTAssertEqual(model.diagnostics["gate2LastCommand"], "togglePlayPause")
         XCTAssertEqual(model.diagnostics["gate2LastResult"], "delegated")
+
+        model.dispatchGate2CompactCommand(.play)
+
+        XCTAssertEqual(model.snapshot.status, .playing)
+        XCTAssertEqual(model.diagnostics["gate2LastCommand"], "play")
+
+        model.dispatchGate2CompactCommand(.pause)
+
+        XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertEqual(model.diagnostics["gate2LastCommand"], "pause")
+
+        model.dispatchGate2CompactCommand(.play)
 
         model.dispatchGate2CompactCommand(.skipForward)
 

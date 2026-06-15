@@ -102,6 +102,8 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.title, "Pill")
         XCTAssertEqual(snapshot.chapterTitle, "Opening")
         XCTAssertTrue(snapshot.compactSurfaceReady)
+        XCTAssertTrue(snapshot.exposedCommands.contains(.play))
+        XCTAssertTrue(snapshot.exposedCommands.contains(.pause))
         XCTAssertTrue(snapshot.exposedCommands.contains(.togglePlayPause))
         XCTAssertTrue(snapshot.exposedCommands.contains(.jumpToChapter))
         XCTAssertTrue(snapshot.exposedCommands.contains(.beginInterjection))
@@ -125,6 +127,16 @@ final class SessionKitCoreTests: XCTestCase {
         let paused = try dispatcher.dispatch(.togglePlayPause)
         XCTAssertTrue(paused.delegatedToCanonicalRuntime)
         XCTAssertEqual(paused.snapshot.status, .paused)
+
+        let played = try dispatcher.dispatch(.play)
+        XCTAssertTrue(played.delegatedToCanonicalRuntime)
+        XCTAssertEqual(played.snapshot.status, .playing)
+
+        let pausedAgain = try dispatcher.dispatch(.pause)
+        XCTAssertTrue(pausedAgain.delegatedToCanonicalRuntime)
+        XCTAssertEqual(pausedAgain.snapshot.status, .paused)
+
+        _ = try dispatcher.dispatch(.play)
 
         let jumped = try dispatcher.dispatch(.jumpToChapter, chapterId: "ch-middle")
         XCTAssertTrue(jumped.delegatedToCanonicalRuntime)

@@ -61,24 +61,71 @@ private struct Gate2LiveActivityView: View {
             ProgressView(value: Double(max(0, min(100, state.progressPercent))), total: 100)
                 .tint(.green)
 
-            HStack(spacing: 12) {
-                Button(intent: Gate2CompactPlaybackIntent(command: "skipBack")) {
-                    Image(systemName: "gobackward.15")
-                }
-                Button(intent: Gate2CompactPlaybackIntent(command: "togglePlayPause")) {
-                    Image(systemName: state.status == "playing" ? "pause.fill" : "play.fill")
-                }
-                Button(intent: Gate2CompactPlaybackIntent(command: "skipForward")) {
-                    Image(systemName: "goforward.15")
-                }
+            HStack(spacing: 16) {
+                CompactRoundIntentButton(command: "skipBack", systemImage: "gobackward.15", size: 58)
+                CompactPlayPauseButton(
+                    command: "togglePlayPause",
+                    isPlaying: state.status == "playing",
+                    progressPercent: state.progressPercent
+                )
+                CompactRoundIntentButton(command: "skipForward", systemImage: "goforward.15", size: 58)
                 Spacer()
                 Image(systemName: state.isRecording ? "checkmark" : "mic.fill")
+                    .font(.title2.weight(.semibold))
+                    .frame(width: 58, height: 58)
+                    .foregroundStyle(.white)
+                    .background(Color.white.opacity(0.16))
+                    .clipShape(Circle())
             }
             .buttonStyle(.plain)
-            .font(.headline)
-            .foregroundStyle(.white.opacity(0.74))
         }
         .padding()
+    }
+}
+
+private struct CompactRoundIntentButton: View {
+    let command: String
+    let systemImage: String
+    let size: CGFloat
+
+    var body: some View {
+        Button(intent: Gate2CompactPlaybackIntent(command: command)) {
+            Image(systemName: systemImage)
+                .font(.title2.weight(.semibold))
+                .frame(width: size, height: size)
+                .foregroundStyle(.white)
+                .background(Color.white.opacity(0.16))
+                .clipShape(Circle())
+        }
+        .frame(width: size, height: size)
+        .contentShape(Circle())
+    }
+}
+
+private struct CompactPlayPauseButton: View {
+    let command: String
+    let isPlaying: Bool
+    let progressPercent: Int
+
+    var body: some View {
+        Button(intent: Gate2CompactPlaybackIntent(command: command)) {
+            ZStack {
+                Circle()
+                    .fill(Color(red: 0.27, green: 0.78, blue: 0.43).opacity(0.22))
+                Circle()
+                    .stroke(Color.white.opacity(0.18), lineWidth: 8)
+                Circle()
+                    .trim(from: 0, to: CGFloat(max(0, min(100, progressPercent))) / 100)
+                    .stroke(Color(red: 0.27, green: 0.9, blue: 0.48), style: StrokeStyle(lineWidth: 8, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.white)
+                    .padding(.leading, isPlaying ? 0 : 3)
+            }
+        }
+        .frame(width: 74, height: 74)
+        .contentShape(Circle())
     }
 }
 
