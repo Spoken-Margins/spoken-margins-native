@@ -58,6 +58,9 @@ final class Gate1FlowUITests: XCTestCase {
         seededItem.tap()
         XCTAssertTrue(element("item.screen").waitForExistence(timeout: 4))
 
+        let showManualJSON = scrollToElement("item.toggleMapJSON.button")
+        showManualJSON.tap()
+
         let editor = scrollToElement("item.mapJSON.editor")
         editor.tap()
         editor.typeText(Self.manualListeningMapJSON)

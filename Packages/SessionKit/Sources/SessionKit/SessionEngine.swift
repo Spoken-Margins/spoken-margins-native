@@ -63,7 +63,7 @@ public final class SessionEngine {
             phase: .itemPlayback,
             currentTargetType: .itemTextTTS,
             currentTargetId: itemId,
-            position: Position(charOffset: 0, chapterId: currentMap?.chapters.first?.id),
+            position: Position(charOffset: 0, chapterId: nil),
             completionPercent: 0,
             playbackRate: 1
         )
@@ -77,9 +77,16 @@ public final class SessionEngine {
     @discardableResult
     public func pause() throws -> SessionSnapshot {
         try requirePlayback("pause")
-        guard let session = currentSession else {
+        guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("pause")
         }
+        if session.currentTargetType == .itemTextTTS {
+            session = syncSessionPositionFromAudio(session, item: currentItem)
+        } else if session.currentTargetType == .summaryTurnTTS || session.currentTargetType == .assistantTurnTTS {
+            session = try syncGeneratedTurnPositionFromAudio(session)
+        }
+        currentSession = session
+        try repository.saveSession(session)
         try audio.pause()
         publish(status: .paused, phase: session.phase)
         return snapshot
@@ -169,7 +176,13 @@ public final class SessionEngine {
     @discardableResult
     public func skipForward(unit: String, minimumDistance: Int) throws -> SessionSnapshot {
         try requirePlayback("skipForward")
-        guard var session = currentSession, let item = currentItem else {
+        guard var session = currentSession else {
+            throw SessionKitError.invalidCommandForState("skipForward")
+        }
+        guard session.currentTargetType == .itemTextTTS else {
+            return try skipGeneratedTurnForward(session: session, unit: unit)
+        }
+        guard let item = currentItem else {
             throw SessionKitError.invalidCommandForState("skipForward")
         }
         session = syncSessionPositionFromAudio(session, item: item)
@@ -200,7 +213,13 @@ public final class SessionEngine {
     @discardableResult
     public func skipBack(unit: String) throws -> SessionSnapshot {
         try requirePlayback("skipBack")
-        guard var session = currentSession, let item = currentItem else {
+        guard var session = currentSession else {
+            throw SessionKitError.invalidCommandForState("skipBack")
+        }
+        guard session.currentTargetType == .itemTextTTS else {
+            return try skipGeneratedTurnBack(session: session, unit: unit)
+        }
+        guard let item = currentItem else {
             throw SessionKitError.invalidCommandForState("skipBack")
         }
         session = syncSessionPositionFromAudio(session, item: item)
@@ -216,6 +235,50 @@ public final class SessionEngine {
             try playCurrentTarget(session)
         }
         publish(status: snapshot.status, phase: session.phase)
+        return snapshot
+    }
+
+    private func skipGeneratedTurnForward(session: Session, unit: String) throws -> SessionSnapshot {
+        var updated = try syncGeneratedTurnPositionFromAudio(session)
+        guard let turn = try repository.loadTurns(sessionId: updated.id).first(where: { $0.id == updated.currentTargetId }) else {
+            throw SessionKitError.invalidCommandForState("skipForward")
+        }
+        let text = generatedTurnNavigationText(for: turn)
+        guard !text.isEmpty else {
+            throw SessionKitError.invalidCommandForState("skipForward")
+        }
+        updated.position.charOffset = nextBoundary(after: updated.position.charOffset, unit: unit, text: text)
+        updated.position.charOffset = max(0, min(updated.position.charOffset, text.count))
+        updated.position.chapterId = turn.chapters?.last(where: { $0.startChar <= updated.position.charOffset })?.id
+        currentSession = updated
+        try repository.saveSession(updated)
+        if snapshot.status == .playing, updated.position.charOffset < text.count {
+            try playCurrentTarget(updated)
+        } else if updated.position.charOffset >= text.count {
+            try audio.stop()
+        }
+        publish(status: updated.position.charOffset >= text.count ? .paused : snapshot.status, phase: updated.phase)
+        return snapshot
+    }
+
+    private func skipGeneratedTurnBack(session: Session, unit: String) throws -> SessionSnapshot {
+        var updated = try syncGeneratedTurnPositionFromAudio(session)
+        guard let turn = try repository.loadTurns(sessionId: updated.id).first(where: { $0.id == updated.currentTargetId }) else {
+            throw SessionKitError.invalidCommandForState("skipBack")
+        }
+        let text = generatedTurnNavigationText(for: turn)
+        guard !text.isEmpty else {
+            throw SessionKitError.invalidCommandForState("skipBack")
+        }
+        updated.position.charOffset = previousBoundary(before: updated.position.charOffset, unit: unit, text: text)
+        updated.position.charOffset = max(0, min(updated.position.charOffset, text.count))
+        updated.position.chapterId = turn.chapters?.last(where: { $0.startChar <= updated.position.charOffset })?.id
+        currentSession = updated
+        try repository.saveSession(updated)
+        if snapshot.status == .playing {
+            try playCurrentTarget(updated)
+        }
+        publish(status: snapshot.status, phase: updated.phase)
         return snapshot
     }
 
@@ -254,7 +317,7 @@ public final class SessionEngine {
         session.currentTargetType = .itemTextTTS
         session.currentTargetId = session.itemId
         session.phase = .itemPlayback
-        session.position = Position(charOffset: 0, chapterId: currentMap?.chapters.first?.id)
+        session.position = Position(charOffset: 0, chapterId: nil)
         session.completionPercent = 0
         currentSession = session
         try repository.saveSession(session)
@@ -788,15 +851,18 @@ public final class SessionEngine {
         let sourcePercent = session.completionPercent
         switch session.currentTargetType {
         case .itemTextTTS:
+            let currentAudioOffset = audio.currentCharOffset()
+            let prefixLength = itemPlaybackPreface().count
+            let isInPreface = prefixLength > 0 && (currentAudioOffset ?? 0) <= prefixLength && session.position.chapterId == nil
             let currentPercent: Int
-            if let offset = audio.currentCharOffset(),
-               let text = try? playbackText(for: session),
-               !text.isEmpty {
-                currentPercent = percent(for: max(0, min(offset, text.count)), text: text)
+            if isInPreface, let offset = currentAudioOffset {
+                currentPercent = percent(offset: offset, length: prefixLength)
+            } else if let offset = currentAudioOffset {
+                currentPercent = percent(for: itemSourceOffset(forAudioOffset: offset), text: currentItem?.text ?? "")
             } else {
                 currentPercent = session.completionPercent
             }
-            let title = currentMap?.chapters.first(where: { $0.id == session.position.chapterId })?.title ?? currentItem?.title
+            let title = isInPreface ? "Summary" : (currentMap?.chapters.first(where: { $0.id == session.position.chapterId })?.title ?? currentItem?.title)
             return PlaybackProgress(sourcePercent: sourcePercent, currentPercent: currentPercent, chapterTitle: title)
         case .summaryTurnTTS, .assistantTurnTTS:
             guard let turn = try? repository.loadTurns(sessionId: session.id).first(where: { $0.id == session.currentTargetId }) else {
@@ -966,6 +1032,20 @@ public final class SessionEngine {
         return updated
     }
 
+    private func syncGeneratedTurnPositionFromAudio(_ session: Session) throws -> Session {
+        guard session.currentTargetType == .summaryTurnTTS || session.currentTargetType == .assistantTurnTTS,
+              let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == session.currentTargetId }),
+              let offset = audio.currentCharOffset(),
+              offset >= 0 else {
+            return session
+        }
+        let text = generatedTurnNavigationText(for: turn)
+        var updated = session
+        updated.position.charOffset = max(0, min(turnResponseOffset(for: turn, audioOffset: offset), text.count))
+        updated.position.chapterId = turn.chapters?.last(where: { $0.startChar <= updated.position.charOffset })?.id
+        return updated
+    }
+
     private func markPlaybackComplete(_ session: Session, item: Item?) -> Session {
         var updated = session
         switch session.currentTargetType {
@@ -989,13 +1069,15 @@ public final class SessionEngine {
         let text = try playbackText(for: session)
         if session.currentTargetType == .summaryTurnTTS || session.currentTargetType == .assistantTurnTTS,
            let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == session.currentTargetId }) {
-            return PlaybackPlan(text: text, audioOffset: turnAudioOffset(for: turn, responseOffset: session.position.charOffset))
+            let startsAtBeginning = session.position.charOffset == 0 && session.position.chapterId == nil
+            return PlaybackPlan(text: text, audioOffset: startsAtBeginning ? 0 : turnAudioOffset(for: turn, responseOffset: session.position.charOffset))
         }
         guard session.currentTargetType == .itemTextTTS else {
             return PlaybackPlan(text: text, audioOffset: session.position.charOffset)
         }
         let prefixLength = itemPlaybackPreface().count
-        let audioOffset = session.position.charOffset == 0 ? 0 : prefixLength + session.position.charOffset
+        let startsAtPreface = session.position.charOffset == 0 && session.position.chapterId == nil
+        let audioOffset = startsAtPreface ? 0 : prefixLength + session.position.charOffset
         return PlaybackPlan(text: text, audioOffset: audioOffset)
     }
 
@@ -1041,6 +1123,12 @@ public final class SessionEngine {
         if !text.isEmpty { return text }
         if !summary.isEmpty { return summary }
         return turn.rawText ?? ""
+    }
+
+    private func generatedTurnNavigationText(for turn: ConversationTurn) -> String {
+        let text = turn.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !text.isEmpty { return text }
+        return playableText(for: turn)
     }
 
     private func itemPlaybackPreface() -> String {
@@ -1153,6 +1241,11 @@ public final class SessionEngine {
     private func percent(for charOffset: Int, text: String) -> Int {
         guard !text.isEmpty else { return 0 }
         return min(100, max(0, Int((Double(charOffset) / Double(text.count)) * 100)))
+    }
+
+    private func percent(offset: Int, length: Int) -> Int {
+        guard length > 0 else { return 0 }
+        return min(100, max(0, Int((Double(offset) / Double(length)) * 100)))
     }
 
     private func nextBoundary(after offset: Int, unit: String, text: String) -> Int {

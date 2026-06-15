@@ -166,7 +166,10 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
 
     public func pause() throws {
         #if canImport(AVFoundation)
-        paused = synthesizer.pauseSpeaking(at: .word)
+        if synthesizer.isSpeaking {
+            paused = true
+            synthesizer.stopSpeaking(at: .immediate)
+        }
         #endif
     }
 

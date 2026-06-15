@@ -437,7 +437,6 @@ final class Gate1AppModel: ObservableObject {
         try store.saveItem(item)
         libraryItems = try loadLibraryRows(store: store)
         selectedItem = try loadItemDetail(id: item.id, store: store)
-        listeningMapJSON = response
         diagnostics["lastGeneratedMapItem"] = item.id
         diagnostics["lastListeningMapMode"] = "provider"
     }
@@ -728,7 +727,7 @@ final class Gate1AppModel: ObservableObject {
               let engine else {
             return
         }
-        guard snapshot.status != .playing || snapshot.phase == .finished else {
+        guard snapshot.phase == .finished else {
             return
         }
         do {

@@ -217,6 +217,7 @@ private struct HomeScreen: View {
 
 private struct ItemScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
+    @State private var showsManualListeningMapEditor = false
 
     var body: some View {
         NavigationStack {
@@ -311,25 +312,34 @@ private struct ItemScreen: View {
                 .buttonStyle(SecondaryButtonStyle())
                 .disabled(model.isGeneratingListeningMap)
                 .accessibilityIdentifier("item.generateMap.button")
-                Text("Listening Map JSON")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(AppColors.secondaryText)
-                TextEditor(text: $model.listeningMapJSON)
-                    .font(.system(.caption, design: .monospaced))
-                    .frame(minHeight: 130)
-                    .padding(8)
-                    .background(AppColors.inputBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppColors.border))
-                    .accessibilityIdentifier("item.mapJSON.editor")
                 Button {
-                    model.applyListeningMapJSON()
+                    showsManualListeningMapEditor.toggle()
                 } label: {
-                    Label("Apply Listening Map JSON", systemImage: "checkmark.circle")
+                    Label(showsManualListeningMapEditor ? "Hide Manual JSON" : "Paste Listening Map JSON", systemImage: "curlybraces")
                 }
                 .buttonStyle(SecondaryButtonStyle())
-                .disabled(model.listeningMapJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .accessibilityIdentifier("item.applyMap.button")
+                .accessibilityIdentifier("item.toggleMapJSON.button")
+                if showsManualListeningMapEditor {
+                    Text("Listening Map JSON")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AppColors.secondaryText)
+                    TextEditor(text: $model.listeningMapJSON)
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(minHeight: 130)
+                        .padding(8)
+                        .background(AppColors.inputBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppColors.border))
+                        .accessibilityIdentifier("item.mapJSON.editor")
+                    Button {
+                        model.applyListeningMapJSON()
+                    } label: {
+                        Label("Apply Listening Map JSON", systemImage: "checkmark.circle")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .disabled(model.listeningMapJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityIdentifier("item.applyMap.button")
+                }
             }
         }
     }
@@ -673,7 +683,7 @@ private struct PlaybackScreen: View {
                         Button {
                             model.playSourceFromBeginning()
                         } label: {
-                            TimelineRow(percent: "0%", title: "Listening Map Overview", subtitle: model.selectedItem.overview)
+                            TimelineRow(percent: "SUM", title: "Summary", subtitle: model.selectedItem.overview)
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("timeline.overview.play")
@@ -729,10 +739,16 @@ private struct PlaybackScreen: View {
     }
 
     private var timelineEntries: [PlaybackTimelineEntry] {
-        let sourceHeaderEntries: [PlaybackTimelineEntry] = [
-            .sourceItem,
-            model.selectedItem.overview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : .overview
-        ].compactMap { $0 }
+        let hasChapters = !model.selectedItem.chapters.isEmpty
+        let hasSummary = !model.selectedItem.overview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let sourceHeaderEntries: [PlaybackTimelineEntry]
+        if hasSummary {
+            sourceHeaderEntries = [.overview]
+        } else if hasChapters {
+            sourceHeaderEntries = []
+        } else {
+            sourceHeaderEntries = [.sourceItem]
+        }
         let sourceEntries = (model.selectedItem.chapters.map { PlaybackTimelineEntry.chapter($0) } +
             model.selectedItem.interjections.filter { $0.targetType == .item }.map { PlaybackTimelineEntry.interjection($0) }
         )

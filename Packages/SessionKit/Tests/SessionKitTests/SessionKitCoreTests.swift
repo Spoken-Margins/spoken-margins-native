@@ -614,6 +614,7 @@ final class SessionKitCoreTests: XCTestCase {
         _ = try engine.playTurn(turnId: response.id)
 
         XCTAssertEqual(audio.preparedTexts.last, "Brief intro.\n\nFull response.")
+        XCTAssertEqual(audio.playedOffsets.last, 0)
     }
 
     func testAICompletionParsesSummaryResponseAndChapters() throws {
@@ -689,6 +690,87 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.sourceProgressPercent, 100)
         XCTAssertLessThan(snapshot.currentPlaybackProgressPercent, 100)
         XCTAssertEqual(snapshot.chapterTitle, "Interjection Summary 1")
+    }
+
+    func testFirstChapterJumpSkipsListeningMapSummaryPreface() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "timeline": ["chapter_timing"],
+                "playback": ["realtime_tts"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "First chapter starts here. Second chapter follows.", externalReference: nil, status: "ready")
+        let map = ListeningMap(
+            id: "map-pill",
+            itemId: item.id,
+            overview: "Short source summary.",
+            chapters: [
+                Chapter(id: "ch-1", title: "First", startChar: 0, endChar: 26, percent: 0),
+                Chapter(id: "ch-2", title: "Second", startChar: 27, endChar: item.text?.count ?? 0, percent: 60)
+            ]
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], mapsByItemId: [item.id: map])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        _ = try engine.jumpToChapter(chapterId: "ch-1")
+
+        XCTAssertEqual(audio.playedOffsets.last, "Overview. Short source summary.\n\n".count)
+    }
+
+    func testListeningMapSummaryPrefaceProgressIsSummaryLocal() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: String(repeating: "Long source text. ", count: 20), externalReference: nil, status: "ready")
+        let overview = "Short source summary."
+        let map = ListeningMap(id: "map-pill", itemId: item.id, overview: overview, chapters: [])
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], mapsByItemId: [item.id: map])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentOffset = "Overview. \(overview)\n\n".count / 2
+        let snapshot = try engine.syncPlaybackProgress()
+
+        XCTAssertEqual(snapshot.sourceProgressPercent, 0)
+        XCTAssertGreaterThan(snapshot.currentPlaybackProgressPercent, 40)
+        XCTAssertLessThan(snapshot.currentPlaybackProgressPercent, 60)
+        XCTAssertEqual(snapshot.chapterTitle, "Summary")
+    }
+
+    func testGeneratedTurnPauseSavesOffsetForResume() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["assistant_turn_tts"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "Source.", externalReference: nil, status: "ready")
+        let session = Session(id: "session-pill", itemId: item.id, status: "in_progress", phase: .conversation, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 100, playbackRate: 1)
+        let turn = ConversationTurn(id: "turn-response-001", sessionId: session.id, role: "assistant", turnType: "assistant_response", status: "complete", summary: "Brief intro.", text: "First response. Second point.", rawText: nil, chapters: nil, sourceInterjectionIds: [])
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session], turns: [turn.id: turn])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.playTurn(turnId: turn.id)
+        audio.currentOffset = "Brief intro.\n\nFirst".count
+        _ = try engine.pause()
+        _ = try engine.resumePlayback()
+
+        XCTAssertEqual(audio.pauseCount, 1)
+        XCTAssertEqual(audio.playedOffsets.last, "Brief intro.\n\nFirst".count)
     }
 
     func testPlaySourceFromBeginningWorksWithoutListeningMap() throws {
