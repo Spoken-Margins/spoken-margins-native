@@ -25,12 +25,33 @@ public struct KokoroNarrationResult: Equatable, Sendable {
     }
 }
 
+public struct KokoroMemorySnapshot: Equatable, Sendable, CustomStringConvertible {
+    public var activeMemory: Int
+    public var cacheMemory: Int
+    public var peakMemory: Int
+
+    public init(activeMemory: Int, cacheMemory: Int, peakMemory: Int) {
+        self.activeMemory = activeMemory
+        self.cacheMemory = cacheMemory
+        self.peakMemory = peakMemory
+    }
+
+    public var description: String {
+        "active=\(Self.megabytes(activeMemory)) cache=\(Self.megabytes(cacheMemory)) peak=\(Self.megabytes(peakMemory))"
+    }
+
+    private static func megabytes(_ bytes: Int) -> String {
+        "\(bytes / (1024 * 1024))MB"
+    }
+}
+
 public enum KokoroNarrationError: Error, LocalizedError, Equatable {
     case unavailableOnSimulator
     case missingModel
     case missingVoices
     case missingVoice(String)
     case emptyText
+    case emptyAudio
     case cannotCreateAudioFormat
     case cannotCreateAudioBuffer
 
@@ -46,6 +67,8 @@ public enum KokoroNarrationError: Error, LocalizedError, Equatable {
             return "Kokoro voice \(voice) was not found in voices.npz."
         case .emptyText:
             return "Kokoro preview text is empty."
+        case .emptyAudio:
+            return "Kokoro rendered no audio samples."
         case .cannotCreateAudioFormat:
             return "Kokoro could not create an audio format."
         case .cannotCreateAudioBuffer:
@@ -73,6 +96,26 @@ public final class KokoroNarrationRenderer {
     private let outputDirectory: URL
 
     public static var isRuntimeSupported: Bool { true }
+
+    public static func configureMemoryForDiagnostics(cacheLimitBytes: Int = 20 * 1024 * 1024) -> KokoroMemorySnapshot {
+        Memory.cacheLimit = cacheLimitBytes
+        Memory.clearCache()
+        return memorySnapshot()
+    }
+
+    public static func clearMemoryCache() -> KokoroMemorySnapshot {
+        Memory.clearCache()
+        return memorySnapshot()
+    }
+
+    public static func memorySnapshot() -> KokoroMemorySnapshot {
+        let snapshot = Memory.snapshot()
+        return KokoroMemorySnapshot(
+            activeMemory: snapshot.activeMemory,
+            cacheMemory: snapshot.cacheMemory,
+            peakMemory: snapshot.peakMemory
+        )
+    }
 
     public static func bundledAssets(in bundle: Bundle = .main) -> KokoroAssetLocation {
         KokoroAssetLocation(
@@ -140,6 +183,9 @@ public final class KokoroNarrationRenderer {
             text: normalized,
             speed: speed
         )
+        guard !samples.isEmpty else {
+            throw KokoroNarrationError.emptyAudio
+        }
         let safeName = [itemId, chunkId, voiceName]
             .joined(separator: "-")
             .replacingOccurrences(of: #"[^A-Za-z0-9._-]+"#, with: "-", options: .regularExpression)
@@ -195,6 +241,18 @@ public final class KokoroNarrationRenderer {
     public static let sampleRate = 24_000.0
 
     public static var isRuntimeSupported: Bool { false }
+
+    public static func configureMemoryForDiagnostics(cacheLimitBytes: Int = 20 * 1024 * 1024) -> KokoroMemorySnapshot {
+        KokoroMemorySnapshot(activeMemory: 0, cacheMemory: 0, peakMemory: 0)
+    }
+
+    public static func clearMemoryCache() -> KokoroMemorySnapshot {
+        KokoroMemorySnapshot(activeMemory: 0, cacheMemory: 0, peakMemory: 0)
+    }
+
+    public static func memorySnapshot() -> KokoroMemorySnapshot {
+        KokoroMemorySnapshot(activeMemory: 0, cacheMemory: 0, peakMemory: 0)
+    }
 
     public static func bundledAssets(in bundle: Bundle = .main) -> KokoroAssetLocation {
         KokoroAssetLocation(

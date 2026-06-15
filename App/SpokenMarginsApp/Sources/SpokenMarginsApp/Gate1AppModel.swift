@@ -82,6 +82,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var kokoroVoiceName = UserDefaults.standard.string(forKey: "kokoroVoiceName") ?? "am_echo"
     @Published var kokoroStatus = "Not checked"
     @Published var isRenderingKokoroPreview = false
+    @Published var isRunningKokoroMemoryCheck = false
     @Published var providerAPIKey = KeychainStore.load(service: "SpokenMargins", account: "OpenAICompatibleAPIKey") ?? ""
     @Published var providerProbeStatus = "Not checked"
     @Published var knownIssues = [
@@ -696,6 +697,12 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["kokoroVoice"] = kokoroVoiceName
     }
 
+    func speechSettingsChanged() {
+        settingsValueChanged()
+        saveSpeechSettings()
+        _ = rebuildEngineForCurrentSettings()
+    }
+
     func previewSpokenContentVoice() {
         previewSpeech(label: "Spoken Content settings", mode: .spokenContent)
     }
@@ -826,6 +833,117 @@ final class Gate1AppModel: ObservableObject {
                 self.kokoroStatus = "Kokoro renderer is not linked in this build."
                 self.diagnostics["kokoroStatus"] = self.kokoroStatus
                 self.isRenderingKokoroPreview = false
+                self.reportFailure("Kokoro renderer is not linked in this build.")
+            }
+            #endif
+        }
+    }
+
+    func runKokoroMemoryCheck() {
+        guard !isRunningKokoroMemoryCheck else { return }
+        saveSpeechSettings()
+        isRunningKokoroMemoryCheck = true
+        kokoroStatus = "Starting Kokoro memory check..."
+        diagnostics["kokoroStatus"] = kokoroStatus
+
+        let voiceName = kokoroVoiceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "am_echo" : kokoroVoiceName
+        let itemId = selectedItem.id.isEmpty ? activeItemId : selectedItem.id
+        let sourceText = "Spoken Margins Kokoro memory check. This renders twice without playback."
+
+        Task.detached { [voiceName, itemId, sourceText] in
+            #if canImport(SessionKitKokoro)
+            do {
+                guard KokoroNarrationRenderer.isRuntimeSupported else {
+                    throw KokoroNarrationError.unavailableOnSimulator
+                }
+                let applicationSupportURL = try FileManager.default.url(
+                    for: .applicationSupportDirectory,
+                    in: .userDomainMask,
+                    appropriateFor: nil,
+                    create: true
+                )
+                let assets = KokoroNarrationRenderer.installedAssets(applicationSupportDirectory: applicationSupportURL)
+                guard let modelURL = assets.modelURL else {
+                    throw KokoroNarrationError.missingModel
+                }
+                guard let voicesURL = assets.voicesURL else {
+                    throw KokoroNarrationError.missingVoices
+                }
+                let cachesURL = try FileManager.default.url(
+                    for: .cachesDirectory,
+                    in: .userDomainMask,
+                    appropriateFor: nil,
+                    create: true
+                )
+                let outputDirectory = cachesURL.appending(path: "KokoroMemoryCheck", directoryHint: .isDirectory)
+                let configured = KokoroNarrationRenderer.configureMemoryForDiagnostics()
+                await MainActor.run {
+                    self.kokoroStatus = "Memory check configured: \(configured)"
+                    self.diagnostics["kokoroMemory.configured"] = configured.description
+                    self.diagnostics["kokoroStatus"] = self.kokoroStatus
+                }
+
+                let renderer = try KokoroNarrationRenderer(
+                    modelURL: modelURL,
+                    voicesURL: voicesURL,
+                    outputDirectory: outputDirectory
+                )
+
+                await MainActor.run {
+                    self.kokoroStatus = "Memory check rendering pass 1 of 2..."
+                    self.diagnostics["kokoroStatus"] = self.kokoroStatus
+                }
+                let first = try renderer.render(
+                    text: sourceText,
+                    itemId: itemId,
+                    chunkId: "memory-check-1",
+                    voiceName: voiceName,
+                    speed: 1.0
+                )
+                let afterFirst = KokoroNarrationRenderer.memorySnapshot()
+                await MainActor.run {
+                    self.kokoroStatus = "Pass 1 rendered \(String(format: "%.1f", first.duration))s. Clearing cache..."
+                    self.diagnostics["kokoroMemory.afterFirst"] = afterFirst.description
+                    self.diagnostics["kokoroStatus"] = self.kokoroStatus
+                }
+
+                let afterClear = KokoroNarrationRenderer.clearMemoryCache()
+                await MainActor.run {
+                    self.kokoroStatus = "Memory check rendering pass 2 of 2..."
+                    self.diagnostics["kokoroMemory.afterClear"] = afterClear.description
+                    self.diagnostics["kokoroStatus"] = self.kokoroStatus
+                }
+                let second = try renderer.render(
+                    text: sourceText,
+                    itemId: itemId,
+                    chunkId: "memory-check-2",
+                    voiceName: voiceName,
+                    speed: 1.0
+                )
+                let afterSecond = KokoroNarrationRenderer.memorySnapshot()
+                let final = KokoroNarrationRenderer.clearMemoryCache()
+
+                await MainActor.run {
+                    self.kokoroStatus = "Memory check passed. Passes: \(String(format: "%.1f", first.duration))s, \(String(format: "%.1f", second.duration))s. Final \(final)"
+                    self.diagnostics["kokoroMemory.afterSecond"] = afterSecond.description
+                    self.diagnostics["kokoroMemory.final"] = final.description
+                    self.diagnostics["kokoroStatus"] = self.kokoroStatus
+                    self.isRunningKokoroMemoryCheck = false
+                    self.reportSuccess("Kokoro memory check completed.")
+                }
+            } catch {
+                await MainActor.run {
+                    self.kokoroStatus = "Memory check failed: \(error.localizedDescription)"
+                    self.diagnostics["kokoroStatus"] = self.kokoroStatus
+                    self.isRunningKokoroMemoryCheck = false
+                    self.reportFailure(error, context: "Kokoro memory check failed")
+                }
+            }
+            #else
+            await MainActor.run {
+                self.kokoroStatus = "Kokoro renderer is not linked in this build."
+                self.diagnostics["kokoroStatus"] = self.kokoroStatus
+                self.isRunningKokoroMemoryCheck = false
                 self.reportFailure("Kokoro renderer is not linked in this build.")
             }
             #endif
@@ -1060,10 +1178,33 @@ final class Gate1AppModel: ObservableObject {
         return SessionEngine(
             profile: profile,
             repository: store,
-            audio: SystemSpeechPlaybackClient(),
+            audio: try makeAudioPlaybackClient(),
             recorder: SystemRecordingClient(),
             aiProvider: provider
         )
+    }
+
+    private func makeAudioPlaybackClient() throws -> AudioPlaybackClient {
+        #if canImport(SessionKitKokoro) && canImport(AVFoundation)
+        if ttsMode == "kokoro" {
+            let supportDirectory = try applicationSupportDirectory()
+            let cachesDirectory = try FileManager.default.url(
+                for: .cachesDirectory,
+                in: .userDomainMask,
+                appropriateFor: nil,
+                create: true
+            )
+            diagnostics["sessionTTS"] = "Kokoro bounded pre-render"
+            return KokoroSpeechPlaybackClient(
+                applicationSupportDirectory: supportDirectory,
+                outputDirectory: cachesDirectory.appending(path: "KokoroPlayback", directoryHint: .isDirectory),
+                voiceName: kokoroVoiceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "am_echo" : kokoroVoiceName,
+                speed: Float(speechRate / 0.5)
+            )
+        }
+        #endif
+        diagnostics["sessionTTS"] = "System speech"
+        return SystemSpeechPlaybackClient()
     }
 
     private func loadLibraryRows(store: SQLiteSessionStore) throws -> [LibraryItemRow] {
@@ -1904,6 +2045,221 @@ private enum ManualListeningMapError: Error, CustomStringConvertible {
     }
 }
 
+#if canImport(SessionKitKokoro) && canImport(AVFoundation)
+private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, AVAudioPlayerDelegate, @unchecked Sendable {
+    private let fallback = SystemSpeechPlaybackClient()
+    private let applicationSupportDirectory: URL
+    private let outputDirectory: URL
+    private let voiceName: String
+    private let speed: Float
+    private let maxCharacters: Int
+    private let renderQueue = DispatchQueue(label: "spoken-margins.kokoro.playback")
+    private let lock = NSLock()
+
+    private var preparedSourceText = ""
+    private var player: AVAudioPlayer?
+    private var generation = UUID()
+    private var currentTargetId: String?
+    private var currentStartOffset = 0
+    private var currentChunkLength = 0
+    private var fallbackIsActive = false
+
+    init(
+        applicationSupportDirectory: URL,
+        outputDirectory: URL,
+        voiceName: String,
+        speed: Float,
+        maxCharacters: Int = 360
+    ) {
+        self.applicationSupportDirectory = applicationSupportDirectory
+        self.outputDirectory = outputDirectory
+        self.voiceName = voiceName
+        self.speed = max(0.65, min(1.35, speed))
+        self.maxCharacters = maxCharacters
+        super.init()
+    }
+
+    func prepareSpeechText(_ text: String) throws -> String {
+        lock.lock()
+        preparedSourceText = text
+        lock.unlock()
+        return try fallback.prepareSpeechText(text)
+    }
+
+    func play(targetId: String) throws {
+        try play(targetId: targetId, from: 0)
+    }
+
+    func play(targetId: String, from charOffset: Int) throws {
+        guard let request = nextRequest(targetId: targetId, from: charOffset) else {
+            try fallback.play(targetId: targetId, from: charOffset)
+            return
+        }
+        enqueueRender(request)
+    }
+
+    func currentCharOffset() -> Int? {
+        lock.lock()
+        let isFallbackActive = fallbackIsActive
+        lock.unlock()
+        if isFallbackActive {
+            return fallback.currentCharOffset()
+        }
+        lock.lock()
+        let start = currentStartOffset
+        let length = currentChunkLength
+        let localPlayer = player
+        lock.unlock()
+        guard let localPlayer, localPlayer.duration > 0, length > 0 else {
+            return start
+        }
+        let fraction = max(0, min(1, localPlayer.currentTime / localPlayer.duration))
+        return start + Int((Double(length) * fraction).rounded(.down))
+    }
+
+    func pause() throws {
+        player?.pause()
+        try fallback.pause()
+    }
+
+    func stop() throws {
+        lock.lock()
+        generation = UUID()
+        player?.stop()
+        player = nil
+        fallbackIsActive = false
+        lock.unlock()
+        try fallback.stop()
+    }
+
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        guard flag else { return }
+        lock.lock()
+        let nextOffset = currentStartOffset + max(1, currentChunkLength)
+        let targetId = currentTargetId
+        let sourceCount = preparedSourceText.count
+        lock.unlock()
+        guard let targetId, nextOffset < sourceCount, let request = nextRequest(targetId: targetId, from: nextOffset) else {
+            return
+        }
+        enqueueRender(request)
+    }
+
+    private struct RenderRequest: Sendable {
+        var id: UUID
+        var targetId: String
+        var startOffset: Int
+        var sourceLength: Int
+        var text: String
+    }
+
+    private func nextRequest(targetId: String, from charOffset: Int) -> RenderRequest? {
+        lock.lock()
+        let source = preparedSourceText
+        generation = UUID()
+        let requestId = generation
+        player?.stop()
+        player = nil
+        fallbackIsActive = false
+        currentTargetId = targetId
+        lock.unlock()
+
+        guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let clampedOffset = max(0, min(charOffset, source.count))
+        guard clampedOffset < source.count else { return nil }
+        let slice = kokoroSourceSlice(from: source, startOffset: clampedOffset, maxCharacters: maxCharacters)
+        guard !slice.text.isEmpty, slice.sourceLength > 0 else { return nil }
+        return RenderRequest(
+            id: requestId,
+            targetId: targetId,
+            startOffset: clampedOffset,
+            sourceLength: slice.sourceLength,
+            text: slice.text
+        )
+    }
+
+    private func enqueueRender(_ request: RenderRequest) {
+        renderQueue.async { [applicationSupportDirectory, outputDirectory, voiceName, speed] in
+            do {
+                let assets = KokoroNarrationRenderer.installedAssets(applicationSupportDirectory: applicationSupportDirectory)
+                guard let modelURL = assets.modelURL else { throw KokoroNarrationError.missingModel }
+                guard let voicesURL = assets.voicesURL else { throw KokoroNarrationError.missingVoices }
+                _ = KokoroNarrationRenderer.configureMemoryForDiagnostics()
+                let renderer = try KokoroNarrationRenderer(
+                    modelURL: modelURL,
+                    voicesURL: voicesURL,
+                    outputDirectory: outputDirectory
+                )
+                let result = try renderer.render(
+                    text: request.text,
+                    itemId: request.targetId,
+                    chunkId: "offset-\(request.startOffset)",
+                    voiceName: voiceName,
+                    speed: speed
+                )
+                _ = KokoroNarrationRenderer.clearMemoryCache()
+                DispatchQueue.main.async {
+                    self.playRenderedAudio(result.audioURL, request: request)
+                }
+            } catch {
+                _ = KokoroNarrationRenderer.clearMemoryCache()
+                DispatchQueue.main.async {
+                    self.playFallback(targetId: request.targetId, from: request.startOffset, requestId: request.id)
+                }
+            }
+        }
+    }
+
+    private func playRenderedAudio(_ audioURL: URL, request: RenderRequest) {
+        lock.lock()
+        guard generation == request.id else {
+            lock.unlock()
+            return
+        }
+        lock.unlock()
+        do {
+            try fallback.stop()
+            #if os(iOS)
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+            try AVAudioSession.sharedInstance().setActive(true)
+            #endif
+            let nextPlayer = try AVAudioPlayer(contentsOf: audioURL)
+            nextPlayer.delegate = self
+            nextPlayer.prepareToPlay()
+            lock.lock()
+            player = nextPlayer
+            currentTargetId = request.targetId
+            currentStartOffset = request.startOffset
+            currentChunkLength = request.sourceLength
+            fallbackIsActive = false
+            lock.unlock()
+            nextPlayer.play()
+        } catch {
+            playFallback(targetId: request.targetId, from: request.startOffset, requestId: request.id)
+        }
+    }
+
+    private func playFallback(targetId: String, from charOffset: Int, requestId: UUID? = nil) {
+        do {
+            lock.lock()
+            if let requestId, generation != requestId {
+                lock.unlock()
+                return
+            }
+            fallbackIsActive = true
+            currentStartOffset = charOffset
+            currentChunkLength = 0
+            lock.unlock()
+            try fallback.play(targetId: targetId, from: charOffset)
+        } catch {
+            lock.lock()
+            fallbackIsActive = false
+            lock.unlock()
+        }
+    }
+}
+#endif
+
 private func kokoroRenderChunk(from text: String, maxCharacters: Int = 360) -> String {
     let trimmed = SpeechTextNormalizer.normalize(text)
         .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1924,6 +2280,29 @@ private func kokoroRenderChunk(from text: String, maxCharacters: Int = 360) -> S
     }
 
     return prefix.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+private func kokoroSourceSlice(from source: String, startOffset: Int, maxCharacters: Int) -> (text: String, sourceLength: Int) {
+    let clampedOffset = max(0, min(startOffset, source.count))
+    let start = source.index(source.startIndex, offsetBy: clampedOffset)
+    let remainingLength = source.distance(from: start, to: source.endIndex)
+    let length = min(maxCharacters, remainingLength)
+    let hardEnd = source.index(start, offsetBy: length)
+    let prefix = String(source[start..<hardEnd])
+    let minimumUsefulLength = min(120, maxCharacters / 2)
+    let boundaryCharacters = CharacterSet(charactersIn: ".!?\n;:")
+    let selected: String
+    if let boundary = prefix.rangeOfCharacter(from: boundaryCharacters, options: .backwards),
+       prefix.distance(from: prefix.startIndex, to: boundary.upperBound) >= minimumUsefulLength {
+        selected = String(prefix[..<boundary.upperBound])
+    } else if let whitespace = prefix.rangeOfCharacter(from: .whitespacesAndNewlines, options: .backwards),
+              prefix.distance(from: prefix.startIndex, to: whitespace.lowerBound) >= minimumUsefulLength {
+        selected = String(prefix[..<whitespace.lowerBound])
+    } else {
+        selected = prefix
+    }
+    let normalized = SpeechTextNormalizer.normalize(selected).trimmingCharacters(in: .whitespacesAndNewlines)
+    return (normalized, max(0, selected.count))
 }
 
 #if canImport(AVFoundation)

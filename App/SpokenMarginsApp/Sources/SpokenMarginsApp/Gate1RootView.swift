@@ -822,8 +822,7 @@ private struct SettingsScreen: View {
                     }
                     .accessibilityIdentifier("settings.speechVoice.picker")
                     .onChange(of: model.speechVoiceIdentifier) { _, _ in
-                        model.settingsValueChanged()
-                        model.saveSpeechSettings()
+                        model.speechSettingsChanged()
                     }
                     VStack(alignment: .leading) {
                         HStack {
@@ -836,8 +835,7 @@ private struct SettingsScreen: View {
                             .accessibilityIdentifier("settings.speechRate.slider")
                     }
                     .onChange(of: model.speechRate) { _, _ in
-                        model.settingsValueChanged()
-                        model.saveSpeechSettings()
+                        model.speechSettingsChanged()
                     }
                     VStack(alignment: .leading, spacing: 10) {
                         Button {
@@ -864,8 +862,15 @@ private struct SettingsScreen: View {
                         .buttonStyle(SecondaryButtonStyle())
                         .accessibilityIdentifier("settings.preview.assistiveTech.button")
                     }
-                    LabeledContent("Session TTS", value: "System speech")
-                    Text("Kokoro is preview-only while on-device rendering is stabilized.")
+                    Picker("Session TTS", selection: $model.ttsMode) {
+                        Text("System Speech").tag("systemImmediate")
+                        Text("Kokoro Pre-render").tag("kokoro")
+                    }
+                    .accessibilityIdentifier("settings.ttsMode.picker")
+                    .onChange(of: model.ttsMode) { _, _ in
+                        model.speechSettingsChanged()
+                    }
+                    Text("Kokoro renders bounded segments on device and falls back to system speech if a segment fails.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
                     TextField("Kokoro Voice", text: $model.kokoroVoiceName)
@@ -874,8 +879,7 @@ private struct SettingsScreen: View {
                         .focused($focusedField, equals: .kokoroVoice)
                         .accessibilityIdentifier("settings.kokoroVoice.field")
                         .onChange(of: model.kokoroVoiceName) { _, _ in
-                            model.settingsValueChanged()
-                            model.saveSpeechSettings()
+                            model.speechSettingsChanged()
                         }
                     Button {
                         isImportingKokoroAssets = true
@@ -898,6 +902,17 @@ private struct SettingsScreen: View {
                     .buttonStyle(SecondaryButtonStyle())
                     .disabled(model.isRenderingKokoroPreview)
                     .accessibilityIdentifier("settings.preview.kokoro.button")
+                    Button {
+                        model.runKokoroMemoryCheck()
+                    } label: {
+                        Label(
+                            model.isRunningKokoroMemoryCheck ? "Running Kokoro Memory Check" : "Run Kokoro Memory Check",
+                            systemImage: "memorychip"
+                        )
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .disabled(model.isRunningKokoroMemoryCheck || model.isRenderingKokoroPreview)
+                    .accessibilityIdentifier("settings.memoryCheck.kokoro.button")
                     LabeledContent("Kokoro", value: model.kokoroStatus)
                     Picker("Skip Increment", selection: $model.skipUnit) {
                         Text("Sentence").tag("sentence")
