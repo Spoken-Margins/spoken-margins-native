@@ -106,8 +106,6 @@ final class Gate1AppModel: ObservableObject {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return encoder
     }()
-    private static let kokoroRenderQueue = DispatchQueue(label: "SpokenMargins.KokoroRender", qos: .userInitiated)
-
     private static func availableSpeechVoiceOptions() -> [SpeechVoiceChoice] {
         #if canImport(AVFoundation)
         return AVSpeechSynthesisVoice.speechVoices()
@@ -761,76 +759,58 @@ final class Gate1AppModel: ObservableObject {
             ? "Spoken Margins Kokoro preview. This path pre-renders neural speech on device and falls back to system speech when unavailable."
             : kokoroRenderChunk(from: selectedItem.text)
 
-        Self.kokoroRenderQueue.async { [voiceName, sourceText] in
-            #if canImport(SessionKitKokoro) && canImport(AVFoundation)
-            do {
-                guard KokoroNarrationRenderer.isRuntimeSupported else {
-                    throw KokoroNarrationError.unavailableOnSimulator
-                }
-                let applicationSupportURL = try FileManager.default.url(
-                    for: .applicationSupportDirectory,
-                    in: .userDomainMask,
-                    appropriateFor: nil,
-                    create: true
-                )
-                let assets = KokoroNarrationRenderer.installedAssets(applicationSupportDirectory: applicationSupportURL)
-                guard let modelURL = assets.modelURL else {
-                    throw KokoroNarrationError.missingModel
-                }
-                guard let voicesURL = assets.voicesURL else {
-                    throw KokoroNarrationError.missingVoices
-                }
-                let cachesURL = try FileManager.default.url(
-                    for: .cachesDirectory,
-                    in: .userDomainMask,
-                    appropriateFor: nil,
-                    create: true
-                )
-                let outputDirectory = cachesURL.appending(path: "KokoroPreview", directoryHint: .isDirectory)
-                let renderer = try KokoroNarrationRenderer(
-                    modelURL: modelURL,
-                    voicesURL: voicesURL,
-                    outputDirectory: outputDirectory
-                )
-                let result = try renderer.renderSamples(
-                    text: sourceText,
-                    voiceName: voiceName,
-                    speed: 1.0
-                )
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    do {
-                        try self.playKokoroPreview(samples: result.samples, sampleRate: result.sampleRate)
-                        self.kokoroStatus = "Rendered \(String(format: "%.1f", result.duration))s with \(voiceName)"
-                        self.diagnostics["kokoroStatus"] = self.kokoroStatus
-                        self.diagnostics["lastSpeechPreview"] = "Kokoro \(voiceName)"
-                        self.reportSuccess("Previewing Kokoro \(voiceName).")
-                    } catch {
-                        self.kokoroStatus = "Playback failed: \(error.localizedDescription)"
-                        self.diagnostics["kokoroStatus"] = self.kokoroStatus
-                        self.reportFailure(error, context: "Kokoro preview playback failed")
-                    }
-                    self.isRenderingKokoroPreview = false
-                }
-            } catch {
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    self.kokoroStatus = error.localizedDescription
-                    self.diagnostics["kokoroStatus"] = self.kokoroStatus
-                    self.isRenderingKokoroPreview = false
-                    self.reportFailure(error, context: "Kokoro preview failed")
-                }
+        #if canImport(SessionKitKokoro) && canImport(AVFoundation)
+        do {
+            guard KokoroNarrationRenderer.isRuntimeSupported else {
+                throw KokoroNarrationError.unavailableOnSimulator
             }
-            #else
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.kokoroStatus = "Kokoro renderer is not linked in this build."
-                self.diagnostics["kokoroStatus"] = self.kokoroStatus
-                self.isRenderingKokoroPreview = false
-                self.reportFailure("Kokoro renderer is not linked in this build.")
+            let applicationSupportURL = try FileManager.default.url(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask,
+                appropriateFor: nil,
+                create: true
+            )
+            let assets = KokoroNarrationRenderer.installedAssets(applicationSupportDirectory: applicationSupportURL)
+            guard let modelURL = assets.modelURL else {
+                throw KokoroNarrationError.missingModel
             }
-            #endif
+            guard let voicesURL = assets.voicesURL else {
+                throw KokoroNarrationError.missingVoices
+            }
+            let cachesURL = try FileManager.default.url(
+                for: .cachesDirectory,
+                in: .userDomainMask,
+                appropriateFor: nil,
+                create: true
+            )
+            let outputDirectory = cachesURL.appending(path: "KokoroPreview", directoryHint: .isDirectory)
+            let renderer = try KokoroNarrationRenderer(
+                modelURL: modelURL,
+                voicesURL: voicesURL,
+                outputDirectory: outputDirectory
+            )
+            let result = try renderer.renderSamples(
+                text: sourceText,
+                voiceName: voiceName,
+                speed: 1.0
+            )
+            try playKokoroPreview(samples: result.samples, sampleRate: result.sampleRate)
+            kokoroStatus = "Rendered \(String(format: "%.1f", result.duration))s with \(voiceName)"
+            diagnostics["kokoroStatus"] = kokoroStatus
+            diagnostics["lastSpeechPreview"] = "Kokoro \(voiceName)"
+            reportSuccess("Previewing Kokoro \(voiceName).")
+        } catch {
+            kokoroStatus = error.localizedDescription
+            diagnostics["kokoroStatus"] = kokoroStatus
+            reportFailure(error, context: "Kokoro preview failed")
         }
+        isRenderingKokoroPreview = false
+        #else
+        kokoroStatus = "Kokoro renderer is not linked in this build."
+        diagnostics["kokoroStatus"] = kokoroStatus
+        isRenderingKokoroPreview = false
+        reportFailure("Kokoro renderer is not linked in this build.")
+        #endif
     }
 
     func runtimeProfileChanged() {
@@ -985,12 +965,7 @@ final class Gate1AppModel: ObservableObject {
             isKokoroPreviewNodeAttached = true
         }
         let frameCount = AVAudioFrameCount(samples.count)
-        guard let format = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: sampleRate,
-            channels: 1,
-            interleaved: false
-        ) else {
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1) else {
             throw KokoroNarrationError.cannotCreateAudioFormat
         }
         if !isKokoroPreviewNodeConnected {
