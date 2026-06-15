@@ -70,14 +70,40 @@ private struct Gate2LiveActivityView: View {
                 )
                 CompactRoundIntentButton(command: "skipForward", systemImage: "goforward.15", size: 58)
                 Spacer()
-                Image(systemName: state.isRecording ? "checkmark" : "mic.fill")
-                    .font(.title2.weight(.semibold))
-                    .frame(width: 58, height: 58)
-                    .foregroundStyle(.white)
-                    .background(Color.white.opacity(0.16))
-                    .clipShape(Circle())
+                Link(destination: Gate2CompactCommandURL.url(command: "beginInterjection")) {
+                    Image(systemName: state.isRecording ? "checkmark" : "mic.fill")
+                        .font(.title2.weight(.semibold))
+                        .frame(width: 58, height: 58)
+                        .foregroundStyle(.white)
+                        .background(Color.white.opacity(0.16))
+                        .clipShape(Circle())
+                }
+                .accessibilityLabel(state.isRecording ? "Recording" : "Interject")
             }
             .buttonStyle(.plain)
+
+            HStack(spacing: 10) {
+                CompactActionIntentButton(
+                    command: Gate2CompactApplicationCommand.summarizeInterjections,
+                    title: "Summary",
+                    systemImage: "sparkles"
+                )
+
+                Link(destination: Gate2CompactCommandURL.url(command: "beginInterjection")) {
+                    Label(state.isRecording ? "Recording" : "Interject", systemImage: state.isRecording ? "record.circle.fill" : "mic.fill")
+                }
+                .font(.caption.weight(.bold))
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .foregroundStyle(.black)
+                .background(Color(red: 0.94, green: 0.82, blue: 0.42))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                CompactActionIntentButton(
+                    command: Gate2CompactApplicationCommand.discussInterjections,
+                    title: "Discuss",
+                    systemImage: "text.bubble.fill"
+                )
+            }
         }
         .padding()
     }
@@ -126,6 +152,24 @@ private struct CompactPlayPauseButton: View {
         }
         .frame(width: 74, height: 74)
         .contentShape(Circle())
+    }
+}
+
+private struct CompactActionIntentButton: View {
+    let command: String
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        Button(intent: Gate2CompactPlaybackIntent(command: command)) {
+            Label(title, systemImage: systemImage)
+                .font(.caption.weight(.bold))
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .foregroundStyle(.white)
+                .background(Color.white.opacity(0.16))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
     }
 }
 

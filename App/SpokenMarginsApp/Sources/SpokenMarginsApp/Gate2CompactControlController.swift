@@ -16,9 +16,11 @@ final class Gate2CompactControlController {
     private var dispatcher: CompactControlDispatcher?
     private var queuedCommandTask: Task<Void, Never>?
     private var queuedCommandHandler: (@MainActor (CompactControlCommand) -> Void)?
+    private var queuedApplicationCommandHandler: (@MainActor (String) -> Bool)?
     private let nowPlaying = Gate2NowPlayingController()
     private let liveActivity = Gate2LiveActivityController()
     private(set) var lastCommand: CompactControlCommand?
+    private(set) var lastApplicationCommand = "none"
     private(set) var lastResult = "none"
 
     var snapshot: CompactControlSnapshot? {
@@ -29,7 +31,8 @@ final class Gate2CompactControlController {
         canonicalRuntime: SessionEngine,
         surfaceProfile: RuntimeCapabilityProfile,
         skipUnit: String,
-        commandHandler: @escaping @MainActor (CompactControlCommand) -> Void
+        commandHandler: @escaping @MainActor (CompactControlCommand) -> Void,
+        applicationCommandHandler: @escaping @MainActor (String) -> Bool = { _ in false }
     ) {
         dispatcher = CompactControlDispatcher(
             surfaceProfile: surfaceProfile,
@@ -37,6 +40,7 @@ final class Gate2CompactControlController {
             defaultSkipUnit: skipUnit
         )
         queuedCommandHandler = commandHandler
+        queuedApplicationCommandHandler = applicationCommandHandler
         nowPlaying.installRemoteCommandHandlers(commandHandler: commandHandler)
         installQueuedWidgetCommandProcessor()
         publishCurrentSnapshot()
@@ -70,6 +74,7 @@ final class Gate2CompactControlController {
             "gate2LastRemoteCommand": nowPlaying.lastRemoteCommand,
             "gate2LiveActivity": liveActivity.status,
             "gate2LastCommand": lastCommand?.rawValue ?? "none",
+            "gate2LastApplicationCommand": lastApplicationCommand,
             "gate2LastResult": lastResult,
             "gate2ExposedCommands": snapshot?.exposedCommands.map(\.rawValue).joined(separator: ",") ?? "none",
             "gate2Recording": snapshot?.isRecording == true ? "true" : "false"
@@ -97,10 +102,11 @@ final class Gate2CompactControlController {
         let queuedCommands = Gate2CompactCommandQueue.drain()
         guard !queuedCommands.isEmpty else { return }
         for queuedCommand in queuedCommands {
-            guard let command = CompactControlCommand(rawValue: queuedCommand.command) else {
-                continue
+            if let command = CompactControlCommand(rawValue: queuedCommand.command) {
+                queuedCommandHandler(command)
+            } else if queuedApplicationCommandHandler?(queuedCommand.command) == true {
+                lastApplicationCommand = queuedCommand.command
             }
-            queuedCommandHandler(command)
         }
     }
 }

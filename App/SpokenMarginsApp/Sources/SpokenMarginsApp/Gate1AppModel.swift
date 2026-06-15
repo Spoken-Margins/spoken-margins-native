@@ -914,6 +914,21 @@ final class Gate1AppModel: ObservableObject {
         dispatchGate2CompactCommand(command)
     }
 
+    @discardableResult
+    func handleGate2CompactApplicationCommand(_ command: String) -> Bool {
+        switch command {
+        case Gate2CompactApplicationCommand.summarizeInterjections:
+            summarize()
+            return true
+        case Gate2CompactApplicationCommand.discussInterjections:
+            discuss(followUp: "")
+            return true
+        default:
+            reportFailure("Unsupported compact application command.")
+            return false
+        }
+    }
+
     func saveProviderSettings() {
         sanitizeTTSMode()
         providerModel = fallbackProviderModel()
@@ -1367,6 +1382,8 @@ final class Gate1AppModel: ObservableObject {
                 skipUnit: skipUnit
             ) { [weak self] command in
                 self?.dispatchGate2CompactCommand(command)
+            } applicationCommandHandler: { [weak self] command in
+                self?.handleGate2CompactApplicationCommand(command) ?? false
             }
             updateGate2CompactState()
             diagnostics.merge(gate2CompactControls.diagnostics(), uniquingKeysWith: { _, new in new })

@@ -68,11 +68,12 @@ final class Gate2CompactControlTests: XCTestCase {
 
         Gate2CompactCommandQueue.enqueue(command: "togglePlayPause", id: "first", defaults: defaults)
         Gate2CompactCommandQueue.enqueue(command: "skipForward", id: "second", defaults: defaults)
+        Gate2CompactCommandQueue.enqueue(command: Gate2CompactApplicationCommand.summarizeInterjections, id: "third", defaults: defaults)
 
         let drained = Gate2CompactCommandQueue.drain(defaults: defaults)
 
-        XCTAssertEqual(drained.map(\.id), ["first", "second"])
-        XCTAssertEqual(drained.map(\.command), ["togglePlayPause", "skipForward"])
+        XCTAssertEqual(drained.map(\.id), ["first", "second", "third"])
+        XCTAssertEqual(drained.map(\.command), ["togglePlayPause", "skipForward", "summarizeInterjections"])
         XCTAssertTrue(Gate2CompactCommandQueue.drain(defaults: defaults).isEmpty)
     }
 }

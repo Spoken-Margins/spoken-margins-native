@@ -65,3 +65,8 @@ public enum Gate2CompactCommandQueue {
         defaults.synchronize()
     }
 }
+
+public enum Gate2CompactApplicationCommand {
+    public static let summarizeInterjections = "summarizeInterjections"
+    public static let discussInterjections = "discussInterjections"
+}
