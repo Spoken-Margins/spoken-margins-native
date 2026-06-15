@@ -748,14 +748,12 @@ final class Gate1AppModel: ObservableObject {
         guard !isRenderingKokoroPreview else { return }
         saveSpeechSettings()
         isRenderingKokoroPreview = true
-        kokoroStatus = "Rendering..."
+        kokoroStatus = "Preparing Kokoro preview..."
         diagnostics["kokoroStatus"] = kokoroStatus
 
         let voiceName = kokoroVoiceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "am_echo" : kokoroVoiceName
         let itemId = selectedItem.id.isEmpty ? activeItemId : selectedItem.id
-        let sourceText = selectedItem.text.isEmpty
-            ? "Spoken Margins Kokoro preview. This path pre-renders neural speech on device and falls back to system speech when unavailable."
-            : String(selectedItem.text.prefix(700))
+        let sourceText = "Spoken Margins Kokoro preview. This is a short on-device voice test."
 
         Task.detached { [voiceName, itemId, sourceText] in
             #if canImport(SessionKitKokoro) && canImport(AVFoundation)
@@ -775,6 +773,10 @@ final class Gate1AppModel: ObservableObject {
                 }
                 guard let voicesURL = assets.voicesURL else {
                     throw KokoroNarrationError.missingVoices
+                }
+                await MainActor.run {
+                    self.kokoroStatus = "Kokoro assets found. Rendering short preview..."
+                    self.diagnostics["kokoroStatus"] = self.kokoroStatus
                 }
                 let cachesURL = try FileManager.default.url(
                     for: .cachesDirectory,
@@ -797,6 +799,8 @@ final class Gate1AppModel: ObservableObject {
                 )
                 await MainActor.run {
                     do {
+                        self.kokoroStatus = "Kokoro rendered. Starting playback..."
+                        self.diagnostics["kokoroStatus"] = self.kokoroStatus
                         try self.playKokoroPreview(url: result.audioURL)
                         self.kokoroStatus = "Rendered \(String(format: "%.1f", result.duration))s with \(voiceName)"
                         self.diagnostics["kokoroStatus"] = self.kokoroStatus
