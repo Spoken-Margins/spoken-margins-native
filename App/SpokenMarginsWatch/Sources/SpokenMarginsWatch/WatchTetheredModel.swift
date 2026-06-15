@@ -117,6 +117,7 @@ final class WatchTetheredModel: NSObject, ObservableObject, WCSessionDelegate {
     ) {
         DispatchQueue.main.async {
             self.status = error.map { "Activation failed: \($0.localizedDescription)" } ?? "Connected"
+            self.handle(message: session.receivedApplicationContext)
             self.refresh()
         }
     }

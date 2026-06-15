@@ -19,6 +19,8 @@ targets:
       - path: Contracts/traces
         type: folder
     dependencies:
+      - target: SpokenMarginsWatch
+        embed: true
       - target: SpokenMarginsGate2Widget
       - package: SessionKit
         product: SessionKit
@@ -70,6 +72,8 @@ targets:
       - path: Contracts/traces
         type: folder
     dependencies:
+      - target: SpokenMarginsWatch
+        embed: true
       - target: SpokenMarginsGate2Widget
       - package: SessionKit
         product: SessionKit

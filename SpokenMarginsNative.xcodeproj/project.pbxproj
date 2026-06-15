@@ -48,8 +48,10 @@
 		BDFC86A1A7E85E4329B0E130 /* Gate2LiveActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7145068260B70B5F88F4D76 /* Gate2LiveActivityWidget.swift */; };
 		C0A5F9C9C5664F01CE38CCC0 /* WatchTetheredView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCCB63558F760813CBB13276 /* WatchTetheredView.swift */; };
 		C23B154E874E71BEE7F76A78 /* SpokenMarginsGate2Widget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = E3D5265FADF5995640D6FB31 /* SpokenMarginsGate2Widget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		C3DF569973C14C00DB998E4A /* SpokenMarginsWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 937EF0A224692BE4208F9488 /* SpokenMarginsWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		C5B21CB3ABC42C3F27690D22 /* Gate2CompactControlTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4306F9BA3A5512A9F518ECAD /* Gate2CompactControlTests.swift */; };
 		CA41517A9A4DED30A499324F /* SessionKitAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 8C20788E476DF1465D360599 /* SessionKitAudio */; };
+		D03E2C7131CC964F4DFA65FC /* SpokenMarginsWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 937EF0A224692BE4208F9488 /* SpokenMarginsWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		D6A8DCA36ED03426D6771AEC /* Gate1PlaybackAutoplayQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CECE96EA9D24248FFE111D5D /* Gate1PlaybackAutoplayQueueTests.swift */; };
 		DC1A734B98645EA97AC772B6 /* SessionKit in Frameworks */ = {isa = PBXBuildFile; productRef = BD06F9B7880DC707F13F6CA5 /* SessionKit */; };
 		DCD0BCAD510043A1EB4EF202 /* SpokenMarginsGate2Widget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = E3D5265FADF5995640D6FB31 /* SpokenMarginsGate2Widget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -69,6 +71,20 @@
 			proxyType = 1;
 			remoteGlobalIDString = 13B5C8F8C12F37E6CB62E6FE;
 			remoteInfo = SpokenMarginsGate2Widget;
+		};
+		47459DA2906C53D5EB469D94 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A73E853E04F4F4AC37DBA1E5 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 912F5379FEC0BD67AF07C3AE;
+			remoteInfo = SpokenMarginsWatch;
+		};
+		4BAE73052978E4640228F50B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A73E853E04F4F4AC37DBA1E5 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 912F5379FEC0BD67AF07C3AE;
+			remoteInfo = SpokenMarginsWatch;
 		};
 		7E54E7D5E3EACF6AFAE24B53 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -114,6 +130,28 @@
 				DCD0BCAD510043A1EB4EF202 /* SpokenMarginsGate2Widget.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		86D7339259B0FB991734870C /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				C3DF569973C14C00DB998E4A /* SpokenMarginsWatch.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F7F3B86D98B5A54C7AE2580F /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				D03E2C7131CC964F4DFA65FC /* SpokenMarginsWatch.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXCopyFilesBuildPhase section */
@@ -382,10 +420,12 @@
 				88A02960D105DDC877D19DA2 /* Resources */,
 				181B8B7CA7628BD2F4B431EB /* Frameworks */,
 				6CE512A41D72170E94B37F3B /* Embed Foundation Extensions */,
+				F7F3B86D98B5A54C7AE2580F /* Embed Watch Content */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				EDC45EACF3F167AE1A7F648C /* PBXTargetDependency */,
 				642F5EF7784AC20E78EF03BE /* PBXTargetDependency */,
 			);
 			name = SpokenMarginsAppDevice;
@@ -427,10 +467,12 @@
 				BB06776C42C30ED723DD3416 /* Resources */,
 				CC246B3771C4C2A0697251CC /* Frameworks */,
 				7A3F276E86D032A73B80310B /* Embed Foundation Extensions */,
+				86D7339259B0FB991734870C /* Embed Watch Content */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				F819AFDE3A93318B7C359362 /* PBXTargetDependency */,
 				DCF9407AD267D96CE9ECF258 /* PBXTargetDependency */,
 			);
 			name = SpokenMarginsApp;
@@ -623,6 +665,16 @@
 			isa = PBXTargetDependency;
 			target = 13B5C8F8C12F37E6CB62E6FE /* SpokenMarginsGate2Widget */;
 			targetProxy = 24418BAF81B5E9978738412E /* PBXContainerItemProxy */;
+		};
+		EDC45EACF3F167AE1A7F648C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 912F5379FEC0BD67AF07C3AE /* SpokenMarginsWatch */;
+			targetProxy = 47459DA2906C53D5EB469D94 /* PBXContainerItemProxy */;
+		};
+		F819AFDE3A93318B7C359362 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 912F5379FEC0BD67AF07C3AE /* SpokenMarginsWatch */;
+			targetProxy = 4BAE73052978E4640228F50B /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
