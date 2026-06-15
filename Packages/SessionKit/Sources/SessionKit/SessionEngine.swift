@@ -297,10 +297,8 @@ public final class SessionEngine {
         session.completionPercent = chapter.percent
         currentSession = session
         try repository.saveSession(session)
-        if snapshot.status == .playing {
-            try playCurrentTarget(session)
-        }
-        publish(status: snapshot.status, phase: session.phase)
+        try playCurrentTarget(session)
+        publish(status: .playing, phase: session.phase)
         return snapshot
     }
 
@@ -1022,6 +1020,14 @@ public final class SessionEngine {
               let offset = audio.currentCharOffset(),
               offset >= 0 else {
             return session
+        }
+        let prefixLength = itemPlaybackPreface().count
+        if prefixLength > 0, offset <= prefixLength {
+            var updated = session
+            updated.position.charOffset = 0
+            updated.position.chapterId = nil
+            updated.completionPercent = 0
+            return updated
         }
         let sourceOffset = itemSourceOffset(forAudioOffset: offset)
         guard sourceOffset <= (item?.text ?? "").count else { return session }

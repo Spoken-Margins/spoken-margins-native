@@ -133,6 +133,11 @@ final class Gate1AppModel: ObservableObject {
         #endif
     }
 
+    init() {
+        sanitizeTTSMode()
+        settingsValueChanged()
+    }
+
     deinit {
         playbackProgressTask?.cancel()
     }
@@ -827,6 +832,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func saveProviderSettings() {
+        sanitizeTTSMode()
         providerModel = fallbackProviderModel()
         UserDefaults.standard.set(providerBaseURL, forKey: "providerBaseURL")
         UserDefaults.standard.set(providerModel, forKey: "providerModel")
@@ -860,6 +866,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func saveSpeechSettings() {
+        sanitizeTTSMode()
         UserDefaults.standard.set(speechRate, forKey: "speechRate")
         UserDefaults.standard.set(speechVoiceIdentifier, forKey: "speechVoiceIdentifier")
         UserDefaults.standard.set(ttsMode, forKey: "ttsMode")
@@ -874,13 +881,13 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func speechSettingsChanged() {
-        if ttsMode == "kokoro", !isKokoroDeviceBuild {
-            ttsMode = "systemImmediate"
-            reportFailure("Kokoro requires the SpokenMarginsAppDevice scheme on a physical device.")
-        }
+        let changed = sanitizeTTSMode()
         settingsValueChanged()
         saveSpeechSettings()
         _ = rebuildEngineForCurrentSettings()
+        if changed {
+            reportFailure("Kokoro requires the SpokenMarginsAppDevice scheme on a physical device.")
+        }
     }
 
     func previewSpokenContentVoice() {
@@ -1223,7 +1230,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var speechRateDescription: String {
-        if ttsMode == "kokoro" {
+        if ttsMode == "kokoro", isKokoroDeviceBuild {
             return String(format: "Kokoro %.2fx", max(0.65, min(1.75, speechRate / 0.5)))
         }
         return String(format: "System %.2f", speechRate)
@@ -1413,12 +1420,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func makeAudioPlaybackClient() throws -> AudioPlaybackClient {
-        #if targetEnvironment(simulator)
-        if ttsMode == "kokoro" {
-            diagnostics["sessionTTS"] = "Kokoro simulator stub"
-            return FakeGeneratedSpeechPlaybackClient()
-        }
-        #endif
+        sanitizeTTSMode()
         #if KOKORO_DEVICE && !targetEnvironment(simulator) && canImport(AVFoundation)
         if ttsMode == "kokoro" {
             let supportDirectory = try applicationSupportDirectory()
@@ -1445,6 +1447,16 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["sessionTTS"] = "System speech"
         }
         return SystemSpeechPlaybackClient()
+    }
+
+    @discardableResult
+    private func sanitizeTTSMode() -> Bool {
+        guard ttsMode == "kokoro", !isKokoroDeviceBuild else {
+            return false
+        }
+        ttsMode = "systemImmediate"
+        UserDefaults.standard.set(ttsMode, forKey: "ttsMode")
+        return true
     }
 
     private func loadLibraryRows(store: SQLiteSessionStore) throws -> [LibraryItemRow] {

@@ -30,7 +30,7 @@ Run:
 
 Current expected result:
 
-- `SessionKitCoreTests`: 32 passing tests.
+- `SessionKitCoreTests`: 33 passing tests.
 - `TraceReplayTests.testGate1TracesReplay`: replays 13 Gate 1 traces.
 - Contract validation: all schemas, fixtures, traces, fixture references, and trace capability requirements pass.
 - iOS simulator build: `SpokenMarginsApp` builds with local ad-hoc simulator signing.

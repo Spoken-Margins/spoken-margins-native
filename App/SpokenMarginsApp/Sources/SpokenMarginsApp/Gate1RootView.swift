@@ -939,9 +939,6 @@ private struct SettingsScreen: View {
                         Text("System Speech").tag("systemImmediate")
                         if model.isKokoroDeviceBuild {
                             Text("Kokoro Pre-render").tag("kokoro")
-                        } else {
-                            Text("Kokoro Pre-render (device scheme)").tag("kokoro")
-                                .disabled(true)
                         }
                     }
                     .accessibilityIdentifier("settings.ttsMode.picker")
@@ -951,61 +948,63 @@ private struct SettingsScreen: View {
                     Text(model.isKokoroDeviceBuild ? "Kokoro renders bounded segments on device and falls back to system speech if a segment fails." : "Kokoro requires the SpokenMarginsAppDevice scheme on a physical device.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
-                    TextField("Kokoro Voice", text: $model.kokoroVoiceName)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .focused($focusedField, equals: .kokoroVoice)
-                        .accessibilityIdentifier("settings.kokoroVoice.field")
-                        .onChange(of: model.kokoroVoiceName) { _, _ in
+                    if model.isKokoroDeviceBuild {
+                        TextField("Kokoro Voice", text: $model.kokoroVoiceName)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .focused($focusedField, equals: .kokoroVoice)
+                            .accessibilityIdentifier("settings.kokoroVoice.field")
+                            .onChange(of: model.kokoroVoiceName) { _, _ in
+                                model.speechSettingsChanged()
+                            }
+                        LabeledContent("Kokoro MLX Cache", value: "\(model.kokoroCacheLimitMB) MB fixed")
+                        VStack(alignment: .leading) {
+                            HStack {
+                                Text("Kokoro Chunk Size")
+                                Spacer()
+                                Text("\(Int(model.kokoroChunkCharacters.rounded())) chars")
+                                    .foregroundStyle(AppColors.secondaryText)
+                            }
+                            Slider(value: $model.kokoroChunkCharacters, in: 80...140, step: 10)
+                                .accessibilityIdentifier("settings.kokoroChunkCharacters.slider")
+                        }
+                        .onChange(of: model.kokoroChunkCharacters) { _, _ in
                             model.speechSettingsChanged()
                         }
-                    LabeledContent("Kokoro MLX Cache", value: "\(model.kokoroCacheLimitMB) MB fixed")
-                    VStack(alignment: .leading) {
-                        HStack {
-                            Text("Kokoro Chunk Size")
-                            Spacer()
-                            Text("\(Int(model.kokoroChunkCharacters.rounded())) chars")
-                                .foregroundStyle(AppColors.secondaryText)
+                        Button {
+                            isImportingKokoroAssets = true
+                        } label: {
+                            Label("Import Kokoro Assets", systemImage: "square.and.arrow.down")
                         }
-                        Slider(value: $model.kokoroChunkCharacters, in: 80...140, step: 10)
-                            .accessibilityIdentifier("settings.kokoroChunkCharacters.slider")
+                        .buttonStyle(SecondaryButtonStyle())
+                        .accessibilityIdentifier("settings.import.kokoroAssets.button")
+                        Text("Expected: kokoro-v1_0.safetensors, roughly hundreds of MB, and voices.npz, roughly tens of MB. Individual .pt voice files are not enough for this renderer.")
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                        Button {
+                            model.previewKokoroVoice()
+                        } label: {
+                            Label(
+                                model.isRenderingKokoroPreview ? "Rendering Kokoro Preview" : "Render Kokoro Preview",
+                                systemImage: "waveform"
+                            )
+                        }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .disabled(model.isRenderingKokoroPreview)
+                        .accessibilityIdentifier("settings.preview.kokoro.button")
+                        Button {
+                            model.runKokoroMemoryCheck()
+                        } label: {
+                            Label(
+                                model.isRunningKokoroMemoryCheck ? "Running Kokoro Memory Check" : "Run Kokoro Memory Check",
+                                systemImage: "memorychip"
+                            )
+                        }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .disabled(model.isRunningKokoroMemoryCheck || model.isRenderingKokoroPreview)
+                        .accessibilityIdentifier("settings.memoryCheck.kokoro.button")
+                        LabeledContent("Kokoro", value: model.kokoroStatus)
                     }
-                    .onChange(of: model.kokoroChunkCharacters) { _, _ in
-                        model.speechSettingsChanged()
-                    }
-                    Button {
-                        isImportingKokoroAssets = true
-                    } label: {
-                        Label("Import Kokoro Assets", systemImage: "square.and.arrow.down")
-                    }
-                    .buttonStyle(SecondaryButtonStyle())
-                    .accessibilityIdentifier("settings.import.kokoroAssets.button")
-                    Text("Expected: kokoro-v1_0.safetensors, roughly hundreds of MB, and voices.npz, roughly tens of MB. Individual .pt voice files are not enough for this renderer.")
-                        .font(.caption)
-                        .foregroundStyle(AppColors.secondaryText)
-                    Button {
-                        model.previewKokoroVoice()
-                    } label: {
-                        Label(
-                            model.isRenderingKokoroPreview ? "Rendering Kokoro Preview" : "Render Kokoro Preview",
-                            systemImage: "waveform"
-                        )
-                    }
-                    .buttonStyle(SecondaryButtonStyle())
-                    .disabled(model.isRenderingKokoroPreview)
-                    .accessibilityIdentifier("settings.preview.kokoro.button")
-                    Button {
-                        model.runKokoroMemoryCheck()
-                    } label: {
-                        Label(
-                            model.isRunningKokoroMemoryCheck ? "Running Kokoro Memory Check" : "Run Kokoro Memory Check",
-                            systemImage: "memorychip"
-                        )
-                    }
-                    .buttonStyle(SecondaryButtonStyle())
-                    .disabled(model.isRunningKokoroMemoryCheck || model.isRenderingKokoroPreview)
-                    .accessibilityIdentifier("settings.memoryCheck.kokoro.button")
-                    LabeledContent("Kokoro", value: model.kokoroStatus)
                     Picker("Skip Increment", selection: $model.skipUnit) {
                         Text("Sentence").tag("sentence")
                         Text("Paragraph").tag("paragraph")

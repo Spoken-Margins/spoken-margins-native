@@ -31,7 +31,7 @@ public enum SpeechPreviewMode: Sendable {
 
 public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unchecked Sendable {
     #if canImport(AVFoundation)
-    private let synthesizer = AVSpeechSynthesizer()
+    private var synthesizer = AVSpeechSynthesizer()
     #endif
     private var preparedSourceText = ""
     private var preparedSpeechText = ""
@@ -51,7 +51,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         self.readsSpeechSettingsAtPlayback = true
         super.init()
         #if canImport(AVFoundation)
-        synthesizer.delegate = self
+        installSynthesizerDelegate()
         #endif
     }
 
@@ -61,7 +61,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         self.readsSpeechSettingsAtPlayback = false
         super.init()
         #if canImport(AVFoundation)
-        synthesizer.delegate = self
+        installSynthesizerDelegate()
         #endif
     }
 
@@ -110,7 +110,9 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
                 paused = false
                 return
             }
-            synthesizer.stopSpeaking(at: .immediate)
+            replaceSynthesizer()
+        } else if paused {
+            replaceSynthesizer()
         }
         #if os(iOS)
         try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
@@ -213,6 +215,17 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
     }
 
     #if canImport(AVFoundation)
+    private func installSynthesizerDelegate() {
+        synthesizer.delegate = self
+    }
+
+    private func replaceSynthesizer() {
+        synthesizer.delegate = nil
+        synthesizer.stopSpeaking(at: .immediate)
+        synthesizer = AVSpeechSynthesizer()
+        installSynthesizerDelegate()
+    }
+
     private func playbackSpeechPreviewMode() -> SpeechPreviewMode {
         let speechSettings = currentSpeechSettings()
         if readsSpeechSettingsAtPlayback, speechSettings.voiceIdentifier == nil {

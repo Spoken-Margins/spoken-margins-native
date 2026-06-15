@@ -722,6 +722,45 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(audio.playedOffsets.last, "Overview. Short source summary.\n\n".count)
     }
 
+    func testChapterJumpAlwaysStartsSelectedChapterPlayback() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "timeline": ["chapter_timing"],
+                "playback": ["realtime_tts"]
+            ]
+        )
+        let text = "First chapter starts here. Second chapter follows. Third chapter ends."
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: text, externalReference: nil, status: "ready")
+        let map = ListeningMap(
+            id: "map-pill",
+            itemId: item.id,
+            overview: "Short source summary.",
+            chapters: [
+                Chapter(id: "ch-1", title: "First", startChar: 0, endChar: 26, percent: 0),
+                Chapter(id: "ch-2", title: "Second", startChar: 27, endChar: 51, percent: 45),
+                Chapter(id: "ch-3", title: "Third", startChar: 52, endChar: text.count, percent: 80)
+            ]
+        )
+        let prefixLength = "Overview. Short source summary.\n\n".count
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], mapsByItemId: [item.id: map])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        _ = try engine.pause()
+        let snapshot = try engine.jumpToChapter(chapterId: "ch-2")
+
+        XCTAssertEqual(snapshot.status, .playing)
+        XCTAssertEqual(audio.playedOffsets.last, prefixLength + 27)
+
+        _ = try engine.jumpToChapter(chapterId: "ch-1")
+
+        XCTAssertEqual(audio.playedOffsets.last, prefixLength)
+    }
+
     func testListeningMapSummaryPrefaceProgressIsSummaryLocal() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
@@ -733,7 +772,9 @@ final class SessionKitCoreTests: XCTestCase {
         )
         let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: String(repeating: "Long source text. ", count: 20), externalReference: nil, status: "ready")
         let overview = "Short source summary."
-        let map = ListeningMap(id: "map-pill", itemId: item.id, overview: overview, chapters: [])
+        let map = ListeningMap(id: "map-pill", itemId: item.id, overview: overview, chapters: [
+            Chapter(id: "ch-1", title: "First Chapter", startChar: 0, endChar: 50, percent: 0)
+        ])
         let audio = RecordingAudioClient()
         let repo = InMemorySessionRepository(items: [item.id: item], mapsByItemId: [item.id: map])
         let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
