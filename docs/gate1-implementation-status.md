@@ -5,13 +5,13 @@
 - Added `Packages/SessionKit` as a Swift package with separate core, persistence, audio, and AI targets.
 - Implemented deterministic `SessionKit` command/state behavior for the Gate 1 trace surface:
   source playback, TTS URL cleanup, semantic movement, rollback/resume, interjections, summary/discussion flow, AI response interjection, offline AI deferral, provider failure/retry, malformed AI text preservation, stable streaming speech, representation lifecycle separation, and session-scoped export.
-- Restored prototype-parity playback semantics for Gate 1: Listening Map overview prefaces source playback, assistant summaries are spoken before full responses, generated turns are queued until active audio completes, and AI turns/AI-turn chapters are playable from the primary timeline.
+- Restored prototype-parity playback semantics for Gate 1: Listening Map overview prefaces source playback, assistant summaries are spoken before full responses, generated turns are queued until active audio completes, source/overview/generated turns are visible in the primary timeline, and AI turns/AI-turn chapters are playable from that surface.
 - Stabilized repeated validation runs by creating unique sessions for repeated starts and unique assistant response turns/jobs for repeated follow-ups.
 - Added runtime capability gating for command availability and structured failure behavior.
 - Added a SQLite-backed repository target with migrations and idempotent JSON record storage for items, sessions, interjections, turns, AI jobs, and Listening Maps.
 - Added AVFoundation/AI provider adapter boundaries while keeping tests deterministic through mock clients.
 - Added real AVFoundation speech playback and `.m4a` interjection recording adapters behind `SessionKitAudio` protocols, including explicit microphone permission prompting before interjection recording. The trace tests still use deterministic mocks.
-- Added a simulator-safe Kokoro stub path so generated-speech completion semantics are testable without linking Metal-only Kokoro runtime code into the simulator app.
+- Added a simulator-safe Kokoro stub path plus a separate `SpokenMarginsAppDevice` scheme for real Kokoro/MLX validation on physical devices.
 - Added Gate 1 trace replay tests over the repository's actual trace and fixture files.
 - Added a SwiftUI app shaped around the reference prototype's product flow: home/create/listening queue, item detail, active playback, discussion, OpenAI-compatible provider configuration, export, diagnostics, reset/seed, release notes, and known issues. Home and playback now use adaptive phone/tablet layouts.
 - Added stable accessibility identifiers and XCUITest paths for reset/seed feedback, seeded session start, playback navigation, export generation, provider/API-key affordance, and manual Listening Map JSON application.
@@ -30,7 +30,7 @@ Run:
 
 Current expected result:
 
-- `SessionKitCoreTests`: 27 passing tests.
+- `SessionKitCoreTests`: 29 passing tests.
 - `TraceReplayTests.testGate1TracesReplay`: replays 13 Gate 1 traces.
 - Contract validation: all schemas, fixtures, traces, fixture references, and trace capability requirements pass.
 - iOS simulator build: `SpokenMarginsApp` builds with local ad-hoc simulator signing.
@@ -44,7 +44,7 @@ Current expected result:
 - The app builds for iOS Simulator from regenerated `project.yml`, but a signed installable iPhone/iPad build still requires local team/provisioning configuration.
 - Bluetooth route validation, interruption recovery, Now Playing metadata, and remote commands still need device implementation and evidence. Microphone permission prompting and durable `.m4a` audio writing exist, but have not been validated on hardware.
 - OpenAI-compatible settings UI now saves API keys in Keychain, probes `/models`, and uses `/chat/completions` for Listening Map, summary, and follow-up generation in the app. It still needs real-device provider validation and richer structured-output evidence.
-- Real Kokoro/Metal rendering is preserved in source but requires hardware validation; simulator CI uses the deterministic generated-speech stub.
+- Real Kokoro/Metal rendering is preserved in the `SpokenMarginsAppDevice` scheme but requires hardware validation; simulator CI uses the deterministic generated-speech stub.
 - Real-device validation has not been run on iPhone/iPad with AirPods, airplane mode, app restart, and provider-unreachable cases.
 
 ## Packaging Note

@@ -528,7 +528,7 @@ private struct PlaybackScreen: View {
                     .font(.title2.weight(.bold))
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.white)
-                Text(model.currentChapter.map { "\($0.percent)% · \($0.title)" } ?? "\(model.snapshot.progressPercent)% complete")
+                Text(playbackProgressLabel)
                     .font(.subheadline)
                     .foregroundStyle(AppColors.watchSecondary)
             }
@@ -545,7 +545,7 @@ private struct PlaybackScreen: View {
                     Circle()
                         .stroke(AppColors.watchControl, lineWidth: 12)
                     Circle()
-                        .trim(from: 0, to: CGFloat(max(0, min(100, model.snapshot.progressPercent))) / 100)
+                        .trim(from: 0, to: CGFloat(max(0, min(100, model.snapshot.currentPlaybackProgressPercent))) / 100)
                         .stroke(AppColors.accent, style: StrokeStyle(lineWidth: 12, lineCap: .round))
                         .rotationEffect(.degrees(-90))
                     Button(action: model.playPause) {
@@ -638,6 +638,14 @@ private struct PlaybackScreen: View {
         .shadow(color: .black.opacity(0.18), radius: 22, y: 12)
     }
 
+    private var playbackProgressLabel: String {
+        let current = "\(model.snapshot.currentPlaybackProgressPercent)% current"
+        if model.snapshot.targetType == "item_text_tts" {
+            return model.currentChapter.map { "\(current) · \($0.title)" } ?? current
+        }
+        return "\(current) · Source \(model.snapshot.sourceProgressPercent)%"
+    }
+
     private var timeline: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -653,6 +661,22 @@ private struct PlaybackScreen: View {
             } else {
                 ForEach(timelineEntries) { entry in
                     switch entry {
+                    case .sourceItem:
+                        Button {
+                            model.playSourceFromBeginning()
+                        } label: {
+                            TimelineRow(percent: "SRC", title: model.selectedItem.title, subtitle: "Play source from beginning")
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("timeline.source.play")
+                    case .overview:
+                        Button {
+                            model.playSourceFromBeginning()
+                        } label: {
+                            TimelineRow(percent: "0%", title: "Listening Map Overview", subtitle: model.selectedItem.overview)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("timeline.overview.play")
                     case .chapter(let chapter):
                         Button {
                             model.jumpToChapter(chapter)
@@ -689,6 +713,14 @@ private struct PlaybackScreen: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("timeline.turnChapter.jump.\(turn.id).\(chapter.id)")
+                    case .turnFallbackChapter(let turn):
+                        Button {
+                            model.playTurn(turn)
+                        } label: {
+                            TimelineRow(percent: "AI 0%", title: turnTitle(turn), subtitle: "Play full generated response")
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("timeline.turnChapter.fallback.\(turn.id)")
                     }
                 }
             }
@@ -697,6 +729,10 @@ private struct PlaybackScreen: View {
     }
 
     private var timelineEntries: [PlaybackTimelineEntry] {
+        let sourceHeaderEntries: [PlaybackTimelineEntry] = [
+            .sourceItem,
+            model.selectedItem.overview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : .overview
+        ].compactMap { $0 }
         let sourceEntries = (model.selectedItem.chapters.map { PlaybackTimelineEntry.chapter($0) } +
             model.selectedItem.interjections.filter { $0.targetType == .item }.map { PlaybackTimelineEntry.interjection($0) }
         )
@@ -707,13 +743,14 @@ private struct PlaybackScreen: View {
             return lhs.percent < rhs.percent
         }
         let turnEntries = model.selectedItem.turns.flatMap { turn -> [PlaybackTimelineEntry] in
-            [PlaybackTimelineEntry.turn(turn)] +
-            (turn.chapters ?? []).map { PlaybackTimelineEntry.turnChapter(turn, $0) } +
+            let chapters = turn.chapters ?? []
+            return [PlaybackTimelineEntry.turn(turn)] +
+            (chapters.isEmpty ? [PlaybackTimelineEntry.turnFallbackChapter(turn)] : chapters.map { PlaybackTimelineEntry.turnChapter(turn, $0) }) +
             model.selectedItem.interjections
                 .filter { $0.targetId == turn.id && $0.targetType != .item }
                 .map { PlaybackTimelineEntry.interjection($0) }
         }
-        return sourceEntries + turnEntries
+        return sourceHeaderEntries + sourceEntries + turnEntries
     }
 
     private var conversation: some View {
@@ -884,13 +921,18 @@ private struct SettingsScreen: View {
                     }
                     Picker("Session TTS", selection: $model.ttsMode) {
                         Text("System Speech").tag("systemImmediate")
-                        Text("Kokoro Pre-render").tag("kokoro")
+                        if model.isKokoroDeviceBuild {
+                            Text("Kokoro Pre-render").tag("kokoro")
+                        } else {
+                            Text("Kokoro Pre-render (device scheme)").tag("kokoro")
+                                .disabled(true)
+                        }
                     }
                     .accessibilityIdentifier("settings.ttsMode.picker")
                     .onChange(of: model.ttsMode) { _, _ in
                         model.speechSettingsChanged()
                     }
-                    Text("Kokoro renders bounded segments on device and falls back to system speech if a segment fails.")
+                    Text(model.isKokoroDeviceBuild ? "Kokoro renders bounded segments on device and falls back to system speech if a segment fails." : "Kokoro requires the SpokenMarginsAppDevice scheme on a physical device.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
                     TextField("Kokoro Voice", text: $model.kokoroVoiceName)
@@ -901,19 +943,7 @@ private struct SettingsScreen: View {
                         .onChange(of: model.kokoroVoiceName) { _, _ in
                             model.speechSettingsChanged()
                         }
-                    VStack(alignment: .leading) {
-                        HStack {
-                            Text("Kokoro MLX Cache")
-                            Spacer()
-                            Text("\(Int(model.kokoroCacheLimitMB.rounded())) MB")
-                                .foregroundStyle(AppColors.secondaryText)
-                        }
-                        Slider(value: $model.kokoroCacheLimitMB, in: 64...1024, step: 64)
-                            .accessibilityIdentifier("settings.kokoroCacheLimit.slider")
-                    }
-                    .onChange(of: model.kokoroCacheLimitMB) { _, _ in
-                        model.speechSettingsChanged()
-                    }
+                    LabeledContent("Kokoro MLX Cache", value: "\(model.kokoroCacheLimitMB) MB fixed")
                     VStack(alignment: .leading) {
                         HStack {
                             Text("Kokoro Chunk Size")
@@ -921,7 +951,7 @@ private struct SettingsScreen: View {
                             Text("\(Int(model.kokoroChunkCharacters.rounded())) chars")
                                 .foregroundStyle(AppColors.secondaryText)
                         }
-                        Slider(value: $model.kokoroChunkCharacters, in: 80...360, step: 20)
+                        Slider(value: $model.kokoroChunkCharacters, in: 80...140, step: 10)
                             .accessibilityIdentifier("settings.kokoroChunkCharacters.slider")
                     }
                     .onChange(of: model.kokoroChunkCharacters) { _, _ in
@@ -1077,35 +1107,47 @@ private struct ExportScreen: View {
 }
 
 private enum PlaybackTimelineEntry: Identifiable {
+    case sourceItem
+    case overview
     case chapter(Chapter)
     case interjection(Interjection)
     case turn(ConversationTurn)
     case turnChapter(ConversationTurn, Chapter)
+    case turnFallbackChapter(ConversationTurn)
 
     var id: String {
         switch self {
+        case .sourceItem: return "source-item"
+        case .overview: return "overview"
         case .chapter(let chapter): return "chapter-\(chapter.id)"
         case .interjection(let interjection): return "interjection-\(interjection.id)"
         case .turn(let turn): return "turn-\(turn.id)"
         case .turnChapter(let turn, let chapter): return "turn-chapter-\(turn.id)-\(chapter.id)"
+        case .turnFallbackChapter(let turn): return "turn-fallback-chapter-\(turn.id)"
         }
     }
 
     var percent: Int {
         switch self {
+        case .sourceItem: return 0
+        case .overview: return 0
         case .chapter(let chapter): return chapter.percent
         case .interjection(let interjection): return interjection.targetType == .item ? interjection.roughPercent : 101
         case .turn: return 101
         case .turnChapter: return 101
+        case .turnFallbackChapter: return 101
         }
     }
 
     var sortRank: Int {
         switch self {
+        case .sourceItem: return -2
+        case .overview: return -1
         case .chapter: return 0
         case .interjection(let interjection): return interjection.targetType == .item ? 1 : 4
         case .turn: return 2
         case .turnChapter: return 3
+        case .turnFallbackChapter: return 3
         }
     }
 }
@@ -1258,14 +1300,25 @@ private struct Pill: View {
 private func turnTitle(_ turn: ConversationTurn) -> String {
     switch turn.turnType {
     case "interjection_summary":
-        return "Interjection Summary"
+        return "Interjection Summary \(turnSequenceNumber(turn.id) ?? 1)"
     case "assistant_response":
+        if let number = turnSequenceNumber(turn.id) {
+            return "AI Response \(number)"
+        }
         return "AI Response"
     case "user_response":
         return "Follow-up"
     default:
         return turn.turnType.replacingOccurrences(of: "_", with: " ").capitalized
     }
+}
+
+private func turnSequenceNumber(_ id: String) -> Int? {
+    guard let raw = id.split(separator: "-").last,
+          let value = Int(raw) else {
+        return nil
+    }
+    return value
 }
 
 private enum AppColors {

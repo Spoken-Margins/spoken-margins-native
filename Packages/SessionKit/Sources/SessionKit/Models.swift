@@ -248,6 +248,8 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     public var title: String?
     public var chapterTitle: String?
     public var progressPercent: Int
+    public var sourceProgressPercent: Int
+    public var currentPlaybackProgressPercent: Int
     public var playbackRate: Double
     public var isRecording: Bool
     public var activeInterjectionCount: Int
@@ -273,6 +275,8 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         title = nil
         chapterTitle = nil
         progressPercent = 0
+        sourceProgressPercent = 0
+        currentPlaybackProgressPercent = 0
         playbackRate = 1
         isRecording = false
         activeInterjectionCount = 0

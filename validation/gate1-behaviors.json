@@ -715,6 +715,7 @@
       "durableEffect": "pending generated turn id is retained until active audio completes, then playback target changes to the generated turn",
       "positiveEvidence": [
         "SessionKitCoreTests.testAIJobCompletedPreservesActivePlaybackPhase",
+        "SessionKitCoreTests.testSummaryPlaybackPublishesCurrentTargetProgressSeparateFromSourceProgress",
         "Gate1AppModel only drains pending generated turns after active playback is no longer playing"
       ],
       "negativeEvidence": [
@@ -739,7 +740,8 @@
       "positiveEvidence": [
         "SessionKitCoreTests.testAssistantPlayableTextSpeaksSummaryBeforeResponse",
         "SessionKitCoreTests.testAICompletionParsesSummaryResponseAndChapters",
-        "SessionKitCoreTests.testJumpToAssistantTurnChapterUsesSummaryPrefaceOffset"
+        "SessionKitCoreTests.testJumpToAssistantTurnChapterUsesSummaryPrefaceOffset",
+        "SessionKitCoreTests.testPlaySourceFromBeginningWorksWithoutListeningMap"
       ],
       "negativeEvidence": [
         "No UI test yet seeds a generated AI turn with chapters and taps the primary timeline row."

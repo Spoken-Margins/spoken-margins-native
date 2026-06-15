@@ -83,8 +83,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var speechVoiceIdentifier = UserDefaults.standard.string(forKey: "speechVoiceIdentifier") ?? ""
     @Published var ttsMode = UserDefaults.standard.string(forKey: "ttsMode") ?? "systemImmediate"
     @Published var kokoroVoiceName = UserDefaults.standard.string(forKey: "kokoroVoiceName") ?? "am_echo"
-    @Published var kokoroCacheLimitMB = UserDefaults.standard.double(forKey: "kokoroCacheLimitMB") == 0 ? 256 : UserDefaults.standard.double(forKey: "kokoroCacheLimitMB")
-    @Published var kokoroChunkCharacters = UserDefaults.standard.double(forKey: "kokoroChunkCharacters") == 0 ? 180 : UserDefaults.standard.double(forKey: "kokoroChunkCharacters")
+    @Published var kokoroChunkCharacters = min(140, max(80, UserDefaults.standard.double(forKey: "kokoroChunkCharacters") == 0 ? 110 : UserDefaults.standard.double(forKey: "kokoroChunkCharacters")))
     @Published var kokoroStatus = "Not checked"
     @Published var isRenderingKokoroPreview = false
     @Published var isRunningKokoroMemoryCheck = false
@@ -487,6 +486,21 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    func playSourceFromBeginning() {
+        stopSpeechPreviews()
+        pendingAutoPlayTurnId = nil
+        run { engine in
+            if !hasActiveSession {
+                snapshot = try engine.startSession(itemId: activeItemId)
+            } else {
+                snapshot = try engine.playSourceFromBeginning()
+            }
+            refreshSelectedItem()
+            screen = .playback
+            reportSuccess("Playing source from the beginning.")
+        }
+    }
+
     func openHome() {
         if hasActiveSession {
             run { engine in
@@ -825,7 +839,6 @@ final class Gate1AppModel: ObservableObject {
         UserDefaults.standard.set(speechVoiceIdentifier, forKey: "speechVoiceIdentifier")
         UserDefaults.standard.set(ttsMode, forKey: "ttsMode")
         UserDefaults.standard.set(kokoroVoiceName, forKey: "kokoroVoiceName")
-        UserDefaults.standard.set(kokoroCacheLimitMB, forKey: "kokoroCacheLimitMB")
         UserDefaults.standard.set(kokoroChunkCharacters, forKey: "kokoroChunkCharacters")
         KeychainStore.save(providerAPIKey, service: "SpokenMargins", account: "OpenAICompatibleAPIKey")
         diagnostics["providerBaseURL"] = providerBaseURL
@@ -838,7 +851,7 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["speechVoice"] = speechVoiceDescription
         diagnostics["ttsMode"] = ttsMode
         diagnostics["kokoroVoice"] = kokoroVoiceName
-        diagnostics["kokoroCacheLimitMB"] = String(format: "%.0f", kokoroCacheLimitMB)
+        diagnostics["kokoroCacheLimitMB"] = String(kokoroCacheLimitMB)
         diagnostics["kokoroChunkCharacters"] = String(format: "%.0f", kokoroChunkCharacters)
         diagnostics["apiKeyConfigured"] = providerAPIKey.isEmpty ? "false" : "true"
         if rebuildEngineForCurrentSettings() {
@@ -852,17 +865,20 @@ final class Gate1AppModel: ObservableObject {
         UserDefaults.standard.set(speechVoiceIdentifier, forKey: "speechVoiceIdentifier")
         UserDefaults.standard.set(ttsMode, forKey: "ttsMode")
         UserDefaults.standard.set(kokoroVoiceName, forKey: "kokoroVoiceName")
-        UserDefaults.standard.set(kokoroCacheLimitMB, forKey: "kokoroCacheLimitMB")
         UserDefaults.standard.set(kokoroChunkCharacters, forKey: "kokoroChunkCharacters")
         diagnostics["speechRate"] = String(format: "%.2f", speechRate)
         diagnostics["speechVoice"] = speechVoiceDescription
         diagnostics["ttsMode"] = ttsMode
         diagnostics["kokoroVoice"] = kokoroVoiceName
-        diagnostics["kokoroCacheLimitMB"] = String(format: "%.0f", kokoroCacheLimitMB)
+        diagnostics["kokoroCacheLimitMB"] = String(kokoroCacheLimitMB)
         diagnostics["kokoroChunkCharacters"] = String(format: "%.0f", kokoroChunkCharacters)
     }
 
     func speechSettingsChanged() {
+        if ttsMode == "kokoro", !isKokoroDeviceBuild {
+            ttsMode = "systemImmediate"
+            reportFailure("Kokoro requires the SpokenMarginsAppDevice scheme on a physical device.")
+        }
         settingsValueChanged()
         saveSpeechSettings()
         _ = rebuildEngineForCurrentSettings()
@@ -1147,7 +1163,7 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["speechVoice"] = speechVoiceDescription
         diagnostics["ttsMode"] = ttsMode
         diagnostics["kokoroVoice"] = kokoroVoiceName
-        diagnostics["kokoroCacheLimitMB"] = String(format: "%.0f", kokoroCacheLimitMB)
+        diagnostics["kokoroCacheLimitMB"] = String(kokoroCacheLimitMB)
         diagnostics["kokoroChunkCharacters"] = String(format: "%.0f", kokoroChunkCharacters)
     }
 
@@ -1214,12 +1230,24 @@ final class Gate1AppModel: ObservableObject {
         return String(format: "System %.2f", speechRate)
     }
 
+    var isKokoroDeviceBuild: Bool {
+        #if KOKORO_DEVICE && !targetEnvironment(simulator)
+        true
+        #else
+        false
+        #endif
+    }
+
     var kokoroCacheLimitBytes: Int {
-        Int(max(64, min(1024, kokoroCacheLimitMB)).rounded()) * 1024 * 1024
+        kokoroCacheLimitMB * 1024 * 1024
+    }
+
+    var kokoroCacheLimitMB: Int {
+        256
     }
 
     var kokoroChunkCharacterLimit: Int {
-        Int(max(80, min(360, kokoroChunkCharacters)).rounded())
+        Int(max(80, min(140, kokoroChunkCharacters)).rounded())
     }
 
     var kokoroSkipForwardMinimumDistance: Int {
@@ -1227,7 +1255,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var currentChapter: Chapter? {
-        selectedItem.chapters.last { $0.percent <= snapshot.progressPercent } ?? selectedItem.chapters.first
+        selectedItem.chapters.last { $0.percent <= snapshot.sourceProgressPercent } ?? selectedItem.chapters.first
     }
 
     private func run(_ operation: (SessionEngine) throws -> Void) {
@@ -1412,7 +1440,11 @@ final class Gate1AppModel: ObservableObject {
             )
         }
         #endif
-        diagnostics["sessionTTS"] = "System speech"
+        if ttsMode == "kokoro" {
+            diagnostics["sessionTTS"] = "Kokoro unavailable in this build; using system speech"
+        } else {
+            diagnostics["sessionTTS"] = "System speech"
+        }
         return SystemSpeechPlaybackClient()
     }
 

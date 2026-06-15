@@ -28,6 +28,12 @@ public final class SessionEngine {
         var audioOffset: Int
     }
 
+    private struct PlaybackProgress {
+        var sourcePercent: Int
+        var currentPercent: Int
+        var chapterTitle: String?
+    }
+
     public init(
         profile: RuntimeCapabilityProfile,
         repository: SessionRepository,
@@ -232,6 +238,28 @@ public final class SessionEngine {
             try playCurrentTarget(session)
         }
         publish(status: snapshot.status, phase: session.phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func playSourceFromBeginning() throws -> SessionSnapshot {
+        try requirePlayback("playSourceFromBeginning")
+        guard var session = currentSession else {
+            throw SessionKitError.invalidCommandForState("playSourceFromBeginning")
+        }
+        if currentItem?.id != session.itemId {
+            currentItem = try repository.loadItem(id: session.itemId)
+        }
+        currentMap = try repository.loadListeningMap(itemId: session.itemId)
+        session.currentTargetType = .itemTextTTS
+        session.currentTargetId = session.itemId
+        session.phase = .itemPlayback
+        session.position = Position(charOffset: 0, chapterId: currentMap?.chapters.first?.id)
+        session.completionPercent = 0
+        currentSession = session
+        try repository.saveSession(session)
+        try playCurrentTarget(session)
+        publish(status: .playing, phase: .itemPlayback)
         return snapshot
     }
 
@@ -747,10 +775,42 @@ public final class SessionEngine {
         snapshot.targetId = session.currentTargetId
         snapshot.title = currentItem?.title
         snapshot.progressPercent = session.completionPercent
+        let progress = playbackProgress(for: session)
+        snapshot.sourceProgressPercent = progress.sourcePercent
+        snapshot.currentPlaybackProgressPercent = progress.currentPercent
         snapshot.playbackRate = session.playbackRate
-        snapshot.chapterTitle = currentMap?.chapters.first(where: { $0.id == session.position.chapterId })?.title ?? currentItem?.title
+        snapshot.chapterTitle = progress.chapterTitle ?? currentItem?.title
         snapshot.activeInterjectionCount = (try? repository.loadInterjections(sessionId: session.id).filter { $0.status == "active" }.count) ?? snapshot.activeInterjectionCount
         snapshot.pendingAiJobCount = (try? repository.loadAIJobs(sessionId: session.id).filter { $0.status != "complete" }.count) ?? snapshot.pendingAiJobCount
+    }
+
+    private func playbackProgress(for session: Session) -> PlaybackProgress {
+        let sourcePercent = session.completionPercent
+        switch session.currentTargetType {
+        case .itemTextTTS:
+            let currentPercent: Int
+            if let offset = audio.currentCharOffset(),
+               let text = try? playbackText(for: session),
+               !text.isEmpty {
+                currentPercent = percent(for: max(0, min(offset, text.count)), text: text)
+            } else {
+                currentPercent = session.completionPercent
+            }
+            let title = currentMap?.chapters.first(where: { $0.id == session.position.chapterId })?.title ?? currentItem?.title
+            return PlaybackProgress(sourcePercent: sourcePercent, currentPercent: currentPercent, chapterTitle: title)
+        case .summaryTurnTTS, .assistantTurnTTS:
+            guard let turn = try? repository.loadTurns(sessionId: session.id).first(where: { $0.id == session.currentTargetId }) else {
+                return PlaybackProgress(sourcePercent: sourcePercent, currentPercent: 0, chapterTitle: currentItem?.title)
+            }
+            let playable = playableText(for: turn)
+            let audioOffset = audio.currentCharOffset() ?? turnAudioOffset(for: turn, responseOffset: session.position.charOffset)
+            let currentPercent = playable.isEmpty ? 0 : percent(for: max(0, min(audioOffset, playable.count)), text: playable)
+            let responseOffset = turnResponseOffset(for: turn, audioOffset: audioOffset)
+            let title = turn.chapters?.last(where: { $0.startChar <= responseOffset })?.title ?? turnTitle(for: turn)
+            return PlaybackProgress(sourcePercent: sourcePercent, currentPercent: currentPercent, chapterTitle: title)
+        case .transcriptBackedMedia, .browserOwnedMedia:
+            return PlaybackProgress(sourcePercent: sourcePercent, currentPercent: sourcePercent, chapterTitle: currentItem?.title)
+        }
     }
 
     private func require(_ command: String, category: String, capabilities: [String]) throws {
@@ -946,6 +1006,13 @@ public final class SessionEngine {
         return summary.count + 2 + responseOffset
     }
 
+    private func turnResponseOffset(for turn: ConversationTurn, audioOffset: Int) -> Int {
+        let summary = turn.summary?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let text = turn.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !summary.isEmpty, !text.isEmpty else { return audioOffset }
+        return max(0, audioOffset - summary.count - 2)
+    }
+
     private func playbackText(for session: Session) throws -> String {
         switch session.currentTargetType {
         case .itemTextTTS, .transcriptBackedMedia, .browserOwnedMedia:
@@ -982,6 +1049,27 @@ public final class SessionEngine {
             return ""
         }
         return "Overview. \(overview)\n\n"
+    }
+
+    private func turnTitle(for turn: ConversationTurn) -> String {
+        switch turn.turnType {
+        case "interjection_summary":
+            return "Interjection Summary \(turnSequenceNumber(turn.id) ?? 1)"
+        case "assistant_response":
+            if let number = turnSequenceNumber(turn.id) {
+                return "AI Response \(number)"
+            }
+            return "AI Response"
+        case "user_response":
+            return "Follow-up"
+        default:
+            return turn.turnType.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    private func turnSequenceNumber(_ id: String) -> Int? {
+        guard let raw = id.split(separator: "-").last else { return nil }
+        return Int(raw)
     }
 
     private func itemSourceOffset(forAudioOffset audioOffset: Int) -> Int {
