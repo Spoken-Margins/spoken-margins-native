@@ -528,6 +528,11 @@ private struct PlaybackScreen: View {
         }
     }
 
+    private var isUITesting: Bool {
+        ProcessInfo.processInfo.arguments.contains("--ui-testing")
+            || ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TESTING"] == "1"
+    }
+
     private var watchSurface: some View {
         VStack(spacing: 18) {
             VStack(spacing: 8) {
@@ -541,6 +546,10 @@ private struct PlaybackScreen: View {
                 Text(playbackProgressLabel)
                     .font(.subheadline)
                     .foregroundStyle(AppColors.watchSecondary)
+            }
+
+            if isUITesting {
+                gate2CompactValidation
             }
 
             HStack(spacing: 16) {
@@ -646,9 +655,6 @@ private struct PlaybackScreen: View {
                 .accessibilityIdentifier("playback.discuss.button")
             }
 
-            if ProcessInfo.processInfo.arguments.contains("--ui-testing") {
-                gate2CompactValidation
-            }
         }
         .padding(24)
         .frame(maxWidth: 430)

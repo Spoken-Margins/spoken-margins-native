@@ -7,6 +7,7 @@ final class Gate1FlowUITests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication()
         app.launchArguments = ["--ui-testing"]
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TESTING"] = "1"
         app.launch()
     }
 
