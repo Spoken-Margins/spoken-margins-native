@@ -701,8 +701,8 @@ private struct PlaybackScreen: View {
                         } label: {
                             TimelineRow(
                                 percent: "\(interjection.roughPercent)%",
-                                title: interjection.displayText ?? interjection.transcript ?? interjection.audioStatus,
-                                subtitle: "\(interjection.targetType.rawValue) · \(interjection.transcriptionStatus)"
+                                title: "Interjection",
+                                subtitle: interjectionPreview(interjection)
                             )
                         }
                         .buttonStyle(.plain)
@@ -1288,6 +1288,7 @@ private struct TimelineRow: View {
                     Text(subtitle)
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
+                        .lineLimit(3)
                 }
             }
         }
@@ -1326,6 +1327,22 @@ private func turnTitle(_ turn: ConversationTurn) -> String {
     default:
         return turn.turnType.replacingOccurrences(of: "_", with: " ").capitalized
     }
+}
+
+private func interjectionPreview(_ interjection: Interjection) -> String {
+    if let displayText = interjection.displayText?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !displayText.isEmpty {
+        return displayText
+    }
+    if let cleaned = interjection.cleanedTranscript?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !cleaned.isEmpty {
+        return cleaned
+    }
+    if let transcript = interjection.transcript?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !transcript.isEmpty {
+        return transcript
+    }
+    return interjection.transcriptionStatus
 }
 
 private func turnSequenceNumber(_ id: String) -> Int? {

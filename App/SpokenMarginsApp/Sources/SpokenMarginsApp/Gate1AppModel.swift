@@ -99,7 +99,7 @@ final class Gate1AppModel: ObservableObject {
     private var activeItemId = "item-pill"
     private var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-4.1-mini"
     private var playbackProgressTask: Task<Void, Never>?
-    private var pendingAutoPlayTurnId: String?
+    private var pendingAutoPlayTurnIds: [String] = []
     private let transcriptionClient = SystemSpeechTranscriptionClient()
     #if canImport(AVFoundation)
     private let speechPreviewSynthesizer = AVSpeechSynthesizer()
@@ -478,7 +478,7 @@ final class Gate1AppModel: ObservableObject {
 
     func jumpToChapter(_ chapter: Chapter) {
         stopSpeechPreviews()
-        pendingAutoPlayTurnId = nil
+        clearPendingAutoPlayTurns()
         run { engine in
             if !hasActiveSession {
                 snapshot = try engine.startSession(itemId: activeItemId)
@@ -492,7 +492,7 @@ final class Gate1AppModel: ObservableObject {
 
     func playSourceFromBeginning() {
         stopSpeechPreviews()
-        pendingAutoPlayTurnId = nil
+        clearPendingAutoPlayTurns()
         run { engine in
             if !hasActiveSession {
                 snapshot = try engine.startSession(itemId: activeItemId)
@@ -699,7 +699,7 @@ final class Gate1AppModel: ObservableObject {
 
     func jumpToTurnChapter(turn: ConversationTurn, chapter: Chapter) {
         stopSpeechPreviews()
-        pendingAutoPlayTurnId = nil
+        clearPendingAutoPlayTurns()
         run { engine in
             snapshot = try engine.jumpToTurnChapter(turnId: turn.id, chapterId: chapter.id)
             refreshSelectedItem()
@@ -709,8 +709,14 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func playTurn(_ turnId: String, engine: SessionEngine) throws {
+        try playTurn(turnId, engine: engine, clearsPendingQueue: true)
+    }
+
+    private func playTurn(_ turnId: String, engine: SessionEngine, clearsPendingQueue: Bool) throws {
         stopSpeechPreviews()
-        pendingAutoPlayTurnId = nil
+        if clearsPendingQueue {
+            clearPendingAutoPlayTurns()
+        }
         snapshot = try engine.playTurn(turnId: turnId)
         refreshSelectedItem()
         screen = .playback
@@ -719,24 +725,24 @@ final class Gate1AppModel: ObservableObject {
     private func autoPlayCompletedTurn(kind: String, turnId: String, engine: SessionEngine) throws {
         guard kind == "interjection_summary" || kind == "assistant_response" else { return }
         if shouldDeferGeneratedTurnPlayback(turnId: turnId) {
-            pendingAutoPlayTurnId = turnId
-            diagnostics["pendingAutoPlayTurnId"] = turnId
-            diagnostics["pendingAutoPlayReason"] = "waiting_for_current_audio"
+            enqueuePendingAutoPlayTurn(turnId)
             return
         }
         try playTurn(turnId, engine: engine)
     }
 
     private func playPendingTurnIfReady() {
-        guard let turnId = pendingAutoPlayTurnId,
+        guard let turnId = pendingAutoPlayTurnIds.first,
               let engine else {
             return
         }
-        guard snapshot.phase == .finished else {
+        guard shouldPlayPendingTurnNow(turnId: turnId) else {
             return
         }
         do {
-            try playTurn(turnId, engine: engine)
+            pendingAutoPlayTurnIds.removeFirst()
+            updatePendingAutoPlayDiagnostics(reason: "draining_queue")
+            try playTurn(turnId, engine: engine, clearsPendingQueue: false)
             reportSuccess("Playing generated response.")
         } catch {
             reportFailure(error, context: "Auto-play generated response failed")
@@ -745,6 +751,33 @@ final class Gate1AppModel: ObservableObject {
 
     private func shouldDeferGeneratedTurnPlayback(turnId: String) -> Bool {
         snapshot.status == .playing && snapshot.targetId != turnId
+    }
+
+    private func shouldPlayPendingTurnNow(turnId: String) -> Bool {
+        guard snapshot.targetId != turnId else { return false }
+        if snapshot.phase == .finished {
+            return true
+        }
+        return snapshot.status != .playing
+    }
+
+    private func enqueuePendingAutoPlayTurn(_ turnId: String) {
+        guard !pendingAutoPlayTurnIds.contains(turnId) else { return }
+        pendingAutoPlayTurnIds.append(turnId)
+        updatePendingAutoPlayDiagnostics(reason: "waiting_for_current_audio")
+    }
+
+    private func clearPendingAutoPlayTurns() {
+        pendingAutoPlayTurnIds.removeAll()
+        diagnostics["pendingAutoPlayTurnId"] = nil
+        diagnostics["pendingAutoPlayQueue"] = "0"
+        diagnostics["pendingAutoPlayReason"] = nil
+    }
+
+    private func updatePendingAutoPlayDiagnostics(reason: String) {
+        diagnostics["pendingAutoPlayTurnId"] = pendingAutoPlayTurnIds.first
+        diagnostics["pendingAutoPlayQueue"] = "\(pendingAutoPlayTurnIds.count)"
+        diagnostics["pendingAutoPlayReason"] = reason
     }
 
     private func latestPendingJob(kind: String) -> AIJob? {
@@ -1216,7 +1249,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var interjectionButtonTitle: String {
-        snapshot.phase == .finished || snapshot.progressPercent >= 100 || selectedItem.turns.contains(where: { $0.turnType == "interjection_summary" }) ? "Add Addendum" : "Interject"
+        "Interject"
     }
 
     var speechVoiceDescription: String {
@@ -1507,13 +1540,11 @@ final class Gate1AppModel: ObservableObject {
                         snapshot = try engine.aiJobCompleted(turnId: turnId)
                         refreshSelectedItem()
                         if shouldDeferPlayback {
-                            pendingAutoPlayTurnId = turnId
-                            diagnostics["pendingAutoPlayTurnId"] = turnId
-                            diagnostics["pendingAutoPlayReason"] = "waiting_for_current_audio"
+                            enqueuePendingAutoPlayTurn(turnId)
                         } else {
                             try autoPlayCompletedTurn(kind: kind, turnId: turnId, engine: engine)
                         }
-                        reportSuccess(pendingAutoPlayTurnId == turnId ? "Provider response saved. Playback will start when the item finishes." : "Provider response saved.")
+                        reportSuccess(pendingAutoPlayTurnIds.contains(turnId) ? "Provider response saved. Playback will start when the current audio finishes." : "Provider response saved.")
                     } catch {
                         reportFailure(error, context: "Provider response persistence failed")
                     }
