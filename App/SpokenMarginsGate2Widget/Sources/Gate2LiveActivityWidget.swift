@@ -40,7 +40,7 @@ private struct Gate2LiveActivityView: View {
     let state: Gate2LiveActivityAttributes.ContentState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(state.title)
@@ -50,7 +50,7 @@ private struct Gate2LiveActivityView: View {
                     Text(state.chapterTitle)
                         .font(.caption)
                         .foregroundStyle(.white.opacity(0.78))
-                        .lineLimit(2)
+                        .lineLimit(1)
                 }
                 Spacer()
                 Text(state.isRecording ? "REC" : state.status.uppercased())
@@ -62,18 +62,18 @@ private struct Gate2LiveActivityView: View {
                 .tint(.green)
 
             HStack(spacing: 16) {
-                CompactRoundIntentButton(command: "skipBack", systemImage: "gobackward.15", size: 58)
+                CompactRoundIntentButton(command: "skipBack", systemImage: "gobackward.15", size: 56)
                 CompactPlayPauseButton(
                     command: "togglePlayPause",
                     isPlaying: state.status == "playing",
                     progressPercent: state.progressPercent
                 )
-                CompactRoundIntentButton(command: "skipForward", systemImage: "goforward.15", size: 58)
+                CompactRoundIntentButton(command: "skipForward", systemImage: "goforward.15", size: 56)
                 Spacer()
                 Link(destination: Gate2CompactCommandURL.url(command: "beginInterjection")) {
                     Image(systemName: state.isRecording ? "checkmark" : "mic.fill")
                         .font(.title2.weight(.semibold))
-                        .frame(width: 58, height: 58)
+                        .frame(width: 56, height: 56)
                         .foregroundStyle(.white)
                         .background(Color.white.opacity(0.16))
                         .clipShape(Circle())
@@ -89,15 +89,6 @@ private struct Gate2LiveActivityView: View {
                     systemImage: "sparkles"
                 )
 
-                Link(destination: Gate2CompactCommandURL.url(command: "beginInterjection")) {
-                    Label(state.isRecording ? "Recording" : "Interject", systemImage: state.isRecording ? "record.circle.fill" : "mic.fill")
-                }
-                .font(.caption.weight(.bold))
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .foregroundStyle(.black)
-                .background(Color(red: 0.94, green: 0.82, blue: 0.42))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-
                 CompactActionIntentButton(
                     command: Gate2CompactApplicationCommand.discussInterjections,
                     title: "Discuss",
@@ -105,7 +96,8 @@ private struct Gate2LiveActivityView: View {
                 )
             }
         }
-        .padding()
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
     }
 }
 
@@ -150,7 +142,7 @@ private struct CompactPlayPauseButton: View {
                     .padding(.leading, isPlaying ? 0 : 3)
             }
         }
-        .frame(width: 74, height: 74)
+        .frame(width: 70, height: 70)
         .contentShape(Circle())
     }
 }
@@ -164,7 +156,7 @@ private struct CompactActionIntentButton: View {
         Button(intent: Gate2CompactPlaybackIntent(command: command)) {
             Label(title, systemImage: systemImage)
                 .font(.caption.weight(.bold))
-                .frame(maxWidth: .infinity, minHeight: 44)
+                .frame(maxWidth: .infinity, minHeight: 40)
                 .foregroundStyle(.white)
                 .background(Color.white.opacity(0.16))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
