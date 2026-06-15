@@ -241,6 +241,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     public var sessionId: String?
     public var itemId: String?
     public var targetType: String?
+    public var targetId: String?
     public var status: PlaybackStatus
     public var phase: SessionPhase
     public var title: String?
@@ -265,6 +266,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         sessionId = nil
         itemId = nil
         targetType = nil
+        targetId = nil
         status = .idle
         phase = .idle
         title = nil

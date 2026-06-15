@@ -20,6 +20,7 @@ public protocol AudioPlaybackClient {
     func prepareSpeechText(_ text: String) throws -> String
     func play(targetId: String) throws
     func play(targetId: String, from charOffset: Int) throws
+    func currentCharOffset() -> Int?
     func pause() throws
     func stop() throws
 }
@@ -31,6 +32,10 @@ public extension AudioPlaybackClient {
 
     func stop() throws {
         try pause()
+    }
+
+    func currentCharOffset() -> Int? {
+        nil
     }
 }
 

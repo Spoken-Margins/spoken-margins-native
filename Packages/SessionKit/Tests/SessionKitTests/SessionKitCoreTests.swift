@@ -221,6 +221,30 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(audio.playedOffsets, [0, offsetBeforePause, offsetBeforePause])
     }
 
+    func testSkipForwardUsesCurrentAudioPositionWhenAvailable() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "timeline": ["chapter_timing"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two. Three. Four.", externalReference: nil, status: "ready")
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let audio = RecordingAudioClient()
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentOffset = 10
+        let snapshot = try engine.skipForward(unit: "sentence")
+
+        XCTAssertGreaterThanOrEqual(snapshot.progressPercent, 50)
+        XCTAssertEqual(try XCTUnwrap(engine.currentSession?.position.charOffset), 17)
+        XCTAssertEqual(audio.playedOffsets.last, 17)
+    }
+
     func testFinishInterjectionSchedulesTranscriptionAfterAudioIsSaved() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
@@ -273,6 +297,33 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(engine.snapshot.targetType, "assistant_turn_tts")
     }
 
+    func testInterjectionsOnAssistantTurnCanBeSummarizedAfterItemSummary() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts", "assistant_turn_tts"],
+                "interjection": ["record_audio"],
+                "ai": ["summarize_interjections"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two.", externalReference: nil, status: "ready")
+        let session = Session(id: "session-pill", itemId: item.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 0, playbackRate: 1)
+        let response = ConversationTurn(id: "turn-response-001", sessionId: session.id, role: "assistant", turnType: "assistant_response", status: "complete", summary: nil, text: "Assistant response text.", rawText: nil, sourceInterjectionIds: [])
+        let itemInterjection = Interjection(id: "ij-item", itemId: item.id, sessionId: session.id, targetType: .item, targetId: item.id, createdAt: Date(timeIntervalSince1970: 1), roughPercent: 0, anchor: Anchor(anchorType: .text, startChar: 0, endChar: 4, anchorBefore: "One.", anchorAfter: "Two."), audioPath: "item.m4a", audioStatus: "saved", transcriptionStatus: "transcribed", transcript: "item note", cleanedTranscript: nil, displayText: "item note", status: "active")
+        let turnInterjection = Interjection(id: "ij-turn", itemId: item.id, sessionId: session.id, targetType: .assistantTurn, targetId: response.id, createdAt: Date(timeIntervalSince1970: 2), roughPercent: 0, anchor: Anchor(anchorType: .turn, startChar: 0, endChar: 8, anchorBefore: "Assistant response text.", anchorAfter: ""), audioPath: "turn.m4a", audioStatus: "saved", transcriptionStatus: "transcribed", transcript: "turn note", cleanedTranscript: nil, displayText: "turn note", status: "active")
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session], interjections: [itemInterjection.id: itemInterjection, turnInterjection.id: turnInterjection], turns: [response.id: response])
+        let engine = SessionEngine(profile: profile, repository: repo)
+
+        _ = try engine.generateInterjectionSummary(scope: SummaryScope(targetType: "item", sessionId: session.id))
+        _ = try engine.generateInterjectionSummary(scope: SummaryScope(targetType: "turn", sessionId: session.id, turnId: response.id))
+
+        let summaries = try repo.loadTurns(sessionId: session.id).filter { $0.turnType == "interjection_summary" }.sorted { $0.id < $1.id }
+        XCTAssertEqual(summaries.map(\.sourceInterjectionIds), [["ij-item"], ["ij-turn"]])
+        XCTAssertEqual(summaries.map(\.id), ["turn-summary-001", "turn-summary-002"])
+    }
+
     func testCancelInterjectionDoesNotCreateInterjectionAndResumes() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
@@ -302,6 +353,7 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     var playedOffsets: [Int] = []
     var preparedTexts: [String] = []
     var pauseCount = 0
+    var currentOffset: Int?
 
     func prepareSpeechText(_ text: String) throws -> String {
         preparedTexts.append(text)
@@ -320,6 +372,10 @@ private final class RecordingAudioClient: AudioPlaybackClient {
 
     func pause() throws {
         pauseCount += 1
+    }
+
+    func currentCharOffset() -> Int? {
+        currentOffset
     }
 }
 

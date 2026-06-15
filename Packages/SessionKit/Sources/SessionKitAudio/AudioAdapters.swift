@@ -9,7 +9,27 @@ import AVFoundation
 import Speech
 #endif
 
-public final class SystemSpeechPlaybackClient: AudioPlaybackClient {
+public struct SpeechVoiceOption: Identifiable, Hashable, Sendable {
+    public let id: String
+    public let name: String
+    public let language: String
+    public let quality: String
+
+    public init(id: String, name: String, language: String, quality: String) {
+        self.id = id
+        self.name = name
+        self.language = language
+        self.quality = quality
+    }
+}
+
+public enum SpeechPreviewMode: Sendable {
+    case spokenContent
+    case appVoice(voiceIdentifier: String?, rate: Float)
+    case assistiveTechnology
+}
+
+public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unchecked Sendable {
     #if canImport(AVFoundation)
     private let synthesizer = AVSpeechSynthesizer()
     #endif
@@ -17,9 +37,53 @@ public final class SystemSpeechPlaybackClient: AudioPlaybackClient {
     private var preparedSpeechText = ""
     private var lastTargetId: String?
     private var lastStartOffset = 0
+    private var currentOffset: Int?
     private var paused = false
+    private let voiceIdentifier: String?
+    private let speechRate: Float
+    private let readsSpeechSettingsAtPlayback: Bool
 
-    public init() {}
+    public override init() {
+        self.voiceIdentifier = nil
+        self.speechRate = AVSpeechUtteranceDefaultSpeechRate
+        self.readsSpeechSettingsAtPlayback = true
+        super.init()
+        #if canImport(AVFoundation)
+        synthesizer.delegate = self
+        #endif
+    }
+
+    public init(voiceIdentifier: String? = nil, speechRate: Float = AVSpeechUtteranceDefaultSpeechRate) {
+        self.voiceIdentifier = voiceIdentifier?.isEmpty == true ? nil : voiceIdentifier
+        self.speechRate = speechRate
+        self.readsSpeechSettingsAtPlayback = false
+        super.init()
+        #if canImport(AVFoundation)
+        synthesizer.delegate = self
+        #endif
+    }
+
+    public static func availableVoiceOptions() -> [SpeechVoiceOption] {
+        #if canImport(AVFoundation)
+        return AVSpeechSynthesisVoice.speechVoices()
+            .sorted { lhs, rhs in
+                if lhs.language == rhs.language {
+                    return lhs.name < rhs.name
+                }
+                return lhs.language < rhs.language
+            }
+            .map { voice in
+                SpeechVoiceOption(
+                    id: voice.identifier,
+                    name: voice.name,
+                    language: voice.language,
+                    quality: voiceQualityName(voice)
+                )
+            }
+        #else
+        return []
+        #endif
+    }
 
     public func prepareSpeechText(_ text: String) throws -> String {
         preparedSourceText = text
@@ -50,11 +114,10 @@ public final class SystemSpeechPlaybackClient: AudioPlaybackClient {
         try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
         try AVAudioSession.sharedInstance().setActive(true)
         #endif
-        let utterance = AVSpeechUtterance(string: textToSpeak)
-        utterance.prefersAssistiveTechnologySettings = true
-        utterance.voice = preferredVoice()
+        let utterance = makeUtterance(textToSpeak, mode: playbackSpeechPreviewMode())
         lastTargetId = targetId
         lastStartOffset = charOffset
+        currentOffset = charOffset
         paused = false
         synthesizer.speak(utterance)
         #else
@@ -64,10 +127,47 @@ public final class SystemSpeechPlaybackClient: AudioPlaybackClient {
         #endif
     }
 
+    public func preview(_ text: String, mode: SpeechPreviewMode) throws {
+        #if canImport(AVFoundation)
+        let textToSpeak = SpeechTextNormalizer.normalize(text)
+        guard !textToSpeak.isEmpty else {
+            throw SessionKitError.invalidCommandForState("preview_text_empty")
+        }
+        if synthesizer.isSpeaking {
+            synthesizer.stopSpeaking(at: .immediate)
+        }
+        #if os(iOS)
+        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try AVAudioSession.sharedInstance().setActive(true)
+        #endif
+        synthesizer.speak(makeUtterance(textToSpeak, mode: mode))
+        #else
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw SessionKitError.invalidCommandForState("preview_text_empty")
+        }
+        #endif
+    }
+
+    public func previewSpokenContent(_ text: String) throws {
+        try preview(text, mode: .spokenContent)
+    }
+
+    public func previewAppVoice(_ text: String, voiceIdentifier: String?, rate: Float) throws {
+        try preview(text, mode: .appVoice(voiceIdentifier: voiceIdentifier, rate: rate))
+    }
+
+    public func previewAssistiveTechnology(_ text: String) throws {
+        try preview(text, mode: .assistiveTechnology)
+    }
+
     public func pause() throws {
         #if canImport(AVFoundation)
         paused = synthesizer.pauseSpeaking(at: .word)
         #endif
+    }
+
+    public func currentCharOffset() -> Int? {
+        currentOffset
     }
 
     public func stop() throws {
@@ -87,27 +187,72 @@ public final class SystemSpeechPlaybackClient: AudioPlaybackClient {
         return SpeechTextNormalizer.normalize(String(preparedSourceText[start...]))
     }
 
-    #if canImport(AVFoundation)
-    private func preferredVoice() -> AVSpeechSynthesisVoice? {
-        let preferredLanguage = Locale.preferredLanguages.first ?? Locale.current.identifier
-        let languagePrefix = String(preferredLanguage.prefix(2)).lowercased()
-        let voices = AVSpeechSynthesisVoice.speechVoices()
-        let matching = voices.filter { voice in
-            voice.language.lowercased().hasPrefix(languagePrefix)
+    private func currentSpeechSettings() -> (voiceIdentifier: String?, rate: Float) {
+        guard readsSpeechSettingsAtPlayback else {
+            return (voiceIdentifier, speechRate)
         }
-        let candidates = matching.isEmpty ? voices : matching
-        return candidates.first { voice in
-            voice.name.localizedCaseInsensitiveContains("Siri") ||
-            voice.identifier.localizedCaseInsensitiveContains("siri")
-        } ?? candidates.first { voice in
-            if #available(iOS 16.0, macOS 13.0, watchOS 9.0, *) {
-                return voice.quality == .premium || voice.quality == .enhanced
+        let storedVoice = UserDefaults.standard.string(forKey: "speechVoiceIdentifier")
+        let storedRate = UserDefaults.standard.double(forKey: "speechRate")
+        return (
+            storedVoice?.isEmpty == true ? nil : storedVoice,
+            storedRate == 0 ? AVSpeechUtteranceDefaultSpeechRate : Float(storedRate)
+        )
+    }
+
+    #if canImport(AVFoundation)
+    private func playbackSpeechPreviewMode() -> SpeechPreviewMode {
+        let speechSettings = currentSpeechSettings()
+        if readsSpeechSettingsAtPlayback, speechSettings.voiceIdentifier == nil {
+            return .spokenContent
+        }
+        return .appVoice(voiceIdentifier: speechSettings.voiceIdentifier, rate: speechSettings.rate)
+    }
+
+    private func makeUtterance(_ text: String, mode: SpeechPreviewMode) -> AVSpeechUtterance {
+        let utterance = AVSpeechUtterance(string: text)
+        switch mode {
+        case .spokenContent:
+            break
+        case .appVoice(let voiceIdentifier, let rate):
+            utterance.rate = rate
+            if let voiceIdentifier,
+               let configuredVoice = AVSpeechSynthesisVoice(identifier: voiceIdentifier) {
+                utterance.voice = configuredVoice
             }
-            return false
-        } ?? AVSpeechSynthesisVoice(language: preferredLanguage)
+        case .assistiveTechnology:
+            utterance.prefersAssistiveTechnologySettings = true
+        }
+        return utterance
     }
     #endif
+
 }
+
+#if canImport(AVFoundation)
+private func voiceQualityName(_ voice: AVSpeechSynthesisVoice) -> String {
+    if #available(iOS 16.0, macOS 13.0, watchOS 9.0, *) {
+        switch voice.quality {
+        case .default: return "Default"
+        case .enhanced: return "Enhanced"
+        case .premium: return "Premium"
+        @unknown default: return "Unknown"
+        }
+    }
+    return "Default"
+}
+#endif
+
+#if canImport(AVFoundation)
+extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
+    public func speechSynthesizer(
+        _ synthesizer: AVSpeechSynthesizer,
+        willSpeakRangeOfSpeechString characterRange: NSRange,
+        utterance: AVSpeechUtterance
+    ) {
+        currentOffset = lastStartOffset + max(0, characterRange.location)
+    }
+}
+#endif
 
 public final class SystemRecordingClient: RecordingClient {
     #if canImport(AVFoundation)

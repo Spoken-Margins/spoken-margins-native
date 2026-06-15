@@ -135,15 +135,21 @@ public final class SessionEngine {
         guard var session = currentSession, let item = currentItem else {
             throw SessionKitError.invalidCommandForState("skipForward")
         }
+        session = syncSessionPositionFromAudio(session, item: item)
         session.position.charOffset = nextBoundary(after: session.position.charOffset, unit: unit, text: item.text ?? "")
         session.completionPercent = percent(for: session.position.charOffset, text: item.text ?? "")
         session.position.chapterId = chapterId(for: session.position.charOffset)
+        if session.position.charOffset >= (item.text ?? "").count {
+            session.phase = .finished
+        }
         currentSession = session
         try repository.saveSession(session)
-        if snapshot.status == .playing {
+        if snapshot.status == .playing, session.position.charOffset < (item.text ?? "").count {
             try playCurrentTarget(session)
+        } else if session.position.charOffset >= (item.text ?? "").count {
+            try audio.stop()
         }
-        publish(status: snapshot.status, phase: session.phase)
+        publish(status: session.phase == .finished ? .paused : snapshot.status, phase: session.phase)
         return snapshot
     }
 
@@ -153,9 +159,13 @@ public final class SessionEngine {
         guard var session = currentSession, let item = currentItem else {
             throw SessionKitError.invalidCommandForState("skipBack")
         }
+        session = syncSessionPositionFromAudio(session, item: item)
         session.position.charOffset = previousBoundary(before: session.position.charOffset, unit: unit, text: item.text ?? "")
         session.completionPercent = percent(for: session.position.charOffset, text: item.text ?? "")
         session.position.chapterId = chapterId(for: session.position.charOffset)
+        if session.phase == .finished {
+            session.phase = .itemPlayback
+        }
         currentSession = session
         try repository.saveSession(session)
         if snapshot.status == .playing {
@@ -275,8 +285,10 @@ public final class SessionEngine {
         lastSummaryCandidates = try selectSummaryCandidates(scope: scope)
         let shouldCall = aiProvider.shouldStartProviderCall(profile: profile, kind: "interjection_summary")
         let status = shouldCall ? "pending" : "deferred"
+        let summaryIndex = try repository.loadTurns(sessionId: session.id).filter { $0.turnType == "interjection_summary" }.count + 1
+        let turnId = "turn-summary-\(String(format: "%03d", summaryIndex))"
         let turn = ConversationTurn(
-            id: "turn-summary-001",
+            id: turnId,
             sessionId: session.id,
             role: "assistant",
             turnType: "interjection_summary",
@@ -287,7 +299,7 @@ public final class SessionEngine {
             sourceInterjectionIds: lastSummaryCandidates.map(\.id)
         )
         try repository.saveTurn(turn)
-        let job = aiJob(id: "job-interjection-summary-001", kind: "interjection_summary", session: session, turnId: turn.id, status: status)
+        let job = aiJob(id: "job-interjection-summary-\(String(format: "%03d", summaryIndex))", kind: "interjection_summary", session: session, turnId: turn.id, status: status)
         try repository.saveAIJob(job)
         snapshot.pendingAiJobKind = job.kind
         snapshot.pendingAiJobStatus = job.status
@@ -620,6 +632,7 @@ public final class SessionEngine {
         snapshot.sessionId = session.id
         snapshot.itemId = session.itemId
         snapshot.targetType = session.currentTargetType.rawValue
+        snapshot.targetId = session.currentTargetId
         snapshot.title = currentItem?.title
         snapshot.progressPercent = session.completionPercent
         snapshot.playbackRate = session.playbackRate
@@ -758,6 +771,20 @@ public final class SessionEngine {
         try audio.play(targetId: session.currentTargetId, from: session.position.charOffset)
     }
 
+    private func syncSessionPositionFromAudio(_ session: Session, item: Item) -> Session {
+        guard session.currentTargetType == .itemTextTTS,
+              let offset = audio.currentCharOffset(),
+              offset >= 0,
+              offset <= (item.text ?? "").count else {
+            return session
+        }
+        var updated = session
+        updated.position.charOffset = max(updated.position.charOffset, offset)
+        updated.completionPercent = percent(for: updated.position.charOffset, text: item.text ?? "")
+        updated.position.chapterId = chapterId(for: updated.position.charOffset)
+        return updated
+    }
+
     private func playbackText(for session: Session) throws -> String {
         switch session.currentTargetType {
         case .itemTextTTS, .transcriptBackedMedia, .browserOwnedMedia:
@@ -849,8 +876,14 @@ public final class SessionEngine {
 
     private func nextBoundary(after offset: Int, unit: String, text: String) -> Int {
         guard offset < text.count else { return text.count }
+        if unit == "paragraph" {
+            return nextParagraphBoundary(after: offset, text: text)
+        }
+        if unit == "section" {
+            return min(text.count, offset + max(500, text.count / 10))
+        }
         let chars = Array(text)
-        let boundaryCharacters: Set<Character> = unit == "paragraph" ? ["\n"] : [".", "?", "!"]
+        let boundaryCharacters: Set<Character> = [".", "?", "!"]
         for index in min(offset + 1, chars.count)..<chars.count where boundaryCharacters.contains(chars[index]) {
             return min(chars.count, index + 1 + consumeSpaces(chars, from: index + 1))
         }
@@ -859,11 +892,43 @@ public final class SessionEngine {
 
     private func previousBoundary(before offset: Int, unit: String, text: String) -> Int {
         guard offset > 0 else { return 0 }
+        if unit == "paragraph" {
+            return previousParagraphBoundary(before: offset, text: text)
+        }
+        if unit == "section" {
+            return max(0, offset - max(500, text.count / 10))
+        }
         let chars = Array(text)
-        let boundaryCharacters: Set<Character> = unit == "paragraph" ? ["\n"] : [".", "?", "!"]
+        let boundaryCharacters: Set<Character> = [".", "?", "!"]
         var index = min(offset - 1, chars.count - 1)
         while index > 0 {
             if boundaryCharacters.contains(chars[index]) {
+                return min(chars.count, index + 1 + consumeSpaces(chars, from: index + 1))
+            }
+            index -= 1
+        }
+        return 0
+    }
+
+    private func nextParagraphBoundary(after offset: Int, text: String) -> Int {
+        let chars = Array(text)
+        guard offset < chars.count else { return text.count }
+        var index = min(offset + 1, chars.count - 1)
+        while index < chars.count {
+            if chars[index] == "\n" {
+                return min(chars.count, index + 1 + consumeSpaces(chars, from: index + 1))
+            }
+            index += 1
+        }
+        return text.count
+    }
+
+    private func previousParagraphBoundary(before offset: Int, text: String) -> Int {
+        let chars = Array(text)
+        guard offset > 0, !chars.isEmpty else { return 0 }
+        var index = min(offset - 1, chars.count - 1)
+        while index > 0 {
+            if chars[index] == "\n" {
                 return min(chars.count, index + 1 + consumeSpaces(chars, from: index + 1))
             }
             index -= 1

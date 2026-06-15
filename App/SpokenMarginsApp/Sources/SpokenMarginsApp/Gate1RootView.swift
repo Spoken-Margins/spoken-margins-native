@@ -303,9 +303,10 @@ private struct ItemScreen: View {
                 Button {
                     model.generateListeningMap()
                 } label: {
-                    Label("Generate Listening Map", systemImage: "sparkles")
+                    Label(model.isGeneratingListeningMap ? "Generating Listening Map" : "Generate Listening Map", systemImage: "sparkles")
                 }
                 .buttonStyle(SecondaryButtonStyle())
+                .disabled(model.isGeneratingListeningMap)
                 .accessibilityIdentifier("item.generateMap.button")
                 Text("Listening Map JSON")
                     .font(.subheadline.weight(.semibold))
@@ -345,9 +346,10 @@ private struct ItemScreen: View {
                         Button {
                             model.generateListeningMap()
                         } label: {
-                            Label("Generate Listening Map", systemImage: "sparkles")
+                            Label(model.isGeneratingListeningMap ? "Generating Listening Map" : "Generate Listening Map", systemImage: "sparkles")
                         }
                         .buttonStyle(SecondaryButtonStyle())
+                        .disabled(model.isGeneratingListeningMap)
                         .accessibilityIdentifier("chapters.generateMap.button")
                     }
                 }
@@ -426,7 +428,7 @@ private struct ItemScreen: View {
 private struct PlaybackScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @State private var followUp = "Can you respond to that objection?"
+    @State private var followUp = "Can you respond to my interjection?"
     @State private var selectedInterjection: Interjection?
     @FocusState private var followUpFocused: Bool
 
@@ -467,6 +469,18 @@ private struct PlaybackScreen: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack {
+                        if model.snapshot.isRecording {
+                            Button(action: model.finishInterjection) {
+                                Image(systemName: "checkmark")
+                            }
+                            .accessibilityLabel("Done Recording")
+                            .accessibilityIdentifier("interjection.toolbar.done")
+                            Button(action: model.cancelInterjection) {
+                                Image(systemName: "xmark")
+                            }
+                            .accessibilityLabel("Cancel Recording")
+                            .accessibilityIdentifier("interjection.toolbar.cancel")
+                        }
                         Button(action: model.endSession) {
                             Image(systemName: "stop.fill")
                         }
@@ -546,6 +560,23 @@ private struct PlaybackScreen: View {
                 .font(.subheadline)
                 .foregroundStyle(AppColors.watchSecondary)
 
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Rate")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AppColors.watchSecondary)
+                    Spacer()
+                    Text(String(format: "%.2fx", model.speechRate))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(AppColors.watchSecondary)
+                }
+                Slider(value: $model.speechRate, in: 0.35...0.65, step: 0.01)
+                    .accessibilityIdentifier("playback.speechRate.slider")
+                    .onChange(of: model.speechRate) { _, _ in
+                        model.saveSpeechSettings()
+                    }
+            }
+
             if model.snapshot.isRecording {
                 VStack(spacing: 12) {
                     Label("Recording", systemImage: "record.circle.fill")
@@ -570,18 +601,22 @@ private struct PlaybackScreen: View {
                             .frame(width: 44, height: 52)
                     }
                     .buttonStyle(WatchSecondaryButtonStyle())
-                    .disabled(!model.hasActiveSession)
+                    .disabled(!model.canSummarizeInterjections)
+                    .accessibilityLabel("Summarize interjections")
                     .accessibilityIdentifier("playback.summary.button")
 
                     Button(action: model.beginInterjection) {
-                        Label(model.snapshot.phase == .finished ? "Add Addendum" : "Interject", systemImage: "mic")
+                        Label(model.interjectionButtonTitle, systemImage: "mic")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(InterjectButtonStyle())
                     .disabled(!model.hasActiveSession)
                     .accessibilityIdentifier("playback.interject.button")
                 }
-                Button(action: model.discuss) {
+                Button {
+                    followUpFocused = false
+                    model.discuss(followUp: followUp)
+                } label: {
                     Label("Discuss", systemImage: "play")
                 }
                 .buttonStyle(LightButtonStyle())
@@ -739,7 +774,7 @@ private struct SettingsScreen: View {
                         .autocorrectionDisabled()
                         .focused($focusedField, equals: .baseURL)
                         .accessibilityIdentifier("provider.baseURL.field")
-                    TextField("Model", text: $model.providerModel)
+                    TextField("Fallback Model", text: $model.providerModel)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .focused($focusedField, equals: .model)
@@ -764,13 +799,79 @@ private struct SettingsScreen: View {
                         .autocorrectionDisabled()
                         .focused($focusedField, equals: .apiKey)
                         .accessibilityIdentifier("provider.apiKey.field")
-                    Button("Save Provider Key", action: model.saveProviderSettings)
+                    Button("Save Provider Settings", action: model.saveProviderSettings)
                         .accessibilityIdentifier("provider.save.button")
                     Button("Probe Provider", action: model.probeProvider)
                         .accessibilityIdentifier("provider.probe.button")
                     LabeledContent("Probe", value: model.providerProbeStatus)
                 }
+                .onChange(of: model.providerBaseURL) { _, _ in model.settingsValueChanged() }
+                .onChange(of: model.providerModel) { _, _ in model.settingsValueChanged() }
+                .onChange(of: model.listeningMapModel) { _, _ in model.settingsValueChanged() }
+                .onChange(of: model.summaryModel) { _, _ in model.settingsValueChanged() }
+                .onChange(of: model.conversationModel) { _, _ in model.settingsValueChanged() }
                 Section("Validation") {
+                    Picker("Speech Voice", selection: $model.speechVoiceIdentifier) {
+                        Text("System Spoken Content Voice (Siri falls back)").tag("")
+                        ForEach(model.speechVoiceOptions) { voice in
+                            Text("\(voice.name) · \(voice.language) · \(voice.quality)")
+                                .tag(voice.id)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.speechVoice.picker")
+                    .onChange(of: model.speechVoiceIdentifier) { _, _ in
+                        model.settingsValueChanged()
+                        model.saveSpeechSettings()
+                    }
+                    VStack(alignment: .leading) {
+                        HStack {
+                            Text("Speaking Rate")
+                            Spacer()
+                            Text(String(format: "%.2fx", model.speechRate))
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
+                        Slider(value: $model.speechRate, in: 0.35...0.65, step: 0.01)
+                            .accessibilityIdentifier("settings.speechRate.slider")
+                    }
+                    .onChange(of: model.speechRate) { _, _ in
+                        model.settingsValueChanged()
+                        model.saveSpeechSettings()
+                    }
+                    VStack(alignment: .leading, spacing: 10) {
+                        Button {
+                            model.previewSpokenContentVoice()
+                        } label: {
+                            Label("Try Spoken Content", systemImage: "speaker.wave.2")
+                        }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .accessibilityIdentifier("settings.preview.spokenContent.button")
+
+                        Button {
+                            model.previewAppVoice()
+                        } label: {
+                            Label("Try App Voice", systemImage: "slider.horizontal.3")
+                        }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .accessibilityIdentifier("settings.preview.appVoice.button")
+
+                        Button {
+                            model.previewAssistiveTechnologyVoice()
+                        } label: {
+                            Label("Try Assistive Tech", systemImage: "accessibility")
+                        }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .accessibilityIdentifier("settings.preview.assistiveTech.button")
+                    }
+                    Picker("Skip Increment", selection: $model.skipUnit) {
+                        Text("Sentence").tag("sentence")
+                        Text("Paragraph").tag("paragraph")
+                        Text("Section").tag("section")
+                    }
+                    .accessibilityIdentifier("settings.skipUnit.picker")
+                    .onChange(of: model.skipUnit) { _, _ in
+                        model.settingsValueChanged()
+                        model.saveProviderSettings()
+                    }
                     Picker("Runtime Profile", selection: $model.selectedProfileId) {
                         Text("Phone/Tablet Online").tag("phone-tablet-online")
                         Text("Phone/Tablet Offline").tag("phone-tablet-offline")
@@ -828,6 +929,10 @@ private struct ExportScreen: View {
                             .buttonStyle(PrimaryButtonStyle())
                             .disabled(!model.hasActiveSession)
                             .accessibilityIdentifier("export.build.button")
+                        Button("Copy Plain Text", action: model.copyPlainTextExport)
+                            .buttonStyle(SecondaryButtonStyle())
+                            .disabled(model.exportPreview.isEmpty)
+                            .accessibilityIdentifier("export.copyPlainText.button")
                         Button("Item", action: { model.openItem(id: model.selectedItem.id) })
                             .buttonStyle(SecondaryButtonStyle())
                             .accessibilityIdentifier("export.item.button")

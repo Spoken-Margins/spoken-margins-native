@@ -4,6 +4,12 @@ import SessionKit
 import SessionKitAI
 import SessionKitAudio
 import SessionKitPersistence
+#if canImport(UIKit)
+import UIKit
+#endif
+#if canImport(AVFoundation)
+import AVFoundation
+#endif
 
 enum Gate1Screen: Hashable {
     case home
@@ -33,6 +39,19 @@ struct ItemDetailState {
     var turns: [ConversationTurn] = []
 }
 
+struct SpeechVoiceChoice: Identifiable, Hashable {
+    let id: String
+    let name: String
+    let language: String
+    let quality: String
+}
+
+private enum AppSpeechPreviewMode {
+    case spokenContent
+    case appVoice(voiceIdentifier: String?, rate: Float)
+    case assistiveTechnology
+}
+
 @MainActor
 final class Gate1AppModel: ObservableObject {
     @Published var screen: Gate1Screen = .home
@@ -47,11 +66,15 @@ final class Gate1AppModel: ObservableObject {
     @Published var importTitle = "Gate 1 Article With Links"
     @Published var importText = "Read the background at https://example.com/long/url before continuing. A labeled [reference](https://example.com/essay) should stay readable while raw URLs are skipped."
     @Published var listeningMapJSON = ""
+    @Published var isGeneratingListeningMap = false
     @Published var providerBaseURL = UserDefaults.standard.string(forKey: "providerBaseURL") ?? "https://api.openai.com/v1"
     @Published var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-4.1-mini"
     @Published var listeningMapModel = UserDefaults.standard.string(forKey: "listeningMapModel") ?? UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-4.1-mini"
     @Published var summaryModel = UserDefaults.standard.string(forKey: "summaryModel") ?? UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-4.1-mini"
     @Published var conversationModel = UserDefaults.standard.string(forKey: "conversationModel") ?? UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-4.1-mini"
+    @Published var skipUnit = UserDefaults.standard.string(forKey: "skipUnit") ?? "paragraph"
+    @Published var speechRate = UserDefaults.standard.double(forKey: "speechRate") == 0 ? 0.5 : UserDefaults.standard.double(forKey: "speechRate")
+    @Published var speechVoiceIdentifier = UserDefaults.standard.string(forKey: "speechVoiceIdentifier") ?? ""
     @Published var providerAPIKey = KeychainStore.load(service: "SpokenMargins", account: "OpenAICompatibleAPIKey") ?? ""
     @Published var providerProbeStatus = "Not checked"
     @Published var knownIssues = [
@@ -63,11 +86,37 @@ final class Gate1AppModel: ObservableObject {
     private var store: SQLiteSessionStore?
     private var activeItemId = "item-pill"
     private let transcriptionClient = SystemSpeechTranscriptionClient()
+    #if canImport(AVFoundation)
+    private let speechPreviewSynthesizer = AVSpeechSynthesizer()
+    #endif
+    let speechVoiceOptions = Gate1AppModel.availableSpeechVoiceOptions()
     private let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return encoder
     }()
+
+    private static func availableSpeechVoiceOptions() -> [SpeechVoiceChoice] {
+        #if canImport(AVFoundation)
+        return AVSpeechSynthesisVoice.speechVoices()
+            .sorted { lhs, rhs in
+                if lhs.language == rhs.language {
+                    return lhs.name < rhs.name
+                }
+                return lhs.language < rhs.language
+            }
+            .map { voice in
+                SpeechVoiceChoice(
+                    id: voice.identifier,
+                    name: voice.name,
+                    language: voice.language,
+                    quality: voiceQualityName(voice)
+                )
+            }
+        #else
+        return []
+        #endif
+    }
 
     func resetAndSeed() {
         do {
@@ -210,6 +259,8 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func generateListeningMap() {
+        guard !isGeneratingListeningMap else { return }
+        isGeneratingListeningMap = true
         guard !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             run { engine in
                 snapshot = try engine.generateListeningMap(itemId: activeItemId)
@@ -221,6 +272,7 @@ final class Gate1AppModel: ObservableObject {
                 diagnostics["lastListeningMapMode"] = "local_deterministic"
                 reportSuccess("Generated local Listening Map.")
             }
+            isGeneratingListeningMap = false
             return
         }
 
@@ -232,6 +284,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func generateProviderListeningMap() async {
+        defer { isGeneratingListeningMap = false }
         do {
             let store = try requireStore()
             var item = try store.loadItem(id: activeItemId)
@@ -375,7 +428,7 @@ final class Gate1AppModel: ObservableObject {
 
     func skipBack() {
         run { engine in
-            snapshot = try engine.skipBack(unit: "sentence")
+            snapshot = try engine.skipBack(unit: skipUnit)
             refreshSelectedItem()
             reportSuccess("Skipped back.")
         }
@@ -383,7 +436,7 @@ final class Gate1AppModel: ObservableObject {
 
     func skipForward() {
         run { engine in
-            snapshot = try engine.skipForward(unit: "sentence")
+            snapshot = try engine.skipForward(unit: skipUnit)
             refreshSelectedItem()
             reportSuccess("Skipped forward.")
         }
@@ -432,20 +485,22 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func summarize() {
+        guard canSummarizeInterjections else {
+            reportFailure("An interjection summary already exists for this session.")
+            return
+        }
         run { engine in
-            snapshot = try engine.generateInterjectionSummary(scope: SummaryScope(targetType: "item"))
-            submitProviderJobIfNeeded(kind: "interjection_summary", turnId: "turn-summary-001", messages: [summaryPrompt(interjections: engine.lastSummaryCandidates)])
+            snapshot = try engine.generateInterjectionSummary(scope: summaryScopeForCurrentTarget())
+            let turnId = latestPendingSummaryTurnId() ?? "turn-summary-001"
+            submitProviderJobIfNeeded(kind: "interjection_summary", turnId: turnId, messages: [summaryPrompt(interjections: engine.lastSummaryCandidates)])
             refreshSelectedItem()
             reportSuccess(snapshot.pendingAiJobStatus == "deferred" ? "Summary queued for later." : "Summary job started.")
         }
     }
 
-    func discuss() {
-        if let turn = selectedItem.turns.last(where: { $0.role == "assistant" && $0.status == "complete" && (($0.text?.isEmpty == false) || ($0.summary?.isEmpty == false)) }) {
-            playTurn(turn)
-        } else {
-            summarize()
-        }
+    func discuss(followUp: String) {
+        let trimmed = followUp.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.followUp(trimmed.isEmpty ? "Respond to my interjections and addenda in this listening session." : trimmed)
     }
 
     func playTurn(_ turn: ConversationTurn) {
@@ -485,12 +540,25 @@ final class Gate1AppModel: ObservableObject {
 
     func buildExport() {
         run { engine in
-            let export = try engine.buildExport(options: ExportOptions(includeFullText: false, includeReference: true, includeListeningMap: false, includeInterjections: true))
+            let export = try engine.buildExport(options: ExportOptions(includeFullText: true, includeReference: true, includeListeningMap: true, includeInterjections: true))
             let data = try encoder.encode(export)
             exportPreview = String(data: data, encoding: .utf8) ?? ""
             screen = .export
             reportSuccess("Built session export.")
         }
+    }
+
+    func copyPlainTextExport() {
+        guard !exportPreview.isEmpty else {
+            reportFailure("No export text is available yet.")
+            return
+        }
+        #if canImport(UIKit)
+        UIPasteboard.general.string = exportPreview
+        reportSuccess("Copied plain-text JSON export.")
+        #else
+        reportFailure("Clipboard is unavailable on this platform.")
+        #endif
     }
 
     func deleteTranscript(interjection: Interjection) {
@@ -513,6 +581,7 @@ final class Gate1AppModel: ObservableObject {
         run { engine in
             diagnostics = try engine.diagnostics()
             diagnostics["providerProbe"] = providerProbeStatus
+            settingsValueChanged()
             reportSuccess("Diagnostics refreshed.")
         }
     }
@@ -523,12 +592,18 @@ final class Gate1AppModel: ObservableObject {
         UserDefaults.standard.set(listeningMapModel, forKey: "listeningMapModel")
         UserDefaults.standard.set(summaryModel, forKey: "summaryModel")
         UserDefaults.standard.set(conversationModel, forKey: "conversationModel")
+        UserDefaults.standard.set(skipUnit, forKey: "skipUnit")
+        UserDefaults.standard.set(speechRate, forKey: "speechRate")
+        UserDefaults.standard.set(speechVoiceIdentifier, forKey: "speechVoiceIdentifier")
         KeychainStore.save(providerAPIKey, service: "SpokenMargins", account: "OpenAICompatibleAPIKey")
         diagnostics["providerBaseURL"] = providerBaseURL
         diagnostics["providerModel"] = providerModel
         diagnostics["listeningMapModel"] = listeningMapModel
         diagnostics["summaryModel"] = summaryModel
         diagnostics["conversationModel"] = conversationModel
+        diagnostics["skipUnit"] = skipUnit
+        diagnostics["speechRate"] = String(format: "%.2f", speechRate)
+        diagnostics["speechVoice"] = speechVoiceDescription
         diagnostics["apiKeyConfigured"] = providerAPIKey.isEmpty ? "false" : "true"
         if rebuildEngineForCurrentSettings() {
             screen = .settings
@@ -536,11 +611,48 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    func saveSpeechSettings() {
+        UserDefaults.standard.set(speechRate, forKey: "speechRate")
+        UserDefaults.standard.set(speechVoiceIdentifier, forKey: "speechVoiceIdentifier")
+        diagnostics["speechRate"] = String(format: "%.2f", speechRate)
+        diagnostics["speechVoice"] = speechVoiceDescription
+    }
+
+    func previewSpokenContentVoice() {
+        previewSpeech(label: "Spoken Content settings", mode: .spokenContent)
+    }
+
+    func previewAppVoice() {
+        saveSpeechSettings()
+        previewSpeech(
+            label: "app voice and rate",
+            mode: .appVoice(
+                voiceIdentifier: speechVoiceIdentifier.isEmpty ? nil : speechVoiceIdentifier,
+                rate: Float(speechRate)
+            )
+        )
+    }
+
+    func previewAssistiveTechnologyVoice() {
+        previewSpeech(label: "assistive technology settings", mode: .assistiveTechnology)
+    }
+
     func runtimeProfileChanged() {
         diagnostics["runtimeProfile"] = selectedProfileId
         if rebuildEngineForCurrentSettings() {
             reportSuccess("Runtime profile set to \(selectedProfileId).")
         }
+    }
+
+    func settingsValueChanged() {
+        diagnostics["providerBaseURL"] = providerBaseURL
+        diagnostics["defaultModel"] = providerModel
+        diagnostics["listeningMapModel"] = listeningMapModel
+        diagnostics["summaryModel"] = summaryModel
+        diagnostics["conversationModel"] = conversationModel
+        diagnostics["skipUnit"] = skipUnit
+        diagnostics["speechRate"] = String(format: "%.2f", speechRate)
+        diagnostics["speechVoice"] = speechVoiceDescription
     }
 
     func probeProvider() {
@@ -581,6 +693,24 @@ final class Gate1AppModel: ObservableObject {
         snapshot.isRecording
     }
 
+    var canSummarizeInterjections: Bool {
+        hasActiveSession && !unsummarizedInterjectionsForCurrentTarget().isEmpty
+    }
+
+    var interjectionButtonTitle: String {
+        snapshot.phase == .finished || snapshot.progressPercent >= 100 || selectedItem.turns.contains(where: { $0.turnType == "interjection_summary" }) ? "Add Addendum" : "Interject"
+    }
+
+    var speechVoiceDescription: String {
+        guard !speechVoiceIdentifier.isEmpty else {
+            return "System Spoken Content Voice (Siri falls back)"
+        }
+        if let voice = speechVoiceOptions.first(where: { $0.id == speechVoiceIdentifier }) {
+            return "\(voice.name) (\(voice.language), \(voice.quality))"
+        }
+        return speechVoiceIdentifier
+    }
+
     var currentChapter: Chapter? {
         selectedItem.chapters.last { $0.percent <= snapshot.progressPercent } ?? selectedItem.chapters.first
     }
@@ -595,6 +725,82 @@ final class Gate1AppModel: ObservableObject {
         } catch {
             reportFailure(error)
         }
+    }
+
+    private func previewSpeech(label: String, mode: AppSpeechPreviewMode) {
+        #if canImport(AVFoundation)
+        do {
+            if speechPreviewSynthesizer.isSpeaking {
+                speechPreviewSynthesizer.stopSpeaking(at: .immediate)
+            }
+            #if os(iOS)
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+            try AVAudioSession.sharedInstance().setActive(true)
+            #endif
+            let utterance = AVSpeechUtterance(string: "Spoken Margins preview. This is the \(label) path.")
+            switch mode {
+            case .spokenContent:
+                break
+            case .appVoice(let voiceIdentifier, let rate):
+                utterance.rate = rate
+                if let voiceIdentifier,
+                   let configuredVoice = AVSpeechSynthesisVoice(identifier: voiceIdentifier) {
+                    utterance.voice = configuredVoice
+                }
+            case .assistiveTechnology:
+                utterance.prefersAssistiveTechnologySettings = true
+            }
+            speechPreviewSynthesizer.speak(utterance)
+            diagnostics["lastSpeechPreview"] = label
+            reportSuccess("Previewing \(label).")
+        } catch {
+            reportFailure(error, context: "Speech preview failed")
+        }
+        #else
+        reportFailure("Speech preview unavailable on this platform.")
+        #endif
+    }
+
+    private func summaryScopeForCurrentTarget() -> SummaryScope {
+        switch currentPlaybackTargetType {
+        case TargetType.summaryTurnTTS.rawValue, TargetType.assistantTurnTTS.rawValue:
+            return SummaryScope(targetType: "turn", turnId: currentPlaybackTargetId)
+        default:
+            return SummaryScope(targetType: "item")
+        }
+    }
+
+    private func latestPendingSummaryTurnId() -> String? {
+        guard let sessionId = snapshot.sessionId,
+              let turns = try? store?.loadTurns(sessionId: sessionId) else { return nil }
+        return turns
+            .filter { $0.turnType == "interjection_summary" && $0.status != "complete" }
+            .last?.id
+    }
+
+    private func unsummarizedInterjectionsForCurrentTarget() -> [Interjection] {
+        let summarized = Set(selectedItem.turns
+            .filter { $0.turnType == "interjection_summary" && $0.status != "failed" }
+            .flatMap(\.sourceInterjectionIds))
+        let targetType = currentPlaybackTargetType
+        let targetId = currentPlaybackTargetId
+        return selectedItem.interjections.filter { interjection in
+            guard !summarized.contains(interjection.id) else { return false }
+            switch targetType {
+            case TargetType.summaryTurnTTS.rawValue, TargetType.assistantTurnTTS.rawValue:
+                return interjection.targetId == targetId && interjection.targetType != .item
+            default:
+                return interjection.targetType == .item
+            }
+        }
+    }
+
+    private var currentPlaybackTargetType: String {
+        (engine?.currentSession?.currentTargetType).map(\.rawValue) ?? snapshot.targetType ?? TargetType.itemTextTTS.rawValue
+    }
+
+    private var currentPlaybackTargetId: String? {
+        engine?.currentSession?.currentTargetId ?? snapshot.itemId
     }
 
     private func rebuildEngineForCurrentSettings() -> Bool {
@@ -666,6 +872,10 @@ final class Gate1AppModel: ObservableObject {
                         guard let engine else { return }
                         snapshot = try engine.aiStreamDelta(turnId: turnId, content: text)
                         snapshot = try engine.aiJobCompleted(turnId: turnId)
+                        if kind == "interjection_summary",
+                           snapshot.progressPercent >= 100 {
+                            snapshot = try engine.playTurn(turnId: turnId)
+                        }
                         refreshSelectedItem()
                         reportSuccess("Provider response saved.")
                     } catch {
@@ -799,7 +1009,23 @@ final class Gate1AppModel: ObservableObject {
         Create a Listening Map for the item content below.
         The user will listen to this content through text-to-speech. The interface may eventually be as small as an Apple Watch, so the map must support quick navigation and situational awareness.
         Return only strict JSON. Use schemaVersion "listening-map.v1".
-        Requirements: brief overview, main claims, navigable chapters, exact anchors copied from source, no invented anchors, no percent estimates.
+        Required object shape:
+        {
+          "schemaVersion": "listening-map.v1",
+          "overview": "one or two sentence overview",
+          "claims": [{"id":"claim-1","text":"main claim"}],
+          "chapters": [
+            {
+              "id": "ch-1",
+              "title": "short navigation title",
+              "description": "what this chapter covers",
+              "anchor": "exact contiguous phrase copied from ITEM CONTENT"
+            }
+          ]
+        }
+        Requirements: brief overview, main claims, navigable chapters, exact contiguous anchors copied from source, no invented anchors, no percent estimates, no start/end character offsets.
+        JSON syntax rules: use ASCII double quotes for object keys and string delimiters. Preserve source punctuation, including curly quotes and apostrophes, only inside string values.
+        Anchor quality rules: every anchor must be at least five words when possible; copy ordinary prose from the source, not headings; do not paraphrase; do not use ellipses.
         ITEM CONTENT:
         <<<
         \(sourceText)
@@ -816,8 +1042,10 @@ final class Gate1AppModel: ObservableObject {
 
         Requirements:
         - Keep only JSON. No Markdown fences.
+        - Use ASCII double quotes for JSON object keys and string delimiters.
+        - Preserve source punctuation, including curly quotes and apostrophes, only inside string values.
         - Every chapter must have id, title, description, and anchor.
-        - Every anchor must be an exact phrase copied from ITEM CONTENT.
+        - Every anchor must be an exact contiguous phrase copied from ITEM CONTENT, preferably at least five words.
         - Do not include percent estimates.
         - Prefer preserving the previous chapter intent if the anchor can be fixed.
 
@@ -1043,13 +1271,128 @@ final class Gate1AppModel: ObservableObject {
         if let first = text.firstIndex(of: "{"), let last = text.lastIndex(of: "}"), first <= last {
             text = String(text[first...last])
         }
+        text = normalizingJSONDelimitersOutsideStrings(in: text)
+        text = removingJSONCommentsOutsideStrings(from: text)
+        text = escapingControlCharactersInsideJSONStringLiterals(in: text)
         text = text
-            .replacingOccurrences(of: "“", with: "\"")
-            .replacingOccurrences(of: "”", with: "\"")
-            .replacingOccurrences(of: "‘", with: "'")
-            .replacingOccurrences(of: "’", with: "'")
             .replacingOccurrences(of: #",\s*([}\]])"#, with: "$1", options: .regularExpression)
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func normalizingJSONDelimitersOutsideStrings(in text: String) -> String {
+        var output = ""
+        var inString = false
+        var escaped = false
+
+        for scalar in text.unicodeScalars {
+            if inString {
+                output.unicodeScalars.append(scalar)
+                if escaped {
+                    escaped = false
+                } else if scalar == "\\" {
+                    escaped = true
+                } else if scalar == "\"" {
+                    inString = false
+                }
+                continue
+            }
+
+            if scalar == "\"" || scalar == "“" || scalar == "”" {
+                output += "\""
+                inString = true
+            } else {
+                output.unicodeScalars.append(scalar)
+            }
+        }
+
+        return output
+    }
+
+    private func removingJSONCommentsOutsideStrings(from text: String) -> String {
+        let scalars = Array(text.unicodeScalars)
+        var output = ""
+        var index = 0
+        var inString = false
+        var escaped = false
+
+        while index < scalars.count {
+            let scalar = scalars[index]
+            if inString {
+                output.unicodeScalars.append(scalar)
+                if escaped {
+                    escaped = false
+                } else if scalar == "\\" {
+                    escaped = true
+                } else if scalar == "\"" {
+                    inString = false
+                }
+                index += 1
+                continue
+            }
+
+            if scalar == "\"" {
+                inString = true
+                output.unicodeScalars.append(scalar)
+                index += 1
+            } else if scalar == "/", index + 1 < scalars.count, scalars[index + 1] == "/" {
+                index += 2
+                while index < scalars.count, scalars[index] != "\n" {
+                    index += 1
+                }
+            } else if scalar == "/", index + 1 < scalars.count, scalars[index + 1] == "*" {
+                index += 2
+                while index + 1 < scalars.count, !(scalars[index] == "*" && scalars[index + 1] == "/") {
+                    index += 1
+                }
+                index = min(index + 2, scalars.count)
+            } else {
+                output.unicodeScalars.append(scalar)
+                index += 1
+            }
+        }
+
+        return output
+    }
+
+    private func escapingControlCharactersInsideJSONStringLiterals(in text: String) -> String {
+        var output = ""
+        var inString = false
+        var escaped = false
+
+        for scalar in text.unicodeScalars {
+            if inString {
+                if escaped {
+                    output.unicodeScalars.append(scalar)
+                    escaped = false
+                } else if scalar == "\\" {
+                    output.unicodeScalars.append(scalar)
+                    escaped = true
+                } else if scalar == "\"" {
+                    output.unicodeScalars.append(scalar)
+                    inString = false
+                } else if scalar.value < 0x20 {
+                    switch scalar {
+                    case "\n":
+                        output += "\\n"
+                    case "\r":
+                        output += "\\r"
+                    case "\t":
+                        output += "\\t"
+                    default:
+                        output += String(format: "\\u%04X", scalar.value)
+                    }
+                } else {
+                    output.unicodeScalars.append(scalar)
+                }
+            } else {
+                output.unicodeScalars.append(scalar)
+                if scalar == "\"" {
+                    inString = true
+                }
+            }
+        }
+
+        return output
     }
 
     private func validatedChapter(id: String, title: String, start: Int, end: Int, text: String) throws -> Chapter {
@@ -1074,7 +1417,71 @@ final class Gate1AppModel: ObservableObject {
         if let folded = text.range(of: trimmedAnchor, options: [.caseInsensitive, .diacriticInsensitive]) {
             return folded
         }
+        if let normalized = normalizedAnchorRange(trimmedAnchor, in: text) {
+            return normalized
+        }
+        if let ngram = ngramAnchorRange(trimmedAnchor, in: text) {
+            return ngram
+        }
         throw ManualListeningMapError.anchorNotFound(chapterId)
+    }
+
+    private func ngramAnchorRange(_ anchor: String, in text: String) -> Range<String.Index>? {
+        let words = anchor
+            .replacingOccurrences(of: #"[^A-Za-z0-9']+"#, with: " ", options: .regularExpression)
+            .split(separator: " ")
+            .map(String.init)
+        guard words.count >= 5 else { return nil }
+        let maxWindow = min(12, words.count)
+        for size in stride(from: maxWindow, through: 5, by: -1) {
+            guard words.count >= size else { continue }
+            for start in 0...(words.count - size) {
+                let phrase = words[start..<(start + size)].joined(separator: " ")
+                if let range = normalizedAnchorRange(phrase, in: text) {
+                    return range
+                }
+            }
+        }
+        return nil
+    }
+
+    private func normalizedAnchorRange(_ anchor: String, in text: String) -> Range<String.Index>? {
+        let source = normalizedSearchIndex(for: text)
+        let target = normalizedSearchIndex(for: anchor).text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty, let range = source.text.range(of: target) else { return nil }
+        let lowerOffset = source.text.distance(from: source.text.startIndex, to: range.lowerBound)
+        let upperOffset = source.text.distance(from: source.text.startIndex, to: range.upperBound)
+        guard lowerOffset < source.indices.count, upperOffset > 0 else { return nil }
+        let lower = source.indices[lowerOffset]
+        let last = source.indices[min(source.indices.count - 1, upperOffset - 1)]
+        let upper = text.index(after: last)
+        return lower..<upper
+    }
+
+    private func normalizedSearchIndex(for text: String) -> (text: String, indices: [String.Index]) {
+        var normalized = ""
+        var indices: [String.Index] = []
+        var lastWasSpace = true
+        var index = text.startIndex
+        while index < text.endIndex {
+            let char = text[index]
+            let folded = String(char).folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            if folded.range(of: #"^[A-Za-z0-9']+$"#, options: .regularExpression) != nil {
+                normalized.append(folded.lowercased())
+                indices.append(index)
+                lastWasSpace = false
+            } else if !lastWasSpace {
+                normalized.append(" ")
+                indices.append(index)
+                lastWasSpace = true
+            }
+            index = text.index(after: index)
+        }
+        if normalized.last == " " {
+            normalized.removeLast()
+            indices.removeLast()
+        }
+        return (normalized, indices)
     }
 
     private func reportSuccess(_ message: String) {
@@ -1254,6 +1661,20 @@ private enum ManualListeningMapError: Error, CustomStringConvertible {
         }
     }
 }
+
+#if canImport(AVFoundation)
+private func voiceQualityName(_ voice: AVSpeechSynthesisVoice) -> String {
+    if #available(iOS 16.0, macOS 13.0, watchOS 9.0, *) {
+        switch voice.quality {
+        case .default: return "Default"
+        case .enhanced: return "Enhanced"
+        case .premium: return "Premium"
+        @unknown default: return "Unknown"
+        }
+    }
+    return "Default"
+}
+#endif
 
 enum KeychainStore {
     static func save(_ value: String, service: String, account: String) {
