@@ -525,6 +525,40 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(summaries.map(\.id), ["turn-summary-001", "turn-summary-002"])
     }
 
+    func testInterjectionSummaryRegenerationRequiresNewInterjectionAndReplacesCurrentTargetSummary() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "ai": ["summarize_interjections"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two. Three.", externalReference: nil, status: "ready")
+        let session = Session(id: "session-pill", itemId: item.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 0, playbackRate: 1)
+        let firstInterjection = Interjection(id: "ij-001", itemId: item.id, sessionId: session.id, targetType: .item, targetId: item.id, createdAt: Date(timeIntervalSince1970: 1), roughPercent: 10, anchor: Anchor(anchorType: .text, startChar: 0, endChar: 4, anchorBefore: "One.", anchorAfter: "Two."), audioPath: "one.m4a", audioStatus: "saved", transcriptionStatus: "transcribed", transcript: "first note", cleanedTranscript: nil, displayText: "first note", status: "active")
+        let secondInterjection = Interjection(id: "ij-002", itemId: item.id, sessionId: session.id, targetType: .item, targetId: item.id, createdAt: Date(timeIntervalSince1970: 2), roughPercent: 25, anchor: Anchor(anchorType: .text, startChar: 5, endChar: 9, anchorBefore: "Two.", anchorAfter: "Three."), audioPath: "two.m4a", audioStatus: "saved", transcriptionStatus: "transcribed", transcript: "second note", cleanedTranscript: nil, displayText: "second note", status: "active")
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session], interjections: [firstInterjection.id: firstInterjection])
+        let engine = SessionEngine(profile: profile, repository: repo)
+
+        _ = try engine.generateInterjectionSummary(scope: SummaryScope(targetType: "item", sessionId: session.id))
+        XCTAssertThrowsError(try engine.generateInterjectionSummary(scope: SummaryScope(targetType: "item", sessionId: session.id))) { error in
+            XCTAssertEqual(error as? SessionKitError, .invalidCommandForState("interjection_summary_already_current"))
+        }
+
+        try repo.saveInterjection(secondInterjection)
+        _ = try engine.aiStreamDelta(turnId: "turn-summary-001", content: "<sm_response>Old summary.</sm_response>")
+        _ = try engine.aiJobCompleted(turnId: "turn-summary-001")
+        _ = try engine.generateInterjectionSummary(scope: SummaryScope(targetType: "item", sessionId: session.id))
+
+        let summaries = try repo.loadTurns(sessionId: session.id).filter { $0.turnType == "interjection_summary" }
+        XCTAssertEqual(summaries.map(\.id), ["turn-summary-001"])
+        XCTAssertEqual(summaries.first?.sourceInterjectionIds, ["ij-001", "ij-002"])
+        XCTAssertEqual(summaries.first?.status, "pending")
+        XCTAssertNil(summaries.first?.text)
+    }
+
     func testCancelInterjectionDoesNotCreateInterjectionAndResumes() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",

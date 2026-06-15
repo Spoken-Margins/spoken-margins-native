@@ -1248,6 +1248,12 @@ final class Gate1AppModel: ObservableObject {
         hasActiveSession && !unsummarizedInterjectionsForCurrentTarget().isEmpty
     }
 
+    var isSummarizingInterjections: Bool {
+        latestPendingJob(kind: "interjection_summary") != nil ||
+        pendingAutoPlayTurnIds.contains(where: { $0.contains("summary") }) ||
+        snapshot.targetType == TargetType.summaryTurnTTS.rawValue
+    }
+
     var interjectionButtonTitle: String {
         "Interject"
     }

@@ -427,8 +427,15 @@ public final class SessionEngine {
         lastSummaryCandidates = try selectSummaryCandidates(scope: scope)
         let shouldCall = aiProvider.shouldStartProviderCall(profile: profile, kind: "interjection_summary")
         let status = shouldCall ? "pending" : "deferred"
-        let summaryIndex = try repository.loadTurns(sessionId: session.id).filter { $0.turnType == "interjection_summary" }.count + 1
-        let turnId = "turn-summary-\(String(format: "%03d", summaryIndex))"
+        let turns = try repository.loadTurns(sessionId: session.id)
+        let interjections = try repository.loadInterjections(sessionId: session.id)
+        let existingTurn = replacementSummaryTurn(scope: scope, session: session, turns: turns, interjections: interjections)
+        if let existingTurn,
+           Set(existingTurn.sourceInterjectionIds) == Set(lastSummaryCandidates.map(\.id)) {
+            throw SessionKitError.invalidCommandForState("interjection_summary_already_current")
+        }
+        let summaryIndex = existingTurn.flatMap { turnSequenceNumber($0.id) } ?? turns.filter { $0.turnType == "interjection_summary" }.count + 1
+        let turnId = existingTurn?.id ?? "turn-summary-\(String(format: "%03d", summaryIndex))"
         let turn = ConversationTurn(
             id: turnId,
             sessionId: session.id,
@@ -449,6 +456,38 @@ public final class SessionEngine {
         snapshot.providerCallStarted = shouldCall
         snapshot.pendingAiJobCount = try repository.loadAIJobs(sessionId: session.id).filter { $0.status != "complete" }.count
         return snapshot
+    }
+
+    private func replacementSummaryTurn(scope: SummaryScope, session: Session, turns: [ConversationTurn], interjections: [Interjection]) -> ConversationTurn? {
+        let target = summaryTarget(scope: scope, session: session)
+        return turns
+            .filter { $0.turnType == "interjection_summary" && summaryTurn($0, matches: target, interjections: interjections) }
+            .sorted { $0.id < $1.id }
+            .last
+    }
+
+    private func summaryTarget(scope: SummaryScope, session: Session) -> (type: InterjectionTargetType, id: String) {
+        if scope.targetType == "turn", let turnId = scope.turnId {
+            return (.assistantTurn, turnId)
+        }
+        return (.item, session.itemId)
+    }
+
+    private func summaryTurn(
+        _ turn: ConversationTurn,
+        matches target: (type: InterjectionTargetType, id: String),
+        interjections: [Interjection]
+    ) -> Bool {
+        guard !turn.sourceInterjectionIds.isEmpty else { return false }
+        let byId = Dictionary(uniqueKeysWithValues: interjections.map { ($0.id, $0) })
+        let sourceInterjections = turn.sourceInterjectionIds.compactMap { byId[$0] }
+        guard sourceInterjections.count == turn.sourceInterjectionIds.count else { return false }
+        switch target.type {
+        case .item:
+            return sourceInterjections.allSatisfy { $0.targetType == .item && $0.targetId == target.id }
+        case .assistantTurn, .summaryTurn:
+            return sourceInterjections.allSatisfy { $0.targetType != .item && $0.targetId == target.id }
+        }
     }
 
     @discardableResult

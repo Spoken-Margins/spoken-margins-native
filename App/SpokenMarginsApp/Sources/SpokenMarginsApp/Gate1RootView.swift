@@ -614,12 +614,17 @@ private struct PlaybackScreen: View {
             } else {
                 HStack(spacing: 10) {
                     Button(action: model.summarize) {
-                        Image(systemName: "sparkles")
-                            .frame(width: 44, height: 52)
+                        if model.isSummarizingInterjections {
+                            ProgressView()
+                                .frame(width: 44, height: 52)
+                        } else {
+                            Image(systemName: "sparkles")
+                                .frame(width: 44, height: 52)
+                        }
                     }
                     .buttonStyle(WatchSecondaryButtonStyle())
-                    .disabled(!model.canSummarizeInterjections)
-                    .accessibilityLabel("Summarize interjections")
+                    .disabled(!model.canSummarizeInterjections || model.isSummarizingInterjections)
+                    .accessibilityLabel(model.isSummarizingInterjections ? "Summarizing interjections" : "Summarize interjections")
                     .accessibilityIdentifier("playback.summary.button")
 
                     Button(action: model.beginInterjection) {
@@ -711,7 +716,7 @@ private struct PlaybackScreen: View {
                         Button {
                             model.playTurn(turn)
                         } label: {
-                            TimelineRow(percent: "AI", title: turnTitle(turn), subtitle: turn.summary ?? turn.text ?? turn.status)
+                            TimelineRow(percent: turnBadge(turn), title: turnTitle(turn), subtitle: turn.summary ?? turn.text ?? turn.status)
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("timeline.turn.play.\(turn.id)")
@@ -723,14 +728,6 @@ private struct PlaybackScreen: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("timeline.turnChapter.jump.\(turn.id).\(chapter.id)")
-                    case .turnFallbackChapter(let turn):
-                        Button {
-                            model.playTurn(turn)
-                        } label: {
-                            TimelineRow(percent: "AI 0%", title: turnTitle(turn), subtitle: "Play full generated response")
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("timeline.turnChapter.fallback.\(turn.id)")
                     }
                 }
             }
@@ -761,7 +758,7 @@ private struct PlaybackScreen: View {
         let turnEntries = model.selectedItem.turns.flatMap { turn -> [PlaybackTimelineEntry] in
             let chapters = turn.chapters ?? []
             return [PlaybackTimelineEntry.turn(turn)] +
-            (chapters.isEmpty ? [PlaybackTimelineEntry.turnFallbackChapter(turn)] : chapters.map { PlaybackTimelineEntry.turnChapter(turn, $0) }) +
+            chapters.map { PlaybackTimelineEntry.turnChapter(turn, $0) } +
             model.selectedItem.interjections
                 .filter { $0.targetId == turn.id && $0.targetType != .item }
                 .map { PlaybackTimelineEntry.interjection($0) }
@@ -1128,7 +1125,6 @@ private enum PlaybackTimelineEntry: Identifiable {
     case interjection(Interjection)
     case turn(ConversationTurn)
     case turnChapter(ConversationTurn, Chapter)
-    case turnFallbackChapter(ConversationTurn)
 
     var id: String {
         switch self {
@@ -1138,7 +1134,6 @@ private enum PlaybackTimelineEntry: Identifiable {
         case .interjection(let interjection): return "interjection-\(interjection.id)"
         case .turn(let turn): return "turn-\(turn.id)"
         case .turnChapter(let turn, let chapter): return "turn-chapter-\(turn.id)-\(chapter.id)"
-        case .turnFallbackChapter(let turn): return "turn-fallback-chapter-\(turn.id)"
         }
     }
 
@@ -1150,7 +1145,6 @@ private enum PlaybackTimelineEntry: Identifiable {
         case .interjection(let interjection): return interjection.targetType == .item ? interjection.roughPercent : 101
         case .turn: return 101
         case .turnChapter: return 101
-        case .turnFallbackChapter: return 101
         }
     }
 
@@ -1162,7 +1156,6 @@ private enum PlaybackTimelineEntry: Identifiable {
         case .interjection(let interjection): return interjection.targetType == .item ? 1 : 4
         case .turn: return 2
         case .turnChapter: return 3
-        case .turnFallbackChapter: return 3
         }
     }
 }
@@ -1327,6 +1320,13 @@ private func turnTitle(_ turn: ConversationTurn) -> String {
     default:
         return turn.turnType.replacingOccurrences(of: "_", with: " ").capitalized
     }
+}
+
+private func turnBadge(_ turn: ConversationTurn) -> String {
+    if turn.role == "user" || turn.turnType == "user_response" {
+        return "YOU"
+    }
+    return "AI"
 }
 
 private func interjectionPreview(_ interjection: Interjection) -> String {
