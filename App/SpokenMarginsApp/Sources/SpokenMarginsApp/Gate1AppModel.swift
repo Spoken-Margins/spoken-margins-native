@@ -732,9 +732,14 @@ final class Gate1AppModel: ObservableObject {
         screen = .playback
     }
 
-    private func autoPlayCompletedTurn(kind: String, turnId: String, engine: SessionEngine) throws {
+    private func autoPlayCompletedTurn(
+        kind: String,
+        turnId: String,
+        engine: SessionEngine,
+        completedCurrentAudio: Bool = false
+    ) throws {
         guard kind == "interjection_summary" || kind == "assistant_response" else { return }
-        if shouldDeferGeneratedTurnPlayback(turnId: turnId) {
+        if shouldDeferGeneratedTurnPlayback(turnId: turnId, completedCurrentAudio: completedCurrentAudio) {
             enqueuePendingAutoPlayTurn(turnId)
             return
         }
@@ -755,8 +760,12 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func shouldDeferGeneratedTurnPlayback(turnId: String) -> Bool {
-        pendingAutoPlayQueue.shouldDeferGeneratedTurnPlayback(snapshot: snapshot, turnId: turnId)
+    private func shouldDeferGeneratedTurnPlayback(turnId: String, completedCurrentAudio: Bool = false) -> Bool {
+        pendingAutoPlayQueue.shouldDeferGeneratedTurnPlayback(
+            snapshot: snapshot,
+            turnId: turnId,
+            completedCurrentAudio: completedCurrentAudio
+        )
     }
 
     private func shouldPlayPendingTurnNow(turnId: String, completedCurrentAudio: Bool = false) -> Bool {
@@ -1546,15 +1555,16 @@ final class Gate1AppModel: ObservableObject {
                 await MainActor.run {
                     do {
                         guard let engine else { return }
-                        let shouldDeferPlayback = shouldDeferGeneratedTurnPlayback(turnId: turnId)
+                        let completedCurrentAudio = syncPlaybackProgressBeforeGeneratedTurnDecision(engine: engine)
                         snapshot = try engine.aiStreamDelta(turnId: turnId, content: text)
                         snapshot = try engine.aiJobCompleted(turnId: turnId)
                         refreshSelectedItem()
-                        if shouldDeferPlayback {
-                            enqueuePendingAutoPlayTurn(turnId)
-                        } else {
-                            try autoPlayCompletedTurn(kind: kind, turnId: turnId, engine: engine)
-                        }
+                        try autoPlayCompletedTurn(
+                            kind: kind,
+                            turnId: turnId,
+                            engine: engine,
+                            completedCurrentAudio: completedCurrentAudio
+                        )
                         reportSuccess(pendingAutoPlayQueue.contains { $0 == turnId } ? "Provider response saved. Playback will start when the current audio finishes." : "Provider response saved.")
                     } catch {
                         reportFailure(error, context: "Provider response persistence failed")
@@ -1565,6 +1575,23 @@ final class Gate1AppModel: ObservableObject {
                     markProviderFailure(String(describing: error), userMessage: "Provider call failed.")
                 }
             }
+        }
+    }
+
+    private func syncPlaybackProgressBeforeGeneratedTurnDecision(engine: SessionEngine) -> Bool {
+        let previousStatus = snapshot.status
+        let previousTargetId = snapshot.targetId
+        do {
+            let updated = try engine.syncPlaybackProgress()
+            if updated != snapshot {
+                snapshot = updated
+            }
+            return previousStatus == .playing &&
+                updated.status == .paused &&
+                previousTargetId == updated.targetId
+        } catch {
+            diagnostics["playbackProgressSyncError"] = String(describing: error)
+            return false
         }
     }
 

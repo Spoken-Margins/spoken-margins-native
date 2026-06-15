@@ -15,6 +15,21 @@ final class Gate1PlaybackAutoplayQueueTests: XCTestCase {
         XCTAssertEqual(queue.popReadyTurn(snapshot: snapshot, completedCurrentAudio: true), "turn-summary-001")
     }
 
+    func testCompletedCurrentAudioPreventsDeferringGeneratedSummaryOnStalePlayingSnapshot() {
+        let queue = Gate1PlaybackAutoplayQueue()
+        var snapshot = SessionSnapshot()
+        snapshot.status = .playing
+        snapshot.phase = .itemPlayback
+        snapshot.targetId = "item-pill"
+
+        XCTAssertTrue(queue.shouldDeferGeneratedTurnPlayback(snapshot: snapshot, turnId: "turn-summary-001"))
+        XCTAssertFalse(queue.shouldDeferGeneratedTurnPlayback(
+            snapshot: snapshot,
+            turnId: "turn-summary-001",
+            completedCurrentAudio: true
+        ))
+    }
+
     func testInterjectionSummaryFinishAllowsQueuedDiscussionToAutoplay() {
         var queue = Gate1PlaybackAutoplayQueue()
         queue.enqueue("turn-response-001")

@@ -25,8 +25,11 @@ struct Gate1PlaybackAutoplayQueue {
         try pendingTurnIds.contains(where: predicate)
     }
 
-    func shouldDeferGeneratedTurnPlayback(snapshot: SessionSnapshot, turnId: String) -> Bool {
-        snapshot.status == .playing && snapshot.targetId != turnId
+    func shouldDeferGeneratedTurnPlayback(snapshot: SessionSnapshot, turnId: String, completedCurrentAudio: Bool = false) -> Bool {
+        if completedCurrentAudio {
+            return false
+        }
+        return snapshot.status == .playing && snapshot.targetId != turnId
     }
 
     func shouldPlayPendingTurnNow(snapshot: SessionSnapshot, turnId: String, completedCurrentAudio: Bool = false) -> Bool {
