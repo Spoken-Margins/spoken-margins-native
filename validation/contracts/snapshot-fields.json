@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "snapshot-fields.v1",
+  "fields": [
+    { "id": "sessionId", "status": "implemented", "source": "SessionSnapshot.sessionId" },
+    { "id": "itemId", "status": "implemented", "source": "SessionSnapshot.itemId" },
+    { "id": "targetType", "status": "implemented", "source": "SessionSnapshot.targetType" },
+    { "id": "targetId", "status": "implemented", "source": "SessionSnapshot.targetId" },
+    { "id": "status", "status": "implemented", "source": "SessionSnapshot.status" },
+    { "id": "phase", "status": "implemented", "source": "SessionSnapshot.phase" },
+    { "id": "title", "status": "implemented", "source": "SessionSnapshot.title" },
+    { "id": "chapterTitle", "status": "implemented", "source": "SessionSnapshot.chapterTitle" },
+    { "id": "progressPercent", "status": "implemented", "source": "SessionSnapshot.progressPercent" },
+    { "id": "sourceProgressPercent", "status": "implemented", "source": "SessionSnapshot.sourceProgressPercent" },
+    { "id": "currentPlaybackProgressPercent", "status": "implemented", "source": "SessionSnapshot.currentPlaybackProgressPercent" },
+    { "id": "playbackRate", "status": "implemented", "source": "SessionSnapshot.playbackRate" },
+    { "id": "isRecording", "status": "implemented", "source": "SessionSnapshot.isRecording" },
+    { "id": "activeInterjectionCount", "status": "implemented", "source": "SessionSnapshot.activeInterjectionCount" },
+    { "id": "pendingAiJobCount", "status": "implemented", "source": "SessionSnapshot.pendingAiJobCount" },
+    { "id": "lastInterjectionAnchorType", "status": "implemented", "source": "SessionSnapshot.lastInterjectionAnchorType" },
+    { "id": "lastInterjectionTargetType", "status": "implemented", "source": "SessionSnapshot.lastInterjectionTargetType" },
+    { "id": "recordingTargetId", "status": "implemented", "source": "SessionSnapshot.recordingTargetId" },
+    { "id": "pendingAiJobKind", "status": "implemented", "source": "SessionSnapshot.pendingAiJobKind" },
+    { "id": "pendingAiJobStatus", "status": "implemented", "source": "SessionSnapshot.pendingAiJobStatus" },
+    { "id": "providerCallStarted", "status": "implemented", "source": "SessionSnapshot.providerCallStarted" },
+    { "id": "turnStatus", "status": "implemented", "source": "SessionSnapshot.turnStatus" },
+    { "id": "lastUserTurnType", "status": "implemented", "source": "SessionSnapshot.lastUserTurnType" },
+    { "id": "spokenUnits", "status": "implemented", "source": "SessionSnapshot.spokenUnits" },
+    { "id": "lastFailure", "status": "implemented", "source": "SessionSnapshot.lastFailure" },
+    {
+      "id": "availableCommands",
+      "status": "backend_request",
+      "source": null,
+      "notes": "Future compact-surface requirement: publish state- and capability-aware command availability."
+    }
+  ]
+}

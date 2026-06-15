@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "surface-contract.v1",
+  "gate": "gate5-browser-text",
+  "runtimeProfile": "browser-text",
+  "surfaceOwns": [
+    "selected_text_capture",
+    "readable_page_text_capture",
+    "browser_handoff_payload"
+  ],
+  "delegatesTo": [
+    "phone-tablet-online",
+    "phone-tablet-offline"
+  ],
+  "snapshotFields": [
+    "sessionId",
+    "itemId",
+    "targetType",
+    "status",
+    "phase",
+    "title",
+    "chapterTitle",
+    "progressPercent",
+    "isRecording",
+    "lastInterjectionAnchorType",
+    "availableCommands"
+  ],
+  "commands": [
+    {
+      "id": "importBrowserText",
+      "delegationMode": "delegated_to_canonical_runtime",
+      "exposed": true,
+      "requiredCapabilities": {
+        "sync": ["browser_session_handoff"]
+      },
+      "backendCommand": null,
+      "notes": "Backend request: create text-backed item or handoff package from selected/readable browser text."
+    },
+    {
+      "id": "startSession",
+      "delegationMode": "local",
+      "exposed": true,
+      "requiredCapabilities": {
+        "playback": ["realtime_tts"],
+        "sync": ["browser_session_handoff"]
+      },
+      "backendCommand": "SessionEngine.startSession",
+      "notes": "Browser text may start local TTS only when the active browser profile allows it."
+    },
+    {
+      "id": "pause",
+      "delegationMode": "local",
+      "exposed": true,
+      "requiredCapabilities": {
+        "playback": ["realtime_tts"]
+      },
+      "backendCommand": "SessionEngine.pause"
+    },
+    {
+      "id": "resumePlayback",
+      "delegationMode": "local",
+      "exposed": true,
+      "requiredCapabilities": {
+        "playback": ["realtime_tts"]
+      },
+      "backendCommand": "SessionEngine.resumePlayback"
+    },
+    {
+      "id": "beginInterjection",
+      "delegationMode": "local",
+      "exposed": true,
+      "requiredCapabilities": {
+        "interjection": ["record_audio", "capture_text_anchor"]
+      },
+      "backendCommand": "SessionEngine.beginInterjection",
+      "notes": "Only exposed when browser recording permission is granted."
+    },
+    {
+      "id": "finishInterjection",
+      "delegationMode": "local",
+      "exposed": true,
+      "requiredCapabilities": {
+        "interjection": ["record_audio", "capture_text_anchor"]
+      },
+      "backendCommand": "SessionEngine.finishInterjection"
+    },
+    {
+      "id": "generateInterjectionSummary",
+      "delegationMode": "delegated_to_canonical_runtime",
+      "exposed": false,
+      "requiredCapabilities": {
+        "ai": ["defer_ai_jobs"]
+      },
+      "backendCommand": "SessionEngine.generateInterjectionSummary",
+      "notes": "Summary/discussion continues in the app for Gate 5."
+    }
+  ],
+  "traces": [
+    "traces/browser-text-session.json"
+  ],
+  "fixtures": [
+    "fixtures/capabilities/browser-text.json",
+    "fixtures/items/text-mapless.json"
+  ],
+  "backendRequests": [
+    {
+      "id": "browser-text-handoff-payload",
+      "title": "Define browser text handoff payload",
+      "status": "open",
+      "details": "Needs title, source URL, selected/readable text, optional author/published date, and session continuation identifiers."
+    },
+    {
+      "id": "import-browser-text-command",
+      "title": "Implement or route importBrowserText",
+      "status": "open",
+      "details": "Trace already names importBrowserText, but SessionKit does not expose a formal command for it yet."
+    }
+  ],
+  "notes": [
+    "Gate 5 first deliverable is contract and handoff shape, not a browser extension implementation.",
+    "Browser text and browser media remain separate profiles and contracts."
+  ]
+}

@@ -1,0 +1,132 @@
+{
+  "schemaVersion": "surface-contract.v1",
+  "gate": "gate3-watch-tethered",
+  "runtimeProfile": "watch-tethered",
+  "surfaceOwns": [
+    "remote_control_ui",
+    "compact_snapshot_display"
+  ],
+  "delegatesTo": [
+    "phone-tablet-online"
+  ],
+  "snapshotFields": [
+    "sessionId",
+    "itemId",
+    "targetType",
+    "status",
+    "phase",
+    "title",
+    "chapterTitle",
+    "progressPercent",
+    "isRecording",
+    "activeInterjectionCount",
+    "pendingAiJobCount",
+    "availableCommands"
+  ],
+  "commands": [
+    {
+      "id": "pause",
+      "delegationMode": "delegated_to_canonical_runtime",
+      "exposed": true,
+      "requiredCapabilities": {
+        "remoteControl": ["send_transport_commands"]
+      },
+      "backendCommand": "SessionEngine.pause",
+      "notes": "Watch sends transport intent; phone/tablet owns playback."
+    },
+    {
+      "id": "resumePlayback",
+      "delegationMode": "delegated_to_canonical_runtime",
+      "exposed": true,
+      "requiredCapabilities": {
+        "remoteControl": ["send_transport_commands"]
+      },
+      "backendCommand": "SessionEngine.resumePlayback",
+      "notes": "May be surfaced as play or play/pause in watch UI."
+    },
+    {
+      "id": "skipForward",
+      "delegationMode": "delegated_to_canonical_runtime",
+      "exposed": true,
+      "requiredCapabilities": {
+        "remoteControl": ["send_transport_commands"]
+      },
+      "backendCommand": "SessionEngine.skipForward"
+    },
+    {
+      "id": "skipBack",
+      "delegationMode": "delegated_to_canonical_runtime",
+      "exposed": true,
+      "requiredCapabilities": {
+        "remoteControl": ["send_transport_commands"]
+      },
+      "backendCommand": "SessionEngine.skipBack"
+    },
+    {
+      "id": "jumpToChapter",
+      "delegationMode": "delegated_to_canonical_runtime",
+      "exposed": true,
+      "requiredCapabilities": {
+        "timeline": ["chapter_timing"],
+        "remoteControl": ["send_chapter_jump"]
+      },
+      "backendCommand": "SessionEngine.jumpToChapter"
+    },
+    {
+      "id": "beginInterjection",
+      "delegationMode": "delegated_to_canonical_runtime",
+      "exposed": true,
+      "requiredCapabilities": {
+        "interjection": ["delegate_interjection_to_canonical_runtime"],
+        "remoteControl": ["send_interjection_commands"]
+      },
+      "backendCommand": "SessionEngine.beginInterjection"
+    },
+    {
+      "id": "finishInterjection",
+      "delegationMode": "delegated_to_canonical_runtime",
+      "exposed": true,
+      "requiredCapabilities": {
+        "interjection": ["delegate_interjection_to_canonical_runtime"],
+        "remoteControl": ["send_interjection_commands"]
+      },
+      "backendCommand": "SessionEngine.finishInterjection"
+    },
+    {
+      "id": "generateInterjectionSummary",
+      "delegationMode": "unsupported",
+      "exposed": false,
+      "requiredCapabilities": {
+        "remoteControl": ["send_ai_commands"]
+      },
+      "backendCommand": "SessionEngine.generateInterjectionSummary",
+      "notes": "Documented as unavailable until the steward accepts AI command exposure for Watch."
+    }
+  ],
+  "traces": [
+    "traces/watch-chapter-navigation.json"
+  ],
+  "fixtures": [
+    "fixtures/capabilities/watch-tethered.json",
+    "fixtures/items/text-with-listening-map.json",
+    "fixtures/maps/valid-listening-map.json"
+  ],
+  "backendRequests": [
+    {
+      "id": "watch-compact-available-commands",
+      "title": "Publish state-aware available commands for compact Watch UI",
+      "status": "open",
+      "details": "Watch should not infer control availability from raw capabilities alone."
+    },
+    {
+      "id": "watch-delegated-recording-lifecycle",
+      "title": "Clarify delegated interjection recording lifecycle",
+      "status": "open",
+      "details": "Contract needs explicit snapshot states for delegated begin/finish while the phone owns microphone and persistence."
+    }
+  ],
+  "notes": [
+    "Gate 3 does not own playback, recording, AI, or persistence locally.",
+    "Gate 3 must not require Xcode project edits until the steward creates a Watch target scaffold."
+  ]
+}

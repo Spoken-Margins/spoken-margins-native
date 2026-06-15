@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "delegation-modes.v1",
+  "modes": [
+    {
+      "id": "local",
+      "description": "The active runtime executes the command directly."
+    },
+    {
+      "id": "delegated_to_canonical_runtime",
+      "description": "The surface sends an intent to the canonical phone/tablet runtime."
+    },
+    {
+      "id": "queued_offline",
+      "description": "The runtime records an event for later sync or import."
+    },
+    {
+      "id": "unsupported",
+      "description": "The surface must not expose or execute the command."
+    }
+  ]
+}

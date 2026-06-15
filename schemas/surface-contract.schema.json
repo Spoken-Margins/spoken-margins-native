@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spokenmargins.local/schemas/surface-contract.schema.json",
+  "title": "SurfaceContract",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "gate",
+    "runtimeProfile",
+    "surfaceOwns",
+    "delegatesTo",
+    "snapshotFields",
+    "commands",
+    "traces",
+    "fixtures",
+    "backendRequests"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": "surface-contract.v1" },
+    "gate": { "type": "string", "minLength": 1 },
+    "runtimeProfile": { "type": "string", "minLength": 1 },
+    "surfaceOwns": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "delegatesTo": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "snapshotFields": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "delegationMode", "exposed"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "delegationMode": { "type": "string", "minLength": 1 },
+          "exposed": { "type": "boolean" },
+          "requiredCapabilities": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            }
+          },
+          "backendCommand": { "type": ["string", "null"] },
+          "notes": { "type": "string" }
+        }
+      }
+    },
+    "traces": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "fixtures": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "backendRequests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "title": { "type": "string", "minLength": 1 },
+          "status": { "enum": ["open", "accepted", "rejected", "resolved"] },
+          "details": { "type": "string" }
+        }
+      }
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}
