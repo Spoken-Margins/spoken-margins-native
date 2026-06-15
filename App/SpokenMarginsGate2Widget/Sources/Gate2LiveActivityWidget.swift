@@ -40,17 +40,19 @@ private struct Gate2LiveActivityView: View {
     let state: Gate2LiveActivityAttributes.ContentState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(state.title)
                         .font(.headline)
                         .foregroundStyle(.white)
                         .lineLimit(1)
+                        .minimumScaleFactor(0.82)
                     Text(state.chapterTitle)
                         .font(.caption)
                         .foregroundStyle(.white.opacity(0.78))
                         .lineLimit(1)
+                        .minimumScaleFactor(0.82)
                 }
                 Spacer()
                 Text(state.isRecording ? "REC" : state.status.uppercased())
@@ -65,8 +67,7 @@ private struct Gate2LiveActivityView: View {
                 CompactRoundIntentButton(command: "skipBack", systemImage: "gobackward.15", size: 56)
                 CompactPlayPauseButton(
                     command: "togglePlayPause",
-                    isPlaying: state.status == "playing",
-                    progressPercent: state.progressPercent
+                    isPlaying: state.status == "playing"
                 )
                 CompactRoundIntentButton(command: "skipForward", systemImage: "goforward.15", size: 56)
                 Spacer()
@@ -97,7 +98,7 @@ private struct Gate2LiveActivityView: View {
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.vertical, 10)
     }
 }
 
@@ -123,26 +124,18 @@ private struct CompactRoundIntentButton: View {
 private struct CompactPlayPauseButton: View {
     let command: String
     let isPlaying: Bool
-    let progressPercent: Int
 
     var body: some View {
         Button(intent: Gate2CompactPlaybackIntent(command: command)) {
-            ZStack {
-                Circle()
-                    .fill(Color(red: 0.27, green: 0.78, blue: 0.43).opacity(0.22))
-                Circle()
-                    .stroke(Color.white.opacity(0.18), lineWidth: 8)
-                Circle()
-                    .trim(from: 0, to: CGFloat(max(0, min(100, progressPercent))) / 100)
-                    .stroke(Color(red: 0.27, green: 0.9, blue: 0.48), style: StrokeStyle(lineWidth: 8, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                    .font(.title2.weight(.bold))
-                    .foregroundStyle(.white)
-                    .padding(.leading, isPlaying ? 0 : 3)
-            }
+            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                .font(.title.weight(.bold))
+                .frame(width: 60, height: 60)
+                .foregroundStyle(.white)
+                .padding(.leading, isPlaying ? 0 : 3)
+                .background(Color(red: 0.27, green: 0.78, blue: 0.43).opacity(0.28))
+                .clipShape(Circle())
         }
-        .frame(width: 70, height: 70)
+        .frame(width: 60, height: 60)
         .contentShape(Circle())
     }
 }
@@ -156,10 +149,12 @@ private struct CompactActionIntentButton: View {
         Button(intent: Gate2CompactPlaybackIntent(command: command)) {
             Label(title, systemImage: systemImage)
                 .font(.caption.weight(.bold))
-                .frame(maxWidth: .infinity, minHeight: 40)
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+                .frame(maxWidth: .infinity, minHeight: 38)
                 .foregroundStyle(.white)
                 .background(Color.white.opacity(0.16))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         }
         .buttonStyle(.plain)
     }
