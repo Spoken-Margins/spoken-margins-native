@@ -40,6 +40,12 @@ final class Gate3WatchConnectivityController: NSObject, WCSessionDelegate {
 
     func publish(snapshot: CompactControlSnapshot?) {
         guard let snapshot, let payload = Self.payload(for: snapshot) else { return }
+        #if os(iOS)
+        guard session?.isWatchAppInstalled == true else {
+            lastMessage = "watch_app_not_installed"
+            return
+        }
+        #endif
         do {
             try session?.updateApplicationContext(payload)
             if session?.isReachable == true {
@@ -54,9 +60,18 @@ final class Gate3WatchConnectivityController: NSObject, WCSessionDelegate {
     func diagnostics() -> [String: String] {
         [
             "gate3WatchConnectivity": activationState,
+            "gate3WatchInstalled": isWatchAppInstalled ? "true" : "false",
             "gate3WatchReachable": session?.isReachable == true ? "true" : "false",
             "gate3WatchLastMessage": lastMessage
         ]
+    }
+
+    private var isWatchAppInstalled: Bool {
+        #if os(iOS)
+        session?.isWatchAppInstalled == true
+        #else
+        true
+        #endif
     }
 
     nonisolated func session(
