@@ -37,6 +37,31 @@ python3 scripts/validate-surface-contracts.py
 - Backend requests for compact snapshot and delegated command behavior.
 - Final handoff with changed files, contract deltas, backend requests, tests run, tests not run, and open risks.
 
+## Steward Verification
+
+These commands require explicit steward/build authority and are not part of ordinary gate-agent scope:
+
+```bash
+swift test
+python3 scripts/validate-contracts.py
+python3 scripts/validate-surface-contracts.py
+xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsAppDevice -destination 'generic/platform=iOS' build | xcbeautify
+xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsWatch -destination 'generic/platform=watchOS' build | xcbeautify
+```
+
+## Device User Testing
+
+Run this on a paired iPhone and Apple Watch after the device app installs cleanly:
+
+- Start a spoken session on iPhone and confirm the Watch shows the current title, brief chapter/target label, progress, and playback state instead of the fallback "Open on iPhone" state.
+- Tap play/pause on Watch and verify the phone-owned session toggles without starting independent Watch playback.
+- Tap skip forward and skip back on Watch and verify the phone advances across the expected chapter boundary or idempotently stays at the boundary without crashing.
+- Use chapter navigation on Watch, if visible, and verify the phone jumps to the selected chapter and returns an updated compact snapshot.
+- Tap interject, verify the Watch enters recording/interjection state, then finish and confirm the phone saves the interjection and the Watch leaves recording state.
+- Tap AI summary/discuss controls, if visible for the current state, and verify unsupported or unavailable actions are hidden or disabled and available actions delegate to the phone session.
+- Background and foreground the Watch app, then confirm it refreshes to the current phone session instead of stale or placeholder state.
+- Stop the phone session and confirm the Watch returns to a clear inactive/open-phone state.
+
 ## Out Of Scope
 
 - Watch app implementation.

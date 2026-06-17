@@ -35,6 +35,23 @@ python3 scripts/validate-contracts.py
 python3 scripts/validate-surface-contracts.py
 ```
 
+Steward/local verification commands, for agents explicitly assigned build authority:
+
+```bash
+xcodegen generate
+xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsAppDevice -destination 'generic/platform=iOS' build | xcbeautify
+xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -destination 'generic/platform=iOS Simulator' build | xcbeautify
+xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsWatch -destination 'generic/platform=watchOS' build | xcbeautify
+```
+
+Expected local tooling:
+
+- `/opt/homebrew/bin` should be on `PATH`.
+- `python3` should resolve to Python 3.10 or newer with `jsonschema` installed.
+- `git-lfs` should be installed and initialized with `git lfs install`.
+- `xcodegen` should be available for regenerating `SpokenMarginsNative.xcodeproj` from `project.yml`.
+- `xcbeautify` should be available for readable Xcode build output.
+
 ## Required Agent Output
 
 Every gate handoff must include:
