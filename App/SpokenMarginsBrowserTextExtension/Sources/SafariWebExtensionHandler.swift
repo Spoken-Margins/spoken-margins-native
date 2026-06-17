@@ -1,0 +1,63 @@
+import Foundation
+import SafariServices
+
+final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
+    private static let appGroupIdentifier = "group.com.spokenmargins.native"
+    private static let payloadDirectoryName = "BrowserTextHandoffs"
+
+    func beginRequest(with context: NSExtensionContext) {
+        let response = NSExtensionItem()
+        response.userInfo = [SFExtensionMessageKey: responseMessage(for: context)]
+        context.completeRequest(returningItems: [response], completionHandler: nil)
+    }
+
+    private func responseMessage(for context: NSExtensionContext) -> [String: Any] {
+        guard let item = context.inputItems.first as? NSExtensionItem,
+              let message = item.userInfo?[SFExtensionMessageKey] as? [String: Any],
+              message["action"] as? String == "storeBrowserTextPayload",
+              var payload = message["payload"] as? [String: Any] else {
+            return errorResponse("Unsupported browser text extension message.")
+        }
+
+        let payloadID = sanitizedPayloadID(payload["id"] as? String)
+        payload["id"] = payloadID
+        payload["schemaVersion"] = payload["schemaVersion"] as? String ?? "browser-text-handoff.v1"
+        payload["createdAt"] = payload["createdAt"] as? String ?? ISO8601DateFormatter().string(from: Date())
+
+        do {
+            guard let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: Self.appGroupIdentifier) else {
+                return errorResponse("App Group container is unavailable.")
+            }
+            let directoryURL = containerURL.appendingPathComponent(Self.payloadDirectoryName, isDirectory: true)
+            try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+            let payloadURL = directoryURL.appendingPathComponent(payloadID).appendingPathExtension("json")
+            let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: payloadURL, options: [.atomic])
+            return [
+                "ok": true,
+                "payloadId": payloadID,
+                "openURL": "spokenmargins://browser-text?payloadId=\(payloadID)"
+            ]
+        } catch {
+            return errorResponse("Unable to store browser text payload: \(error.localizedDescription)")
+        }
+    }
+
+    private func sanitizedPayloadID(_ rawID: String?) -> String {
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
+        let cleaned = rawID?
+            .unicodeScalars
+            .filter { allowed.contains($0) }
+            .map(String.init)
+            .joined()
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return cleaned.isEmpty ? UUID().uuidString : cleaned
+    }
+
+    private func errorResponse(_ message: String) -> [String: Any] {
+        [
+            "ok": false,
+            "error": message
+        ]
+    }
+}

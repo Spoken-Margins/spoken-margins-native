@@ -109,7 +109,7 @@
       "id": "browser-text-handoff-payload",
       "title": "Define browser text handoff payload",
       "status": "resolved",
-      "details": "Initial handoff shape is documented in docs/gate5-browser-text-handoff.md. A durable schema is still a later backend request if the browser extension moves beyond contract validation."
+      "details": "Durable payload handoff is documented in docs/gate5-browser-text-handoff.md. Full text payloads are persisted through the App Group and opened with a payloadId URL."
     },
     {
       "id": "import-browser-text-command",
@@ -125,8 +125,8 @@
     }
   ],
   "notes": [
-    "Gate 5 first deliverable is contract and handoff shape, not a browser extension implementation.",
+    "Gate 5 now validates Safari selected-text and readable-page capture with native app continuation.",
     "Browser text and browser media remain separate profiles and contracts.",
-    "Handoff payload proposal lives in docs/gate5-browser-text-handoff.md."
+    "Browser recording and browser-owned TTS remain follow-up work; this slice delegates playback and interjection to the native app."
   ]
 }

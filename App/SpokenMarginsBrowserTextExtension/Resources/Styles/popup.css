@@ -1,0 +1,41 @@
+body {
+  margin: 0;
+  min-width: 240px;
+  color: #f6f6f6;
+  background: #141414;
+  font: 15px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+}
+
+main {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+h1 {
+  margin: 0 0 4px;
+  font-size: 17px;
+  line-height: 1.2;
+}
+
+button {
+  min-height: 44px;
+  border: 0;
+  border-radius: 8px;
+  color: #111;
+  background: #f4f4f4;
+  font: inherit;
+  font-weight: 700;
+}
+
+button:disabled {
+  opacity: 0.55;
+}
+
+#status {
+  min-height: 18px;
+  margin: 0;
+  color: #bdbdbd;
+  font-size: 12px;
+  line-height: 1.4;
+}

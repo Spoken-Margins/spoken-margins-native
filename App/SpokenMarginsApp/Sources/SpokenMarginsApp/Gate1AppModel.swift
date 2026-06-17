@@ -288,7 +288,8 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func importBrowserText(_ handoff: BrowserTextHandoff) {
+    @discardableResult
+    func importBrowserText(_ handoff: BrowserTextHandoff) -> Bool {
         do {
             let store = try requireStore()
             let engine = try makeEngine(store: store)
@@ -304,8 +305,10 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["lastBrowserTextSource"] = handoff.source.url
             screen = handoff.requestedContinuation.startSession ? .playback : .item
             reportSuccess("Imported browser text from \(handoff.source.title).")
+            return true
         } catch {
             reportFailure(error, context: "Browser text import failed")
+            return false
         }
     }
 
@@ -936,8 +939,22 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleIncomingURL(_ url: URL) {
-        if let handoff = Gate5BrowserTextHandoffURL.handoff(from: url) {
-            importBrowserText(handoff)
+        guard !Gate5BrowserTextHandoffURL.isBrowserTextURL(url) else {
+            do {
+                if let payloadID = Gate5BrowserTextHandoffURL.payloadID(from: url) {
+                    let handoffStore = try Gate5BrowserTextHandoffStore.appGroup()
+                    let handoff = try Gate5BrowserTextHandoffURL.handoff(from: url, store: handoffStore)
+                    if importBrowserText(handoff) {
+                        try? handoffStore.deletePayload(payloadID: payloadID)
+                    }
+                } else if let handoff = Gate5BrowserTextHandoffURL.handoff(from: url) {
+                    importBrowserText(handoff)
+                } else {
+                    reportFailure("Unsupported browser text URL.")
+                }
+            } catch {
+                reportFailure(error, context: "Browser text import failed")
+            }
             return
         }
         handleGate2CompactURL(url)

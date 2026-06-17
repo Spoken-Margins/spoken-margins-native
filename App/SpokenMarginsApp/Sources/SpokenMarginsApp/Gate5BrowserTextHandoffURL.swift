@@ -5,16 +5,27 @@ enum Gate5BrowserTextHandoffURL {
     static let scheme = "spokenmargins"
     static let host = "browser-text"
 
+    static func isBrowserTextURL(_ url: URL) -> Bool {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return false
+        }
+        return components.scheme == scheme && components.host == host
+    }
+
+    static func payloadID(from url: URL) -> String? {
+        query(from: url)["payloadId"]
+    }
+
     static func handoff(from url: URL) -> BrowserTextHandoff? {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               components.scheme == scheme,
               components.host == host else {
             return nil
         }
-        let query = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).compactMap { item -> (String, String)? in
-            guard let value = item.value else { return nil }
-            return (item.name, value)
-        })
+        let query = query(from: components)
+        guard query["payloadId"] == nil else {
+            return nil
+        }
         guard let text = query["text"], !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }
@@ -39,6 +50,16 @@ enum Gate5BrowserTextHandoffURL {
                 preferredPlaybackOwner: query["preferredPlaybackOwner"]
             )
         )
+    }
+
+    static func handoff(from url: URL, store: Gate5BrowserTextHandoffStore) throws -> BrowserTextHandoff {
+        if let payloadID = payloadID(from: url) {
+            return try store.handoff(payloadID: payloadID)
+        }
+        guard let handoff = handoff(from: url) else {
+            throw Gate5BrowserTextHandoffStoreError.invalidPayload("unsupported browser text URL")
+        }
+        return handoff
     }
 
     static func url(for handoff: BrowserTextHandoff) -> URL {
@@ -66,6 +87,30 @@ enum Gate5BrowserTextHandoffURL {
         }
         components.queryItems = items
         return components.url!
+    }
+
+    static func url(forPayloadID payloadID: String) -> URL {
+        var components = URLComponents()
+        components.scheme = scheme
+        components.host = host
+        components.queryItems = [
+            URLQueryItem(name: "payloadId", value: payloadID)
+        ]
+        return components.url!
+    }
+
+    private static func query(from url: URL) -> [String: String] {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return [:]
+        }
+        return query(from: components)
+    }
+
+    private static func query(from components: URLComponents) -> [String: String] {
+        Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).compactMap { item -> (String, String)? in
+            guard let value = item.value else { return nil }
+            return (item.name, value)
+        })
     }
 
     private static func boolValue(_ value: String?) -> Bool {
