@@ -75,7 +75,7 @@ final class WatchTetheredModel: NSObject, ObservableObject, WCSessionDelegate {
         if optimisticRecording {
             switch command {
             case .finishInterjection, .cancelInterjection:
-                return canSendCommands
+                return canSendCommands && isReachable
             case .beginInterjection:
                 return false
             default:
@@ -90,6 +90,9 @@ final class WatchTetheredModel: NSObject, ObservableObject, WCSessionDelegate {
             default:
                 break
             }
+        }
+        if requiresLivePhone(command), !isReachable {
+            return false
         }
         return snapshot?.availableCommands.contains(command) == true
     }
@@ -119,6 +122,13 @@ final class WatchTetheredModel: NSObject, ObservableObject, WCSessionDelegate {
     }
 
     private func send(_ command: CompactControlCommand, extra: [String: Any]) {
+        guard canSend(command) else {
+            status = unavailableStatus(for: command)
+            if command == .beginInterjection {
+                optimisticRecording = false
+            }
+            return
+        }
         applyOptimisticState(for: command)
         var message = extra
         message["type"] = "command"
@@ -135,6 +145,29 @@ final class WatchTetheredModel: NSObject, ObservableObject, WCSessionDelegate {
         default:
             break
         }
+    }
+
+    private func requiresLivePhone(_ command: CompactControlCommand) -> Bool {
+        switch command {
+        case .beginInterjection, .finishInterjection, .cancelInterjection, .generateInterjectionSummary, .submitFollowup:
+            return true
+        case .play, .pause, .togglePlayPause, .skipBack, .skipForward, .jumpToChapter:
+            return false
+        }
+    }
+
+    private func unavailableStatus(for command: CompactControlCommand) -> String {
+        if requiresLivePhone(command), !isReachable {
+            switch command {
+            case .beginInterjection, .finishInterjection, .cancelInterjection:
+                return "Open iPhone to interject"
+            case .generateInterjectionSummary, .submitFollowup:
+                return "Open iPhone for AI"
+            default:
+                return "Open iPhone app"
+            }
+        }
+        return "Command unavailable"
     }
 
     private func send(message: [String: Any]) {

@@ -15,8 +15,12 @@ struct WatchTetheredView: View {
                     recordingControls
                 } else {
                     transportControls
-                    actionControls
-                    discussControl
+                    if model.canSend(.generateInterjectionSummary) || model.canSend(.beginInterjection) {
+                        actionControls
+                    }
+                    if model.canSend(.submitFollowup) {
+                        discussControl
+                    }
                 }
                 if model.needsPhoneToResume {
                     Text("Open iPhone to resume")
@@ -97,19 +101,23 @@ struct WatchTetheredView: View {
 
     private var actionControls: some View {
         HStack(spacing: 8) {
-            actionPill(
-                systemName: "sparkles",
-                title: "Summary",
-                enabled: model.canSend(.generateInterjectionSummary)
-            ) {
-                model.send(.generateInterjectionSummary)
+            if model.canSend(.generateInterjectionSummary) {
+                actionPill(
+                    systemName: "sparkles",
+                    title: "Summary",
+                    enabled: true
+                ) {
+                    model.send(.generateInterjectionSummary)
+                }
             }
-            actionPill(
-                systemName: "mic.fill",
-                title: "Interject",
-                enabled: model.canSend(.beginInterjection)
-            ) {
-                model.send(.beginInterjection)
+            if model.canSend(.beginInterjection) {
+                actionPill(
+                    systemName: "mic.fill",
+                    title: "Interject",
+                    enabled: true
+                ) {
+                    model.send(.beginInterjection)
+                }
             }
         }
     }
@@ -165,8 +173,6 @@ struct WatchTetheredView: View {
             .buttonStyle(.plain)
             .background(.white.opacity(0.12), in: Capsule())
             .overlay(Capsule().stroke(.white.opacity(0.12), lineWidth: 1))
-            .disabled(!model.canSend(.submitFollowup))
-            .opacity(model.canSend(.submitFollowup) ? 1 : 0.45)
         }
     }
 

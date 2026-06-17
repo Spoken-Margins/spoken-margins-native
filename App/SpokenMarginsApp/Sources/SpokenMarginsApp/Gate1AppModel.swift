@@ -1493,6 +1493,13 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func dispatchGate3WatchCommand(_ request: Gate3WatchCommandRequest) {
+        guard gate3WatchSnapshot()?.availableCommands.contains(request.command) == true else {
+            diagnostics["gate3WatchLastCommand"] = request.command.rawValue
+            diagnostics["gate3WatchLastResult"] = "unavailable"
+            updateGate3WatchState()
+            reportFailure("Watch command \(request.command.rawValue) is unavailable for the current session state.")
+            return
+        }
         if request.command == .generateInterjectionSummary {
             summarize()
             updateGate3WatchState()
