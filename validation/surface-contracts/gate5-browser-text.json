@@ -5,7 +5,8 @@
   "surfaceOwns": [
     "selected_text_capture",
     "readable_page_text_capture",
-    "browser_handoff_payload"
+    "browser_handoff_payload",
+    "source_url_metadata"
   ],
   "delegatesTo": [
     "phone-tablet-online",
@@ -32,8 +33,8 @@
       "requiredCapabilities": {
         "sync": ["browser_session_handoff"]
       },
-      "backendCommand": null,
-      "notes": "Backend request: create text-backed item or handoff package from selected/readable browser text."
+      "backendCommand": "SessionEngine.importBrowserText",
+      "notes": "Creates a URL-backed text item from selected/readable browser text and may start a session when requested."
     },
     {
       "id": "startSession",
@@ -95,28 +96,37 @@
     }
   ],
   "traces": [
-    "traces/browser-text-session.json"
+    "traces/browser-text-session.json",
+    "traces/browser-readable-text-session.json"
   ],
   "fixtures": [
     "fixtures/capabilities/browser-text.json",
-    "fixtures/items/text-mapless.json"
+    "fixtures/items/browser-text-selected.json",
+    "fixtures/items/browser-text-readable-page.json"
   ],
   "backendRequests": [
     {
       "id": "browser-text-handoff-payload",
       "title": "Define browser text handoff payload",
-      "status": "open",
-      "details": "Needs title, source URL, selected/readable text, optional author/published date, and session continuation identifiers."
+      "status": "resolved",
+      "details": "Initial handoff shape is documented in docs/gate5-browser-text-handoff.md. A durable schema is still a later backend request if the browser extension moves beyond contract validation."
     },
     {
       "id": "import-browser-text-command",
       "title": "Implement or route importBrowserText",
+      "status": "resolved",
+      "details": "SessionKit exposes importBrowserText and the app routes spokenmargins://browser-text handoff URLs into it."
+    },
+    {
+      "id": "browser-text-available-commands",
+      "title": "Publish command availability for browser text permissions",
       "status": "open",
-      "details": "Trace already names importBrowserText, but SessionKit does not expose a formal command for it yet."
+      "details": "Browser UI needs availableCommands to hide recording when microphone permission is absent and to distinguish browser-owned from app-owned playback."
     }
   ],
   "notes": [
     "Gate 5 first deliverable is contract and handoff shape, not a browser extension implementation.",
-    "Browser text and browser media remain separate profiles and contracts."
+    "Browser text and browser media remain separate profiles and contracts.",
+    "Handoff payload proposal lives in docs/gate5-browser-text-handoff.md."
   ]
 }

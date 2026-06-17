@@ -16,6 +16,13 @@ final class TraceReplayTests: XCTestCase {
             try harness.replay()
         }
     }
+
+    func testGate5TracesReplay() throws {
+        for traceName in TraceHarness.gate5TraceNames {
+            let harness = try TraceHarness(traceName: traceName)
+            try harness.replay()
+        }
+    }
 }
 
 final class TraceHarness {
@@ -37,6 +44,11 @@ final class TraceHarness {
 
     static let gate2TraceNames = [
         "lock-screen-widget-controls"
+    ]
+
+    static let gate5TraceNames = [
+        "browser-text-session",
+        "browser-readable-text-session"
     ]
 
     let trace: [String: Any]
@@ -117,6 +129,8 @@ final class TraceHarness {
             switch command {
             case "startSession":
                 return try engine.startSession(itemId: args["itemId"] as? String ?? "item-pill")
+            case "importBrowserText":
+                return try engine.importBrowserText(browserTextHandoff(from: args))
             case "skipForward":
                 return try engine.skipForward(unit: args["unit"] as? String ?? "sentence")
             case "skipBack":
@@ -188,6 +202,15 @@ final class TraceHarness {
                 XCTAssertEqual(snapshot.status.rawValue, value as? String)
             case "targetType":
                 XCTAssertEqual(snapshot.targetType, value as? String)
+            case "itemMediaType":
+                let item = try XCTUnwrap(snapshot.itemId.flatMap { repository.items[$0] })
+                XCTAssertEqual(item.mediaType, value as? String)
+            case "externalReferenceType":
+                let item = try XCTUnwrap(snapshot.itemId.flatMap { repository.items[$0] })
+                XCTAssertEqual(item.externalReferenceType, value as? String)
+            case "externalReference":
+                let item = try XCTUnwrap(snapshot.itemId.flatMap { repository.items[$0] })
+                XCTAssertEqual(item.externalReference, value as? String)
             case "isRecording":
                 XCTAssertEqual(snapshot.isRecording, value as? Bool)
             case "activeInterjectionCount":
@@ -551,6 +574,25 @@ final class TraceHarness {
             sessionId: dict["sessionId"] as? String,
             turnId: dict["turnId"] as? String,
             interjectionIds: dict["interjectionIds"] as? [String]
+        )
+    }
+
+    private func browserTextHandoff(from dict: [String: Any]) -> BrowserTextHandoff {
+        let continuation = dict["requestedContinuation"] as? [String: Any] ?? [:]
+        return BrowserTextHandoff(
+            itemId: dict["itemId"] as? String,
+            captureMode: BrowserTextCaptureMode(rawValue: dict["captureMode"] as? String ?? "") ?? .selectedText,
+            source: BrowserTextSource(
+                url: dict["externalReference"] as? String ?? "",
+                title: dict["title"] as? String ?? "",
+                author: dict["author"] as? String,
+                publishedAt: dict["publishedAt"] as? String
+            ),
+            text: dict["text"] as? String ?? "",
+            requestedContinuation: BrowserTextContinuation(
+                startSession: continuation["startSession"] as? Bool ?? dict["startSession"] as? Bool ?? false,
+                preferredPlaybackOwner: continuation["preferredPlaybackOwner"] as? String
+            )
         )
     }
 

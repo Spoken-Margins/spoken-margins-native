@@ -90,15 +90,96 @@ public struct Item: Codable, Equatable, Sendable {
     public var mediaType: String
     public var text: String?
     public var externalReference: String?
+    public var externalReferenceType: String?
     public var status: String
 
-    public init(id: String, title: String, mediaType: String, text: String?, externalReference: String?, status: String) {
+    public init(
+        id: String,
+        title: String,
+        mediaType: String,
+        text: String?,
+        externalReference: String?,
+        status: String,
+        externalReferenceType: String? = nil
+    ) {
         self.id = id
         self.title = title
         self.mediaType = mediaType
         self.text = text
         self.externalReference = externalReference
+        self.externalReferenceType = externalReferenceType
         self.status = status
+    }
+}
+
+public enum BrowserTextCaptureMode: String, Codable, Equatable, Sendable {
+    case selectedText = "selected_text"
+    case readablePage = "readable_page"
+}
+
+public struct BrowserTextSource: Codable, Equatable, Sendable {
+    public var url: String
+    public var title: String
+    public var author: String?
+    public var publishedAt: String?
+
+    public init(url: String, title: String, author: String? = nil, publishedAt: String? = nil) {
+        self.url = url
+        self.title = title
+        self.author = author
+        self.publishedAt = publishedAt
+    }
+}
+
+public struct BrowserTextSelection: Codable, Equatable, Sendable {
+    public var textStart: Int?
+    public var textEnd: Int?
+    public var prefix: String?
+    public var suffix: String?
+
+    public init(textStart: Int? = nil, textEnd: Int? = nil, prefix: String? = nil, suffix: String? = nil) {
+        self.textStart = textStart
+        self.textEnd = textEnd
+        self.prefix = prefix
+        self.suffix = suffix
+    }
+}
+
+public struct BrowserTextContinuation: Codable, Equatable, Sendable {
+    public var startSession: Bool
+    public var preferredPlaybackOwner: String?
+
+    public init(startSession: Bool = false, preferredPlaybackOwner: String? = nil) {
+        self.startSession = startSession
+        self.preferredPlaybackOwner = preferredPlaybackOwner
+    }
+}
+
+public struct BrowserTextHandoff: Codable, Equatable, Sendable {
+    public var schemaVersion: String
+    public var itemId: String?
+    public var captureMode: BrowserTextCaptureMode
+    public var source: BrowserTextSource
+    public var text: String
+    public var selection: BrowserTextSelection?
+    public var requestedContinuation: BrowserTextContinuation
+
+    public init(
+        schemaVersion: String = "browser-text-handoff.v1",
+        itemId: String? = nil,
+        captureMode: BrowserTextCaptureMode,
+        source: BrowserTextSource,
+        text: String,
+        selection: BrowserTextSelection? = nil,
+        requestedContinuation: BrowserTextContinuation = BrowserTextContinuation()
+    ) {
+        self.schemaVersion = schemaVersion
+        self.itemId = itemId
+        self.captureMode = captureMode
+        self.source = source
+        self.text = text
+        self.selection = selection
+        self.requestedContinuation = requestedContinuation
     }
 }
 
