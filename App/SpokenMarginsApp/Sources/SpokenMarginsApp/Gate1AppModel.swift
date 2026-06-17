@@ -242,6 +242,8 @@ final class Gate1AppModel: ObservableObject {
             libraryItems = try loadLibraryRows(store: store)
             selectedItem = try loadItemDetail(id: item.id, store: store)
             diagnostics["lastImport"] = item.id
+            importTitle = ""
+            importText = ""
             screen = .playback
             reportSuccess("Imported and started \(item.title).")
         } catch {
@@ -620,7 +622,15 @@ final class Gate1AppModel: ObservableObject {
                 _ = try? engine.stopPlayback()
             }
             _ = try engine.inspectSession(sessionId: session.id)
-            snapshot = try engine.resumePlayback()
+            do {
+                if session.phase == .finished || session.completionPercent >= 100 {
+                    snapshot = try engine.playSourceFromBeginning()
+                } else {
+                    snapshot = try engine.resumePlayback()
+                }
+            } catch SessionKitError.invalidCommandForState("playback_text_empty") {
+                snapshot = try engine.playSourceFromBeginning()
+            }
             selectedItem = try loadItemDetail(id: session.itemId, store: store)
             screen = .playback
             reportSuccess("Resumed session at \(session.completionPercent)% complete.")
