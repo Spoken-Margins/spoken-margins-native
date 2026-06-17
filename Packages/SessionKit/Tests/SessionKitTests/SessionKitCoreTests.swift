@@ -109,6 +109,9 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertTrue(snapshot.exposedCommands.contains(.beginInterjection))
         XCTAssertFalse(snapshot.exposedCommands.contains(.finishInterjection))
         XCTAssertEqual(snapshot.availableCommands, snapshot.exposedCommands)
+        XCTAssertEqual(snapshot.timeline.first?.kind, "overview")
+        XCTAssertEqual(snapshot.timeline.first?.title, "Summary")
+        XCTAssertEqual(snapshot.timeline.filter { $0.kind == "source_chapter" }.map(\.title), ["Opening", "Middle"])
     }
 
     func testCompactControlCommandsDelegateToCanonicalRuntime() throws {
@@ -154,17 +157,20 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(finished.snapshot.phase, .itemPlayback)
         XCTAssertEqual(finished.snapshot.status, .playing)
         XCTAssertEqual(engine.currentSession?.itemId, "item-pill")
+        XCTAssertTrue(finished.snapshot.timeline.contains { $0.kind == "interjection" })
 
         let summary = try dispatcher.dispatch(.generateInterjectionSummary)
         XCTAssertTrue(summary.delegatedToCanonicalRuntime)
         XCTAssertEqual(summary.snapshot.pendingAiJobKind, "interjection_summary")
         XCTAssertEqual(summary.snapshot.pendingAiJobStatus, "pending")
+        XCTAssertTrue(summary.snapshot.timeline.contains { $0.kind == "interjection_summary" && $0.title == "Interjection Summary 1" })
 
         let discussion = try dispatcher.dispatch(.submitFollowup, followUpText: "Can you respond to my interjection?")
         XCTAssertTrue(discussion.delegatedToCanonicalRuntime)
         XCTAssertEqual(discussion.snapshot.phase, .conversation)
         XCTAssertEqual(discussion.snapshot.lastUserTurnType, "user_response")
         XCTAssertEqual(discussion.snapshot.pendingAiJobKind, "assistant_response")
+        XCTAssertTrue(discussion.snapshot.timeline.contains { $0.kind == "assistant_response" && $0.title == "AI Response 1" })
     }
 
     func testCompactControlRejectsUnsupportedSurfaceCommands() throws {
@@ -616,7 +622,6 @@ final class SessionKitCoreTests: XCTestCase {
             id: "phone-tablet-online",
             displayName: "Phone/Tablet Online",
             capabilities: [
-                "sync": ["canonical_persistence"],
                 "playback": ["realtime_tts"]
             ]
         )
@@ -1147,6 +1152,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(audio.playedTargets.last, item.id)
         XCTAssertEqual(audio.playedOffsets.last, 0)
     }
+
 }
 
 private final class RecordingAudioClient: AudioPlaybackClient {

@@ -25,7 +25,8 @@
     "pendingAiJobKind",
     "pendingAiJobStatus",
     "lastUserTurnType",
-    "availableCommands"
+    "availableCommands",
+    "timeline"
   ],
   "commands": [
     {
@@ -164,6 +165,12 @@
       "title": "Decide Watch chapter skip semantics",
       "status": "resolved",
       "details": "Compact dispatch now passes skip units through and SessionEngine supports chapter-unit skip behavior for text items with Listening Maps."
+    },
+    {
+      "id": "watch-compact-timeline",
+      "title": "Publish compact timeline rows for Watch",
+      "status": "resolved",
+      "details": "CompactControlSnapshot now includes source chapters and generated AI/summary rows so the Watch can show timeline context below the primary controls."
     }
   ],
   "notes": [
