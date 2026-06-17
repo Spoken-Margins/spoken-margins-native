@@ -31,6 +31,7 @@ Key planning documents:
 - `docs/parity-test-plan.md`: verification strategy through schemas, fixtures, and traces
 - `docs/product-validation-plan.md`: product-owner validation gates for interface-level acceptance
 - `docs/prototype-lessons.md`: prototype lessons to preserve, abstract, or leave behind
+- `docs/gate3-watch-tethered-closeout.md`: closed Gate 3 Watch scope and Gate 4 lessons learned
 
 ## First Engineering Move
 

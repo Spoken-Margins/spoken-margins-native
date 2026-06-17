@@ -164,12 +164,13 @@ Goal: validate compact delegated control from the phone lock screen or widget su
 
 Goal: validate the watch as a remote control surface for the phone/tablet runtime.
 
+Status: closed as a tethered remote-control surface. See `docs/gate3-watch-tethered-closeout.md`.
+
 ### In Scope
 
 - watch displays current item and chapter/target
 - play/pause
 - skip back/forward
-- begin/finish interjection
 - scroll chapters
 - jump to chapter
 - phone app reflects all watch actions
@@ -182,24 +183,28 @@ Goal: validate the watch as a remote control surface for the phone/tablet runtim
 3. Pause and resume from watch.
 4. Skip back and forward from watch.
 5. Scroll chapter list and jump to a chapter.
-6. Begin and finish an interjection from watch.
-7. Confirm phone session contains the resulting anchored interjection.
+6. Submit Discuss from watch when available and confirm the phone session receives the delegated request.
+7. Confirm Watch-started interjection is not exposed in Gate 3.
 
 ### Pass Criteria
 
 - Watch feels like a reliable remote for walking with phone nearby.
 - Watch does not pretend to own playback, recording, AI, or persistence locally.
+- Watch does not expose unsafe delegated recording while the phone is locked.
 
 ### Out Of Scope
 
 - watch-owned playback
 - watch transcription
 - watch AI
+- watch-started interjection recording
 - phone-free walk
 
 ## Gate 4: Untethered Watch
 
 Goal: validate the phone-free watch and AirPods walk.
+
+Gate 4 should start from the Gate 3 Watch lessons in `docs/gate3-watch-tethered-closeout.md`, especially the finding that delegated phone recording from Watch is unsafe while locked.
 
 ### In Scope
 
