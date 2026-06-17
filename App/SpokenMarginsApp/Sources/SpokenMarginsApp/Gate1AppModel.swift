@@ -62,6 +62,7 @@ final class Gate1AppModel: ObservableObject {
         didSet {
             reconcilePlaybackProgressTicker()
             updateGate2CompactState()
+            updateGate3WatchState()
         }
     }
     @Published var gate2CompactSnapshot: CompactControlSnapshot?
@@ -99,6 +100,8 @@ final class Gate1AppModel: ObservableObject {
     private var engine: SessionEngine?
     private var store: SQLiteSessionStore?
     private let gate2CompactControls = Gate2CompactControlController()
+    private let gate3WatchConnectivity = Gate3WatchConnectivityController()
+    private var gate3WatchDispatcher: CompactControlDispatcher?
     private var activeItemId = "item-pill"
     private var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-4.1-mini"
     private var playbackProgressTask: Task<Void, Never>?
@@ -139,6 +142,11 @@ final class Gate1AppModel: ObservableObject {
     init() {
         sanitizeTTSMode()
         settingsValueChanged()
+        gate3WatchConnectivity.activate { [weak self] in
+            self?.gate3WatchSnapshot()
+        } commandHandler: { [weak self] request in
+            self?.dispatchGate3WatchCommand(request)
+        }
     }
 
     deinit {
@@ -1417,6 +1425,7 @@ final class Gate1AppModel: ObservableObject {
     private func installEngine(_ engine: SessionEngine) {
         self.engine = engine
         configureGate2CompactControls(for: engine)
+        configureGate3WatchControls(for: engine)
     }
 
     private func configureGate2CompactControls(for engine: SessionEngine) {
@@ -1443,6 +1452,81 @@ final class Gate1AppModel: ObservableObject {
         gate2CompactControls.update(snapshot: snapshot)
         gate2CompactSnapshot = gate2CompactControls.snapshot
         diagnostics.merge(gate2CompactControls.diagnostics(), uniquingKeysWith: { _, new in new })
+    }
+
+    private func configureGate3WatchControls(for engine: SessionEngine) {
+        do {
+            let surfaceProfile = try loadProfile(id: "watch-tethered")
+            gate3WatchDispatcher = CompactControlDispatcher(
+                surfaceProfile: surfaceProfile,
+                canonicalRuntime: engine,
+                defaultSkipUnit: "chapter"
+            )
+            updateGate3WatchState()
+        } catch {
+            diagnostics["gate3WatchSurface"] = "configuration_failed"
+            diagnostics["gate3WatchError"] = String(describing: error)
+        }
+    }
+
+    private func gate3WatchSnapshot() -> CompactControlSnapshot? {
+        gate3WatchDispatcher?.snapshot()
+    }
+
+    private func updateGate3WatchState() {
+        gate3WatchConnectivity.publish(snapshot: gate3WatchSnapshot())
+        diagnostics.merge(gate3WatchConnectivity.diagnostics(), uniquingKeysWith: { _, new in new })
+    }
+
+    private func dispatchGate3WatchCommand(_ request: Gate3WatchCommandRequest) {
+        if request.command == .beginInterjection {
+            Task {
+                let granted = await SystemRecordingClient.requestRecordPermission()
+                guard granted else {
+                    reportFailure("Microphone access is required to record interjections from Watch.")
+                    updateGate3WatchState()
+                    return
+                }
+                performGate3WatchCommand(request)
+            }
+            return
+        }
+        performGate3WatchCommand(request)
+    }
+
+    private func performGate3WatchCommand(_ request: Gate3WatchCommandRequest) {
+        do {
+            if engine == nil {
+                resetAndSeed()
+            }
+            guard let dispatcher = gate3WatchDispatcher else {
+                throw SessionKitError.invalidCommandForState("watch_tethered_unconfigured")
+            }
+            let result = try dispatcher.dispatch(
+                request.command,
+                chapterId: request.chapterId,
+                unit: request.unit,
+                followUpText: request.followUpText
+            )
+            if let engine {
+                snapshot = engine.snapshot
+            } else {
+                updateGate3WatchState()
+            }
+            refreshSelectedItem()
+            if request.command == .finishInterjection, let interjection = latestInterjectionNeedingTranscription() {
+                scheduleTranscription(for: interjection)
+            }
+            diagnostics["gate3WatchLastCommand"] = request.command.rawValue
+            diagnostics["gate3WatchLastResult"] = result.delegatedToCanonicalRuntime ? "delegated" : (result.rejectedReason ?? "rejected")
+            updateGate3WatchState()
+            reportSuccess("Watch control \(request.command.rawValue) delegated.")
+        } catch {
+            diagnostics["gate3WatchLastCommand"] = request.command.rawValue
+            diagnostics["gate3WatchLastResult"] = "failed"
+            updateGate3WatchState()
+            reportFailure(error, context: "Watch control failed")
+        }
     }
 
     private func performGate2CompactCommand(_ command: CompactControlCommand, chapterId: String? = nil) {

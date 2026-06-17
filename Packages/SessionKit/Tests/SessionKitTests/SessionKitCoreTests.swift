@@ -108,6 +108,10 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertTrue(snapshot.exposedCommands.contains(.jumpToChapter))
         XCTAssertTrue(snapshot.exposedCommands.contains(.beginInterjection))
         XCTAssertFalse(snapshot.exposedCommands.contains(.finishInterjection))
+        XCTAssertEqual(snapshot.availableCommands, snapshot.exposedCommands)
+        XCTAssertEqual(snapshot.timeline.first?.kind, "overview")
+        XCTAssertEqual(snapshot.timeline.first?.title, "Summary")
+        XCTAssertEqual(snapshot.timeline.filter { $0.kind == "source_chapter" }.map(\.title), ["Opening", "Middle"])
     }
 
     func testCompactControlCommandsDelegateToCanonicalRuntime() throws {
@@ -117,7 +121,7 @@ final class SessionKitCoreTests: XCTestCase {
             capabilities: [
                 "timeline": ["chapter_timing"],
                 "interjection": ["delegate_interjection_to_canonical_runtime"],
-                "remoteControl": ["display_snapshot", "send_transport_commands", "send_chapter_jump", "send_interjection_commands"]
+                "remoteControl": ["display_snapshot", "send_transport_commands", "send_chapter_jump", "send_interjection_commands", "send_ai_commands"]
             ]
         )
         let engine = try compactControlEngine()
@@ -153,6 +157,19 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(finished.snapshot.phase, .itemPlayback)
         XCTAssertEqual(finished.snapshot.status, .playing)
         XCTAssertEqual(engine.currentSession?.itemId, "item-pill")
+        XCTAssertTrue(finished.snapshot.timeline.contains { $0.kind == "interjection" })
+
+        let summary = try dispatcher.dispatch(.generateInterjectionSummary)
+        XCTAssertTrue(summary.delegatedToCanonicalRuntime)
+        XCTAssertEqual(summary.snapshot.pendingAiJobKind, "interjection_summary")
+        XCTAssertEqual(summary.snapshot.pendingAiJobStatus, "pending")
+        XCTAssertTrue(summary.snapshot.timeline.contains { $0.kind == "interjection_summary" && $0.title == "Interjection Summary 1" })
+
+        let discussion = try dispatcher.dispatch(.submitFollowup, followUpText: "Can you respond to my interjection?")
+        XCTAssertTrue(discussion.delegatedToCanonicalRuntime)
+        XCTAssertEqual(discussion.snapshot.phase, .conversation)
+        XCTAssertEqual(discussion.snapshot.lastUserTurnType, "user_response")
+        XCTAssertEqual(discussion.snapshot.pendingAiJobKind, "assistant_response")
     }
 
     func testCompactControlRejectsUnsupportedSurfaceCommands() throws {
@@ -170,6 +187,12 @@ final class SessionKitCoreTests: XCTestCase {
         }
         XCTAssertThrowsError(try dispatcher.dispatch(.beginInterjection)) { error in
             XCTAssertEqual(error as? SessionKitError, .invalidCommandForCapability("beginInterjection"))
+        }
+        XCTAssertThrowsError(try dispatcher.dispatch(.generateInterjectionSummary)) { error in
+            XCTAssertEqual(error as? SessionKitError, .invalidCommandForCapability("generateInterjectionSummary"))
+        }
+        XCTAssertThrowsError(try dispatcher.dispatch(.submitFollowup, followUpText: "Discuss this.")) { error in
+            XCTAssertEqual(error as? SessionKitError, .invalidCommandForCapability("submitFollowup"))
         }
     }
 
@@ -217,7 +240,7 @@ final class SessionKitCoreTests: XCTestCase {
                 "interjection": ["record_audio", "capture_text_anchor", "capture_turn_anchor"],
                 "ai": ["summarize_interjections", "continue_discussion"],
                 "sync": ["canonical_persistence"],
-                "remoteControl": ["display_snapshot", "send_transport_commands", "send_chapter_jump", "send_interjection_commands"]
+                "remoteControl": ["display_snapshot", "send_transport_commands", "send_chapter_jump", "send_interjection_commands", "send_ai_commands"]
             ]
         )
         let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two. Three. Four.", externalReference: nil, status: "ready")
