@@ -9,7 +9,7 @@ struct SpokenMarginsApp: App {
             Gate1RootView()
                 .environmentObject(model)
                 .onOpenURL { url in
-                    model.handleGate2CompactURL(url)
+                    model.handleIncomingURL(url)
                 }
         }
     }

@@ -109,6 +109,9 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertTrue(snapshot.exposedCommands.contains(.beginInterjection))
         XCTAssertFalse(snapshot.exposedCommands.contains(.finishInterjection))
         XCTAssertEqual(snapshot.availableCommands, snapshot.exposedCommands)
+        XCTAssertEqual(snapshot.timeline.first?.kind, "overview")
+        XCTAssertEqual(snapshot.timeline.first?.title, "Summary")
+        XCTAssertEqual(snapshot.timeline.filter { $0.kind == "source_chapter" }.map(\.title), ["Opening", "Middle"])
     }
 
     func testCompactControlCommandsDelegateToCanonicalRuntime() throws {
@@ -154,17 +157,20 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(finished.snapshot.phase, .itemPlayback)
         XCTAssertEqual(finished.snapshot.status, .playing)
         XCTAssertEqual(engine.currentSession?.itemId, "item-pill")
+        XCTAssertTrue(finished.snapshot.timeline.contains { $0.kind == "interjection" })
 
         let summary = try dispatcher.dispatch(.generateInterjectionSummary)
         XCTAssertTrue(summary.delegatedToCanonicalRuntime)
         XCTAssertEqual(summary.snapshot.pendingAiJobKind, "interjection_summary")
         XCTAssertEqual(summary.snapshot.pendingAiJobStatus, "pending")
+        XCTAssertTrue(summary.snapshot.timeline.contains { $0.kind == "interjection_summary" && $0.title == "Interjection Summary 1" })
 
         let discussion = try dispatcher.dispatch(.submitFollowup, followUpText: "Can you respond to my interjection?")
         XCTAssertTrue(discussion.delegatedToCanonicalRuntime)
         XCTAssertEqual(discussion.snapshot.phase, .conversation)
         XCTAssertEqual(discussion.snapshot.lastUserTurnType, "user_response")
         XCTAssertEqual(discussion.snapshot.pendingAiJobKind, "assistant_response")
+        XCTAssertTrue(discussion.snapshot.timeline.contains { $0.kind == "assistant_response" && $0.title == "AI Response 1" })
     }
 
     func testCompactControlRejectsUnsupportedSurfaceCommands() throws {
@@ -616,7 +622,6 @@ final class SessionKitCoreTests: XCTestCase {
             id: "phone-tablet-online",
             displayName: "Phone/Tablet Online",
             capabilities: [
-                "sync": ["canonical_persistence"],
                 "playback": ["realtime_tts"]
             ]
         )
@@ -1146,6 +1151,87 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.sourceProgressPercent, 0)
         XCTAssertEqual(audio.playedTargets.last, item.id)
         XCTAssertEqual(audio.playedOffsets.last, 0)
+    }
+
+    func testBrowserTextImportCreatesURLBackedTextItem() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "browser-text",
+            displayName: "Browser Text",
+            capabilities: [
+                "sync": ["browser_session_handoff"],
+                "playback": ["realtime_tts"]
+            ]
+        )
+        let repo = InMemorySessionRepository()
+        let engine = SessionEngine(profile: profile, repository: repo)
+        let handoff = BrowserTextHandoff(
+            itemId: "item-browser-selected",
+            captureMode: .selectedText,
+            source: BrowserTextSource(url: "https://example.com/pill", title: "Browser Pill"),
+            text: "Selected browser text."
+        )
+
+        let snapshot = try engine.importBrowserText(handoff)
+        let item = try repo.loadItem(id: "item-browser-selected")
+
+        XCTAssertEqual(snapshot.itemId, item.id)
+        XCTAssertEqual(snapshot.targetType, TargetType.itemTextTTS.rawValue)
+        XCTAssertEqual(snapshot.status, .idle)
+        XCTAssertEqual(item.title, "Browser Pill")
+        XCTAssertEqual(item.mediaType, "text")
+        XCTAssertEqual(item.text, "Selected browser text.")
+        XCTAssertEqual(item.externalReference, "https://example.com/pill")
+        XCTAssertEqual(item.externalReferenceType, "url")
+        XCTAssertEqual(item.status, "needs_listening_map")
+    }
+
+    func testBrowserTextImportCanStartSessionWhenRequested() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "browser-text",
+            displayName: "Browser Text",
+            capabilities: [
+                "sync": ["browser_session_handoff"],
+                "playback": ["realtime_tts"]
+            ]
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository()
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+        let handoff = BrowserTextHandoff(
+            itemId: "item-browser-readable",
+            captureMode: .readablePage,
+            source: BrowserTextSource(url: "https://example.com/readable", title: "Readable Page"),
+            text: "Readable page text.",
+            requestedContinuation: BrowserTextContinuation(startSession: true, preferredPlaybackOwner: "browser_or_app")
+        )
+
+        let snapshot = try engine.importBrowserText(handoff)
+
+        XCTAssertEqual(snapshot.status, .playing)
+        XCTAssertEqual(snapshot.phase, .itemPlayback)
+        XCTAssertEqual(snapshot.itemId, "item-browser-readable")
+        XCTAssertEqual(audio.playedTargets.last, "item-browser-readable")
+    }
+
+    func testBrowserTextImportRequiresSyncImportCapability() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "playback": ["realtime_tts"]
+            ]
+        )
+        let engine = SessionEngine(profile: profile, repository: InMemorySessionRepository())
+        let handoff = BrowserTextHandoff(
+            itemId: "item-browser-denied",
+            captureMode: .selectedText,
+            source: BrowserTextSource(url: "https://example.com/denied", title: "Denied"),
+            text: "Denied text."
+        )
+
+        XCTAssertThrowsError(try engine.importBrowserText(handoff)) { error in
+            XCTAssertEqual(error as? SessionKitError, .invalidCommandForCapability("importBrowserText"))
+        }
     }
 }
 

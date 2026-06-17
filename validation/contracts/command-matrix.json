@@ -112,8 +112,8 @@
     {
       "id": "importBrowserText",
       "description": "Create a text-backed item or handoff package from browser-selected or readable text.",
-      "status": "backend_request",
-      "backendCommand": null
+      "status": "implemented",
+      "backendCommand": "SessionEngine.importBrowserText"
     },
     {
       "id": "attachBrowserMedia",

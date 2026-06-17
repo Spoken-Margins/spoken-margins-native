@@ -47,6 +47,12 @@ Optional fields:
 - `selection`
 - `requestedContinuation`
 
+For app-side Gate 5 validation, the same payload is encoded as:
+
+```text
+spokenmargins://browser-text?captureMode=selected_text&title=Example&url=https%3A%2F%2Fexample.com&text=Captured%20text&startSession=1
+```
+
 ## Runtime Behavior
 
 - `importBrowserText` creates a normal `item.v1` record with `mediaType: text`, `externalReferenceType: url`, and `externalReference` set to the source URL.
@@ -64,6 +70,6 @@ Optional fields:
 
 ## Backend Requests
 
-- Implement or route `importBrowserText`.
+- `importBrowserText` is the app-side import command for Gate 5 validation.
 - Add a durable browser text handoff/package schema if the browser extension moves beyond this Gate 5 contract.
 - Publish `availableCommands` so browser UI can hide recording and playback controls when permission or runtime capability is absent.

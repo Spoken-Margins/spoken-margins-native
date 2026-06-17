@@ -15,6 +15,7 @@
     {
       "command": "importBrowserText",
       "args": {
+        "itemId": "item-browser-process-readable",
         "captureMode": "readable_page",
         "title": "Inspecting Process Instead of Anecdotes",
         "externalReference": "https://example.com/process-review",
@@ -23,6 +24,7 @@
       },
       "expect": {
         "itemMediaType": "text",
+        "externalReference": "https://example.com/process-review",
         "externalReferenceType": "url",
         "targetType": "item_text_tts"
       }

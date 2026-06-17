@@ -16,13 +16,19 @@
     {
       "command": "importBrowserText",
       "args": {
+        "itemId": "item-browser-pill-selected",
         "captureMode": "selected_text",
         "title": "You Can't Inspect the Pill",
         "externalReference": "https://example.com/pill",
         "externalReferenceType": "url",
         "text": "Opening distrust is reasonable. Maybe their diet changed. Maybe their sleep changed."
       },
-      "expect": { "itemMediaType": "text", "externalReferenceType": "url", "targetType": "item_text_tts" }
+      "expect": {
+        "itemMediaType": "text",
+        "externalReference": "https://example.com/pill",
+        "externalReferenceType": "url",
+        "targetType": "item_text_tts"
+      }
     },
     {
       "command": "startSession",

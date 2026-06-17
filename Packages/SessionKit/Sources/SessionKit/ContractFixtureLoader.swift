@@ -9,7 +9,8 @@ public enum ContractFixtureLoader {
             mediaType: object["mediaType"] as? String ?? "text",
             text: object["text"] as? String,
             externalReference: object["externalReference"] as? String,
-            status: object["status"] as? String ?? "ready"
+            status: object["status"] as? String ?? "ready",
+            externalReferenceType: object["externalReferenceType"] as? String
         )
     }
 

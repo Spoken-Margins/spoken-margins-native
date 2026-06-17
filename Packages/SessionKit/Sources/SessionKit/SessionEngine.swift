@@ -152,6 +152,42 @@ public final class SessionEngine {
     }
 
     @discardableResult
+    public func importBrowserText(_ handoff: BrowserTextHandoff) throws -> SessionSnapshot {
+        try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
+        let title = cleanedBrowserTextTitle(handoff.source.title, url: handoff.source.url)
+        let text = handoff.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            throw SessionKitError.invalidCommandForState("importBrowserText")
+        }
+        let item = Item(
+            id: handoff.itemId ?? browserTextItemId(title: title, url: handoff.source.url),
+            title: title,
+            mediaType: "text",
+            text: text,
+            externalReference: handoff.source.url,
+            status: "needs_listening_map",
+            externalReferenceType: "url"
+        )
+        try repository.saveItem(item)
+        currentItem = item
+        currentMap = nil
+        snapshot.itemId = item.id
+        snapshot.targetType = TargetType.itemTextTTS.rawValue
+        snapshot.targetId = item.id
+        snapshot.title = item.title
+        snapshot.chapterTitle = item.title
+        snapshot.status = .idle
+        snapshot.phase = .idle
+        snapshot.progressPercent = 0
+        snapshot.sourceProgressPercent = 0
+        snapshot.currentPlaybackProgressPercent = 0
+        if handoff.requestedContinuation.startSession {
+            return try startSession(itemId: item.id)
+        }
+        return snapshot
+    }
+
+    @discardableResult
     public func generateListeningMap(itemId: String) throws -> SessionSnapshot {
         try require("generateListeningMap", category: "ai", capabilities: ["generate_listening_map"])
         var item = try repository.loadItem(id: itemId)
@@ -865,6 +901,146 @@ public final class SessionEngine {
         return export
     }
 
+    public func compactTimelineEntries() -> [CompactTimelineEntry] {
+        guard let session = currentSession else { return [] }
+        let item = currentItem ?? (try? repository.loadItem(id: session.itemId))
+        let map = currentMap ?? (try? repository.loadListeningMap(itemId: session.itemId))
+        let sourceChapters = map?.chapters ?? []
+        let interjections = ((try? repository.loadInterjections(sessionId: session.id)) ?? [])
+            .filter { $0.status != "deleted" }
+        let turns = (try? repository.loadTurns(sessionId: session.id)) ?? []
+
+        var entries: [CompactTimelineEntry] = []
+        let overview = map?.overview.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !overview.isEmpty {
+            entries.append(
+                CompactTimelineEntry(
+                    id: "overview",
+                    kind: "overview",
+                    title: "Summary",
+                    detail: overview,
+                    percent: 0,
+                    isCurrent: session.currentTargetType == .itemTextTTS && session.position.chapterId == nil
+                )
+            )
+        } else if sourceChapters.isEmpty {
+            entries.append(
+                CompactTimelineEntry(
+                    id: "source-item",
+                    kind: "source_item",
+                    title: item?.title ?? snapshot.title ?? "Source",
+                    detail: "Play source from beginning",
+                    percent: 0,
+                    isCurrent: session.currentTargetType == .itemTextTTS
+                )
+            )
+        }
+
+        let sourceEntries = sourceChapters.map { chapter in
+            CompactTimelineEntry(
+                id: "source-\(chapter.id)",
+                kind: "source_chapter",
+                title: chapter.title,
+                detail: "Source",
+                chapterId: chapter.id,
+                percent: chapter.percent,
+                isCurrent: session.currentTargetType == .itemTextTTS && session.position.chapterId == chapter.id
+            )
+        } + interjections
+            .filter { $0.targetType == .item }
+            .map { interjection in
+                CompactTimelineEntry(
+                    id: "interjection-\(interjection.id)",
+                    kind: "interjection",
+                    title: "Interjection",
+                    detail: interjectionPreview(interjection),
+                    percent: interjection.roughPercent
+                )
+            }
+        entries.append(contentsOf: sourceEntries.sorted(by: compactTimelineSort))
+
+        for turn in turns {
+            let title = turnTitle(for: turn)
+            entries.append(
+                CompactTimelineEntry(
+                    id: "turn-\(turn.id)",
+                    kind: turn.turnType,
+                    title: title,
+                    detail: turn.summary ?? turn.text ?? turn.status,
+                    turnId: turn.id,
+                    isCurrent: session.currentTargetId == turn.id
+                )
+            )
+            entries.append(
+                contentsOf: (turn.chapters ?? []).map { chapter in
+                    CompactTimelineEntry(
+                        id: "turn-\(turn.id)-\(chapter.id)",
+                        kind: "turn_chapter",
+                        title: chapter.title,
+                        detail: title,
+                        chapterId: chapter.id,
+                        turnId: turn.id,
+                        percent: chapter.percent,
+                        isCurrent: session.currentTargetId == turn.id && session.position.chapterId == chapter.id
+                    )
+                }
+            )
+            entries.append(
+                contentsOf: interjections
+                    .filter { $0.targetId == turn.id && $0.targetType != .item }
+                    .map { interjection in
+                        CompactTimelineEntry(
+                            id: "interjection-\(interjection.id)",
+                            kind: "interjection",
+                            title: "Interjection",
+                            detail: interjectionPreview(interjection),
+                            turnId: turn.id,
+                            percent: interjection.roughPercent
+                        )
+                    }
+            )
+        }
+
+        return entries
+    }
+
+    private func compactTimelineSort(_ lhs: CompactTimelineEntry, _ rhs: CompactTimelineEntry) -> Bool {
+        let lhsPercent = lhs.percent ?? 101
+        let rhsPercent = rhs.percent ?? 101
+        if lhsPercent == rhsPercent {
+            return compactTimelineSortRank(lhs.kind) < compactTimelineSortRank(rhs.kind)
+        }
+        return lhsPercent < rhsPercent
+    }
+
+    private func compactTimelineSortRank(_ kind: String) -> Int {
+        switch kind {
+        case "source_item": return -2
+        case "overview": return -1
+        case "source_chapter": return 0
+        case "interjection": return 1
+        case "user_response", "interjection_summary", "assistant_response": return 2
+        case "turn_chapter": return 3
+        default: return 4
+        }
+    }
+
+    private func interjectionPreview(_ interjection: Interjection) -> String {
+        if let displayText = interjection.displayText?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !displayText.isEmpty {
+            return displayText
+        }
+        if let cleaned = interjection.cleanedTranscript?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !cleaned.isEmpty {
+            return cleaned
+        }
+        if let transcript = interjection.transcript?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !transcript.isEmpty {
+            return transcript
+        }
+        return interjection.transcriptionStatus
+    }
+
     private func exportTimeline(interjections: [Interjection], turns: [ConversationTurn]) -> [ExportTimelineEntry] {
         let sourceInterjections = interjections.filter { $0.targetType == .item }.map {
             ExportTimelineEntry(type: "interjection", interjectionId: $0.id, turnId: nil, targetType: $0.targetType.rawValue, targetId: $0.targetId, percent: $0.roughPercent, chapterId: nil)
@@ -956,6 +1132,27 @@ public final class SessionEngine {
             || profile.has("remoteControl", "send_transport_commands") else {
             throw SessionKitError.invalidCommandForCapability(command)
         }
+    }
+
+    private func cleanedBrowserTextTitle(_ title: String, url: String) -> String {
+        let cleaned = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleaned.isEmpty {
+            return cleaned
+        }
+        guard let host = URLComponents(string: url)?.host, !host.isEmpty else {
+            return "Browser Text"
+        }
+        return host
+    }
+
+    private func browserTextItemId(title: String, url: String) -> String {
+        let base = [title, url].joined(separator: "-").lowercased()
+        let allowed = CharacterSet.alphanumerics
+        let slug = base.unicodeScalars.map { scalar -> Character in
+            allowed.contains(scalar) ? Character(scalar) : "-"
+        }
+        let collapsed = String(slug).split(separator: "-").joined(separator: "-")
+        return "item-browser-\(collapsed.prefix(48))"
     }
 
     private func resolveSession(_ sessionId: String?) throws -> Session {

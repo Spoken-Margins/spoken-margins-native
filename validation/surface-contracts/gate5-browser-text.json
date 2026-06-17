@@ -33,8 +33,8 @@
       "requiredCapabilities": {
         "sync": ["browser_session_handoff"]
       },
-      "backendCommand": null,
-      "notes": "Backend request: create text-backed item or handoff package from selected/readable browser text."
+      "backendCommand": "SessionEngine.importBrowserText",
+      "notes": "Creates a URL-backed text item from selected/readable browser text and may start a session when requested."
     },
     {
       "id": "startSession",
@@ -114,8 +114,8 @@
     {
       "id": "import-browser-text-command",
       "title": "Implement or route importBrowserText",
-      "status": "open",
-      "details": "Trace already names importBrowserText, but SessionKit does not expose a formal command for it yet."
+      "status": "resolved",
+      "details": "SessionKit exposes importBrowserText and the app routes spokenmargins://browser-text handoff URLs into it."
     },
     {
       "id": "browser-text-available-commands",

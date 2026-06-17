@@ -31,6 +31,12 @@
       "status": "implemented",
       "source": "CompactControlSnapshot.availableCommands",
       "notes": "Compact surfaces publish state- and capability-aware command availability."
+    },
+    {
+      "id": "timeline",
+      "status": "implemented",
+      "source": "CompactControlSnapshot.timeline",
+      "notes": "Compact surfaces publish source chapters and generated AI/summary timeline rows for constrained UIs such as Watch."
     }
   ]
 }

@@ -34,6 +34,7 @@ public struct CompactControlSnapshot: Codable, Equatable, Sendable {
     public var lastUserTurnType: String?
     public var exposedCommands: [CompactControlCommand]
     public var availableCommands: [CompactControlCommand]
+    public var timeline: [CompactTimelineEntry]
     public var compactSurfaceReady: Bool
     public var surfaceProfileId: String
 
@@ -56,6 +57,7 @@ public struct CompactControlSnapshot: Codable, Equatable, Sendable {
         pendingAiJobStatus: String?,
         lastUserTurnType: String?,
         exposedCommands: [CompactControlCommand],
+        timeline: [CompactTimelineEntry] = [],
         compactSurfaceReady: Bool,
         surfaceProfileId: String
     ) {
@@ -78,8 +80,40 @@ public struct CompactControlSnapshot: Codable, Equatable, Sendable {
         self.lastUserTurnType = lastUserTurnType
         self.exposedCommands = exposedCommands
         self.availableCommands = exposedCommands
+        self.timeline = timeline
         self.compactSurfaceReady = compactSurfaceReady
         self.surfaceProfileId = surfaceProfileId
+    }
+}
+
+public struct CompactTimelineEntry: Codable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var kind: String
+    public var title: String
+    public var detail: String?
+    public var chapterId: String?
+    public var turnId: String?
+    public var percent: Int?
+    public var isCurrent: Bool
+
+    public init(
+        id: String,
+        kind: String,
+        title: String,
+        detail: String? = nil,
+        chapterId: String? = nil,
+        turnId: String? = nil,
+        percent: Int? = nil,
+        isCurrent: Bool = false
+    ) {
+        self.id = id
+        self.kind = kind
+        self.title = title
+        self.detail = detail
+        self.chapterId = chapterId
+        self.turnId = turnId
+        self.percent = percent
+        self.isCurrent = isCurrent
     }
 }
 
@@ -227,6 +261,7 @@ public final class CompactControlDispatcher {
             pendingAiJobStatus: snapshot.pendingAiJobStatus,
             lastUserTurnType: snapshot.lastUserTurnType,
             exposedCommands: commands,
+            timeline: canonicalRuntime.compactTimelineEntries(),
             compactSurfaceReady: canDisplay && snapshot.sessionId != nil,
             surfaceProfileId: surfaceProfile.id
         )

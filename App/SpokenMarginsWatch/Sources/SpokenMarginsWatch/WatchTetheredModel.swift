@@ -7,6 +7,7 @@ final class WatchTetheredModel: NSObject, ObservableObject, WCSessionDelegate {
     @Published var snapshot: CompactControlSnapshot?
     @Published var status = "Connecting"
     @Published var lastError: String?
+    @Published private var optimisticRecording = false
 
     private struct IncomingPayload: Sendable {
         var type: String?
@@ -47,7 +48,7 @@ final class WatchTetheredModel: NSObject, ObservableObject, WCSessionDelegate {
     }
 
     var isRecording: Bool {
-        snapshot?.isRecording == true
+        optimisticRecording || snapshot?.isRecording == true
     }
 
     var isPlaying: Bool {
@@ -58,7 +59,25 @@ final class WatchTetheredModel: NSObject, ObservableObject, WCSessionDelegate {
         snapshot?.compactSurfaceReady == true
     }
 
+    var timeline: [CompactTimelineEntry] {
+        snapshot?.timeline ?? []
+    }
+
+    var hasTimeline: Bool {
+        !timeline.isEmpty
+    }
+
     func canSend(_ command: CompactControlCommand) -> Bool {
+        if optimisticRecording {
+            switch command {
+            case .finishInterjection, .cancelInterjection:
+                return canSendCommands
+            case .beginInterjection:
+                return false
+            default:
+                break
+            }
+        }
         guard canSendCommands else { return false }
         return snapshot?.availableCommands.contains(command) == true
     }
@@ -88,10 +107,22 @@ final class WatchTetheredModel: NSObject, ObservableObject, WCSessionDelegate {
     }
 
     private func send(_ command: CompactControlCommand, extra: [String: Any]) {
+        applyOptimisticState(for: command)
         var message = extra
         message["type"] = "command"
         message["command"] = command.rawValue
         send(message: message)
+    }
+
+    private func applyOptimisticState(for command: CompactControlCommand) {
+        switch command {
+        case .beginInterjection:
+            optimisticRecording = true
+        case .finishInterjection, .cancelInterjection:
+            optimisticRecording = false
+        default:
+            break
+        }
     }
 
     private func send(message: [String: Any]) {
@@ -144,6 +175,14 @@ final class WatchTetheredModel: NSObject, ObservableObject, WCSessionDelegate {
         }
     }
 
+    #if os(iOS)
+    nonisolated func sessionDidBecomeInactive(_ session: WCSession) {}
+
+    nonisolated func sessionDidDeactivate(_ session: WCSession) {
+        session.activate()
+    }
+    #endif
+
     nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
         let payload = Self.payload(from: applicationContext)
         Task { @MainActor [weak self] in
@@ -171,6 +210,7 @@ final class WatchTetheredModel: NSObject, ObservableObject, WCSessionDelegate {
         if type == "snapshot", let data = payload.snapshotData {
             do {
                 snapshot = try JSONDecoder().decode(CompactControlSnapshot.self, from: data)
+                optimisticRecording = snapshot?.isRecording == true
                 status = "Ready"
                 lastError = nil
             } catch {
