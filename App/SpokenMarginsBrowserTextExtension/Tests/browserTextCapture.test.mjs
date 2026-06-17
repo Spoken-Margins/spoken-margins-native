@@ -23,6 +23,16 @@ function element(tagName, textContent = "", children = []) {
   };
 }
 
+test("popup and manifest reference flattened bundled resources", () => {
+  const manifest = JSON.parse(fs.readFileSync("App/SpokenMarginsBrowserTextExtension/Resources/manifest.json", "utf8"));
+  const popup = fs.readFileSync("App/SpokenMarginsBrowserTextExtension/Resources/popup.html", "utf8");
+
+  assert.deepEqual(manifest.content_scripts[0].js, ["browserTextCapture.js"]);
+  assert.match(popup, /href="popup\.css"/);
+  assert.match(popup, /src="popup\.js"/);
+  assert.doesNotMatch(popup, /Styles\/popup\.css|Scripts\/popup\.js/);
+});
+
 function loadCapture(documentRef) {
   const source = fs.readFileSync("App/SpokenMarginsBrowserTextExtension/Resources/Scripts/browserTextCapture.js", "utf8");
   const context = {

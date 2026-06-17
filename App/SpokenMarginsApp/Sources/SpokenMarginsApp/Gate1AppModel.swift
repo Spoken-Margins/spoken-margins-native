@@ -1460,7 +1460,7 @@ final class Gate1AppModel: ObservableObject {
             gate3WatchDispatcher = CompactControlDispatcher(
                 surfaceProfile: surfaceProfile,
                 canonicalRuntime: engine,
-                defaultSkipUnit: "chapter"
+                defaultSkipUnit: skipUnit
             )
             updateGate3WatchState()
         } catch {

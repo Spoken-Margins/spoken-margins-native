@@ -21,7 +21,7 @@
         "<all_urls>"
       ],
       "js": [
-        "Scripts/browserTextCapture.js"
+        "browserTextCapture.js"
       ],
       "run_at": "document_idle"
     }

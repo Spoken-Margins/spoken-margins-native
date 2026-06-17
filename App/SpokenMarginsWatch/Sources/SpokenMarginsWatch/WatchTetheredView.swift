@@ -65,7 +65,7 @@ struct WatchTetheredView: View {
                 symbolSize: 21,
                 prominent: false,
                 enabled: model.canSend(.skipBack),
-                action: model.skipBackChapter
+                action: model.skipBack
             )
             iconButton(
                 systemName: model.isPlaying ? "pause.fill" : "play.fill",
@@ -84,7 +84,7 @@ struct WatchTetheredView: View {
                 symbolSize: 21,
                 prominent: false,
                 enabled: model.canSend(.skipForward),
-                action: model.skipForwardChapter
+                action: model.skipForward
             )
         }
     }

@@ -109,6 +109,14 @@ final class Gate3WatchConnectivityController: NSObject, WCSessionDelegate {
     }
 
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
+        handleIncoming(message)
+    }
+
+    nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
+        handleIncoming(userInfo)
+    }
+
+    nonisolated private func handleIncoming(_ message: [String: Any]) {
         guard let type = message["type"] as? String else {
             Task { @MainActor [weak self] in
                 self?.lastMessage = "missing_type"

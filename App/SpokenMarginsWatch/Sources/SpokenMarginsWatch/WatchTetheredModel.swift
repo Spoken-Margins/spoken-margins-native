@@ -90,12 +90,12 @@ final class WatchTetheredModel: NSObject, ObservableObject, WCSessionDelegate {
         send(command, extra: [:])
     }
 
-    func skipBackChapter() {
-        send(.skipBack, extra: ["unit": "chapter"])
+    func skipBack() {
+        send(.skipBack, extra: [:])
     }
 
-    func skipForwardChapter() {
-        send(.skipForward, extra: ["unit": "chapter"])
+    func skipForward() {
+        send(.skipForward, extra: [:])
     }
 
     func jumpToChapter(_ chapterId: String) {
@@ -136,6 +136,11 @@ final class WatchTetheredModel: NSObject, ObservableObject, WCSessionDelegate {
             return
         }
         guard session.isReachable else {
+            if message["type"] as? String == "command" {
+                session.transferUserInfo(message)
+                status = "Queued for iPhone"
+                return
+            }
             status = "Open Spoken Margins on iPhone"
             return
         }
