@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		0415ABE87D95185CE879A52A /* Gate3WatchConnectivityController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6FD634456F3DD75EA51E128 /* Gate3WatchConnectivityController.swift */; };
-		044E82303EF7FDED088BCA60 /* Resources in Resources */ = {isa = PBXBuildFile; fileRef = 35A72B783754BB90190A6FB5 /* Resources */; };
 		062C8110EC991016EB32DD43 /* WatchTetheredModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A5537F3319CDBB6C6C259E4 /* WatchTetheredModel.swift */; };
 		0B95095DA284B6EC0A2F4251 /* Gate2CompactCommandQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3CB7F6850A2AD331ACAB8CE /* Gate2CompactCommandQueue.swift */; };
 		0BE5F908EA204F6ABABC7BA5 /* SessionKitAI in Frameworks */ = {isa = PBXBuildFile; productRef = D20161172CDA43D78527D31A /* SessionKitAI */; };
@@ -24,6 +23,7 @@
 		47FC5E80C0248169596370EB /* Gate1AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 465089CBB611D338A74CAE8A /* Gate1AppModel.swift */; };
 		494516F7C1ACBC6BFE79A10E /* SpokenMarginsApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3466DCC99E6E887F6A0C536 /* SpokenMarginsApp.swift */; };
 		4E6FB0DDBCB68D2D82D1E744 /* Gate1RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 479B709AF5D74954043B0852 /* Gate1RootView.swift */; };
+		4EB9C4988DDEA400406B44F5 /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = 9AC0CEE299A474FCA1DE58BE /* popup.js */; };
 		4F23B59DC21EA463D3E98666 /* Gate2CompactCommandURL.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACA3752A15AEB95233F0BEF2 /* Gate2CompactCommandURL.swift */; };
 		548BD2D708492064E577609A /* Gate1PlaybackAutoplayQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEA49CC89858E441644E7DE /* Gate1PlaybackAutoplayQueue.swift */; };
 		5C5B4D174DE7B2498F0E6C60 /* Gate1ProviderRequestFactoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39B769830FC9CEAAF89CF8EC /* Gate1ProviderRequestFactoryTests.swift */; };
@@ -54,6 +54,7 @@
 		BB2EB8B4A269BF2F25903797 /* Gate1FlowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB4DFB911729FD28E4C7545B /* Gate1FlowUITests.swift */; };
 		BDFC86A1A7E85E4329B0E130 /* Gate2LiveActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7145068260B70B5F88F4D76 /* Gate2LiveActivityWidget.swift */; };
 		C0A5F9C9C5664F01CE38CCC0 /* WatchTetheredView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCCB63558F760813CBB13276 /* WatchTetheredView.swift */; };
+		C1C5CC7AD3B743C875908B96 /* browserTextCapture.js in Resources */ = {isa = PBXBuildFile; fileRef = 1DE1A620B5E212629857338F /* browserTextCapture.js */; };
 		C23B154E874E71BEE7F76A78 /* SpokenMarginsGate2Widget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = E3D5265FADF5995640D6FB31 /* SpokenMarginsGate2Widget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		C3DF569973C14C00DB998E4A /* SpokenMarginsWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 937EF0A224692BE4208F9488 /* SpokenMarginsWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		C53A80476E4513D666A228D3 /* SpokenMarginsBrowserTextExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = F2A6CC7522887307C67D46AE /* SpokenMarginsBrowserTextExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -61,12 +62,15 @@
 		CA41517A9A4DED30A499324F /* SessionKitAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 8C20788E476DF1465D360599 /* SessionKitAudio */; };
 		D03E2C7131CC964F4DFA65FC /* SpokenMarginsWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 937EF0A224692BE4208F9488 /* SpokenMarginsWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		D6A8DCA36ED03426D6771AEC /* Gate1PlaybackAutoplayQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CECE96EA9D24248FFE111D5D /* Gate1PlaybackAutoplayQueueTests.swift */; };
+		D8FED511D7C45D211D991D9E /* popup.css in Resources */ = {isa = PBXBuildFile; fileRef = 1213A7465ECB99E1E9FCE12A /* popup.css */; };
 		DC1A734B98645EA97AC772B6 /* SessionKit in Frameworks */ = {isa = PBXBuildFile; productRef = BD06F9B7880DC707F13F6CA5 /* SessionKit */; };
 		DCD0BCAD510043A1EB4EF202 /* SpokenMarginsGate2Widget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = E3D5265FADF5995640D6FB31 /* SpokenMarginsGate2Widget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		DDB4FBD1FDA25FA6A7F14AA8 /* SessionKit in Frameworks */ = {isa = PBXBuildFile; productRef = BAB471BA99FD9179920114BB /* SessionKit */; };
 		E0638FCE160D00C75915DABA /* SpokenMarginsWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B572DB5D2472D49476D2F48C /* SpokenMarginsWatchApp.swift */; };
+		E3274F151D1933E8743EA4CE /* popup.html in Resources */ = {isa = PBXBuildFile; fileRef = 968283859946C995CD8FA20C /* popup.html */; };
 		E6A2617BB582B87498D902FC /* Gate1PlaybackAutoplayQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEA49CC89858E441644E7DE /* Gate1PlaybackAutoplayQueue.swift */; };
 		E6B52B9A3D95BC1983406E0F /* Gate1ProviderRequestFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B8DDB409E3390A07A7DC3C2 /* Gate1ProviderRequestFactory.swift */; };
+		EA3D13B4259566F793F4E0F9 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = BF9501739D9C1D8AAED60132 /* manifest.json */; };
 		EB730ED5DCA2EB33EDC00001 /* Gate2CompactCommandURL.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACA3752A15AEB95233F0BEF2 /* Gate2CompactCommandURL.swift */; };
 		F719B3F555F883823A6AEED5 /* SessionKitPersistence in Frameworks */ = {isa = PBXBuildFile; productRef = 16898C6F40FB4FDCA4DE8C38 /* SessionKitPersistence */; };
 		FC58647CFC86F748AC0C788F /* traces in Resources */ = {isa = PBXBuildFile; fileRef = DA64F144F04CC7A9F436B28E /* traces */; };
@@ -185,20 +189,23 @@
 		01F3F544C01C06FED3A5DF17 /* Gate2CompactControlController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate2CompactControlController.swift; sourceTree = "<group>"; };
 		039937DF40296F8BB983A8E4 /* Gate5BrowserTextImportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate5BrowserTextImportTests.swift; sourceTree = "<group>"; };
 		0A5537F3319CDBB6C6C259E4 /* WatchTetheredModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchTetheredModel.swift; sourceTree = "<group>"; };
+		1213A7465ECB99E1E9FCE12A /* popup.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = popup.css; sourceTree = "<group>"; };
+		1DE1A620B5E212629857338F /* browserTextCapture.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = browserTextCapture.js; sourceTree = "<group>"; };
 		2F27E8BBF188ABCD2B2A7B0F /* Gate1DiscussionContextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1DiscussionContextTests.swift; sourceTree = "<group>"; };
 		35550BC3E5F1FF166ED033B5 /* Gate5BrowserTextHandoffURL.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate5BrowserTextHandoffURL.swift; sourceTree = "<group>"; };
-		35A72B783754BB90190A6FB5 /* Resources */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Resources; path = App/SpokenMarginsBrowserTextExtension/Resources; sourceTree = SOURCE_ROOT; };
 		39B769830FC9CEAAF89CF8EC /* Gate1ProviderRequestFactoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1ProviderRequestFactoryTests.swift; sourceTree = "<group>"; };
 		3B8DDB409E3390A07A7DC3C2 /* Gate1ProviderRequestFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1ProviderRequestFactory.swift; sourceTree = "<group>"; };
 		3FAD165CE1DA1C12E166B2E7 /* Gate2LiveActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate2LiveActivityAttributes.swift; sourceTree = "<group>"; };
 		4306F9BA3A5512A9F518ECAD /* Gate2CompactControlTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate2CompactControlTests.swift; sourceTree = "<group>"; };
 		465089CBB611D338A74CAE8A /* Gate1AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1AppModel.swift; sourceTree = "<group>"; };
 		479B709AF5D74954043B0852 /* Gate1RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1RootView.swift; sourceTree = "<group>"; };
-		560C4E54442E123E42855A02 /* SpokenMarginsAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SpokenMarginsAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		560C4E54442E123E42855A02 /* SpokenMarginsAppTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = SpokenMarginsAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		869D8B5B01B1CDEDC9433BB5 /* SpokenMarginsAppDevice.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = SpokenMarginsAppDevice.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		9028714E249043B12F2CD95D /* SpokenMarginsAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SpokenMarginsAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		9028714E249043B12F2CD95D /* SpokenMarginsAppUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = SpokenMarginsAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		932001F7F4C13B1FBA9BC128 /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
 		937EF0A224692BE4208F9488 /* SpokenMarginsWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SpokenMarginsWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		968283859946C995CD8FA20C /* popup.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = popup.html; sourceTree = "<group>"; };
+		9AC0CEE299A474FCA1DE58BE /* popup.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = popup.js; sourceTree = "<group>"; };
 		9FEFBCF337DFC7DB102DAD5B /* SpokenMarginsApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = SpokenMarginsApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A12CA39E2FF10DDA3392AF6B /* Gate1SummaryEligibility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1SummaryEligibility.swift; sourceTree = "<group>"; };
 		A3466DCC99E6E887F6A0C536 /* SpokenMarginsApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpokenMarginsApp.swift; sourceTree = "<group>"; };
@@ -207,6 +214,7 @@
 		ACA3752A15AEB95233F0BEF2 /* Gate2CompactCommandURL.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate2CompactCommandURL.swift; sourceTree = "<group>"; };
 		B572DB5D2472D49476D2F48C /* SpokenMarginsWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpokenMarginsWatchApp.swift; sourceTree = "<group>"; };
 		BEEA49CC89858E441644E7DE /* Gate1PlaybackAutoplayQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1PlaybackAutoplayQueue.swift; sourceTree = "<group>"; };
+		BF9501739D9C1D8AAED60132 /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
 		C271766FC941B68CA12F2DAC /* SessionKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SessionKit; path = Packages/SessionKit; sourceTree = SOURCE_ROOT; };
 		C6FD634456F3DD75EA51E128 /* Gate3WatchConnectivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate3WatchConnectivityController.swift; sourceTree = "<group>"; };
 		CECE96EA9D24248FFE111D5D /* Gate1PlaybackAutoplayQueueTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1PlaybackAutoplayQueueTests.swift; sourceTree = "<group>"; };
@@ -276,9 +284,9 @@
 			isa = PBXGroup;
 			children = (
 				F8F6B4F91AA36C9513801753 /* fixtures */,
-				35A72B783754BB90190A6FB5 /* Resources */,
 				DA64F144F04CC7A9F436B28E /* traces */,
 				8B9C00DF1535B22C10054D68 /* Packages */,
+				460250240FDC5A068A5D5EA9 /* Resources */,
 				5B74E9616092FD1489F4F709 /* Sources */,
 				34447A1CD52ADC20F1369A5C /* Sources */,
 				51BB7B1659520C9A9AF5D084 /* Sources */,
@@ -299,6 +307,18 @@
 			path = App/SpokenMarginsApp/Sources;
 			sourceTree = "<group>";
 		};
+		460250240FDC5A068A5D5EA9 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				BF9501739D9C1D8AAED60132 /* manifest.json */,
+				968283859946C995CD8FA20C /* popup.html */,
+				70D66176CB60056EAB2E7E56 /* Scripts */,
+				5AAAF697B45EBC46CF21D69D /* Styles */,
+			);
+			name = Resources;
+			path = App/SpokenMarginsBrowserTextExtension/Resources;
+			sourceTree = "<group>";
+		};
 		51BB7B1659520C9A9AF5D084 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
@@ -306,6 +326,14 @@
 			);
 			name = Sources;
 			path = App/SpokenMarginsBrowserTextExtension/Sources;
+			sourceTree = "<group>";
+		};
+		5AAAF697B45EBC46CF21D69D /* Styles */ = {
+			isa = PBXGroup;
+			children = (
+				1213A7465ECB99E1E9FCE12A /* popup.css */,
+			);
+			path = Styles;
 			sourceTree = "<group>";
 		};
 		5B74E9616092FD1489F4F709 /* Sources */ = {
@@ -317,6 +345,15 @@
 			);
 			name = Sources;
 			path = App/Gate2Shared/Sources;
+			sourceTree = "<group>";
+		};
+		70D66176CB60056EAB2E7E56 /* Scripts */ = {
+			isa = PBXGroup;
+			children = (
+				1DE1A620B5E212629857338F /* browserTextCapture.js */,
+				9AC0CEE299A474FCA1DE58BE /* popup.js */,
+			);
+			path = Scripts;
 			sourceTree = "<group>";
 		};
 		888E37F56BF50874CD1C48FD /* Sources */ = {
@@ -619,7 +656,11 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				044E82303EF7FDED088BCA60 /* Resources in Resources */,
+				C1C5CC7AD3B743C875908B96 /* browserTextCapture.js in Resources */,
+				EA3D13B4259566F793F4E0F9 /* manifest.json in Resources */,
+				D8FED511D7C45D211D991D9E /* popup.css in Resources */,
+				E3274F151D1933E8743EA4CE /* popup.html in Resources */,
+				4EB9C4988DDEA400406B44F5 /* popup.js in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -844,7 +885,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -946,7 +986,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -964,7 +1003,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -1101,7 +1139,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

@@ -146,7 +146,6 @@ targets:
     sources:
       - path: App/SpokenMarginsBrowserTextExtension/Sources
       - path: App/SpokenMarginsBrowserTextExtension/Resources
-        type: folder
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.browsertext
