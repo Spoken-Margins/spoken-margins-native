@@ -288,6 +288,30 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    @discardableResult
+    func importBrowserText(_ handoff: BrowserTextHandoff) -> Bool {
+        do {
+            let store = try requireStore()
+            let engine = try makeEngine(store: store)
+            installEngine(engine)
+            snapshot = try engine.importBrowserText(handoff)
+            guard let importedItemId = snapshot.itemId ?? handoff.itemId else {
+                throw SessionKitError.persistenceFailed("browser_text_item_id")
+            }
+            activeItemId = importedItemId
+            libraryItems = try loadLibraryRows(store: store)
+            selectedItem = try loadItemDetail(id: importedItemId, store: store)
+            diagnostics["lastBrowserTextImport"] = importedItemId
+            diagnostics["lastBrowserTextSource"] = handoff.source.url
+            screen = handoff.requestedContinuation.startSession ? .playback : .item
+            reportSuccess("Imported browser text from \(handoff.source.title).")
+            return true
+        } catch {
+            reportFailure(error, context: "Browser text import failed")
+            return false
+        }
+    }
+
     func reportImportFailure(_ error: Error) {
         reportFailure(error, context: "File import failed")
     }
@@ -912,6 +936,28 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         dispatchGate2CompactCommand(command)
+    }
+
+    func handleIncomingURL(_ url: URL) {
+        guard !Gate5BrowserTextHandoffURL.isBrowserTextURL(url) else {
+            do {
+                if let payloadID = Gate5BrowserTextHandoffURL.payloadID(from: url) {
+                    let handoffStore = try Gate5BrowserTextHandoffStore.appGroup()
+                    let handoff = try Gate5BrowserTextHandoffURL.handoff(from: url, store: handoffStore)
+                    if importBrowserText(handoff) {
+                        try? handoffStore.deletePayload(payloadID: payloadID)
+                    }
+                } else if let handoff = Gate5BrowserTextHandoffURL.handoff(from: url) {
+                    importBrowserText(handoff)
+                } else {
+                    reportFailure("Unsupported browser text URL.")
+                }
+            } catch {
+                reportFailure(error, context: "Browser text import failed")
+            }
+            return
+        }
+        handleGate2CompactURL(url)
     }
 
     @discardableResult

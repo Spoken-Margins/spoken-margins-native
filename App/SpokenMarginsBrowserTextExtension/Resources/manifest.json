@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Spoken Margins Browser Text",
+  "description": "Capture selected or readable page text and continue listening in Spoken Margins.",
+  "version": "0.1",
+  "permissions": [
+    "activeTab",
+    "nativeMessaging",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "action": {
+    "default_title": "Send to Spoken Margins",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "Scripts/browserTextCapture.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

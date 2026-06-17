@@ -1,0 +1,132 @@
+{
+  "schemaVersion": "surface-contract.v1",
+  "gate": "gate5-browser-text",
+  "runtimeProfile": "browser-text",
+  "surfaceOwns": [
+    "selected_text_capture",
+    "readable_page_text_capture",
+    "browser_handoff_payload",
+    "source_url_metadata"
+  ],
+  "delegatesTo": [
+    "phone-tablet-online",
+    "phone-tablet-offline"
+  ],
+  "snapshotFields": [
+    "sessionId",
+    "itemId",
+    "targetType",
+    "status",
+    "phase",
+    "title",
+    "chapterTitle",
+    "progressPercent",
+    "isRecording",
+    "lastInterjectionAnchorType",
+    "availableCommands"
+  ],
+  "commands": [
+    {
+      "id": "importBrowserText",
+      "delegationMode": "delegated_to_canonical_runtime",
+      "exposed": true,
+      "requiredCapabilities": {
+        "sync": ["browser_session_handoff"]
+      },
+      "backendCommand": "SessionEngine.importBrowserText",
+      "notes": "Creates a URL-backed text item from selected/readable browser text and may start a session when requested."
+    },
+    {
+      "id": "startSession",
+      "delegationMode": "local",
+      "exposed": true,
+      "requiredCapabilities": {
+        "playback": ["realtime_tts"],
+        "sync": ["browser_session_handoff"]
+      },
+      "backendCommand": "SessionEngine.startSession",
+      "notes": "Browser text may start local TTS only when the active browser profile allows it."
+    },
+    {
+      "id": "pause",
+      "delegationMode": "local",
+      "exposed": true,
+      "requiredCapabilities": {
+        "playback": ["realtime_tts"]
+      },
+      "backendCommand": "SessionEngine.pause"
+    },
+    {
+      "id": "resumePlayback",
+      "delegationMode": "local",
+      "exposed": true,
+      "requiredCapabilities": {
+        "playback": ["realtime_tts"]
+      },
+      "backendCommand": "SessionEngine.resumePlayback"
+    },
+    {
+      "id": "beginInterjection",
+      "delegationMode": "local",
+      "exposed": true,
+      "requiredCapabilities": {
+        "interjection": ["record_audio", "capture_text_anchor"]
+      },
+      "backendCommand": "SessionEngine.beginInterjection",
+      "notes": "Only exposed when browser recording permission is granted."
+    },
+    {
+      "id": "finishInterjection",
+      "delegationMode": "local",
+      "exposed": true,
+      "requiredCapabilities": {
+        "interjection": ["record_audio", "capture_text_anchor"]
+      },
+      "backendCommand": "SessionEngine.finishInterjection"
+    },
+    {
+      "id": "generateInterjectionSummary",
+      "delegationMode": "delegated_to_canonical_runtime",
+      "exposed": false,
+      "requiredCapabilities": {
+        "ai": ["defer_ai_jobs"]
+      },
+      "backendCommand": "SessionEngine.generateInterjectionSummary",
+      "notes": "Summary/discussion continues in the app for Gate 5."
+    }
+  ],
+  "traces": [
+    "traces/browser-text-session.json",
+    "traces/browser-readable-text-session.json"
+  ],
+  "fixtures": [
+    "fixtures/capabilities/browser-text.json",
+    "fixtures/items/browser-text-selected.json",
+    "fixtures/items/browser-text-readable-page.json"
+  ],
+  "backendRequests": [
+    {
+      "id": "browser-text-handoff-payload",
+      "title": "Define browser text handoff payload",
+      "status": "resolved",
+      "details": "Durable payload handoff is documented in docs/gate5-browser-text-handoff.md. Full text payloads are persisted through the App Group and opened with a payloadId URL."
+    },
+    {
+      "id": "import-browser-text-command",
+      "title": "Implement or route importBrowserText",
+      "status": "resolved",
+      "details": "SessionKit exposes importBrowserText and the app routes spokenmargins://browser-text handoff URLs into it."
+    },
+    {
+      "id": "browser-text-available-commands",
+      "title": "Publish command availability for browser text permissions",
+      "status": "open",
+      "details": "Browser UI needs availableCommands to hide recording when microphone permission is absent and to distinguish browser-owned from app-owned playback."
+    }
+  ],
+  "notes": [
+    "Gate 5 now validates Safari selected-text and readable-page capture with native app continuation.",
+    "Browser text and browser media remain separate profiles and contracts.",
+    "Browser recording and browser-owned TTS remain follow-up work; this slice delegates playback and interjection to the native app."
+  ]
+}

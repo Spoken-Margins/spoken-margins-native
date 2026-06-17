@@ -18,6 +18,7 @@ targets:
       - path: Contracts/traces
         type: folder
     dependencies:
+      - target: SpokenMarginsBrowserTextExtension
       - target: SpokenMarginsGate2Widget
       - package: SessionKit
         product: SessionKit
@@ -69,6 +70,7 @@ targets:
       - path: Contracts/traces
         type: folder
     dependencies:
+      - target: SpokenMarginsBrowserTextExtension
       - target: SpokenMarginsGate2Widget
       - package: SessionKit
         product: SessionKit
@@ -133,6 +135,25 @@ targets:
         CFBundleVersion: "1"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
+  SpokenMarginsBrowserTextExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: App/SpokenMarginsBrowserTextExtension/Sources
+      - path: App/SpokenMarginsBrowserTextExtension/Resources
+        type: folder
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.browsertext
+        CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsBrowserTextExtension/SpokenMarginsBrowserTextExtension.entitlements
+        CODE_SIGN_STYLE: Automatic
+        CURRENT_PROJECT_VERSION: "1"
+        DEVELOPMENT_TEAM: J8SWC6J3VY
+        INFOPLIST_FILE: App/SpokenMarginsBrowserTextExtension/Info.plist
+        MARKETING_VERSION: "0.1"
+        SDKROOT: iphoneos
+        SWIFT_VERSION: "6.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
   SpokenMarginsAppUITests:
     type: bundle.ui-testing
     platform: iOS

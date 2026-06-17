@@ -1,7 +1,7 @@
 {
   "schemaVersion": "session-trace.v1",
   "name": "browser-text-session",
-  "description": "Browser extension packages selected text as an item and starts app-owned TTS playback.",
+  "description": "Browser extension packages selected text as a URL-backed item and starts text playback.",
   "runtimeProfile": "browser-text",
   "requiresCapabilities": {
     "playback": ["realtime_tts"],
@@ -10,21 +10,29 @@
     "sync": ["browser_session_handoff"]
   },
   "fixtures": {
-    "item": "fixtures/items/text-mapless.json"
+    "item": "fixtures/items/browser-text-selected.json"
   },
   "steps": [
     {
       "command": "importBrowserText",
       "args": {
+        "itemId": "item-browser-pill-selected",
+        "captureMode": "selected_text",
         "title": "You Can't Inspect the Pill",
         "externalReference": "https://example.com/pill",
+        "externalReferenceType": "url",
         "text": "Opening distrust is reasonable. Maybe their diet changed. Maybe their sleep changed."
       },
-      "expect": { "itemMediaType": "text", "targetType": "item_text_tts" }
+      "expect": {
+        "itemMediaType": "text",
+        "externalReference": "https://example.com/pill",
+        "externalReferenceType": "url",
+        "targetType": "item_text_tts"
+      }
     },
     {
       "command": "startSession",
-      "args": { "itemId": "item-pill" },
+      "args": { "itemId": "item-browser-pill-selected" },
       "expect": { "phase": "item_playback", "status": "playing" }
     },
     {
@@ -38,7 +46,7 @@
     }
   ],
   "assertions": [
-    "Browser text sessions become normal text-backed items.",
+    "Browser selected text sessions become normal URL-backed text items.",
     "Interjections use text anchors and can be continued later in the app."
   ]
 }

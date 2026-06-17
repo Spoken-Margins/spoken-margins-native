@@ -244,7 +244,7 @@ private struct ItemScreen: View {
                     .accessibilityIdentifier("item.home.button")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    if model.selectedItem.id.hasPrefix("item-import-") || model.selectedItem.id.hasPrefix("item-obsidian-") {
+                    if model.selectedItem.id.hasPrefix("item-import-") || model.selectedItem.id.hasPrefix("item-obsidian-") || model.selectedItem.id.hasPrefix("item-browser-") {
                         Button(role: .destructive) {
                             model.deleteItem(id: model.selectedItem.id)
                         } label: {
@@ -265,6 +265,13 @@ private struct ItemScreen: View {
             Text(model.selectedItem.title)
                 .font(.system(size: 38, weight: .bold))
                 .minimumScaleFactor(0.7)
+            if !model.selectedItem.externalReference.isEmpty {
+                Text(model.selectedItem.externalReference)
+                    .font(.footnote)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("item.externalReference")
+            }
             HStack {
                 Pill(model.selectedItem.status)
                 Pill("\(max(1, model.selectedItem.chapters.count)) chapters")

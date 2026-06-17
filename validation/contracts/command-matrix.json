@@ -1,0 +1,125 @@
+{
+  "schemaVersion": "command-matrix.v1",
+  "commands": [
+    {
+      "id": "startSession",
+      "description": "Create or activate a session for an item.",
+      "status": "implemented",
+      "backendCommand": "SessionEngine.startSession"
+    },
+    {
+      "id": "play",
+      "description": "Start playback through the canonical public command vocabulary.",
+      "status": "contract_only",
+      "backendCommand": "SessionEngine.resumePlayback"
+    },
+    {
+      "id": "pause",
+      "description": "Pause playback and preserve source position.",
+      "status": "implemented",
+      "backendCommand": "SessionEngine.pause"
+    },
+    {
+      "id": "resumePlayback",
+      "description": "Resume the active playback target.",
+      "status": "implemented",
+      "backendCommand": "SessionEngine.resumePlayback"
+    },
+    {
+      "id": "togglePlayPause",
+      "description": "Compact-surface play/pause toggle.",
+      "status": "implemented",
+      "backendCommand": "SessionEngine.togglePlayPause"
+    },
+    {
+      "id": "stopPlayback",
+      "description": "Stop or pause the active playback target.",
+      "status": "implemented",
+      "backendCommand": "SessionEngine.stopPlayback"
+    },
+    {
+      "id": "skipForward",
+      "description": "Move forward by a supported navigation unit.",
+      "status": "implemented",
+      "backendCommand": "SessionEngine.skipForward"
+    },
+    {
+      "id": "skipBack",
+      "description": "Move backward by a supported navigation unit.",
+      "status": "implemented",
+      "backendCommand": "SessionEngine.skipBack"
+    },
+    {
+      "id": "jumpToChapter",
+      "description": "Jump to a resolved chapter anchor.",
+      "status": "implemented",
+      "backendCommand": "SessionEngine.jumpToChapter"
+    },
+    {
+      "id": "beginInterjection",
+      "description": "Begin an interjection against the active target.",
+      "status": "implemented",
+      "backendCommand": "SessionEngine.beginInterjection"
+    },
+    {
+      "id": "finishInterjection",
+      "description": "Finish an active interjection and save audio metadata.",
+      "status": "implemented",
+      "backendCommand": "SessionEngine.finishInterjection"
+    },
+    {
+      "id": "cancelInterjection",
+      "description": "Cancel an active interjection.",
+      "status": "implemented",
+      "backendCommand": "SessionEngine.cancelInterjection"
+    },
+    {
+      "id": "generateInterjectionSummary",
+      "description": "Create or defer an interjection summary job.",
+      "status": "implemented",
+      "backendCommand": "SessionEngine.generateInterjectionSummary"
+    },
+    {
+      "id": "playTurn",
+      "description": "Play an assistant or summary turn.",
+      "status": "implemented",
+      "backendCommand": "SessionEngine.playTurn"
+    },
+    {
+      "id": "submitFollowup",
+      "description": "Submit a follow-up and create or defer an assistant response job.",
+      "status": "implemented",
+      "backendCommand": "SessionEngine.submitFollowup"
+    },
+    {
+      "id": "endSession",
+      "description": "End the active session.",
+      "status": "implemented",
+      "backendCommand": "SessionEngine.endSession"
+    },
+    {
+      "id": "playSourceFromBeginning",
+      "description": "Return to original source playback from the beginning.",
+      "status": "implemented",
+      "backendCommand": "SessionEngine.playSourceFromBeginning"
+    },
+    {
+      "id": "jumpToTurnChapter",
+      "description": "Jump to a generated turn chapter.",
+      "status": "implemented",
+      "backendCommand": "SessionEngine.jumpToTurnChapter"
+    },
+    {
+      "id": "importBrowserText",
+      "description": "Create a text-backed item or handoff package from browser-selected or readable text.",
+      "status": "implemented",
+      "backendCommand": "SessionEngine.importBrowserText"
+    },
+    {
+      "id": "attachBrowserMedia",
+      "description": "Attach browser-owned media session metadata and source-time observations.",
+      "status": "backend_request",
+      "backendCommand": null
+    }
+  ]
+}
