@@ -92,25 +92,19 @@
     },
     {
       "id": "beginInterjection",
-      "delegationMode": "delegated_to_canonical_runtime",
-      "exposed": true,
-      "requiredCapabilities": {
-        "interjection": ["delegate_interjection_to_canonical_runtime"],
-        "remoteControl": ["send_interjection_commands"]
-      },
-      "backendCommand": "SessionEngine.beginInterjection",
-      "notes": "Watch sends a delegated recording start intent; phone/tablet owns microphone, anchoring, persistence, and the refreshed compact snapshot."
+      "delegationMode": "unsupported",
+      "exposed": false,
+      "requiredCapabilities": {},
+      "backendCommand": null,
+      "notes": "Watch-started interjection is hidden and rejected for Gate 3 because delegated phone recording can mutate playback while the phone is locked. Gate 4 should provide Watch-owned or background-safe capture."
     },
     {
       "id": "finishInterjection",
-      "delegationMode": "delegated_to_canonical_runtime",
-      "exposed": true,
-      "requiredCapabilities": {
-        "interjection": ["delegate_interjection_to_canonical_runtime"],
-        "remoteControl": ["send_interjection_commands"]
-      },
-      "backendCommand": "SessionEngine.finishInterjection",
-      "notes": "Watch sends a delegated recording finish intent; phone/tablet saves the anchored interjection and returns the refreshed compact snapshot."
+      "delegationMode": "unsupported",
+      "exposed": false,
+      "requiredCapabilities": {},
+      "backendCommand": null,
+      "notes": "Watch does not own recording state in Gate 3; finish is unavailable unless a future Watch-owned recording flow exists."
     },
     {
       "id": "generateInterjectionSummary",
@@ -157,8 +151,14 @@
     {
       "id": "watch-delegated-recording-lifecycle",
       "title": "Clarify delegated interjection recording lifecycle",
-      "status": "resolved",
-      "details": "Gate 3 trace replay verifies beginInterjection reports recording_interjection and finishInterjection returns to item_playback through the canonical phone/tablet runtime."
+      "status": "rejected",
+      "details": "Real-device testing showed delegated Watch beginInterjection can complete the current item when the phone is locked. Gate 3 now hides and rejects Watch-started interjection."
+    },
+    {
+      "id": "watch-safe-interjection-capture",
+      "title": "Provide Watch-owned or background-safe interjection capture",
+      "status": "open",
+      "details": "Gate 4 should decide whether the Watch records/transcribes locally and syncs the interjection, or whether the phone can expose a proven background-safe recording command while locked."
     },
     {
       "id": "watch-chapter-skip-semantics",
@@ -176,8 +176,8 @@
   "notes": [
     "Gate 3 does not own playback, recording, AI provider calls, persistence, transcription, or sync locally.",
     "Gate 3 must not require Xcode project edits until the steward creates a Watch target scaffold.",
-    "The Watch playback interface should mirror the iPhone playback surface: brief chapter or generated-turn label, skip back, play/pause, skip forward, interject, AI summary, and Discuss.",
+    "The Watch playback interface should mirror the safe iPhone playback controls where possible: brief chapter or generated-turn label, skip back, play/pause, skip forward, AI summary when eligible, and Discuss.",
     "The Watch compact snapshot should contain current item, target, chapter, playback status, progress, recording state, pending AI job state, last user turn type, and availableCommands; it must not require the current source excerpt.",
-    "traces/watch-chapter-navigation.json covers play/pause, chapter jump, chapter skip, boundary idempotence, delegated interjection, AI summary, and Discuss."
+    "traces/watch-chapter-navigation.json covers play/pause, chapter jump, chapter skip, boundary idempotence, and Discuss. Watch-started interjection is intentionally deferred to Gate 4."
   ]
 }

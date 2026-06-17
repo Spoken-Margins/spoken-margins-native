@@ -1484,7 +1484,20 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func gate3WatchSnapshot() -> CompactControlSnapshot? {
-        gate3WatchDispatcher?.snapshot()
+        guard var snapshot = gate3WatchDispatcher?.snapshot() else {
+            return nil
+        }
+        removeUnavailableGate3WatchCommands(from: &snapshot)
+        return snapshot
+    }
+
+    private func removeUnavailableGate3WatchCommands(from snapshot: inout CompactControlSnapshot) {
+        var unavailableCommands: Set<CompactControlCommand> = [.beginInterjection]
+        if !canSummarizeInterjections {
+            unavailableCommands.insert(.generateInterjectionSummary)
+        }
+        snapshot.exposedCommands.removeAll { unavailableCommands.contains($0) }
+        snapshot.availableCommands.removeAll { unavailableCommands.contains($0) }
     }
 
     private func updateGate3WatchState() {
@@ -1493,6 +1506,13 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func dispatchGate3WatchCommand(_ request: Gate3WatchCommandRequest) {
+        if request.command == .beginInterjection {
+            diagnostics["gate3WatchLastCommand"] = request.command.rawValue
+            diagnostics["gate3WatchLastResult"] = "disabled_until_watch_recording"
+            updateGate3WatchState()
+            reportFailure("Watch interjection is disabled until Watch-owned or background-safe recording is available.")
+            return
+        }
         guard gate3WatchSnapshot()?.availableCommands.contains(request.command) == true else {
             diagnostics["gate3WatchLastCommand"] = request.command.rawValue
             diagnostics["gate3WatchLastResult"] = "unavailable"

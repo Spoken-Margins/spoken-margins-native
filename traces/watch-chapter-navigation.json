@@ -5,8 +5,7 @@
   "runtimeProfile": "watch-tethered",
   "requiresCapabilities": {
     "timeline": ["chapter_timing"],
-    "interjection": ["delegate_interjection_to_canonical_runtime"],
-    "remoteControl": ["display_snapshot", "send_transport_commands", "send_chapter_jump", "send_interjection_commands", "send_ai_commands"]
+    "remoteControl": ["display_snapshot", "send_transport_commands", "send_chapter_jump", "send_ai_commands"]
   },
   "fixtures": {
     "item": "fixtures/items/text-with-listening-map.json",
@@ -41,18 +40,6 @@
       "expect": { "delegatedToCanonicalRuntime": true, "chapterTitle": "Inspect process", "noCrash": true }
     },
     {
-      "command": "beginInterjection",
-      "expect": { "delegatedToCanonicalRuntime": true, "phase": "recording_interjection" }
-    },
-    {
-      "command": "finishInterjection",
-      "expect": { "delegatedToCanonicalRuntime": true, "phase": "item_playback" }
-    },
-    {
-      "command": "generateInterjectionSummary",
-      "expect": { "delegatedToCanonicalRuntime": true, "pendingAiJobKind": "interjection_summary", "pendingAiJobStatus": "pending" }
-    },
-    {
       "command": "submitFollowup",
       "args": { "text": "Can you respond to my interjection?" },
       "expect": { "delegatedToCanonicalRuntime": true, "phase": "conversation", "lastUserTurnType": "user_response", "pendingAiJobKind": "assistant_response" }
@@ -62,6 +49,7 @@
     "Chapter jumps use resolved anchors.",
     "Boundary chapter navigation is idempotent.",
     "Compact surface never needs the current source excerpt.",
-    "Watch play/pause, interjection, AI summary, and discussion commands delegate to the canonical phone/tablet runtime."
+    "Watch play/pause and discussion commands delegate to the canonical phone/tablet runtime.",
+    "Watch-started interjection recording is intentionally absent until Watch-owned or background-safe capture is available."
   ]
 }

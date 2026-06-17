@@ -8,11 +8,11 @@
   "capabilities": {
     "playback": [],
     "timeline": ["chapter_timing"],
-    "interjection": ["delegate_interjection_to_canonical_runtime"],
+    "interjection": [],
     "ai": [],
     "sync": [],
-    "remoteControl": ["display_snapshot", "send_transport_commands", "send_chapter_jump", "send_interjection_commands", "send_ai_commands"]
+    "remoteControl": ["display_snapshot", "send_transport_commands", "send_chapter_jump", "send_ai_commands"]
   },
   "forbiddenCapabilities": ["realtime_tts", "prerendered_audio", "native_media", "record_audio", "generate_listening_map", "summarize_interjections", "cleanup_transcript", "continue_discussion"],
-  "notes": ["Watch is only a control surface. Phone/tablet owns playback, recording, AI provider calls, persistence, and sync; Watch may send delegated AI summary and Discuss intents when tethered."]
+  "notes": ["Watch is only a control surface. Phone/tablet owns playback, recording, AI provider calls, persistence, and sync; Watch may send delegated AI summary and Discuss intents when tethered. Watch-started interjection recording is disabled until Watch-owned or background-safe capture is available."]
 }

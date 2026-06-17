@@ -72,6 +72,9 @@ final class WatchTetheredModel: NSObject, ObservableObject, WCSessionDelegate {
     }
 
     func canSend(_ command: CompactControlCommand) -> Bool {
+        if command == .beginInterjection {
+            return false
+        }
         if optimisticRecording {
             switch command {
             case .finishInterjection, .cancelInterjection:
@@ -124,9 +127,7 @@ final class WatchTetheredModel: NSObject, ObservableObject, WCSessionDelegate {
     private func send(_ command: CompactControlCommand, extra: [String: Any]) {
         guard canSend(command) else {
             status = unavailableStatus(for: command)
-            if command == .beginInterjection {
-                optimisticRecording = false
-            }
+            optimisticRecording = false
             return
         }
         applyOptimisticState(for: command)
