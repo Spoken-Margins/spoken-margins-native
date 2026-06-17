@@ -947,6 +947,10 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleIncomingURL(_ url: URL) {
+        if url.scheme == "spokenmargins", url.host == "open" {
+            screen = hasActiveSession ? .playback : .home
+            return
+        }
         guard !Gate5BrowserTextHandoffURL.isBrowserTextURL(url) else {
             do {
                 if let payloadID = Gate5BrowserTextHandoffURL.payloadID(from: url) {
@@ -1479,6 +1483,16 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func dispatchGate3WatchCommand(_ request: Gate3WatchCommandRequest) {
+        if request.command == .generateInterjectionSummary {
+            summarize()
+            updateGate3WatchState()
+            return
+        }
+        if request.command == .submitFollowup {
+            discuss(followUp: request.followUpText ?? "Can you respond to my interjection?")
+            updateGate3WatchState()
+            return
+        }
         if request.command == .beginInterjection {
             Task {
                 let granted = await SystemRecordingClient.requestRecordPermission()

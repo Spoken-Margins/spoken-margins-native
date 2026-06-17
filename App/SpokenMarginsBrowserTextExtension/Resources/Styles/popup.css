@@ -1,25 +1,26 @@
 body {
   margin: 0;
-  min-width: 240px;
+  width: 176px;
+  min-width: 176px;
   color: #f6f6f6;
   background: #141414;
-  font: 15px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  font: 14px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
 }
 
 main {
   display: grid;
-  gap: 10px;
-  padding: 14px;
+  gap: 8px;
+  padding: 10px;
 }
 
 h1 {
   margin: 0 0 4px;
-  font-size: 17px;
+  font-size: 15px;
   line-height: 1.2;
 }
 
 button {
-  min-height: 44px;
+  min-height: 36px;
   border: 0;
   border-radius: 8px;
   color: #111;
@@ -33,9 +34,9 @@ button:disabled {
 }
 
 #status {
-  min-height: 18px;
+  min-height: 16px;
   margin: 0;
   color: #bdbdbd;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.4;
 }

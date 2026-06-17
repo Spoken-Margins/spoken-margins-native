@@ -26,11 +26,14 @@ function element(tagName, textContent = "", children = []) {
 test("popup and manifest reference flattened bundled resources", () => {
   const manifest = JSON.parse(fs.readFileSync("App/SpokenMarginsBrowserTextExtension/Resources/manifest.json", "utf8"));
   const popup = fs.readFileSync("App/SpokenMarginsBrowserTextExtension/Resources/popup.html", "utf8");
+  const styles = fs.readFileSync("App/SpokenMarginsBrowserTextExtension/Resources/Styles/popup.css", "utf8");
 
   assert.deepEqual(manifest.content_scripts[0].js, ["browserTextCapture.js"]);
   assert.match(popup, /href="popup\.css"/);
   assert.match(popup, /src="popup\.js"/);
   assert.doesNotMatch(popup, /Styles\/popup\.css|Scripts\/popup\.js/);
+  assert.match(styles, /width:\s*176px/);
+  assert.match(styles, /min-height:\s*36px/);
 });
 
 function loadCapture(documentRef) {

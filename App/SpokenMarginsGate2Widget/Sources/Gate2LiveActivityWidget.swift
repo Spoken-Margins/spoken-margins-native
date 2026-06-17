@@ -126,17 +126,30 @@ private struct CompactPlayPauseButton: View {
     let isPlaying: Bool
 
     var body: some View {
-        Button(intent: Gate2CompactPlaybackIntent(command: command)) {
-            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                .font(.title.weight(.bold))
-                .frame(width: 60, height: 60)
-                .foregroundStyle(.white)
-                .padding(.leading, isPlaying ? 0 : 3)
-                .background(Color(red: 0.27, green: 0.78, blue: 0.43).opacity(0.28))
-                .clipShape(Circle())
+        Group {
+            if isPlaying {
+                Button(intent: Gate2CompactPlaybackIntent(command: command)) {
+                    playPauseLabel
+                }
+            } else {
+                Link(destination: URL(string: "spokenmargins://open")!) {
+                    playPauseLabel
+                }
+                .accessibilityHint("Opens Spoken Margins to resume playback.")
+            }
         }
         .frame(width: 60, height: 60)
         .contentShape(Circle())
+    }
+
+    private var playPauseLabel: some View {
+        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+            .font(.title.weight(.bold))
+            .frame(width: 60, height: 60)
+            .foregroundStyle(.white)
+            .padding(.leading, isPlaying ? 0 : 3)
+            .background(Color(red: 0.27, green: 0.78, blue: 0.43).opacity(0.28))
+            .clipShape(Circle())
     }
 }
 

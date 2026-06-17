@@ -1598,7 +1598,7 @@ public final class SessionEngine {
             }
             index += 1
         }
-        return text.count
+        return nextBoundary(after: offset, unit: "sentence", text: text)
     }
 
     private func previousParagraphBoundary(before offset: Int, text: String) -> Int {
@@ -1614,7 +1614,7 @@ public final class SessionEngine {
             }
             index -= 1
         }
-        return 0
+        return previousBoundary(before: offset, unit: "sentence", text: text)
     }
 
     private func consumeSpaces(_ chars: [Character], from start: Int) -> Int {

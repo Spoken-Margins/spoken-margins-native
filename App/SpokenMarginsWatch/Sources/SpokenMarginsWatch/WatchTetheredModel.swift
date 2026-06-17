@@ -59,6 +59,10 @@ final class WatchTetheredModel: NSObject, ObservableObject, WCSessionDelegate {
         snapshot?.compactSurfaceReady == true
     }
 
+    var needsPhoneToResume: Bool {
+        !isReachable && snapshot?.status != .playing
+    }
+
     var timeline: [CompactTimelineEntry] {
         snapshot?.timeline ?? []
     }
@@ -79,6 +83,14 @@ final class WatchTetheredModel: NSObject, ObservableObject, WCSessionDelegate {
             }
         }
         guard canSendCommands else { return false }
+        if needsPhoneToResume {
+            switch command {
+            case .play, .togglePlayPause, .skipBack, .skipForward, .jumpToChapter, .beginInterjection:
+                return false
+            default:
+                break
+            }
+        }
         return snapshot?.availableCommands.contains(command) == true
     }
 
@@ -137,6 +149,10 @@ final class WatchTetheredModel: NSObject, ObservableObject, WCSessionDelegate {
         }
         guard session.isReachable else {
             if message["type"] as? String == "command" {
+                if needsPhoneToResume {
+                    status = "Open iPhone to resume"
+                    return
+                }
                 session.transferUserInfo(message)
                 status = "Queued for iPhone"
                 return

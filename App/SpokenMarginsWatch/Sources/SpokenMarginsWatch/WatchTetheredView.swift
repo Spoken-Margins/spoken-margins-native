@@ -11,13 +11,19 @@ struct WatchTetheredView: View {
         ScrollView {
             VStack(spacing: 7) {
                 header
-                transportControls
                 if model.isRecording {
                     recordingControls
                 } else {
+                    transportControls
                     actionControls
+                    discussControl
                 }
-                discussControl
+                if model.needsPhoneToResume {
+                    Text("Open iPhone to resume")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                }
                 timelineSection
                 footer
             }
@@ -124,9 +130,17 @@ struct WatchTetheredView: View {
 
     private var recordingControls: some View {
         VStack(spacing: 6) {
-            Label("Recording", systemImage: "record.circle.fill")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.red)
+            HStack(spacing: 8) {
+                Image(systemName: "record.circle.fill")
+                    .foregroundStyle(.red)
+                Text("Recording")
+                    .font(.headline.weight(.semibold))
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(.red.opacity(0.16), in: Capsule())
+            .overlay(Capsule().stroke(.red.opacity(0.25), lineWidth: 1))
+
             HStack(spacing: 8) {
                 actionPill(systemName: "checkmark", title: "Finish", enabled: model.canSend(.finishInterjection), prominent: true) {
                     model.send(.finishInterjection)

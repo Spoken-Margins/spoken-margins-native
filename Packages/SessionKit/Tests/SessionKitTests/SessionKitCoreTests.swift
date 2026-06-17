@@ -435,6 +435,36 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(audio.playedOffsets.last, 17)
     }
 
+    func testParagraphSkipFallsBackToSentenceForSingleParagraphText() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "timeline": ["chapter_timing"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two. Three.", externalReference: nil, status: "ready")
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let audio = RecordingAudioClient()
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentOffset = 0
+        let forward = try engine.skipForward(unit: "paragraph")
+
+        XCTAssertEqual(forward.progressPercent, 31)
+        XCTAssertEqual(try XCTUnwrap(engine.currentSession?.position.charOffset), 5)
+        XCTAssertEqual(audio.playedOffsets.last, 5)
+
+        audio.currentOffset = 10
+        let back = try engine.skipBack(unit: "paragraph")
+
+        XCTAssertEqual(back.progressPercent, 31)
+        XCTAssertEqual(try XCTUnwrap(engine.currentSession?.position.charOffset), 5)
+    }
+
     func testSkipBackUsesCurrentAudioPositionAndPreviousBoundaryIsStrict() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
