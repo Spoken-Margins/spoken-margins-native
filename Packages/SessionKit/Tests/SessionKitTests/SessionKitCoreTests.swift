@@ -848,6 +848,70 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(turn.chapters?.first?.id, "ch-1")
     }
 
+    func testImportAssistantResponseCreatesCompletedPlayableTurn() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["assistant_turn_tts"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "Source.", externalReference: nil, status: "ready")
+        let session = Session(id: "session-pill", itemId: item.id, status: "in_progress", phase: .conversation, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 0, playbackRate: 1)
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        let snapshot = try engine.importAssistantResponse(
+            text: "<sm_summary>Short setup.</sm_summary><sm_response>External response. Second point.</sm_response>",
+            autoPlay: true
+        )
+
+        let turn = try XCTUnwrap(try repo.loadTurns(sessionId: session.id).first)
+        XCTAssertEqual(turn.status, "complete")
+        XCTAssertEqual(turn.summary, "Short setup.")
+        XCTAssertEqual(turn.text, "External response. Second point.")
+        XCTAssertEqual(snapshot.phase, .aiResponsePlayback)
+        XCTAssertEqual(audio.preparedTexts.last, "Short setup.\n\nExternal response. Second point.")
+    }
+
+    func testScopedExportFiltersTargetInterjectionsAndMarkdown() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["assistant_turn_tts"]
+            ]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "Source.", externalReference: "[[Pill]]", status: "ready")
+        let session = Session(id: "session-pill", itemId: item.id, status: "in_progress", phase: .conversation, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 20, playbackRate: 1)
+        let response = ConversationTurn(id: "turn-response-001", sessionId: session.id, role: "assistant", turnType: "assistant_response", status: "complete", summary: "Brief.", text: "Response text.", rawText: nil, sourceInterjectionIds: [])
+        let itemInterjection = Interjection(id: "ij-item", itemId: item.id, sessionId: session.id, targetType: .item, targetId: item.id, createdAt: Date(timeIntervalSince1970: 1), roughPercent: 10, anchor: Anchor(anchorType: .text, startChar: 0, endChar: 6, anchorBefore: "Source.", anchorAfter: ""), audioPath: nil, audioStatus: "none", transcriptionStatus: "transcribed", transcript: "source note", cleanedTranscript: "clean source note", displayText: nil, status: "active")
+        let turnInterjection = Interjection(id: "ij-turn", itemId: item.id, sessionId: session.id, targetType: .assistantTurn, targetId: response.id, createdAt: Date(timeIntervalSince1970: 2), roughPercent: 30, anchor: Anchor(anchorType: .turn, startChar: 0, endChar: 8, anchorBefore: "Response", anchorAfter: "text."), audioPath: nil, audioStatus: "none", transcriptionStatus: "transcribed", transcript: "turn note", cleanedTranscript: nil, displayText: nil, status: "active")
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session], interjections: [itemInterjection.id: itemInterjection, turnInterjection.id: turnInterjection], turns: [response.id: response])
+        let engine = SessionEngine(profile: profile, repository: repo)
+
+        let export = try engine.buildExport(options: ExportOptions(
+            sessionId: session.id,
+            includeFullText: false,
+            includeReference: true,
+            includeListeningMap: false,
+            includeInterjections: true,
+            includeTurns: true,
+            scope: "target",
+            targetType: InterjectionTargetType.assistantTurn.rawValue,
+            targetId: response.id
+        ))
+        let markdown = SessionExportMarkdownRenderer.render(export)
+
+        XCTAssertEqual(export.interjections.map(\.id), ["ij-turn"])
+        XCTAssertEqual(export.turns.map(\.id), [response.id])
+        XCTAssertTrue(markdown.contains("turn note"))
+        XCTAssertFalse(markdown.contains("source note"))
+    }
+
     func testMalformedAIChaptersPreserveResponseText() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",

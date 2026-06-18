@@ -49,6 +49,13 @@ struct SpeechVoiceChoice: Identifiable, Hashable {
     let quality: String
 }
 
+struct QuickAccessFile: Identifiable, Hashable {
+    let id: String
+    let name: String
+    let relativePath: String
+    let modifiedAtDescription: String
+}
+
 private enum AppSpeechPreviewMode {
     case spokenContent
     case appVoice(voiceIdentifier: String?, rate: Float)
@@ -70,8 +77,18 @@ final class Gate1AppModel: ObservableObject {
     @Published var statusMessage = "Ready."
     @Published var lastError: String?
     @Published var exportPreview = ""
+    @Published var exportFormat = UserDefaults.standard.string(forKey: "exportFormat") ?? "markdown"
+    @Published var exportScope = UserDefaults.standard.string(forKey: "exportScope") ?? "full_session"
+    @Published var exportIncludesSourceText = UserDefaults.standard.object(forKey: "exportIncludesSourceText") as? Bool ?? true
+    @Published var exportIncludesReference = UserDefaults.standard.object(forKey: "exportIncludesReference") as? Bool ?? true
+    @Published var exportIncludesListeningMap = UserDefaults.standard.object(forKey: "exportIncludesListeningMap") as? Bool ?? true
+    @Published var exportIncludesInterjections = UserDefaults.standard.object(forKey: "exportIncludesInterjections") as? Bool ?? true
+    @Published var exportIncludesTurns = UserDefaults.standard.object(forKey: "exportIncludesTurns") as? Bool ?? true
     @Published var libraryItems: [LibraryItemRow] = []
     @Published var selectedItem = ItemDetailState()
+    @Published var pastedAssistantResponse = ""
+    @Published var quickAccessFolderName = UserDefaults.standard.string(forKey: "quickAccessFolderName") ?? "No folder selected"
+    @Published var quickAccessRecentFiles: [QuickAccessFile] = []
     @Published var selectedProfileId = "phone-tablet-online"
     @Published var importTitle = "Gate 1 Article With Links"
     @Published var importText = "Read the background at https://example.com/long/url before continuing. A labeled [reference](https://example.com/essay) should stay readable while raw URLs are skipped."
@@ -107,6 +124,7 @@ final class Gate1AppModel: ObservableObject {
     private var playbackProgressTask: Task<Void, Never>?
     private var pendingAutoPlayQueue = Gate1PlaybackAutoplayQueue()
     private let transcriptionClient = SystemSpeechTranscriptionClient()
+    private let quickAccessFolderBookmarkKey = "quickAccessFolderBookmark"
     #if canImport(AVFoundation)
     private let speechPreviewSynthesizer = AVSpeechSynthesizer()
     private var kokoroPreviewPlayer: AVAudioPlayer?
@@ -142,6 +160,7 @@ final class Gate1AppModel: ObservableObject {
     init() {
         sanitizeTTSMode()
         settingsValueChanged()
+        refreshQuickAccessFolder()
         gate3WatchConnectivity.activate { [weak self] in
             self?.gate3WatchSnapshot()
         } commandHandler: { [weak self] request in
@@ -296,6 +315,87 @@ final class Gate1AppModel: ObservableObject {
         } catch {
             reportFailure(error, context: "Obsidian import failed")
         }
+    }
+
+    func configureQuickAccessFolder(url: URL) {
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+        do {
+            let bookmark = try url.bookmarkData(options: quickAccessBookmarkCreationOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
+            UserDefaults.standard.set(bookmark, forKey: quickAccessFolderBookmarkKey)
+            UserDefaults.standard.set(url.lastPathComponent, forKey: "quickAccessFolderName")
+            quickAccessFolderName = url.lastPathComponent
+            refreshQuickAccessFolder()
+            reportSuccess("Quick folder set to \(url.lastPathComponent).")
+        } catch {
+            reportFailure(error, context: "Quick folder setup failed")
+        }
+    }
+
+    func refreshQuickAccessFolder() {
+        guard let folderURL = resolvedQuickAccessFolderURL() else {
+            quickAccessRecentFiles = []
+            return
+        }
+        let didAccess = folderURL.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                folderURL.stopAccessingSecurityScopedResource()
+            }
+        }
+        do {
+            let files = try FileManager.default.contentsOfDirectory(
+                at: folderURL,
+                includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            )
+            let supported = files.compactMap { url -> (url: URL, date: Date)? in
+                let ext = url.pathExtension.lowercased()
+                guard ["md", "markdown", "txt"].contains(ext) else { return nil }
+                let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey])
+                guard values?.isRegularFile == true else { return nil }
+                return (url, values?.contentModificationDate ?? .distantPast)
+            }
+            let formatter = RelativeDateTimeFormatter()
+            formatter.unitsStyle = .short
+            quickAccessRecentFiles = supported
+                .sorted { $0.date > $1.date }
+                .prefix(2)
+                .map { entry in
+                    QuickAccessFile(
+                        id: entry.url.lastPathComponent,
+                        name: entry.url.deletingPathExtension().lastPathComponent,
+                        relativePath: entry.url.lastPathComponent,
+                        modifiedAtDescription: formatter.localizedString(for: entry.date, relativeTo: Date())
+                    )
+                }
+            quickAccessFolderName = folderURL.lastPathComponent
+            diagnostics["quickAccessFolder"] = folderURL.lastPathComponent
+            diagnostics["quickAccessRecentFiles"] = "\(quickAccessRecentFiles.count)"
+        } catch {
+            quickAccessRecentFiles = []
+            diagnostics["quickAccessError"] = String(describing: error)
+        }
+    }
+
+    func importQuickAccessFile(_ file: QuickAccessFile) {
+        guard let folderURL = resolvedQuickAccessFolderURL() else {
+            reportFailure("Choose a quick folder before importing recent files.")
+            return
+        }
+        let fileURL = folderURL.appending(path: file.relativePath)
+        let didAccess = folderURL.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                folderURL.stopAccessingSecurityScopedResource()
+            }
+        }
+        importObsidianMarkdownFiles(urls: [fileURL])
+        refreshQuickAccessFolder()
     }
 
     @discardableResult
@@ -884,9 +984,9 @@ final class Gate1AppModel: ObservableObject {
 
     func buildExport() {
         run { engine in
-            let export = try engine.buildExport(options: ExportOptions(includeFullText: true, includeReference: true, includeListeningMap: true, includeInterjections: true))
-            let data = try encoder.encode(export)
-            exportPreview = String(data: data, encoding: .utf8) ?? ""
+            persistExportSettings()
+            let export = try engine.buildExport(options: currentExportOptions())
+            exportPreview = try renderExport(export)
             screen = .export
             reportSuccess("Built session export.")
         }
@@ -899,10 +999,57 @@ final class Gate1AppModel: ObservableObject {
         }
         #if canImport(UIKit)
         UIPasteboard.general.string = exportPreview
-        reportSuccess("Copied plain-text JSON export.")
+        reportSuccess("Copied \(exportFormat == "json" ? "JSON" : "Markdown") export.")
         #else
         reportFailure("Clipboard is unavailable on this platform.")
         #endif
+    }
+
+    func copyTargetInterjections(targetType: String, targetId: String, format: String = "markdown") {
+        run { engine in
+            let export = try engine.buildExport(options: ExportOptions(
+                sessionId: snapshot.sessionId,
+                includeFullText: false,
+                includeReference: true,
+                includeListeningMap: false,
+                includeInterjections: true,
+                includeTurns: targetType != InterjectionTargetType.item.rawValue,
+                scope: "target",
+                targetType: targetType,
+                targetId: targetId
+            ))
+            guard !export.interjections.isEmpty else {
+                reportFailure("No interjections are available for that target.")
+                return
+            }
+            let text = try renderExport(export, format: format)
+            #if canImport(UIKit)
+            UIPasteboard.general.string = text
+            reportSuccess("Copied target interjections.")
+            #else
+            exportPreview = text
+            reportSuccess("Built target interjection export.")
+            #endif
+        }
+    }
+
+    func importPastedAssistantResponse(autoPlay: Bool = true) {
+        let text = pastedAssistantResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            reportFailure("Paste a response before importing.")
+            return
+        }
+        stopSpeechPreviews()
+        run { engine in
+            if !hasActiveSession {
+                snapshot = try engine.startSession(itemId: activeItemId)
+            }
+            snapshot = try engine.importAssistantResponse(text: text, autoPlay: autoPlay)
+            pastedAssistantResponse = ""
+            refreshSelectedItem()
+            screen = .playback
+            reportSuccess(autoPlay ? "Imported and playing pasted response." : "Imported pasted response.")
+        }
     }
 
     func deleteTranscript(interjection: Interjection) {
@@ -2180,6 +2327,79 @@ final class Gate1AppModel: ObservableObject {
         default:
             return "turn"
         }
+    }
+
+    private func persistExportSettings() {
+        UserDefaults.standard.set(exportFormat, forKey: "exportFormat")
+        UserDefaults.standard.set(exportScope, forKey: "exportScope")
+        UserDefaults.standard.set(exportIncludesSourceText, forKey: "exportIncludesSourceText")
+        UserDefaults.standard.set(exportIncludesReference, forKey: "exportIncludesReference")
+        UserDefaults.standard.set(exportIncludesListeningMap, forKey: "exportIncludesListeningMap")
+        UserDefaults.standard.set(exportIncludesInterjections, forKey: "exportIncludesInterjections")
+        UserDefaults.standard.set(exportIncludesTurns, forKey: "exportIncludesTurns")
+    }
+
+    private func currentExportOptions() -> ExportOptions {
+        ExportOptions(
+            sessionId: snapshot.sessionId,
+            includeFullText: exportIncludesSourceText,
+            includeReference: exportIncludesReference,
+            includeListeningMap: exportIncludesListeningMap,
+            includeInterjections: exportIncludesInterjections,
+            includeTurns: exportIncludesTurns,
+            scope: exportScope
+        )
+    }
+
+    private func renderExport(_ export: SessionExport, format: String? = nil) throws -> String {
+        if (format ?? exportFormat) == "json" {
+            let data = try encoder.encode(export)
+            return String(data: data, encoding: .utf8) ?? ""
+        }
+        return SessionExportMarkdownRenderer.render(export)
+    }
+
+    private func resolvedQuickAccessFolderURL() -> URL? {
+        guard let data = UserDefaults.standard.data(forKey: quickAccessFolderBookmarkKey) else { return nil }
+        do {
+            var isStale = false
+            let url = try URL(
+                resolvingBookmarkData: data,
+                options: quickAccessBookmarkResolutionOptions,
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            )
+            if isStale {
+                let didAccess = url.startAccessingSecurityScopedResource()
+                defer {
+                    if didAccess {
+                        url.stopAccessingSecurityScopedResource()
+                    }
+                }
+                let refreshed = try url.bookmarkData(options: quickAccessBookmarkCreationOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
+                UserDefaults.standard.set(refreshed, forKey: quickAccessFolderBookmarkKey)
+            }
+            return url
+        } catch {
+            diagnostics["quickAccessBookmarkError"] = String(describing: error)
+            return nil
+        }
+    }
+
+    private var quickAccessBookmarkCreationOptions: URL.BookmarkCreationOptions {
+        #if os(macOS)
+        return [.withSecurityScope]
+        #else
+        return []
+        #endif
+    }
+
+    private var quickAccessBookmarkResolutionOptions: URL.BookmarkResolutionOptions {
+        #if os(macOS)
+        return [.withSecurityScope]
+        #else
+        return []
+        #endif
     }
 
     private func obsidianItemId(fileName: String, index: Int) -> String {
