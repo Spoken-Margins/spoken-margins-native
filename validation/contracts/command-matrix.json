@@ -92,6 +92,12 @@
       "backendCommand": "SessionEngine.submitFollowup"
     },
     {
+      "id": "importAssistantResponse",
+      "description": "Import a pasted external assistant response as a completed playable turn.",
+      "status": "implemented",
+      "backendCommand": "SessionEngine.importAssistantResponse"
+    },
+    {
       "id": "endSession",
       "description": "End the active session.",
       "status": "implemented",

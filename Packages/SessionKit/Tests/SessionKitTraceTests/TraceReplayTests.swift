@@ -45,6 +45,7 @@ final class TraceHarness {
         "ai-response-interjection",
         "ai-provider-failure-retry",
         "ai-malformed-structure-preserves-text",
+        "external-assistant-response-import",
         "stable-streaming-speech",
         "interjection-representation-lifecycles"
     ]
@@ -164,6 +165,8 @@ final class TraceHarness {
             case "submitFollowup":
                 let input = args["input"] as? [String: Any]
                 return try engine.submitFollowup(text: input?["text"] as? String ?? "")
+            case "importAssistantResponse":
+                return try engine.importAssistantResponse(text: args["text"] as? String ?? "", autoPlay: args["autoPlay"] as? Bool ?? true)
             case "retryAiJob":
                 return try engine.retryAIJob(jobId: args["jobId"] as? String ?? "job-assistant-response-001")
             case "prepareSpeechText":
@@ -628,7 +631,12 @@ final class TraceHarness {
             includeFullText: dict["includeFullText"] as? Bool ?? false,
             includeReference: dict["includeReference"] as? Bool ?? true,
             includeListeningMap: dict["includeListeningMap"] as? Bool ?? false,
-            includeInterjections: dict["includeInterjections"] as? Bool ?? true
+            includeInterjections: dict["includeInterjections"] as? Bool ?? true,
+            includeTurns: dict["includeTurns"] as? Bool ?? true,
+            scope: dict["scope"] as? String ?? "full_session",
+            targetType: dict["targetType"] as? String,
+            targetId: dict["targetId"] as? String,
+            interjectionIds: dict["interjectionIds"] as? [String]
         )
     }
 }

@@ -653,6 +653,41 @@ public final class SessionEngine {
     }
 
     @discardableResult
+    public func importAssistantResponse(text rawText: String, autoPlay: Bool = true) throws -> SessionSnapshot {
+        try require("importAssistantResponse", category: "sync", capabilities: ["canonical_persistence"])
+        var session = try resolveSession(nil)
+        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw SessionKitError.invalidCommandForState("importAssistantResponse")
+        }
+        let parsed = parseSectionedResponse(from: trimmed)
+        let turns = try repository.loadTurns(sessionId: session.id)
+        let responseIndex = turns.filter { $0.turnType == "assistant_response" }.count + 1
+        let turn = ConversationTurn(
+            id: "turn-response-\(String(format: "%03d", responseIndex))",
+            sessionId: session.id,
+            role: "assistant",
+            turnType: "assistant_response",
+            status: "complete",
+            summary: parsed.summary,
+            text: parsed.response.isEmpty ? trimmed : parsed.response,
+            rawText: trimmed,
+            chapters: parsed.chapters,
+            sourceInterjectionIds: []
+        )
+        try repository.saveTurn(turn)
+        session.phase = .conversation
+        currentSession = session
+        try repository.saveSession(session)
+        snapshot.turnStatus = "complete"
+        if autoPlay {
+            return try playTurn(turnId: turn.id)
+        }
+        publish(status: snapshot.status, phase: .conversation)
+        return snapshot
+    }
+
+    @discardableResult
     public func aiProviderFailed(error: String) throws -> SessionSnapshot {
         let session = try resolveSession(nil)
         var jobs = try repository.loadAIJobs(sessionId: session.id)
@@ -867,8 +902,10 @@ public final class SessionEngine {
     public func buildExport(options: ExportOptions) throws -> SessionExport {
         let session = try resolveSession(options.sessionId)
         let item = try repository.loadItem(id: session.itemId)
-        let interjections = options.includeInterjections ? try repository.loadInterjections(sessionId: session.id) : []
-        let turns = try repository.loadTurns(sessionId: session.id)
+        let allInterjections = try repository.loadInterjections(sessionId: session.id)
+        let allTurns = try repository.loadTurns(sessionId: session.id)
+        let interjections = options.includeInterjections ? scopedExportInterjections(options: options, session: session, interjections: allInterjections) : []
+        let turns = options.includeTurns ? scopedExportTurns(options: options, turns: allTurns, interjections: interjections) : []
         let export = SessionExport(
             item: ExportItem(
                 id: item.id,
@@ -892,13 +929,48 @@ public final class SessionEngine {
                     anchorAfter: $0.anchor.anchorAfter,
                     mediaTimeMs: $0.anchor.mediaTimeMs,
                     transcriptionStatus: $0.transcriptionStatus,
-                    transcript: $0.transcript,
+                    transcript: $0.cleanedTranscript ?? $0.transcript,
                     audioPath: $0.audioPath
                 )
             }
         )
         lastExport = export
         return export
+    }
+
+    private func scopedExportInterjections(options: ExportOptions, session: Session, interjections: [Interjection]) -> [Interjection] {
+        switch options.scope {
+        case "original", "source_only":
+            return []
+        case "source_interjections", "original_with_interjections":
+            return interjections.filter { $0.targetType == .item && $0.targetId == session.itemId }
+        case "target":
+            guard let targetType = options.targetType, let targetId = options.targetId else { return interjections }
+            if targetType == InterjectionTargetType.item.rawValue || targetType == TargetType.itemTextTTS.rawValue {
+                return interjections.filter { $0.targetType == .item && $0.targetId == targetId }
+            }
+            return interjections.filter { $0.targetId == targetId && $0.targetType != .item }
+        case "selected_interjections":
+            guard let ids = options.interjectionIds else { return [] }
+            return interjections.filter { ids.contains($0.id) }
+        default:
+            return interjections
+        }
+    }
+
+    private func scopedExportTurns(options: ExportOptions, turns: [ConversationTurn], interjections: [Interjection]) -> [ConversationTurn] {
+        switch options.scope {
+        case "original", "source_only", "source_interjections", "original_with_interjections":
+            return []
+        case "target":
+            guard let targetId = options.targetId else { return turns }
+            return turns.filter { $0.id == targetId }
+        case "selected_interjections":
+            let targetTurnIds = Set(interjections.filter { $0.targetType != .item }.map(\.targetId))
+            return turns.filter { targetTurnIds.contains($0.id) }
+        default:
+            return turns
+        }
     }
 
     public func compactTimelineEntries() -> [CompactTimelineEntry] {

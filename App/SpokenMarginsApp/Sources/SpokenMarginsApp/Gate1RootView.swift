@@ -37,6 +37,7 @@ private struct HomeScreen: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @FocusState private var focusedField: Field?
     @State private var isImportingObsidianFiles = false
+    @State private var isSelectingQuickAccessFolder = false
 
     private enum Field {
         case title
@@ -53,6 +54,7 @@ private struct HomeScreen: View {
                                 header
                                 StatusBanner()
                                 createItem
+                                quickAccessFolder
                             }
                             .frame(maxWidth: 620, alignment: .topLeading)
 
@@ -68,6 +70,7 @@ private struct HomeScreen: View {
                             header
                             StatusBanner()
                             createItem
+                            quickAccessFolder
                             queue
                         }
                     }
@@ -92,12 +95,26 @@ private struct HomeScreen: View {
             .scrollDismissesKeyboard(.interactively)
             .fileImporter(
                 isPresented: $isImportingObsidianFiles,
-                allowedContentTypes: [UTType(filenameExtension: "md") ?? .plainText],
+                allowedContentTypes: [UTType(filenameExtension: "md") ?? .plainText, .plainText],
                 allowsMultipleSelection: true
             ) { result in
                 switch result {
                 case .success(let urls):
                     model.importObsidianMarkdownFiles(urls: urls)
+                case .failure(let error):
+                    model.reportImportFailure(error)
+                }
+            }
+            .fileImporter(
+                isPresented: $isSelectingQuickAccessFolder,
+                allowedContentTypes: [.folder],
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    if let url = urls.first {
+                        model.configureQuickAccessFolder(url: url)
+                    }
                 case .failure(let error):
                     model.reportImportFailure(error)
                 }
@@ -146,6 +163,70 @@ private struct HomeScreen: View {
                 }
                 .buttonStyle(SecondaryButtonStyle())
                 .accessibilityIdentifier("obsidian.import.button")
+            }
+        }
+    }
+
+    private var quickAccessFolder: some View {
+        ProductPanel {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Label("Quick Folder", systemImage: "folder")
+                        .font(.headline)
+                    Spacer()
+                    Button {
+                        model.refreshQuickAccessFolder()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .frame(width: 34, height: 34)
+                    }
+                    .buttonStyle(IconButtonStyle())
+                    .accessibilityLabel("Refresh Quick Folder")
+                    .accessibilityIdentifier("quickFolder.refresh.button")
+                }
+                Text(model.quickAccessFolderName)
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .lineLimit(2)
+                HStack {
+                    Button {
+                        isSelectingQuickAccessFolder = true
+                    } label: {
+                        Label("Choose Folder", systemImage: "folder.badge.plus")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .accessibilityIdentifier("quickFolder.choose.button")
+
+                    Button {
+                        isImportingObsidianFiles = true
+                    } label: {
+                        Label("Open Files", systemImage: "folder")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .accessibilityIdentifier("quickFolder.openFiles.button")
+                }
+                if !model.quickAccessRecentFiles.isEmpty {
+                    ForEach(model.quickAccessRecentFiles) { file in
+                        Button {
+                            model.importQuickAccessFile(file)
+                        } label: {
+                            HStack {
+                                Image(systemName: "doc.text")
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(file.name)
+                                        .font(.subheadline.weight(.semibold))
+                                    Text(file.modifiedAtDescription)
+                                        .font(.caption)
+                                        .foregroundStyle(AppColors.secondaryText)
+                                }
+                                Spacer()
+                                Image(systemName: "plus")
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("quickFolder.recent.\(file.id)")
+                    }
+                }
             }
         }
     }
@@ -436,7 +517,7 @@ private struct ItemScreen: View {
     }
 
     private var actions: some View {
-        HStack {
+        VStack(alignment: .leading, spacing: 12) {
             Button {
                 model.startItem(id: model.selectedItem.id)
             } label: {
@@ -449,6 +530,14 @@ private struct ItemScreen: View {
             }
             .buttonStyle(SecondaryButtonStyle())
             .accessibilityIdentifier("item.export.button")
+            Button {
+                model.copyTargetInterjections(targetType: InterjectionTargetType.item.rawValue, targetId: model.selectedItem.id)
+            } label: {
+                Label("Copy Item Notes", systemImage: "doc.on.doc")
+            }
+            .buttonStyle(SecondaryButtonStyle())
+            .disabled(model.selectedItem.interjections.filter { $0.targetType == .item }.isEmpty)
+            .accessibilityIdentifier("item.copyInterjections.button")
         }
     }
 }
@@ -458,6 +547,7 @@ private struct PlaybackScreen: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var followUp = "Can you respond to my interjection?"
     @State private var selectedInterjection: Interjection?
+    @State private var isPastingAssistantResponse = false
     @FocusState private var followUpFocused: Bool
 
     var body: some View {
@@ -530,6 +620,10 @@ private struct PlaybackScreen: View {
             .scrollDismissesKeyboard(.interactively)
             .sheet(item: $selectedInterjection) { interjection in
                 InterjectionDetailView(interjection: interjection)
+                    .environmentObject(model)
+            }
+            .sheet(isPresented: $isPastingAssistantResponse) {
+                PastedAssistantResponseView(isPresented: $isPastingAssistantResponse)
                     .environmentObject(model)
             }
         }
@@ -832,6 +926,16 @@ private struct PlaybackScreen: View {
                     Spacer()
                     Text("Conversation")
                         .font(.headline)
+                    Button {
+                        isPastingAssistantResponse = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .frame(width: 34, height: 34)
+                    }
+                    .buttonStyle(IconButtonStyle())
+                    .disabled(!model.hasActiveSession)
+                    .accessibilityLabel("Paste Assistant Response")
+                    .accessibilityIdentifier("conversation.pasteResponse.button")
                 }
                 if model.selectedItem.turns.isEmpty {
                     Text("Generate a summary or send a follow-up after listening.")
@@ -844,6 +948,16 @@ private struct PlaybackScreen: View {
                                     .font(.headline)
                                 Spacer()
                                 if turn.role == "assistant", turn.status == "complete" {
+                                    Button {
+                                        model.copyTargetInterjections(targetType: turn.turnType == "interjection_summary" ? InterjectionTargetType.summaryTurn.rawValue : InterjectionTargetType.assistantTurn.rawValue, targetId: turn.id)
+                                    } label: {
+                                        Image(systemName: "square.and.arrow.up")
+                                            .frame(width: 34, height: 34)
+                                    }
+                                    .buttonStyle(IconButtonStyle())
+                                    .disabled(model.selectedItem.interjections.filter { $0.targetId == turn.id && $0.targetType != .item }.isEmpty)
+                                    .accessibilityLabel("Copy interjections for \(turnTitle(turn))")
+                                    .accessibilityIdentifier("conversation.copyTurnInterjections.\(turn.id)")
                                     Button {
                                         model.playTurn(turn)
                                     } label: {
@@ -1140,15 +1254,59 @@ private struct ExportScreen: View {
                     Text("Export")
                         .font(.largeTitle.bold())
                     StatusBanner()
-                    HStack {
-                        Button("Build Session Export", action: model.buildExport)
+                    ProductPanel {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Picker("Format", selection: $model.exportFormat) {
+                                Text("Markdown").tag("markdown")
+                                Text("JSON").tag("json")
+                            }
+                            .pickerStyle(.segmented)
+                            .accessibilityIdentifier("export.format.picker")
+
+                            Picker("Scope", selection: $model.exportScope) {
+                                Text("Original").tag("original")
+                                Text("Source Notes").tag("source_interjections")
+                                Text("Full Session").tag("full_session")
+                            }
+                            .pickerStyle(.segmented)
+                            .accessibilityIdentifier("export.scope.picker")
+
+                            Toggle("Source Text", isOn: $model.exportIncludesSourceText)
+                                .accessibilityIdentifier("export.includeSourceText.toggle")
+                            Toggle("Reference", isOn: $model.exportIncludesReference)
+                                .accessibilityIdentifier("export.includeReference.toggle")
+                            Toggle("Listening Map", isOn: $model.exportIncludesListeningMap)
+                                .accessibilityIdentifier("export.includeListeningMap.toggle")
+                            Toggle("Interjections", isOn: $model.exportIncludesInterjections)
+                                .accessibilityIdentifier("export.includeInterjections.toggle")
+                            Toggle("AI Turns", isOn: $model.exportIncludesTurns)
+                                .accessibilityIdentifier("export.includeTurns.toggle")
+                        }
+                    }
+                    VStack(alignment: .leading, spacing: 12) {
+                        Button {
+                            model.buildExport()
+                        } label: {
+                            Label("Build Export", systemImage: "doc.text")
+                        }
                             .buttonStyle(PrimaryButtonStyle())
                             .disabled(!model.hasActiveSession)
                             .accessibilityIdentifier("export.build.button")
-                        Button("Copy Plain Text", action: model.copyPlainTextExport)
+                        Button {
+                            model.copyPlainTextExport()
+                        } label: {
+                            Label("Copy", systemImage: "doc.on.doc")
+                        }
                             .buttonStyle(SecondaryButtonStyle())
                             .disabled(model.exportPreview.isEmpty)
                             .accessibilityIdentifier("export.copyPlainText.button")
+                        if !model.exportPreview.isEmpty {
+                            ShareLink(item: model.exportPreview) {
+                                Label("Share", systemImage: "square.and.arrow.up")
+                            }
+                            .buttonStyle(SecondaryButtonStyle())
+                            .accessibilityIdentifier("export.share.button")
+                        }
                         Button("Item", action: { model.openItem(id: model.selectedItem.id) })
                             .buttonStyle(SecondaryButtonStyle())
                             .accessibilityIdentifier("export.item.button")
@@ -1172,6 +1330,63 @@ private struct ExportScreen: View {
                     .accessibilityIdentifier("export.home.button")
                 }
             }
+        }
+    }
+}
+
+private struct PastedAssistantResponseView: View {
+    @EnvironmentObject private var model: Gate1AppModel
+    @Binding var isPresented: Bool
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 16) {
+                TextEditor(text: $model.pastedAssistantResponse)
+                    .font(.body)
+                    .frame(minHeight: 260)
+                    .padding(8)
+                    .background(AppColors.inputBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppColors.border))
+                    .focused($isFocused)
+                    .accessibilityIdentifier("pasteResponse.editor")
+                HStack {
+                    Button {
+                        model.importPastedAssistantResponse(autoPlay: true)
+                        isPresented = false
+                    } label: {
+                        Label("Import And Play", systemImage: "play.fill")
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .disabled(model.pastedAssistantResponse.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityIdentifier("pasteResponse.importPlay.button")
+
+                    Button {
+                        model.importPastedAssistantResponse(autoPlay: false)
+                        isPresented = false
+                    } label: {
+                        Label("Import", systemImage: "plus")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .disabled(model.pastedAssistantResponse.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityIdentifier("pasteResponse.import.button")
+                }
+                Spacer()
+            }
+            .padding(20)
+            .navigationTitle("Paste Response")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Close") { isPresented = false }
+                        .accessibilityIdentifier("pasteResponse.close.button")
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { isFocused = false }
+                }
+            }
+            .onAppear { isFocused = true }
         }
     }
 }
@@ -1235,6 +1450,12 @@ private struct InterjectionDetailView: View {
                 Section("Transcript") {
                     Text(interjection.cleanedTranscript ?? interjection.transcript ?? "No transcript yet.")
                         .textSelection(.enabled)
+                    Button {
+                        model.copyTargetInterjections(targetType: interjection.targetType.rawValue, targetId: interjection.targetId)
+                    } label: {
+                        Label("Copy Target Interjections", systemImage: "doc.on.doc")
+                    }
+                    .accessibilityIdentifier("interjection.detail.copyTarget")
                     Button("Delete Transcript") {
                         model.deleteTranscript(interjection: interjection)
                         dismiss()
