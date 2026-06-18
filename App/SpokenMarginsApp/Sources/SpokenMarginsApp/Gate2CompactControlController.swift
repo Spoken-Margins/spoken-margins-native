@@ -15,11 +15,12 @@ import UIKit
 final class Gate2CompactControlController {
     private var dispatcher: CompactControlDispatcher?
     private var queuedCommandTask: Task<Void, Never>?
-    private var queuedCommandHandler: (@MainActor (CompactControlCommand) -> Void)?
+    private var queuedCommandHandler: (@MainActor (CompactControlCommand, String) -> Void)?
     private var queuedApplicationCommandHandler: (@MainActor (String) -> Bool)?
     private let nowPlaying = Gate2NowPlayingController()
     private let liveActivity = Gate2LiveActivityController()
     private(set) var lastCommand: CompactControlCommand?
+    private(set) var lastCommandOrigin = "none"
     private(set) var lastApplicationCommand = "none"
     private(set) var lastResult = "none"
 
@@ -31,7 +32,7 @@ final class Gate2CompactControlController {
         canonicalRuntime: SessionEngine,
         surfaceProfile: RuntimeCapabilityProfile,
         skipUnit: String,
-        commandHandler: @escaping @MainActor (CompactControlCommand) -> Void,
+        commandHandler: @escaping @MainActor (CompactControlCommand, String) -> Void,
         applicationCommandHandler: @escaping @MainActor (String) -> Bool = { _ in false }
     ) {
         dispatcher = CompactControlDispatcher(
@@ -41,7 +42,9 @@ final class Gate2CompactControlController {
         )
         queuedCommandHandler = commandHandler
         queuedApplicationCommandHandler = applicationCommandHandler
-        nowPlaying.installRemoteCommandHandlers(commandHandler: commandHandler)
+        nowPlaying.installRemoteCommandHandlers { command in
+            commandHandler(command, "now_playing")
+        }
         installQueuedWidgetCommandProcessor()
         publishCurrentSnapshot()
         lastResult = "configured"
@@ -49,17 +52,20 @@ final class Gate2CompactControlController {
 
     func update(snapshot: SessionSnapshot) {
         guard dispatcher != nil else { return }
-        drainQueuedWidgetCommands()
-        publishCurrentSnapshot()
+        let drainedCommand = drainQueuedWidgetCommands()
+        if !drainedCommand {
+            publishCurrentSnapshot()
+        }
     }
 
     @discardableResult
-    func dispatch(_ command: CompactControlCommand, chapterId: String? = nil) throws -> CompactControlResult {
+    func dispatch(_ command: CompactControlCommand, chapterId: String? = nil, origin: String = "app_ui") throws -> CompactControlResult {
         guard let dispatcher else {
             throw SessionKitError.invalidCommandForState("compact_control_unconfigured")
         }
         let result = try dispatcher.dispatch(command, chapterId: chapterId)
         lastCommand = command
+        lastCommandOrigin = origin
         lastResult = result.delegatedToCanonicalRuntime ? "delegated" : (result.rejectedReason ?? "rejected")
         nowPlaying.publish(result.snapshot)
         return result
@@ -74,6 +80,7 @@ final class Gate2CompactControlController {
             "gate2LastRemoteCommand": nowPlaying.lastRemoteCommand,
             "gate2LiveActivity": liveActivity.status,
             "gate2LastCommand": lastCommand?.rawValue ?? "none",
+            "gate2LastCommandOrigin": lastCommandOrigin,
             "gate2LastApplicationCommand": lastApplicationCommand,
             "gate2LastResult": lastResult,
             "gate2ExposedCommands": snapshot?.exposedCommands.map(\.rawValue).joined(separator: ",") ?? "none",
@@ -97,17 +104,19 @@ final class Gate2CompactControlController {
         }
     }
 
-    private func drainQueuedWidgetCommands() {
-        guard let queuedCommandHandler else { return }
+    @discardableResult
+    private func drainQueuedWidgetCommands() -> Bool {
+        guard let queuedCommandHandler else { return false }
         let queuedCommands = Gate2CompactCommandQueue.drain()
-        guard !queuedCommands.isEmpty else { return }
+        guard !queuedCommands.isEmpty else { return false }
         for queuedCommand in queuedCommands {
             if let command = CompactControlCommand(rawValue: queuedCommand.command) {
-                queuedCommandHandler(command)
+                queuedCommandHandler(command, "widget_or_live_activity_queue")
             } else if queuedApplicationCommandHandler?(queuedCommand.command) == true {
                 lastApplicationCommand = queuedCommand.command
             }
         }
+        return true
     }
 }
 
@@ -187,6 +196,19 @@ private final class Gate2NowPlayingController {
         ]
         info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = snapshot.playbackRate
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        let center = MPRemoteCommandCenter.shared()
+        let canPlay = snapshot.availableCommands.contains(.play) || snapshot.availableCommands.contains(.togglePlayPause)
+        let canPause = snapshot.availableCommands.contains(.pause) || snapshot.availableCommands.contains(.togglePlayPause)
+        let canSkipBack = snapshot.availableCommands.contains(.skipBack)
+        let canSkipForward = snapshot.availableCommands.contains(.skipForward)
+        center.playCommand.isEnabled = snapshot.status != .playing && canPlay
+        center.pauseCommand.isEnabled = snapshot.status == .playing && canPause
+        center.togglePlayPauseCommand.isEnabled = canPlay || canPause
+        center.skipBackwardCommand.isEnabled = canSkipBack
+        center.previousTrackCommand.isEnabled = canSkipBack
+        center.skipForwardCommand.isEnabled = canSkipForward
+        center.nextTrackCommand.isEnabled = canSkipForward
+        center.stopCommand.isEnabled = snapshot.status == .playing && canPause
         #endif
     }
 

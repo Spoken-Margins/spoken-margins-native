@@ -185,6 +185,8 @@ targets:
         CFBundleVersion: "1"
         WKApplication: true
         WKCompanionAppBundleIdentifier: com.spokenmargins.native
+        WKBackgroundModes:
+          - audio
   SpokenMarginsAppUITests:
     type: bundle.ui-testing
     platform: iOS

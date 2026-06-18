@@ -531,6 +531,17 @@ private struct ItemScreen: View {
             .buttonStyle(SecondaryButtonStyle())
             .accessibilityIdentifier("item.export.button")
             Button {
+                model.renderSelectedItemForWatchPackage()
+            } label: {
+                Label(model.isRenderingWatchPackage ? "Rendering Watch Audio" : "Render Watch Audio", systemImage: "waveform")
+            }
+            .buttonStyle(SecondaryButtonStyle())
+            .disabled(model.isRenderingWatchPackage)
+            .accessibilityIdentifier("item.renderWatchAudio.button")
+            Text(model.watchPackageRenderStatus)
+                .font(.footnote)
+                .foregroundStyle(AppColors.secondaryText)
+            Button {
                 model.copyTargetInterjections(targetType: InterjectionTargetType.item.rawValue, targetId: model.selectedItem.id)
             } label: {
                 Label("Copy Item Notes", systemImage: "doc.on.doc")

@@ -107,6 +107,8 @@ final class Gate1AppModel: ObservableObject {
     @Published var kokoroStatus = "Not checked"
     @Published var isRenderingKokoroPreview = false
     @Published var isRunningKokoroMemoryCheck = false
+    @Published var isRenderingWatchPackage = false
+    @Published var watchPackageRenderStatus = "Not rendered"
     @Published var providerAPIKey = KeychainStore.load(service: "SpokenMargins", account: "OpenAICompatibleAPIKey") ?? ""
     @Published var providerProbeStatus = "Not checked"
     @Published var knownIssues = [
@@ -123,6 +125,8 @@ final class Gate1AppModel: ObservableObject {
     private var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-4.1-mini"
     private var playbackProgressTask: Task<Void, Never>?
     private var pendingAutoPlayQueue = Gate1PlaybackAutoplayQueue()
+    private var activeWatchPackageRenderItemIds: Set<String> = []
+    private var failedWatchPackageRenderItemIds: Set<String> = []
     private let transcriptionClient = SystemSpeechTranscriptionClient()
     private let quickAccessFolderBookmarkKey = "quickAccessFolderBookmark"
     #if canImport(AVFoundation)
@@ -832,6 +836,10 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    func renderSelectedItemForWatchPackage() {
+        renderWatchPackage(itemId: selectedItem.id, transferAfterRender: false)
+    }
+
     func summarize() {
         guard canSummarizeInterjections else {
             reportFailure("An interjection summary already exists for this session.")
@@ -1088,7 +1096,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func dispatchGate2CompactCommand(_ command: CompactControlCommand, chapterId: String? = nil) {
+    func dispatchGate2CompactCommand(_ command: CompactControlCommand, chapterId: String? = nil, origin: String = "app_ui") {
         if command == .beginInterjection {
             Task {
                 let granted = await SystemRecordingClient.requestRecordPermission()
@@ -1096,11 +1104,11 @@ final class Gate1AppModel: ObservableObject {
                     reportFailure("Microphone access is required to record interjections from compact controls.")
                     return
                 }
-                performGate2CompactCommand(command, chapterId: chapterId)
+                performGate2CompactCommand(command, chapterId: chapterId, origin: origin)
             }
             return
         }
-        performGate2CompactCommand(command, chapterId: chapterId)
+        performGate2CompactCommand(command, chapterId: chapterId, origin: origin)
     }
 
     func handleGate2CompactURL(_ url: URL) {
@@ -1109,7 +1117,7 @@ final class Gate1AppModel: ObservableObject {
             reportFailure("Unsupported compact control URL.")
             return
         }
-        dispatchGate2CompactCommand(command)
+        dispatchGate2CompactCommand(command, origin: "compact_url")
     }
 
     func handleIncomingURL(_ url: URL) {
@@ -1605,8 +1613,8 @@ final class Gate1AppModel: ObservableObject {
                 canonicalRuntime: engine,
                 surfaceProfile: surfaceProfile,
                 skipUnit: skipUnit
-            ) { [weak self] command in
-                self?.dispatchGate2CompactCommand(command)
+            ) { [weak self] command, origin in
+                self?.dispatchGate2CompactCommand(command, origin: origin)
             } applicationCommandHandler: { [weak self] command in
                 self?.handleGate2CompactApplicationCommand(command) ?? false
             }
@@ -1682,13 +1690,23 @@ final class Gate1AppModel: ObservableObject {
                     ]
                 }
                 let hasPrerenderRequest = requests.contains { $0.requestType == .prerenderRequested }
+                let status: WatchPackageLibraryStatus
+                if activeWatchPackageRenderItemIds.contains(item.id) {
+                    status = .rendering
+                } else if failedWatchPackageRenderItemIds.contains(item.id) {
+                    status = .failed
+                } else if hasPrerenderRequest {
+                    status = .rendering
+                } else {
+                    status = .needsPrerender
+                }
                 return [
                     WatchPackageLibraryRow(
                         itemId: item.id,
                         title: item.title,
-                        status: hasPrerenderRequest ? .rendering : .needsPrerender,
+                        status: status,
                         packageId: nil,
-                        progressPercent: hasPrerenderRequest ? 0 : nil
+                        progressPercent: status == .rendering ? 0 : nil
                     )
                 ]
             }
@@ -1709,7 +1727,9 @@ final class Gate1AppModel: ObservableObject {
             let store = try requireStore()
             try store.saveWatchPackageRequest(request)
             diagnostics["gate4WatchLastPackageRequest"] = "\(request.requestType.rawValue):\(request.itemId)"
-            if request.requestType == .watchTransferRequested, let packageId = request.packageId {
+            if request.requestType == .prerenderRequested {
+                renderWatchPackage(itemId: request.itemId, transferAfterRender: true)
+            } else if request.requestType == .watchTransferRequested, let packageId = request.packageId {
                 gate3WatchConnectivity.transferWatchPackage(packageId: packageId)
             }
             gate3WatchConnectivity.publishPackageLibrary()
@@ -1749,7 +1769,66 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    private func renderWatchPackage(itemId: String, transferAfterRender: Bool) {
+        guard !itemId.isEmpty else {
+            reportFailure("Choose an item before rendering Watch audio.")
+            return
+        }
+        guard !activeWatchPackageRenderItemIds.contains(itemId) else {
+            reportFailure("Watch audio is already rendering for this item.")
+            return
+        }
+        activeWatchPackageRenderItemIds.insert(itemId)
+        failedWatchPackageRenderItemIds.remove(itemId)
+        isRenderingWatchPackage = true
+        watchPackageRenderStatus = "Rendering"
+        diagnostics["gate4WatchRenderItem"] = itemId
+        gate3WatchConnectivity.publishPackageLibrary()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let store = try self.requireStore()
+                let item = try store.loadItem(id: itemId)
+                let map = try store.loadListeningMap(itemId: itemId)
+                let coordinator = WatchPackageRenderCoordinator(
+                    applicationSupportDirectory: try self.applicationSupportDirectory()
+                )
+                let output = try await coordinator.renderSystemSpeechPackage(
+                    item: item,
+                    map: map,
+                    voiceIdentifier: self.speechVoiceIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : self.speechVoiceIdentifier,
+                    rate: Float(self.speechRate)
+                )
+                try store.saveWatchAudioPackage(output.package)
+                self.activeWatchPackageRenderItemIds.remove(itemId)
+                self.failedWatchPackageRenderItemIds.remove(itemId)
+                self.isRenderingWatchPackage = !self.activeWatchPackageRenderItemIds.isEmpty
+                self.libraryItems = try self.loadLibraryRows(store: store)
+                if itemId == self.selectedItem.id || itemId == self.activeItemId {
+                    self.selectedItem = try self.loadItemDetail(id: itemId, store: store)
+                }
+                self.diagnostics["gate4WatchLastRenderedPackage"] = output.package.id
+                self.diagnostics["gate4WatchLastRenderedAudio"] = output.audioURL.lastPathComponent
+                self.watchPackageRenderStatus = "Available"
+                self.reportSuccess("Rendered Watch package \(output.package.item.title).")
+                self.gate3WatchConnectivity.publishPackageLibrary()
+                if transferAfterRender {
+                    self.gate3WatchConnectivity.transferWatchPackage(packageId: output.package.id)
+                }
+            } catch {
+                self.activeWatchPackageRenderItemIds.remove(itemId)
+                self.failedWatchPackageRenderItemIds.insert(itemId)
+                self.isRenderingWatchPackage = !self.activeWatchPackageRenderItemIds.isEmpty
+                self.watchPackageRenderStatus = "Failed"
+                self.diagnostics["gate4WatchRenderError"] = String(describing: error)
+                self.reportFailure(error, context: "Watch package render failed")
+                self.gate3WatchConnectivity.publishPackageLibrary()
+            }
+        }
+    }
+
     private func dispatchGate3WatchCommand(_ request: Gate3WatchCommandRequest) {
+        diagnostics["gate2LastCommandOrigin"] = "watch_connectivity_legacy"
         if request.command == .beginInterjection {
             diagnostics["gate3WatchLastCommand"] = request.command.rawValue
             diagnostics["gate3WatchLastResult"] = "disabled_until_watch_recording"
@@ -1824,9 +1903,9 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func performGate2CompactCommand(_ command: CompactControlCommand, chapterId: String? = nil) {
+    private func performGate2CompactCommand(_ command: CompactControlCommand, chapterId: String? = nil, origin: String = "app_ui") {
         do {
-            let result = try gate2CompactControls.dispatch(command, chapterId: chapterId)
+            let result = try gate2CompactControls.dispatch(command, chapterId: chapterId, origin: origin)
             if let engine {
                 snapshot = engine.snapshot
             } else {

@@ -315,6 +315,12 @@ public final class PreparedAudioPlaybackClient: NSObject, AudioPlaybackClient, @
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             throw SessionKitError.persistenceFailed("prepared_audio_missing:\(fileURL.lastPathComponent)")
         }
+        #if canImport(AVFoundation)
+        let player = try AVAudioPlayer(contentsOf: fileURL)
+        guard player.duration > 0 else {
+            throw SessionKitError.persistenceFailed("prepared_audio_empty:\(fileURL.lastPathComponent)")
+        }
+        #endif
         preparedFiles[targetId] = fileURL
         if let durationMs {
             durations[targetId] = durationMs
@@ -347,7 +353,7 @@ public final class PreparedAudioPlaybackClient: NSObject, AudioPlaybackClient, @
             activeTargetId = targetId
         }
         #if os(iOS) || os(watchOS)
-        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try configurePreparedAudioSession()
         try AVAudioSession.sharedInstance().setActive(true)
         #endif
         let offset = max(0, Double(mediaTimeMs) / 1000)
@@ -355,7 +361,9 @@ public final class PreparedAudioPlaybackClient: NSObject, AudioPlaybackClient, @
             player.currentTime = min(offset, player.duration)
             playbackComplete = false
             completedTargetId = nil
-            player.play()
+            guard player.play() else {
+                throw SessionKitError.persistenceFailed("prepared_audio_playback_failed:\(targetId)")
+            }
         }
         #else
         throw SessionKitError.persistenceFailed("prepared_audio_playback_unavailable")
@@ -397,6 +405,16 @@ public final class PreparedAudioPlaybackClient: NSObject, AudioPlaybackClient, @
         #endif
         #endif
     }
+
+    #if canImport(AVFoundation) && (os(iOS) || os(watchOS))
+    private func configurePreparedAudioSession() throws {
+        #if os(watchOS)
+        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [])
+        #else
+        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        #endif
+    }
+    #endif
 }
 
 #if canImport(AVFoundation)
