@@ -165,6 +165,14 @@ final class Gate1AppModel: ObservableObject {
             self?.gate3WatchSnapshot()
         } commandHandler: { [weak self] request in
             self?.dispatchGate3WatchCommand(request)
+        } packageLibraryProvider: { [weak self] in
+            self?.gate4WatchPackageLibraryRows() ?? []
+        } packageProvider: { [weak self] packageId in
+            try self?.gate4WatchPackage(packageId: packageId)
+        } packageRequestHandler: { [weak self] request in
+            self?.handleGate4WatchPackageRequest(request)
+        } watchSyncEventHandler: { [weak self] event in
+            self?.handleGate4WatchSyncEvent(event)
         }
     }
 
@@ -225,6 +233,7 @@ final class Gate1AppModel: ObservableObject {
             let map = try loadFixtureMap(name: "valid-listening-map")
             try store.seed(item: item)
             try store.seed(map: map)
+            try seedGate4WatchPackageFixture(store: store)
             self.store = store
             installEngine(try makeEngine(store: store))
             activeItemId = item.id
@@ -1652,6 +1661,94 @@ final class Gate1AppModel: ObservableObject {
         diagnostics.merge(gate3WatchConnectivity.diagnostics(), uniquingKeysWith: { _, new in new })
     }
 
+    private func gate4WatchPackageLibraryRows() -> [WatchPackageLibraryRow] {
+        do {
+            let store = try requireStore()
+            try seedGate4WatchPackageFixture(store: store)
+            let items = try store.listItems()
+            return try items.flatMap { item -> [WatchPackageLibraryRow] in
+                let packages = try store.loadWatchAudioPackages(itemId: item.id)
+                let requests = try store.loadWatchPackageRequests(itemId: item.id)
+                if let package = packages.sorted(by: { $0.createdAt > $1.createdAt }).first {
+                    let hasTransferRequest = requests.contains { $0.packageId == package.id && $0.requestType == .watchTransferRequested }
+                    return [
+                        WatchPackageLibraryRow(
+                            itemId: item.id,
+                            title: package.item.title.isEmpty ? item.title : package.item.title,
+                            status: hasTransferRequest ? .queuedForTransfer : .availableForTransfer,
+                            packageId: package.id,
+                            progressPercent: hasTransferRequest ? 0 : nil
+                        )
+                    ]
+                }
+                let hasPrerenderRequest = requests.contains { $0.requestType == .prerenderRequested }
+                return [
+                    WatchPackageLibraryRow(
+                        itemId: item.id,
+                        title: item.title,
+                        status: hasPrerenderRequest ? .rendering : .needsPrerender,
+                        packageId: nil,
+                        progressPercent: hasPrerenderRequest ? 0 : nil
+                    )
+                ]
+            }
+        } catch {
+            diagnostics["gate4WatchPackageLibraryError"] = String(describing: error)
+            return []
+        }
+    }
+
+    private func gate4WatchPackage(packageId: String) throws -> WatchAudioPackage? {
+        let store = try requireStore()
+        try seedGate4WatchPackageFixture(store: store)
+        return try store.loadWatchAudioPackage(id: packageId)
+    }
+
+    private func handleGate4WatchPackageRequest(_ request: WatchPackageRequestEvent) {
+        do {
+            let store = try requireStore()
+            try store.saveWatchPackageRequest(request)
+            diagnostics["gate4WatchLastPackageRequest"] = "\(request.requestType.rawValue):\(request.itemId)"
+            if request.requestType == .watchTransferRequested, let packageId = request.packageId {
+                gate3WatchConnectivity.transferWatchPackage(packageId: packageId)
+            }
+            gate3WatchConnectivity.publishPackageLibrary()
+        } catch {
+            diagnostics["gate4WatchPackageRequestError"] = String(describing: error)
+            reportFailure(error, context: "Watch package request failed")
+        }
+    }
+
+    private func handleGate4WatchSyncEvent(_ event: WatchSyncEvent) {
+        do {
+            let store = try requireStore()
+            try seedGate4WatchPackageFixture(store: store)
+            try store.saveWatchSyncEvent(event)
+            if engine == nil {
+                installEngine(try makeEngine(store: store))
+            }
+            _ = try engine?.importWatchSyncEvent(eventId: event.id)
+            if let engine {
+                snapshot = engine.snapshot
+            }
+            libraryItems = try loadLibraryRows(store: store)
+            let importedItemId: String?
+            if let itemId = event.itemId {
+                importedItemId = itemId
+            } else {
+                importedItemId = try store.loadWatchAudioPackage(id: event.watchPackageId)?.itemId
+            }
+            if let itemId = importedItemId {
+                selectedItem = try loadItemDetail(id: itemId, store: store)
+            }
+            diagnostics["gate4WatchLastImportedEvent"] = event.id
+            reportSuccess("Imported Watch event \(event.id).")
+        } catch {
+            diagnostics["gate4WatchSyncEventError"] = String(describing: error)
+            reportFailure(error, context: "Watch sync import failed")
+        }
+    }
+
     private func dispatchGate3WatchCommand(_ request: Gate3WatchCommandRequest) {
         if request.command == .beginInterjection {
             diagnostics["gate3WatchLastCommand"] = request.command.rawValue
@@ -2814,6 +2911,14 @@ final class Gate1AppModel: ObservableObject {
             throw CocoaError(.fileNoSuchFile)
         }
         return try ContractFixtureLoader.profile(at: url)
+    }
+
+    private func seedGate4WatchPackageFixture(store: SQLiteSessionStore) throws {
+        guard let url = Bundle.main.url(forResource: "offline-package", withExtension: "json", subdirectory: "fixtures/watch") else {
+            return
+        }
+        let package = try ContractFixtureLoader.watchAudioPackage(at: url)
+        try store.saveWatchAudioPackage(package)
     }
 }
 

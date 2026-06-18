@@ -115,6 +115,10 @@ public final class SQLiteSessionStore: SessionRepository {
         try loadOptional(kind: "watch_audio_package", id: id)
     }
 
+    public func loadWatchAudioPackages(itemId: String) throws -> [WatchAudioPackage] {
+        try loadByItem(kind: "watch_audio_package", itemId: itemId)
+    }
+
     public func saveWatchSyncEvent(_ event: WatchSyncEvent) throws {
         try save(kind: "watch_sync_event", id: event.id, sessionId: event.sessionId, itemId: event.itemId, value: event)
     }

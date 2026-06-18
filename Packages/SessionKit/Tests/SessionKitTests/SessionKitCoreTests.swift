@@ -274,6 +274,78 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(try store.loadWatchSyncEvents(sessionId: package.sessionId).map(\.id), [event.id])
         XCTAssertEqual(try store.hasImportedWatchSyncEvent(id: event.id), true)
         XCTAssertEqual(try store.loadWatchPackageRequests(itemId: package.itemId).map(\.requestType), [.watchTransferRequested])
+        XCTAssertEqual(try store.loadWatchAudioPackages(itemId: package.itemId).map(\.id), [package.id])
+    }
+
+    func testMediaTimelineResolverUsesBoundaryToleranceAndFallback() throws {
+        let timeline = MediaTimeline(
+            segments: [
+                MediaTimelineSegment(id: "seg-1", startMs: 0, endMs: 10_000, startChar: 0, endChar: 10, text: "First"),
+                MediaTimelineSegment(id: "seg-2", startMs: 10_000, endMs: 20_000, startChar: 11, endChar: 20, text: "Second")
+            ],
+            chapters: [
+                MediaTimelineChapter(id: "ch-1", title: "One", startMs: 0, transcriptSegmentId: "seg-1"),
+                MediaTimelineChapter(id: "ch-2", title: "Two", startMs: 10_000, transcriptSegmentId: "seg-2")
+            ],
+            durationMs: 20_000
+        )
+
+        let boundary = MediaTimelineAnchorResolver.resolve(mediaTimeMs: 9_900, timeline: timeline, boundaryToleranceMs: 250)
+        XCTAssertEqual(boundary.transcriptSegmentId, "seg-1")
+        XCTAssertEqual(boundary.chapterId, "ch-1")
+
+        let toleratedNext = MediaTimelineAnchorResolver.resolve(mediaTimeMs: 10_020, timeline: timeline, boundaryToleranceMs: 250)
+        XCTAssertEqual(toleratedNext.transcriptSegmentId, "seg-2")
+        XCTAssertEqual(toleratedNext.chapterId, "ch-2")
+
+        let fallback = MediaTimelineAnchorResolver.resolve(mediaTimeMs: 40_000, timeline: timeline, boundaryToleranceMs: 250)
+        XCTAssertEqual(fallback.transcriptSegmentId, "seg-2")
+        XCTAssertEqual(fallback.mediaTimeMs, 40_000)
+    }
+
+    func testInMemoryRepositoryListsWatchPackagesByItem() throws {
+        let first = WatchAudioPackage(
+            id: "package-1",
+            itemId: "item-a",
+            sessionId: "session-1",
+            createdAt: Date(timeIntervalSince1970: 1),
+            item: WatchPackageItem(title: "First", mediaType: "text"),
+            audioAssets: [],
+            transcript: WatchPackageTranscript(transcriptId: "transcript-1", segments: []),
+            chapters: [],
+            settings: WatchPackageSettings(rollbackUnit: "previous_segment", defaultPlaybackRate: 1)
+        )
+        let second = WatchAudioPackage(
+            id: "package-2",
+            itemId: "item-a",
+            sessionId: "session-2",
+            createdAt: Date(timeIntervalSince1970: 2),
+            item: WatchPackageItem(title: "Second", mediaType: "text"),
+            audioAssets: [],
+            transcript: WatchPackageTranscript(transcriptId: "transcript-2", segments: []),
+            chapters: [],
+            settings: WatchPackageSettings(rollbackUnit: "previous_segment", defaultPlaybackRate: 1)
+        )
+        let other = WatchAudioPackage(
+            id: "package-3",
+            itemId: "item-b",
+            sessionId: "session-3",
+            createdAt: Date(timeIntervalSince1970: 3),
+            item: WatchPackageItem(title: "Other", mediaType: "text"),
+            audioAssets: [],
+            transcript: WatchPackageTranscript(transcriptId: "transcript-3", segments: []),
+            chapters: [],
+            settings: WatchPackageSettings(rollbackUnit: "previous_segment", defaultPlaybackRate: 1)
+        )
+        let repository = InMemorySessionRepository(
+            watchPackages: [
+                first.id: first,
+                second.id: second,
+                other.id: other
+            ]
+        )
+
+        XCTAssertEqual(try repository.loadWatchAudioPackages(itemId: "item-a").map(\.id), ["package-1", "package-2"])
     }
 
     private func compactControlEngine() throws -> SessionEngine {

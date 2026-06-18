@@ -97,6 +97,10 @@ public final class InMemorySessionRepository: SessionRepository {
         watchPackages[id]
     }
 
+    public func loadWatchAudioPackages(itemId: String) throws -> [WatchAudioPackage] {
+        watchPackages.values.filter { $0.itemId == itemId }.sorted { $0.createdAt < $1.createdAt }
+    }
+
     public func saveWatchSyncEvent(_ event: WatchSyncEvent) throws {
         watchSyncEvents[event.id] = event
     }

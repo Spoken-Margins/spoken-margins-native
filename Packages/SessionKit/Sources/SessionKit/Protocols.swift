@@ -16,6 +16,7 @@ public protocol SessionRepository {
     func updateAIJob(_ job: AIJob) throws
     func saveWatchAudioPackage(_ package: WatchAudioPackage) throws
     func loadWatchAudioPackage(id: String) throws -> WatchAudioPackage?
+    func loadWatchAudioPackages(itemId: String) throws -> [WatchAudioPackage]
     func saveWatchSyncEvent(_ event: WatchSyncEvent) throws
     func loadWatchSyncEvents(sessionId: String) throws -> [WatchSyncEvent]
     func loadWatchSyncEvent(id: String) throws -> WatchSyncEvent?

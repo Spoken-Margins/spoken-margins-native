@@ -2,7 +2,7 @@
 
 ## Mission
 
-Advance the Gate 4 Watch Untethered surface contract and package/sync handoff shape without changing shared SessionKit implementation, shared contract matrices, validators, schemas, or Xcode project files.
+Close the Gate 4 Watch Untethered surface as steward-owned work, including shared SessionKit runtime, Watch app UI, phone broker wiring, project generation, and contract status updates.
 
 Gate 4 proves that the Watch can be a prepared local playback and recording runtime, not only a tethered remote control.
 
@@ -10,6 +10,7 @@ Gate 4 proves that the Watch can be a prepared local playback and recording runt
 
 - `validation/surface-contracts/gate4-watch-untethered.json`
 - `docs/gate4-watch-untethered-foundations.md`
+- `docs/gate4-watch-untethered-closeout.md`
 - `validation/agent-cards/gate4-watch-untethered.md`
 
 ## Steward-Only Files
@@ -34,7 +35,7 @@ python3 scripts/validate-contracts.py
 python3 scripts/validate-surface-contracts.py
 ```
 
-Gate agents must not run full app or Xcode builds.
+Gate agents must not run full app or Xcode builds. Steward closeout must run the contract validators plus iOS and watchOS builds.
 
 ## Target Contract
 
@@ -45,6 +46,8 @@ Gate agents must not run full app or Xcode builds.
 ## Required Gate 4 Shape
 
 - Watch shows a package library with loaded, queued-for-transfer, and needs-prerender states.
+- Phone publishes package library rows and persists package request events.
+- Phone transfers package manifests and any matching local package audio assets.
 - Watch activates a prepared package locally.
 - Watch plays local prepared audio and tracks source media time.
 - Watch chapter navigation uses packaged chapter timings.
@@ -71,4 +74,4 @@ Every Gate 4 handoff must include:
 - Shared SessionKit command implementation.
 - Shared schema or validator changes.
 - iCloud implementation. Gate 4 may define the package manifest and sync direction, but steward owns implementation.
-
+  Gate 4 closeout preserves the manifest shape for future iCloud/laptop rendering but does not implement direct iCloud discovery.

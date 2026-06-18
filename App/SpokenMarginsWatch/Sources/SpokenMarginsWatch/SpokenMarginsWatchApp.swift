@@ -6,8 +6,12 @@ struct SpokenMarginsWatchApp: App {
 
     var body: some Scene {
         WindowGroup {
-            WatchTetheredView()
-                .environmentObject(model)
+            TabView {
+                WatchUntetheredView()
+                WatchTetheredView()
+            }
+            .tabViewStyle(.verticalPage)
+            .environmentObject(model)
         }
     }
 }

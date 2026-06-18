@@ -29,11 +29,13 @@
 		548BD2D708492064E577609A /* Gate1PlaybackAutoplayQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEA49CC89858E441644E7DE /* Gate1PlaybackAutoplayQueue.swift */; };
 		5C5B4D174DE7B2498F0E6C60 /* Gate1ProviderRequestFactoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39B769830FC9CEAAF89CF8EC /* Gate1ProviderRequestFactoryTests.swift */; };
 		698482F8A43C210AC1F3A6A6 /* Gate1AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 465089CBB611D338A74CAE8A /* Gate1AppModel.swift */; };
+		6A0D7726C2FF7C8D8C050E20 /* SessionKitAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 4A8B0E14E2E94C075E70AA65 /* SessionKitAudio */; };
 		6C3AD65F618F4FBE42AB6A31 /* fixtures in Resources */ = {isa = PBXBuildFile; fileRef = F8F6B4F91AA36C9513801753 /* fixtures */; };
 		6CB846C44B91E384E07119F1 /* Gate2CompactCommandURL.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACA3752A15AEB95233F0BEF2 /* Gate2CompactCommandURL.swift */; };
 		77D7913EE73FD5527AE5BE61 /* Gate5BrowserTextHandoffURL.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35550BC3E5F1FF166ED033B5 /* Gate5BrowserTextHandoffURL.swift */; };
 		7D221EF9060C54FEBC63ABBF /* Gate2LiveActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FAD165CE1DA1C12E166B2E7 /* Gate2LiveActivityAttributes.swift */; };
 		85DADD1DB36F870288A49249 /* Gate2CompactControlController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01F3F544C01C06FED3A5DF17 /* Gate2CompactControlController.swift */; };
+		899F90C2B1D581258CFC45FC /* WatchUntetheredView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F2B5AE66E58AB80A20258E8 /* WatchUntetheredView.swift */; };
 		8DE717C8441259C1129956E5 /* Gate5BrowserTextImportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 039937DF40296F8BB983A8E4 /* Gate5BrowserTextImportTests.swift */; };
 		8EA59EE4526E908A03A80965 /* Gate1DiscussionContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4826C82C1E1D635A35CBA50 /* Gate1DiscussionContext.swift */; };
 		8ED02630F01D36F842770734 /* Gate1ProviderRequestFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B8DDB409E3390A07A7DC3C2 /* Gate1ProviderRequestFactory.swift */; };
@@ -194,6 +196,7 @@
 		1DE1A620B5E212629857338F /* browserTextCapture.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = browserTextCapture.js; sourceTree = "<group>"; };
 		2A741433D6B3E34D30387DBB /* Gate1AppModelWorkflowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1AppModelWorkflowTests.swift; sourceTree = "<group>"; };
 		2F27E8BBF188ABCD2B2A7B0F /* Gate1DiscussionContextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1DiscussionContextTests.swift; sourceTree = "<group>"; };
+		2F2B5AE66E58AB80A20258E8 /* WatchUntetheredView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchUntetheredView.swift; sourceTree = "<group>"; };
 		35550BC3E5F1FF166ED033B5 /* Gate5BrowserTextHandoffURL.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate5BrowserTextHandoffURL.swift; sourceTree = "<group>"; };
 		39B769830FC9CEAAF89CF8EC /* Gate1ProviderRequestFactoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1ProviderRequestFactoryTests.swift; sourceTree = "<group>"; };
 		3B8DDB409E3390A07A7DC3C2 /* Gate1ProviderRequestFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1ProviderRequestFactory.swift; sourceTree = "<group>"; };
@@ -248,6 +251,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				DDB4FBD1FDA25FA6A7F14AA8 /* SessionKit in Frameworks */,
+				6A0D7726C2FF7C8D8C050E20 /* SessionKitAudio in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -422,6 +426,7 @@
 				B572DB5D2472D49476D2F48C /* SpokenMarginsWatchApp.swift */,
 				0A5537F3319CDBB6C6C259E4 /* WatchTetheredModel.swift */,
 				FCCB63558F760813CBB13276 /* WatchTetheredView.swift */,
+				2F2B5AE66E58AB80A20258E8 /* WatchUntetheredView.swift */,
 			);
 			path = SpokenMarginsWatch;
 			sourceTree = "<group>";
@@ -559,6 +564,7 @@
 			name = SpokenMarginsWatch;
 			packageProductDependencies = (
 				BAB471BA99FD9179920114BB /* SessionKit */,
+				4A8B0E14E2E94C075E70AA65 /* SessionKitAudio */,
 			);
 			productName = SpokenMarginsWatch;
 			productReference = 937EF0A224692BE4208F9488 /* SpokenMarginsWatch.app */;
@@ -695,6 +701,7 @@
 				E0638FCE160D00C75915DABA /* SpokenMarginsWatchApp.swift in Sources */,
 				062C8110EC991016EB32DD43 /* WatchTetheredModel.swift in Sources */,
 				C0A5F9C9C5664F01CE38CCC0 /* WatchTetheredView.swift in Sources */,
+				899F90C2B1D581258CFC45FC /* WatchUntetheredView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1313,6 +1320,10 @@
 			productName = SessionKitPersistence;
 		};
 		34C621C37AF71E6ED22B1045 /* SessionKitAudio */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SessionKitAudio;
+		};
+		4A8B0E14E2E94C075E70AA65 /* SessionKitAudio */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SessionKitAudio;
 		};

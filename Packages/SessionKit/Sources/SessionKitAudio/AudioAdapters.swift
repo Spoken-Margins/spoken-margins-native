@@ -297,6 +297,117 @@ extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
 }
 #endif
 
+public final class PreparedAudioPlaybackClient: NSObject, AudioPlaybackClient, @unchecked Sendable {
+    #if canImport(AVFoundation)
+    private var player: AVAudioPlayer?
+    #endif
+    private var preparedFiles: [String: URL] = [:]
+    private var durations: [String: Int] = [:]
+    private var completedTargetId: String?
+    private var playbackComplete = false
+    private var activeTargetId: String?
+
+    public override init() {
+        super.init()
+    }
+
+    public func prepareAudioFile(targetId: String, fileURL: URL, durationMs: Int? = nil) throws {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            throw SessionKitError.persistenceFailed("prepared_audio_missing:\(fileURL.lastPathComponent)")
+        }
+        preparedFiles[targetId] = fileURL
+        if let durationMs {
+            durations[targetId] = durationMs
+        }
+    }
+
+    public func prepareSpeechText(_ text: String) throws -> String {
+        SpeechTextNormalizer.normalize(text)
+    }
+
+    public func play(targetId: String) throws {
+        try play(targetId: targetId, fromMediaTimeMs: 0)
+    }
+
+    public func play(targetId: String, from charOffset: Int) throws {
+        try play(targetId: targetId, fromMediaTimeMs: charOffset)
+    }
+
+    public func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {
+        #if canImport(AVFoundation)
+        guard let url = preparedFiles[targetId] else {
+            throw SessionKitError.invalidCommandForState("prepared_audio_unavailable:\(targetId)")
+        }
+        if activeTargetId != targetId || player == nil {
+            player?.stop()
+            let nextPlayer = try AVAudioPlayer(contentsOf: url)
+            nextPlayer.delegate = self
+            nextPlayer.prepareToPlay()
+            player = nextPlayer
+            activeTargetId = targetId
+        }
+        #if os(iOS) || os(watchOS)
+        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try AVAudioSession.sharedInstance().setActive(true)
+        #endif
+        let offset = max(0, Double(mediaTimeMs) / 1000)
+        if let player {
+            player.currentTime = min(offset, player.duration)
+            playbackComplete = false
+            completedTargetId = nil
+            player.play()
+        }
+        #else
+        throw SessionKitError.persistenceFailed("prepared_audio_playback_unavailable")
+        #endif
+    }
+
+    public func currentMediaTimeMs() -> Int? {
+        #if canImport(AVFoundation)
+        guard let player else { return nil }
+        return max(0, Int((player.currentTime * 1000).rounded()))
+        #else
+        return nil
+        #endif
+    }
+
+    public func currentCharOffset() -> Int? {
+        currentMediaTimeMs()
+    }
+
+    public func isPlaybackComplete(targetId: String) -> Bool {
+        playbackComplete && completedTargetId == targetId
+    }
+
+    public func pause() throws {
+        #if canImport(AVFoundation)
+        player?.pause()
+        #endif
+    }
+
+    public func stop() throws {
+        #if canImport(AVFoundation)
+        player?.stop()
+        player = nil
+        activeTargetId = nil
+        playbackComplete = false
+        completedTargetId = nil
+        #if os(iOS) || os(watchOS)
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        #endif
+        #endif
+    }
+}
+
+#if canImport(AVFoundation)
+extension PreparedAudioPlaybackClient: AVAudioPlayerDelegate {
+    public func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        playbackComplete = flag
+        completedTargetId = activeTargetId
+    }
+}
+#endif
+
 public final class SystemRecordingClient: RecordingClient {
     #if canImport(AVFoundation)
     private var recorder: AVAudioRecorder?
@@ -349,7 +460,11 @@ public final class SystemRecordingClient: RecordingClient {
         @unknown default:
             throw SessionKitError.persistenceFailed("recording_permission_unknown")
         }
+        #if os(watchOS)
+        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.allowBluetoothHFP, .duckOthers])
+        #else
         try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetoothHFP, .duckOthers])
+        #endif
         try session.setActive(true)
         #endif
         let directory = try recordingsDirectory()

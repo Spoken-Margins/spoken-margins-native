@@ -196,14 +196,14 @@
     {
       "id": "gate4-watch-package-library-status",
       "title": "Publish package availability and transfer statuses",
-      "status": "open",
-      "details": "Watch needs a package library screen that distinguishes loaded, queued for transfer, pre-rendered but not loaded, not yet pre-rendered, rendering, failed, and expired package states."
+      "status": "resolved",
+      "details": "Phone publishes package availability rows and Watch merges them with local manifests to distinguish loaded, queued for transfer, pre-rendered but not loaded, not yet pre-rendered, rendering, failed, and expired package states."
     },
     {
       "id": "gate4-watch-package-request-event",
       "title": "Add durable package request event",
-      "status": "open",
-      "details": "Tapping a not-yet-pre-rendered item on Watch should queue a durable request for phone/laptop rendering and later Watch transfer. Tapping a pre-rendered but unloaded item should queue transfer to Watch."
+      "status": "resolved",
+      "details": "Watch taps send durable package request events. Phone persists prerender_requested and watch_transfer_requested, and starts package transfer for available packages."
     },
     {
       "id": "gate4-icloud-package-manifest",
@@ -214,14 +214,14 @@
     {
       "id": "gate4-local-watch-audio-runtime",
       "title": "Implement local Watch audio playback with source time",
-      "status": "open",
-      "details": "Watch playback must expose current media time and completion state from local audio, not char offsets or tethered phone snapshots."
+      "status": "resolved",
+      "details": "SessionKitAudio exposes PreparedAudioPlaybackClient with current media time and completion state. Watch untethered uses it through a local SessionEngine when package audio assets are present."
     },
     {
       "id": "gate4-watch-reconnect-conflict-policy",
       "title": "Define reconnect merge and conflict policy",
-      "status": "open",
-      "details": "Position updates must not overwrite newer interjections. Imported events should be ordered by createdAt and event id, with idempotent persistence and explicit diagnostics for stale package/session ids."
+      "status": "resolved",
+      "details": "Watch sync events are sent durably and imported through SessionEngine.importWatchSyncEvent, which is idempotent by event id. Interjection imports create anchored records without being overwritten by playback-position events."
     }
   ],
   "notes": [

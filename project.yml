@@ -166,6 +166,8 @@ targets:
     dependencies:
       - package: SessionKit
         product: SessionKit
+      - package: SessionKit
+        product: SessionKitAudio
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.watch
