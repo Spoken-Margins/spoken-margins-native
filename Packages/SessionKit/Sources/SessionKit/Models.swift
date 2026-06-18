@@ -213,6 +213,340 @@ public struct ListeningMap: Codable, Equatable, Sendable {
     }
 }
 
+public struct MediaTimelineSegment: Codable, Equatable, Sendable {
+    public var id: String
+    public var startMs: Int
+    public var endMs: Int
+    public var startChar: Int?
+    public var endChar: Int?
+    public var text: String
+
+    public init(id: String, startMs: Int, endMs: Int, startChar: Int? = nil, endChar: Int? = nil, text: String) {
+        self.id = id
+        self.startMs = startMs
+        self.endMs = endMs
+        self.startChar = startChar
+        self.endChar = endChar
+        self.text = text
+    }
+}
+
+public struct MediaTimelineChapter: Codable, Equatable, Sendable {
+    public var id: String
+    public var title: String
+    public var description: String?
+    public var startMs: Int
+    public var transcriptSegmentId: String
+
+    public init(id: String, title: String, description: String? = nil, startMs: Int, transcriptSegmentId: String) {
+        self.id = id
+        self.title = title
+        self.description = description
+        self.startMs = startMs
+        self.transcriptSegmentId = transcriptSegmentId
+    }
+}
+
+public struct MediaTimeline: Codable, Equatable, Sendable {
+    public var segments: [MediaTimelineSegment]
+    public var chapters: [MediaTimelineChapter]
+    public var durationMs: Int?
+
+    public init(segments: [MediaTimelineSegment], chapters: [MediaTimelineChapter], durationMs: Int? = nil) {
+        self.segments = segments
+        self.chapters = chapters
+        self.durationMs = durationMs
+    }
+}
+
+public struct MediaResolvedAnchor: Codable, Equatable, Sendable {
+    public var mediaTimeMs: Int
+    public var chapterId: String?
+    public var transcriptSegmentId: String?
+    public var startChar: Int
+    public var endChar: Int
+    public var anchorBefore: String
+    public var anchorAfter: String
+    public var playbackRateObserved: Double
+
+    public init(
+        mediaTimeMs: Int,
+        chapterId: String?,
+        transcriptSegmentId: String?,
+        startChar: Int,
+        endChar: Int,
+        anchorBefore: String,
+        anchorAfter: String,
+        playbackRateObserved: Double
+    ) {
+        self.mediaTimeMs = mediaTimeMs
+        self.chapterId = chapterId
+        self.transcriptSegmentId = transcriptSegmentId
+        self.startChar = startChar
+        self.endChar = endChar
+        self.anchorBefore = anchorBefore
+        self.anchorAfter = anchorAfter
+        self.playbackRateObserved = playbackRateObserved
+    }
+}
+
+public enum MediaTimelineAnchorResolver {
+    public static func resolve(
+        mediaTimeMs: Int,
+        timeline: MediaTimeline,
+        playbackRateObserved: Double = 1,
+        boundaryToleranceMs: Int = 250
+    ) -> MediaResolvedAnchor {
+        let clampedTime = max(0, mediaTimeMs)
+        let sortedSegments = timeline.segments.sorted { $0.startMs < $1.startMs }
+        let segment = segment(containing: clampedTime, in: sortedSegments, toleranceMs: boundaryToleranceMs)
+        let chapter = timeline.chapters
+            .filter { $0.startMs <= clampedTime }
+            .sorted { $0.startMs < $1.startMs }
+            .last
+        let segmentIndex = segment.flatMap { selected in sortedSegments.firstIndex(where: { $0.id == selected.id }) }
+        let nextSegmentText = segmentIndex.flatMap { index -> String? in
+            guard sortedSegments.indices.contains(index + 1) else { return nil }
+            return sortedSegments[index + 1].text
+        }
+        return MediaResolvedAnchor(
+            mediaTimeMs: clampedTime,
+            chapterId: chapter?.id,
+            transcriptSegmentId: segment?.id,
+            startChar: segment?.startChar ?? 0,
+            endChar: segment?.endChar ?? 0,
+            anchorBefore: segment?.text ?? "",
+            anchorAfter: nextSegmentText ?? "",
+            playbackRateObserved: playbackRateObserved
+        )
+    }
+
+    private static func segment(
+        containing mediaTimeMs: Int,
+        in segments: [MediaTimelineSegment],
+        toleranceMs: Int
+    ) -> MediaTimelineSegment? {
+        if let exact = segments.first(where: { $0.startMs <= mediaTimeMs && mediaTimeMs < $0.endMs }) {
+            return exact
+        }
+        if let next = segments.first(where: { abs($0.startMs - mediaTimeMs) <= toleranceMs }) {
+            return next
+        }
+        return segments.last(where: { $0.startMs <= mediaTimeMs }) ?? segments.first
+    }
+}
+
+public struct WatchPackageItem: Codable, Equatable, Sendable {
+    public var title: String
+    public var mediaType: String
+    public var externalReference: String?
+
+    public init(title: String, mediaType: String, externalReference: String? = nil) {
+        self.title = title
+        self.mediaType = mediaType
+        self.externalReference = externalReference
+    }
+}
+
+public struct WatchPackageAudioAsset: Codable, Equatable, Sendable {
+    public var audioAssetId: String
+    public var fileName: String
+    public var durationMs: Int
+    public var sha256: String?
+
+    public init(audioAssetId: String, fileName: String, durationMs: Int, sha256: String? = nil) {
+        self.audioAssetId = audioAssetId
+        self.fileName = fileName
+        self.durationMs = durationMs
+        self.sha256 = sha256
+    }
+}
+
+public struct WatchPackageTranscript: Codable, Equatable, Sendable {
+    public var transcriptId: String
+    public var segments: [MediaTimelineSegment]
+
+    public init(transcriptId: String, segments: [MediaTimelineSegment]) {
+        self.transcriptId = transcriptId
+        self.segments = segments
+    }
+}
+
+public struct WatchPackageSettings: Codable, Equatable, Sendable {
+    public var rollbackUnit: String
+    public var defaultPlaybackRate: Double
+
+    public init(rollbackUnit: String, defaultPlaybackRate: Double) {
+        self.rollbackUnit = rollbackUnit
+        self.defaultPlaybackRate = defaultPlaybackRate
+    }
+}
+
+public struct WatchAudioPackage: Codable, Equatable, Sendable {
+    public var schemaVersion: String
+    public var id: String
+    public var itemId: String
+    public var sessionId: String
+    public var createdAt: Date
+    public var expiresAt: Date?
+    public var item: WatchPackageItem
+    public var audioAssets: [WatchPackageAudioAsset]
+    public var transcript: WatchPackageTranscript
+    public var chapters: [MediaTimelineChapter]
+    public var settings: WatchPackageSettings
+
+    public init(
+        schemaVersion: String = "watch-audio-package.v1",
+        id: String,
+        itemId: String,
+        sessionId: String,
+        createdAt: Date,
+        expiresAt: Date? = nil,
+        item: WatchPackageItem,
+        audioAssets: [WatchPackageAudioAsset],
+        transcript: WatchPackageTranscript,
+        chapters: [MediaTimelineChapter],
+        settings: WatchPackageSettings
+    ) {
+        self.schemaVersion = schemaVersion
+        self.id = id
+        self.itemId = itemId
+        self.sessionId = sessionId
+        self.createdAt = createdAt
+        self.expiresAt = expiresAt
+        self.item = item
+        self.audioAssets = audioAssets
+        self.transcript = transcript
+        self.chapters = chapters
+        self.settings = settings
+    }
+
+    public var timeline: MediaTimeline {
+        MediaTimeline(
+            segments: transcript.segments,
+            chapters: chapters,
+            durationMs: audioAssets.map(\.durationMs).max()
+        )
+    }
+
+    public var primaryAudioAsset: WatchPackageAudioAsset? {
+        audioAssets.first
+    }
+}
+
+public struct WatchSyncEventPayload: Codable, Equatable, Sendable {
+    public var mediaTimeMs: Int?
+    public var chapterId: String?
+    public var transcriptSegmentId: String?
+    public var playbackRate: Double?
+    public var audioFileName: String?
+    public var audioDurationMs: Int?
+    public var error: String?
+
+    public init(
+        mediaTimeMs: Int? = nil,
+        chapterId: String? = nil,
+        transcriptSegmentId: String? = nil,
+        playbackRate: Double? = nil,
+        audioFileName: String? = nil,
+        audioDurationMs: Int? = nil,
+        error: String? = nil
+    ) {
+        self.mediaTimeMs = mediaTimeMs
+        self.chapterId = chapterId
+        self.transcriptSegmentId = transcriptSegmentId
+        self.playbackRate = playbackRate
+        self.audioFileName = audioFileName
+        self.audioDurationMs = audioDurationMs
+        self.error = error
+    }
+}
+
+public struct WatchSyncEvent: Codable, Equatable, Sendable {
+    public var schemaVersion: String
+    public var id: String
+    public var watchPackageId: String
+    public var sessionId: String
+    public var itemId: String?
+    public var eventType: String
+    public var createdAt: Date
+    public var payload: WatchSyncEventPayload
+
+    public init(
+        schemaVersion: String = "watch-sync-event.v1",
+        id: String,
+        watchPackageId: String,
+        sessionId: String,
+        itemId: String? = nil,
+        eventType: String,
+        createdAt: Date,
+        payload: WatchSyncEventPayload
+    ) {
+        self.schemaVersion = schemaVersion
+        self.id = id
+        self.watchPackageId = watchPackageId
+        self.sessionId = sessionId
+        self.itemId = itemId
+        self.eventType = eventType
+        self.createdAt = createdAt
+        self.payload = payload
+    }
+}
+
+public enum WatchPackageLibraryStatus: String, Codable, Equatable, Sendable {
+    case loadedOnWatch = "loaded_on_watch"
+    case queuedForTransfer = "queued_for_transfer"
+    case availableForTransfer = "available_for_transfer"
+    case needsPrerender = "needs_prerender"
+    case rendering
+    case failed
+    case expired
+}
+
+public struct WatchPackageLibraryRow: Codable, Equatable, Sendable {
+    public var itemId: String
+    public var title: String
+    public var status: WatchPackageLibraryStatus
+    public var packageId: String?
+    public var progressPercent: Int?
+
+    public init(
+        itemId: String,
+        title: String,
+        status: WatchPackageLibraryStatus,
+        packageId: String? = nil,
+        progressPercent: Int? = nil
+    ) {
+        self.itemId = itemId
+        self.title = title
+        self.status = status
+        self.packageId = packageId
+        self.progressPercent = progressPercent
+    }
+}
+
+public enum WatchPackageRequestType: String, Codable, Equatable, Sendable {
+    case prerenderRequested = "prerender_requested"
+    case watchTransferRequested = "watch_transfer_requested"
+    case packageDeleteRequested = "package_delete_requested"
+}
+
+public struct WatchPackageRequestEvent: Codable, Equatable, Sendable {
+    public var id: String
+    public var itemId: String
+    public var packageId: String?
+    public var requestType: WatchPackageRequestType
+    public var createdAt: Date
+
+    public init(id: String, itemId: String, packageId: String? = nil, requestType: WatchPackageRequestType, createdAt: Date) {
+        self.id = id
+        self.itemId = itemId
+        self.packageId = packageId
+        self.requestType = requestType
+        self.createdAt = createdAt
+    }
+}
+
 public struct Position: Codable, Equatable, Sendable {
     public var charOffset: Int
     public var mediaTimeMs: Int?

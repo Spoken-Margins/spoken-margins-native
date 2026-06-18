@@ -7,6 +7,10 @@ public final class InMemorySessionRepository: SessionRepository {
     public var interjections: [String: Interjection]
     public var turns: [String: ConversationTurn]
     public var aiJobs: [String: AIJob]
+    public var watchPackages: [String: WatchAudioPackage]
+    public var watchSyncEvents: [String: WatchSyncEvent]
+    public var importedWatchSyncEventIds: Set<String>
+    public var watchPackageRequests: [String: WatchPackageRequestEvent]
 
     public init(
         items: [String: Item] = [:],
@@ -14,7 +18,11 @@ public final class InMemorySessionRepository: SessionRepository {
         sessions: [String: Session] = [:],
         interjections: [String: Interjection] = [:],
         turns: [String: ConversationTurn] = [:],
-        aiJobs: [String: AIJob] = [:]
+        aiJobs: [String: AIJob] = [:],
+        watchPackages: [String: WatchAudioPackage] = [:],
+        watchSyncEvents: [String: WatchSyncEvent] = [:],
+        importedWatchSyncEventIds: Set<String> = [],
+        watchPackageRequests: [String: WatchPackageRequestEvent] = [:]
     ) {
         self.items = items
         self.mapsByItemId = mapsByItemId
@@ -22,6 +30,10 @@ public final class InMemorySessionRepository: SessionRepository {
         self.interjections = interjections
         self.turns = turns
         self.aiJobs = aiJobs
+        self.watchPackages = watchPackages
+        self.watchSyncEvents = watchSyncEvents
+        self.importedWatchSyncEventIds = importedWatchSyncEventIds
+        self.watchPackageRequests = watchPackageRequests
     }
 
     public func loadItem(id: String) throws -> Item {
@@ -75,5 +87,41 @@ public final class InMemorySessionRepository: SessionRepository {
 
     public func updateAIJob(_ job: AIJob) throws {
         aiJobs[job.id] = job
+    }
+
+    public func saveWatchAudioPackage(_ package: WatchAudioPackage) throws {
+        watchPackages[package.id] = package
+    }
+
+    public func loadWatchAudioPackage(id: String) throws -> WatchAudioPackage? {
+        watchPackages[id]
+    }
+
+    public func saveWatchSyncEvent(_ event: WatchSyncEvent) throws {
+        watchSyncEvents[event.id] = event
+    }
+
+    public func loadWatchSyncEvents(sessionId: String) throws -> [WatchSyncEvent] {
+        watchSyncEvents.values.filter { $0.sessionId == sessionId }.sorted { $0.createdAt < $1.createdAt }
+    }
+
+    public func loadWatchSyncEvent(id: String) throws -> WatchSyncEvent? {
+        watchSyncEvents[id]
+    }
+
+    public func markWatchSyncEventImported(id: String) throws {
+        importedWatchSyncEventIds.insert(id)
+    }
+
+    public func hasImportedWatchSyncEvent(id: String) throws -> Bool {
+        importedWatchSyncEventIds.contains(id)
+    }
+
+    public func saveWatchPackageRequest(_ request: WatchPackageRequestEvent) throws {
+        watchPackageRequests[request.id] = request
+    }
+
+    public func loadWatchPackageRequests(itemId: String) throws -> [WatchPackageRequestEvent] {
+        watchPackageRequests.values.filter { $0.itemId == itemId }.sorted { $0.createdAt < $1.createdAt }
     }
 }

@@ -230,6 +230,52 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(try store.loadAIJobs(sessionId: session.id).first?.status, "retryable")
     }
 
+    func testSQLiteStorePersistsWatchPackageEventsAndRequests() throws {
+        let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-\(UUID().uuidString).sqlite").path
+        let store = try SQLiteSessionStore(path: path)
+        let package = WatchAudioPackage(
+            id: "watch-package-1",
+            itemId: "item-audio",
+            sessionId: "session-watch-1",
+            createdAt: Date(timeIntervalSince1970: 1),
+            item: WatchPackageItem(title: "Audio Item", mediaType: "text", externalReference: "icloud://item-audio"),
+            audioAssets: [WatchPackageAudioAsset(audioAssetId: "asset-1", fileName: "asset.m4a", durationMs: 60_000)],
+            transcript: WatchPackageTranscript(
+                transcriptId: "transcript-1",
+                segments: [MediaTimelineSegment(id: "seg-1", startMs: 0, endMs: 10_000, startChar: 0, endChar: 12, text: "Opening line.")]
+            ),
+            chapters: [MediaTimelineChapter(id: "ch-1", title: "Opening", startMs: 0, transcriptSegmentId: "seg-1")],
+            settings: WatchPackageSettings(rollbackUnit: "previous_segment", defaultPlaybackRate: 1)
+        )
+        let event = WatchSyncEvent(
+            id: "watch-event-1",
+            watchPackageId: package.id,
+            sessionId: package.sessionId,
+            itemId: package.itemId,
+            eventType: "interjection_recorded",
+            createdAt: Date(timeIntervalSince1970: 2),
+            payload: WatchSyncEventPayload(mediaTimeMs: 1_000, transcriptSegmentId: "seg-1", audioFileName: "watch-ij-1.m4a")
+        )
+        let request = WatchPackageRequestEvent(
+            id: "request-1",
+            itemId: package.itemId,
+            packageId: package.id,
+            requestType: .watchTransferRequested,
+            createdAt: Date(timeIntervalSince1970: 3)
+        )
+
+        try store.saveWatchAudioPackage(package)
+        try store.saveWatchSyncEvent(event)
+        try store.markWatchSyncEventImported(id: event.id)
+        try store.saveWatchPackageRequest(request)
+
+        XCTAssertEqual(try store.loadWatchAudioPackage(id: package.id)?.id, package.id)
+        XCTAssertEqual(try store.loadWatchSyncEvent(id: event.id)?.payload.audioFileName, "watch-ij-1.m4a")
+        XCTAssertEqual(try store.loadWatchSyncEvents(sessionId: package.sessionId).map(\.id), [event.id])
+        XCTAssertEqual(try store.hasImportedWatchSyncEvent(id: event.id), true)
+        XCTAssertEqual(try store.loadWatchPackageRequests(itemId: package.itemId).map(\.requestType), [.watchTransferRequested])
+    }
+
     private func compactControlEngine() throws -> SessionEngine {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",

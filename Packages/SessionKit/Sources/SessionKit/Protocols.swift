@@ -14,13 +14,24 @@ public protocol SessionRepository {
     func saveAIJob(_ job: AIJob) throws
     func loadAIJobs(sessionId: String) throws -> [AIJob]
     func updateAIJob(_ job: AIJob) throws
+    func saveWatchAudioPackage(_ package: WatchAudioPackage) throws
+    func loadWatchAudioPackage(id: String) throws -> WatchAudioPackage?
+    func saveWatchSyncEvent(_ event: WatchSyncEvent) throws
+    func loadWatchSyncEvents(sessionId: String) throws -> [WatchSyncEvent]
+    func loadWatchSyncEvent(id: String) throws -> WatchSyncEvent?
+    func markWatchSyncEventImported(id: String) throws
+    func hasImportedWatchSyncEvent(id: String) throws -> Bool
+    func saveWatchPackageRequest(_ request: WatchPackageRequestEvent) throws
+    func loadWatchPackageRequests(itemId: String) throws -> [WatchPackageRequestEvent]
 }
 
 public protocol AudioPlaybackClient {
     func prepareSpeechText(_ text: String) throws -> String
     func play(targetId: String) throws
     func play(targetId: String, from charOffset: Int) throws
+    func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws
     func currentCharOffset() -> Int?
+    func currentMediaTimeMs() -> Int?
     func isPlaybackComplete(targetId: String) -> Bool
     func pause() throws
     func stop() throws
@@ -31,11 +42,19 @@ public extension AudioPlaybackClient {
         try play(targetId: targetId)
     }
 
+    func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {
+        try play(targetId: targetId, from: mediaTimeMs)
+    }
+
     func stop() throws {
         try pause()
     }
 
     func currentCharOffset() -> Int? {
+        nil
+    }
+
+    func currentMediaTimeMs() -> Int? {
         nil
     }
 

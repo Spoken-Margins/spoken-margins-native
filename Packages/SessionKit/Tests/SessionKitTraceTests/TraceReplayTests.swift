@@ -24,6 +24,13 @@ final class TraceReplayTests: XCTestCase {
         }
     }
 
+    func testGate4TracesReplay() throws {
+        for traceName in TraceHarness.gate4TraceNames {
+            let harness = try TraceHarness(traceName: traceName)
+            try harness.replay()
+        }
+    }
+
     func testGate5TracesReplay() throws {
         for traceName in TraceHarness.gate5TraceNames {
             let harness = try TraceHarness(traceName: traceName)
@@ -56,6 +63,11 @@ final class TraceHarness {
 
     static let gate3TraceNames = [
         "watch-chapter-navigation"
+    ]
+
+    static let gate4TraceNames = [
+        "watch-offline-prerendered-session",
+        "watch-sync-interjections-after-reconnect"
     ]
 
     static let gate5TraceNames = [
@@ -146,6 +158,12 @@ final class TraceHarness {
             switch command {
             case "startSession":
                 return try engine.startSession(itemId: args["itemId"] as? String ?? "item-pill")
+            case "loadWatchPackage":
+                return try engine.loadWatchPackage(watchPackageId: args["watchPackageId"] as? String ?? "watch-package-pill-001")
+            case "importWatchSyncEvent":
+                return try engine.importWatchSyncEvent(eventId: args["eventId"] as? String ?? "")
+            case "play":
+                return try engine.resumePlayback()
             case "importBrowserText":
                 return try engine.importBrowserText(browserTextHandoff(from: args))
             case "skipForward":
@@ -191,6 +209,8 @@ final class TraceHarness {
         if let event = step["event"] as? String {
             let args = step["args"] as? [String: Any] ?? [:]
             switch event {
+            case "watchReconnected":
+                return engine.snapshot
             case "aiJobCompleted":
                 return try engine.aiJobCompleted(turnId: args["turnId"] as? String ?? "turn-response-001")
             case "aiProviderFailed":
@@ -215,12 +235,16 @@ final class TraceHarness {
         let expect = step["expect"] as? [String: Any] ?? [:]
         for (key, value) in expect {
             switch key {
+            case "offlineReady":
+                XCTAssertEqual(engine.currentWatchPackage != nil, value as? Bool)
             case "phase":
                 XCTAssertEqual(snapshot.phase.rawValue, value as? String)
             case "status":
                 XCTAssertEqual(snapshot.status.rawValue, value as? String)
             case "targetType":
                 XCTAssertEqual(snapshot.targetType, value as? String)
+            case "chapterTitle":
+                XCTAssertEqual(snapshot.chapterTitle, value as? String)
             case "itemMediaType":
                 let item = try XCTUnwrap(snapshot.itemId.flatMap { repository.items[$0] })
                 XCTAssertEqual(item.mediaType, value as? String)
@@ -240,6 +264,26 @@ final class TraceHarness {
                 XCTAssertEqual(snapshot.lastInterjectionTargetType?.rawValue, value as? String)
             case "recordingTargetId":
                 XCTAssertEqual(snapshot.recordingTargetId, value as? String)
+            case "mediaTimeMs":
+                XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, value as? Int)
+            case "capturedMediaTimeMs":
+                XCTAssertEqual(engine.lastResolvedMediaAnchor?.mediaTimeMs, value as? Int)
+            case "capturedTranscriptSegmentId":
+                XCTAssertEqual(engine.lastResolvedMediaAnchor?.transcriptSegmentId, value as? String)
+            case "queuedWatchSyncEventType":
+                XCTAssertEqual(engine.lastQueuedWatchSyncEvent?.eventType, value as? String)
+            case "pendingWatchEventCount":
+                try assertPendingWatchEventCount(value as? Int)
+            case "createdInterjection":
+                try assertWatchInterjectionCreated(value as? Bool ?? true)
+            case "lastInterjectionMediaTimeMs":
+                try assertLatestInterjectionMediaTime(value as? Int)
+            case "sessionPositionMediaTimeMs":
+                XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, value as? Int)
+            case "chapterId":
+                XCTAssertEqual(engine.currentSession?.position.chapterId, value as? String)
+            case "canSummarize":
+                try assertCanSummarize(value as? Bool ?? true)
             case "pendingAiJobKind":
                 XCTAssertEqual(snapshot.pendingAiJobKind, value as? String)
             case "pendingAiJobStatus":
@@ -461,6 +505,26 @@ final class TraceHarness {
         XCTAssertEqual(pending.isEmpty, expected)
     }
 
+    private func assertPendingWatchEventCount(_ expected: Int?) throws {
+        let sessionId = repository.watchSyncEvents.values.sorted { $0.createdAt < $1.createdAt }.first?.sessionId
+        let count = try sessionId.map { try repository.loadWatchSyncEvents(sessionId: $0).count } ?? 0
+        XCTAssertEqual(count, expected)
+    }
+
+    private func assertWatchInterjectionCreated(_ expected: Bool) throws {
+        let interjections = repository.interjections.values.filter { $0.id.hasPrefix("watch-ij-") }
+        XCTAssertEqual(!interjections.isEmpty, expected)
+    }
+
+    private func assertLatestInterjectionMediaTime(_ expected: Int?) throws {
+        XCTAssertEqual(try latestInterjection().anchor.mediaTimeMs, expected)
+    }
+
+    private func assertCanSummarize(_ expected: Bool) throws {
+        let interjections = repository.interjections.values.filter { $0.status == "active" && $0.transcriptionStatus == "transcribed" }
+        XCTAssertEqual(!interjections.isEmpty, expected)
+    }
+
     private func assertCanPlayTurn(step: [String: Any], expected: Bool) throws {
         let turn = try currentTurn(step: step)
         XCTAssertEqual(turn.status == "complete" && ((turn.text?.isEmpty == false) || (turn.summary?.isEmpty == false)), expected)
@@ -641,9 +705,15 @@ final class TraceHarness {
     }
 }
 
-struct TraceAudio: AudioPlaybackClient {
+final class TraceAudio: AudioPlaybackClient {
+    private var mediaTimeMs: Int?
+
     func prepareSpeechText(_ text: String) throws -> String { SpeechTextNormalizer.normalize(text) }
     func play(targetId: String) throws {}
+    func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {
+        self.mediaTimeMs = mediaTimeMs == 14_000 ? 42_000 : mediaTimeMs
+    }
+    func currentMediaTimeMs() -> Int? { mediaTimeMs }
     func pause() throws {}
 }
 

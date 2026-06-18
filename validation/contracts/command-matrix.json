@@ -122,6 +122,18 @@
       "backendCommand": "SessionEngine.importBrowserText"
     },
     {
+      "id": "loadWatchPackage",
+      "description": "Activate a prepared Watch audio package as a local untethered runtime.",
+      "status": "implemented",
+      "backendCommand": "SessionEngine.loadWatchPackage"
+    },
+    {
+      "id": "importWatchSyncEvent",
+      "description": "Idempotently import a queued Watch sync event into the canonical phone/tablet runtime.",
+      "status": "implemented",
+      "backendCommand": "SessionEngine.importWatchSyncEvent"
+    },
+    {
       "id": "attachBrowserMedia",
       "description": "Attach browser-owned media session metadata and source-time observations.",
       "status": "backend_request",

@@ -107,6 +107,44 @@ public final class SQLiteSessionStore: SessionRepository {
         try saveAIJob(job)
     }
 
+    public func saveWatchAudioPackage(_ package: WatchAudioPackage) throws {
+        try save(kind: "watch_audio_package", id: package.id, sessionId: package.sessionId, itemId: package.itemId, value: package)
+    }
+
+    public func loadWatchAudioPackage(id: String) throws -> WatchAudioPackage? {
+        try loadOptional(kind: "watch_audio_package", id: id)
+    }
+
+    public func saveWatchSyncEvent(_ event: WatchSyncEvent) throws {
+        try save(kind: "watch_sync_event", id: event.id, sessionId: event.sessionId, itemId: event.itemId, value: event)
+    }
+
+    public func loadWatchSyncEvents(sessionId: String) throws -> [WatchSyncEvent] {
+        try loadBySession(kind: "watch_sync_event", sessionId: sessionId)
+    }
+
+    public func loadWatchSyncEvent(id: String) throws -> WatchSyncEvent? {
+        try loadOptional(kind: "watch_sync_event", id: id)
+    }
+
+    public func markWatchSyncEventImported(id: String) throws {
+        let marker = ImportedWatchSyncEvent(id: id, importedAt: Date())
+        try save(kind: "imported_watch_sync_event", id: id, sessionId: nil, itemId: nil, value: marker)
+    }
+
+    public func hasImportedWatchSyncEvent(id: String) throws -> Bool {
+        let marker: ImportedWatchSyncEvent? = try loadOptional(kind: "imported_watch_sync_event", id: id)
+        return marker != nil
+    }
+
+    public func saveWatchPackageRequest(_ request: WatchPackageRequestEvent) throws {
+        try save(kind: "watch_package_request", id: request.id, sessionId: nil, itemId: request.itemId, value: request)
+    }
+
+    public func loadWatchPackageRequests(itemId: String) throws -> [WatchPackageRequestEvent] {
+        try loadByItem(kind: "watch_package_request", itemId: itemId)
+    }
+
     public func seed(item: Item) throws {
         try saveItem(item)
     }
@@ -242,3 +280,8 @@ public final class SQLiteSessionStore: SessionRepository {
 }
 
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
+private struct ImportedWatchSyncEvent: Codable {
+    var id: String
+    var importedAt: Date
+}
