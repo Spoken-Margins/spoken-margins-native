@@ -19,6 +19,12 @@
     "title",
     "chapterTitle",
     "progressPercent",
+    "sourceProgressPercent",
+    "currentPlaybackProgressPercent",
+    "currentMediaTimeMs",
+    "currentPlaybackDurationMs",
+    "currentTranscriptSegmentId",
+    "currentAnchorConfidence",
     "isRecording",
     "activeInterjectionCount",
     "pendingAiJobCount",
@@ -167,6 +173,12 @@
       "details": "Compact dispatch now passes skip units through and SessionEngine supports chapter-unit skip behavior for text items with Listening Maps."
     },
     {
+      "id": "watch-tethered-playback-position-anchor-payloads",
+      "title": "Support compact Watch command anchors from canonical playback-position snapshots",
+      "status": "open",
+      "details": "If Watch delegated commands need to send currentMediaTimeMs, currentPlaybackDurationMs, currentTranscriptSegmentId, currentAnchorConfidence, sourceProgressPercent, or currentPlaybackProgressPercent back to the phone/tablet runtime, the steward should define an approved flat command payload shape and trace-harness coverage. Gate 3 does not invent nested payloads or backend command strings."
+    },
+    {
       "id": "watch-compact-timeline",
       "title": "Publish compact timeline rows for Watch",
       "status": "resolved",
@@ -178,6 +190,8 @@
     "Gate 3 must not require Xcode project edits until the steward creates a Watch target scaffold.",
     "The Watch playback interface should mirror the safe iPhone playback controls where possible: brief chapter or generated-turn label, skip back, play/pause, skip forward, AI summary when eligible, and Discuss.",
     "The Watch compact snapshot should contain current item, target, chapter, playback status, progress, recording state, pending AI job state, last user turn type, and availableCommands; it must not require the current source excerpt.",
-    "traces/watch-chapter-navigation.json covers play/pause, chapter jump, chapter skip, boundary idempotence, and Discuss. Watch-started interjection is intentionally deferred to Gate 4."
+    "traces/watch-chapter-navigation.json covers play/pause, chapter jump, chapter skip, boundary idempotence, and Discuss. Watch-started interjection is intentionally deferred to Gate 4.",
+    "When the compact snapshot includes playback-position fields, Gate 3 should prefer currentMediaTimeMs, currentPlaybackDurationMs, currentTranscriptSegmentId, currentAnchorConfidence, sourceProgressPercent, and currentPlaybackProgressPercent over legacy aggregate progress for scrubbing labels, elapsed/remaining display, and transcript-aware chapter context.",
+    "Gate 3 remains remote-control-only: playback position values are display and command-anchor inputs from the phone/tablet runtime, not evidence of Watch-owned playback or recording."
   ]
 }

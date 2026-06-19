@@ -51,9 +51,9 @@ Gate agents must not run full app or Xcode builds. Steward closeout must run the
 - Phone publishes package library rows and persists package request events.
 - Phone transfers package manifests and any matching local package audio assets.
 - Watch activates a prepared package locally.
-- Watch plays local prepared audio and tracks source media time.
-- Watch chapter navigation uses packaged chapter timings.
-- Watch records interjection audio locally.
+- Watch plays local prepared audio and tracks source media time with steward-approved playback-position snapshot fields (`currentMediaTimeMs`, `currentPlaybackDurationMs`, `currentTranscriptSegmentId`, `currentAnchorConfidence`, `sourceProgressPercent`, and `currentPlaybackProgressPercent`) when present.
+- Watch chapter navigation uses packaged chapter timings and transcript segment anchors from the local package timeline.
+- Watch records interjection audio locally and anchors it to the local prepared-package playback position.
 - Watch queues durable sync events with package id, session id, item id, audio file name, source media time, chapter id, transcript segment id, and playback rate.
 - Phone/tablet imports queued events idempotently after reconnect, then owns transcription, cleanup, summary, discussion, and canonical persistence.
 
@@ -77,7 +77,8 @@ Every Gate 4 handoff must include:
 - Use only delegation modes already listed in `validation/contracts/delegation-modes.json`.
 - Do not add new fixture families unless the steward packet says they are schema-validated.
 - Do not change replayed traces unless every new command, event, and expectation key is already supported by the SessionKit trace harness.
-- If Gate 4 needs a new package status field, sync event shape, command payload, trace expectation, schema, validator, or runtime behavior, record a backend request instead of changing shared vocabulary.
+- If Gate 4 needs a new package status field, sync event shape, command payload, trace expectation, schema, validator, playback-position snapshot output, or runtime behavior, record a backend request instead of changing shared vocabulary.
+- Keep Gate 4 limited to local prepared-package playback/recording and offline sync event queuing; do not convert untethered Watch commands into tethered phone remote-control behavior.
 - Validator success is not runtime or trace-replay proof.
 
 ## Out Of Scope

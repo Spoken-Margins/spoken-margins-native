@@ -27,6 +27,10 @@
     "progressPercent",
     "sourceProgressPercent",
     "currentPlaybackProgressPercent",
+    "currentMediaTimeMs",
+    "currentPlaybackDurationMs",
+    "currentTranscriptSegmentId",
+    "currentAnchorConfidence",
     "playbackRate",
     "isRecording",
     "activeInterjectionCount",
@@ -218,6 +222,12 @@
       "details": "SessionKitAudio exposes PreparedAudioPlaybackClient with current media time and completion state. Watch untethered uses it through a local SessionEngine when package audio assets are present."
     },
     {
+      "id": "gate4-watch-local-playback-position-snapshots",
+      "title": "Publish local prepared-package playback-position fields in Watch snapshots",
+      "status": "open",
+      "details": "Ensure the local Watch prepared-package runtime emits currentMediaTimeMs, currentPlaybackDurationMs, currentTranscriptSegmentId, currentAnchorConfidence, sourceProgressPercent, and currentPlaybackProgressPercent when available so local navigation and interjection anchors can use steward-approved snapshot vocabulary."
+    },
+    {
       "id": "gate4-watch-reconnect-conflict-policy",
       "title": "Define reconnect merge and conflict policy",
       "status": "resolved",
@@ -229,6 +239,8 @@
     "Pre-rendered TTS packages and first-party audio/podcast sessions should share the same transcript/media timeline anchoring model once either has timestamped transcript segments.",
     "The Watch owns package playback and recording locally, but not transcription, cleanup, summary, discussion, provider calls, canonical persistence, or package rendering.",
     "The companion reconnect trace uses phone-tablet-online and should be owned by the steward or a phone-import gate contract because surface contract validation requires trace runtimeProfile to match the surface runtimeProfile.",
-    "Package request and transfer status probably require new snapshot fields or a separate package library model; those shared contract changes are steward-owned."
+    "Package request and transfer status probably require new snapshot fields or a separate package library model; those shared contract changes are steward-owned.",
+    "When present in local package snapshots, Gate 4 should prefer currentMediaTimeMs, currentPlaybackDurationMs, currentTranscriptSegmentId, currentAnchorConfidence, sourceProgressPercent, and currentPlaybackProgressPercent for elapsed/remaining display, package chapter context, and interjection anchoring.",
+    "Gate 4 playback-position fields describe Watch-owned prepared-package playback/recording only; they must not imply tethered phone remote control while untethered."
   ]
 }
