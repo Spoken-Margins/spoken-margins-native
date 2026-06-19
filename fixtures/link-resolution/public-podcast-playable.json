@@ -1,0 +1,69 @@
+{
+  "schemaVersion": "link-resolution-fixture.v1",
+  "name": "Public podcast episode resolves to playable remote stream",
+  "case": {
+    "provider": "public-rss",
+    "queueState": "playable",
+    "expectedQueueItemId": "item-podcast-evidence-001",
+    "request": {
+      "type": "LinkResolutionRequest",
+      "id": "link-request-public-podcast-001",
+      "inputURL": "https://podcasts.example.com/shows/inspectable-evidence/episodes/public-evidence",
+      "sourceSurface": "share_sheet",
+      "createdAt": "2026-06-16T10:00:00.000Z"
+    },
+    "result": {
+      "type": "LinkResolutionResult",
+      "requestId": "link-request-public-podcast-001",
+      "status": "playable",
+      "originalLink": {
+        "type": "SourceLink",
+        "url": "https://podcasts.example.com/shows/inspectable-evidence/episodes/public-evidence",
+        "provider": "public-rss",
+        "title": "Public Evidence",
+        "role": "discovery"
+      },
+      "selectedCandidate": {
+        "sourceLink": {
+          "type": "SourceLink",
+          "url": "https://feeds.example.com/inspectable-evidence.xml",
+          "provider": "public-rss",
+          "title": "Inspectable Evidence Feed",
+          "role": "canonical_feed"
+        },
+        "title": "Public Evidence",
+        "showTitle": "Inspectable Evidence",
+        "durationMs": 2412000,
+        "publishedAt": "2026-06-01T08:30:00.000Z",
+        "audioURL": "https://cdn.example.com/inspectable-evidence/public-evidence.mp3",
+        "confidence": 0.97
+      },
+      "candidates": [
+        {
+          "sourceLink": {
+            "type": "SourceLink",
+            "url": "https://feeds.example.com/inspectable-evidence.xml",
+            "provider": "public-rss",
+            "title": "Inspectable Evidence Feed",
+            "role": "canonical_feed"
+          },
+          "title": "Public Evidence",
+          "showTitle": "Inspectable Evidence",
+          "durationMs": 2412000,
+          "publishedAt": "2026-06-01T08:30:00.000Z",
+          "audioURL": "https://cdn.example.com/inspectable-evidence/public-evidence.mp3",
+          "confidence": 0.97
+        }
+      ],
+      "failureReason": null
+    },
+    "audioRepresentation": {
+      "type": "AudioRepresentation",
+      "id": "audio-podcast-evidence-001",
+      "sourceType": "remote_stream",
+      "url": "https://cdn.example.com/inspectable-evidence/public-evidence.mp3",
+      "durationMs": 2412000,
+      "transcriptId": "transcript-podcast-evidence-001"
+    }
+  }
+}

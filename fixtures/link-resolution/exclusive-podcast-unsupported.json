@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "link-resolution-fixture.v1",
+  "name": "Exclusive podcast link is unsupported without public audio",
+  "case": {
+    "provider": "exclusive-provider",
+    "queueState": "unsupported",
+    "expectedQueueItemId": null,
+    "request": {
+      "type": "LinkResolutionRequest",
+      "id": "link-request-exclusive-podcast-001",
+      "inputURL": "https://exclusive.example.com/episode/private-member-show",
+      "sourceSurface": "share_sheet",
+      "createdAt": "2026-06-16T10:10:00.000Z"
+    },
+    "result": {
+      "type": "LinkResolutionResult",
+      "requestId": "link-request-exclusive-podcast-001",
+      "status": "unsupported",
+      "originalLink": {
+        "type": "SourceLink",
+        "url": "https://exclusive.example.com/episode/private-member-show",
+        "provider": "exclusive-provider",
+        "title": "Private Member Show",
+        "role": "discovery"
+      },
+      "selectedCandidate": null,
+      "candidates": [],
+      "failureReason": "no_public_rss_or_audio_enclosure"
+    },
+    "audioRepresentation": null
+  }
+}

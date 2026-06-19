@@ -1,0 +1,63 @@
+{
+  "schemaVersion": "link-resolution-fixture.v1",
+  "name": "Ambiguous public podcast link needs user review",
+  "case": {
+    "provider": "public-rss",
+    "queueState": "needs_review",
+    "expectedQueueItemId": null,
+    "request": {
+      "type": "LinkResolutionRequest",
+      "id": "link-request-podcast-review-001",
+      "inputURL": "https://podcasts.example.com/search?q=inspectable%20evidence",
+      "sourceSurface": "paste_url",
+      "createdAt": "2026-06-16T10:05:00.000Z"
+    },
+    "result": {
+      "type": "LinkResolutionResult",
+      "requestId": "link-request-podcast-review-001",
+      "status": "needs_review",
+      "originalLink": {
+        "type": "SourceLink",
+        "url": "https://podcasts.example.com/search?q=inspectable%20evidence",
+        "provider": "public-rss",
+        "title": "Inspectable evidence podcast search",
+        "role": "discovery"
+      },
+      "selectedCandidate": null,
+      "candidates": [
+        {
+          "sourceLink": {
+            "type": "SourceLink",
+            "url": "https://feeds.example.com/inspectable-evidence.xml",
+            "provider": "public-rss",
+            "title": "Inspectable Evidence Feed",
+            "role": "canonical_feed"
+          },
+          "title": "Public Evidence",
+          "showTitle": "Inspectable Evidence",
+          "durationMs": 2412000,
+          "publishedAt": "2026-06-01T08:30:00.000Z",
+          "audioURL": "https://cdn.example.com/inspectable-evidence/public-evidence.mp3",
+          "confidence": 0.61
+        },
+        {
+          "sourceLink": {
+            "type": "SourceLink",
+            "url": "https://feeds.example.com/evidence-notes.xml",
+            "provider": "public-rss",
+            "title": "Evidence Notes Feed",
+            "role": "canonical_feed"
+          },
+          "title": "Inspectable Evidence",
+          "showTitle": "Evidence Notes",
+          "durationMs": 1980000,
+          "publishedAt": "2026-05-28T09:00:00.000Z",
+          "audioURL": "https://cdn.example.com/evidence-notes/inspectable-evidence.mp3",
+          "confidence": 0.58
+        }
+      ],
+      "failureReason": "multiple_public_candidates"
+    },
+    "audioRepresentation": null
+  }
+}

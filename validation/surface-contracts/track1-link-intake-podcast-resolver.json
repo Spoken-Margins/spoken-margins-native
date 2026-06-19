@@ -1,0 +1,85 @@
+{
+  "schemaVersion": "surface-contract.v1",
+  "gate": "track1-link-intake-podcast-resolver",
+  "runtimeProfile": "phone-tablet-online",
+  "surfaceOwns": [
+    "share_sheet_url_intake",
+    "paste_url_intake",
+    "link_resolution_queue_state",
+    "podcast_candidate_review"
+  ],
+  "delegatesTo": [
+    "phone-tablet-online"
+  ],
+  "snapshotFields": [
+    "sessionId",
+    "itemId",
+    "status",
+    "phase",
+    "title",
+    "availableCommands",
+    "linkResolutionStatus",
+    "linkResolutionFailureReason"
+  ],
+  "commands": [
+    {
+      "id": "importSourceLink",
+      "delegationMode": "delegated_to_canonical_runtime",
+      "exposed": true,
+      "requiredCapabilities": {
+        "playback": ["remote_stream"],
+        "sync": ["canonical_persistence"]
+      },
+      "backendCommand": null,
+      "notes": "Share-sheet and paste URL intake must use the steward-approved importSourceLink command. Runtime routing, provider lookup, queue persistence, and item creation remain steward-owned backend requests."
+    },
+    {
+      "id": "startSession",
+      "delegationMode": "local",
+      "exposed": true,
+      "requiredCapabilities": {
+        "playback": ["remote_stream"]
+      },
+      "backendCommand": "SessionEngine.startSession",
+      "notes": "Only exposed after importSourceLink resolves a public RSS/audio-backed podcast link into a persisted transcript_backed_media item."
+    }
+  ],
+  "traces": [],
+  "fixtures": [
+    "fixtures/link-resolution/public-podcast-playable.json",
+    "fixtures/link-resolution/podcast-link-needs-review.json",
+    "fixtures/link-resolution/exclusive-podcast-unsupported.json",
+    "fixtures/items/podcast-episode-remote-stream.json"
+  ],
+  "backendRequests": [
+    {
+      "id": "link-intake-share-extension-routing",
+      "title": "Route share-sheet and pasted URLs into importSourceLink",
+      "status": "open",
+      "details": "Add app/share-extension URL intake that creates a LinkResolutionRequest for public podcast links and calls the canonical importSourceLink path without introducing resolveLink, importPodcastURL, or any other command id."
+    },
+    {
+      "id": "link-intake-provider-lookup",
+      "title": "Resolve public podcast links to RSS/audio candidates",
+      "status": "open",
+      "details": "Implement provider-independent lookup for public podcast episode pages and feed links, selecting only candidates with public RSS/audio enclosure URLs. Exclusive/private provider links should return unsupported or needs_review without fabricated playable audio."
+    },
+    {
+      "id": "link-intake-queue-ui-snapshots",
+      "title": "Publish link resolution queue snapshot fields",
+      "status": "open",
+      "details": "Surface linkResolutionStatus and linkResolutionFailureReason in canonical snapshots for resolving, playable, needs_review, and unsupported queue states. These fields are accepted vocabulary but are backend-request runtime output."
+    },
+    {
+      "id": "link-intake-runtime-persistence",
+      "title": "Persist resolved podcast items and remote-stream audio",
+      "status": "open",
+      "details": "When a public link resolves to a playable audio enclosure, persist an Item with mediaType transcript_backed_media and an AudioRepresentation with sourceType remote_stream. Queue state should retain the original SourceLink and selected candidate for review/debugging."
+    }
+  ],
+  "notes": [
+    "Track B does not add executable traces; link-resolution events are not replayable trace language until steward runtime and harness support exists.",
+    "Public RSS/audio-backed podcast acquisitions produce transcript_backed_media items and remote_stream audio representations.",
+    "linkResolutionStatus and linkResolutionFailureReason are referenced only as backend-request snapshot fields."
+  ]
+}

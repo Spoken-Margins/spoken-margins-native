@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "item.v1",
+  "id": "item-podcast-evidence-001",
+  "title": "Public Evidence",
+  "mediaType": "transcript_backed_media",
+  "text": null,
+  "media": {
+    "sourceType": "podcast",
+    "url": "https://cdn.example.com/inspectable-evidence/public-evidence.mp3",
+    "durationMs": 2412000,
+    "nativeMediaId": null
+  },
+  "externalReference": "https://podcasts.example.com/shows/inspectable-evidence/episodes/public-evidence",
+  "externalReferenceType": "url",
+  "createdAt": "2026-06-16T10:00:00.000Z",
+  "updatedAt": "2026-06-16T10:00:00.000Z",
+  "status": "ready",
+  "listeningMapId": null,
+  "transcriptId": "transcript-podcast-evidence-001"
+}
