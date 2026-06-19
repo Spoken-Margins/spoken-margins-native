@@ -1,0 +1,58 @@
+{
+  "schemaVersion": "link-resolution-fixture.v1",
+  "name": "apple-overcast-needs-review",
+  "cases": [
+    {
+      "provider": "apple_podcasts",
+      "queueState": "needs_review",
+      "request": {
+        "type": "LinkResolutionRequest",
+        "id": "linkreq-apple-exclusive-001",
+        "inputURL": "https://podcasts.apple.com/us/podcast/example-exclusive/id123456789?i=100000000001",
+        "sourceSurface": "paste_url",
+        "createdAt": "2026-06-19T00:05:00Z"
+      },
+      "result": {
+        "type": "LinkResolutionResult",
+        "requestId": "linkreq-apple-exclusive-001",
+        "status": "needs_review",
+        "originalLink": {
+          "type": "SourceLink",
+          "url": "https://podcasts.apple.com/us/podcast/example-exclusive/id123456789?i=100000000001",
+          "provider": "apple_podcasts",
+          "title": "Subscriber-only Example",
+          "role": "discovery"
+        },
+        "selectedCandidate": null,
+        "candidates": [],
+        "failureReason": "No open RSS audio enclosure could be confirmed from fixture metadata. Preserve the source link for user review instead of enqueueing playable audio."
+      }
+    },
+    {
+      "provider": "overcast",
+      "queueState": "unsupported",
+      "request": {
+        "type": "LinkResolutionRequest",
+        "id": "linkreq-overcast-private-001",
+        "inputURL": "https://overcast.fm/+fixturePrivateToken",
+        "sourceSurface": "share_sheet",
+        "createdAt": "2026-06-19T00:10:00Z"
+      },
+      "result": {
+        "type": "LinkResolutionResult",
+        "requestId": "linkreq-overcast-private-001",
+        "status": "unsupported",
+        "originalLink": {
+          "type": "SourceLink",
+          "url": "https://overcast.fm/+fixturePrivateToken",
+          "provider": "overcast",
+          "title": null,
+          "role": "discovery"
+        },
+        "selectedCandidate": null,
+        "candidates": [],
+        "failureReason": "Private or app-scoped Overcast link has no resolvable open feed/audio fixture."
+      }
+    }
+  ]
+}

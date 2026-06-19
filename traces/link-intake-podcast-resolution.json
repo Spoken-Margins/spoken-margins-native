@@ -1,0 +1,84 @@
+{
+  "schemaVersion": "session-trace.v1",
+  "name": "link-intake-podcast-resolution",
+  "description": "Share-sheet and paste URL intake resolve podcast discovery links into playable queue items only when open RSS audio is available.",
+  "runtimeProfile": "phone-tablet-online",
+  "requiresCapabilities": {
+    "playback": ["remote_stream", "native_media"],
+    "sync": ["canonical_persistence"]
+  },
+  "fixtures": {
+    "playableResolution": "fixtures/link-resolution/spotify-episode-rss-playable.json",
+    "unsupportedResolution": "fixtures/link-resolution/apple-overcast-needs-review.json",
+    "playableItem": "fixtures/items/podcast-acquired-nvidia-part-iii.json"
+  },
+  "steps": [
+    {
+      "event": "linkResolutionRequested",
+      "args": {
+        "requestId": "linkreq-spotify-acquired-001",
+        "inputURL": "https://open.spotify.com/episode/0fixtureSpotifyEpisode",
+        "sourceSurface": "share_sheet"
+      },
+      "expect": {
+        "queueState": "resolving",
+        "requestType": "LinkResolutionRequest"
+      }
+    },
+    {
+      "event": "linkResolutionCompleted",
+      "args": {
+        "requestId": "linkreq-spotify-acquired-001",
+        "fixture": "fixtures/link-resolution/spotify-episode-rss-playable.json"
+      },
+      "expect": {
+        "resultType": "LinkResolutionResult",
+        "status": "playable",
+        "queueState": "playable",
+        "selectedCandidateAudioURL": "https://cdn.example.org/acquired/nvidia-part-iii.mp3",
+        "audioRepresentationType": "AudioRepresentation",
+        "sourceLinkRole": "canonical_feed"
+      }
+    },
+    {
+      "command": "startSession",
+      "args": { "itemId": "item-podcast-acquired-nvidia-part-iii" },
+      "expect": {
+        "phase": "item_playback",
+        "status": "playing",
+        "targetType": "item_media",
+        "queueState": "playable"
+      }
+    },
+    {
+      "event": "linkResolutionCompleted",
+      "args": {
+        "requestId": "linkreq-apple-exclusive-001",
+        "fixture": "fixtures/link-resolution/apple-overcast-needs-review.json"
+      },
+      "expect": {
+        "status": "needs_review",
+        "queueState": "needs_review",
+        "playableAudioURL": null
+      }
+    },
+    {
+      "event": "linkResolutionCompleted",
+      "args": {
+        "requestId": "linkreq-overcast-private-001",
+        "fixture": "fixtures/link-resolution/apple-overcast-needs-review.json"
+      },
+      "expect": {
+        "status": "unsupported",
+        "queueState": "unsupported",
+        "playableAudioURL": null
+      }
+    }
+  ],
+  "assertions": [
+    "Queue state begins as resolving while a LinkResolutionRequest is pending.",
+    "Spotify discovery links can become playable only through an open RSS candidate with an audio enclosure URL.",
+    "Apple Podcasts or Overcast links without confirmed open audio degrade to needs_review or unsupported rather than fabricating playable media.",
+    "Playable podcast queue items use SourceLink and AudioRepresentation contract shapes already present in SessionKit."
+  ]
+}

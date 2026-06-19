@@ -1,0 +1,66 @@
+{
+  "schemaVersion": "link-resolution-fixture.v1",
+  "name": "spotify-episode-rss-playable",
+  "request": {
+    "type": "LinkResolutionRequest",
+    "id": "linkreq-spotify-acquired-001",
+    "inputURL": "https://open.spotify.com/episode/0fixtureSpotifyEpisode",
+    "sourceSurface": "share_sheet",
+    "createdAt": "2026-06-19T00:00:00Z"
+  },
+  "result": {
+    "type": "LinkResolutionResult",
+    "requestId": "linkreq-spotify-acquired-001",
+    "status": "playable",
+    "originalLink": {
+      "type": "SourceLink",
+      "url": "https://open.spotify.com/episode/0fixtureSpotifyEpisode",
+      "provider": "spotify",
+      "title": "Acquired: Nvidia Part III",
+      "role": "discovery"
+    },
+    "selectedCandidate": {
+      "sourceLink": {
+        "type": "SourceLink",
+        "url": "https://feeds.example.org/acquired/rss.xml",
+        "provider": "rss",
+        "title": "Acquired",
+        "role": "canonical_feed"
+      },
+      "title": "Nvidia Part III: The Dawn of the AI Era",
+      "showTitle": "Acquired",
+      "durationMs": 9258000,
+      "publishedAt": "2024-02-20T12:00:00Z",
+      "audioURL": "https://cdn.example.org/acquired/nvidia-part-iii.mp3",
+      "confidence": 0.94
+    },
+    "candidates": [
+      {
+        "sourceLink": {
+          "type": "SourceLink",
+          "url": "https://feeds.example.org/acquired/rss.xml",
+          "provider": "rss",
+          "title": "Acquired",
+          "role": "canonical_feed"
+        },
+        "title": "Nvidia Part III: The Dawn of the AI Era",
+        "showTitle": "Acquired",
+        "durationMs": 9258000,
+        "publishedAt": "2024-02-20T12:00:00Z",
+        "audioURL": "https://cdn.example.org/acquired/nvidia-part-iii.mp3",
+        "confidence": 0.94
+      }
+    ],
+    "failureReason": null
+  },
+  "audioRepresentation": {
+    "type": "AudioRepresentation",
+    "id": "audio-acquired-nvidia-part-iii",
+    "sourceType": "remote_stream",
+    "url": "https://cdn.example.org/acquired/nvidia-part-iii.mp3",
+    "durationMs": 9258000,
+    "transcriptId": null
+  },
+  "queueState": "playable",
+  "expectedQueueItemId": "item-podcast-acquired-nvidia-part-iii"
+}

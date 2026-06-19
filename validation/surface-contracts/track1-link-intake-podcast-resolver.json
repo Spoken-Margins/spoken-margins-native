@@ -1,0 +1,90 @@
+{
+  "schemaVersion": "surface-contract.v1",
+  "gate": "track1-link-intake-podcast-resolver",
+  "runtimeProfile": "phone-tablet-online",
+  "surfaceOwns": [
+    "share_sheet_url_intake",
+    "paste_url_intake",
+    "podcast_discovery_link_classification",
+    "link_resolution_queue_state"
+  ],
+  "delegatesTo": [
+    "phone-tablet-online",
+    "phone-tablet-offline"
+  ],
+  "snapshotFields": [
+    "sessionId",
+    "itemId",
+    "targetType",
+    "status",
+    "phase",
+    "title",
+    "progressPercent",
+    "availableCommands"
+  ],
+  "commands": [
+    {
+      "id": "startSession",
+      "delegationMode": "delegated_to_canonical_runtime",
+      "exposed": true,
+      "requiredCapabilities": {
+        "playback": ["remote_stream", "native_media"],
+        "sync": ["canonical_persistence"]
+      },
+      "backendCommand": "SessionEngine.startSession",
+      "notes": "Only enabled once link resolution reaches playable with an RSS/audio-backed item."
+    },
+    {
+      "id": "pause",
+      "delegationMode": "delegated_to_canonical_runtime",
+      "exposed": true,
+      "requiredCapabilities": {
+        "playback": ["remote_stream"]
+      },
+      "backendCommand": "SessionEngine.pause"
+    },
+    {
+      "id": "resumePlayback",
+      "delegationMode": "delegated_to_canonical_runtime",
+      "exposed": true,
+      "requiredCapabilities": {
+        "playback": ["remote_stream"]
+      },
+      "backendCommand": "SessionEngine.resumePlayback"
+    }
+  ],
+  "traces": [
+    "traces/link-intake-podcast-resolution.json"
+  ],
+  "fixtures": [
+    "fixtures/link-resolution/spotify-episode-rss-playable.json",
+    "fixtures/link-resolution/apple-overcast-needs-review.json",
+    "fixtures/items/podcast-acquired-nvidia-part-iii.json"
+  ],
+  "backendRequests": [
+    {
+      "id": "link-resolution-import-command",
+      "title": "Add a canonical URL intake command for LinkResolutionRequest",
+      "status": "open",
+      "details": "Contracts use existing LinkResolutionRequest/LinkResolutionResult types, but the command matrix has no importLink/importSourceLink command yet. Steward should add shared command vocabulary and runtime routing for share-sheet and paste URL intake."
+    },
+    {
+      "id": "podcast-rss-resolver-provider",
+      "title": "Implement resolver providers for public podcast discovery links",
+      "status": "open",
+      "details": "Resolve Spotify, Apple Podcasts, and Overcast discovery URLs to open RSS feeds/audio enclosures when metadata permits. Exclusive/private links must return needs_review or unsupported without fake audio."
+    },
+    {
+      "id": "link-resolution-snapshot-fields",
+      "title": "Expose link resolution queue state in canonical snapshots",
+      "status": "open",
+      "details": "Gate UI needs resolving, playable, needs_review, and unsupported state plus failure reason and candidate title/audio metadata. Current snapshot field matrix lacks linkResolutionStatus/queueState fields."
+    }
+  ],
+  "notes": [
+    "Queue states for this track are resolving, playable, needs_review, and unsupported.",
+    "The Spotify fixture demonstrates playable resolution via open RSS audio without network provider clients.",
+    "Apple Podcasts exclusive and private Overcast examples intentionally degrade because no open RSS audio fixture is available.",
+    "No shared runtime, schema, command matrix, snapshot matrix, or validator files were changed by this gate."
+  ]
+}
