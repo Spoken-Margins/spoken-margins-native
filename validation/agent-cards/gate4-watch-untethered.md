@@ -13,6 +13,8 @@ Gate 4 proves that the Watch can be a prepared local playback and recording runt
 - `docs/gate4-watch-untethered-closeout.md`
 - `validation/agent-cards/gate4-watch-untethered.md`
 
+Gate 4 work must also follow `docs/parallel-track-coordination.md`, `docs/surface-contract-governance.md`, and the steward packet for the active branch.
+
 ## Steward-Only Files
 
 Do not edit these files without explicit steward assignment:
@@ -65,6 +67,18 @@ Every Gate 4 handoff must include:
 - tests run
 - tests not run
 - open risks
+- shared vocabulary needed but missing from the steward packet
+- whether executable traces changed
+
+## Contract-First Limits
+
+- Use only command ids already listed in `validation/contracts/command-matrix.json`.
+- Use only snapshot fields already listed in `validation/contracts/snapshot-fields.json`.
+- Use only delegation modes already listed in `validation/contracts/delegation-modes.json`.
+- Do not add new fixture families unless the steward packet says they are schema-validated.
+- Do not change replayed traces unless every new command, event, and expectation key is already supported by the SessionKit trace harness.
+- If Gate 4 needs a new package status field, sync event shape, command payload, trace expectation, schema, validator, or runtime behavior, record a backend request instead of changing shared vocabulary.
+- Validator success is not runtime or trace-replay proof.
 
 ## Out Of Scope
 

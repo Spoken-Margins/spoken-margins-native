@@ -261,3 +261,19 @@ Every trace should declare either:
 - the required capabilities.
 
 The test harness must reject a trace if the active profile lacks required capabilities.
+
+## Capability Governance
+
+Capabilities describe what a runtime can do. They do not create new command names, snapshot fields, trace expectation keys, fixture schemas, or persisted models.
+
+Before a surface contract depends on a capability-derived value, that value must also exist in the appropriate shared vocabulary:
+
+- commands in `validation/contracts/command-matrix.json`
+- snapshot fields in `validation/contracts/snapshot-fields.json`
+- delegation modes in `validation/contracts/delegation-modes.json`
+- serialized fixture families in `schemas/` and `scripts/validate-contracts.py`
+- executable trace language in the Swift trace harness
+
+For example, a runtime may have `timeline.media_time`, but a widget contract still cannot assert a `mediaTimeMs` snapshot field unless the steward has registered that field and the runtime emits it under the canonical name.
+
+Gate agents should treat missing vocabulary as a backend request, not as permission to invent an adjacent field or fixture shape.
