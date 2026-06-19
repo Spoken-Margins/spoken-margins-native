@@ -418,6 +418,26 @@ final class TraceHarness {
                 XCTAssertEqual(snapshot.phase.rawValue, value as? String)
             case "targetType":
                 XCTAssertEqual(snapshot.targetType, value as? String)
+            case "progressPercent":
+                XCTAssertEqual(snapshot.progressPercent, value as? Int)
+            case "sourceProgressPercent":
+                XCTAssertEqual(snapshot.sourceProgressPercent, value as? Int)
+            case "currentPlaybackProgressPercent":
+                XCTAssertEqual(snapshot.currentPlaybackProgressPercent, value as? Int)
+            case "currentMediaTimeMs":
+                XCTAssertEqual(snapshot.currentMediaTimeMs, value as? Int)
+            case "currentPlaybackDurationMs":
+                XCTAssertEqual(snapshot.currentPlaybackDurationMs, value as? Int)
+            case "currentTranscriptSegmentId":
+                XCTAssertEqual(snapshot.currentTranscriptSegmentId, value as? String)
+            case "currentAnchorConfidence":
+                XCTAssertEqual(snapshot.currentAnchorConfidence?.rawValue, value as? String)
+            case "playbackRate":
+                XCTAssertEqual(snapshot.playbackRate, value as? Double)
+            case "isRecording":
+                XCTAssertEqual(snapshot.isRecording, value as? Bool)
+            case "pendingAiJobCount":
+                XCTAssertEqual(snapshot.pendingAiJobCount, value as? Int)
             case "pendingAiJobKind":
                 XCTAssertEqual(snapshot.pendingAiJobKind, value as? String)
             case "pendingAiJobStatus":

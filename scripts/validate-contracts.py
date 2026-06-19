@@ -21,6 +21,7 @@ PATH_SCHEMA_RULES = [
     ("fixtures/watch/offline-package.json", "watch-audio-package.schema.json"),
     ("fixtures/watch/sync-*-event.json", "watch-sync-event.schema.json"),
     ("fixtures/audio/*.json", "audio-asset.schema.json"),
+    ("fixtures/link-resolution/*.json", "link-resolution-fixture.schema.json"),
     ("fixtures/transcripts/*.json", "transcript.schema.json"),
     ("traces/*.json", "session-trace.schema.json"),
 ]

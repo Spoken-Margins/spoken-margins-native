@@ -12,6 +12,10 @@
     { "id": "progressPercent", "status": "implemented", "source": "SessionSnapshot.progressPercent" },
     { "id": "sourceProgressPercent", "status": "implemented", "source": "SessionSnapshot.sourceProgressPercent" },
     { "id": "currentPlaybackProgressPercent", "status": "implemented", "source": "SessionSnapshot.currentPlaybackProgressPercent" },
+    { "id": "currentMediaTimeMs", "status": "implemented", "source": "SessionSnapshot.currentMediaTimeMs" },
+    { "id": "currentPlaybackDurationMs", "status": "implemented", "source": "SessionSnapshot.currentPlaybackDurationMs" },
+    { "id": "currentTranscriptSegmentId", "status": "implemented", "source": "SessionSnapshot.currentTranscriptSegmentId" },
+    { "id": "currentAnchorConfidence", "status": "implemented", "source": "SessionSnapshot.currentAnchorConfidence" },
     { "id": "playbackRate", "status": "implemented", "source": "SessionSnapshot.playbackRate" },
     { "id": "isRecording", "status": "implemented", "source": "SessionSnapshot.isRecording" },
     { "id": "activeInterjectionCount", "status": "implemented", "source": "SessionSnapshot.activeInterjectionCount" },
@@ -37,6 +41,18 @@
       "status": "implemented",
       "source": "CompactControlSnapshot.timeline",
       "notes": "Compact surfaces publish source chapters and generated AI/summary timeline rows for constrained UIs such as Watch."
+    },
+    {
+      "id": "linkResolutionStatus",
+      "status": "backend_request",
+      "source": null,
+      "notes": "Proposed queue/import state for share-sheet and paste URL intake. Runtime support is steward-owned."
+    },
+    {
+      "id": "linkResolutionFailureReason",
+      "status": "backend_request",
+      "source": null,
+      "notes": "Proposed diagnostic text for unsupported or needs-review link resolution outcomes."
     }
   ]
 }

@@ -122,6 +122,12 @@
       "backendCommand": "SessionEngine.importBrowserText"
     },
     {
+      "id": "importSourceLink",
+      "description": "Accept a shared or pasted URL and resolve it toward a playable or reviewable source item.",
+      "status": "backend_request",
+      "backendCommand": null
+    },
+    {
       "id": "loadWatchPackage",
       "description": "Activate a prepared Watch audio package as a local untethered runtime.",
       "status": "implemented",
