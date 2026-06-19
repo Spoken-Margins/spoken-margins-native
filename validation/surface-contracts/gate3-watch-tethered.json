@@ -19,6 +19,9 @@
     "title",
     "chapterTitle",
     "progressPercent",
+    "playbackRate",
+    "currentPlaybackProgressPercent",
+    "sourceProgressPercent",
     "isRecording",
     "activeInterjectionCount",
     "pendingAiJobCount",
@@ -34,7 +37,9 @@
       "delegationMode": "delegated_to_canonical_runtime",
       "exposed": true,
       "requiredCapabilities": {
-        "remoteControl": ["send_transport_commands"]
+        "remoteControl": [
+          "send_transport_commands"
+        ]
       },
       "backendCommand": "SessionEngine.togglePlayPause",
       "notes": "Watch uses the same single play/pause control shape as the iPhone playback surface; phone/tablet executes the toggle and returns a refreshed compact snapshot."
@@ -44,7 +49,9 @@
       "delegationMode": "delegated_to_canonical_runtime",
       "exposed": true,
       "requiredCapabilities": {
-        "remoteControl": ["send_transport_commands"]
+        "remoteControl": [
+          "send_transport_commands"
+        ]
       },
       "backendCommand": "SessionEngine.resumePlayback",
       "notes": "Watch sends a play intent to the canonical phone/tablet runtime and expects a refreshed compact snapshot response."
@@ -54,7 +61,9 @@
       "delegationMode": "delegated_to_canonical_runtime",
       "exposed": true,
       "requiredCapabilities": {
-        "remoteControl": ["send_transport_commands"]
+        "remoteControl": [
+          "send_transport_commands"
+        ]
       },
       "backendCommand": "SessionEngine.pause",
       "notes": "Watch sends a pause intent to the canonical phone/tablet runtime and expects a refreshed compact snapshot response."
@@ -64,31 +73,51 @@
       "delegationMode": "delegated_to_canonical_runtime",
       "exposed": true,
       "requiredCapabilities": {
-        "remoteControl": ["send_transport_commands"]
+        "remoteControl": [
+          "send_transport_commands"
+        ],
+        "timeline": [
+          "chapter_timing",
+          "media_time",
+          "transcript_segments"
+        ]
       },
       "backendCommand": "SessionEngine.skipForward",
-      "notes": "Watch sends a forward navigation intent to the canonical phone/tablet runtime and expects a refreshed compact snapshot response."
+      "notes": "Watch sends a forward navigation intent to the canonical phone/tablet runtime and expects a refreshed compact snapshot response. Payloads should preserve PlaybackPosition-derived media time and transcript segment context when the phone snapshot includes them."
     },
     {
       "id": "skipBack",
       "delegationMode": "delegated_to_canonical_runtime",
       "exposed": true,
       "requiredCapabilities": {
-        "remoteControl": ["send_transport_commands"]
+        "remoteControl": [
+          "send_transport_commands"
+        ],
+        "timeline": [
+          "chapter_timing",
+          "media_time",
+          "transcript_segments"
+        ]
       },
       "backendCommand": "SessionEngine.skipBack",
-      "notes": "Watch sends a backward navigation intent to the canonical phone/tablet runtime and expects a refreshed compact snapshot response."
+      "notes": "Watch sends a backward navigation intent to the canonical phone/tablet runtime and expects a refreshed compact snapshot response. Payloads should preserve PlaybackPosition-derived media time and transcript segment context when the phone snapshot includes them."
     },
     {
       "id": "jumpToChapter",
       "delegationMode": "delegated_to_canonical_runtime",
       "exposed": true,
       "requiredCapabilities": {
-        "timeline": ["chapter_timing"],
-        "remoteControl": ["send_chapter_jump"]
+        "timeline": [
+          "chapter_timing",
+          "media_time",
+          "transcript_segments"
+        ],
+        "remoteControl": [
+          "send_chapter_jump"
+        ]
       },
       "backendCommand": "SessionEngine.jumpToChapter",
-      "notes": "Watch sends the selected resolved chapter id to the canonical phone/tablet runtime and expects a refreshed compact snapshot response."
+      "notes": "Watch sends the selected resolved chapter id to the canonical phone/tablet runtime and expects a refreshed compact snapshot response. Payloads should preserve PlaybackPosition-derived media time and transcript segment context when the phone snapshot includes them."
     },
     {
       "id": "beginInterjection",
@@ -96,7 +125,7 @@
       "exposed": false,
       "requiredCapabilities": {},
       "backendCommand": null,
-      "notes": "Watch-started interjection is hidden and rejected for Gate 3 because delegated phone recording can mutate playback while the phone is locked. Gate 4 should provide Watch-owned or background-safe capture."
+      "notes": "Watch-started interjection remains hidden and rejected for Gate 3. If re-enabled later, the delegated command payload must preserve mediaTimeMs, durationMs, chapterId, and transcriptSegmentId from the phone snapshot rather than starting Watch-local recording."
     },
     {
       "id": "finishInterjection",
@@ -111,7 +140,9 @@
       "delegationMode": "delegated_to_canonical_runtime",
       "exposed": true,
       "requiredCapabilities": {
-        "remoteControl": ["send_ai_commands"]
+        "remoteControl": [
+          "send_ai_commands"
+        ]
       },
       "backendCommand": "SessionEngine.generateInterjectionSummary",
       "notes": "Watch exposes the iPhone summary sparkles action as a delegated AI intent; phone/tablet owns summary eligibility, provider calls, persistence, and pending job state."
@@ -121,7 +152,9 @@
       "delegationMode": "delegated_to_canonical_runtime",
       "exposed": true,
       "requiredCapabilities": {
-        "remoteControl": ["send_ai_commands"]
+        "remoteControl": [
+          "send_ai_commands"
+        ]
       },
       "backendCommand": "SessionEngine.submitFollowup",
       "notes": "Watch exposes the iPhone Discuss action as a delegated follow-up intent; phone/tablet owns prompt context, provider calls, persistence, and pending job state."
@@ -171,6 +204,12 @@
       "title": "Publish compact timeline rows for Watch",
       "status": "resolved",
       "details": "CompactControlSnapshot now includes source chapters and generated AI/summary rows so the Watch can show timeline context below the primary controls."
+    },
+    {
+      "id": "watch-tethered-playback-position-anchors",
+      "title": "Include PlaybackPosition anchors in tethered Watch compact snapshots and command payloads",
+      "status": "open",
+      "details": "Phone-to-Watch snapshots and delegated Watch commands should carry mediaTimeMs, durationMs, chapterId, progress, and transcriptSegmentId where available so chapter/progress display and future interjection delegation are anchored to real media time."
     }
   ],
   "notes": [
@@ -178,6 +217,7 @@
     "Gate 3 must not require Xcode project edits until the steward creates a Watch target scaffold.",
     "The Watch playback interface should mirror the safe iPhone playback controls where possible: brief chapter or generated-turn label, skip back, play/pause, skip forward, AI summary when eligible, and Discuss.",
     "The Watch compact snapshot should contain current item, target, chapter, playback status, progress, recording state, pending AI job state, last user turn type, and availableCommands; it must not require the current source excerpt.",
-    "traces/watch-chapter-navigation.json covers play/pause, chapter jump, chapter skip, boundary idempotence, and Discuss. Watch-started interjection is intentionally deferred to Gate 4."
+    "traces/watch-chapter-navigation.json covers play/pause, chapter jump, chapter skip, boundary idempotence, and Discuss. Watch-started interjection is intentionally deferred to Gate 4.",
+    "Tethered Watch chapter/progress display should prefer PlaybackPosition-derived mediaTimeMs and durationMs, and preserve transcriptSegmentId/chapterId in delegated command payloads when available."
   ]
 }

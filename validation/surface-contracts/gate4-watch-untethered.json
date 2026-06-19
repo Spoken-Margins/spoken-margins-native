@@ -40,8 +40,12 @@
       "delegationMode": "local",
       "exposed": true,
       "requiredCapabilities": {
-        "sync": ["receive_prepared_packages"],
-        "playback": ["prerendered_audio"]
+        "sync": [
+          "receive_prepared_packages"
+        ],
+        "playback": [
+          "prerendered_audio"
+        ]
       },
       "backendCommand": "SessionEngine.loadWatchPackage",
       "notes": "Activates a prepared package locally without conflating package activation with canonical phone/tablet item start."
@@ -51,7 +55,9 @@
       "delegationMode": "local",
       "exposed": true,
       "requiredCapabilities": {
-        "playback": ["prerendered_audio"]
+        "playback": [
+          "prerendered_audio"
+        ]
       },
       "backendCommand": "SessionEngine.resumePlayback",
       "notes": "Watch starts or resumes local package audio only after the local audio runtime confirms playback has begun."
@@ -61,7 +67,9 @@
       "delegationMode": "local",
       "exposed": true,
       "requiredCapabilities": {
-        "playback": ["prerendered_audio"]
+        "playback": [
+          "prerendered_audio"
+        ]
       },
       "backendCommand": "SessionEngine.pause",
       "notes": "Watch pauses local package audio and preserves source media time."
@@ -71,7 +79,9 @@
       "delegationMode": "local",
       "exposed": true,
       "requiredCapabilities": {
-        "playback": ["prerendered_audio"]
+        "playback": [
+          "prerendered_audio"
+        ]
       },
       "backendCommand": "SessionEngine.togglePlayPause"
     },
@@ -80,61 +90,88 @@
       "delegationMode": "local",
       "exposed": true,
       "requiredCapabilities": {
-        "playback": ["prerendered_audio"],
-        "timeline": ["media_time"]
+        "playback": [
+          "prerendered_audio"
+        ],
+        "timeline": [
+          "media_time"
+        ]
       },
       "backendCommand": "SessionEngine.skipBack",
-      "notes": "Local skip should resolve through the package timeline, not through text chunk ids or tethered phone state."
+      "notes": "Local skip should resolve through the package timeline, not through text chunk ids or tethered phone state. Command payloads preserve mediaTimeMs, durationMs, chapterId, and transcriptSegmentId resolved from the prepared package timeline where applicable."
     },
     {
       "id": "skipForward",
       "delegationMode": "local",
       "exposed": true,
       "requiredCapabilities": {
-        "playback": ["prerendered_audio"],
-        "timeline": ["media_time"]
+        "playback": [
+          "prerendered_audio"
+        ],
+        "timeline": [
+          "media_time"
+        ]
       },
       "backendCommand": "SessionEngine.skipForward",
-      "notes": "Local skip should resolve through the package timeline and remain idempotent at package boundaries."
+      "notes": "Local skip should resolve through the package timeline and remain idempotent at package boundaries. Command payloads preserve mediaTimeMs, durationMs, chapterId, and transcriptSegmentId resolved from the prepared package timeline where applicable."
     },
     {
       "id": "jumpToChapter",
       "delegationMode": "local",
       "exposed": true,
       "requiredCapabilities": {
-        "playback": ["prerendered_audio"],
-        "timeline": ["chapter_timing", "media_time"]
+        "playback": [
+          "prerendered_audio"
+        ],
+        "timeline": [
+          "chapter_timing",
+          "media_time"
+        ]
       },
       "backendCommand": "SessionEngine.jumpToChapter",
-      "notes": "Watch jumps to the packaged chapter startMs and recomputes transcript segment context locally."
+      "notes": "Watch jumps to the packaged chapter startMs and recomputes transcript segment context locally. Command payloads preserve mediaTimeMs, durationMs, chapterId, and transcriptSegmentId resolved from the prepared package timeline where applicable."
     },
     {
       "id": "beginInterjection",
       "delegationMode": "local",
       "exposed": true,
       "requiredCapabilities": {
-        "interjection": ["record_audio", "capture_media_anchor", "capture_transcript_anchor", "queue_offline_interjections"]
+        "interjection": [
+          "record_audio",
+          "capture_media_anchor",
+          "capture_transcript_anchor",
+          "queue_offline_interjections"
+        ]
       },
       "backendCommand": "SessionEngine.beginInterjection",
-      "notes": "Watch pauses local package playback, captures source media time and transcript segment from the package timeline, and records locally."
+      "notes": "Watch pauses local package playback, captures source media time and transcript segment from the package timeline, and records locally. Command payloads preserve mediaTimeMs, durationMs, chapterId, and transcriptSegmentId resolved from the prepared package timeline where applicable."
     },
     {
       "id": "finishInterjection",
       "delegationMode": "queued_offline",
       "exposed": true,
       "requiredCapabilities": {
-        "interjection": ["record_audio", "capture_media_anchor", "capture_transcript_anchor", "queue_offline_interjections"],
-        "sync": ["queue_offline_events"]
+        "interjection": [
+          "record_audio",
+          "capture_media_anchor",
+          "capture_transcript_anchor",
+          "queue_offline_interjections"
+        ],
+        "sync": [
+          "queue_offline_events"
+        ]
       },
       "backendCommand": "SessionEngine.finishInterjection",
-      "notes": "Watch saves audio locally and queues an interjection_recorded sync event. Phone/tablet later imports it idempotently."
+      "notes": "Watch saves audio locally and queues an interjection_recorded sync event. Phone/tablet later imports it idempotently. Command payloads preserve mediaTimeMs, durationMs, chapterId, and transcriptSegmentId resolved from the prepared package timeline where applicable."
     },
     {
       "id": "cancelInterjection",
       "delegationMode": "local",
       "exposed": true,
       "requiredCapabilities": {
-        "interjection": ["record_audio"]
+        "interjection": [
+          "record_audio"
+        ]
       },
       "backendCommand": "SessionEngine.cancelInterjection",
       "notes": "Watch discards local unsaved recording and resumes package playback from the rollback policy."
@@ -160,7 +197,9 @@
       "delegationMode": "queued_offline",
       "exposed": true,
       "requiredCapabilities": {
-        "sync": ["queue_offline_events"]
+        "sync": [
+          "queue_offline_events"
+        ]
       },
       "backendCommand": "SessionEngine.endSession",
       "notes": "Watch may queue a session_finished event, but canonical session completion is reconciled by phone/tablet."
@@ -229,6 +268,7 @@
     "Pre-rendered TTS packages and first-party audio/podcast sessions should share the same transcript/media timeline anchoring model once either has timestamped transcript segments.",
     "The Watch owns package playback and recording locally, but not transcription, cleanup, summary, discussion, provider calls, canonical persistence, or package rendering.",
     "The companion reconnect trace uses phone-tablet-online and should be owned by the steward or a phone-import gate contract because surface contract validation requires trace runtimeProfile to match the surface runtimeProfile.",
-    "Package request and transfer status probably require new snapshot fields or a separate package library model; those shared contract changes are steward-owned."
+    "Package request and transfer status probably require new snapshot fields or a separate package library model; those shared contract changes are steward-owned.",
+    "Untethered Watch snapshots and sync events preserve PlaybackPosition-derived mediaTimeMs, durationMs, chapterId, progress, playbackRate, and transcriptSegmentId from the local prepared package timeline."
   ]
 }

@@ -7,12 +7,33 @@
   "mediaOwnership": "remote_control_only",
   "capabilities": {
     "playback": [],
-    "timeline": ["chapter_timing"],
-    "interjection": ["delegate_interjection_to_canonical_runtime"],
+    "timeline": [
+      "chapter_timing",
+      "media_time",
+      "transcript_segments"
+    ],
+    "interjection": [
+      "delegate_interjection_to_canonical_runtime"
+    ],
     "ai": [],
     "sync": [],
-    "remoteControl": ["display_snapshot", "send_transport_commands", "send_chapter_jump", "send_interjection_commands"]
+    "remoteControl": [
+      "display_snapshot",
+      "send_transport_commands",
+      "send_chapter_jump",
+      "send_interjection_commands"
+    ]
   },
-  "forbiddenCapabilities": ["record_audio", "realtime_tts", "prerendered_audio", "native_media", "generate_listening_map", "summarize_interjections", "continue_discussion"],
-  "notes": ["Compact command surface. The phone/tablet runtime performs all work."]
+  "forbiddenCapabilities": [
+    "record_audio",
+    "realtime_tts",
+    "prerendered_audio",
+    "native_media",
+    "generate_listening_map",
+    "summarize_interjections",
+    "continue_discussion"
+  ],
+  "notes": [
+    "Compact command surface. The phone/tablet runtime performs all work; media time, duration, chapter, and transcript segment values are display/delegation anchors only."
+  ]
 }
