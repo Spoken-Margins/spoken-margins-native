@@ -18,45 +18,245 @@
   ],
   "additionalProperties": false,
   "properties": {
-    "schemaVersion": { "const": "interjection.v1" },
-    "id": { "type": "string", "minLength": 1 },
-    "itemId": { "type": "string", "minLength": 1 },
-    "sessionId": { "type": "string", "minLength": 1 },
-    "targetType": { "enum": ["item", "assistant_turn", "summary_turn", "external_media"] },
-    "targetId": { "type": "string", "minLength": 1 },
-    "chapterId": { "type": ["string", "null"] },
-    "createdAt": { "type": "string", "format": "date-time" },
-    "roughPercent": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "schemaVersion": {
+      "const": "interjection.v1"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "itemId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sessionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "targetType": {
+      "enum": [
+        "item",
+        "assistant_turn",
+        "summary_turn",
+        "external_media"
+      ]
+    },
+    "targetId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "chapterId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "roughPercent": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
     "anchor": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["anchorType"],
+      "required": [
+        "anchorType"
+      ],
       "properties": {
-        "anchorType": { "enum": ["text", "transcript", "media", "turn"] },
-        "startChar": { "type": ["integer", "null"], "minimum": 0 },
-        "endChar": { "type": ["integer", "null"], "minimum": 0 },
-        "anchorBefore": { "type": ["string", "null"] },
-        "anchorAfter": { "type": ["string", "null"] },
-        "mediaTimeMs": { "type": ["integer", "null"], "minimum": 0 },
-        "playbackRateObserved": { "type": ["number", "null"], "minimum": 0.25, "maximum": 4 },
-        "transcriptSegmentId": { "type": ["string", "null"] },
-        "turnSegmentIndex": { "type": ["integer", "null"], "minimum": 0 }
+        "anchorType": {
+          "enum": [
+            "text",
+            "transcript",
+            "media",
+            "turn"
+          ]
+        },
+        "startChar": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "endChar": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "anchorBefore": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "anchorAfter": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mediaTimeMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "playbackRateObserved": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0.25,
+          "maximum": 4
+        },
+        "transcriptSegmentId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "turnSegmentIndex": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
       }
     },
     "audio": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["status"],
+      "required": [
+        "status"
+      ],
       "properties": {
-        "status": { "enum": ["pending", "saved", "failed", "discarded"] },
-        "path": { "type": ["string", "null"] },
-        "durationMs": { "type": ["integer", "null"], "minimum": 0 }
+        "status": {
+          "enum": [
+            "pending",
+            "saved",
+            "failed",
+            "discarded"
+          ]
+        },
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "durationMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
       }
     },
-    "transcriptionStatus": { "enum": ["pending", "transcribed", "failed"] },
-    "transcript": { "type": ["string", "null"] },
-    "cleanedTranscript": { "type": ["string", "null"] },
-    "status": { "enum": ["active", "deleted"] },
-    "error": { "type": ["string", "null"] }
+    "transcriptionStatus": {
+      "enum": [
+        "pending",
+        "transcribed",
+        "failed"
+      ]
+    },
+    "transcript": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "cleanedTranscript": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "status": {
+      "enum": [
+        "active",
+        "deleted"
+      ]
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "aiContext": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "contextType",
+        "anchorConfidence"
+      ],
+      "properties": {
+        "contextType": {
+          "enum": [
+            "source_text",
+            "generated_tts",
+            "native_audio_transcript",
+            "native_audio_media_time",
+            "transcriptless_audio_fallback"
+          ]
+        },
+        "chapterId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "transcriptSegmentId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mediaTimeMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "sourceExcerptBefore": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sourceExcerptAfter": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "anchorConfidence": {
+          "enum": [
+            "high",
+            "medium",
+            "low"
+          ]
+        },
+        "fallbackReason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
   }
 }

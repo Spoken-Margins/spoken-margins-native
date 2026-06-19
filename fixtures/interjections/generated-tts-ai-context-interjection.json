@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "interjection.v1",
+  "id": "ij-tts-context-001",
+  "itemId": "item-pill",
+  "sessionId": "session-pill-prerendered",
+  "targetType": "item",
+  "targetId": "item-pill",
+  "chapterId": "ch-pill-causality",
+  "createdAt": "2026-06-11T12:19:00.000Z",
+  "roughPercent": 38,
+  "anchor": {
+    "anchorType": "media",
+    "startChar": 31,
+    "endChar": 81,
+    "anchorBefore": "Maybe their diet changed. Maybe their sleep changed.",
+    "anchorAfter": "Maybe their symptoms were about to improve anyway.",
+    "mediaTimeMs": 35000,
+    "playbackRateObserved": 1,
+    "transcriptSegmentId": null,
+    "turnSegmentIndex": null
+  },
+  "aiContext": {
+    "contextType": "generated_tts",
+    "chapterId": "ch-pill-causality",
+    "transcriptSegmentId": null,
+    "mediaTimeMs": 35000,
+    "sourceExcerptBefore": "Maybe their diet changed. Maybe their sleep changed.",
+    "sourceExcerptAfter": "Maybe their symptoms were about to improve anyway.",
+    "anchorConfidence": "high",
+    "fallbackReason": null
+  },
+  "audio": { "status": "saved", "path": "interjections/ij-tts-context-001.m4a", "durationMs": 4100 },
+  "transcriptionStatus": "transcribed",
+  "transcript": "This audio rendering should produce the same source context.",
+  "cleanedTranscript": "This audio rendering should produce the same source context.",
+  "status": "active",
+  "error": null
+}

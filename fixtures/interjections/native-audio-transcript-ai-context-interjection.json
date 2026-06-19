@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "interjection.v1",
+  "id": "ij-video-context-001",
+  "itemId": "item-video-001",
+  "sessionId": "session-video-001",
+  "targetType": "external_media",
+  "targetId": "item-video-001",
+  "chapterId": "ch-video-anecdotes",
+  "createdAt": "2026-06-11T14:10:00.000Z",
+  "roughPercent": 24,
+  "anchor": {
+    "anchorType": "transcript",
+    "startChar": null,
+    "endChar": null,
+    "anchorBefore": "Maybe their diet changed. Maybe their sleep changed.",
+    "anchorAfter": "Maybe their symptoms were about to improve anyway.",
+    "mediaTimeMs": 428000,
+    "playbackRateObserved": 1.75,
+    "transcriptSegmentId": "seg-003",
+    "turnSegmentIndex": null
+  },
+  "aiContext": {
+    "contextType": "native_audio_transcript",
+    "chapterId": "ch-video-anecdotes",
+    "transcriptSegmentId": "seg-003",
+    "mediaTimeMs": 428000,
+    "sourceExcerptBefore": "Maybe their diet changed. Maybe their sleep changed.",
+    "sourceExcerptAfter": "Maybe their symptoms were about to improve anyway.",
+    "anchorConfidence": "high",
+    "fallbackReason": null
+  },
+  "audio": { "status": "saved", "path": "interjections/ij-video-context-001.m4a", "durationMs": 3900 },
+  "transcriptionStatus": "transcribed",
+  "transcript": "Use this transcript-backed media context for the answer.",
+  "cleanedTranscript": "Use this transcript-backed media context for the answer.",
+  "status": "active",
+  "error": null
+}

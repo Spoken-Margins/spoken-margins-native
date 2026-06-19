@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "audio-asset.v1",
+  "id": "audio-native-field-notes",
+  "itemId": "item-native-audio-001",
+  "audioSourceType": "native_media_file",
+  "availability": "local_phone",
+  "filePath": "audio/native/voice-memo-field-notes.m4a",
+  "url": null,
+  "durationMs": 640000,
+  "codec": "m4a/aac",
+  "voiceId": null,
+  "createdAt": "2026-06-11T15:00:00.000Z"
+}

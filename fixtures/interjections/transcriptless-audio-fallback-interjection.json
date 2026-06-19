@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "interjection.v1",
+  "id": "ij-native-audio-fallback-001",
+  "itemId": "item-native-audio-001",
+  "sessionId": "session-native-audio-001",
+  "targetType": "external_media",
+  "targetId": "item-native-audio-001",
+  "chapterId": null,
+  "createdAt": "2026-06-11T15:07:00.000Z",
+  "roughPercent": 42,
+  "anchor": {
+    "anchorType": "media",
+    "startChar": null,
+    "endChar": null,
+    "anchorBefore": null,
+    "anchorAfter": null,
+    "mediaTimeMs": 268000,
+    "playbackRateObserved": 1,
+    "transcriptSegmentId": null,
+    "turnSegmentIndex": null
+  },
+  "aiContext": {
+    "contextType": "transcriptless_audio_fallback",
+    "chapterId": null,
+    "transcriptSegmentId": null,
+    "mediaTimeMs": 268000,
+    "sourceExcerptBefore": null,
+    "sourceExcerptAfter": null,
+    "anchorConfidence": "low",
+    "fallbackReason": "No transcript or source text is available; AI context may use item metadata and media time only."
+  },
+  "audio": { "status": "saved", "path": "interjections/ij-native-audio-fallback-001.m4a", "durationMs": 3600 },
+  "transcriptionStatus": "transcribed",
+  "transcript": "I need to revisit this moment later.",
+  "cleanedTranscript": "I need to revisit this moment later.",
+  "status": "active",
+  "error": null
+}

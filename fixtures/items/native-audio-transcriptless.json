@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "item.v1",
+  "id": "item-native-audio-001",
+  "title": "Voice Memo: Field Notes",
+  "mediaType": "native_audio",
+  "text": null,
+  "media": {
+    "sourceType": "file_audio",
+    "url": null,
+    "durationMs": 640000,
+    "nativeMediaId": "voice-memo-field-notes"
+  },
+  "externalReference": "voice-memo-field-notes.m4a",
+  "externalReferenceType": "plain",
+  "createdAt": "2026-06-11T15:00:00.000Z",
+  "updatedAt": "2026-06-11T15:00:00.000Z",
+  "status": "ready",
+  "listeningMapId": null,
+  "transcriptId": null
+}

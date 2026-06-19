@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "interjection.v1",
+  "id": "ij-text-context-001",
+  "itemId": "item-pill",
+  "sessionId": "session-pill-mapless",
+  "targetType": "item",
+  "targetId": "item-pill",
+  "chapterId": "ch-pill-causality",
+  "createdAt": "2026-06-11T12:18:00.000Z",
+  "roughPercent": 38,
+  "anchor": {
+    "anchorType": "text",
+    "startChar": 31,
+    "endChar": 81,
+    "anchorBefore": "Maybe their diet changed. Maybe their sleep changed.",
+    "anchorAfter": "Maybe their symptoms were about to improve anyway.",
+    "mediaTimeMs": null,
+    "playbackRateObserved": 1,
+    "transcriptSegmentId": null,
+    "turnSegmentIndex": null
+  },
+  "aiContext": {
+    "contextType": "source_text",
+    "chapterId": "ch-pill-causality",
+    "transcriptSegmentId": null,
+    "mediaTimeMs": null,
+    "sourceExcerptBefore": "Maybe their diet changed. Maybe their sleep changed.",
+    "sourceExcerptAfter": "Maybe their symptoms were about to improve anyway.",
+    "anchorConfidence": "high",
+    "fallbackReason": null
+  },
+  "audio": { "status": "saved", "path": "interjections/ij-text-context-001.m4a", "durationMs": 4200 },
+  "transcriptionStatus": "transcribed",
+  "transcript": "This list works, but it feels repetitive.",
+  "cleanedTranscript": "This list works, but it feels repetitive.",
+  "status": "active",
+  "error": null
+}
