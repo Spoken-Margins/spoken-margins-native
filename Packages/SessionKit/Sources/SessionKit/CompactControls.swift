@@ -26,6 +26,10 @@ public struct CompactControlSnapshot: Codable, Equatable, Sendable {
     public var progressPercent: Int
     public var currentPlaybackProgressPercent: Int
     public var sourceProgressPercent: Int
+    public var currentMediaTimeMs: Int?
+    public var currentPlaybackDurationMs: Int?
+    public var currentTranscriptSegmentId: String?
+    public var currentAnchorConfidence: AnchorConfidence?
     public var playbackRate: Double
     public var isRecording: Bool
     public var pendingAiJobCount: Int
@@ -50,6 +54,10 @@ public struct CompactControlSnapshot: Codable, Equatable, Sendable {
         progressPercent: Int,
         currentPlaybackProgressPercent: Int,
         sourceProgressPercent: Int,
+        currentMediaTimeMs: Int? = nil,
+        currentPlaybackDurationMs: Int? = nil,
+        currentTranscriptSegmentId: String? = nil,
+        currentAnchorConfidence: AnchorConfidence? = nil,
         playbackRate: Double,
         isRecording: Bool,
         pendingAiJobCount: Int,
@@ -72,6 +80,10 @@ public struct CompactControlSnapshot: Codable, Equatable, Sendable {
         self.progressPercent = progressPercent
         self.currentPlaybackProgressPercent = currentPlaybackProgressPercent
         self.sourceProgressPercent = sourceProgressPercent
+        self.currentMediaTimeMs = currentMediaTimeMs
+        self.currentPlaybackDurationMs = currentPlaybackDurationMs
+        self.currentTranscriptSegmentId = currentTranscriptSegmentId
+        self.currentAnchorConfidence = currentAnchorConfidence
         self.playbackRate = playbackRate
         self.isRecording = isRecording
         self.pendingAiJobCount = pendingAiJobCount
@@ -254,6 +266,10 @@ public final class CompactControlDispatcher {
             progressPercent: snapshot.progressPercent,
             currentPlaybackProgressPercent: snapshot.currentPlaybackProgressPercent,
             sourceProgressPercent: snapshot.sourceProgressPercent,
+            currentMediaTimeMs: snapshot.currentMediaTimeMs,
+            currentPlaybackDurationMs: snapshot.currentPlaybackDurationMs,
+            currentTranscriptSegmentId: snapshot.currentTranscriptSegmentId,
+            currentAnchorConfidence: snapshot.currentAnchorConfidence,
             playbackRate: snapshot.playbackRate,
             isRecording: snapshot.isRecording,
             pendingAiJobCount: snapshot.pendingAiJobCount,

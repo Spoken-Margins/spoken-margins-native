@@ -303,6 +303,115 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(fallback.mediaTimeMs, 40_000)
     }
 
+    func testTextPlaybackPositionMapsInterjectionToSourceContext() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "interjection": ["record_audio", "capture_text_anchor"]
+            ]
+        )
+        let text = "First sentence. Second sentence."
+        let item = Item(id: "item-text", title: "Text", mediaType: "text", text: text, externalReference: nil, status: "ready")
+        let audio = RecordingAudioClient()
+        let transcriber = RecordingTranscriptionClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio, transcriber: transcriber)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentOffset = "First ".count
+        let progress = try engine.syncPlaybackProgress()
+
+        XCTAssertEqual(progress.currentTextStart, "First ".count)
+        XCTAssertEqual(progress.currentAnchorConfidence, .textRange)
+
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: "interjections/text.m4a")
+
+        let interjection = try XCTUnwrap(try repo.loadInterjections(sessionId: engine.currentSession?.id ?? "").first)
+        XCTAssertEqual(interjection.anchor.anchorType, .text)
+        XCTAssertEqual(interjection.anchor.startChar, "First ".count)
+        XCTAssertTrue(interjection.anchor.anchorBefore.contains("sentence"))
+        XCTAssertEqual(transcriber.scheduledInterjectionIds, [interjection.id])
+    }
+
+    func testMediaPlaybackPositionPublishesTimelineAnchorAndDuration() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-offline",
+            displayName: "Phone/Tablet Offline",
+            capabilities: [
+                "sync": ["receive_prepared_packages", "canonical_persistence"],
+                "playback": ["prerendered_audio", "native_media"],
+                "timeline": ["transcript_segments", "media_time", "chapter_timing"]
+            ]
+        )
+        let package = WatchAudioPackage(
+            id: "package-media",
+            itemId: "item-media",
+            sessionId: "session-media",
+            createdAt: Date(timeIntervalSince1970: 1),
+            item: WatchPackageItem(title: "Media", mediaType: "transcript_backed_media", externalReference: "https://example.com/audio.mp3"),
+            audioAssets: [WatchPackageAudioAsset(audioAssetId: "asset-media", fileName: "media.m4a", durationMs: 20_000)],
+            transcript: WatchPackageTranscript(
+                transcriptId: "transcript-media",
+                segments: [
+                    MediaTimelineSegment(id: "seg-1", startMs: 0, endMs: 10_000, startChar: 0, endChar: 14, text: "First segment."),
+                    MediaTimelineSegment(id: "seg-2", startMs: 10_000, endMs: 20_000, startChar: 15, endChar: 30, text: "Second segment.")
+                ]
+            ),
+            chapters: [
+                MediaTimelineChapter(id: "ch-1", title: "Opening", startMs: 0, transcriptSegmentId: "seg-1"),
+                MediaTimelineChapter(id: "ch-2", title: "Middle", startMs: 10_000, transcriptSegmentId: "seg-2")
+            ],
+            settings: WatchPackageSettings(rollbackUnit: "previous_segment", defaultPlaybackRate: 1)
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(watchPackages: [package.id: package])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.loadWatchPackage(watchPackageId: package.id)
+        _ = try engine.resumePlayback()
+        audio.currentMediaTimeValue = 12_000
+        let snapshot = try engine.syncPlaybackProgress()
+
+        XCTAssertEqual(snapshot.currentMediaTimeMs, 12_000)
+        XCTAssertEqual(snapshot.currentPlaybackDurationMs, 20_000)
+        XCTAssertEqual(snapshot.currentTranscriptSegmentId, "seg-2")
+        XCTAssertEqual(snapshot.currentAnchorConfidence, .transcriptSpan)
+        XCTAssertEqual(snapshot.chapterTitle, "Middle")
+    }
+
+    func testLinkResolutionContractCanRepresentResolvedPodcastEpisode() throws {
+        let request = LinkResolutionRequest(
+            id: "link-request-1",
+            inputURL: "https://open.spotify.com/episode/example",
+            sourceSurface: "share_sheet",
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let candidate = LinkResolutionCandidate(
+            sourceLink: SourceLink(url: "https://feeds.example.com/show.xml", provider: "rss", title: "Example Show", role: "canonical_feed"),
+            title: "Episode Title",
+            showTitle: "Example Show",
+            durationMs: 1_800_000,
+            publishedAt: "2026-06-19",
+            audioURL: "https://cdn.example.com/episode.mp3",
+            confidence: 0.96
+        )
+        let result = LinkResolutionResult(
+            requestId: request.id,
+            status: .playable,
+            originalLink: SourceLink(url: request.inputURL, provider: "spotify", role: "discovery"),
+            selectedCandidate: candidate,
+            candidates: [candidate]
+        )
+
+        XCTAssertEqual(result.status, .playable)
+        XCTAssertEqual(result.selectedCandidate?.audioURL, "https://cdn.example.com/episode.mp3")
+        XCTAssertEqual(result.originalLink.role, "discovery")
+    }
+
     func testInMemoryRepositoryListsWatchPackagesByItem() throws {
         let first = WatchAudioPackage(
             id: "package-1",
@@ -1453,6 +1562,9 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     var preparedTexts: [String] = []
     var pauseCount = 0
     var currentOffset: Int?
+    var currentMediaTimeValue: Int?
+    var currentDurationMs: Int?
+    var activeTargetId: String?
     var completedTargetIds = Set<String>()
 
     func prepareSpeechText(_ text: String) throws -> String {
@@ -1461,13 +1573,24 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     }
 
     func play(targetId: String) throws {
+        activeTargetId = targetId
         playedTargets.append(targetId)
         playedOffsets.append(0)
     }
 
     func play(targetId: String, from charOffset: Int) throws {
+        activeTargetId = targetId
+        currentMediaTimeValue = nil
         playedTargets.append(targetId)
         playedOffsets.append(charOffset)
+    }
+
+    func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {
+        activeTargetId = targetId
+        currentOffset = nil
+        currentMediaTimeValue = mediaTimeMs
+        playedTargets.append(targetId)
+        playedOffsets.append(mediaTimeMs)
     }
 
     func pause() throws {
@@ -1476,6 +1599,30 @@ private final class RecordingAudioClient: AudioPlaybackClient {
 
     func currentCharOffset() -> Int? {
         currentOffset
+    }
+
+    func currentMediaTimeMs() -> Int? {
+        currentMediaTimeValue
+    }
+
+    func currentPlaybackPosition() -> PlaybackPosition? {
+        if let currentMediaTimeValue {
+            return PlaybackPosition(
+                targetId: activeTargetId,
+                mediaTimeMs: currentMediaTimeValue,
+                durationMs: currentDurationMs,
+                anchorConfidence: .mediaTime
+            )
+        }
+        if let currentOffset {
+            return PlaybackPosition(
+                targetId: activeTargetId,
+                textStart: currentOffset,
+                textEnd: currentOffset + 1,
+                anchorConfidence: .textRange
+            )
+        }
+        return nil
     }
 
     func isPlaybackComplete(targetId: String) -> Bool {

@@ -907,7 +907,7 @@ public final class SessionEngine {
         snapshot.turnStatus = "complete"
         snapshot.pendingAiJobCount = pendingJobs.count
         let nextPhase: SessionPhase
-        if snapshot.status == .playing, audio.currentCharOffset() != nil {
+        if snapshot.status == .playing, rawAudioTextOffset() != nil {
             nextPhase = session.phase
         } else if turn.turnType == "interjection_summary" {
             nextPhase = .interjectionSummary
@@ -1246,8 +1246,15 @@ public final class SessionEngine {
         snapshot.title = currentItem?.title
         snapshot.progressPercent = session.completionPercent
         let progress = playbackProgress(for: session)
+        let position = playbackPosition(for: session)
         snapshot.sourceProgressPercent = progress.sourcePercent
         snapshot.currentPlaybackProgressPercent = progress.currentPercent
+        snapshot.currentMediaTimeMs = position.mediaTimeMs
+        snapshot.currentPlaybackDurationMs = position.durationMs
+        snapshot.currentTextStart = position.textStart
+        snapshot.currentTextEnd = position.textEnd
+        snapshot.currentTranscriptSegmentId = position.transcriptSegmentId
+        snapshot.currentAnchorConfidence = position.anchorConfidence
         snapshot.playbackRate = session.playbackRate
         snapshot.chapterTitle = progress.chapterTitle ?? currentItem?.title
         snapshot.activeInterjectionCount = (try? repository.loadInterjections(sessionId: session.id).filter { $0.status == "active" }.count) ?? snapshot.activeInterjectionCount
@@ -1256,9 +1263,10 @@ public final class SessionEngine {
 
     private func playbackProgress(for session: Session) -> PlaybackProgress {
         let sourcePercent = session.completionPercent
+        let position = playbackPosition(for: session)
         switch session.currentTargetType {
         case .itemTextTTS:
-            let currentAudioOffset = audio.currentCharOffset()
+            let currentAudioOffset = rawAudioTextOffset()
             let prefixLength = itemPlaybackPreface().count
             let isInPreface = prefixLength > 0 && (currentAudioOffset ?? 0) <= prefixLength && session.position.chapterId == nil
             let currentPercent: Int
@@ -1276,14 +1284,14 @@ public final class SessionEngine {
                 return PlaybackProgress(sourcePercent: sourcePercent, currentPercent: 0, chapterTitle: currentItem?.title)
             }
             let playable = playableText(for: turn)
-            let audioOffset = audio.currentCharOffset() ?? turnAudioOffset(for: turn, responseOffset: session.position.charOffset)
+            let audioOffset = rawAudioTextOffset() ?? turnAudioOffset(for: turn, responseOffset: session.position.charOffset)
             let currentPercent = playable.isEmpty ? 0 : percent(for: max(0, min(audioOffset, playable.count)), text: playable)
             let responseOffset = turnResponseOffset(for: turn, audioOffset: audioOffset)
             let title = turn.chapters?.last(where: { $0.startChar <= responseOffset })?.title ?? turnTitle(for: turn)
             return PlaybackProgress(sourcePercent: sourcePercent, currentPercent: currentPercent, chapterTitle: title)
         case .transcriptBackedMedia, .browserOwnedMedia:
             if let package = currentWatchPackage {
-                let mediaTimeMs = audio.currentMediaTimeMs() ?? session.position.mediaTimeMs ?? 0
+                let mediaTimeMs = position.mediaTimeMs ?? session.position.mediaTimeMs ?? 0
                 let resolved = MediaTimelineAnchorResolver.resolve(
                     mediaTimeMs: mediaTimeMs,
                     timeline: package.timeline,
@@ -1299,6 +1307,94 @@ public final class SessionEngine {
                 )
             }
             return PlaybackProgress(sourcePercent: sourcePercent, currentPercent: sourcePercent, chapterTitle: currentItem?.title)
+        }
+    }
+
+    private func rawAudioTextOffset() -> Int? {
+        audio.currentPlaybackPosition()?.textStart ?? audio.currentCharOffset()
+    }
+
+    private func playbackPosition(for session: Session) -> PlaybackPosition {
+        let audioPosition = audio.currentPlaybackPosition()
+        switch session.currentTargetType {
+        case .itemTextTTS:
+            let prefixLength = itemPlaybackPreface().count
+            let text = currentItem?.text ?? ""
+            let rawOffset = rawAudioTextOffset()
+            let isInPreface = rawOffset.map { prefixLength > 0 && $0 <= prefixLength && session.position.chapterId == nil } ?? false
+            let sourceOffset = rawOffset.map { isInPreface ? 0 : itemSourceOffset(forAudioOffset: $0) } ?? session.position.charOffset
+            let start = max(0, min(sourceOffset, text.count))
+            let end = min(text.count, max(start + 1, nextBoundary(after: start, unit: "sentence", text: text)))
+            return PlaybackPosition(
+                itemId: session.itemId,
+                targetType: session.currentTargetType,
+                targetId: session.currentTargetId,
+                textStart: start,
+                textEnd: end,
+                chapterId: isInPreface ? nil : chapterId(for: start),
+                playbackRate: session.playbackRate,
+                anchorConfidence: .textRange
+            )
+        case .summaryTurnTTS, .assistantTurnTTS:
+            let turn = try? repository.loadTurns(sessionId: session.id).first(where: { $0.id == session.currentTargetId })
+            let text = turn.map { generatedTurnNavigationText(for: $0) } ?? ""
+            let audioOffset = rawAudioTextOffset() ?? turn.map { turnAudioOffset(for: $0, responseOffset: session.position.charOffset) } ?? session.position.charOffset
+            let responseOffset = turn.map { turnResponseOffset(for: $0, audioOffset: audioOffset) } ?? session.position.charOffset
+            let start = max(0, min(responseOffset, text.count))
+            let end = min(text.count, max(start + 1, nextBoundary(after: start, unit: "sentence", text: text)))
+            return PlaybackPosition(
+                itemId: session.itemId,
+                targetType: session.currentTargetType,
+                targetId: session.currentTargetId,
+                textStart: start,
+                textEnd: end,
+                chapterId: turn?.chapters?.last(where: { $0.startChar <= start })?.id,
+                playbackRate: session.playbackRate,
+                anchorConfidence: .textRange
+            )
+        case .transcriptBackedMedia, .browserOwnedMedia:
+            let mediaTimeMs = audioPosition?.mediaTimeMs ?? audio.currentMediaTimeMs() ?? session.position.mediaTimeMs
+            let durationMs = audioPosition?.durationMs ?? currentWatchPackage?.primaryAudioAsset?.durationMs ?? currentWatchPackage?.timeline.durationMs
+            guard let mediaTimeMs else {
+                return PlaybackPosition(
+                    itemId: session.itemId,
+                    targetType: session.currentTargetType,
+                    targetId: session.currentTargetId,
+                    chapterId: session.position.chapterId,
+                    playbackRate: session.playbackRate,
+                    anchorConfidence: .localFallback
+                )
+            }
+            if let package = currentWatchPackage {
+                let resolved = MediaTimelineAnchorResolver.resolve(
+                    mediaTimeMs: mediaTimeMs,
+                    timeline: package.timeline,
+                    playbackRateObserved: session.playbackRate
+                )
+                return PlaybackPosition(
+                    itemId: session.itemId,
+                    targetType: session.currentTargetType,
+                    targetId: session.currentTargetId,
+                    mediaTimeMs: resolved.mediaTimeMs,
+                    durationMs: durationMs,
+                    textStart: resolved.startChar,
+                    textEnd: resolved.endChar,
+                    transcriptSegmentId: resolved.transcriptSegmentId,
+                    chapterId: resolved.chapterId,
+                    playbackRate: resolved.playbackRateObserved,
+                    anchorConfidence: resolved.transcriptSegmentId == nil ? .mediaTime : .transcriptSpan
+                )
+            }
+            return PlaybackPosition(
+                itemId: session.itemId,
+                targetType: session.currentTargetType,
+                targetId: session.currentTargetId,
+                mediaTimeMs: max(0, mediaTimeMs),
+                durationMs: durationMs,
+                chapterId: session.position.chapterId,
+                playbackRate: session.playbackRate,
+                anchorConfidence: .mediaTime
+            )
         }
     }
 
@@ -1398,8 +1494,9 @@ public final class SessionEngine {
     }
 
     private func buildAnchor(for session: Session, targetType: InterjectionTargetType, targetId: String) -> Anchor {
+        let playbackPosition = playbackPosition(for: session)
         if session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia {
-            let resolved = resolveMediaAnchor(for: session)
+            let resolved = resolveMediaAnchor(for: session, playbackPosition: playbackPosition)
             lastResolvedMediaAnchor = resolved
             return Anchor(
                 anchorType: resolved.transcriptSegmentId == nil ? .media : .transcript,
@@ -1415,7 +1512,7 @@ public final class SessionEngine {
         if targetType != .item {
             let turn = try? repository.loadTurns(sessionId: session.id).first(where: { $0.id == targetId })
             let turnText = turn.map { generatedTurnNavigationText(for: $0) } ?? ""
-            let start = max(0, min(session.position.charOffset, turnText.count))
+            let start = max(0, min(playbackPosition.textStart ?? session.position.charOffset, turnText.count))
             let sentenceStart = previousBoundary(before: start, unit: "sentence", text: turnText)
             let end = min(turnText.count, max(sentenceStart + 1, nextBoundary(after: start, unit: "sentence", text: turnText)))
             let segmentIndex = completeSentenceUnits(in: slice(turnText, start: 0, end: sentenceStart)).count
@@ -1429,7 +1526,7 @@ public final class SessionEngine {
             )
         }
         let text = currentItem?.text ?? ""
-        let start = max(0, min(session.position.charOffset, text.count))
+        let start = max(0, min(playbackPosition.textStart ?? session.position.charOffset, text.count))
         let end = min(text.count, max(start + 1, nextBoundary(after: start, unit: "sentence", text: text)))
         return Anchor(
             anchorType: .text,
@@ -1643,23 +1740,24 @@ public final class SessionEngine {
         return "watch-event-\(base)"
     }
 
-    private func resolveMediaAnchor(for session: Session) -> MediaResolvedAnchor {
+    private func resolveMediaAnchor(for session: Session, playbackPosition: PlaybackPosition? = nil) -> MediaResolvedAnchor {
+        let position = playbackPosition ?? self.playbackPosition(for: session)
         guard let package = currentWatchPackage else {
             return MediaResolvedAnchor(
-                mediaTimeMs: session.position.mediaTimeMs ?? 0,
-                chapterId: session.position.chapterId,
+                mediaTimeMs: position.mediaTimeMs ?? session.position.mediaTimeMs ?? 0,
+                chapterId: position.chapterId ?? session.position.chapterId,
                 transcriptSegmentId: nil,
-                startChar: session.position.charOffset,
-                endChar: session.position.charOffset,
+                startChar: position.textStart ?? session.position.charOffset,
+                endChar: position.textEnd ?? position.textStart ?? session.position.charOffset,
                 anchorBefore: "",
                 anchorAfter: "",
-                playbackRateObserved: session.playbackRate
+                playbackRateObserved: position.playbackRate
             )
         }
         return MediaTimelineAnchorResolver.resolve(
-            mediaTimeMs: audio.currentMediaTimeMs() ?? session.position.mediaTimeMs ?? 0,
+            mediaTimeMs: position.mediaTimeMs ?? session.position.mediaTimeMs ?? 0,
             timeline: package.timeline,
-            playbackRateObserved: session.playbackRate
+            playbackRateObserved: position.playbackRate
         )
     }
 
@@ -1822,44 +1920,37 @@ public final class SessionEngine {
     }
 
     private func syncSessionPositionFromAudio(_ session: Session, item: Item?) -> Session {
+        let playbackPosition = playbackPosition(for: session)
         guard session.currentTargetType == .itemTextTTS,
-              let offset = audio.currentCharOffset(),
-              offset >= 0 else {
+              let textStart = playbackPosition.textStart,
+              textStart >= 0 else {
             return session
         }
-        let prefixLength = itemPlaybackPreface().count
-        if prefixLength > 0, offset <= prefixLength {
-            var updated = session
-            updated.position.charOffset = 0
-            updated.position.chapterId = nil
-            updated.completionPercent = 0
-            return updated
-        }
-        let sourceOffset = itemSourceOffset(forAudioOffset: offset)
-        guard sourceOffset <= (item?.text ?? "").count else { return session }
+        guard textStart <= (item?.text ?? "").count else { return session }
         var updated = session
-        updated.position.charOffset = max(0, min(sourceOffset, item?.text?.count ?? 0))
+        updated.position.charOffset = max(0, min(textStart, item?.text?.count ?? 0))
         updated.completionPercent = percent(for: updated.position.charOffset, text: item?.text ?? "")
-        updated.position.chapterId = chapterId(for: updated.position.charOffset)
+        updated.position.chapterId = playbackPosition.chapterId
         return updated
     }
 
     private func syncGeneratedTurnPositionFromAudio(_ session: Session) throws -> Session {
         guard session.currentTargetType == .summaryTurnTTS || session.currentTargetType == .assistantTurnTTS,
               let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == session.currentTargetId }),
-              let offset = audio.currentCharOffset(),
-              offset >= 0 else {
+              let textStart = playbackPosition(for: session).textStart,
+              textStart >= 0 else {
             return session
         }
         let text = generatedTurnNavigationText(for: turn)
         var updated = session
-        updated.position.charOffset = max(0, min(turnResponseOffset(for: turn, audioOffset: offset), text.count))
+        updated.position.charOffset = max(0, min(textStart, text.count))
         updated.position.chapterId = turn.chapters?.last(where: { $0.startChar <= updated.position.charOffset })?.id
         return updated
     }
 
     private func syncMediaPositionFromAudio(_ session: Session) -> Session {
-        guard let mediaTimeMs = audio.currentMediaTimeMs() ?? session.position.mediaTimeMs else {
+        let playbackPosition = playbackPosition(for: session)
+        guard let mediaTimeMs = playbackPosition.mediaTimeMs ?? session.position.mediaTimeMs else {
             return session
         }
         var updated = session
@@ -1868,7 +1959,7 @@ public final class SessionEngine {
             let resolved = MediaTimelineAnchorResolver.resolve(
                 mediaTimeMs: max(0, mediaTimeMs),
                 timeline: package.timeline,
-                playbackRateObserved: session.playbackRate
+                playbackRateObserved: playbackPosition.playbackRate
             )
             updated.position.chapterId = resolved.chapterId
             updated.position.charOffset = resolved.startChar

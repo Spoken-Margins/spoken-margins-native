@@ -31,6 +31,7 @@ public protocol AudioPlaybackClient {
     func play(targetId: String) throws
     func play(targetId: String, from charOffset: Int) throws
     func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws
+    func currentPlaybackPosition() -> PlaybackPosition?
     func currentCharOffset() -> Int?
     func currentMediaTimeMs() -> Int?
     func isPlaybackComplete(targetId: String) -> Bool
@@ -52,10 +53,14 @@ public extension AudioPlaybackClient {
     }
 
     func currentCharOffset() -> Int? {
-        nil
+        currentPlaybackPosition()?.textStart
     }
 
     func currentMediaTimeMs() -> Int? {
+        currentPlaybackPosition()?.mediaTimeMs
+    }
+
+    func currentPlaybackPosition() -> PlaybackPosition? {
         nil
     }
 

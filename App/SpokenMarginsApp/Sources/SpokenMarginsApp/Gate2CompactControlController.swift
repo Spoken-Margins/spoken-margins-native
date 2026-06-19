@@ -186,11 +186,15 @@ private final class Gate2NowPlayingController {
 
     func publish(_ snapshot: CompactControlSnapshot) {
         #if canImport(MediaPlayer)
+        let durationSeconds = snapshot.currentPlaybackDurationMs.map { max(0, Double($0) / 1000) }
+        let elapsedSeconds = snapshot.currentMediaTimeMs.map { max(0, Double($0) / 1000) }
+        let fallbackDuration = 100.0
+        let fallbackElapsed = Double(max(0, min(100, snapshot.currentPlaybackProgressPercent)))
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: snapshot.title ?? "Spoken Margins",
             MPMediaItemPropertyAlbumTitle: snapshot.chapterTitle ?? "Session",
-            MPNowPlayingInfoPropertyElapsedPlaybackTime: Double(snapshot.currentPlaybackProgressPercent),
-            MPMediaItemPropertyPlaybackDuration: 100,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsedSeconds ?? fallbackElapsed,
+            MPMediaItemPropertyPlaybackDuration: durationSeconds ?? fallbackDuration,
             MPNowPlayingInfoPropertyPlaybackRate: snapshot.status == .playing ? snapshot.playbackRate : 0,
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue
         ]

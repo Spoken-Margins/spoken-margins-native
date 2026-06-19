@@ -38,6 +38,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
     private var lastTargetId: String?
     private var lastStartOffset = 0
     private var currentOffset: Int?
+    private var currentRangeLength = 0
     private var completedTargetId: String?
     private var playbackComplete = false
     private var paused = false
@@ -122,6 +123,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         lastTargetId = targetId
         lastStartOffset = charOffset
         currentOffset = charOffset
+        currentRangeLength = 0
         completedTargetId = nil
         playbackComplete = false
         paused = false
@@ -177,6 +179,18 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
 
     public func currentCharOffset() -> Int? {
         currentOffset
+    }
+
+    public func currentPlaybackPosition() -> PlaybackPosition? {
+        guard let currentOffset else { return nil }
+        let end = min(preparedSourceText.count, currentOffset + max(1, currentRangeLength))
+        return PlaybackPosition(
+            targetType: .itemTextTTS,
+            targetId: lastTargetId,
+            textStart: currentOffset,
+            textEnd: end,
+            anchorConfidence: .textRange
+        )
     }
 
     public func isPlaybackComplete(targetId: String) -> Bool {
@@ -276,6 +290,7 @@ extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
         utterance: AVSpeechUtterance
     ) {
         currentOffset = lastStartOffset + max(0, characterRange.location)
+        currentRangeLength = max(0, characterRange.length)
     }
 
     public func speechSynthesizer(
@@ -283,6 +298,7 @@ extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
         didFinish utterance: AVSpeechUtterance
     ) {
         currentOffset = preparedSourceText.count
+        currentRangeLength = 0
         completedTargetId = lastTargetId
         playbackComplete = true
     }
@@ -306,6 +322,7 @@ public final class PreparedAudioPlaybackClient: NSObject, AudioPlaybackClient, @
     private var completedTargetId: String?
     private var playbackComplete = false
     private var activeTargetId: String?
+    private var lastRequestedMediaTimeMs = 0
 
     public override init() {
         super.init()
@@ -359,6 +376,7 @@ public final class PreparedAudioPlaybackClient: NSObject, AudioPlaybackClient, @
         let offset = max(0, Double(mediaTimeMs) / 1000)
         if let player {
             player.currentTime = min(offset, player.duration)
+            lastRequestedMediaTimeMs = max(0, Int((player.currentTime * 1000).rounded()))
             playbackComplete = false
             completedTargetId = nil
             guard player.play() else {
@@ -372,15 +390,26 @@ public final class PreparedAudioPlaybackClient: NSObject, AudioPlaybackClient, @
 
     public func currentMediaTimeMs() -> Int? {
         #if canImport(AVFoundation)
-        guard let player else { return nil }
+        guard let player else { return lastRequestedMediaTimeMs }
         return max(0, Int((player.currentTime * 1000).rounded()))
         #else
-        return nil
+        return lastRequestedMediaTimeMs
         #endif
     }
 
     public func currentCharOffset() -> Int? {
-        currentMediaTimeMs()
+        nil
+    }
+
+    public func currentPlaybackPosition() -> PlaybackPosition? {
+        guard let activeTargetId else { return nil }
+        return PlaybackPosition(
+            targetType: .transcriptBackedMedia,
+            targetId: activeTargetId,
+            mediaTimeMs: currentMediaTimeMs(),
+            durationMs: durations[activeTargetId],
+            anchorConfidence: .mediaTime
+        )
     }
 
     public func isPlaybackComplete(targetId: String) -> Bool {
