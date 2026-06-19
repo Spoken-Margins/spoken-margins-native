@@ -7,12 +7,32 @@
   "mediaOwnership": "remote_control_only",
   "capabilities": {
     "playback": [],
-    "timeline": ["chapter_timing"],
+    "timeline": [
+      "chapter_timing",
+      "media_time",
+      "transcript_segments"
+    ],
     "interjection": [],
     "ai": [],
     "sync": [],
-    "remoteControl": ["display_snapshot", "send_transport_commands", "send_chapter_jump", "send_ai_commands"]
+    "remoteControl": [
+      "display_snapshot",
+      "send_transport_commands",
+      "send_chapter_jump",
+      "send_ai_commands"
+    ]
   },
-  "forbiddenCapabilities": ["realtime_tts", "prerendered_audio", "native_media", "record_audio", "generate_listening_map", "summarize_interjections", "cleanup_transcript", "continue_discussion"],
-  "notes": ["Watch is only a control surface. Phone/tablet owns playback, recording, AI provider calls, persistence, and sync; Watch may send delegated AI summary and Discuss intents when tethered. Watch-started interjection recording is disabled until Watch-owned or background-safe capture is available."]
+  "forbiddenCapabilities": [
+    "realtime_tts",
+    "prerendered_audio",
+    "native_media",
+    "record_audio",
+    "generate_listening_map",
+    "summarize_interjections",
+    "cleanup_transcript",
+    "continue_discussion"
+  ],
+  "notes": [
+    "Watch is only a control surface. Phone/tablet owns playback, recording, AI provider calls, persistence, and sync; Watch may send delegated transport, chapter, AI summary, and Discuss intents when tethered. Snapshot and command payloads should preserve media time, duration, chapter, progress, and transcript segment anchors when available. Watch-started interjection recording is disabled until Watch-owned or background-safe capture is available."
+  ]
 }

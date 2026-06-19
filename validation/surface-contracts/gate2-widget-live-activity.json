@@ -1,0 +1,156 @@
+{
+  "schemaVersion": "surface-contract.v1",
+  "gate": "gate2-widget-live-activity",
+  "runtimeProfile": "lock-screen-widget",
+  "surfaceOwns": [
+    "compact_snapshot_display",
+    "live_activity_display",
+    "app_open_deep_link_commands"
+  ],
+  "delegatesTo": [
+    "phone-tablet-online",
+    "phone-tablet-offline"
+  ],
+  "snapshotFields": [
+    "sessionId",
+    "itemId",
+    "targetType",
+    "targetId",
+    "status",
+    "phase",
+    "title",
+    "chapterTitle",
+    "progressPercent",
+    "sourceProgressPercent",
+    "currentPlaybackProgressPercent",
+    "playbackRate",
+    "isRecording",
+    "activeInterjectionCount",
+    "availableCommands",
+    "timeline"
+  ],
+  "commands": [
+    {
+      "id": "togglePlayPause",
+      "delegationMode": "delegated_to_canonical_runtime",
+      "exposed": true,
+      "requiredCapabilities": {
+        "remoteControl": [
+          "send_transport_commands"
+        ]
+      },
+      "backendCommand": "SessionEngine.togglePlayPause",
+      "notes": "Widget and Live Activity controls delegate transport state to the canonical app runtime."
+    },
+    {
+      "id": "skipBack",
+      "delegationMode": "delegated_to_canonical_runtime",
+      "exposed": true,
+      "requiredCapabilities": {
+        "remoteControl": [
+          "send_transport_commands"
+        ],
+        "timeline": [
+          "media_time"
+        ]
+      },
+      "backendCommand": "SessionEngine.skipBack",
+      "notes": "Skip payload preserves the current PlaybackPosition-derived media time when available so the app resolves chapter and transcript context."
+    },
+    {
+      "id": "skipForward",
+      "delegationMode": "delegated_to_canonical_runtime",
+      "exposed": true,
+      "requiredCapabilities": {
+        "remoteControl": [
+          "send_transport_commands"
+        ],
+        "timeline": [
+          "media_time"
+        ]
+      },
+      "backendCommand": "SessionEngine.skipForward",
+      "notes": "Skip payload preserves the current PlaybackPosition-derived media time when available so the app resolves chapter and transcript context."
+    },
+    {
+      "id": "jumpToChapter",
+      "delegationMode": "delegated_to_canonical_runtime",
+      "exposed": true,
+      "requiredCapabilities": {
+        "remoteControl": [
+          "send_chapter_jump"
+        ],
+        "timeline": [
+          "chapter_timing",
+          "media_time",
+          "transcript_segments"
+        ]
+      },
+      "backendCommand": "SessionEngine.jumpToChapter",
+      "notes": "Chapter jumps delegate the selected chapter id plus any known media time and transcript segment anchor; the app performs the seek."
+    },
+    {
+      "id": "beginInterjection",
+      "delegationMode": "delegated_to_canonical_runtime",
+      "exposed": true,
+      "requiredCapabilities": {
+        "remoteControl": [
+          "send_interjection_commands"
+        ],
+        "interjection": [
+          "delegate_interjection_to_canonical_runtime"
+        ],
+        "timeline": [
+          "media_time",
+          "transcript_segments"
+        ]
+      },
+      "backendCommand": "SessionEngine.beginInterjection",
+      "notes": "The widget interject button opens the app with a command URL and immediately delegates beginInterjection to the canonical runtime; the widget never starts local recording. The delegated payload should include PlaybackPosition mediaTimeMs, durationMs when known, chapterId, and transcriptSegmentId when available."
+    },
+    {
+      "id": "finishInterjection",
+      "delegationMode": "delegated_to_canonical_runtime",
+      "exposed": true,
+      "requiredCapabilities": {
+        "remoteControl": [
+          "send_interjection_commands"
+        ],
+        "interjection": [
+          "delegate_interjection_to_canonical_runtime"
+        ]
+      },
+      "backendCommand": "SessionEngine.finishInterjection",
+      "notes": "Finish only completes recording already owned by the app runtime after the delegated beginInterjection path."
+    }
+  ],
+  "traces": [
+    "traces/lock-screen-widget-controls.json"
+  ],
+  "fixtures": [
+    "fixtures/capabilities/lock-screen-widget.json",
+    "fixtures/items/text-with-listening-map.json",
+    "fixtures/maps/valid-listening-map.json",
+    "fixtures/items/transcript-backed-video.json",
+    "fixtures/transcripts/video-transcript.json"
+  ],
+  "backendRequests": [
+    {
+      "id": "widget-playback-position-snapshot",
+      "title": "Publish PlaybackPosition-derived media fields to compact widget and Live Activity snapshots",
+      "status": "open",
+      "details": "Compact snapshots should expose real mediaTimeMs, durationMs, sourceProgressPercent/currentPlaybackProgressPercent, chapterTitle, and transcriptSegmentId when media or transcript timing is available, without requiring widget-owned playback."
+    },
+    {
+      "id": "widget-interject-command-url-dispatch",
+      "title": "Route widget interject URLs to immediate beginInterjection delegation",
+      "status": "open",
+      "details": "The app-open URL for the widget/Live Activity interject action should foreground the app and dispatch SessionEngine.beginInterjection with the current media/chapter/transcript anchors, not start recording inside the extension."
+    }
+  ],
+  "notes": [
+    "Live Activity title, chapterTitle, and progress must be derived from PlaybackPosition real media time when available, falling back to existing percent fields only when duration or transcript timing is unknown.",
+    "Widget and Live Activity surfaces do not own playback, recording, persistence, transcription, or AI work.",
+    "Interjection anchor payloads should preserve mediaTimeMs, durationMs, chapterId, and transcriptSegmentId where available so the app can attach the recording to the correct source moment."
+  ]
+}
