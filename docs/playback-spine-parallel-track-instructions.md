@@ -84,15 +84,15 @@ Suggested branch: `codex/restart-link-intake-contracts`
 ### Required Work
 
 - Use `importSourceLink` for URL intake contract work.
-- Use `linkResolutionStatus` and `linkResolutionFailureReason` only as backend-request snapshot fields.
+- Use `linkResolutionStatus` and `linkResolutionFailureReason` as implemented `importSourceLink` snapshot fields.
 - Add link-resolution fixtures that validate against `schemas/link-resolution-fixture.schema.json`.
 - Use `AudioRepresentation.sourceType = "remote_stream"` for public RSS/audio-backed podcast audio.
 - Use `Item.mediaType = "transcript_backed_media"` for acquired podcast/audio items.
-- Add backend requests for provider lookup, app share extension/paste routing, queue UI, and runtime persistence.
+- Add backend requests for provider lookup, app share extension/paste routing, and queue UI when needed.
 
 ### Trace Rule
 
-Do not add `traces/link-intake-podcast-resolution.json` yet. Link-resolution events are not replayable runtime trace language until the steward adds harness and runtime support.
+Do not add `traces/link-intake-podcast-resolution.json` yet unless the trace harness is explicitly extended for `importSourceLink`. The SessionKit command exists, but existing trace replay fixtures do not execute link-resolution steps.
 
 ### Do Not Do
 

@@ -14,6 +14,7 @@ struct Gate1ProviderRequestFactory {
         guard let url = URL(string: "\(trimmed)/chat/completions") else { return nil }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = 30
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         let payload = RequestPayload(

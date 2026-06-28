@@ -7,6 +7,9 @@ import ActivityKit
 #if canImport(MediaPlayer)
 import MediaPlayer
 #endif
+#if canImport(AVFoundation)
+import AVFoundation
+#endif
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -15,9 +18,8 @@ import UIKit
 final class Gate2CompactControlController {
     private var dispatcher: CompactControlDispatcher?
     private var queuedCommandTask: Task<Void, Never>?
-    private var queuedCommandHandler: (@MainActor (CompactControlCommand, String) -> Void)?
+    private var queuedCommandHandler: (@MainActor (CompactControlCommand, String, Int?, Double?) -> Void)?
     private var queuedApplicationCommandHandler: (@MainActor (String) -> Bool)?
-    private let nowPlaying = Gate2NowPlayingController()
     private let liveActivity = Gate2LiveActivityController()
     private(set) var lastCommand: CompactControlCommand?
     private(set) var lastCommandOrigin = "none"
@@ -32,7 +34,7 @@ final class Gate2CompactControlController {
         canonicalRuntime: SessionEngine,
         surfaceProfile: RuntimeCapabilityProfile,
         skipUnit: String,
-        commandHandler: @escaping @MainActor (CompactControlCommand, String) -> Void,
+        commandHandler: @escaping @MainActor (CompactControlCommand, String, Int?, Double?) -> Void,
         applicationCommandHandler: @escaping @MainActor (String) -> Bool = { _ in false }
     ) {
         dispatcher = CompactControlDispatcher(
@@ -42,9 +44,6 @@ final class Gate2CompactControlController {
         )
         queuedCommandHandler = commandHandler
         queuedApplicationCommandHandler = applicationCommandHandler
-        nowPlaying.installRemoteCommandHandlers { command in
-            commandHandler(command, "now_playing")
-        }
         installQueuedWidgetCommandProcessor()
         publishCurrentSnapshot()
         lastResult = "configured"
@@ -59,15 +58,20 @@ final class Gate2CompactControlController {
     }
 
     @discardableResult
-    func dispatch(_ command: CompactControlCommand, chapterId: String? = nil, origin: String = "app_ui") throws -> CompactControlResult {
+    func dispatch(
+        _ command: CompactControlCommand,
+        chapterId: String? = nil,
+        mediaTimeMs: Int? = nil,
+        playbackRate: Double? = nil,
+        origin: String = "app_ui"
+    ) throws -> CompactControlResult {
         guard let dispatcher else {
             throw SessionKitError.invalidCommandForState("compact_control_unconfigured")
         }
-        let result = try dispatcher.dispatch(command, chapterId: chapterId)
+        let result = try dispatcher.dispatch(command, chapterId: chapterId, mediaTimeMs: mediaTimeMs, playbackRate: playbackRate)
         lastCommand = command
         lastCommandOrigin = origin
         lastResult = result.delegatedToCanonicalRuntime ? "delegated" : (result.rejectedReason ?? "rejected")
-        nowPlaying.publish(result.snapshot)
         return result
     }
 
@@ -76,8 +80,9 @@ final class Gate2CompactControlController {
         return [
             "gate2CompactSurface": snapshot?.compactSurfaceReady == true ? "ready" : "not_ready",
             "gate2SurfaceProfile": snapshot?.surfaceProfileId ?? "none",
-            "gate2NowPlaying": nowPlaying.isConfigured ? "configured" : "not_configured",
-            "gate2LastRemoteCommand": nowPlaying.lastRemoteCommand,
+            "gate2NowPlaying": "owned_by_media_coordinator",
+            "gate2LastRemoteCommand": lastCommandOrigin == "now_playing" ? (lastCommand?.rawValue ?? "none") : "none",
+            "gate2LastRemoteCommandDetail": lastCommandOrigin == "now_playing" ? lastResult : "none",
             "gate2LiveActivity": liveActivity.status,
             "gate2LastCommand": lastCommand?.rawValue ?? "none",
             "gate2LastCommandOrigin": lastCommandOrigin,
@@ -90,7 +95,6 @@ final class Gate2CompactControlController {
 
     private func publishCurrentSnapshot() {
         guard let snapshot = dispatcher?.snapshot() else { return }
-        nowPlaying.publish(snapshot)
         liveActivity.publish(snapshot)
     }
 
@@ -111,7 +115,7 @@ final class Gate2CompactControlController {
         guard !queuedCommands.isEmpty else { return false }
         for queuedCommand in queuedCommands {
             if let command = CompactControlCommand(rawValue: queuedCommand.command) {
-                queuedCommandHandler(command, "widget_or_live_activity_queue")
+                queuedCommandHandler(command, "widget_or_live_activity_queue", nil, nil)
             } else if queuedApplicationCommandHandler?(queuedCommand.command) == true {
                 lastApplicationCommand = queuedCommand.command
             }
@@ -141,7 +145,8 @@ private final class Gate2LiveActivityController {
             status: snapshot.status.rawValue,
             phase: snapshot.phase.rawValue,
             progressPercent: snapshot.currentPlaybackProgressPercent,
-            isRecording: snapshot.isRecording
+            isRecording: snapshot.isRecording,
+            availableCommands: snapshot.availableCommands.map(\.rawValue)
         )
         let currentActivityId = activityId
         Task {
@@ -179,13 +184,23 @@ private final class Gate2LiveActivityController {
     #endif
 }
 
-@MainActor
+    @MainActor
 private final class Gate2NowPlayingController {
     private(set) var isConfigured = false
     private(set) var lastRemoteCommand = "none"
+    private(set) var lastRemoteCommandDetail = "none"
 
     func publish(_ snapshot: CompactControlSnapshot) {
         #if canImport(MediaPlayer)
+        if snapshot.status.isPlaybackActive {
+            #if canImport(AVFoundation) && os(iOS)
+            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+            try? AVAudioSession.sharedInstance().setActive(true)
+            #endif
+            #if canImport(UIKit)
+            UIApplication.shared.beginReceivingRemoteControlEvents()
+            #endif
+        }
         let durationSeconds = snapshot.currentPlaybackDurationMs.map { max(0, Double($0) / 1000) }
         let elapsedSeconds = snapshot.currentMediaTimeMs.map { max(0, Double($0) / 1000) }
         let fallbackDuration = 100.0
@@ -199,24 +214,31 @@ private final class Gate2NowPlayingController {
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue
         ]
         info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = snapshot.playbackRate
+        info[MPNowPlayingInfoPropertyIsLiveStream] = false
+        if let targetId = snapshot.targetId, let url = URL(string: targetId), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+            info[MPNowPlayingInfoPropertyAssetURL] = url
+        }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
         let center = MPRemoteCommandCenter.shared()
         let canPlay = snapshot.availableCommands.contains(.play) || snapshot.availableCommands.contains(.togglePlayPause)
         let canPause = snapshot.availableCommands.contains(.pause) || snapshot.availableCommands.contains(.togglePlayPause)
         let canSkipBack = snapshot.availableCommands.contains(.skipBack)
         let canSkipForward = snapshot.availableCommands.contains(.skipForward)
-        center.playCommand.isEnabled = snapshot.status != .playing && canPlay
-        center.pauseCommand.isEnabled = snapshot.status == .playing && canPause
+        center.playCommand.isEnabled = !snapshot.status.isPlaybackActive && canPlay
+        center.pauseCommand.isEnabled = snapshot.status.isPlaybackActive && canPause
         center.togglePlayPauseCommand.isEnabled = canPlay || canPause
         center.skipBackwardCommand.isEnabled = canSkipBack
         center.previousTrackCommand.isEnabled = canSkipBack
         center.skipForwardCommand.isEnabled = canSkipForward
         center.nextTrackCommand.isEnabled = canSkipForward
-        center.stopCommand.isEnabled = snapshot.status == .playing && canPause
+        center.stopCommand.isEnabled = snapshot.status.isPlaybackActive && canPause
+        center.changePlaybackPositionCommand.isEnabled = snapshot.currentPlaybackDurationMs != nil
+        center.changePlaybackRateCommand.isEnabled = canPlay || canPause
+        center.changePlaybackRateCommand.supportedPlaybackRates = [0.75, 1.0, 1.25, 1.5, 2.0]
         #endif
     }
 
-    func installRemoteCommandHandlers(commandHandler: @escaping @MainActor (CompactControlCommand) -> Void) {
+    func installRemoteCommandHandlers(commandHandler: @escaping @MainActor (CompactControlCommand, Int?, Double?) -> Void) {
         #if canImport(MediaPlayer)
         #if canImport(UIKit)
         UIApplication.shared.beginReceivingRemoteControlEvents()
@@ -230,6 +252,8 @@ private final class Gate2NowPlayingController {
         center.previousTrackCommand.removeTarget(nil)
         center.nextTrackCommand.removeTarget(nil)
         center.stopCommand.removeTarget(nil)
+        center.changePlaybackPositionCommand.removeTarget(nil)
+        center.changePlaybackRateCommand.removeTarget(nil)
 
         center.playCommand.isEnabled = true
         center.pauseCommand.isEnabled = true
@@ -239,62 +263,97 @@ private final class Gate2NowPlayingController {
         center.previousTrackCommand.isEnabled = true
         center.nextTrackCommand.isEnabled = true
         center.stopCommand.isEnabled = true
+        center.changePlaybackPositionCommand.isEnabled = true
+        center.changePlaybackRateCommand.isEnabled = true
+        center.changePlaybackRateCommand.supportedPlaybackRates = [0.75, 1.0, 1.25, 1.5, 2.0]
         center.skipBackwardCommand.preferredIntervals = [15]
         center.skipForwardCommand.preferredIntervals = [15]
 
         center.playCommand.addTarget { _ in
             Task { @MainActor [weak self] in
                 self?.lastRemoteCommand = "play"
-                commandHandler(.play)
+                self?.lastRemoteCommandDetail = "none"
+                commandHandler(.play, nil, nil)
             }
             return .success
         }
         center.pauseCommand.addTarget { _ in
             Task { @MainActor [weak self] in
                 self?.lastRemoteCommand = "pause"
-                commandHandler(.pause)
+                self?.lastRemoteCommandDetail = "none"
+                commandHandler(.pause, nil, nil)
             }
             return .success
         }
         center.togglePlayPauseCommand.addTarget { _ in
             Task { @MainActor [weak self] in
                 self?.lastRemoteCommand = "togglePlayPause"
-                commandHandler(.togglePlayPause)
+                self?.lastRemoteCommandDetail = "none"
+                commandHandler(.togglePlayPause, nil, nil)
             }
             return .success
         }
         center.skipBackwardCommand.addTarget { _ in
             Task { @MainActor [weak self] in
                 self?.lastRemoteCommand = "skipBack"
-                commandHandler(.skipBack)
+                self?.lastRemoteCommandDetail = "15s"
+                commandHandler(.skipBack, nil, nil)
             }
             return .success
         }
         center.skipForwardCommand.addTarget { _ in
             Task { @MainActor [weak self] in
                 self?.lastRemoteCommand = "skipForward"
-                commandHandler(.skipForward)
+                self?.lastRemoteCommandDetail = "15s"
+                commandHandler(.skipForward, nil, nil)
             }
             return .success
         }
         center.previousTrackCommand.addTarget { _ in
             Task { @MainActor [weak self] in
                 self?.lastRemoteCommand = "previousTrack"
-                commandHandler(.skipBack)
+                self?.lastRemoteCommandDetail = "previous"
+                commandHandler(.skipBack, nil, nil)
             }
             return .success
         }
         center.nextTrackCommand.addTarget { _ in
             Task { @MainActor [weak self] in
                 self?.lastRemoteCommand = "nextTrack"
-                commandHandler(.skipForward)
+                self?.lastRemoteCommandDetail = "next"
+                commandHandler(.skipForward, nil, nil)
             }
             return .success
         }
         center.stopCommand.addTarget { _ in
             Task { @MainActor [weak self] in
                 self?.lastRemoteCommand = "stop"
-                commandHandler(.pause)
+                self?.lastRemoteCommandDetail = "none"
+                commandHandler(.pause, nil, nil)
+            }
+            return .success
+        }
+        center.changePlaybackPositionCommand.addTarget { event in
+            guard let event = event as? MPChangePlaybackPositionCommandEvent else {
+                return .commandFailed
+            }
+            let mediaTimeMs = max(0, Int((event.positionTime * 1000).rounded()))
+            Task { @MainActor [weak self] in
+                self?.lastRemoteCommand = "changePlaybackPosition"
+                self?.lastRemoteCommandDetail = "\(mediaTimeMs)"
+                commandHandler(.seekToMediaTime, mediaTimeMs, nil)
+            }
+            return .success
+        }
+        center.changePlaybackRateCommand.addTarget { event in
+            guard let event = event as? MPChangePlaybackRateCommandEvent else {
+                return .commandFailed
+            }
+            let rate = Double(event.playbackRate)
+            Task { @MainActor [weak self] in
+                self?.lastRemoteCommand = "changePlaybackRate"
+                self?.lastRemoteCommandDetail = String(format: "%.2f", rate)
+                commandHandler(.setPlaybackRate, nil, rate)
             }
             return .success
         }

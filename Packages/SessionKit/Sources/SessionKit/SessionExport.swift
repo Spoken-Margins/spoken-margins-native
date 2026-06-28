@@ -14,6 +14,8 @@ public struct ExportItem: Codable, Equatable {
     public var id: String
     public var title: String
     public var externalReference: String?
+    public var sourceURL: String?
+    public var mediaSourceType: String?
     public var includedFullText: Bool
     public var text: String?
 }
@@ -92,6 +94,14 @@ public enum SessionExportMarkdownRenderer {
         lines.append("")
         if let reference = export.item.externalReference, !reference.isEmpty {
             lines.append("Item: \(reference)")
+            lines.append("")
+        }
+        if let sourceURL = export.item.sourceURL, !sourceURL.isEmpty, sourceURL != export.item.externalReference {
+            lines.append("Source URL: \(sourceURL)")
+            lines.append("")
+        }
+        if let mediaSourceType = export.item.mediaSourceType, !mediaSourceType.isEmpty {
+            lines.append("Source Type: \(mediaSourceType)")
             lines.append("")
         }
         if let text = export.item.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
@@ -174,6 +184,10 @@ public enum SessionExportMarkdownRenderer {
             lines.append(interjection.anchorAfter)
             lines.append("")
         }
+        if let mediaTimeMs = interjection.mediaTimeMs {
+            lines.append("Media time: \(formattedMediaTime(mediaTimeMs))")
+            lines.append("")
+        }
         if let transcript = interjection.transcript?.trimmingCharacters(in: .whitespacesAndNewlines), !transcript.isEmpty {
             lines.append("Transcript:")
             lines.append(transcript)
@@ -200,5 +214,16 @@ public enum SessionExportMarkdownRenderer {
         default:
             return turn.turnType.replacingOccurrences(of: "_", with: " ").capitalized
         }
+    }
+
+    private static func formattedMediaTime(_ mediaTimeMs: Int) -> String {
+        let totalSeconds = max(0, mediaTimeMs / 1000)
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let seconds = totalSeconds % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+        }
+        return String(format: "%d:%02d", minutes, seconds)
     }
 }

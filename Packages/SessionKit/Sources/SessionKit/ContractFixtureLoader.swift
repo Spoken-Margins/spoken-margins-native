@@ -3,6 +3,7 @@ import Foundation
 public enum ContractFixtureLoader {
     public static func item(at url: URL) throws -> Item {
         let object = try object(at: url)
+        let media = object["media"] as? [String: Any]
         return Item(
             id: object["id"] as? String ?? "",
             title: object["title"] as? String ?? "",
@@ -10,7 +11,20 @@ public enum ContractFixtureLoader {
             text: object["text"] as? String,
             externalReference: object["externalReference"] as? String,
             status: object["status"] as? String ?? "ready",
-            externalReferenceType: object["externalReferenceType"] as? String
+            externalReferenceType: object["externalReferenceType"] as? String,
+            media: media.flatMap { mediaObject in
+                guard let rawSourceType = mediaObject["sourceType"] as? String,
+                      let sourceType = AudioSourceType(rawValue: rawSourceType) else {
+                    return nil
+                }
+                return ItemMedia(
+                    sourceType: sourceType,
+                    url: mediaObject["url"] as? String,
+                    durationMs: mediaObject["durationMs"] as? Int,
+                    nativeMediaId: mediaObject["nativeMediaId"] as? String
+                )
+            },
+            transcriptId: object["transcriptId"] as? String
         )
     }
 

@@ -88,7 +88,7 @@ final class Gate5BrowserTextImportTests: XCTestCase {
     }
 
     func testBrowserTextImportStartsPlaybackAndPreservesSourceURL() {
-        let model = Gate1AppModel()
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         let handoff = BrowserTextHandoff(
             itemId: "item-browser-app-test",
@@ -109,7 +109,7 @@ final class Gate5BrowserTextImportTests: XCTestCase {
     }
 
     func testIncomingBrowserTextURLRoutesToGate5Import() {
-        let model = Gate1AppModel()
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         let url = Gate5BrowserTextHandoffURL.url(for: BrowserTextHandoff(
             itemId: "item-browser-url-route",
@@ -145,7 +145,7 @@ final class Gate5BrowserTextImportTests: XCTestCase {
             ]
         ])
         let handoff = try store.handoff(payloadID: payloadID)
-        let model = Gate1AppModel()
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
 
         let success = model.importBrowserText(handoff)

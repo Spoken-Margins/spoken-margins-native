@@ -11,6 +11,7 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
         public var phase: String
         public var progressPercent: Int
         public var isRecording: Bool
+        public var availableCommands: [String]
 
         public init(
             title: String,
@@ -18,7 +19,8 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
             status: String,
             phase: String,
             progressPercent: Int,
-            isRecording: Bool
+            isRecording: Bool,
+            availableCommands: [String] = []
         ) {
             self.title = title
             self.chapterTitle = chapterTitle
@@ -26,6 +28,7 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
             self.phase = phase
             self.progressPercent = progressPercent
             self.isRecording = isRecording
+            self.availableCommands = availableCommands
         }
     }
 

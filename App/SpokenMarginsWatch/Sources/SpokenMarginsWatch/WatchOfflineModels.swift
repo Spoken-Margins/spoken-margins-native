@@ -220,7 +220,7 @@ final class WatchLocalPlaybackModel: ObservableObject {
     }
 
     var isPlaying: Bool {
-        snapshot?.status == .playing
+        snapshot?.status.isPlaybackActive == true
     }
 
     var title: String {
@@ -387,7 +387,7 @@ final class WatchLocalPlaybackModel: ObservableObject {
     }
 
     private func reconcileProgressTicker() {
-        guard snapshot?.status == .playing else {
+        guard snapshot?.status.isPlaybackActive == true else {
             playbackProgressTask?.cancel()
             playbackProgressTask = nil
             return
@@ -400,7 +400,7 @@ final class WatchLocalPlaybackModel: ObservableObject {
                     guard let self, let engine = self.localEngine else { return }
                     do {
                         self.snapshot = try engine.syncPlaybackProgress()
-                        if self.snapshot?.status != .playing {
+                        if self.snapshot?.status.isPlaybackActive != true {
                             self.playbackProgressTask?.cancel()
                             self.playbackProgressTask = nil
                         }

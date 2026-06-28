@@ -11,6 +11,7 @@ public final class InMemorySessionRepository: SessionRepository {
     public var watchSyncEvents: [String: WatchSyncEvent]
     public var importedWatchSyncEventIds: Set<String>
     public var watchPackageRequests: [String: WatchPackageRequestEvent]
+    public var transcriptTimelines: [String: SourceTranscriptTimeline]
 
     public init(
         items: [String: Item] = [:],
@@ -22,7 +23,8 @@ public final class InMemorySessionRepository: SessionRepository {
         watchPackages: [String: WatchAudioPackage] = [:],
         watchSyncEvents: [String: WatchSyncEvent] = [:],
         importedWatchSyncEventIds: Set<String> = [],
-        watchPackageRequests: [String: WatchPackageRequestEvent] = [:]
+        watchPackageRequests: [String: WatchPackageRequestEvent] = [:],
+        transcriptTimelines: [String: SourceTranscriptTimeline] = [:]
     ) {
         self.items = items
         self.mapsByItemId = mapsByItemId
@@ -34,6 +36,7 @@ public final class InMemorySessionRepository: SessionRepository {
         self.watchSyncEvents = watchSyncEvents
         self.importedWatchSyncEventIds = importedWatchSyncEventIds
         self.watchPackageRequests = watchPackageRequests
+        self.transcriptTimelines = transcriptTimelines
     }
 
     public func loadItem(id: String) throws -> Item {
@@ -127,5 +130,20 @@ public final class InMemorySessionRepository: SessionRepository {
 
     public func loadWatchPackageRequests(itemId: String) throws -> [WatchPackageRequestEvent] {
         watchPackageRequests.values.filter { $0.itemId == itemId }.sorted { $0.createdAt < $1.createdAt }
+    }
+
+    public func saveTranscriptTimeline(_ transcript: SourceTranscriptTimeline) throws {
+        transcriptTimelines[transcript.id] = transcript
+    }
+
+    public func loadTranscriptTimeline(id: String) throws -> SourceTranscriptTimeline? {
+        transcriptTimelines[id]
+    }
+
+    public func loadTranscriptTimeline(itemId: String) throws -> SourceTranscriptTimeline? {
+        transcriptTimelines.values
+            .filter { $0.itemId == itemId }
+            .sorted { $0.createdAt < $1.createdAt }
+            .last
     }
 }

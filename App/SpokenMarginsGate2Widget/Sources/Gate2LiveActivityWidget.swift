@@ -64,41 +64,61 @@ private struct Gate2LiveActivityView: View {
                 .tint(.green)
 
             HStack(spacing: 16) {
-                CompactRoundIntentButton(command: "skipBack", systemImage: "gobackward.15", size: 56)
-                CompactPlayPauseButton(
-                    command: "togglePlayPause",
-                    isPlaying: state.status == "playing"
-                )
-                CompactRoundIntentButton(command: "skipForward", systemImage: "goforward.15", size: 56)
-                Spacer()
-                Link(destination: Gate2CompactCommandURL.url(command: "beginInterjection")) {
-                    Image(systemName: state.isRecording ? "checkmark" : "mic.fill")
-                        .font(.title2.weight(.semibold))
-                        .frame(width: 56, height: 56)
-                        .foregroundStyle(.white)
-                        .background(Color.white.opacity(0.16))
-                        .clipShape(Circle())
+                if state.canRun("skipBack") {
+                    CompactRoundIntentButton(command: "skipBack", systemImage: "gobackward.15", size: 56)
                 }
-                .accessibilityLabel(state.isRecording ? "Recording" : "Interject")
+                if state.canRun("togglePlayPause") {
+                    CompactPlayPauseButton(
+                        command: "togglePlayPause",
+                        isPlaying: state.status == "playing" || state.status == "starting"
+                    )
+                }
+                if state.canRun("skipForward") {
+                    CompactRoundIntentButton(command: "skipForward", systemImage: "goforward.15", size: 56)
+                }
+                Spacer()
+                if state.canRun("beginInterjection") || state.canRun("finishInterjection") {
+                    Link(destination: Gate2CompactCommandURL.url(command: state.isRecording ? "finishInterjection" : "beginInterjection")) {
+                        Image(systemName: state.isRecording ? "checkmark" : "mic.fill")
+                            .font(.title2.weight(.semibold))
+                            .frame(width: 56, height: 56)
+                            .foregroundStyle(.white)
+                            .background(Color.white.opacity(0.16))
+                            .clipShape(Circle())
+                    }
+                    .accessibilityLabel(state.isRecording ? "Finish interjection" : "Interject")
+                }
             }
             .buttonStyle(.plain)
 
-            HStack(spacing: 10) {
-                CompactActionIntentButton(
-                    command: Gate2CompactApplicationCommand.summarizeInterjections,
-                    title: "Summary",
-                    systemImage: "sparkles"
-                )
+            if state.canRun("generateInterjectionSummary") || state.canRun("submitFollowup") {
+                HStack(spacing: 10) {
+                    if state.canRun("generateInterjectionSummary") {
+                        CompactActionIntentButton(
+                            command: Gate2CompactApplicationCommand.summarizeInterjections,
+                            title: "Summary",
+                            systemImage: "sparkles"
+                        )
+                    }
 
-                CompactActionIntentButton(
-                    command: Gate2CompactApplicationCommand.discussInterjections,
-                    title: "Discuss",
-                    systemImage: "text.bubble.fill"
-                )
+                    if state.canRun("submitFollowup") {
+                        CompactActionIntentButton(
+                            command: Gate2CompactApplicationCommand.discussInterjections,
+                            title: "Discuss",
+                            systemImage: "text.bubble.fill"
+                        )
+                    }
+                }
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+    }
+}
+
+private extension Gate2LiveActivityAttributes.ContentState {
+    func canRun(_ command: String) -> Bool {
+        availableCommands.contains(command)
     }
 }
 

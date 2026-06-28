@@ -49,6 +49,18 @@ struct SpeechVoiceChoice: Identifiable, Hashable {
     let quality: String
 }
 
+struct PiperVoiceOption: Identifiable, Hashable {
+    let id: String
+    let name: String
+    let language: String
+    let modelURL: URL
+    let configURL: URL?
+
+    var displayName: String {
+        language.isEmpty ? name : "\(name) · \(language)"
+    }
+}
+
 struct QuickAccessFile: Identifiable, Hashable {
     let id: String
     let name: String
@@ -67,6 +79,14 @@ final class Gate1AppModel: ObservableObject {
     @Published var screen: Gate1Screen = .home
     @Published var snapshot = SessionSnapshot() {
         didSet {
+            if isMediaPlaybackSnapshot {
+                mediaPlaybackRate = snapshot.playbackRate
+            }
+            preparedTextAudioStatus = snapshot.preparedTextAudioStatus ?? preparedTextAudioStatus
+            if let snapshotSourceTranscriptStatus = snapshot.sourceTranscriptStatus,
+               !(sourceTranscriptStatus == "transcribing" && snapshotSourceTranscriptStatus == "not_started") {
+                sourceTranscriptStatus = snapshotSourceTranscriptStatus
+            }
             reconcilePlaybackProgressTicker()
             updateGate2CompactState()
             updateGate3WatchState()
@@ -92,6 +112,8 @@ final class Gate1AppModel: ObservableObject {
     @Published var selectedProfileId = "phone-tablet-online"
     @Published var importTitle = "Gate 1 Article With Links"
     @Published var importText = "Read the background at https://example.com/long/url before continuing. A labeled [reference](https://example.com/essay) should stay readable while raw URLs are skipped."
+    @Published var sourceLinkURL = ""
+    @Published var isResolvingSourceLink = false
     @Published var listeningMapJSON = ""
     @Published var isGeneratingListeningMap = false
     @Published var providerBaseURL = UserDefaults.standard.string(forKey: "providerBaseURL") ?? "https://api.openai.com/v1"
@@ -100,11 +122,19 @@ final class Gate1AppModel: ObservableObject {
     @Published var conversationModel = UserDefaults.standard.string(forKey: "conversationModel") ?? UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-4.1-mini"
     @Published var skipUnit = UserDefaults.standard.string(forKey: "skipUnit") ?? "paragraph"
     @Published var speechRate = UserDefaults.standard.double(forKey: "speechRate") == 0 ? 0.5 : UserDefaults.standard.double(forKey: "speechRate")
+    @Published var mediaPlaybackRate = UserDefaults.standard.double(forKey: "mediaPlaybackRate") == 0 ? 1.0 : UserDefaults.standard.double(forKey: "mediaPlaybackRate")
+    @Published var preparedTextAudioStatus = "Not started"
+    @Published var sourceTranscriptStatus = "Not started"
+    @Published var pendingPreparedTextStartItemId: String?
+    @Published var speechVoiceOptions: [SpeechVoiceChoice] = []
     @Published var speechVoiceIdentifier = UserDefaults.standard.string(forKey: "speechVoiceIdentifier") ?? ""
     @Published var ttsMode = UserDefaults.standard.string(forKey: "ttsMode") ?? "systemImmediate"
     @Published var kokoroVoiceName = UserDefaults.standard.string(forKey: "kokoroVoiceName") ?? "am_echo"
     @Published var kokoroChunkCharacters = min(140, max(80, UserDefaults.standard.double(forKey: "kokoroChunkCharacters") == 0 ? 110 : UserDefaults.standard.double(forKey: "kokoroChunkCharacters")))
     @Published var kokoroStatus = "Not checked"
+    @Published var piperVoiceId = UserDefaults.standard.string(forKey: "piperVoiceId") ?? ""
+    @Published var piperVoiceOptions: [PiperVoiceOption] = []
+    @Published var piperStatus = "Not checked"
     @Published var isRenderingKokoroPreview = false
     @Published var isRunningKokoroMemoryCheck = false
     @Published var isRenderingWatchPackage = false
@@ -113,27 +143,36 @@ final class Gate1AppModel: ObservableObject {
     @Published var providerProbeStatus = "Not checked"
     @Published var knownIssues = [
         "Gate 1 simulator app builds; signed device installation still requires local team/provisioning configuration.",
-        "Gate 2 Now Playing and Live Activity controls require signed real-device validation."
+        "Gate 2 Now Playing and Live Activity controls require signed real-device validation.",
+        "Source link, public podcast, and share-extension intake are experimental until they have their own human validation record."
     ]
 
     private var engine: SessionEngine?
     private var store: SQLiteSessionStore?
     private let gate2CompactControls = Gate2CompactControlController()
     private let gate3WatchConnectivity = Gate3WatchConnectivityController()
+    private let sourceLinkResolver: LinkResolutionClient?
+    private let sourceLinkHandoffStore: SourceLinkHandoffStore?
+    private let audioPlaybackClientOverride: AudioPlaybackClient?
+    private let forcePreparedTextGate: Bool
+    private let sourceTranscriptionClient: SourceTranscriptionClient
     private var gate3WatchDispatcher: CompactControlDispatcher?
     private var activeItemId = "item-pill"
     private var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-4.1-mini"
     private var playbackProgressTask: Task<Void, Never>?
+    private var textAudioPrewarmTasks: [String: Task<Void, Never>] = [:]
+    private var liveSpeechFallbackItemIds: Set<String> = []
+    private var isImportingPendingSourceLinkHandoffs = false
     private var pendingAutoPlayQueue = Gate1PlaybackAutoplayQueue()
     private var activeWatchPackageRenderItemIds: Set<String> = []
     private var failedWatchPackageRenderItemIds: Set<String> = []
+    private let preparedTextAudioStarterDurationMs = 30_000
     private let transcriptionClient = SystemSpeechTranscriptionClient()
     private let quickAccessFolderBookmarkKey = "quickAccessFolderBookmark"
     #if canImport(AVFoundation)
     private let speechPreviewSynthesizer = AVSpeechSynthesizer()
     private var kokoroPreviewPlayer: AVAudioPlayer?
     #endif
-    let speechVoiceOptions = Gate1AppModel.availableSpeechVoiceOptions()
     private let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -161,8 +200,21 @@ final class Gate1AppModel: ObservableObject {
         #endif
     }
 
-    init() {
+    init(
+        sourceLinkResolver: LinkResolutionClient? = nil,
+        sourceLinkHandoffStore: SourceLinkHandoffStore? = nil,
+        audioPlaybackClient: AudioPlaybackClient? = nil,
+        forcePreparedTextGate: Bool = false,
+        sourceTranscriptionClient: SourceTranscriptionClient = SystemSourceTranscriptionClient()
+    ) {
+        self.sourceLinkResolver = sourceLinkResolver
+        self.sourceLinkHandoffStore = sourceLinkHandoffStore
+        self.audioPlaybackClientOverride = audioPlaybackClient
+        self.forcePreparedTextGate = forcePreparedTextGate
+        self.sourceTranscriptionClient = sourceTranscriptionClient
+        refreshSpeechVoiceOptions()
         sanitizeTTSMode()
+        refreshPiperVoiceStatus()
         settingsValueChanged()
         refreshQuickAccessFolder()
         gate3WatchConnectivity.activate { [weak self] in
@@ -182,10 +234,11 @@ final class Gate1AppModel: ObservableObject {
 
     deinit {
         playbackProgressTask?.cancel()
+        textAudioPrewarmTasks.values.forEach { $0.cancel() }
     }
 
     private func reconcilePlaybackProgressTicker() {
-        if snapshot.status == .playing {
+        if snapshot.status.isPlaybackActive {
             startPlaybackProgressTicker()
         } else {
             stopPlaybackProgressTicker()
@@ -199,7 +252,7 @@ final class Gate1AppModel: ObservableObject {
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 await MainActor.run {
                     guard let self else { return }
-                    guard self.snapshot.status == .playing else {
+                    guard self.snapshot.status.isPlaybackActive else {
                         self.stopPlaybackProgressTicker()
                         return
                     }
@@ -208,7 +261,7 @@ final class Gate1AppModel: ObservableObject {
                         let previousStatus = self.snapshot.status
                         let previousTargetId = self.snapshot.targetId
                         let updated = try engine.syncPlaybackProgress()
-                        let completedCurrentAudio = previousStatus == .playing &&
+                        let completedCurrentAudio = previousStatus.isPlaybackActive &&
                             updated.status == .paused &&
                             previousTargetId == updated.targetId
                         if updated != self.snapshot {
@@ -270,14 +323,13 @@ final class Gate1AppModel: ObservableObject {
             try store.seed(item: item)
             installEngine(try makeEngine(store: store))
             activeItemId = item.id
-            snapshot = try engine?.startSession(itemId: item.id) ?? SessionSnapshot()
+            scheduleTextAudioPrewarmIfNeeded(itemId: item.id)
             libraryItems = try loadLibraryRows(store: store)
             selectedItem = try loadItemDetail(id: item.id, store: store)
             diagnostics["lastImport"] = item.id
             importTitle = ""
             importText = ""
-            screen = .playback
-            reportSuccess("Imported and started \(item.title).")
+            startItem(id: item.id)
         } catch {
             reportFailure(error, context: "Import failed")
         }
@@ -320,6 +372,7 @@ final class Gate1AppModel: ObservableObject {
             activeItemId = imported.first?.id ?? activeItemId
             libraryItems = try loadLibraryRows(store: store)
             selectedItem = try loadItemDetail(id: activeItemId, store: store)
+            imported.forEach { scheduleTextAudioPrewarmIfNeeded(itemId: $0.id) }
             diagnostics["lastObsidianImportCount"] = "\(imported.count)"
             diagnostics["lastObsidianImportFailures"] = "\(failures.count)"
             screen = .home
@@ -327,6 +380,211 @@ final class Gate1AppModel: ObservableObject {
             reportSuccess("Imported \(imported.count) Obsidian file\(imported.count == 1 ? "" : "s").\(suffix)")
         } catch {
             reportFailure(error, context: "Obsidian import failed")
+        }
+    }
+
+    @discardableResult
+    func importSourceLinkFromForm() -> Bool {
+        let success = importSourceLink(
+            urlString: sourceLinkURL,
+            sourceSurface: "paste",
+            startSession: true
+        )
+        if success {
+            sourceLinkURL = ""
+        }
+        return success
+    }
+
+    func beginSourceLinkImportFromForm() {
+        guard !isResolvingSourceLink else { return }
+        guard !sourceLinkURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            reportFailure("Paste or enter a podcast, RSS, or audio URL first.")
+            return
+        }
+        isResolvingSourceLink = true
+        statusMessage = "Resolving source link..."
+        lastError = nil
+        diagnostics["lastSourceLinkButtonTap"] = "registered"
+        Task { @MainActor in
+            await Task.yield()
+            _ = await importSourceLinkAsync(
+                urlString: sourceLinkURL,
+                sourceSurface: "paste",
+                startSession: true
+            )
+        }
+    }
+
+    func pasteSourceLinkFromClipboard() {
+        #if canImport(UIKit)
+        guard let clipboardText = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !clipboardText.isEmpty else {
+            reportFailure("Clipboard does not contain a URL.")
+            return
+        }
+        let pasted = Self.firstURL(in: clipboardText)?.absoluteString ?? clipboardText
+        sourceLinkURL = pasted
+        reportSuccess("Pasted link from Clipboard.")
+        diagnostics["lastSourceLinkClipboardPaste"] = pasted
+        #else
+        reportFailure("Clipboard paste is unavailable on this platform.")
+        #endif
+    }
+
+    @discardableResult
+    func importSourceLink(_ handoff: SourceLinkHandoff) -> Bool {
+        importSourceLink(
+            urlString: handoff.inputURL,
+            sourceSurface: handoff.sourceSurface,
+            startSession: handoff.startSession
+        )
+    }
+
+    @discardableResult
+    private func importSourceLinkAsync(_ handoff: SourceLinkHandoff) async -> Bool {
+        await importSourceLinkAsync(
+            urlString: handoff.inputURL,
+            sourceSurface: handoff.sourceSurface,
+            startSession: handoff.startSession
+        )
+    }
+
+    @discardableResult
+    private func importSourceLinkAsync(urlString: String, sourceSurface: String, startSession: Bool = true) async -> Bool {
+        guard sourceLinkResolver == nil else {
+            return importSourceLink(urlString: urlString, sourceSurface: sourceSurface, startSession: startSession)
+        }
+        isResolvingSourceLink = true
+        statusMessage = "Resolving source link..."
+        defer { isResolvingSourceLink = false }
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed),
+              let scheme = url.scheme?.lowercased(),
+              ["http", "https"].contains(scheme) else {
+            reportFailure("Enter a valid podcast, RSS, or audio URL.")
+            return false
+        }
+        let request = LinkResolutionRequest(
+            id: "source-link-\(Int(Date().timeIntervalSince1970))",
+            inputURL: url.absoluteString,
+            sourceSurface: sourceSurface,
+            createdAt: Date()
+        )
+        do {
+            let result = try await PublicPodcastLinkResolver().resolveAsync(request)
+            return importResolvedSourceLink(request: request, result: result, startSession: startSession)
+        } catch {
+            reportFailure(error, context: "Source link import failed")
+            return false
+        }
+    }
+
+    @discardableResult
+    func importSourceLink(urlString: String, sourceSurface: String, startSession: Bool = true) -> Bool {
+        isResolvingSourceLink = true
+        defer { isResolvingSourceLink = false }
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed),
+              let scheme = url.scheme?.lowercased(),
+              ["http", "https"].contains(scheme) else {
+            reportFailure("Enter a valid podcast, RSS, or audio URL.")
+            return false
+        }
+        do {
+            let store = try requireStore()
+            if engine == nil {
+                installEngine(try makeEngine(store: store))
+            }
+            guard let engine else { return false }
+            statusMessage = "Resolving source link..."
+            let request = LinkResolutionRequest(
+                id: "source-link-\(Int(Date().timeIntervalSince1970))",
+                inputURL: url.absoluteString,
+                sourceSurface: sourceSurface,
+                createdAt: Date()
+            )
+            snapshot = try engine.importSourceLink(request, startSessionWhenPlayable: startSession)
+            libraryItems = try loadLibraryRows(store: store)
+            if let itemId = snapshot.itemId {
+                activeItemId = itemId
+                selectedItem = try loadItemDetail(id: itemId, store: store)
+            }
+            diagnostics["lastSourceLinkImport"] = snapshot.itemId ?? "none"
+            diagnostics["lastSourceLinkStatus"] = snapshot.linkResolutionStatus ?? "unknown"
+            diagnostics["lastSourceLinkFailureReason"] = snapshot.linkResolutionFailureReason ?? "none"
+            let sourceLinkProvider = engine.lastLinkResolutionResult?.originalLink.provider
+                ?? engine.lastLinkResolutionResult?.candidates.first?.sourceLink.provider
+            diagnostics["lastSourceLinkProvider"] = sourceLinkProvider ?? "unknown"
+            if snapshot.linkResolutionStatus == LinkResolutionStatus.playable.rawValue, let title = snapshot.title {
+                screen = startSession ? .playback : .item
+                sourceTranscriptStatus = snapshot.sourceTranscriptStatus ?? "not_started"
+                diagnostics["sourceTranscriptionStatus"] = sourceTranscriptStatus
+                if let itemId = snapshot.itemId {
+                    let resolved = engine.lastLinkResolutionResult
+                    scheduleSourceTranscriptImportIfAvailable(
+                        resolved?.selectedCandidate?.transcriptLinks ?? resolved?.candidates.flatMap(\.transcriptLinks) ?? [],
+                        itemId: itemId
+                    )
+                }
+                reportSuccess("Imported and started \(title).")
+                return true
+            }
+            screen = .home
+            reportFailure(sourceLinkFailureMessage(
+                status: snapshot.linkResolutionStatus,
+                reason: snapshot.linkResolutionFailureReason,
+                provider: sourceLinkProvider
+            ))
+            return false
+        } catch {
+            reportFailure(error, context: "Source link import failed")
+            return false
+        }
+    }
+
+    @discardableResult
+    private func importResolvedSourceLink(request: LinkResolutionRequest, result: LinkResolutionResult, startSession: Bool = true) -> Bool {
+        do {
+            let store = try requireStore()
+            if engine == nil {
+                installEngine(try makeEngine(store: store))
+            }
+            guard let engine else { return false }
+            snapshot = try engine.importResolvedSourceLink(request, result: result, startSessionWhenPlayable: startSession)
+            libraryItems = try loadLibraryRows(store: store)
+            if let itemId = snapshot.itemId {
+                activeItemId = itemId
+                selectedItem = try loadItemDetail(id: itemId, store: store)
+            }
+            diagnostics["lastSourceLinkImport"] = snapshot.itemId ?? "none"
+            diagnostics["lastSourceLinkStatus"] = snapshot.linkResolutionStatus ?? "unknown"
+            diagnostics["lastSourceLinkFailureReason"] = snapshot.linkResolutionFailureReason ?? "none"
+            let sourceLinkProvider = result.originalLink.provider ?? result.candidates.first?.sourceLink.provider
+            diagnostics["lastSourceLinkProvider"] = sourceLinkProvider ?? "unknown"
+            if snapshot.linkResolutionStatus == LinkResolutionStatus.playable.rawValue, let title = snapshot.title {
+                screen = startSession ? .playback : .item
+                sourceTranscriptStatus = snapshot.sourceTranscriptStatus ?? "not_started"
+                diagnostics["sourceTranscriptionStatus"] = sourceTranscriptStatus
+                if let itemId = snapshot.itemId {
+                    scheduleSourceTranscriptImportIfAvailable(
+                        result.selectedCandidate?.transcriptLinks ?? result.candidates.flatMap(\.transcriptLinks),
+                        itemId: itemId
+                    )
+                }
+                reportSuccess("Imported and started \(title).")
+                return true
+            }
+            screen = .home
+            reportFailure(sourceLinkFailureMessage(
+                status: snapshot.linkResolutionStatus,
+                reason: snapshot.linkResolutionFailureReason,
+                provider: sourceLinkProvider
+            ))
+            return false
+        } catch {
+            reportFailure(error, context: "Source link import failed")
+            return false
         }
     }
 
@@ -417,17 +675,25 @@ final class Gate1AppModel: ObservableObject {
             let store = try requireStore()
             let engine = try makeEngine(store: store)
             installEngine(engine)
-            snapshot = try engine.importBrowserText(handoff)
+            let shouldStart = handoff.requestedContinuation.startSession
+            var importOnlyHandoff = handoff
+            importOnlyHandoff.requestedContinuation.startSession = false
+            snapshot = try engine.importBrowserText(importOnlyHandoff)
             guard let importedItemId = snapshot.itemId ?? handoff.itemId else {
                 throw SessionKitError.persistenceFailed("browser_text_item_id")
             }
             activeItemId = importedItemId
             libraryItems = try loadLibraryRows(store: store)
             selectedItem = try loadItemDetail(id: importedItemId, store: store)
+            scheduleTextAudioPrewarmIfNeeded(itemId: importedItemId)
             diagnostics["lastBrowserTextImport"] = importedItemId
             diagnostics["lastBrowserTextSource"] = handoff.source.url
-            screen = handoff.requestedContinuation.startSession ? .playback : .item
-            reportSuccess("Imported browser text from \(handoff.source.title).")
+            if shouldStart {
+                startItem(id: importedItemId)
+            } else {
+                screen = .item
+                reportSuccess("Imported browser text from \(handoff.source.title).")
+            }
             return true
         } catch {
             reportFailure(error, context: "Browser text import failed")
@@ -497,10 +763,60 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    func importPiperVoiceAssets(urls: [URL]) {
+        guard !urls.isEmpty else {
+            reportFailure("No Piper voice files were selected.")
+            return
+        }
+
+        do {
+            let assetsDirectory = try piperAssetsDirectory()
+            try FileManager.default.createDirectory(at: assetsDirectory, withIntermediateDirectories: true)
+
+            var copied: [String] = []
+            var ignored: [String] = []
+
+            for url in urls {
+                let didAccess = url.startAccessingSecurityScopedResource()
+                defer {
+                    if didAccess {
+                        url.stopAccessingSecurityScopedResource()
+                    }
+                }
+
+                guard isSupportedPiperVoiceAsset(url) else {
+                    ignored.append(url.lastPathComponent)
+                    continue
+                }
+
+                let destinationURL = assetsDirectory.appending(path: url.lastPathComponent)
+                if FileManager.default.fileExists(atPath: destinationURL.path) {
+                    try FileManager.default.removeItem(at: destinationURL)
+                }
+                try FileManager.default.copyItem(at: url, to: destinationURL)
+                copied.append(url.lastPathComponent)
+            }
+
+            refreshPiperVoiceStatus()
+            let ignoredSuffix = ignored.isEmpty ? "" : " Ignored: \(ignored.joined(separator: ", "))."
+            if copied.isEmpty {
+                reportFailure("No Piper assets were imported. Select a .onnx voice model and its .onnx.json config.\(ignoredSuffix)")
+            } else {
+                reportSuccess("Imported Piper asset\(copied.count == 1 ? "" : "s").\(ignoredSuffix)")
+            }
+        } catch {
+            reportFailure(error, context: "Piper voice import failed")
+        }
+    }
+
     func start() {
         stopSpeechPreviews()
+        scheduleTextAudioPrewarmIfNeeded(itemId: activeItemId)
         run { engine in
             snapshot = try engine.startSession(itemId: activeItemId)
+            if isMediaPlaybackSnapshot, mediaPlaybackRate != snapshot.playbackRate {
+                snapshot = try engine.setPlaybackRate(mediaPlaybackRate)
+            }
             if let store, let sessionId = snapshot.sessionId {
                 try seedUITestingGeneratedTimelineIfNeeded(sessionId: sessionId, engine: engine, store: store)
             }
@@ -513,7 +829,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func playPause() {
-        if snapshot.status == .playing {
+        if snapshot.status.isPlaybackActive {
             pause()
         } else if hasActiveSession {
             resumePlayback()
@@ -542,6 +858,23 @@ final class Gate1AppModel: ObservableObject {
     func generateListeningMap() {
         guard !isGeneratingListeningMap else { return }
         isGeneratingListeningMap = true
+        if let item = try? store?.loadItem(id: activeItemId),
+           item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false,
+           item.media?.url != nil {
+            if sourceTranscriptStatus == "transcribing" || sourceTranscriptStatus == "queued" || sourceTranscriptStatus == "downloading" {
+                isGeneratingListeningMap = false
+                reportFailure("Source transcript is still being prepared. Listening Map will be available when transcription finishes.")
+                return
+            }
+            if sourceTranscriptStatus == "unavailable" || sourceTranscriptStatus == "failed" {
+                isGeneratingListeningMap = false
+                reportFailure("Source transcript is unavailable, so this audio can only use timestamp anchors for now.")
+                return
+            }
+            isGeneratingListeningMap = false
+            reportFailure("No source transcript is ready yet. Interjections will use timestamp anchors until transcript context is available.")
+            return
+        }
         guard !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             run { engine in
                 snapshot = try engine.generateListeningMap(itemId: activeItemId)
@@ -551,6 +884,7 @@ final class Gate1AppModel: ObservableObject {
                 refreshSelectedItem()
                 diagnostics["lastGeneratedMapItem"] = activeItemId
                 diagnostics["lastListeningMapMode"] = "local_deterministic"
+                scheduleTextAudioPrewarmIfNeeded(itemId: activeItemId)
                 reportSuccess("Generated local Listening Map.")
             }
             isGeneratingListeningMap = false
@@ -602,6 +936,7 @@ final class Gate1AppModel: ObservableObject {
         selectedItem = try loadItemDetail(id: item.id, store: store)
         diagnostics["lastGeneratedMapItem"] = item.id
         diagnostics["lastListeningMapMode"] = "provider"
+        scheduleTextAudioPrewarmIfNeeded(itemId: item.id)
     }
 
     private func generateLocalListeningMap() {
@@ -612,6 +947,7 @@ final class Gate1AppModel: ObservableObject {
             }
             refreshSelectedItem()
             diagnostics["lastGeneratedMapItem"] = activeItemId
+            scheduleTextAudioPrewarmIfNeeded(itemId: activeItemId)
             reportSuccess("Generated Listening Map.")
         }
     }
@@ -628,6 +964,7 @@ final class Gate1AppModel: ObservableObject {
             selectedItem = try loadItemDetail(id: activeItemId, store: store)
             diagnostics["lastAppliedMap"] = map.id
             diagnostics["lastAppliedMapChapters"] = "\(map.chapters.count)"
+            scheduleTextAudioPrewarmIfNeeded(itemId: activeItemId)
             reportSuccess("Applied Listening Map.")
         } catch {
             reportFailure(error, context: "Listening Map validation failed")
@@ -688,6 +1025,7 @@ final class Gate1AppModel: ObservableObject {
             let store = try requireStore()
             activeItemId = id
             selectedItem = try loadItemDetail(id: id, store: store)
+            scheduleTextAudioPrewarmIfNeeded(itemId: id)
             listeningMapJSON = ""
             screen = .item
             reportSuccess("Opened \(selectedItem.title).")
@@ -698,6 +1036,16 @@ final class Gate1AppModel: ObservableObject {
 
     func startItem(id: String) {
         activeItemId = id
+        start()
+    }
+
+    func playLiveSpeechInstead() {
+        guard canPlayLiveSpeechInstead else { return }
+        liveSpeechFallbackItemIds.insert(activeItemId)
+        pendingPreparedTextStartItemId = nil
+        preparedTextAudioStatus = "live_fallback"
+        snapshot.preparedTextAudioStatus = "live_fallback"
+        diagnostics["textAudioFallback:\(activeItemId)"] = "explicit_user_action"
         start()
     }
 
@@ -776,7 +1124,7 @@ final class Gate1AppModel: ObservableObject {
 
     func skipBack() {
         run { engine in
-            snapshot = try engine.skipBack(unit: skipUnit)
+            snapshot = try engine.skipBack(unit: skipUnitForCurrentTarget())
             refreshSelectedItem()
             reportSuccess("Skipped back.")
         }
@@ -784,19 +1132,43 @@ final class Gate1AppModel: ObservableObject {
 
     func skipForward() {
         run { engine in
+            let unit = skipUnitForCurrentTarget()
             if ttsMode == "kokoro" {
-                snapshot = try engine.skipForward(unit: skipUnit, minimumDistance: kokoroSkipForwardMinimumDistance)
+                snapshot = try engine.skipForward(unit: unit, minimumDistance: kokoroSkipForwardMinimumDistance)
             } else {
-                snapshot = try engine.skipForward(unit: skipUnit)
+                snapshot = try engine.skipForward(unit: unit)
             }
             refreshSelectedItem()
             reportSuccess("Skipped forward.")
         }
     }
 
+    func setMediaPlaybackRate(_ rate: Double) {
+        let clamped = max(0.75, min(2.0, rate))
+        mediaPlaybackRate = clamped
+        UserDefaults.standard.set(clamped, forKey: "mediaPlaybackRate")
+        run { engine in
+            snapshot = try engine.setPlaybackRate(clamped)
+            refreshSelectedItem()
+            diagnostics["mediaPlaybackRate"] = String(format: "%.2f", clamped)
+        }
+    }
+
+    private func skipUnitForCurrentTarget() -> String {
+        switch snapshot.targetType {
+        case TargetType.transcriptBackedMedia.rawValue, TargetType.browserOwnedMedia.rawValue:
+            return "time_15s"
+        default:
+            return skipUnit
+        }
+    }
+
     func beginInterjection() {
+        statusMessage = "Starting interjection..."
+        lastError = nil
+        diagnostics["lastInterjectionTap"] = "begin"
         Task {
-            let granted = await SystemRecordingClient.requestRecordPermission()
+            let granted = await requestMicrophonePermission()
             guard granted else {
                 reportFailure("Microphone access is required to record interjections. Enable microphone access in Settings and try again.")
                 return
@@ -809,12 +1181,29 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    private func requestMicrophonePermission(timeoutSeconds: TimeInterval = 10) async -> Bool {
+        await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                await SystemRecordingClient.requestRecordPermission()
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
+                return false
+            }
+            let granted = await group.next() ?? false
+            group.cancelAll()
+            diagnostics["lastMicrophonePermissionResult"] = granted ? "granted" : "denied_or_timeout"
+            return granted
+        }
+    }
+
     func finishInterjection() {
         run { engine in
             snapshot = try engine.finishInterjection(audioRef: nil)
             refreshSelectedItem()
             if let interjection = latestInterjectionNeedingTranscription() {
                 scheduleTranscription(for: interjection)
+                scheduleSourceWindowContextIfNeeded(for: interjection)
             }
             reportSuccess("Saved interjection. Transcribing.")
         }
@@ -1092,11 +1481,18 @@ final class Gate1AppModel: ObservableObject {
             diagnostics.merge(gate2CompactControls.diagnostics(), uniquingKeysWith: { _, new in new })
             settingsValueChanged()
             refreshKokoroAssetStatus()
+            refreshPiperVoiceStatus()
             reportSuccess("Diagnostics refreshed.")
         }
     }
 
-    func dispatchGate2CompactCommand(_ command: CompactControlCommand, chapterId: String? = nil, origin: String = "app_ui") {
+    func dispatchGate2CompactCommand(
+        _ command: CompactControlCommand,
+        chapterId: String? = nil,
+        mediaTimeMs: Int? = nil,
+        playbackRate: Double? = nil,
+        origin: String = "app_ui"
+    ) {
         if command == .beginInterjection {
             Task {
                 let granted = await SystemRecordingClient.requestRecordPermission()
@@ -1104,11 +1500,11 @@ final class Gate1AppModel: ObservableObject {
                     reportFailure("Microphone access is required to record interjections from compact controls.")
                     return
                 }
-                performGate2CompactCommand(command, chapterId: chapterId, origin: origin)
+                performGate2CompactCommand(command, chapterId: chapterId, mediaTimeMs: mediaTimeMs, playbackRate: playbackRate, origin: origin)
             }
             return
         }
-        performGate2CompactCommand(command, chapterId: chapterId, origin: origin)
+        performGate2CompactCommand(command, chapterId: chapterId, mediaTimeMs: mediaTimeMs, playbackRate: playbackRate, origin: origin)
     }
 
     func handleGate2CompactURL(_ url: URL) {
@@ -1120,9 +1516,93 @@ final class Gate1AppModel: ObservableObject {
         dispatchGate2CompactCommand(command, origin: "compact_url")
     }
 
+    func importPendingSourceLinkHandoffs() {
+        Task { @MainActor in
+            await importPendingSourceLinkHandoffsAsync()
+        }
+    }
+
+    private func importPendingSourceLinkHandoffsAsync() async {
+        guard !isImportingPendingSourceLinkHandoffs else { return }
+        isImportingPendingSourceLinkHandoffs = true
+        defer { isImportingPendingSourceLinkHandoffs = false }
+        do {
+            let handoffStore = try resolvedSourceLinkHandoffStore()
+            let payloadIDs = try handoffStore.pendingPayloadIDs()
+            guard !payloadIDs.isEmpty else { return }
+            diagnostics["pendingSourceLinkPayloads"] = "\(payloadIDs.count)"
+            for payloadID in payloadIDs {
+                do {
+                    let handoff = try handoffStore.handoff(payloadID: payloadID)
+                    let imported: Bool
+                    if sourceLinkResolver == nil {
+                        imported = await importSourceLinkAsync(handoff)
+                    } else {
+                        imported = importSourceLink(handoff)
+                    }
+                    if imported {
+                        try? handoffStore.deletePayload(payloadID: payloadID)
+                        diagnostics["pendingSourceLinkPayload:\(payloadID)"] = "deleted_after_import"
+                    } else {
+                        diagnostics["pendingSourceLinkPayload:\(payloadID)"] = "retained_after_failed_import"
+                    }
+                } catch SourceLinkHandoffStoreError.invalidPayload {
+                    try? handoffStore.deletePayload(payloadID: payloadID)
+                    diagnostics["pendingSourceLinkPayload:\(payloadID)"] = "deleted_invalid_payload"
+                } catch SourceLinkHandoffStoreError.missingPayload {
+                    diagnostics["pendingSourceLinkPayload:\(payloadID)"] = "missing"
+                } catch {
+                    diagnostics["pendingSourceLinkPayload:\(payloadID)"] = "retained_error:\(error.localizedDescription)"
+                }
+            }
+        } catch {
+            diagnostics["pendingSourceLinkImport"] = "unavailable:\(error.localizedDescription)"
+        }
+    }
+
     func handleIncomingURL(_ url: URL) {
         if url.scheme == "spokenmargins", url.host == "open" {
             screen = hasActiveSession ? .playback : .home
+            return
+        }
+        if SourceLinkHandoffURL.isSourceLinkURL(url) {
+            do {
+                if let payloadID = SourceLinkHandoffURL.payloadID(from: url) {
+                    let handoffStore = try resolvedSourceLinkHandoffStore()
+                    let handoff = try SourceLinkHandoffURL.handoff(from: url, store: handoffStore)
+                    if sourceLinkResolver == nil {
+                        Task { @MainActor in
+                            let imported = await importSourceLinkAsync(handoff)
+                            if imported {
+                                try? handoffStore.deletePayload(payloadID: payloadID)
+                                diagnostics["lastSourceLinkPayloadCleanup"] = "deleted_after_import"
+                            } else {
+                                diagnostics["lastSourceLinkPayloadCleanup"] = "retained_after_failed_import"
+                            }
+                        }
+                    } else {
+                        let imported = importSourceLink(handoff)
+                        if imported {
+                            try? handoffStore.deletePayload(payloadID: payloadID)
+                            diagnostics["lastSourceLinkPayloadCleanup"] = "deleted_after_import"
+                        } else {
+                            diagnostics["lastSourceLinkPayloadCleanup"] = "retained_after_failed_import"
+                        }
+                    }
+                } else if let handoff = SourceLinkHandoffURL.handoff(from: url) {
+                    if sourceLinkResolver == nil {
+                        Task { @MainActor in
+                            await importSourceLinkAsync(handoff)
+                        }
+                    } else {
+                        importSourceLink(handoff)
+                    }
+                } else {
+                    reportFailure("Unsupported source link URL.")
+                }
+            } catch {
+                reportFailure(error, context: "Source link import failed")
+            }
             return
         }
         guard !Gate5BrowserTextHandoffURL.isBrowserTextURL(url) else {
@@ -1150,9 +1630,17 @@ final class Gate1AppModel: ObservableObject {
     func handleGate2CompactApplicationCommand(_ command: String) -> Bool {
         switch command {
         case Gate2CompactApplicationCommand.summarizeInterjections:
+            guard gate2CompactSnapshot?.availableCommands.contains(.generateInterjectionSummary) == true else {
+                reportFailure("Summary is unavailable for the current compact surface state.")
+                return false
+            }
             summarize()
             return true
         case Gate2CompactApplicationCommand.discussInterjections:
+            guard gate2CompactSnapshot?.availableCommands.contains(.submitFollowup) == true else {
+                reportFailure("Discuss is unavailable for the current compact surface state.")
+                return false
+            }
             discuss(followUp: "")
             return true
         default:
@@ -1174,8 +1662,10 @@ final class Gate1AppModel: ObservableObject {
         UserDefaults.standard.set(speechVoiceIdentifier, forKey: "speechVoiceIdentifier")
         UserDefaults.standard.set(ttsMode, forKey: "ttsMode")
         UserDefaults.standard.set(kokoroVoiceName, forKey: "kokoroVoiceName")
+        UserDefaults.standard.set(piperVoiceId, forKey: "piperVoiceId")
         UserDefaults.standard.set(kokoroChunkCharacters, forKey: "kokoroChunkCharacters")
         KeychainStore.save(providerAPIKey, service: "SpokenMargins", account: "OpenAICompatibleAPIKey")
+        cancelTextAudioPrewarmTasks()
         diagnostics["providerBaseURL"] = providerBaseURL
         diagnostics["fallbackModel"] = providerModel
         diagnostics["listeningMapModel"] = listeningMapModel
@@ -1186,6 +1676,8 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["speechVoice"] = speechVoiceDescription
         diagnostics["ttsMode"] = ttsMode
         diagnostics["kokoroVoice"] = kokoroVoiceName
+        diagnostics["piperVoice"] = piperVoiceId.isEmpty ? "none" : piperVoiceId
+        diagnostics["piperStatus"] = piperStatus
         diagnostics["kokoroCacheLimitMB"] = String(kokoroCacheLimitMB)
         diagnostics["kokoroChunkCharacters"] = String(format: "%.0f", kokoroChunkCharacters)
         diagnostics["apiKeyConfigured"] = providerAPIKey.isEmpty ? "false" : "true"
@@ -1201,13 +1693,23 @@ final class Gate1AppModel: ObservableObject {
         UserDefaults.standard.set(speechVoiceIdentifier, forKey: "speechVoiceIdentifier")
         UserDefaults.standard.set(ttsMode, forKey: "ttsMode")
         UserDefaults.standard.set(kokoroVoiceName, forKey: "kokoroVoiceName")
+        UserDefaults.standard.set(piperVoiceId, forKey: "piperVoiceId")
         UserDefaults.standard.set(kokoroChunkCharacters, forKey: "kokoroChunkCharacters")
+        cancelTextAudioPrewarmTasks()
         diagnostics["speechRate"] = String(format: "%.2f", speechRate)
         diagnostics["speechVoice"] = speechVoiceDescription
         diagnostics["ttsMode"] = ttsMode
         diagnostics["kokoroVoice"] = kokoroVoiceName
+        diagnostics["piperVoice"] = piperVoiceId.isEmpty ? "none" : piperVoiceId
+        diagnostics["piperStatus"] = piperStatus
         diagnostics["kokoroCacheLimitMB"] = String(kokoroCacheLimitMB)
         diagnostics["kokoroChunkCharacters"] = String(format: "%.0f", kokoroChunkCharacters)
+    }
+
+    func refreshSpeechVoiceOptions() {
+        speechVoiceOptions = Self.availableSpeechVoiceOptions()
+        diagnostics["speechVoiceCount"] = "\(speechVoiceOptions.count)"
+        diagnostics["speechVoice"] = speechVoiceDescription
     }
 
     func speechSettingsChanged() {
@@ -1266,6 +1768,33 @@ final class Gate1AppModel: ObservableObject {
         kokoroStatus = "Kokoro renderer is not linked in this build."
         diagnostics["kokoroStatus"] = kokoroStatus
         #endif
+    }
+
+    func refreshPiperVoiceStatus() {
+        do {
+            piperVoiceOptions = try discoverPiperVoiceOptions()
+            if piperVoiceId.isEmpty, let first = piperVoiceOptions.first {
+                piperVoiceId = first.id
+                UserDefaults.standard.set(piperVoiceId, forKey: "piperVoiceId")
+            } else if !piperVoiceId.isEmpty, !piperVoiceOptions.contains(where: { $0.id == piperVoiceId }) {
+                piperVoiceId = piperVoiceOptions.first?.id ?? ""
+                UserDefaults.standard.set(piperVoiceId, forKey: "piperVoiceId")
+            }
+            if piperVoiceOptions.isEmpty {
+                piperStatus = "No Piper voices installed. Import a .onnx model and .onnx.json config."
+            } else if let selected = piperVoiceOptions.first(where: { $0.id == piperVoiceId }) {
+                piperStatus = "Selected \(selected.displayName). Renderer not linked yet; playback falls back to system speech."
+            } else {
+                piperStatus = "\(piperVoiceOptions.count) Piper voice\(piperVoiceOptions.count == 1 ? "" : "s") installed."
+            }
+            diagnostics["piperVoices"] = "\(piperVoiceOptions.count)"
+            diagnostics["piperVoice"] = piperVoiceId.isEmpty ? "none" : piperVoiceId
+            diagnostics["piperStatus"] = piperStatus
+        } catch {
+            piperVoiceOptions = []
+            piperStatus = "Piper voice check failed: \(error.localizedDescription)"
+            diagnostics["piperStatus"] = piperStatus
+        }
     }
 
     func previewKokoroVoice() {
@@ -1499,6 +2028,8 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["speechVoice"] = speechVoiceDescription
         diagnostics["ttsMode"] = ttsMode
         diagnostics["kokoroVoice"] = kokoroVoiceName
+        diagnostics["piperVoice"] = piperVoiceId.isEmpty ? "none" : piperVoiceId
+        diagnostics["piperStatus"] = piperStatus
         diagnostics["kokoroCacheLimitMB"] = String(kokoroCacheLimitMB)
         diagnostics["kokoroChunkCharacters"] = String(format: "%.0f", kokoroChunkCharacters)
     }
@@ -1537,6 +2068,26 @@ final class Gate1AppModel: ObservableObject {
         snapshot.sessionId != nil
     }
 
+    var isMediaPlaybackSnapshot: Bool {
+        snapshot.targetType == TargetType.transcriptBackedMedia.rawValue ||
+            snapshot.targetType == TargetType.browserOwnedMedia.rawValue
+    }
+
+    var displayPlaybackProgressPercent: Int {
+        switch snapshot.targetType {
+        case TargetType.itemTextTTS.rawValue,
+            TargetType.transcriptBackedMedia.rawValue,
+            TargetType.browserOwnedMedia.rawValue:
+            return snapshot.sourceProgressPercent
+        default:
+            return snapshot.currentPlaybackProgressPercent
+        }
+    }
+
+    var canPlayLiveSpeechInstead: Bool {
+        pendingPreparedTextStartItemId == activeItemId
+    }
+
     var canFinishInterjection: Bool {
         snapshot.isRecording
     }
@@ -1572,6 +2123,18 @@ final class Gate1AppModel: ObservableObject {
         return String(format: "System %.2f", speechRate)
     }
 
+    var mediaPlaybackRateDescription: String {
+        String(format: "%.2fx", mediaPlaybackRate)
+    }
+
+    var preparedTextAudioStatusDescription: String {
+        humanReadableStatus(preparedTextAudioStatus)
+    }
+
+    var sourceTranscriptStatusDescription: String {
+        humanReadableStatus(sourceTranscriptStatus)
+    }
+
     var isKokoroDeviceBuild: Bool {
         #if KOKORO_DEVICE && !targetEnvironment(simulator)
         true
@@ -1596,6 +2159,33 @@ final class Gate1AppModel: ObservableObject {
         max(220, kokoroChunkCharacterLimit * 2)
     }
 
+    private func humanReadableStatus(_ status: String) -> String {
+        switch status {
+        case "not_started":
+            return "not started"
+        case "rendering":
+            return "rendering"
+        case "starter_ready":
+            return "starter ready"
+        case "ready", "complete":
+            return "ready"
+        case "failed":
+            return "failed"
+        case "live_fallback":
+            return "live fallback"
+        case "queued":
+            return "queued"
+        case "downloading":
+            return "downloading"
+        case "transcribing":
+            return "transcribing"
+        case "unavailable":
+            return "unavailable"
+        default:
+            return status.replacingOccurrences(of: "_", with: " ")
+        }
+    }
+
     var currentChapter: Chapter? {
         selectedItem.chapters.last { $0.percent <= snapshot.sourceProgressPercent } ?? selectedItem.chapters.first
     }
@@ -1612,9 +2202,9 @@ final class Gate1AppModel: ObservableObject {
             gate2CompactControls.configure(
                 canonicalRuntime: engine,
                 surfaceProfile: surfaceProfile,
-                skipUnit: skipUnit
-            ) { [weak self] command, origin in
-                self?.dispatchGate2CompactCommand(command, origin: origin)
+                skipUnit: "time_15s"
+            ) { [weak self] command, origin, mediaTimeMs, playbackRate in
+                self?.dispatchGate2CompactCommand(command, mediaTimeMs: mediaTimeMs, playbackRate: playbackRate, origin: origin)
             } applicationCommandHandler: { [weak self] command in
                 self?.handleGate2CompactApplicationCommand(command) ?? false
             }
@@ -1648,20 +2238,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func gate3WatchSnapshot() -> CompactControlSnapshot? {
-        guard var snapshot = gate3WatchDispatcher?.snapshot() else {
-            return nil
-        }
-        removeUnavailableGate3WatchCommands(from: &snapshot)
-        return snapshot
-    }
-
-    private func removeUnavailableGate3WatchCommands(from snapshot: inout CompactControlSnapshot) {
-        var unavailableCommands: Set<CompactControlCommand> = [.beginInterjection]
-        if !canSummarizeInterjections {
-            unavailableCommands.insert(.generateInterjectionSummary)
-        }
-        snapshot.exposedCommands.removeAll { unavailableCommands.contains($0) }
-        snapshot.availableCommands.removeAll { unavailableCommands.contains($0) }
+        gate3WatchDispatcher?.snapshot()
     }
 
     private func updateGate3WatchState() {
@@ -1890,6 +2467,7 @@ final class Gate1AppModel: ObservableObject {
             refreshSelectedItem()
             if request.command == .finishInterjection, let interjection = latestInterjectionNeedingTranscription() {
                 scheduleTranscription(for: interjection)
+                scheduleSourceWindowContextIfNeeded(for: interjection)
             }
             diagnostics["gate3WatchLastCommand"] = request.command.rawValue
             diagnostics["gate3WatchLastResult"] = result.delegatedToCanonicalRuntime ? "delegated" : (result.rejectedReason ?? "rejected")
@@ -1903,9 +2481,21 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func performGate2CompactCommand(_ command: CompactControlCommand, chapterId: String? = nil, origin: String = "app_ui") {
+    private func performGate2CompactCommand(
+        _ command: CompactControlCommand,
+        chapterId: String? = nil,
+        mediaTimeMs: Int? = nil,
+        playbackRate: Double? = nil,
+        origin: String = "app_ui"
+    ) {
         do {
-            let result = try gate2CompactControls.dispatch(command, chapterId: chapterId, origin: origin)
+            let result = try gate2CompactControls.dispatch(
+                command,
+                chapterId: chapterId,
+                mediaTimeMs: mediaTimeMs,
+                playbackRate: playbackRate,
+                origin: origin
+            )
             if let engine {
                 snapshot = engine.snapshot
             } else {
@@ -1914,6 +2504,7 @@ final class Gate1AppModel: ObservableObject {
             refreshSelectedItem()
             if command == .finishInterjection, let interjection = latestInterjectionNeedingTranscription() {
                 scheduleTranscription(for: interjection)
+                scheduleSourceWindowContextIfNeeded(for: interjection)
             }
             reportSuccess("Compact control \(command.rawValue) \(result.delegatedToCanonicalRuntime ? "delegated" : "handled").")
         } catch {
@@ -2006,6 +2597,84 @@ final class Gate1AppModel: ObservableObject {
         try applicationSupportDirectory().appending(path: "Kokoro", directoryHint: .isDirectory)
     }
 
+    private func piperAssetsDirectory() throws -> URL {
+        try applicationSupportDirectory().appending(path: "Piper", directoryHint: .isDirectory)
+    }
+
+    private func isSupportedPiperVoiceAsset(_ url: URL) -> Bool {
+        let lowercasedName = url.lastPathComponent.lowercased()
+        return lowercasedName.hasSuffix(".onnx") || lowercasedName.hasSuffix(".onnx.json")
+    }
+
+    private func discoverPiperVoiceOptions() throws -> [PiperVoiceOption] {
+        let directory = try piperAssetsDirectory()
+        guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
+        let urls = try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )
+        return urls
+            .filter { $0.lastPathComponent.lowercased().hasSuffix(".onnx") }
+            .compactMap { modelURL -> PiperVoiceOption? in
+                let voiceId = piperVoiceId(forModelURL: modelURL)
+                guard !voiceId.isEmpty else { return nil }
+                let configURL = piperConfigURL(forVoiceId: voiceId, in: directory)
+                let metadata = piperVoiceMetadata(configURL: configURL)
+                return PiperVoiceOption(
+                    id: voiceId,
+                    name: metadata.name ?? piperDisplayName(for: voiceId),
+                    language: metadata.language ?? "",
+                    modelURL: modelURL,
+                    configURL: configURL
+                )
+            }
+            .sorted { lhs, rhs in
+                lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
+            }
+    }
+
+    private func piperVoiceId(forModelURL url: URL) -> String {
+        let name = url.lastPathComponent
+        guard name.lowercased().hasSuffix(".onnx") else { return "" }
+        return String(name.dropLast(5))
+    }
+
+    private func piperConfigURL(forVoiceId voiceId: String, in directory: URL) -> URL? {
+        let candidates = [
+            directory.appending(path: "\(voiceId).onnx.json"),
+            directory.appending(path: "\(voiceId).json")
+        ]
+        return candidates.first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    private func piperDisplayName(for voiceId: String) -> String {
+        voiceId
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .split(separator: " ")
+            .map { token in
+                token.prefix(1).uppercased() + token.dropFirst()
+            }
+            .joined(separator: " ")
+    }
+
+    private func piperVoiceMetadata(configURL: URL?) -> (name: String?, language: String?) {
+        guard let configURL,
+              let data = try? Data(contentsOf: configURL),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return (nil, nil)
+        }
+        let dataset = object["dataset"] as? String
+        let language = object["language"] as? [String: Any]
+        let languageCode = language?["code"] as? String
+        let languageName = language?["name"] as? String
+        return (
+            dataset?.isEmpty == false ? dataset : nil,
+            languageName ?? languageCode
+        )
+    }
+
     private func summaryScopeForCurrentTarget() -> SummaryScope {
         switch currentPlaybackTargetType {
         case TargetType.summaryTurnTTS.rawValue, TargetType.assistantTurnTTS.rawValue:
@@ -2064,11 +2733,254 @@ final class Gate1AppModel: ObservableObject {
             repository: store,
             audio: try makeAudioPlaybackClient(),
             recorder: SystemRecordingClient(),
-            aiProvider: provider
+            aiProvider: provider,
+            linkResolver: sourceLinkResolver ?? PublicPodcastLinkResolver(),
+            textAudio: try makeTextAudioPreparationClient()
         )
     }
 
+    private func makeTextAudioPreparationClient() throws -> TextAudioPreparationClient? {
+        guard audioPlaybackClientOverride == nil else { return nil }
+        guard ttsMode != "kokoro" else { return nil }
+        guard ttsMode != "piper" else { return nil }
+        #if canImport(AVFoundation)
+        diagnostics["sessionTextAudio"] = "System generated audio"
+        return SystemTextAudioPreparationClient(
+            outputDirectory: try generatedTextAudioDirectory(),
+            voiceIdentifier: speechVoiceIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : speechVoiceIdentifier,
+            speechRate: Float(speechRate),
+            allowsSynchronousRendering: false
+        )
+        #else
+        return nil
+        #endif
+    }
+
+    private func scheduleTextAudioPrewarmIfNeeded(itemId: String) {
+        guard audioPlaybackClientOverride == nil, ttsMode != "kokoro" else { return }
+        guard ttsMode != "piper" else { return }
+        guard textAudioPrewarmTasks[itemId] == nil else { return }
+        do {
+            let store = try requireStore()
+            let item = try store.loadItem(id: itemId)
+            guard shouldPrewarmTextAudio(for: item), let text = item.text else { return }
+            let outputDirectory = try generatedTextAudioDirectory()
+            let voiceIdentifier = speechVoiceIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : speechVoiceIdentifier
+            let rate = Float(speechRate)
+            diagnostics["textAudioPrewarm:\(itemId)"] = "scheduled"
+            preparedTextAudioStatus = "rendering"
+            snapshot.preparedTextAudioStatus = preparedTextAudioStatus
+            textAudioPrewarmTasks[itemId] = Task { [weak self, itemId, title = item.title, text, outputDirectory, voiceIdentifier, rate] in
+                guard let self else { return }
+                self.diagnostics["textAudioPrewarm:\(itemId)"] = "rendering_full"
+                let fullResult = await Self.prepareTextAudioInBackground(
+                    itemId: itemId,
+                    title: title,
+                    text: text,
+                    outputDirectory: outputDirectory,
+                    voiceIdentifier: voiceIdentifier,
+                    speechRate: rate,
+                    renderScope: .complete
+                )
+                guard !Task.isCancelled else { return }
+                self.textAudioPrewarmTasks[itemId] = nil
+                switch fullResult {
+                case .success(let prepared):
+                    guard let prepared else {
+                        self.finishTextAudioPrewarm(itemId: itemId, status: "failed", diagnostic: "full_unavailable")
+                        return
+                    }
+                    self.attachPreparedTextAudio(prepared, itemId: itemId, preparedStatus: "ready", diagnosticStatus: "ready")
+                case .failure(let error):
+                    self.finishTextAudioPrewarm(itemId: itemId, status: "failed", diagnostic: "full_failed:\(error.localizedDescription)")
+                }
+            }
+        } catch {
+            diagnostics["textAudioPrewarm:\(itemId)"] = "failed:\(error.localizedDescription)"
+            preparedTextAudioStatus = "failed"
+            snapshot.preparedTextAudioStatus = "failed"
+        }
+    }
+
+    private nonisolated static func prepareTextAudioInBackground(
+        itemId: String,
+        title: String,
+        text: String,
+        outputDirectory: URL,
+        voiceIdentifier: String?,
+        speechRate: Float,
+        renderScope: TextAudioPrewarmRenderScope
+    ) async -> Result<PreparedTextAudio?, Error> {
+        await Task.detached(priority: renderScope.priority) {
+            do {
+                let renderer = SystemTextAudioPreparationClient(
+                    outputDirectory: outputDirectory,
+                    voiceIdentifier: voiceIdentifier,
+                    speechRate: speechRate,
+                    allowsSynchronousRendering: true
+                )
+                switch renderScope {
+                case .starter(let targetDurationMs):
+                    return .success(try renderer.prepareStarterTextAudio(itemId: itemId, title: title, text: text, targetDurationMs: targetDurationMs))
+                case .complete:
+                    return .success(try renderer.prepareTextAudio(itemId: itemId, title: title, text: text))
+                }
+            } catch {
+                return .failure(error)
+            }
+        }.value
+    }
+
+    @discardableResult
+    private func attachPreparedTextAudio(
+        _ prepared: PreparedTextAudio,
+        itemId: String,
+        preparedStatus: String = "ready",
+        diagnosticStatus: String = "ready"
+    ) -> Bool {
+        do {
+            let shouldAutoStart = pendingPreparedTextStartItemId == itemId
+            if engine == nil, let store {
+                installEngine(try makeEngine(store: store))
+            }
+            guard let engine else { return false }
+            snapshot = try engine.attachPreparedTextAudio(itemId: itemId, prepared: prepared)
+            if let store {
+                libraryItems = try loadLibraryRows(store: store)
+                if activeItemId == itemId || selectedItem.id == itemId {
+                    selectedItem = try loadItemDetail(id: itemId, store: store)
+                }
+            }
+            diagnostics["textAudioPrewarm:\(itemId)"] = diagnosticStatus
+            preparedTextAudioStatus = preparedStatus
+            snapshot.preparedTextAudioStatus = preparedStatus
+            if shouldAutoStart {
+                pendingPreparedTextStartItemId = nil
+                startItem(id: itemId)
+            }
+            return true
+        } catch {
+            diagnostics["textAudioPrewarm:\(itemId)"] = "attach_failed:\(error.localizedDescription)"
+            if pendingPreparedTextStartItemId == itemId {
+                pendingPreparedTextStartItemId = nil
+            }
+            preparedTextAudioStatus = "failed"
+            snapshot.preparedTextAudioStatus = "failed"
+            return false
+        }
+    }
+
+    private func finishTextAudioPrewarm(itemId: String, status: String, diagnostic: String) {
+        textAudioPrewarmTasks[itemId] = nil
+        diagnostics["textAudioPrewarm:\(itemId)"] = diagnostic
+        if pendingPreparedTextStartItemId == itemId {
+            pendingPreparedTextStartItemId = nil
+        }
+        preparedTextAudioStatus = status
+        snapshot.preparedTextAudioStatus = status
+    }
+
+    private nonisolated static func preparedTextAudioCoversCompleteText(_ prepared: PreparedTextAudio) -> Bool {
+        guard let endChar = prepared.timeline.segments.compactMap(\.endChar).max() else {
+            return false
+        }
+        return endChar >= prepared.normalizedText.count
+    }
+
+    private func shouldPrewarmTextAudio(for item: Item) -> Bool {
+        guard item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else { return false }
+        if item.mediaType == TargetType.browserOwnedMedia.rawValue {
+            return false
+        }
+        switch item.media?.sourceType {
+        case .none, .some(.generatedTTSRealtime):
+            return true
+        case .some(.generatedTTSPrerendered):
+            return isStarterPreparedTextMedia(item.media)
+        case .some(.nativeMediaFile), .some(.browserOwnedMedia), .some(.remoteStream):
+            return false
+        }
+    }
+
+    private func isStarterPreparedTextMedia(_ media: ItemMedia?) -> Bool {
+        guard media?.sourceType == .generatedTTSPrerendered else { return false }
+        let identifier = media?.nativeMediaId ?? media?.url ?? ""
+        return identifier.contains("-starter.caf") || identifier.contains("-starter.")
+    }
+
+    private func cancelTextAudioPrewarmTasks() {
+        textAudioPrewarmTasks.values.forEach { $0.cancel() }
+        textAudioPrewarmTasks.removeAll()
+    }
+
+    private func generatedTextAudioDirectory() throws -> URL {
+        let cachesDirectory = try FileManager.default.url(
+            for: .cachesDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        return cachesDirectory.appending(path: "GeneratedTextAudio", directoryHint: .isDirectory)
+    }
+
+    private func prepareTextPlaybackBeforeStarting(itemId: String) -> Bool {
+        do {
+            let store = try requireStore()
+            let item = try store.loadItem(id: itemId)
+            guard shouldGatePreparedTextPlayback(for: item) else {
+                return false
+            }
+            pendingPreparedTextStartItemId = itemId
+            diagnostics["textAudioStartGate:\(itemId)"] = "waiting_for_prepared_media"
+            if preparedTextAudioStatus != "failed" {
+                preparedTextAudioStatus = "rendering"
+                snapshot.preparedTextAudioStatus = "rendering"
+            }
+            if engine == nil {
+                installEngine(try makeEngine(store: store))
+            }
+            selectedItem = try loadItemDetail(id: itemId, store: store)
+            screen = .playback
+            reportSuccess("Preparing generated audio for \(item.title).")
+            return true
+        } catch {
+            reportFailure(error, context: "Prepare text playback failed")
+            return true
+        }
+    }
+
+    private func shouldGatePreparedTextPlayback(for item: Item) -> Bool {
+        guard (audioPlaybackClientOverride == nil || forcePreparedTextGate),
+              ttsMode != "kokoro",
+              !liveSpeechFallbackItemIds.contains(item.id),
+              shouldPrewarmTextAudio(for: item) else {
+            return false
+        }
+        if item.media?.sourceType == .generatedTTSPrerendered {
+            return false
+        }
+        return true
+    }
+
+    private enum TextAudioPrewarmRenderScope: Sendable {
+        case starter(targetDurationMs: Int)
+        case complete
+
+        var priority: TaskPriority {
+            switch self {
+            case .starter:
+                return .userInitiated
+            case .complete:
+                return .utility
+            }
+        }
+    }
+
     private func makeAudioPlaybackClient() throws -> AudioPlaybackClient {
+        if let audioPlaybackClientOverride {
+            diagnostics["sessionTTS"] = "Test audio override"
+            return audioPlaybackClientOverride
+        }
         sanitizeTTSMode()
         #if KOKORO_DEVICE && !targetEnvironment(simulator) && canImport(AVFoundation)
         if ttsMode == "kokoro" {
@@ -2080,7 +2992,7 @@ final class Gate1AppModel: ObservableObject {
                 create: true
             )
             diagnostics["sessionTTS"] = "Kokoro bounded pre-render"
-            return KokoroSpeechPlaybackClient(
+            let speech = KokoroSpeechPlaybackClient(
                 applicationSupportDirectory: supportDirectory,
                 outputDirectory: cachesDirectory.appending(path: "KokoroPlayback", directoryHint: .isDirectory),
                 voiceName: kokoroVoiceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "am_echo" : kokoroVoiceName,
@@ -2088,6 +3000,7 @@ final class Gate1AppModel: ObservableObject {
                 cacheLimitBytes: kokoroCacheLimitBytes,
                 maxCharacters: kokoroChunkCharacterLimit
             )
+            return RoutedAudioPlaybackClient(speech: speech, media: makeMediaPlaybackClient())
         }
         #endif
         if ttsMode == "kokoro" {
@@ -2095,12 +3008,28 @@ final class Gate1AppModel: ObservableObject {
         } else {
             diagnostics["sessionTTS"] = "System speech"
         }
-        return SystemSpeechPlaybackClient()
+        return RoutedAudioPlaybackClient(
+            speech: SystemSpeechPlaybackClient(),
+            media: makeMediaPlaybackClient()
+        )
+    }
+
+    private func makeMediaPlaybackClient() -> AudioPlaybackClient {
+        AVPlayerStreamPlaybackClient { [weak self] command, mediaTimeMs, playbackRate in
+            Task { @MainActor [weak self] in
+                self?.performGate2CompactCommand(
+                    command,
+                    mediaTimeMs: mediaTimeMs,
+                    playbackRate: playbackRate,
+                    origin: "now_playing"
+                )
+            }
+        }
     }
 
     @discardableResult
     private func sanitizeTTSMode() -> Bool {
-        guard ttsMode == "kokoro", !isKokoroDeviceBuild else {
+        guard (ttsMode == "kokoro" && !isKokoroDeviceBuild) || ttsMode == "piper" else {
             return false
         }
         ttsMode = "systemImmediate"
@@ -2113,14 +3042,68 @@ final class Gate1AppModel: ObservableObject {
             LibraryItemRow(
                 id: item.id,
                 title: item.title,
-                status: item.status,
+                status: libraryStatusLabel(for: item),
                 canDelete: isUserImportedItem(item.id)
             )
         }
     }
 
+    private func libraryStatusLabel(for item: Item) -> String {
+        guard item.status == "ready" else { return item.status }
+        if item.media != nil || item.mediaType == TargetType.transcriptBackedMedia.rawValue {
+            return "Audio ready"
+        }
+        return item.status
+    }
+
+    private func resolvedSourceLinkHandoffStore() throws -> SourceLinkHandoffStore {
+        if let sourceLinkHandoffStore {
+            return sourceLinkHandoffStore
+        }
+        return try SourceLinkHandoffStore.appGroup()
+    }
+
+    private func sourceLinkFailureMessage(status: String?, reason: String?, provider: String?) -> String {
+        switch reason {
+        case "spotify_audio_requires_provider_playback":
+            if provider == "spotify" {
+                return "This looks like a Spotify-only episode. Spoken Margins could not find a public audio file for it yet."
+            }
+            return "This provider did not expose a public audio file that Spoken Margins can play yet."
+        case "apple_episode_id_missing":
+            return "That Apple Podcasts link did not identify a specific episode."
+        case "apple_lookup_empty":
+            return "Apple Podcasts did not return this episode from lookup, and I could not find a public audio stream on the Apple page."
+        case "apple_audio_enclosure_not_found":
+            return "Apple Podcasts did not expose a playable public audio stream for that episode."
+        case "audio_enclosure_not_found":
+            return "I found the page or feed, but not a playable podcast/audio file."
+        case "rss_episode_ambiguous":
+            return "I found the feed, but could not identify one episode to play."
+        case "unsupported_link_type":
+            return "That link is not a supported public podcast, RSS feed, or direct audio file."
+        case "apple_lookup_failed":
+            return "Apple Podcasts did not return a playable public audio file for that episode."
+        case .some(let message):
+            return message
+        case .none:
+            if status == LinkResolutionStatus.unsupported.rawValue {
+                return "That link is not playable in Spoken Margins yet."
+            }
+            return "Source link needs review before it can be played."
+        }
+    }
+
+    private static func firstURL(in text: String) -> URL? {
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
+            return URL(string: text)
+        }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return detector.matches(in: text, options: [], range: range).compactMap(\.url).first
+    }
+
     private func isUserImportedItem(_ id: String) -> Bool {
-        id.hasPrefix("item-import-") || id.hasPrefix("item-obsidian-")
+        id.hasPrefix("item-import-") || id.hasPrefix("item-obsidian-") || id.hasPrefix("item-browser-") || id.hasPrefix("item-source-")
     }
 
     private func submitProviderJobIfNeeded(kind: String, turnId: String, messages: [String], force: Bool = false) {
@@ -2141,7 +3124,7 @@ final class Gate1AppModel: ObservableObject {
         lastError = nil
         Task {
             do {
-                let (data, response) = try await URLSession.shared.data(for: request)
+                let (data, response) = try await performProviderDataRequest(request)
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                 guard (200..<300).contains(status) else {
                     let body = String(data: data, encoding: .utf8) ?? "HTTP \(status)"
@@ -2182,7 +3165,7 @@ final class Gate1AppModel: ObservableObject {
             if updated != snapshot {
                 snapshot = updated
             }
-            return previousStatus == .playing &&
+            return previousStatus.isPlaybackActive &&
                 updated.status == .paused &&
                 previousTargetId == updated.targetId
         } catch {
@@ -2198,13 +3181,41 @@ final class Gate1AppModel: ObservableObject {
         guard let request = makeChatCompletionsRequest(messages: messages, model: model, systemPrompt: systemPrompt) else {
             throw ProviderCallError.invalidURL
         }
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await performProviderDataRequest(request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             let body = String(data: data, encoding: .utf8) ?? "HTTP \(status)"
             throw ProviderCallError.http(status, body)
         }
         return try decodeProviderText(data)
+    }
+
+    private func performProviderDataRequest(_ request: URLRequest, timeoutSeconds: TimeInterval = 30) async throws -> (Data, URLResponse) {
+        var timedRequest = request
+        timedRequest.timeoutInterval = timeoutSeconds
+        diagnostics["lastProviderRequestURL"] = timedRequest.url?.absoluteString ?? "none"
+        diagnostics["lastProviderRequestStartedAt"] = "\(Date().timeIntervalSince1970)"
+        return try await Self.performProviderDataRequestOffMain(timedRequest, timeoutSeconds: timeoutSeconds)
+    }
+
+    private nonisolated static func performProviderDataRequestOffMain(
+        _ request: URLRequest,
+        timeoutSeconds: TimeInterval
+    ) async throws -> (Data, URLResponse) {
+        return try await withThrowingTaskGroup(of: (Data, URLResponse).self) { group in
+            group.addTask {
+                try await URLSession.shared.data(for: request)
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
+                throw URLError(.timedOut)
+            }
+            guard let result = try await group.next() else {
+                throw URLError(.unknown)
+            }
+            group.cancelAll()
+            return result
+        }
     }
 
     private func makeChatCompletionsRequest(messages: [String], model: String, systemPrompt: String) -> URLRequest? {
@@ -2341,6 +3352,335 @@ final class Gate1AppModel: ObservableObject {
         return interjections.last { $0.transcriptionStatus == "pending" && $0.audioPath != nil }
     }
 
+    private func scheduleSourceTranscriptImportIfAvailable(_ links: [SourceTranscriptLink], itemId: String) {
+        guard !links.isEmpty else {
+            diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "no_links"
+            return
+        }
+        guard let store,
+              let item = try? store.loadItem(id: itemId),
+              item.transcriptId == nil else { return }
+        let sortedLinks = Self.prioritizedTranscriptLinks(links)
+        diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "scheduled:\(sortedLinks.count)"
+        diagnostics["sourceTranscriptionStatus"] = "downloading"
+        sourceTranscriptStatus = "downloading"
+        snapshot.sourceTranscriptStatus = "downloading"
+        Task { [weak self, itemId, sortedLinks, durationMs = item.media?.durationMs] in
+            guard let self else { return }
+            var lastFailure = ""
+            for link in sortedLinks {
+                do {
+                    let data = try await Self.fetchTranscriptLink(link)
+                    if let timeline = try Self.transcriptTimeline(from: data, link: link, itemId: itemId, durationMs: durationMs),
+                       !timeline.segments.isEmpty {
+                        await MainActor.run {
+                            self.diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "attached:\(link.type)"
+                            self.attachSourceTranscriptTimeline(timeline, itemId: itemId)
+                        }
+                        return
+                    }
+                    lastFailure = "empty:\(link.type)"
+                } catch {
+                    lastFailure = "\(link.type):\(error.localizedDescription)"
+                }
+            }
+            await MainActor.run {
+                self.diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "unavailable:\(lastFailure)"
+                self.diagnostics["sourceTranscriptionStatus"] = "unavailable"
+                self.sourceTranscriptStatus = "unavailable"
+                self.snapshot.sourceTranscriptStatus = "unavailable"
+            }
+        }
+    }
+
+    private static func prioritizedTranscriptLinks(_ links: [SourceTranscriptLink]) -> [SourceTranscriptLink] {
+        links.enumerated()
+            .sorted { lhs, rhs in
+                let lhsRank = transcriptLinkRank(lhs.element)
+                let rhsRank = transcriptLinkRank(rhs.element)
+                if lhsRank == rhsRank {
+                    return lhs.offset < rhs.offset
+                }
+                return lhsRank < rhsRank
+            }
+            .map(\.element)
+    }
+
+    private static func transcriptLinkRank(_ link: SourceTranscriptLink) -> Int {
+        let value = "\(link.type) \(link.url) \(link.rel ?? "")".lowercased()
+        if value.contains("vtt") || value.contains("webvtt") { return 0 }
+        if value.contains("srt") || value.contains("subrip") { return 1 }
+        if value.contains("json") { return 2 }
+        if value.contains("plain") || value.contains(".txt") { return 3 }
+        if value.contains("html") || value.contains(".htm") { return 4 }
+        return 5
+    }
+
+    private static func fetchTranscriptLink(_ link: SourceTranscriptLink) async throws -> Data {
+        guard let url = URL(string: link.url),
+              ["http", "https", "file"].contains(url.scheme?.lowercased() ?? "") else {
+            throw SessionKitError.persistenceFailed("source_transcript_url_unsupported")
+        }
+        if url.isFileURL {
+            return try Data(contentsOf: url)
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 8
+        request.setValue("SpokenMargins/0.1", forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 200
+        guard (200..<300).contains(status) else {
+            throw URLError(.badServerResponse)
+        }
+        return data
+    }
+
+    private static func transcriptTimeline(from data: Data, link: SourceTranscriptLink, itemId: String, durationMs: Int?) throws -> TranscriptTimeline? {
+        let type = "\(link.type) \(link.url)".lowercased()
+        guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
+            return nil
+        }
+        if type.contains("vtt") || type.contains("srt") {
+            return cueTranscriptTimeline(from: text, itemId: itemId, durationMs: durationMs)
+        }
+        if type.contains("json") {
+            return jsonTranscriptTimeline(from: data, itemId: itemId, durationMs: durationMs)
+        }
+        let cleaned = type.contains("html") ? stripHTML(text) : text
+        let normalized = cleaned
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return nil }
+        let endMs = max(1, durationMs ?? 1)
+        return TranscriptTimeline(
+            segments: [
+                MediaTimelineSegment(
+                    id: "transcript-\(itemId)-plain-0001",
+                    startMs: 0,
+                    endMs: endMs,
+                    text: normalized
+                )
+            ],
+            chapters: [],
+            durationMs: durationMs ?? endMs
+        )
+    }
+
+    private static func cueTranscriptTimeline(from text: String, itemId: String, durationMs: Int?) -> TranscriptTimeline {
+        let blocks = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .components(separatedBy: "\n\n")
+        var segments: [MediaTimelineSegment] = []
+        for block in blocks {
+            let lines = block
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            guard let timingIndex = lines.firstIndex(where: { $0.contains("-->") }) else { continue }
+            let parts = lines[timingIndex].components(separatedBy: "-->")
+            guard parts.count >= 2,
+                  let startMs = parseCueTime(parts[0]),
+                  let endMs = parseCueTime(parts[1]) else {
+                continue
+            }
+            let body = lines[(timingIndex + 1)...]
+                .joined(separator: " ")
+                .replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
+                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !body.isEmpty else { continue }
+            segments.append(MediaTimelineSegment(
+                id: "transcript-\(itemId)-cue-\(String(format: "%04d", segments.count + 1))",
+                startMs: startMs,
+                endMs: max(startMs + 1, endMs),
+                text: body
+            ))
+        }
+        return TranscriptTimeline(
+            segments: segments,
+            chapters: [],
+            durationMs: durationMs ?? segments.map(\.endMs).max()
+        )
+    }
+
+    private static func jsonTranscriptTimeline(from data: Data, itemId: String, durationMs: Int?) -> TranscriptTimeline? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) else { return nil }
+        let entries: [[String: Any]]
+        if let array = object as? [[String: Any]] {
+            entries = array
+        } else if let dictionary = object as? [String: Any],
+                  let nested = (dictionary["segments"] ?? dictionary["transcripts"] ?? dictionary["captions"]) as? [[String: Any]] {
+            entries = nested
+        } else if let dictionary = object as? [String: Any],
+                  let text = dictionary["text"] as? String {
+            let normalized = text.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalized.isEmpty else { return nil }
+            let endMs = max(1, durationMs ?? 1)
+            return TranscriptTimeline(
+                segments: [MediaTimelineSegment(id: "transcript-\(itemId)-json-0001", startMs: 0, endMs: endMs, text: normalized)],
+                chapters: [],
+                durationMs: durationMs ?? endMs
+            )
+        } else {
+            return nil
+        }
+        var segments: [MediaTimelineSegment] = []
+        for entry in entries {
+            let body = (entry["text"] ?? entry["body"] ?? entry["caption"]) as? String ?? ""
+            let text = body.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+            let startMs = jsonTimeMs(entry["start"] ?? entry["startTime"] ?? entry["start_ms"] ?? entry["offset"]) ?? 0
+            let explicitEndMs = jsonTimeMs(entry["end"] ?? entry["endTime"] ?? entry["end_ms"])
+            let duration = jsonTimeMs(entry["duration"] ?? entry["durationMs"] ?? entry["duration_ms"])
+            let endMs = explicitEndMs ?? duration.map { startMs + $0 } ?? max(startMs + 1, durationMs ?? startMs + 1)
+            segments.append(MediaTimelineSegment(
+                id: "transcript-\(itemId)-json-\(String(format: "%04d", segments.count + 1))",
+                startMs: startMs,
+                endMs: max(startMs + 1, endMs),
+                text: text
+            ))
+        }
+        guard !segments.isEmpty else { return nil }
+        return TranscriptTimeline(
+            segments: segments,
+            chapters: [],
+            durationMs: durationMs ?? segments.map(\.endMs).max()
+        )
+    }
+
+    private static func parseCueTime(_ raw: String) -> Int? {
+        let value = raw
+            .split(separator: " ")
+            .first?
+            .replacingOccurrences(of: ",", with: ".")
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let parts = value.split(separator: ":").map(String.init)
+        guard !parts.isEmpty else { return nil }
+        let secondsPart = parts.last ?? "0"
+        let seconds = Double(secondsPart) ?? 0
+        let minutes = parts.count >= 2 ? Double(parts[parts.count - 2]) ?? 0 : 0
+        let hours = parts.count >= 3 ? Double(parts[parts.count - 3]) ?? 0 : 0
+        return Int(((hours * 3600) + (minutes * 60) + seconds) * 1000)
+    }
+
+    private static func jsonTimeMs(_ value: Any?) -> Int? {
+        switch value {
+        case let int as Int:
+            return int
+        case let double as Double:
+            return double < 10_000 ? Int((double * 1000).rounded()) : Int(double.rounded())
+        case let string as String:
+            if string.contains(":") {
+                return parseCueTime(string)
+            }
+            guard let double = Double(string) else { return nil }
+            return double < 10_000 ? Int((double * 1000).rounded()) : Int(double.rounded())
+        default:
+            return nil
+        }
+    }
+
+    private static func stripHTML(_ html: String) -> String {
+        html.replacingOccurrences(of: #"<script[\s\S]*?</script>"#, with: " ", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: #"<style[\s\S]*?</style>"#, with: " ", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
+    }
+
+    private func scheduleSourceTranscriptionIfNeeded(for item: Item) {
+        guard item.transcriptId == nil,
+              let sourceURLString = item.media?.url,
+              let sourceURL = URL(string: sourceURLString) else {
+            return
+        }
+        diagnostics["sourceTranscriptionStatus"] = "transcribing"
+        sourceTranscriptStatus = "transcribing"
+        snapshot.sourceTranscriptStatus = "transcribing"
+        statusMessage = "Transcribing source audio..."
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let timeline = try await self.sourceTranscriptionClient.transcribeSourceAudio(
+                    url: sourceURL,
+                    itemId: item.id,
+                    durationMs: item.media?.durationMs
+                )
+                await MainActor.run {
+                    self.attachSourceTranscriptTimeline(timeline, itemId: item.id)
+                }
+            } catch {
+                await MainActor.run {
+                    self.diagnostics["sourceTranscriptionStatus"] = "unavailable"
+                    self.diagnostics["sourceTranscriptionError"] = String(describing: error)
+                    self.sourceTranscriptStatus = "unavailable"
+                    self.snapshot.sourceTranscriptStatus = "unavailable"
+                    if self.lastError == nil {
+                        self.statusMessage = "Audio ready. Source transcript unavailable; notes will use timestamps."
+                    }
+                }
+            }
+        }
+    }
+
+    private func attachSourceTranscriptTimeline(_ timeline: TranscriptTimeline, itemId: String) {
+        run { engine in
+            snapshot = try engine.attachTranscriptTimeline(itemId: itemId, timeline: timeline)
+            if let store {
+                libraryItems = try loadLibraryRows(store: store)
+                selectedItem = try loadItemDetail(id: itemId, store: store)
+            }
+            diagnostics["sourceTranscriptionStatus"] = "complete"
+            diagnostics["sourceTranscriptionItem"] = itemId
+            sourceTranscriptStatus = "ready"
+            snapshot.sourceTranscriptStatus = "ready"
+            reportSuccess("Source transcript ready for anchored notes.")
+        }
+    }
+
+    private func scheduleSourceWindowContextIfNeeded(for interjection: Interjection) {
+        guard interjection.targetType == .item,
+              let anchorMediaTimeMs = interjection.anchor.mediaTimeMs,
+              let store,
+              let item = try? store.loadItem(id: interjection.itemId),
+              item.transcriptId == nil,
+              let sourceURLString = item.media?.url,
+              let sourceURL = URL(string: sourceURLString) else {
+            return
+        }
+        switch item.media?.sourceType {
+        case .some(.nativeMediaFile), .some(.remoteStream):
+            break
+        default:
+            return
+        }
+        diagnostics["sourceWindowTranscription:\(interjection.id)"] = "scheduled"
+        Task { [weak self, interjectionId = interjection.id, itemId = item.id, durationMs = item.media?.durationMs] in
+            guard let self else { return }
+            do {
+                let timeline = try await self.sourceTranscriptionClient.transcribeSourceAudioWindow(
+                    url: sourceURL,
+                    itemId: itemId,
+                    anchorMediaTimeMs: anchorMediaTimeMs,
+                    durationMs: durationMs,
+                    windowBeforeMs: 90_000,
+                    windowAfterMs: 120_000
+                )
+                await MainActor.run {
+                    self.run { engine in
+                        self.snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjectionId, timeline: timeline)
+                        self.refreshSelectedItem()
+                        self.diagnostics["sourceWindowTranscription:\(interjectionId)"] = "complete"
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.diagnostics["sourceWindowTranscription:\(interjectionId)"] = "failed:\(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
     private func scheduleTranscription(for interjection: Interjection) {
         guard let audioPath = interjection.audioPath else { return }
         Task {
@@ -2373,13 +3713,14 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func conversationPrompt(followUp: String, explicitFollowUp: String, primaryInterjections: [Interjection]) -> String {
-        Gate1ProviderRequestFactory.conversationPrompt(
+        let scopedInterjections = primaryInterjections.isEmpty ? currentDiscussionInterjections() : primaryInterjections
+        return Gate1ProviderRequestFactory.conversationPrompt(
             followUp: followUp,
             contextJSON: sessionContextJSON(
-                interjections: selectedItem.interjections,
+                interjections: scopedInterjections,
                 currentFollowUp: followUp,
                 explicitFollowUp: explicitFollowUp,
-                primaryInterjections: primaryInterjections
+                primaryInterjections: scopedInterjections
             )
         )
     }

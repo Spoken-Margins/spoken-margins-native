@@ -30,6 +30,24 @@ final class Gate1PlaybackAutoplayQueueTests: XCTestCase {
         ))
     }
 
+    func testPartialOriginalSourceBlocksGeneratedTurnEvenAfterCurrentAudioCompletes() {
+        var queue = Gate1PlaybackAutoplayQueue()
+        queue.enqueue("turn-response-001")
+        var snapshot = SessionSnapshot()
+        snapshot.status = .paused
+        snapshot.phase = .itemPlayback
+        snapshot.targetType = TargetType.transcriptBackedMedia.rawValue
+        snapshot.targetId = "file:///tmp/generated-starter.caf"
+        snapshot.sourceProgressPercent = 8
+
+        XCTAssertTrue(queue.shouldDeferGeneratedTurnPlayback(
+            snapshot: snapshot,
+            turnId: "turn-response-001",
+            completedCurrentAudio: true
+        ))
+        XCTAssertNil(queue.popReadyTurn(snapshot: snapshot, completedCurrentAudio: true))
+    }
+
     func testInterjectionSummaryFinishAllowsQueuedDiscussionToAutoplay() {
         var queue = Gate1PlaybackAutoplayQueue()
         queue.enqueue("turn-response-001")

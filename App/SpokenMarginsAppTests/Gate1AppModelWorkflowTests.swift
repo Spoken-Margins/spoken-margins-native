@@ -1,10 +1,11 @@
 import XCTest
+import SessionKit
 @testable import SpokenMarginsApp
 
 @MainActor
 final class Gate1AppModelWorkflowTests: XCTestCase {
     func testManualImportClearsEntryFieldsAfterSuccessfulCreate() {
-        let model = Gate1AppModel()
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         model.importTitle = "Scratch Item"
         model.importText = "This is pasted text. It should not remain in the import form."
@@ -17,8 +18,28 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.title, "Scratch Item")
     }
 
+    func testTextImportStartsLiveSpeechWhilePreparedMediaRendersInBackground() {
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            forcePreparedTextGate: true
+        )
+        model.resetAndSeed()
+        model.importTitle = "Prepared First"
+        model.importText = "This text should start immediately while generated audio renders in the background."
+
+        model.importTextItem()
+
+        XCTAssertEqual(model.screen, .playback)
+        XCTAssertNil(model.pendingPreparedTextStartItemId)
+        XCTAssertNotNil(model.snapshot.sessionId)
+        XCTAssertEqual(model.snapshot.status, .playing)
+        XCTAssertEqual(model.snapshot.targetType, TargetType.itemTextTTS.rawValue)
+        XCTAssertEqual(model.preparedTextAudioStatus, "rendering")
+        XCTAssertFalse(model.canPlayLiveSpeechInstead)
+    }
+
     func testResumeCompletedSessionAfterExportRestartsSourcePlayback() throws {
-        let model = Gate1AppModel()
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         model.importTitle = "Short Item"
         model.importText = "One sentence only."

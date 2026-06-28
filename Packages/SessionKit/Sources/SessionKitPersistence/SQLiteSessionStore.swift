@@ -149,6 +149,19 @@ public final class SQLiteSessionStore: SessionRepository {
         try loadByItem(kind: "watch_package_request", itemId: itemId)
     }
 
+    public func saveTranscriptTimeline(_ transcript: SourceTranscriptTimeline) throws {
+        try save(kind: "source_transcript_timeline", id: transcript.id, sessionId: nil, itemId: transcript.itemId, value: transcript)
+    }
+
+    public func loadTranscriptTimeline(id: String) throws -> SourceTranscriptTimeline? {
+        try loadOptional(kind: "source_transcript_timeline", id: id)
+    }
+
+    public func loadTranscriptTimeline(itemId: String) throws -> SourceTranscriptTimeline? {
+        let transcripts: [SourceTranscriptTimeline] = try loadByItem(kind: "source_transcript_timeline", itemId: itemId)
+        return transcripts.last
+    }
+
     public func seed(item: Item) throws {
         try saveItem(item)
     }

@@ -8,7 +8,23 @@ Verification answers: did the implementation pass tests?
 
 Validation answers: does the product actually support the intended listening, interjection, navigation, sync, and discussion workflows?
 
-The product owner is expected to validate interface-level behavior, not inspect implementation details. Each gate must therefore be production-like enough to reveal shallow or misleading progress.
+The product owner is the only validator of product flows. Agents and tests verify implementation claims; they do not validate product fit, feel, understandability, or acceptance. Each gate must therefore be production-like enough to reveal shallow or misleading progress.
+
+## Status Language
+
+Use these states for every gate behavior:
+
+- `implemented`: the app has a user path or runtime path.
+- `verified`: automated checks, builds, traces, or developer/device evidence support the implementation.
+- `human_validated`: the product owner used the flow and accepted it.
+
+A flow moves to `human_validated` only through product-owner use. After that, focused regression tests may be added to preserve the validated behavior.
+
+## Automation Timing
+
+Routine development should use fast verification: contract validators, SessionKit/runtime tests, app unit tests, and targeted builds when integration changed.
+
+Broad UI route automation is late-gate evidence. Run it before asking the product owner to close a gate, or after a human-validated flow is important enough to protect with regression coverage. Avoid making full UI routes the default development loop.
 
 ## Validation Rules
 
@@ -28,6 +44,8 @@ Each validation gate must provide:
 A gate does not pass because the happy path worked once. A gate passes when the product owner can repeat the core flow with realistic material and failures are understandable, recoverable, and honestly represented by the UI.
 
 Validation gates should feel ambitious. They should not be throwaway demos.
+
+Human validation records should be stored under `artifacts/validation/gate-N/` with the date, build, device, flow, pass/fail result, and notes.
 
 ## Gate 0: Validation Harness Readiness
 

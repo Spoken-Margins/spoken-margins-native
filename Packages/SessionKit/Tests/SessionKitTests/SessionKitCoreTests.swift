@@ -108,7 +108,14 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertTrue(snapshot.exposedCommands.contains(.jumpToChapter))
         XCTAssertTrue(snapshot.exposedCommands.contains(.beginInterjection))
         XCTAssertFalse(snapshot.exposedCommands.contains(.finishInterjection))
-        XCTAssertEqual(snapshot.availableCommands, snapshot.exposedCommands)
+        XCTAssertFalse(snapshot.availableCommands.contains(.play))
+        XCTAssertTrue(snapshot.availableCommands.contains(.pause))
+        XCTAssertTrue(snapshot.availableCommands.contains(.togglePlayPause))
+        XCTAssertTrue(snapshot.availableCommands.contains(.skipBack))
+        XCTAssertTrue(snapshot.availableCommands.contains(.skipForward))
+        XCTAssertTrue(snapshot.availableCommands.contains(.jumpToChapter))
+        XCTAssertTrue(snapshot.availableCommands.contains(.beginInterjection))
+        XCTAssertFalse(snapshot.availableCommands.contains(.finishInterjection))
         XCTAssertEqual(snapshot.timeline.first?.kind, "overview")
         XCTAssertEqual(snapshot.timeline.first?.title, "Summary")
         XCTAssertEqual(snapshot.timeline.filter { $0.kind == "source_chapter" }.map(\.title), ["Opening", "Middle"])
@@ -196,6 +203,69 @@ final class SessionKitCoreTests: XCTestCase {
         }
     }
 
+    func testDirectAICommandsRejectProfilesWithoutAIOrDeferralCapability() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "watch-untethered",
+            displayName: "Watch Untethered",
+            capabilities: [
+                "playback": ["realtime_tts"],
+                "timeline": ["text_char_offsets"],
+                "interjection": ["record_audio", "capture_text_anchor"],
+                "sync": ["canonical_persistence"]
+            ],
+            forbiddenCapabilities: ["summarize_interjections", "continue_discussion", "defer_ai_jobs"]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two.", externalReference: nil, status: "ready")
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo)
+
+        _ = try engine.startSession(itemId: item.id)
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: "interjections/watch.m4a")
+
+        XCTAssertThrowsError(try engine.generateInterjectionSummary(scope: SummaryScope(targetType: "item", sessionId: engine.currentSession?.id))) { error in
+            XCTAssertEqual(error as? SessionKitError, .invalidCommandForCapability("generateInterjectionSummary"))
+        }
+        XCTAssertThrowsError(try engine.submitFollowup(text: "Discuss this.")) { error in
+            XCTAssertEqual(error as? SessionKitError, .invalidCommandForCapability("submitFollowup"))
+        }
+    }
+
+    func testPlaybackStartRemainsStartingUntilAudioConfirms() throws {
+        let audio = RecordingAudioClient()
+        audio.startStatus = .pending
+        let engine = SessionEngine(
+            profile: phonePlaybackProfile(),
+            repository: InMemorySessionRepository(items: [
+                "item-pill": Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two.", externalReference: nil, status: "ready")
+            ]),
+            audio: audio
+        )
+
+        let starting = try engine.startSession(itemId: "item-pill")
+        XCTAssertEqual(starting.status, .starting)
+
+        audio.startStatus = .confirmed
+        let confirmed = try engine.syncPlaybackProgress()
+        XCTAssertEqual(confirmed.status, .playing)
+    }
+
+    func testPlaybackStartFailurePublishesFailedWithoutClaimingPlaying() throws {
+        let audio = RecordingAudioClient()
+        audio.startStatus = .failed("native_audio_failed")
+        let engine = SessionEngine(
+            profile: phonePlaybackProfile(),
+            repository: InMemorySessionRepository(items: [
+                "item-pill": Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two.", externalReference: nil, status: "ready")
+            ]),
+            audio: audio
+        )
+
+        let failed = try engine.startSession(itemId: "item-pill")
+        XCTAssertEqual(failed.status, .failed)
+        XCTAssertEqual(failed.lastFailure, "playback_start_failed:native_audio_failed")
+    }
+
     func testSQLiteStorePersistsCoreRecords() throws {
         let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-\(UUID().uuidString).sqlite").path
         let store = try SQLiteSessionStore(path: path)
@@ -223,11 +293,23 @@ final class SessionKitCoreTests: XCTestCase {
         try store.saveInterjection(interjection)
         let job = AIJob(id: "job-1", kind: "assistant_response", itemId: item.id, sessionId: session.id, turnId: "turn-1", providerType: "fixture", model: "fixture", status: "retryable", attempts: 1, lastError: "offline", messages: ["hello"], playbackMode: "item_text_tts")
         try store.saveAIJob(job)
+        let transcript = SourceTranscriptTimeline(
+            id: "transcript-1",
+            itemId: item.id,
+            createdAt: Date(timeIntervalSince1970: 2),
+            timeline: TranscriptTimeline(
+                segments: [MediaTimelineSegment(id: "seg-1", startMs: 0, endMs: 1_000, text: "One.")],
+                chapters: [MediaTimelineChapter(id: "ch-1", title: "One", startMs: 0, transcriptSegmentId: "seg-1")],
+                durationMs: 1_000
+            )
+        )
+        try store.saveTranscriptTimeline(transcript)
 
         XCTAssertEqual(try store.loadItem(id: item.id), item)
         XCTAssertEqual(try store.loadSession(id: session.id), session)
         XCTAssertEqual(try store.loadInterjections(sessionId: session.id).first?.audioPath, "ij.m4a")
         XCTAssertEqual(try store.loadAIJobs(sessionId: session.id).first?.status, "retryable")
+        XCTAssertEqual(try store.loadTranscriptTimeline(itemId: item.id)?.id, transcript.id)
     }
 
     func testSQLiteStorePersistsWatchPackageEventsAndRequests() throws {
@@ -412,6 +494,653 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(result.originalLink.role, "discovery")
     }
 
+    func testImportSourceLinkCreatesPlayableNativeAudioItem() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["native_media"]
+            ]
+        )
+        let request = LinkResolutionRequest(
+            id: "link-request-episode",
+            inputURL: "https://open.spotify.com/episode/example",
+            sourceSurface: "share_sheet",
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let candidate = LinkResolutionCandidate(
+            sourceLink: SourceLink(url: "https://feeds.example.com/show.xml", provider: "rss", title: "Example Show", role: "canonical_feed"),
+            title: "Episode Title",
+            showTitle: "Example Show",
+            durationMs: 1_800_000,
+            publishedAt: "2026-06-19",
+            audioURL: "https://cdn.example.com/episode.mp3",
+            confidence: 0.96
+        )
+        let resolver = StaticLinkResolutionClient(result: LinkResolutionResult(
+            requestId: request.id,
+            status: .playable,
+            originalLink: SourceLink(url: request.inputURL, provider: "spotify", role: "discovery"),
+            selectedCandidate: candidate,
+            candidates: [candidate]
+        ))
+        let repo = InMemorySessionRepository()
+        let engine = SessionEngine(profile: profile, repository: repo, linkResolver: resolver)
+
+        let snapshot = try engine.importSourceLink(request)
+
+        XCTAssertEqual(snapshot.linkResolutionStatus, LinkResolutionStatus.playable.rawValue)
+        XCTAssertNil(snapshot.linkResolutionFailureReason)
+        XCTAssertEqual(snapshot.targetType, TargetType.transcriptBackedMedia.rawValue)
+        XCTAssertEqual(snapshot.currentPlaybackDurationMs, 1_800_000)
+        XCTAssertEqual(snapshot.currentAnchorConfidence, .providerMetadata)
+
+        let itemId = try XCTUnwrap(snapshot.itemId)
+        let item = try repo.loadItem(id: itemId)
+        XCTAssertEqual(item.title, "Episode Title")
+        XCTAssertEqual(item.mediaType, TargetType.transcriptBackedMedia.rawValue)
+        XCTAssertEqual(item.externalReference, request.inputURL)
+        XCTAssertEqual(item.externalReferenceType, "url")
+        XCTAssertEqual(item.media?.sourceType, .remoteStream)
+        XCTAssertEqual(item.media?.url, "https://cdn.example.com/episode.mp3")
+        XCTAssertEqual(item.media?.durationMs, 1_800_000)
+    }
+
+    func testImportSourceLinkUnsupportedDoesNotCreateItem() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: ["sync": ["canonical_persistence"]]
+        )
+        let request = LinkResolutionRequest(
+            id: "link-request-unsupported",
+            inputURL: "https://example.com/not-a-podcast",
+            sourceSurface: "paste",
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let engine = SessionEngine(profile: profile, repository: InMemorySessionRepository())
+
+        let snapshot = try engine.importSourceLink(request)
+
+        XCTAssertEqual(snapshot.linkResolutionStatus, LinkResolutionStatus.unsupported.rawValue)
+        XCTAssertEqual(snapshot.linkResolutionFailureReason, "no_link_resolver_configured")
+        XCTAssertNil(snapshot.itemId)
+        XCTAssertNil(engine.currentItem)
+    }
+
+    func testImportSourceLinkRequiresCanonicalPersistence() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "widget",
+            displayName: "Widget",
+            capabilities: ["remoteControl": ["display_snapshot"]]
+        )
+        let request = LinkResolutionRequest(
+            id: "link-request-denied",
+            inputURL: "https://example.com/episode",
+            sourceSurface: "share_sheet",
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let engine = SessionEngine(profile: profile, repository: InMemorySessionRepository())
+
+        XCTAssertThrowsError(try engine.importSourceLink(request)) { error in
+            XCTAssertEqual(error as? SessionKitError, .invalidCommandForCapability("importSourceLink"))
+        }
+    }
+
+    func testImportedNativeAudioItemStartsMediaPlayback() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["native_media"]
+            ]
+        )
+        let request = LinkResolutionRequest(
+            id: "link-request-start",
+            inputURL: "https://example.com/episode",
+            sourceSurface: "share_sheet",
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let candidate = LinkResolutionCandidate(
+            sourceLink: SourceLink(url: "https://feeds.example.com/show.xml", provider: "rss", role: "canonical_feed"),
+            title: "Playable Episode",
+            durationMs: 600_000,
+            audioURL: "https://cdn.example.com/playable.mp3",
+            confidence: 0.9
+        )
+        let resolver = StaticLinkResolutionClient(result: LinkResolutionResult(
+            requestId: request.id,
+            status: .playable,
+            originalLink: SourceLink(url: request.inputURL, role: "discovery"),
+            selectedCandidate: candidate,
+            candidates: [candidate]
+        ))
+        let audio = RecordingAudioClient()
+        let engine = SessionEngine(profile: profile, repository: InMemorySessionRepository(), audio: audio, linkResolver: resolver)
+
+        let snapshot = try engine.importSourceLink(request, startSessionWhenPlayable: true)
+
+        XCTAssertEqual(snapshot.status, .playing)
+        XCTAssertEqual(snapshot.targetType, TargetType.transcriptBackedMedia.rawValue)
+        XCTAssertEqual(snapshot.targetId, "https://cdn.example.com/playable.mp3")
+        XCTAssertEqual(snapshot.currentMediaTimeMs, 0)
+        XCTAssertEqual(snapshot.currentPlaybackDurationMs, 600_000)
+        XCTAssertEqual(audio.playedTargets, ["https://cdn.example.com/playable.mp3"])
+        XCTAssertEqual(audio.playedOffsets, [0])
+        XCTAssertEqual(audio.preparedTexts, [])
+        let mediaContext = try XCTUnwrap(audio.mediaContexts.compactMap { $0 }.last)
+        XCTAssertEqual(mediaContext.itemId, snapshot.itemId)
+        XCTAssertEqual(mediaContext.title, "Playable Episode")
+        XCTAssertEqual(mediaContext.durationMs, 600_000)
+        XCTAssertEqual(mediaContext.sourceType, .remoteStream)
+    }
+
+    func testTranscriptlessNativeAudioInterjectionAnchorsToMediaTime() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["native_media"],
+                "interjection": ["record_audio", "capture_media_anchor"]
+            ]
+        )
+        let item = Item(
+            id: "item-source-audio",
+            title: "Native Audio",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/episode",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://cdn.example.com/episode.mp3", durationMs: 900_000)
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentMediaTimeValue = 123_000
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: "interjections/media.m4a")
+
+        let interjection = try XCTUnwrap(try repo.loadInterjections(sessionId: engine.currentSession?.id ?? "").first)
+        XCTAssertEqual(interjection.anchor.anchorType, .media)
+        XCTAssertEqual(interjection.anchor.mediaTimeMs, 123_000)
+        XCTAssertNil(interjection.anchor.transcriptSegmentId)
+        XCTAssertEqual(interjection.anchor.playbackRateObserved, 1)
+
+        let export = try engine.buildExport(options: ExportOptions(
+            includeFullText: false,
+            includeReference: true,
+            includeListeningMap: false,
+            includeInterjections: true
+        ))
+        let markdown = SessionExportMarkdownRenderer.render(export)
+        XCTAssertEqual(export.item.mediaSourceType, AudioSourceType.remoteStream.rawValue)
+        XCTAssertEqual(export.interjections.first?.mediaTimeMs, 123_000)
+        XCTAssertTrue(markdown.contains("Media time: 2:03"))
+        XCTAssertTrue(markdown.contains("Source Type: remote_stream"))
+    }
+
+    func testSourceWindowContextUpdatesMediaInterjectionAnchorWithoutChangingNoteTranscript() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["native_media"],
+                "interjection": ["record_audio", "capture_media_anchor"]
+            ]
+        )
+        let item = Item(
+            id: "item-source-window",
+            title: "Windowed Native Audio",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/episode",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://cdn.example.com/episode.mp3", durationMs: 900_000)
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentMediaTimeValue = 123_000
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: "interjections/media-window.m4a")
+        let interjection = try XCTUnwrap(try repo.loadInterjections(sessionId: engine.currentSession?.id ?? "").first)
+        let window = TranscriptTimeline(
+            segments: [
+                MediaTimelineSegment(id: "window-seg-1", startMs: 90_000, endMs: 122_000, text: "Context before the note."),
+                MediaTimelineSegment(id: "window-seg-2", startMs: 122_000, endMs: 150_000, text: "Context at the note."),
+                MediaTimelineSegment(id: "window-seg-3", startMs: 150_000, endMs: 180_000, text: "Context after the note.")
+            ],
+            chapters: [],
+            durationMs: 900_000
+        )
+
+        _ = try engine.sourceWindowContextCompleted(interjectionId: interjection.id, timeline: window)
+
+        let updated = try XCTUnwrap(try repo.loadInterjections(sessionId: engine.currentSession?.id ?? "").first)
+        XCTAssertEqual(updated.anchor.anchorType, .transcript)
+        XCTAssertEqual(updated.anchor.mediaTimeMs, 123_000)
+        XCTAssertEqual(updated.anchor.anchorBefore, "Context at the note.")
+        XCTAssertEqual(updated.anchor.anchorAfter, "Context after the note.")
+        XCTAssertNotNil(updated.anchor.transcriptSegmentId)
+        XCTAssertNil(updated.transcript)
+        XCTAssertEqual(updated.transcriptionStatus, "pending")
+    }
+
+    func testNativeAudioSkipWorksWithoutWatchPackage() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["native_media"]
+            ]
+        )
+        let item = Item(
+            id: "item-native-skip",
+            title: "Native Skip",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/episode",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://cdn.example.com/episode.mp3", durationMs: 90_000)
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentMediaTimeValue = 30_000
+        let forward = try engine.skipForward(unit: "time_15s")
+        XCTAssertEqual(forward.currentMediaTimeMs, 45_000)
+        XCTAssertEqual(audio.playedOffsets.last, 45_000)
+
+        audio.currentMediaTimeValue = 45_000
+        let back = try engine.skipBack(unit: "time_15s")
+        XCTAssertEqual(back.currentMediaTimeMs, 30_000)
+        XCTAssertEqual(audio.playedOffsets.last, 30_000)
+    }
+
+    func testNativeAudioPlaybackRatePropagatesToAudioClientAndSnapshot() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["native_media"]
+            ]
+        )
+        let item = Item(
+            id: "item-native-rate",
+            title: "Native Rate",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/episode",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://cdn.example.com/episode.mp3", durationMs: 120_000)
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        let snapshot = try engine.setPlaybackRate(1.5)
+
+        XCTAssertEqual(snapshot.playbackRate, 1.5)
+        XCTAssertEqual(engine.currentSession?.playbackRate, 1.5)
+        XCTAssertEqual(audio.playbackRates.last, 1.5)
+    }
+
+    func testPreparedTextAudioUsesMediaPlaybackAndTranscriptAnchors() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["prerendered_audio", "native_media"],
+                "timeline": ["transcript_segments", "media_time", "chapter_timing"],
+                "interjection": ["record_audio", "capture_transcript_anchor"]
+            ]
+        )
+        let item = Item(
+            id: "item-text-audio",
+            title: "Prepared Text",
+            mediaType: "text",
+            text: "First sentence. Second sentence.",
+            externalReference: nil,
+            status: "ready"
+        )
+        let timeline = TranscriptTimeline(
+            segments: [
+                MediaTimelineSegment(id: "tts-1", startMs: 0, endMs: 1_000, startChar: 0, endChar: 15, text: "First sentence."),
+                MediaTimelineSegment(id: "tts-2", startMs: 1_000, endMs: 2_300, startChar: 16, endChar: 32, text: "Second sentence.")
+            ],
+            chapters: [
+                MediaTimelineChapter(id: "ch-tts-1", title: "First", startMs: 0, transcriptSegmentId: "tts-1"),
+                MediaTimelineChapter(id: "ch-tts-2", title: "Second", startMs: 1_000, transcriptSegmentId: "tts-2")
+            ],
+            durationMs: 2_300
+        )
+        let prepared = PreparedTextAudio(
+            normalizedText: "First sentence. Second sentence.",
+            media: ItemMedia(
+                sourceType: .generatedTTSPrerendered,
+                url: "file:///tmp/generated-text.caf",
+                durationMs: 2_300,
+                nativeMediaId: "file:///tmp/generated-text.caf"
+            ),
+            timeline: timeline
+        )
+        let audio = RecordingAudioClient()
+        let textAudio = RecordingTextAudioPreparationClient(prepared: prepared)
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio, textAudio: textAudio)
+
+        let started = try engine.startSession(itemId: item.id)
+
+        XCTAssertEqual(started.targetType, TargetType.transcriptBackedMedia.rawValue)
+        XCTAssertEqual(started.targetId, "file:///tmp/generated-text.caf")
+        XCTAssertEqual(started.currentPlaybackDurationMs, 2_300)
+        XCTAssertEqual(audio.playedTargets.last, "file:///tmp/generated-text.caf")
+        XCTAssertEqual(audio.playedOffsets.last, 0)
+        XCTAssertEqual(audio.playbackRates.last, 1)
+        let mediaContext = try XCTUnwrap(audio.mediaContexts.compactMap { $0 }.last)
+        XCTAssertEqual(mediaContext.title, "Prepared Text")
+        XCTAssertEqual(mediaContext.sourceType, .generatedTTSPrerendered)
+        XCTAssertEqual(mediaContext.chapters.map(\.id), ["ch-tts-1", "ch-tts-2"])
+        XCTAssertEqual(try repo.loadItem(id: item.id).media?.sourceType, .generatedTTSPrerendered)
+        XCTAssertEqual(try repo.loadTranscriptTimeline(itemId: item.id)?.timeline.segments.map(\.id), ["tts-1", "tts-2"])
+
+        audio.currentMediaTimeValue = 1_200
+        let progress = try engine.syncPlaybackProgress()
+        XCTAssertEqual(progress.currentTranscriptSegmentId, "tts-2")
+        XCTAssertEqual(progress.currentAnchorConfidence, .transcriptSpan)
+        XCTAssertEqual(progress.chapterTitle, "Second")
+
+        _ = try engine.setPlaybackRate(1.5)
+        XCTAssertEqual(audio.playbackRates.last, 1.5)
+
+        _ = try engine.seekMedia(toMediaTimeMs: 1_000)
+        XCTAssertEqual(audio.playedOffsets.last, 1_000)
+
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: "interjections/generated-text.m4a")
+        let interjection = try XCTUnwrap(try repo.loadInterjections(sessionId: engine.currentSession?.id ?? "").first)
+        XCTAssertEqual(interjection.anchor.anchorType, .transcript)
+        XCTAssertEqual(interjection.anchor.transcriptSegmentId, "tts-2")
+        XCTAssertEqual(interjection.anchor.anchorBefore, "Second sentence.")
+    }
+
+    func testPreparedTextAudioAttachmentMigratesActiveLiveTextSessionToMedia() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts", "prerendered_audio", "native_media"],
+                "timeline": ["transcript_segments", "media_time", "chapter_timing"]
+            ]
+        )
+        let item = Item(
+            id: "item-live-to-media",
+            title: "Live To Media",
+            mediaType: "text",
+            text: "First sentence. Second sentence.",
+            externalReference: nil,
+            status: "ready"
+        )
+        let timeline = TranscriptTimeline(
+            segments: [
+                MediaTimelineSegment(id: "tts-1", startMs: 0, endMs: 1_000, startChar: 0, endChar: 15, text: "First sentence."),
+                MediaTimelineSegment(id: "tts-2", startMs: 1_000, endMs: 2_300, startChar: 16, endChar: 32, text: "Second sentence.")
+            ],
+            chapters: [
+                MediaTimelineChapter(id: "ch-tts-1", title: "First", startMs: 0, transcriptSegmentId: "tts-1"),
+                MediaTimelineChapter(id: "ch-tts-2", title: "Second", startMs: 1_000, transcriptSegmentId: "tts-2")
+            ],
+            durationMs: 2_300
+        )
+        let prepared = PreparedTextAudio(
+            normalizedText: item.text ?? "",
+            media: ItemMedia(
+                sourceType: .generatedTTSPrerendered,
+                url: "file:///tmp/live-to-media.caf",
+                durationMs: 2_300,
+                nativeMediaId: "file:///tmp/live-to-media.caf"
+            ),
+            timeline: timeline
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        XCTAssertEqual(engine.currentSession?.currentTargetType, .itemTextTTS)
+        audio.currentOffset = 16
+
+        let migrated = try engine.attachPreparedTextAudio(itemId: item.id, prepared: prepared)
+
+        XCTAssertEqual(migrated.targetType, TargetType.transcriptBackedMedia.rawValue)
+        XCTAssertEqual(migrated.targetId, "file:///tmp/live-to-media.caf")
+        XCTAssertEqual(migrated.currentMediaTimeMs, 1_000)
+        XCTAssertEqual(migrated.currentTranscriptSegmentId, "tts-2")
+        XCTAssertEqual(engine.currentSession?.currentTargetType, .transcriptBackedMedia)
+        XCTAssertEqual(audio.playedTargets.last, "file:///tmp/live-to-media.caf")
+        XCTAssertEqual(audio.playedOffsets.last, 1_000)
+    }
+
+    func testPreparedTextAudioAttachmentReplacesStarterMediaWithoutLosingPlayhead() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["prerendered_audio", "native_media"],
+                "timeline": ["transcript_segments", "media_time", "chapter_timing"]
+            ]
+        )
+        let item = Item(
+            id: "item-starter-to-full",
+            title: "Starter To Full",
+            mediaType: "text",
+            text: "First sentence. Second sentence. Third sentence.",
+            externalReference: nil,
+            status: "ready",
+            media: ItemMedia(
+                sourceType: .generatedTTSPrerendered,
+                url: "file:///tmp/generated-starter.caf",
+                durationMs: 1_000,
+                nativeMediaId: "file:///tmp/generated-starter.caf"
+            ),
+            transcriptId: "generated-transcript-item-starter-to-full"
+        )
+        let starterTimeline = TranscriptTimeline(
+            segments: [
+                MediaTimelineSegment(id: "tts-1", startMs: 0, endMs: 1_000, startChar: 0, endChar: 15, text: "First sentence.")
+            ],
+            chapters: [
+                MediaTimelineChapter(id: "ch-tts-1", title: "First", startMs: 0, transcriptSegmentId: "tts-1")
+            ],
+            durationMs: 1_000
+        )
+        let fullTimeline = TranscriptTimeline(
+            segments: [
+                MediaTimelineSegment(id: "tts-1", startMs: 0, endMs: 1_000, startChar: 0, endChar: 15, text: "First sentence."),
+                MediaTimelineSegment(id: "tts-2", startMs: 1_000, endMs: 2_300, startChar: 16, endChar: 32, text: "Second sentence."),
+                MediaTimelineSegment(id: "tts-3", startMs: 2_300, endMs: 3_600, startChar: 33, endChar: 48, text: "Third sentence.")
+            ],
+            chapters: [
+                MediaTimelineChapter(id: "ch-tts-1", title: "First", startMs: 0, transcriptSegmentId: "tts-1"),
+                MediaTimelineChapter(id: "ch-tts-2", title: "Second", startMs: 1_000, transcriptSegmentId: "tts-2"),
+                MediaTimelineChapter(id: "ch-tts-3", title: "Third", startMs: 2_300, transcriptSegmentId: "tts-3")
+            ],
+            durationMs: 3_600
+        )
+        let prepared = PreparedTextAudio(
+            normalizedText: item.text ?? "",
+            media: ItemMedia(
+                sourceType: .generatedTTSPrerendered,
+                url: "file:///tmp/generated-full.caf",
+                durationMs: 3_600,
+                nativeMediaId: "file:///tmp/generated-full.caf"
+            ),
+            timeline: fullTimeline
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        try repo.saveTranscriptTimeline(SourceTranscriptTimeline(
+            id: "generated-transcript-item-starter-to-full",
+            itemId: item.id,
+            createdAt: Date(),
+            timeline: starterTimeline
+        ))
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        XCTAssertEqual(audio.playedTargets.last, "file:///tmp/generated-starter.caf")
+        audio.currentMediaTimeValue = 700
+
+        let replaced = try engine.attachPreparedTextAudio(itemId: item.id, prepared: prepared)
+
+        XCTAssertEqual(replaced.targetId, "file:///tmp/generated-full.caf")
+        XCTAssertEqual(replaced.currentMediaTimeMs, 733)
+        XCTAssertEqual(replaced.currentPlaybackDurationMs, 3_600)
+        XCTAssertEqual(audio.playedTargets.last, "file:///tmp/generated-full.caf")
+        XCTAssertEqual(audio.playedOffsets.last, 733)
+        XCTAssertEqual(engine.currentSession?.currentTargetId, "file:///tmp/generated-full.caf")
+        XCTAssertEqual(try repo.loadItem(id: item.id).media?.url, "file:///tmp/generated-full.caf")
+        XCTAssertEqual(try repo.loadTranscriptTimeline(itemId: item.id)?.timeline.segments.map(\.id), ["tts-1", "tts-2", "tts-3"])
+    }
+
+    func testPartialStarterGeneratedTextAudioCompletionDoesNotCompleteSource() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["prerendered_audio", "native_media"],
+                "timeline": ["transcript_segments", "media_time", "chapter_timing"]
+            ]
+        )
+        let item = Item(
+            id: "item-partial-starter",
+            title: "Partial Starter",
+            mediaType: "text",
+            text: "First sentence. Second sentence. Third sentence.",
+            externalReference: nil,
+            status: "ready",
+            media: ItemMedia(
+                sourceType: .generatedTTSPrerendered,
+                url: "file:///tmp/generated-partial-starter.caf",
+                durationMs: 1_000,
+                nativeMediaId: "file:///tmp/generated-partial-starter.caf"
+            ),
+            transcriptId: "generated-transcript-item-partial-starter"
+        )
+        let starterTimeline = TranscriptTimeline(
+            segments: [
+                MediaTimelineSegment(id: "tts-1", startMs: 0, endMs: 1_000, startChar: 0, endChar: 15, text: "First sentence.")
+            ],
+            chapters: [
+                MediaTimelineChapter(id: "ch-tts-1", title: "First", startMs: 0, transcriptSegmentId: "tts-1")
+            ],
+            durationMs: 1_000
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        try repo.saveTranscriptTimeline(SourceTranscriptTimeline(
+            id: "generated-transcript-item-partial-starter",
+            itemId: item.id,
+            createdAt: Date(),
+            timeline: starterTimeline
+        ))
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentMediaTimeValue = 1_000
+        audio.completedTargetIds.insert("file:///tmp/generated-partial-starter.caf")
+        let snapshot = try engine.syncPlaybackProgress()
+
+        XCTAssertEqual(snapshot.status, .paused)
+        XCTAssertEqual(snapshot.phase, .itemPlayback)
+        XCTAssertEqual(snapshot.targetType, TargetType.transcriptBackedMedia.rawValue)
+        XCTAssertEqual(snapshot.preparedTextAudioStatus, "starter_ready")
+        XCTAssertLessThan(snapshot.sourceProgressPercent, 100)
+        XCTAssertLessThan(snapshot.currentPlaybackProgressPercent, 100)
+    }
+
+    func testSourceTranscriptTimelineAnchorsNativeAudioAndGeneratesListeningMap() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["native_media"],
+                "timeline": ["transcript_segments", "media_time", "chapter_timing"],
+                "ai": ["generate_listening_map"],
+                "interjection": ["record_audio", "capture_media_anchor"]
+            ]
+        )
+        let item = Item(
+            id: "item-native-transcript",
+            title: "Native Transcript",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/episode",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://cdn.example.com/episode.mp3", durationMs: 30_000)
+        )
+        let timeline = TranscriptTimeline(
+            segments: [
+                MediaTimelineSegment(id: "seg-1", startMs: 0, endMs: 10_000, text: "Opening thought."),
+                MediaTimelineSegment(id: "seg-2", startMs: 10_000, endMs: 20_000, text: "Important middle point."),
+                MediaTimelineSegment(id: "seg-3", startMs: 20_000, endMs: 30_000, text: "Closing thought.")
+            ],
+            chapters: [
+                MediaTimelineChapter(id: "ch-1", title: "Opening", startMs: 0, transcriptSegmentId: "seg-1"),
+                MediaTimelineChapter(id: "ch-2", title: "Middle", startMs: 10_000, transcriptSegmentId: "seg-2")
+            ],
+            durationMs: 30_000
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.attachTranscriptTimeline(itemId: item.id, timeline: timeline)
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentMediaTimeValue = 12_000
+        let progress = try engine.syncPlaybackProgress()
+
+        XCTAssertEqual(progress.currentTranscriptSegmentId, "seg-2")
+        XCTAssertEqual(progress.currentAnchorConfidence, .transcriptSpan)
+        XCTAssertEqual(progress.chapterTitle, "Middle")
+
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: "interjections/native-transcript.m4a")
+        let interjection = try XCTUnwrap(try repo.loadInterjections(sessionId: engine.currentSession?.id ?? "").first)
+        XCTAssertEqual(interjection.anchor.anchorType, .transcript)
+        XCTAssertEqual(interjection.anchor.transcriptSegmentId, "seg-2")
+        XCTAssertEqual(interjection.anchor.anchorBefore, "Important middle point.")
+
+        let mapSnapshot = try engine.generateListeningMap(itemId: item.id)
+        let map = try XCTUnwrap(try repo.loadListeningMap(itemId: item.id))
+        XCTAssertEqual(mapSnapshot.itemId, item.id)
+        XCTAssertFalse(map.chapters.isEmpty)
+        XCTAssertTrue((try repo.loadItem(id: item.id).text ?? "").contains("Important middle point."))
+    }
+
     func testInMemoryRepositoryListsWatchPackagesByItem() throws {
         let first = WatchAudioPackage(
             id: "package-1",
@@ -482,6 +1211,20 @@ final class SessionKitCoreTests: XCTestCase {
         )
         let repo = InMemorySessionRepository(items: [item.id: item], mapsByItemId: [item.id: map])
         return SessionEngine(profile: profile, repository: repo)
+    }
+
+    private func phonePlaybackProfile() -> RuntimeCapabilityProfile {
+        RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone / Tablet Online",
+            capabilities: [
+                "playback": ["realtime_tts", "assistant_turn_tts", "summary_turn_tts"],
+                "timeline": ["text_char_offsets", "chapter_timing"],
+                "interjection": ["record_audio", "capture_text_anchor", "capture_turn_anchor"],
+                "ai": ["summarize_interjections", "continue_discussion", "defer_ai_jobs"],
+                "sync": ["canonical_persistence"]
+            ]
+        )
     }
 
     func testSQLiteStoreListsAndDeletesItemScopedRecords() throws {
@@ -1566,6 +2309,15 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     var currentDurationMs: Int?
     var activeTargetId: String?
     var completedTargetIds = Set<String>()
+    var seekRequests: [Int] = []
+    var playbackRates: [Double] = []
+    var playbackRate = 1.0
+    var mediaContexts: [PlaybackMediaContext?] = []
+    var startStatus: PlaybackStartStatus = .confirmed
+
+    func configureMediaContext(_ context: PlaybackMediaContext?) throws {
+        mediaContexts.append(context)
+    }
 
     func prepareSpeechText(_ text: String) throws -> String {
         preparedTexts.append(text)
@@ -1593,6 +2345,16 @@ private final class RecordingAudioClient: AudioPlaybackClient {
         playedOffsets.append(mediaTimeMs)
     }
 
+    func seek(toMediaTimeMs mediaTimeMs: Int) throws {
+        currentMediaTimeValue = mediaTimeMs
+        seekRequests.append(mediaTimeMs)
+    }
+
+    func setPlaybackRate(_ rate: Double) throws {
+        playbackRate = rate
+        playbackRates.append(rate)
+    }
+
     func pause() throws {
         pauseCount += 1
     }
@@ -1605,12 +2367,17 @@ private final class RecordingAudioClient: AudioPlaybackClient {
         currentMediaTimeValue
     }
 
+    func currentPlaybackDurationMs() -> Int? {
+        currentDurationMs
+    }
+
     func currentPlaybackPosition() -> PlaybackPosition? {
         if let currentMediaTimeValue {
             return PlaybackPosition(
                 targetId: activeTargetId,
                 mediaTimeMs: currentMediaTimeValue,
                 durationMs: currentDurationMs,
+                playbackRate: playbackRate,
                 anchorConfidence: .mediaTime
             )
         }
@@ -1628,6 +2395,24 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     func isPlaybackComplete(targetId: String) -> Bool {
         completedTargetIds.contains(targetId)
     }
+
+    func playbackStartStatus(targetId: String) -> PlaybackStartStatus {
+        startStatus
+    }
+}
+
+private final class RecordingTextAudioPreparationClient: TextAudioPreparationClient, @unchecked Sendable {
+    var prepared: PreparedTextAudio?
+    var requests: [(itemId: String, title: String, text: String)] = []
+
+    init(prepared: PreparedTextAudio?) {
+        self.prepared = prepared
+    }
+
+    func prepareTextAudio(itemId: String, title: String, text: String) throws -> PreparedTextAudio? {
+        requests.append((itemId, title, text))
+        return prepared
+    }
 }
 
 private final class RecordingTranscriptionClient: TranscriptionClient {
@@ -1635,5 +2420,13 @@ private final class RecordingTranscriptionClient: TranscriptionClient {
 
     func scheduleTranscription(interjection: Interjection) throws {
         scheduledInterjectionIds.append(interjection.id)
+    }
+}
+
+private struct StaticLinkResolutionClient: LinkResolutionClient {
+    var result: LinkResolutionResult
+
+    func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult {
+        result
     }
 }

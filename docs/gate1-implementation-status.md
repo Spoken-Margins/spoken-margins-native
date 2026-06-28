@@ -22,20 +22,26 @@
 
 ## Verification
 
-Run:
+For routine development verification, run:
 
 ```bash
-./scripts/verify-gate1.sh
+./scripts/verify-gate1-routine.sh
+```
+
+For late-gate/pre-validation closeout evidence, run:
+
+```bash
+./scripts/verify-gate1-closeout.sh
 ```
 
 Current expected result:
 
 - `SessionKitCoreTests`: 39 passing tests.
-- `SpokenMarginsAppTests`: 9 passing app-level playback queue and provider request tests.
+- `SpokenMarginsAppTests`: app-level playback queue, provider request, compact control, Watch package, browser text, and source-link tests.
 - `TraceReplayTests.testGate1TracesReplay`: replays 13 Gate 1 traces.
 - Contract validation: all schemas, fixtures, traces, fixture references, and trace capability requirements pass.
 - iOS simulator build: `SpokenMarginsApp` builds with local ad-hoc simulator signing.
-- iOS simulator UI tests: full `Gate1FlowUITests` class passes against iPhone and iPad simulators.
+- iOS simulator UI tests: full `Gate1FlowUITests` class passes against iPhone and iPad simulators during closeout verification.
 - iOS simulator smoke: app installs and launches on iOS 26.5 iPhone 17 and iPad Pro 13-inch (M5) simulators via `scripts/smoke-simulator.sh`.
 - Current launch screenshots are written to `artifacts/gate1/iphone-launch.png` and `artifacts/gate1/ipad-launch.png`.
 - The script uses `swift build --build-tests` plus `xcrun xctest` because this Xcode 26.5 SwiftPM environment builds the XCTest bundle but `swift test` reports no discovered tests.
@@ -54,4 +60,4 @@ Do not copy a top-level `Resources/` directory into the iOS app bundle. Simulato
 
 ## Next Production Step
 
-Add Gate 1 validation evidence for microphone/Speech transcription, system speech playback, provider success/failure, offline deferral, export isolation, and audio route/interruption behavior while keeping `./scripts/verify-gate1.sh` green. Kokoro evidence moves to a later gate.
+Add Gate 1 validation evidence for microphone/Speech transcription, system speech playback, provider success/failure, offline deferral, export isolation, and audio route/interruption behavior while keeping routine verification green. Run closeout UI routes before asking the product owner to close the gate. Kokoro evidence moves to a later gate.

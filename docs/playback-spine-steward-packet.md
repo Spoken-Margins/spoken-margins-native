@@ -44,7 +44,7 @@ Playback-spine relevant ids:
 - `attachBrowserMedia`
 - `importSourceLink`
 
-`importSourceLink` and `attachBrowserMedia` are backend-request commands. Gate agents may reference them in surface contracts, but must not add replayed trace steps that execute them until steward runtime and harness support exists.
+`importSourceLink` is implemented in SessionKit for resolver-backed link intake and playable native-audio item creation. `attachBrowserMedia` remains a backend-request command. Gate agents may reference backend-request commands in surface contracts, but must not add replayed trace steps that execute them until steward runtime and harness support exists.
 
 ### Snapshot Fields
 
@@ -81,7 +81,7 @@ Playback-spine relevant ids:
 
 Do not use aliases such as `mediaTimeMs`, `durationMs`, or `transcriptSegmentId` in surface snapshot contracts. Use `currentMediaTimeMs`, `currentPlaybackDurationMs`, and `currentTranscriptSegmentId`.
 
-`linkResolutionStatus` and `linkResolutionFailureReason` are backend-request fields. They are accepted vocabulary but not implemented runtime output.
+`linkResolutionStatus` and `linkResolutionFailureReason` are implemented SessionKit snapshot fields for `importSourceLink` outcomes.
 
 ### Delegation Modes
 

@@ -6,6 +6,8 @@ public enum CompactControlCommand: String, Codable, CaseIterable, Equatable, Sen
     case togglePlayPause
     case skipBack
     case skipForward
+    case seekToMediaTime
+    case setPlaybackRate
     case jumpToChapter
     case beginInterjection
     case finishInterjection
@@ -65,6 +67,7 @@ public struct CompactControlSnapshot: Codable, Equatable, Sendable {
         pendingAiJobStatus: String?,
         lastUserTurnType: String?,
         exposedCommands: [CompactControlCommand],
+        availableCommands: [CompactControlCommand]? = nil,
         timeline: [CompactTimelineEntry] = [],
         compactSurfaceReady: Bool,
         surfaceProfileId: String
@@ -91,7 +94,7 @@ public struct CompactControlSnapshot: Codable, Equatable, Sendable {
         self.pendingAiJobStatus = pendingAiJobStatus
         self.lastUserTurnType = lastUserTurnType
         self.exposedCommands = exposedCommands
-        self.availableCommands = exposedCommands
+        self.availableCommands = availableCommands ?? exposedCommands
         self.timeline = timeline
         self.compactSurfaceReady = compactSurfaceReady
         self.surfaceProfileId = surfaceProfileId
@@ -169,6 +172,8 @@ public final class CompactControlDispatcher {
         _ command: CompactControlCommand,
         chapterId: String? = nil,
         unit: String? = nil,
+        mediaTimeMs: Int? = nil,
+        playbackRate: Double? = nil,
         followUpText: String? = nil,
         summaryScope: SummaryScope? = nil
     ) throws -> CompactControlResult {
@@ -185,6 +190,16 @@ public final class CompactControlDispatcher {
             updated = try canonicalRuntime.skipBack(unit: unit ?? defaultSkipUnit)
         case .skipForward:
             updated = try canonicalRuntime.skipForward(unit: unit ?? defaultSkipUnit)
+        case .seekToMediaTime:
+            guard let mediaTimeMs else {
+                throw SessionKitError.invalidCommandForState("seekToMediaTime")
+            }
+            updated = try canonicalRuntime.seekMedia(toMediaTimeMs: mediaTimeMs)
+        case .setPlaybackRate:
+            guard let playbackRate else {
+                throw SessionKitError.invalidCommandForState("setPlaybackRate")
+            }
+            updated = try canonicalRuntime.setPlaybackRate(playbackRate)
         case .jumpToChapter:
             guard let chapterId else {
                 throw SessionKitError.invalidCommandForState("jumpToChapter")
@@ -208,35 +223,27 @@ public final class CompactControlDispatcher {
         guard surfaceProfile.has("remoteControl", "display_snapshot") else {
             throw SessionKitError.invalidCommandForCapability(command.rawValue)
         }
-
-        switch command {
-        case .play, .pause, .togglePlayPause, .skipBack, .skipForward:
-            guard surfaceProfile.has("remoteControl", "send_transport_commands") else {
-                throw SessionKitError.invalidCommandForCapability(command.rawValue)
-            }
-        case .jumpToChapter:
-            guard surfaceProfile.has("timeline", "chapter_timing"),
-                  surfaceProfile.has("remoteControl", "send_chapter_jump") else {
-                throw SessionKitError.invalidCommandForCapability(command.rawValue)
-            }
-        case .beginInterjection, .finishInterjection, .cancelInterjection:
-            guard surfaceProfile.has("interjection", "delegate_interjection_to_canonical_runtime"),
-                  surfaceProfile.has("remoteControl", "send_interjection_commands") else {
-                throw SessionKitError.invalidCommandForCapability(command.rawValue)
-            }
-        case .generateInterjectionSummary, .submitFollowup:
-            guard surfaceProfile.has("remoteControl", "send_ai_commands") else {
-                throw SessionKitError.invalidCommandForCapability(command.rawValue)
-            }
+        let compact = compactSnapshot(from: canonicalRuntime.snapshot)
+        guard compact.exposedCommands.contains(command) else {
+            throw SessionKitError.invalidCommandForCapability(command.rawValue)
+        }
+        guard compact.availableCommands.contains(command) else {
+            throw SessionKitError.invalidCommandForState(command.rawValue)
         }
     }
 
     private func compactSnapshot(from snapshot: SessionSnapshot) -> CompactControlSnapshot {
         let canDisplay = surfaceProfile.has("remoteControl", "display_snapshot")
-        let commands = CompactControlCommand.allCases.filter { command in
+        let exposedCommands = CompactControlCommand.allCases.filter { command in
             switch command {
             case .play, .pause, .togglePlayPause, .skipBack, .skipForward:
                 return surfaceProfile.has("remoteControl", "send_transport_commands")
+            case .seekToMediaTime:
+                return surfaceProfile.has("remoteControl", "send_transport_commands")
+                    && surfaceProfile.has("timeline", "media_time")
+            case .setPlaybackRate:
+                return surfaceProfile.has("remoteControl", "send_transport_commands")
+                    && surfaceProfile.has("timeline", "playback_rate_observation")
             case .jumpToChapter:
                 return surfaceProfile.has("timeline", "chapter_timing")
                     && surfaceProfile.has("remoteControl", "send_chapter_jump")
@@ -252,6 +259,9 @@ public final class CompactControlDispatcher {
                 return !snapshot.isRecording
                     && surfaceProfile.has("remoteControl", "send_ai_commands")
             }
+        }
+        let availableCommands = exposedCommands.filter { command in
+            isCommandAvailable(command, snapshot: snapshot)
         }
 
         return CompactControlSnapshot(
@@ -276,11 +286,50 @@ public final class CompactControlDispatcher {
             pendingAiJobKind: snapshot.pendingAiJobKind,
             pendingAiJobStatus: snapshot.pendingAiJobStatus,
             lastUserTurnType: snapshot.lastUserTurnType,
-            exposedCommands: commands,
+            exposedCommands: exposedCommands,
+            availableCommands: availableCommands,
             timeline: canonicalRuntime.compactTimelineEntries(),
             compactSurfaceReady: canDisplay && snapshot.sessionId != nil,
             surfaceProfileId: surfaceProfile.id
         )
+    }
+
+    private func isCommandAvailable(_ command: CompactControlCommand, snapshot: SessionSnapshot) -> Bool {
+        guard surfaceProfile.has("remoteControl", "display_snapshot"),
+              snapshot.sessionId != nil else {
+            return false
+        }
+
+        switch command {
+        case .play:
+            return !snapshot.isRecording && !snapshot.status.isPlaybackActive
+        case .pause:
+            return !snapshot.isRecording && snapshot.status.isPlaybackActive
+        case .togglePlayPause:
+            return !snapshot.isRecording
+        case .skipBack, .skipForward:
+            return !snapshot.isRecording
+        case .seekToMediaTime, .setPlaybackRate:
+            return !snapshot.isRecording
+                && snapshot.currentPlaybackDurationMs != nil
+                && (snapshot.targetType == TargetType.transcriptBackedMedia.rawValue
+                    || snapshot.targetType == TargetType.browserOwnedMedia.rawValue)
+        case .jumpToChapter:
+            return !snapshot.isRecording
+        case .beginInterjection:
+            return !snapshot.isRecording
+                && surfaceProfile.has("interjection", "delegate_interjection_to_canonical_runtime")
+        case .finishInterjection, .cancelInterjection:
+            return snapshot.isRecording
+                && surfaceProfile.has("interjection", "delegate_interjection_to_canonical_runtime")
+        case .generateInterjectionSummary:
+            return !snapshot.isRecording
+                && surfaceProfile.has("remoteControl", "send_ai_commands")
+                && canonicalRuntime.hasSummaryCandidates(scope: defaultSummaryScope())
+        case .submitFollowup:
+            return !snapshot.isRecording
+                && surfaceProfile.has("remoteControl", "send_ai_commands")
+        }
     }
 
     private func compactChapterTitle(from snapshot: SessionSnapshot) -> String? {

@@ -32,16 +32,30 @@ struct Gate1RootView: View {
     }
 }
 
+private enum FileImportPresentationError: LocalizedError {
+    case missingRequest
+
+    var errorDescription: String? {
+        "File import completed without an active import request."
+    }
+}
+
 private struct HomeScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @FocusState private var focusedField: Field?
-    @State private var isImportingObsidianFiles = false
-    @State private var isSelectingQuickAccessFolder = false
+    @State private var isFileImporterPresented = false
+    @State private var activeFileImportRequest: FileImportRequest?
 
     private enum Field {
         case title
         case text
+        case sourceLink
+    }
+
+    private enum FileImportRequest {
+        case obsidianFiles
+        case quickFolder
     }
 
     var body: some View {
@@ -94,32 +108,47 @@ private struct HomeScreen: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .fileImporter(
-                isPresented: $isImportingObsidianFiles,
-                allowedContentTypes: [UTType(filenameExtension: "md") ?? .plainText, .plainText],
-                allowsMultipleSelection: true
+                isPresented: Binding(
+                    get: { isFileImporterPresented },
+                    set: { isFileImporterPresented = $0 }
+                ),
+                allowedContentTypes: fileImportAllowedContentTypes,
+                allowsMultipleSelection: activeFileImportRequest == .obsidianFiles
             ) { result in
+                let request = activeFileImportRequest
+                activeFileImportRequest = nil
+                isFileImporterPresented = false
                 switch result {
                 case .success(let urls):
-                    model.importObsidianMarkdownFiles(urls: urls)
-                case .failure(let error):
-                    model.reportImportFailure(error)
-                }
-            }
-            .fileImporter(
-                isPresented: $isSelectingQuickAccessFolder,
-                allowedContentTypes: [.folder],
-                allowsMultipleSelection: false
-            ) { result in
-                switch result {
-                case .success(let urls):
-                    if let url = urls.first {
-                        model.configureQuickAccessFolder(url: url)
+                    switch request {
+                    case .obsidianFiles:
+                        model.importObsidianMarkdownFiles(urls: urls)
+                    case .quickFolder:
+                        if let url = urls.first {
+                            model.configureQuickAccessFolder(url: url)
+                        }
+                    case .none:
+                        model.reportImportFailure(FileImportPresentationError.missingRequest)
                     }
                 case .failure(let error):
                     model.reportImportFailure(error)
                 }
             }
         }
+    }
+
+    private var fileImportAllowedContentTypes: [UTType] {
+        switch activeFileImportRequest {
+        case .quickFolder:
+            return [.folder]
+        case .obsidianFiles, .none:
+            return [UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText, .plainText]
+        }
+    }
+
+    private func presentFileImporter(_ request: FileImportRequest) {
+        activeFileImportRequest = request
+        isFileImporterPresented = true
     }
 
     private var header: some View {
@@ -140,7 +169,7 @@ private struct HomeScreen: View {
                     .focused($focusedField, equals: .title)
                     .accessibilityIdentifier("create.title.field")
                 TextEditor(text: $model.importText)
-                    .frame(minHeight: 180)
+                    .frame(height: 150)
                     .padding(8)
                     .background(AppColors.inputBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -157,12 +186,48 @@ private struct HomeScreen: View {
                 .accessibilityIdentifier("create.start.button")
                 Button {
                     focusedField = nil
-                    isImportingObsidianFiles = true
+                    presentFileImporter(.obsidianFiles)
                 } label: {
                     Label("Import Obsidian Files", systemImage: "doc.badge.plus")
                 }
                 .buttonStyle(SecondaryButtonStyle())
                 .accessibilityIdentifier("obsidian.import.button")
+                Divider()
+                    .padding(.vertical, 4)
+                HStack(spacing: 8) {
+                    TextField("Podcast, RSS, or audio URL", text: $model.sourceLinkURL)
+                        .textFieldStyle(.roundedBorder)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.URL)
+                        .focused($focusedField, equals: .sourceLink)
+                        .accessibilityIdentifier("sourceLink.url.field")
+                    Button {
+                        focusedField = nil
+                        model.pasteSourceLinkFromClipboard()
+                    } label: {
+                        Image(systemName: "doc.on.clipboard")
+                            .frame(width: 34, height: 34)
+                    }
+                    .buttonStyle(IconButtonStyle())
+                    .accessibilityLabel("Paste Link From Clipboard")
+                    .accessibilityIdentifier("sourceLink.clipboard.button")
+                }
+                Button {
+                    focusedField = nil
+                    model.beginSourceLinkImportFromForm()
+                } label: {
+                    if model.isResolvingSourceLink {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text("Resolving Link")
+                        }
+                    } else {
+                        Label("Import Link And Start", systemImage: "link.badge.plus")
+                    }
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .disabled(model.sourceLinkURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isResolvingSourceLink)
+                .accessibilityIdentifier("sourceLink.import.button")
             }
         }
     }
@@ -190,7 +255,7 @@ private struct HomeScreen: View {
                     .lineLimit(2)
                 HStack {
                     Button {
-                        isSelectingQuickAccessFolder = true
+                        presentFileImporter(.quickFolder)
                     } label: {
                         Label("Choose Folder", systemImage: "folder.badge.plus")
                     }
@@ -198,7 +263,7 @@ private struct HomeScreen: View {
                     .accessibilityIdentifier("quickFolder.choose.button")
 
                     Button {
-                        isImportingObsidianFiles = true
+                        presentFileImporter(.obsidianFiles)
                     } label: {
                         Label("Open Files", systemImage: "folder")
                     }
@@ -676,11 +741,11 @@ private struct PlaybackScreen: View {
                     Circle()
                         .stroke(AppColors.watchControl, lineWidth: 12)
                     Circle()
-                        .trim(from: 0, to: CGFloat(max(0, min(100, model.snapshot.currentPlaybackProgressPercent))) / 100)
+                        .trim(from: 0, to: CGFloat(max(0, min(100, model.displayPlaybackProgressPercent))) / 100)
                         .stroke(AppColors.accent, style: StrokeStyle(lineWidth: 12, lineCap: .round))
                         .rotationEffect(.degrees(-90))
                     Button(action: model.playPause) {
-                        Image(systemName: model.snapshot.status == .playing ? "pause.fill" : "play.fill")
+                        Image(systemName: model.snapshot.status.isPlaybackActive ? "pause.fill" : "play.fill")
                             .font(.title)
                     }
                     .buttonStyle(.plain)
@@ -700,19 +765,49 @@ private struct PlaybackScreen: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Text("Rate")
+                    Text(model.isMediaPlaybackSnapshot ? "Playback Speed" : "Speech Rate")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(AppColors.watchSecondary)
                     Spacer()
-                    Text(model.speechRateDescription)
+                    Text(model.isMediaPlaybackSnapshot ? model.mediaPlaybackRateDescription : model.speechRateDescription)
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(AppColors.watchSecondary)
                 }
-                Slider(value: $model.speechRate, in: 0.35...0.85, step: 0.01)
-                    .accessibilityIdentifier("playback.speechRate.slider")
-                    .onChange(of: model.speechRate) { _, _ in
-                        model.saveSpeechSettings()
+                if model.isMediaPlaybackSnapshot {
+                    Slider(
+                        value: Binding(
+                            get: { model.mediaPlaybackRate },
+                            set: { model.setMediaPlaybackRate($0) }
+                        ),
+                        in: 0.75...2.0,
+                        step: 0.25
+                    )
+                    .accessibilityIdentifier("playback.mediaRate.slider")
+                } else {
+                    Slider(value: $model.speechRate, in: 0.35...0.85, step: 0.01)
+                        .accessibilityIdentifier("playback.speechRate.slider")
+                        .onChange(of: model.speechRate) { _, _ in
+                            model.saveSpeechSettings()
+                        }
+                }
+                if model.isMediaPlaybackSnapshot {
+                    Text("Transcript: \(model.sourceTranscriptStatusDescription)")
+                        .font(.caption2)
+                        .foregroundStyle(AppColors.watchSecondary)
+                        .accessibilityIdentifier("playback.sourceTranscript.status")
+                } else {
+                    Text("Prepared audio: \(model.preparedTextAudioStatusDescription)")
+                        .font(.caption2)
+                        .foregroundStyle(AppColors.watchSecondary)
+                        .accessibilityIdentifier("playback.preparedAudio.status")
+                    if model.canPlayLiveSpeechInstead {
+                        Button(action: model.playLiveSpeechInstead) {
+                            Label("Play Live Speech Instead", systemImage: "speaker.wave.2")
+                        }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .accessibilityIdentifier("playback.liveSpeechFallback.button")
                     }
+                }
             }
 
             if model.snapshot.isRecording {
@@ -1013,8 +1108,14 @@ private struct PlaybackScreen: View {
 
 private struct SettingsScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
-    @State private var isImportingKokoroAssets = false
+    @State private var isSettingsFileImporterPresented = false
+    @State private var activeSettingsImportRequest: SettingsImportRequest?
     @FocusState private var focusedField: Field?
+
+    private enum SettingsImportRequest {
+        case kokoroAssets
+        case piperVoice
+    }
 
     private enum Field {
         case baseURL
@@ -1023,6 +1124,26 @@ private struct SettingsScreen: View {
         case conversationModel
         case apiKey
         case kokoroVoice
+    }
+
+    private var settingsImportAllowedContentTypes: [UTType] {
+        switch activeSettingsImportRequest {
+        case .kokoroAssets:
+            return [
+                UTType(filenameExtension: "safetensors") ?? .data,
+                UTType(filenameExtension: "npz") ?? .data
+            ]
+        case .piperVoice, .none:
+            return [
+                UTType(filenameExtension: "onnx") ?? .data,
+                UTType(filenameExtension: "json") ?? .json
+            ]
+        }
+    }
+
+    private func presentSettingsImporter(_ request: SettingsImportRequest) {
+        activeSettingsImportRequest = request
+        isSettingsFileImporterPresented = true
     }
 
     var body: some View {
@@ -1066,6 +1187,19 @@ private struct SettingsScreen: View {
                 .onChange(of: model.summaryModel) { _, _ in model.settingsValueChanged() }
                 .onChange(of: model.conversationModel) { _, _ in model.settingsValueChanged() }
                 Section("Validation") {
+                    HStack {
+                        Text("Native Voices")
+                        Spacer()
+                        Button {
+                            model.refreshSpeechVoiceOptions()
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .frame(width: 34, height: 34)
+                        }
+                        .buttonStyle(IconButtonStyle())
+                        .accessibilityLabel("Refresh Native Voices")
+                        .accessibilityIdentifier("settings.refreshSpeechVoices.button")
+                    }
                     Picker("Speech Voice", selection: $model.speechVoiceIdentifier) {
                         Text("System Spoken Content Voice (Siri falls back)").tag("")
                         ForEach(model.speechVoiceOptions) { voice in
@@ -1077,6 +1211,9 @@ private struct SettingsScreen: View {
                     .onChange(of: model.speechVoiceIdentifier) { _, _ in
                         model.speechSettingsChanged()
                     }
+                    Text("Voices installed into iOS, including Piper voices exposed through Accessibility, should appear here after refresh.")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
                     VStack(alignment: .leading) {
                         HStack {
                             Text("Speaking Rate")
@@ -1152,7 +1289,7 @@ private struct SettingsScreen: View {
                             model.speechSettingsChanged()
                         }
                         Button {
-                            isImportingKokoroAssets = true
+                            presentSettingsImporter(.kokoroAssets)
                         } label: {
                             Label("Import Kokoro Assets", systemImage: "square.and.arrow.down")
                         }
@@ -1222,19 +1359,31 @@ private struct SettingsScreen: View {
             .accessibilityIdentifier("settings.screen")
             .navigationTitle("Settings")
             .onAppear {
+                model.refreshSpeechVoiceOptions()
                 model.refreshKokoroAssetStatus()
+                model.refreshPiperVoiceStatus()
             }
             .fileImporter(
-                isPresented: $isImportingKokoroAssets,
-                allowedContentTypes: [
-                    UTType(filenameExtension: "safetensors") ?? .data,
-                    UTType(filenameExtension: "npz") ?? .data
-                ],
+                isPresented: Binding(
+                    get: { isSettingsFileImporterPresented },
+                    set: { isSettingsFileImporterPresented = $0 }
+                ),
+                allowedContentTypes: settingsImportAllowedContentTypes,
                 allowsMultipleSelection: true
             ) { result in
+                let request = activeSettingsImportRequest
+                activeSettingsImportRequest = nil
+                isSettingsFileImporterPresented = false
                 switch result {
                 case .success(let urls):
-                    model.importKokoroAssets(urls: urls)
+                    switch request {
+                    case .kokoroAssets:
+                        model.importKokoroAssets(urls: urls)
+                    case .piperVoice:
+                        model.importPiperVoiceAssets(urls: urls)
+                    case .none:
+                        model.reportImportFailure(FileImportPresentationError.missingRequest)
+                    }
                 case .failure(let error):
                     model.reportImportFailure(error)
                 }

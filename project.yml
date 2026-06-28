@@ -21,6 +21,7 @@ targets:
     dependencies:
       - target: SpokenMarginsWatch
         embed: true
+      - target: SpokenMarginsShareExtension
       - target: SpokenMarginsBrowserTextExtension
       - target: SpokenMarginsGate2Widget
       - package: SessionKit
@@ -75,6 +76,7 @@ targets:
     dependencies:
       - target: SpokenMarginsWatch
         embed: true
+      - target: SpokenMarginsShareExtension
       - target: SpokenMarginsBrowserTextExtension
       - target: SpokenMarginsGate2Widget
       - package: SessionKit
@@ -158,6 +160,40 @@ targets:
         SDKROOT: iphoneos
         SWIFT_VERSION: "6.0"
         TARGETED_DEVICE_FAMILY: "1,2"
+  SpokenMarginsShareExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: App/SpokenMarginsShareExtension/Sources
+      - path: App/SpokenMarginsShareExtension/Resources
+      - path: App/Gate2Shared/Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.share
+        CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsShareExtension/SpokenMarginsShareExtension.entitlements
+        CODE_SIGN_STYLE: Automatic
+        CURRENT_PROJECT_VERSION: "1"
+        DEVELOPMENT_TEAM: J8SWC6J3VY
+        INFOPLIST_FILE: App/SpokenMarginsShareExtension/Info.plist
+        MARKETING_VERSION: "0.1"
+        SDKROOT: iphoneos
+        SWIFT_VERSION: "6.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+    info:
+      path: App/SpokenMarginsShareExtension/Info.plist
+      properties:
+        CFBundleDisplayName: Spoken Margins
+        CFBundleShortVersionString: "0.1"
+        CFBundleVersion: "1"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).SourceLinkShareViewController
+          NSExtensionAttributes:
+            NSExtensionJavaScriptPreprocessingFile: SourceLinkPreprocessor
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsText: true
+              NSExtensionActivationSupportsWebPageWithMaxCount: 1
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
   SpokenMarginsWatch:
     type: application
     platform: watchOS

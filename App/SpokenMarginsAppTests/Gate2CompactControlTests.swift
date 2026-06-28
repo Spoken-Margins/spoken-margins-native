@@ -5,7 +5,7 @@ import XCTest
 @MainActor
 final class Gate2CompactControlTests: XCTestCase {
     func testCompactSnapshotIsPublishedForSeededSession() {
-        let model = Gate1AppModel()
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         model.startItem(id: "item-pill")
 
@@ -20,7 +20,7 @@ final class Gate2CompactControlTests: XCTestCase {
     }
 
     func testCompactTransportCommandsDelegateAndUpdateDiagnostics() {
-        let model = Gate1AppModel()
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         model.startItem(id: "item-pill")
 
@@ -49,7 +49,7 @@ final class Gate2CompactControlTests: XCTestCase {
     }
 
     func testCompactCommandURLDelegatesThroughCanonicalRuntime() {
-        let model = Gate1AppModel()
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         model.startItem(id: "item-pill")
 

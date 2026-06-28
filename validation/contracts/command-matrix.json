@@ -50,6 +50,18 @@
       "backendCommand": "SessionEngine.skipBack"
     },
     {
+      "id": "seekToMediaTime",
+      "description": "Seek native or transcript-backed media to an absolute media-time position.",
+      "status": "implemented",
+      "backendCommand": "SessionEngine.seekMedia"
+    },
+    {
+      "id": "setPlaybackRate",
+      "description": "Set the active playback rate for the canonical playback target.",
+      "status": "implemented",
+      "backendCommand": "SessionEngine.setPlaybackRate"
+    },
+    {
       "id": "jumpToChapter",
       "description": "Jump to a resolved chapter anchor.",
       "status": "implemented",
@@ -124,8 +136,14 @@
     {
       "id": "importSourceLink",
       "description": "Accept a shared or pasted URL and resolve it toward a playable or reviewable source item.",
-      "status": "backend_request",
-      "backendCommand": null
+      "status": "implemented",
+      "backendCommand": "SessionEngine.importSourceLink"
+    },
+    {
+      "id": "attachTranscriptTimeline",
+      "description": "Attach a source-audio transcript timeline so native media can produce transcript spans, listening maps, and AI context.",
+      "status": "implemented",
+      "backendCommand": "SessionEngine.attachTranscriptTimeline"
     },
     {
       "id": "loadWatchPackage",

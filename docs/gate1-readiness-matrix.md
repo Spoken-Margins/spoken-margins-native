@@ -4,7 +4,7 @@ Date: 2026-06-15
 
 This matrix is an adversarial readiness check for Gate 1: Phone/Tablet Core Session. It is derived from `docs/product-validation-plan.md`, `docs/prototype-spec.md`, and `docs/sessionkit-contract.md`.
 
-Readiness is intentionally stricter than implementation status. A behavior is ready only when it has a product user path, a core API path, durable side effects, automated checks that assert behavior rather than visibility, and runtime evidence appropriate to the feature.
+Readiness is intentionally stricter than implementation status. A behavior is ready only when it has a product user path, a core API path, durable side effects, targeted verification appropriate to the feature, and runtime evidence appropriate to the feature. Human validation is separate and can only be supplied by the product owner.
 
 Machine-readable inventory: `validation/gate1-behaviors.json`
 
@@ -71,13 +71,13 @@ Gate 1 is **not ready for product-owner validation**.
 1. **Device evidence is not sufficient.** Simulator launch/build evidence does not validate microphone, audio route, Speech.framework transcription, provider behavior, offline behavior, or actual audible rollback.
 2. **Listening Map validation is still shallow.** A user-facing paste/validate path and valid-map UI test exist, but malformed-map UI coverage, structured multi-issue repair reports, and provider-output repair loops are missing.
 3. **Generated playback sequencing needs end-to-end evidence.** Core/app policy now queues generated turns until active audio completion, but provider-driven UI validation and device audio completion evidence remain.
-4. **Many newly wired runtime paths still need UI tests.** Summary playback, AI-response playback, AI timeline rows, Cancel, interjection detail, End Session, and offline profile changes are reachable but not fully proven through UI automation.
+4. **Many newly wired runtime paths still need closeout evidence.** Summary playback, AI-response playback, AI timeline rows, Cancel, interjection detail, End Session, and offline profile changes are reachable but not yet protected by late-gate UI routes or human validation records.
 5. **Real ingestion and device/provider evidence remain.** Obsidian clip parsing is covered, but native Files/iCloud import, real provider recovery, and device audio validation remain.
 
 ## Minimum Fix Set Before Product Validation
 
 1. Add structured Listening Map repair reporting and UI tests for malformed pasted maps, or explicitly remove the repair loop from Gate 1 scope.
-2. Add product UI tests that assert state/persistence changes, not only visible controls.
+2. Run broad UI routes as late-gate closeout evidence, and add focused regression tests only after the product owner validates the flows worth preserving.
 3. Add device validation evidence for microphone recording, Speech.framework transcription, saved audio files, system speech quality, route/interruption behavior, provider failure/retry, and offline deferred jobs.
 4. Add or attach evidence for generated source-summary auto-play and AI-turn summary queuing on device.
 5. Keep provider payload/model-routing tests green and attach live provider success/failure/retry evidence.
