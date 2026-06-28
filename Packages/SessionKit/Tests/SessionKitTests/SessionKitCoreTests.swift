@@ -1438,6 +1438,37 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(audio.playedOffsets, [0, offsetBeforePause, offsetBeforePause])
     }
 
+    func testStopPlaybackPersistsLatestSourcePositionForResume() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "timeline": ["chapter_timing"]
+            ]
+        )
+        let text = "One. Two. Three."
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: text, externalReference: nil, status: "ready")
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let audio = RecordingAudioClient()
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentOffset = "One. Two. ".count
+        let stopped = try engine.stopPlayback()
+        let sessionId = try XCTUnwrap(stopped.sessionId)
+        let persisted = try XCTUnwrap(try repo.loadSession(id: sessionId))
+
+        XCTAssertEqual(stopped.status, .paused)
+        XCTAssertEqual(persisted.position.charOffset, "One. Two. ".count)
+
+        let resumed = try engine.resumePlayback()
+
+        XCTAssertEqual(resumed.status, .playing)
+        XCTAssertEqual(audio.playedOffsets, [0, "One. Two. ".count])
+    }
+
     func testSkipForwardUsesCurrentAudioPositionWhenAvailable() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",

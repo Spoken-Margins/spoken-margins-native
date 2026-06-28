@@ -296,6 +296,23 @@ final class Gate1AppModel: ObservableObject {
         playbackProgressTask = nil
     }
 
+    func syncPlaybackProgressForLifecycle() {
+        guard snapshot.status.isPlaybackActive, let engine else { return }
+        do {
+            let updated = snapshotReflectingTextAudioPrewarmStatus(
+                try engine.syncPlaybackProgress(),
+                itemId: activeItemId
+            )
+            if updated != snapshot {
+                snapshot = updated
+            }
+            refreshSelectedItem()
+            diagnostics["playbackLifecycleSync"] = "saved"
+        } catch {
+            diagnostics["playbackLifecycleSyncError"] = String(describing: error)
+        }
+    }
+
     private func reflectTextAudioPrewarmStatusIfActive(itemId: String) {
         let updated = snapshotReflectingTextAudioPrewarmStatus(snapshot, itemId: itemId)
         guard updated != snapshot else { return }
@@ -1813,7 +1830,7 @@ final class Gate1AppModel: ObservableObject {
             if piperVoiceOptions.isEmpty {
                 piperStatus = "No Piper voices installed. Import a .onnx model and .onnx.json config."
             } else if let selected = piperVoiceOptions.first(where: { $0.id == piperVoiceId }) {
-                piperStatus = "Selected \(selected.displayName). Renderer not linked yet; playback falls back to system speech."
+                piperStatus = "Selected \(selected.displayName). Piper renderer not linked in this build; playback will fail instead of falling back to system speech."
             } else {
                 piperStatus = "\(piperVoiceOptions.count) Piper voice\(piperVoiceOptions.count == 1 ? "" : "s") installed."
             }
@@ -3018,6 +3035,13 @@ final class Gate1AppModel: ObservableObject {
             return audioPlaybackClientOverride
         }
         sanitizeTTSMode()
+        if ttsMode == "piper" {
+            diagnostics["sessionTTS"] = "Piper unavailable; system fallback blocked"
+            return RoutedAudioPlaybackClient(
+                speech: UnavailableSpeechPlaybackClient(reason: "piper_renderer_unavailable"),
+                media: makeMediaPlaybackClient()
+            )
+        }
         #if KOKORO_DEVICE && !targetEnvironment(simulator) && canImport(AVFoundation)
         if ttsMode == "kokoro" {
             let supportDirectory = try applicationSupportDirectory()
@@ -3065,7 +3089,7 @@ final class Gate1AppModel: ObservableObject {
 
     @discardableResult
     private func sanitizeTTSMode() -> Bool {
-        guard (ttsMode == "kokoro" && !isKokoroDeviceBuild) || ttsMode == "piper" else {
+        guard ttsMode == "kokoro" && !isKokoroDeviceBuild else {
             return false
         }
         ttsMode = "systemImmediate"
@@ -4494,6 +4518,9 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
     private var fallbackIsActive = false
     private var completedTargetId: String?
     private var playbackComplete = false
+    private var pendingStartTargetId: String?
+    private var startedTargetId: String?
+    private var playbackFailure: String?
     private var renderedCache: [Int: URL] = [:]
     private var inFlightOffsets = Set<Int>()
     private var pendingAutoplayOffset: Int?
@@ -4532,7 +4559,7 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
         lock.lock()
         preparedSourceText = text
         lock.unlock()
-        return try fallback.prepareSpeechText(text)
+        return SpeechTextNormalizer.normalize(text)
     }
 
     func play(targetId: String) throws {
@@ -4541,8 +4568,8 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
 
     func play(targetId: String, from charOffset: Int) throws {
         guard let request = nextRequest(targetId: targetId, from: charOffset) else {
-            try fallback.play(targetId: targetId, from: charOffset)
-            return
+            markPlaybackFailure(targetId: targetId, reason: "kokoro_playback_text_empty")
+            throw SessionKitError.invalidCommandForState("kokoro_playback_text_empty")
         }
         enqueueRender(request)
     }
@@ -4593,8 +4620,26 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
         pendingAutoplayOffset = nil
         completedTargetId = nil
         playbackComplete = false
+        pendingStartTargetId = nil
+        startedTargetId = nil
+        playbackFailure = nil
         lock.unlock()
         try fallback.stop()
+    }
+
+    func playbackStartStatus(targetId: String) -> PlaybackStartStatus {
+        lock.lock()
+        let failed = currentTargetId == targetId ? playbackFailure : nil
+        let isStarted = startedTargetId == targetId || (currentTargetId == targetId && player != nil)
+        let isPending = pendingStartTargetId == targetId || pendingAutoplayOffset != nil || !inFlightOffsets.isEmpty
+        lock.unlock()
+        if let failed {
+            return .failed(failed)
+        }
+        if isStarted {
+            return .confirmed
+        }
+        return isPending ? .pending : .confirmed
     }
 
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
@@ -4650,6 +4695,9 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
         pendingAutoplayOffset = nil
         completedTargetId = nil
         playbackComplete = false
+        pendingStartTargetId = targetId
+        startedTargetId = nil
+        playbackFailure = nil
         currentTargetId = targetId
         lock.unlock()
 
@@ -4682,7 +4730,8 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
 
     private func enqueueRender(_ request: RenderRequest, shouldPlayWhenReady: Bool = true) {
         guard canSubmitKokoroRender() else {
-            playFallback(targetId: request.targetId, from: request.startOffset, requestId: request.id)
+            markPlaybackFailureIfRequired(request: request, shouldPlayWhenReady: shouldPlayWhenReady, reason: "kokoro_render_unavailable")
+            renderFailed(request: request)
             return
         }
         lock.lock()
@@ -4699,8 +4748,8 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
             guard let self else { return }
             guard self.canSubmitKokoroRender() else {
                 DispatchQueue.main.async {
+                    self.markPlaybackFailureIfRequired(request: request, shouldPlayWhenReady: shouldPlayWhenReady, reason: "kokoro_render_unavailable")
                     self.renderFailed(request: request)
-                    self.playFallback(targetId: request.targetId, from: request.startOffset, requestId: request.id)
                 }
                 return
             }
@@ -4730,8 +4779,8 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
                 )
                 guard self.canSubmitKokoroRender() else {
                     DispatchQueue.main.async {
+                        self.markPlaybackFailureIfRequired(request: request, shouldPlayWhenReady: shouldPlayWhenReady, reason: "kokoro_render_unavailable")
                         self.renderFailed(request: request)
-                        self.playFallback(targetId: request.targetId, from: request.startOffset, requestId: request.id)
                     }
                     return
                 }
@@ -4768,8 +4817,8 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
                     final.description
                 )
                 DispatchQueue.main.async {
+                    self.markPlaybackFailureIfRequired(request: request, shouldPlayWhenReady: shouldPlayWhenReady, reason: "kokoro_render_failed")
                     self.renderFailed(request: request)
-                    self.playFallback(targetId: request.targetId, from: request.startOffset, requestId: request.id)
                 }
             }
         }
@@ -4827,6 +4876,9 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
             currentChunkLength = request.sourceLength
             currentChunkBoundary = request.boundary
             fallbackIsActive = false
+            pendingStartTargetId = nil
+            startedTargetId = request.targetId
+            playbackFailure = nil
             lock.unlock()
             if delay > 0 {
                 nextPlayer.play(atTime: nextPlayer.deviceCurrentTime + delay)
@@ -4835,7 +4887,7 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
             }
             prefetchNextChunk(after: request)
         } catch {
-            playFallback(targetId: request.targetId, from: request.startOffset, requestId: request.id)
+            markPlaybackFailure(request: request, reason: "kokoro_playback_failed")
         }
     }
 
@@ -4906,25 +4958,39 @@ private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, A
         return Float(max(0.65, min(1.75, storedRate / 0.5)))
     }
 
-    private func playFallback(targetId: String, from charOffset: Int, requestId: UUID? = nil) {
-        do {
-            lock.lock()
-            if let requestId, generation != requestId {
-                lock.unlock()
-                return
-            }
-            fallbackIsActive = true
-            playbackComplete = false
-            completedTargetId = nil
-            currentStartOffset = charOffset
-            currentChunkLength = 0
+    private func markPlaybackFailure(request: RenderRequest, reason: String) {
+        lock.lock()
+        guard generation == request.id else {
             lock.unlock()
-            try fallback.play(targetId: targetId, from: charOffset)
-        } catch {
-            lock.lock()
-            fallbackIsActive = false
-            lock.unlock()
+            return
         }
+        currentTargetId = request.targetId
+        currentStartOffset = request.startOffset
+        currentChunkLength = 0
+        fallbackIsActive = false
+        pendingStartTargetId = nil
+        startedTargetId = nil
+        playbackFailure = reason
+        lock.unlock()
+    }
+
+    private func markPlaybackFailureIfRequired(request: RenderRequest, shouldPlayWhenReady: Bool, reason: String) {
+        lock.lock()
+        let isAwaitedAutoplay = pendingAutoplayOffset == request.startOffset
+        lock.unlock()
+        guard shouldPlayWhenReady || isAwaitedAutoplay else { return }
+        markPlaybackFailure(request: request, reason: reason)
+    }
+
+    private func markPlaybackFailure(targetId: String, reason: String) {
+        lock.lock()
+        currentTargetId = targetId
+        currentChunkLength = 0
+        fallbackIsActive = false
+        pendingStartTargetId = nil
+        startedTargetId = nil
+        playbackFailure = reason
+        lock.unlock()
     }
 }
 #endif
@@ -5011,6 +5077,40 @@ private func kokoroBoundary(in prefix: String, characters: CharacterSet, include
 private extension KokoroSourceSlice {
     func withBoundary(_ boundary: KokoroChunkBoundary) -> KokoroSourceSlice {
         KokoroSourceSlice(text: text, sourceLength: sourceLength, boundary: boundary)
+    }
+}
+
+private final class UnavailableSpeechPlaybackClient: AudioPlaybackClient, @unchecked Sendable {
+    private let reason: String
+    private var failedTargetId: String?
+
+    init(reason: String) {
+        self.reason = reason
+    }
+
+    func prepareSpeechText(_ text: String) throws -> String {
+        SpeechTextNormalizer.normalize(text)
+    }
+
+    func play(targetId: String) throws {
+        try fail(targetId: targetId)
+    }
+
+    func play(targetId: String, from charOffset: Int) throws {
+        try fail(targetId: targetId)
+    }
+
+    func pause() throws {}
+
+    func stop() throws {}
+
+    func playbackStartStatus(targetId: String) -> PlaybackStartStatus {
+        failedTargetId == targetId ? .failed(reason) : .confirmed
+    }
+
+    private func fail(targetId: String) throws {
+        failedTargetId = targetId
+        throw SessionKitError.invalidCommandForState(reason)
     }
 }
 

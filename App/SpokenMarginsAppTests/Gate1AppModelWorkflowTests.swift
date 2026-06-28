@@ -91,6 +91,37 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.sourceProgressPercent, 0)
     }
 
+    func testLifecycleSyncPersistsLatestTextPlaybackPosition() throws {
+        let audio = WorkflowRecordingAudioClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio)
+        model.resetAndSeed()
+        model.importTitle = "Long Item"
+        model.importText = "One. Two. Three."
+
+        model.importTextItem()
+        audio.currentOffset = "One. Two. ".count
+        model.syncPlaybackProgressForLifecycle()
+
+        let session = try XCTUnwrap(model.selectedItem.sessions.last)
+        XCTAssertEqual(session.position.charOffset, "One. Two. ".count)
+        XCTAssertEqual(model.snapshot.currentTextStart, "One. Two. ".count)
+        XCTAssertEqual(model.diagnostics["playbackLifecycleSync"], "saved")
+    }
+
+    func testPiperModeFailsExplicitlyInsteadOfFallingBackToSystemSpeech() {
+        let model = Gate1AppModel()
+        model.resetAndSeed()
+        model.ttsMode = "piper"
+        model.importTitle = "Piper Item"
+        model.importText = "This should not silently use system speech."
+
+        model.importTextItem()
+
+        XCTAssertFalse(model.snapshot.status.isPlaybackActive)
+        XCTAssertEqual(model.diagnostics["sessionTTS"], "Piper unavailable; system fallback blocked")
+        XCTAssertTrue(model.lastError?.contains("piper_renderer_unavailable") == true)
+    }
+
     private func waitFor(
         _ description: String,
         timeoutNanoseconds: UInt64 = 1_000_000_000,
@@ -167,5 +198,42 @@ private actor PreparedTextAudioPrewarmProbe {
     func complete(with prepared: PreparedTextAudio?) {
         preparedContinuation?.resume(returning: prepared)
         preparedContinuation = nil
+    }
+}
+
+private final class WorkflowRecordingAudioClient: AudioPlaybackClient {
+    var playedOffsets: [Int] = []
+    var currentOffset: Int?
+    private var activeTargetId: String?
+
+    func prepareSpeechText(_ text: String) throws -> String {
+        SpeechTextNormalizer.normalize(text)
+    }
+
+    func play(targetId: String) throws {
+        try play(targetId: targetId, from: 0)
+    }
+
+    func play(targetId: String, from charOffset: Int) throws {
+        activeTargetId = targetId
+        currentOffset = charOffset
+        playedOffsets.append(charOffset)
+    }
+
+    func pause() throws {}
+
+    func currentCharOffset() -> Int? {
+        currentOffset
+    }
+
+    func currentPlaybackPosition() -> PlaybackPosition? {
+        guard let currentOffset else { return nil }
+        return PlaybackPosition(
+            targetType: .itemTextTTS,
+            targetId: activeTargetId,
+            textStart: currentOffset,
+            textEnd: currentOffset + 1,
+            anchorConfidence: .textRange
+        )
     }
 }

@@ -1262,7 +1262,7 @@ private struct SettingsScreen: View {
                     .onChange(of: model.ttsMode) { _, _ in
                         model.speechSettingsChanged()
                     }
-                    Text(model.isKokoroDeviceBuild ? "Kokoro renders bounded segments on device and falls back to system speech if a segment fails." : "Kokoro requires the SpokenMarginsAppDevice scheme on a physical device.")
+                    Text(model.isKokoroDeviceBuild ? "Kokoro renders bounded segments on device and reports a playback failure if a segment cannot render." : "Kokoro requires the SpokenMarginsAppDevice scheme on a physical device.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
                     if model.isKokoroDeviceBuild {

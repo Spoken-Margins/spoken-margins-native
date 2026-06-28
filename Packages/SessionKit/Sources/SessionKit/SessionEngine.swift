@@ -198,9 +198,12 @@ public final class SessionEngine {
 
     @discardableResult
     public func stopPlayback() throws -> SessionSnapshot {
-        guard let session = currentSession else {
+        guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("stopPlayback")
         }
+        session = try syncCurrentPositionFromAudio(session)
+        currentSession = session
+        try repository.saveSession(session)
         try audio.stop()
         publish(status: .paused, phase: session.phase)
         return snapshot
@@ -221,7 +224,27 @@ public final class SessionEngine {
                 publish(status: .starting, phase: session.phase)
                 return snapshot
             case .failed(let message):
+                if updated.position != session.position
+                    || updated.completionPercent != session.completionPercent
+                    || updated.phase != session.phase {
+                    session = updated
+                    currentSession = session
+                    try repository.saveSession(session)
+                }
                 snapshot.lastFailure = "playback_start_failed:\(message)"
+                publish(status: .failed, phase: session.phase)
+                return snapshot
+            }
+        } else if snapshot.status == .playing {
+            if case .failed(let message) = audio.playbackStartStatus(targetId: session.currentTargetId) {
+                if updated.position != session.position
+                    || updated.completionPercent != session.completionPercent
+                    || updated.phase != session.phase {
+                    session = updated
+                    currentSession = session
+                    try repository.saveSession(session)
+                }
+                snapshot.lastFailure = "playback_failed:\(message)"
                 publish(status: .failed, phase: session.phase)
                 return snapshot
             }
