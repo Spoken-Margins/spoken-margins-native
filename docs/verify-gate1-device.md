@@ -24,6 +24,7 @@ Use the default `SpokenMarginsApp` scheme for Gate 1 device validation. Gate 1 T
 ## Evidence To Attach
 
 - `./scripts/verify-gate1-routine.sh` terminal log.
+- App integration build and `SpokenMarginsAppTests` terminal log.
 - `./scripts/verify-gate1-closeout.sh` terminal log when the build is being presented for gate closeout.
 - Device screen recordings for source playback -> summary auto-play and AI response -> AI-targeted summary queuing.
 - Screenshot or recording evidence for microphone allowed/denied, saved `.m4a`, Speech transcription result, provider settings, provider success/failure/retry, offline deferred recovery, diagnostics, and export preview.

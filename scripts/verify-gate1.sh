@@ -2,14 +2,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PACKAGE="$ROOT/Packages/SessionKit"
 
 python3 "$ROOT/scripts/validate-contracts.py"
-
-cd "$PACKAGE"
-
-swift build --build-tests
-xcrun xctest .build/arm64-apple-macosx/debug/SessionKitPackageTests.xctest
+python3 "$ROOT/scripts/validate-surface-contracts.py"
+"$ROOT/scripts/run-sessionkit-tests.sh"
 
 cd "$ROOT"
 

@@ -1,5 +1,7 @@
 # Playback Spine Steward Packet
 
+> Archive note: this document is reference-only. The active default workflow is `AGENTS.md`. Use this steward packet only when the product owner explicitly requests a parallel-agent restart with a named steward, named agents, allowed files, forbidden files, and merge order.
+
 This packet is the frozen coordination baseline for restarting playback-spine parallel tracks.
 
 ## Base

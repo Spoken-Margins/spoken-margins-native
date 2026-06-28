@@ -213,12 +213,15 @@ targets:
         DEVELOPMENT_TEAM: J8SWC6J3VY
         MARKETING_VERSION: "0.1"
         SWIFT_VERSION: "6.0"
+        TARGETED_DEVICE_FAMILY: "4"
     info:
       path: App/SpokenMarginsWatch/Info.plist
       properties:
         CFBundleDisplayName: Spoken Margins
         CFBundleShortVersionString: "0.1"
         CFBundleVersion: "1"
+        UIDeviceFamily:
+          - 4
         WKApplication: true
         WKCompanionAppBundleIdentifier: com.spokenmargins.native
         WKBackgroundModes:

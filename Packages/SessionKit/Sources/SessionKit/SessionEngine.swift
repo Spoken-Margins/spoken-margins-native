@@ -24,12 +24,16 @@ public final class SessionEngine {
     private let aiProvider: AIProviderClient
     private let linkResolver: LinkResolutionClient
     private let textAudio: TextAudioPreparationClient?
+    private let playbackStartTimeout: TimeInterval
+    private let now: () -> Date
     private var recordingAnchor: Anchor?
     private var recordingTargetType: InterjectionTargetType?
     private var recordingTargetId: String?
     private var priorPhase: SessionPhase?
     private var streamingBuffers: [String: String] = [:]
     private var spokenPrefixes: [String: Int] = [:]
+    private var playbackStartPendingTargetId: String?
+    private var playbackStartDeadline: Date?
 
     private struct PlaybackPlan {
         var text: String
@@ -50,7 +54,9 @@ public final class SessionEngine {
         transcriber: TranscriptionClient = DeferredTranscriptionClient(),
         aiProvider: AIProviderClient = DeterministicAIProvider(),
         linkResolver: LinkResolutionClient = UnsupportedLinkResolutionClient(),
-        textAudio: TextAudioPreparationClient? = nil
+        textAudio: TextAudioPreparationClient? = nil,
+        playbackStartTimeout: TimeInterval = 10,
+        now: @escaping () -> Date = Date.init
     ) {
         self.profile = profile
         self.repository = repository
@@ -60,6 +66,8 @@ public final class SessionEngine {
         self.aiProvider = aiProvider
         self.linkResolver = linkResolver
         self.textAudio = textAudio
+        self.playbackStartTimeout = playbackStartTimeout
+        self.now = now
     }
 
     @discardableResult
@@ -203,7 +211,7 @@ public final class SessionEngine {
         let playbackCompleted = audio.isPlaybackComplete(targetId: session.currentTargetId)
         var updated = try syncCurrentPositionFromAudio(session)
         if snapshot.status == .starting {
-            switch audio.playbackStartStatus(targetId: session.currentTargetId) {
+            switch playbackStartStatus(for: session.currentTargetId) {
             case .confirmed:
                 snapshot.status = .playing
             case .pending:
@@ -1750,6 +1758,9 @@ public final class SessionEngine {
     }
 
     private func publish(status: PlaybackStatus, phase: SessionPhase) {
+        if status != .starting {
+            clearPlaybackStartPending()
+        }
         snapshot.status = status
         snapshot.phase = phase
         snapshot.isRecording = status == .recording
@@ -1779,7 +1790,7 @@ public final class SessionEngine {
     }
 
     private func publishPlaybackStart(for session: Session, phase: SessionPhase) {
-        switch audio.playbackStartStatus(targetId: session.currentTargetId) {
+        switch playbackStartStatus(for: session.currentTargetId) {
         case .confirmed:
             publish(status: .playing, phase: phase)
         case .pending:
@@ -1796,6 +1807,33 @@ public final class SessionEngine {
         } else {
             publish(status: snapshot.status, phase: session.phase)
         }
+    }
+
+    private func playbackStartStatus(for targetId: String) -> PlaybackStartStatus {
+        switch audio.playbackStartStatus(targetId: targetId) {
+        case .confirmed:
+            clearPlaybackStartPending()
+            return .confirmed
+        case .failed(let message):
+            clearPlaybackStartPending()
+            return .failed(message)
+        case .pending:
+            if playbackStartPendingTargetId != targetId {
+                playbackStartPendingTargetId = targetId
+                playbackStartDeadline = now().addingTimeInterval(playbackStartTimeout)
+                return .pending
+            }
+            if let playbackStartDeadline, now() >= playbackStartDeadline {
+                clearPlaybackStartPending()
+                return .failed("playback_start_timeout")
+            }
+            return .pending
+        }
+    }
+
+    private func clearPlaybackStartPending() {
+        playbackStartPendingTargetId = nil
+        playbackStartDeadline = nil
     }
 
     private func preparedTextAudioStatus(for item: Item?) -> String? {

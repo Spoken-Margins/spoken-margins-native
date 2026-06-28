@@ -13,6 +13,16 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
         public var isRecording: Bool
         public var availableCommands: [String]
 
+        private enum CodingKeys: String, CodingKey {
+            case title
+            case chapterTitle
+            case status
+            case phase
+            case progressPercent
+            case isRecording
+            case availableCommands
+        }
+
         public init(
             title: String,
             chapterTitle: String,
@@ -29,6 +39,17 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
             self.progressPercent = progressPercent
             self.isRecording = isRecording
             self.availableCommands = availableCommands
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            title = try container.decode(String.self, forKey: .title)
+            chapterTitle = try container.decode(String.self, forKey: .chapterTitle)
+            status = try container.decode(String.self, forKey: .status)
+            phase = try container.decode(String.self, forKey: .phase)
+            progressPercent = try container.decode(Int.self, forKey: .progressPercent)
+            isRecording = try container.decode(Bool.self, forKey: .isRecording)
+            availableCommands = try container.decodeIfPresent([String].self, forKey: .availableCommands) ?? []
         }
     }
 

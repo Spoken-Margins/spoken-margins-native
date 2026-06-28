@@ -1,5 +1,7 @@
 # Playback Spine Parallel Track Instructions
 
+> Archive note: this document is reference-only. The active default workflow is `AGENTS.md`. Do not use these restart instructions unless the product owner explicitly requests parallel agents with a named steward, named agents, allowed files, forbidden files, and merge order.
+
 Use these instructions when restarting parallel agents from the current `codex/playback-spine-refactor` head.
 
 Each agent must begin by reading:

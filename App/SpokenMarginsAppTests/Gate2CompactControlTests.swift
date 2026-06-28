@@ -76,4 +76,77 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertEqual(drained.map(\.command), ["togglePlayPause", "skipForward", "summarizeInterjections"])
         XCTAssertTrue(Gate2CompactCommandQueue.drain(defaults: defaults).isEmpty)
     }
+
+    func testNowPlayingAvailabilityUsesCompactAvailableCommandsForSeekAndRate() {
+        let textSnapshot = compactSnapshot(
+            targetType: TargetType.itemTextTTS.rawValue,
+            availableCommands: [.togglePlayPause, .skipBack, .skipForward],
+            durationMs: 120_000
+        )
+        let textAvailability = Gate2NowPlayingCommandAvailability(snapshot: textSnapshot)
+
+        XCTAssertTrue(textAvailability.canPause)
+        XCTAssertFalse(textAvailability.canSeek)
+        XCTAssertFalse(textAvailability.canSetPlaybackRate)
+
+        let mediaSnapshot = compactSnapshot(
+            targetType: TargetType.transcriptBackedMedia.rawValue,
+            availableCommands: [.togglePlayPause, .seekToMediaTime, .setPlaybackRate],
+            durationMs: 120_000
+        )
+        let mediaAvailability = Gate2NowPlayingCommandAvailability(snapshot: mediaSnapshot)
+
+        XCTAssertTrue(mediaAvailability.canSeek)
+        XCTAssertTrue(mediaAvailability.canSetPlaybackRate)
+    }
+
+    func testLiveActivityContentStateDecodesLegacyPayloadWithoutAvailableCommands() throws {
+        let data = Data("""
+        {
+          "title": "Pill",
+          "chapterTitle": "Opening",
+          "status": "playing",
+          "phase": "itemPlayback",
+          "progressPercent": 42,
+          "isRecording": false
+        }
+        """.utf8)
+
+        let state = try JSONDecoder().decode(Gate2LiveActivityAttributes.ContentState.self, from: data)
+
+        XCTAssertEqual(state.title, "Pill")
+        XCTAssertEqual(state.availableCommands, [])
+    }
+
+    private func compactSnapshot(
+        targetType: String,
+        availableCommands: [CompactControlCommand],
+        durationMs: Int?
+    ) -> CompactControlSnapshot {
+        CompactControlSnapshot(
+            sessionId: "session-pill",
+            itemId: "item-pill",
+            targetType: targetType,
+            targetId: "item-pill",
+            title: "Pill",
+            chapterTitle: "Opening",
+            status: .playing,
+            phase: .itemPlayback,
+            progressPercent: 10,
+            currentPlaybackProgressPercent: 10,
+            sourceProgressPercent: 10,
+            currentMediaTimeMs: 1_000,
+            currentPlaybackDurationMs: durationMs,
+            playbackRate: 1,
+            isRecording: false,
+            pendingAiJobCount: 0,
+            pendingAiJobKind: nil,
+            pendingAiJobStatus: nil,
+            lastUserTurnType: nil,
+            exposedCommands: CompactControlCommand.allCases,
+            availableCommands: availableCommands,
+            compactSurfaceReady: true,
+            surfaceProfileId: "lock-screen-widget"
+        )
+    }
 }

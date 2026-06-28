@@ -1,5 +1,7 @@
 # Parallel Track Coordination
 
+> Archive note: this document is reference-only. The active default workflow is `AGENTS.md`. Use this parallel-track process only when the product owner explicitly requests parallel agents with a named steward, named agents, allowed files, forbidden files, and merge order.
+
 This document defines how steward and gate agents coordinate parallel work without creating incompatible contracts.
 
 ## Core Rule

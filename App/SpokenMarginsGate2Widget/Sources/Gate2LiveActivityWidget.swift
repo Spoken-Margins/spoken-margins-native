@@ -146,17 +146,8 @@ private struct CompactPlayPauseButton: View {
     let isPlaying: Bool
 
     var body: some View {
-        Group {
-            if isPlaying {
-                Button(intent: Gate2CompactPlaybackIntent(command: command)) {
-                    playPauseLabel
-                }
-            } else {
-                Link(destination: URL(string: "spokenmargins://open")!) {
-                    playPauseLabel
-                }
-                .accessibilityHint("Opens Spoken Margins to resume playback.")
-            }
+        Button(intent: Gate2CompactPlaybackIntent(command: command)) {
+            playPauseLabel
         }
         .frame(width: 60, height: 60)
         .contentShape(Circle())

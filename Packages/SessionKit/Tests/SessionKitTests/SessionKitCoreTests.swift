@@ -266,6 +266,33 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(failed.lastFailure, "playback_start_failed:native_audio_failed")
     }
 
+    func testPlaybackStartPendingTimesOutAsFailure() throws {
+        let audio = RecordingAudioClient()
+        audio.startStatus = .pending
+        var now = Date(timeIntervalSince1970: 100)
+        let engine = SessionEngine(
+            profile: phonePlaybackProfile(),
+            repository: InMemorySessionRepository(items: [
+                "item-pill": Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two.", externalReference: nil, status: "ready")
+            ]),
+            audio: audio,
+            playbackStartTimeout: 10,
+            now: { now }
+        )
+
+        let starting = try engine.startSession(itemId: "item-pill")
+        XCTAssertEqual(starting.status, .starting)
+
+        now = Date(timeIntervalSince1970: 109)
+        let stillStarting = try engine.syncPlaybackProgress()
+        XCTAssertEqual(stillStarting.status, .starting)
+
+        now = Date(timeIntervalSince1970: 111)
+        let failed = try engine.syncPlaybackProgress()
+        XCTAssertEqual(failed.status, .failed)
+        XCTAssertEqual(failed.lastFailure, "playback_start_failed:playback_start_timeout")
+    }
+
     func testSQLiteStorePersistsCoreRecords() throws {
         let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-\(UUID().uuidString).sqlite").path
         let store = try SQLiteSessionStore(path: path)

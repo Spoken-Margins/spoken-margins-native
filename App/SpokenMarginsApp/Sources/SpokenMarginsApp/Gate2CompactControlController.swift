@@ -14,6 +14,30 @@ import AVFoundation
 import UIKit
 #endif
 
+struct Gate2NowPlayingCommandAvailability: Equatable {
+    var canPlay: Bool
+    var canPause: Bool
+    var canTogglePlayPause: Bool
+    var canSkipBack: Bool
+    var canSkipForward: Bool
+    var canStop: Bool
+    var canSeek: Bool
+    var canSetPlaybackRate: Bool
+
+    init(snapshot: CompactControlSnapshot) {
+        let canSendPlay = snapshot.availableCommands.contains(.play) || snapshot.availableCommands.contains(.togglePlayPause)
+        let canSendPause = snapshot.availableCommands.contains(.pause) || snapshot.availableCommands.contains(.togglePlayPause)
+        canPlay = !snapshot.status.isPlaybackActive && canSendPlay
+        canPause = snapshot.status.isPlaybackActive && canSendPause
+        canTogglePlayPause = canSendPlay || canSendPause
+        canSkipBack = snapshot.availableCommands.contains(.skipBack)
+        canSkipForward = snapshot.availableCommands.contains(.skipForward)
+        canStop = snapshot.status.isPlaybackActive && canSendPause
+        canSeek = snapshot.availableCommands.contains(.seekToMediaTime)
+        canSetPlaybackRate = snapshot.availableCommands.contains(.setPlaybackRate)
+    }
+}
+
 @MainActor
 final class Gate2CompactControlController {
     private var dispatcher: CompactControlDispatcher?
@@ -184,7 +208,7 @@ private final class Gate2LiveActivityController {
     #endif
 }
 
-    @MainActor
+@MainActor
 private final class Gate2NowPlayingController {
     private(set) var isConfigured = false
     private(set) var lastRemoteCommand = "none"
@@ -220,20 +244,17 @@ private final class Gate2NowPlayingController {
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
         let center = MPRemoteCommandCenter.shared()
-        let canPlay = snapshot.availableCommands.contains(.play) || snapshot.availableCommands.contains(.togglePlayPause)
-        let canPause = snapshot.availableCommands.contains(.pause) || snapshot.availableCommands.contains(.togglePlayPause)
-        let canSkipBack = snapshot.availableCommands.contains(.skipBack)
-        let canSkipForward = snapshot.availableCommands.contains(.skipForward)
-        center.playCommand.isEnabled = !snapshot.status.isPlaybackActive && canPlay
-        center.pauseCommand.isEnabled = snapshot.status.isPlaybackActive && canPause
-        center.togglePlayPauseCommand.isEnabled = canPlay || canPause
-        center.skipBackwardCommand.isEnabled = canSkipBack
-        center.previousTrackCommand.isEnabled = canSkipBack
-        center.skipForwardCommand.isEnabled = canSkipForward
-        center.nextTrackCommand.isEnabled = canSkipForward
-        center.stopCommand.isEnabled = snapshot.status.isPlaybackActive && canPause
-        center.changePlaybackPositionCommand.isEnabled = snapshot.currentPlaybackDurationMs != nil
-        center.changePlaybackRateCommand.isEnabled = canPlay || canPause
+        let availability = Gate2NowPlayingCommandAvailability(snapshot: snapshot)
+        center.playCommand.isEnabled = availability.canPlay
+        center.pauseCommand.isEnabled = availability.canPause
+        center.togglePlayPauseCommand.isEnabled = availability.canTogglePlayPause
+        center.skipBackwardCommand.isEnabled = availability.canSkipBack
+        center.previousTrackCommand.isEnabled = availability.canSkipBack
+        center.skipForwardCommand.isEnabled = availability.canSkipForward
+        center.nextTrackCommand.isEnabled = availability.canSkipForward
+        center.stopCommand.isEnabled = availability.canStop
+        center.changePlaybackPositionCommand.isEnabled = availability.canSeek
+        center.changePlaybackRateCommand.isEnabled = availability.canSetPlaybackRate
         center.changePlaybackRateCommand.supportedPlaybackRates = [0.75, 1.0, 1.25, 1.5, 2.0]
         #endif
     }
@@ -255,16 +276,16 @@ private final class Gate2NowPlayingController {
         center.changePlaybackPositionCommand.removeTarget(nil)
         center.changePlaybackRateCommand.removeTarget(nil)
 
-        center.playCommand.isEnabled = true
-        center.pauseCommand.isEnabled = true
-        center.togglePlayPauseCommand.isEnabled = true
-        center.skipBackwardCommand.isEnabled = true
-        center.skipForwardCommand.isEnabled = true
-        center.previousTrackCommand.isEnabled = true
-        center.nextTrackCommand.isEnabled = true
-        center.stopCommand.isEnabled = true
-        center.changePlaybackPositionCommand.isEnabled = true
-        center.changePlaybackRateCommand.isEnabled = true
+        center.playCommand.isEnabled = false
+        center.pauseCommand.isEnabled = false
+        center.togglePlayPauseCommand.isEnabled = false
+        center.skipBackwardCommand.isEnabled = false
+        center.skipForwardCommand.isEnabled = false
+        center.previousTrackCommand.isEnabled = false
+        center.nextTrackCommand.isEnabled = false
+        center.stopCommand.isEnabled = false
+        center.changePlaybackPositionCommand.isEnabled = false
+        center.changePlaybackRateCommand.isEnabled = false
         center.changePlaybackRateCommand.supportedPlaybackRates = [0.75, 1.0, 1.25, 1.5, 2.0]
         center.skipBackwardCommand.preferredIntervals = [15]
         center.skipForwardCommand.preferredIntervals = [15]
