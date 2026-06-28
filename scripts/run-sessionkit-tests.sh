@@ -7,9 +7,10 @@ PACKAGE="$ROOT/Packages/SessionKit"
 cd "$PACKAGE"
 swift build --build-tests
 
-XCTEST_BUNDLE="$(find .build -type d -name 'SessionKitPackageTests.xctest' -path '*/debug/*' | sort | head -n 1)"
-if [[ -z "$XCTEST_BUNDLE" ]]; then
-  echo "SessionKitPackageTests.xctest was not produced by swift build --build-tests." >&2
+BIN_PATH="$(swift build --show-bin-path)"
+XCTEST_BUNDLE="$BIN_PATH/SessionKitPackageTests.xctest"
+if [[ ! -d "$XCTEST_BUNDLE" ]]; then
+  echo "Expected XCTest bundle not found at $XCTEST_BUNDLE." >&2
   exit 1
 fi
 

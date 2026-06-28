@@ -32,6 +32,9 @@ public final class SessionEngine {
     private var priorPhase: SessionPhase?
     private var streamingBuffers: [String: String] = [:]
     private var spokenPrefixes: [String: Int] = [:]
+    private var playbackStartAttemptId = 0
+    private var activePlaybackStartAttemptId: Int?
+    private var playbackStartPendingAttemptId: Int?
     private var playbackStartPendingTargetId: String?
     private var playbackStartDeadline: Date?
 
@@ -211,7 +214,7 @@ public final class SessionEngine {
         let playbackCompleted = audio.isPlaybackComplete(targetId: session.currentTargetId)
         var updated = try syncCurrentPositionFromAudio(session)
         if snapshot.status == .starting {
-            switch playbackStartStatus(for: session.currentTargetId) {
+            switch playbackStartStatus(for: session.currentTargetId, attemptId: activePlaybackStartAttemptId ?? playbackStartAttemptId) {
             case .confirmed:
                 snapshot.status = .playing
             case .pending:
@@ -1790,7 +1793,9 @@ public final class SessionEngine {
     }
 
     private func publishPlaybackStart(for session: Session, phase: SessionPhase) {
-        switch playbackStartStatus(for: session.currentTargetId) {
+        playbackStartAttemptId += 1
+        activePlaybackStartAttemptId = playbackStartAttemptId
+        switch playbackStartStatus(for: session.currentTargetId, attemptId: playbackStartAttemptId) {
         case .confirmed:
             publish(status: .playing, phase: phase)
         case .pending:
@@ -1809,7 +1814,7 @@ public final class SessionEngine {
         }
     }
 
-    private func playbackStartStatus(for targetId: String) -> PlaybackStartStatus {
+    private func playbackStartStatus(for targetId: String, attemptId: Int) -> PlaybackStartStatus {
         switch audio.playbackStartStatus(targetId: targetId) {
         case .confirmed:
             clearPlaybackStartPending()
@@ -1818,8 +1823,9 @@ public final class SessionEngine {
             clearPlaybackStartPending()
             return .failed(message)
         case .pending:
-            if playbackStartPendingTargetId != targetId {
+            if playbackStartPendingTargetId != targetId || playbackStartPendingAttemptId != attemptId {
                 playbackStartPendingTargetId = targetId
+                playbackStartPendingAttemptId = attemptId
                 playbackStartDeadline = now().addingTimeInterval(playbackStartTimeout)
                 return .pending
             }
@@ -1832,6 +1838,8 @@ public final class SessionEngine {
     }
 
     private func clearPlaybackStartPending() {
+        activePlaybackStartAttemptId = nil
+        playbackStartPendingAttemptId = nil
         playbackStartPendingTargetId = nil
         playbackStartDeadline = nil
     }

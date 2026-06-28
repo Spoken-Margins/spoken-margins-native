@@ -33,8 +33,15 @@ Use app builds when app, Watch, widget, extension, project, signing, or package 
 ```bash
 xcodegen generate
 xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -destination 'generic/platform=iOS Simulator' build | xcbeautify
-xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsAppDevice -destination 'generic/platform=iOS' build | xcbeautify
+xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -destination 'generic/platform=iOS' build | xcbeautify
 xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsWatch -destination 'generic/platform=watchOS' build | xcbeautify
+```
+
+`SpokenMarginsAppDevice` is the optional Kokoro/MLX device scheme. Run it only when validating Kokoro-specific work and only after Xcode's Metal Toolchain component is installed:
+
+```bash
+xcodebuild -downloadComponent MetalToolchain
+xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsAppDevice -destination 'generic/platform=iOS' build | xcbeautify
 ```
 
 Broad UI route automation is late-gate evidence. Run it before asking the product owner to close a gate, or after a human-validated flow needs regression protection. Do not require broad UI routes for every development iteration.

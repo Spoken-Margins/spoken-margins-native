@@ -132,6 +132,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         CURRENT_PROJECT_VERSION: "1"
         DEVELOPMENT_TEAM: J8SWC6J3VY
+        ENABLE_DEBUG_DYLIB: NO
         MARKETING_VERSION: "0.1"
         SWIFT_VERSION: "6.0"
     info:
@@ -155,6 +156,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         CURRENT_PROJECT_VERSION: "1"
         DEVELOPMENT_TEAM: J8SWC6J3VY
+        ENABLE_DEBUG_DYLIB: NO
         INFOPLIST_FILE: App/SpokenMarginsBrowserTextExtension/Info.plist
         MARKETING_VERSION: "0.1"
         SDKROOT: iphoneos
@@ -174,6 +176,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         CURRENT_PROJECT_VERSION: "1"
         DEVELOPMENT_TEAM: J8SWC6J3VY
+        ENABLE_DEBUG_DYLIB: NO
         INFOPLIST_FILE: App/SpokenMarginsShareExtension/Info.plist
         MARKETING_VERSION: "0.1"
         SDKROOT: iphoneos
@@ -220,8 +223,6 @@ targets:
         CFBundleDisplayName: Spoken Margins
         CFBundleShortVersionString: "0.1"
         CFBundleVersion: "1"
-        UIDeviceFamily:
-          - 4
         WKApplication: true
         WKCompanionAppBundleIdentifier: com.spokenmargins.native
         WKBackgroundModes:

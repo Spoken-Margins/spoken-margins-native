@@ -38,6 +38,40 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.canPlayLiveSpeechInstead)
     }
 
+    func testTextImportStartsLiveSpeechWhilePreparedMediaRendersInBackground() async throws {
+        let prewarm = PreparedTextAudioPrewarmProbe()
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            preparedTextAudioPrewarmHandler: { itemId, title, text, _, _, _ in
+                let prepared = await prewarm.prepare(itemId: itemId, title: title, text: text)
+                return .success(prepared)
+            }
+        )
+        model.resetAndSeed()
+        model.importTitle = "Prepared First"
+        model.importText = "This text should start immediately while generated audio renders in the background."
+
+        model.importTextItem()
+        let request = await prewarm.waitForRequest()
+
+        XCTAssertEqual(model.screen, .playback)
+        XCTAssertNotNil(model.snapshot.sessionId)
+        XCTAssertEqual(model.snapshot.status, .playing)
+        XCTAssertEqual(model.snapshot.targetType, TargetType.itemTextTTS.rawValue)
+        XCTAssertEqual(model.preparedTextAudioStatus, "rendering")
+        XCTAssertEqual(request.title, "Prepared First")
+
+        await prewarm.complete(with: preparedTextAudio(itemId: request.itemId, title: request.title, text: request.text))
+        try await waitFor("prepared audio to attach") {
+            model.preparedTextAudioStatus == "ready"
+        }
+
+        XCTAssertEqual(model.snapshot.preparedTextAudioStatus, "ready")
+        XCTAssertEqual(model.snapshot.targetType, TargetType.transcriptBackedMedia.rawValue)
+        XCTAssertEqual(model.snapshot.targetId, "file:///tmp/\(request.itemId)-full.caf")
+        XCTAssertFalse(model.canPlayLiveSpeechInstead)
+    }
+
     func testResumeCompletedSessionAfterExportRestartsSourcePlayback() throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
@@ -55,5 +89,83 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.status, .playing)
         XCTAssertEqual(model.snapshot.targetType, "item_text_tts")
         XCTAssertEqual(model.snapshot.sourceProgressPercent, 0)
+    }
+
+    private func waitFor(
+        _ description: String,
+        timeoutNanoseconds: UInt64 = 1_000_000_000,
+        condition: @escaping () -> Bool
+    ) async throws {
+        let interval: UInt64 = 10_000_000
+        var elapsed: UInt64 = 0
+        while elapsed < timeoutNanoseconds {
+            if condition() {
+                return
+            }
+            try await Task.sleep(nanoseconds: interval)
+            elapsed += interval
+        }
+        XCTFail("Timed out waiting for \(description).")
+    }
+
+    private func preparedTextAudio(itemId: String, title: String, text: String) -> PreparedTextAudio {
+        let mediaURL = "file:///tmp/\(itemId)-full.caf"
+        return PreparedTextAudio(
+            normalizedText: text,
+            media: ItemMedia(
+                sourceType: .generatedTTSPrerendered,
+                url: mediaURL,
+                durationMs: 1_000,
+                nativeMediaId: mediaURL
+            ),
+            timeline: TranscriptTimeline(
+                segments: [
+                    MediaTimelineSegment(id: "tts-1", startMs: 0, endMs: 1_000, startChar: 0, endChar: text.count, text: text)
+                ],
+                chapters: [
+                    MediaTimelineChapter(id: "ch-tts-1", title: title, startMs: 0, transcriptSegmentId: "tts-1")
+                ],
+                durationMs: 1_000
+            ),
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+    }
+}
+
+private actor PreparedTextAudioPrewarmProbe {
+    struct Request: Sendable {
+        var itemId: String
+        var title: String
+        var text: String
+    }
+
+    private var request: Request?
+    private var requestContinuations: [CheckedContinuation<Request, Never>] = []
+    private var preparedContinuation: CheckedContinuation<PreparedTextAudio?, Never>?
+
+    func prepare(itemId: String, title: String, text: String) async -> PreparedTextAudio? {
+        let request = Request(itemId: itemId, title: title, text: text)
+        self.request = request
+        for continuation in requestContinuations {
+            continuation.resume(returning: request)
+        }
+        requestContinuations.removeAll()
+        return await withCheckedContinuation { continuation in
+            preparedContinuation = continuation
+        }
+    }
+
+    func waitForRequest() async -> Request {
+        if let request {
+            return request
+        }
+        return await withCheckedContinuation { continuation in
+            requestContinuations.append(continuation)
+        }
+    }
+
+    func complete(with prepared: PreparedTextAudio?) {
+        preparedContinuation?.resume(returning: prepared)
+        preparedContinuation = nil
     }
 }

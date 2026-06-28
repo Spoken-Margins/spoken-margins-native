@@ -74,6 +74,15 @@ private enum AppSpeechPreviewMode {
     case assistiveTechnology
 }
 
+typealias PreparedTextAudioPrewarmHandler = @Sendable (
+    _ itemId: String,
+    _ title: String,
+    _ text: String,
+    _ outputDirectory: URL,
+    _ voiceIdentifier: String?,
+    _ speechRate: Float
+) async -> Result<PreparedTextAudio?, Error>
+
 @MainActor
 final class Gate1AppModel: ObservableObject {
     @Published var screen: Gate1Screen = .home
@@ -156,6 +165,7 @@ final class Gate1AppModel: ObservableObject {
     private let audioPlaybackClientOverride: AudioPlaybackClient?
     private let forcePreparedTextGate: Bool
     private let sourceTranscriptionClient: SourceTranscriptionClient
+    private let preparedTextAudioPrewarmHandler: PreparedTextAudioPrewarmHandler?
     private var gate3WatchDispatcher: CompactControlDispatcher?
     private var activeItemId = "item-pill"
     private var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-4.1-mini"
@@ -205,13 +215,15 @@ final class Gate1AppModel: ObservableObject {
         sourceLinkHandoffStore: SourceLinkHandoffStore? = nil,
         audioPlaybackClient: AudioPlaybackClient? = nil,
         forcePreparedTextGate: Bool = false,
-        sourceTranscriptionClient: SourceTranscriptionClient = SystemSourceTranscriptionClient()
+        sourceTranscriptionClient: SourceTranscriptionClient = SystemSourceTranscriptionClient(),
+        preparedTextAudioPrewarmHandler: PreparedTextAudioPrewarmHandler? = nil
     ) {
         self.sourceLinkResolver = sourceLinkResolver
         self.sourceLinkHandoffStore = sourceLinkHandoffStore
         self.audioPlaybackClientOverride = audioPlaybackClient
         self.forcePreparedTextGate = forcePreparedTextGate
         self.sourceTranscriptionClient = sourceTranscriptionClient
+        self.preparedTextAudioPrewarmHandler = preparedTextAudioPrewarmHandler
         refreshSpeechVoiceOptions()
         sanitizeTTSMode()
         refreshPiperVoiceStatus()
@@ -260,7 +272,10 @@ final class Gate1AppModel: ObservableObject {
                     do {
                         let previousStatus = self.snapshot.status
                         let previousTargetId = self.snapshot.targetId
-                        let updated = try engine.syncPlaybackProgress()
+                        let updated = self.snapshotReflectingTextAudioPrewarmStatus(
+                            try engine.syncPlaybackProgress(),
+                            itemId: self.activeItemId
+                        )
                         let completedCurrentAudio = previousStatus.isPlaybackActive &&
                             updated.status == .paused &&
                             previousTargetId == updated.targetId
@@ -279,6 +294,20 @@ final class Gate1AppModel: ObservableObject {
     private func stopPlaybackProgressTicker() {
         playbackProgressTask?.cancel()
         playbackProgressTask = nil
+    }
+
+    private func reflectTextAudioPrewarmStatusIfActive(itemId: String) {
+        let updated = snapshotReflectingTextAudioPrewarmStatus(snapshot, itemId: itemId)
+        guard updated != snapshot else { return }
+        snapshot = updated
+    }
+
+    private func snapshotReflectingTextAudioPrewarmStatus(_ snapshot: SessionSnapshot, itemId: String) -> SessionSnapshot {
+        guard textAudioPrewarmTasks[itemId] != nil else { return snapshot }
+        guard snapshot.preparedTextAudioStatus == nil || snapshot.preparedTextAudioStatus == "live_fallback" else { return snapshot }
+        var updated = snapshot
+        updated.preparedTextAudioStatus = "rendering"
+        return updated
     }
 
     func resetAndSeed() {
@@ -823,6 +852,7 @@ final class Gate1AppModel: ObservableObject {
             if let store {
                 selectedItem = try loadItemDetail(id: activeItemId, store: store)
             }
+            reflectTextAudioPrewarmStatusIfActive(itemId: activeItemId)
             screen = .playback
             reportSuccess("Started \(snapshot.title ?? "session").")
         }
@@ -2757,7 +2787,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func scheduleTextAudioPrewarmIfNeeded(itemId: String) {
-        guard audioPlaybackClientOverride == nil, ttsMode != "kokoro" else { return }
+        guard preparedTextAudioPrewarmHandler != nil || audioPlaybackClientOverride == nil, ttsMode != "kokoro" else { return }
         guard ttsMode != "piper" else { return }
         guard textAudioPrewarmTasks[itemId] == nil else { return }
         do {
@@ -2770,18 +2800,24 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["textAudioPrewarm:\(itemId)"] = "scheduled"
             preparedTextAudioStatus = "rendering"
             snapshot.preparedTextAudioStatus = preparedTextAudioStatus
+            let prewarmHandler = preparedTextAudioPrewarmHandler
             textAudioPrewarmTasks[itemId] = Task { [weak self, itemId, title = item.title, text, outputDirectory, voiceIdentifier, rate] in
                 guard let self else { return }
                 self.diagnostics["textAudioPrewarm:\(itemId)"] = "rendering_full"
-                let fullResult = await Self.prepareTextAudioInBackground(
-                    itemId: itemId,
-                    title: title,
-                    text: text,
-                    outputDirectory: outputDirectory,
-                    voiceIdentifier: voiceIdentifier,
-                    speechRate: rate,
-                    renderScope: .complete
-                )
+                let fullResult: Result<PreparedTextAudio?, Error>
+                if let prewarmHandler {
+                    fullResult = await prewarmHandler(itemId, title, text, outputDirectory, voiceIdentifier, rate)
+                } else {
+                    fullResult = await Self.prepareTextAudioInBackground(
+                        itemId: itemId,
+                        title: title,
+                        text: text,
+                        outputDirectory: outputDirectory,
+                        voiceIdentifier: voiceIdentifier,
+                        speechRate: rate,
+                        renderScope: .complete
+                    )
+                }
                 guard !Task.isCancelled else { return }
                 self.textAudioPrewarmTasks[itemId] = nil
                 switch fullResult {

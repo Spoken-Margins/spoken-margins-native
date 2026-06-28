@@ -4,6 +4,16 @@ Use this checklist after routine verification passes and closeout UI routes have
 
 Use the default `SpokenMarginsApp` scheme for Gate 1 device validation. Gate 1 TTS evidence is system speech. The separate `SpokenMarginsAppDevice` scheme preserves Kokoro/MLX work for a later gate and is not required for Gate 1.
 
+## Optional Kokoro Device Build
+
+`SpokenMarginsAppDevice` links Kokoro/MLX and requires Xcode's Metal Toolchain component. Install it from Xcode > Settings > Components, or run:
+
+```bash
+xcodebuild -downloadComponent MetalToolchain
+```
+
+Without that component, the device scheme fails in the MLX `Cmlx` target with `cannot execute tool 'metal' due to missing Metal Toolchain`.
+
 ## Required Device Pass
 
 - Install a signed iPhone build and a signed iPad build from the same commit.
