@@ -38,6 +38,38 @@ struct Gate2NowPlayingCommandAvailability: Equatable {
     }
 }
 
+enum Gate2LiveActivityPolicy {
+    static func isEligible(_ snapshot: CompactControlSnapshot) -> Bool {
+        guard snapshot.compactSurfaceReady, snapshot.sessionId != nil else { return false }
+        switch snapshot.phase {
+        case .finished, .abandoned:
+            return false
+        default:
+            return true
+        }
+    }
+
+    static func shouldEnd(activitySessionId: String, currentSessionId: String?) -> Bool {
+        guard let currentSessionId else { return true }
+        return activitySessionId != currentSessionId
+    }
+
+    static func shouldEndInactive(
+        activitySessionId: String,
+        activityId: String,
+        inactiveSessionId: String?,
+        trackedActivityId: String?
+    ) -> Bool {
+        if let inactiveSessionId {
+            return activitySessionId == inactiveSessionId
+        }
+        if let trackedActivityId {
+            return activityId == trackedActivityId
+        }
+        return true
+    }
+}
+
 @MainActor
 final class Gate2CompactControlController {
     private var dispatcher: CompactControlDispatcher?
@@ -151,16 +183,31 @@ final class Gate2CompactControlController {
 @MainActor
 private final class Gate2LiveActivityController {
     private var activityId: String?
+    private var publishGeneration = 0
     private(set) var status = "not_started"
 
     func publish(_ snapshot: CompactControlSnapshot) {
+        publishGeneration += 1
+        let generation = publishGeneration
         #if canImport(ActivityKit)
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
             status = "disabled"
             return
         }
-        guard snapshot.compactSurfaceReady, let sessionId = snapshot.sessionId else {
-            status = "not_ready"
+        guard Gate2LiveActivityPolicy.isEligible(snapshot), let sessionId = snapshot.sessionId else {
+            let inactiveSessionId = snapshot.sessionId
+            let trackedActivityId = activityId
+            status = "ending"
+            Task { @MainActor in
+                guard generation == publishGeneration else { return }
+                let endedCount = await Self.endInactiveActivities(
+                    inactiveSessionId: inactiveSessionId,
+                    trackedActivityId: trackedActivityId
+                )
+                guard generation == publishGeneration else { return }
+                activityId = nil
+                status = endedCount > 0 ? "ended" : "not_ready"
+            }
             return
         }
         let state = Gate2LiveActivityAttributes.ContentState(
@@ -172,9 +219,9 @@ private final class Gate2LiveActivityController {
             isRecording: snapshot.isRecording,
             availableCommands: snapshot.availableCommands.map(\.rawValue)
         )
-        let currentActivityId = activityId
-        Task {
-            let result = await Self.publishActivity(sessionId: sessionId, state: state, activityId: currentActivityId)
+        Task { @MainActor in
+            let result = await Self.publishActivity(sessionId: sessionId, state: state)
+            guard generation == publishGeneration else { return }
             activityId = result.activityId
             status = result.status
         }
@@ -186,13 +233,27 @@ private final class Gate2LiveActivityController {
     #if canImport(ActivityKit)
     private nonisolated static func publishActivity(
         sessionId: String,
-        state: Gate2LiveActivityAttributes.ContentState,
-        activityId: String?
+        state: Gate2LiveActivityAttributes.ContentState
     ) async -> (activityId: String?, status: String) {
         let content = ActivityContent(state: state, staleDate: nil)
-        if let activity = Activity<Gate2LiveActivityAttributes>.activities.first(where: { $0.id == activityId || $0.attributes.sessionId == sessionId }) {
+        let activities = Activity<Gate2LiveActivityAttributes>.activities
+        var matchingActivities: [Activity<Gate2LiveActivityAttributes>] = []
+        var endedCount = 0
+        for activity in activities {
+            if Gate2LiveActivityPolicy.shouldEnd(activitySessionId: activity.attributes.sessionId, currentSessionId: sessionId) {
+                await end(activity)
+                endedCount += 1
+            } else {
+                matchingActivities.append(activity)
+            }
+        }
+        if let activity = matchingActivities.first {
             await activity.update(content)
-            return (activity.id, "updated")
+            for duplicate in matchingActivities.dropFirst() {
+                await end(duplicate)
+                endedCount += 1
+            }
+            return (activity.id, endedCount > 0 ? "updated_pruned_stale" : "updated")
         }
         do {
             let activity = try Activity<Gate2LiveActivityAttributes>.request(
@@ -204,6 +265,25 @@ private final class Gate2LiveActivityController {
         } catch {
             return (nil, "failed:\(error.localizedDescription)")
         }
+    }
+
+    private nonisolated static func endInactiveActivities(inactiveSessionId: String?, trackedActivityId: String?) async -> Int {
+        var endedCount = 0
+        for activity in Activity<Gate2LiveActivityAttributes>.activities where Gate2LiveActivityPolicy.shouldEndInactive(
+            activitySessionId: activity.attributes.sessionId,
+            activityId: activity.id,
+            inactiveSessionId: inactiveSessionId,
+            trackedActivityId: trackedActivityId
+        ) {
+            await end(activity)
+            endedCount += 1
+        }
+        return endedCount
+    }
+
+    private nonisolated static func end(_ activity: Activity<Gate2LiveActivityAttributes>) async {
+        let content: ActivityContent<Gate2LiveActivityAttributes.ContentState>? = nil
+        await activity.end(content, dismissalPolicy: .immediate)
     }
     #endif
 }

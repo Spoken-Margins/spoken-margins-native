@@ -86,6 +86,54 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.diagnostics["lastSourceLinkStatus"], LinkResolutionStatus.playable.rawValue)
     }
 
+    func testNativeAudioInterjectionRequestsOneMinuteSourceWindowContext() async throws {
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "audio_file"),
+                title: "Windowed Episode",
+                durationMs: 300_000,
+                audioURL: "https://cdn.example.com/windowed.mp3",
+                confidence: 1
+            )
+        ))
+        let audio = WindowContextAudioClient()
+        let transcriber = RecordingSourceWindowTranscriptionClient(timeline: TranscriptTimeline(
+            segments: [
+                MediaTimelineSegment(id: "window-before", startMs: 63_000, endMs: 122_000, text: "Minute before."),
+                MediaTimelineSegment(id: "window-current", startMs: 122_000, endMs: 124_000, text: "Interjection context."),
+                MediaTimelineSegment(id: "window-after", startMs: 124_000, endMs: 183_000, text: "Minute after.")
+            ],
+            chapters: [],
+            durationMs: 300_000
+        ))
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: audio,
+            recordingClient: NoopRecordingClient(),
+            sourceTranscriptionClient: transcriber
+        )
+        model.resetAndSeed()
+
+        XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/episode", sourceSurface: "paste"))
+        audio.currentMediaTimeValue = 123_000
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        model.dispatchGate2CompactCommand(.finishInterjection)
+        let request = await transcriber.waitForWindowRequest()
+        try await waitFor("source window context to attach") {
+            model.diagnostics["sourceWindowTranscription:ij-001"] == "complete"
+        }
+
+        XCTAssertEqual(request.anchorMediaTimeMs, 123_000)
+        XCTAssertEqual(request.windowBeforeMs, 60_000)
+        XCTAssertEqual(request.windowAfterMs, 60_000)
+        XCTAssertEqual(request.durationMs, 300_000)
+        XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorBefore, "Minute before. Interjection context.")
+        XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorAfter, "Minute after.")
+    }
+
     func testClipboardButtonExtractsSourceLinkURL() throws {
         #if canImport(UIKit)
         UIPasteboard.general.string = "Listen here: https://podcasts.apple.com/us/podcast/show/id123456?i=999"
@@ -380,6 +428,23 @@ final class SourceLinkImportTests: XCTestCase {
         temporaryDirectories.append(directory)
         return SourceLinkHandoffStore(baseDirectory: directory)
     }
+
+    private func waitFor(
+        _ description: String,
+        timeoutNanoseconds: UInt64 = 1_000_000_000,
+        condition: @escaping () -> Bool
+    ) async throws {
+        let interval: UInt64 = 10_000_000
+        var elapsed: UInt64 = 0
+        while elapsed < timeoutNanoseconds {
+            if condition() {
+                return
+            }
+            try await Task.sleep(nanoseconds: interval)
+            elapsed += interval
+        }
+        XCTFail("Timed out waiting for \(description).")
+    }
 }
 
 private struct StaticAppLinkResolver: LinkResolutionClient {
@@ -400,5 +465,89 @@ private struct StaticAppLinkResolver: LinkResolutionClient {
 private struct ThrowingSourceTranscriptionClient: SourceTranscriptionClient {
     func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
         throw SessionKitError.persistenceFailed("source_transcription_disabled_for_test")
+    }
+}
+
+private final class WindowContextAudioClient: AudioPlaybackClient {
+    var currentMediaTimeValue: Int?
+    private var activeTargetId: String?
+
+    func prepareSpeechText(_ text: String) throws -> String {
+        SpeechTextNormalizer.normalize(text)
+    }
+
+    func play(targetId: String) throws {
+        activeTargetId = targetId
+    }
+
+    func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {
+        activeTargetId = targetId
+        currentMediaTimeValue = mediaTimeMs
+    }
+
+    func pause() throws {}
+
+    func currentPlaybackPosition() -> PlaybackPosition? {
+        guard let currentMediaTimeValue else { return nil }
+        return PlaybackPosition(
+            targetType: .transcriptBackedMedia,
+            targetId: activeTargetId,
+            mediaTimeMs: currentMediaTimeValue,
+            durationMs: 300_000,
+            playbackRate: 1,
+            anchorConfidence: .mediaTime
+        )
+    }
+}
+
+private actor RecordingSourceWindowTranscriptionClient: SourceTranscriptionClient {
+    struct WindowRequest: Sendable {
+        var anchorMediaTimeMs: Int
+        var durationMs: Int?
+        var windowBeforeMs: Int
+        var windowAfterMs: Int
+    }
+
+    private let timeline: TranscriptTimeline
+    private var windowRequest: WindowRequest?
+    private var continuations: [CheckedContinuation<WindowRequest, Never>] = []
+
+    init(timeline: TranscriptTimeline) {
+        self.timeline = timeline
+    }
+
+    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+        throw SessionKitError.persistenceFailed("source_transcription_disabled_for_test")
+    }
+
+    func transcribeSourceAudioWindow(
+        url: URL,
+        itemId: String,
+        anchorMediaTimeMs: Int,
+        durationMs: Int?,
+        windowBeforeMs: Int,
+        windowAfterMs: Int
+    ) async throws -> TranscriptTimeline {
+        let request = WindowRequest(
+            anchorMediaTimeMs: anchorMediaTimeMs,
+            durationMs: durationMs,
+            windowBeforeMs: windowBeforeMs,
+            windowAfterMs: windowAfterMs
+        )
+        windowRequest = request
+        for continuation in continuations {
+            continuation.resume(returning: request)
+        }
+        continuations.removeAll()
+        return timeline
+    }
+
+    func waitForWindowRequest() async -> WindowRequest {
+        if let windowRequest {
+            return windowRequest
+        }
+        return await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+        }
     }
 }

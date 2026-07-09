@@ -264,6 +264,7 @@ public final class CompactControlDispatcher {
             isCommandAvailable(command, snapshot: snapshot)
         }
 
+        let compactSurfaceReady = canDisplay && isCompactSessionEligible(snapshot)
         return CompactControlSnapshot(
             sessionId: snapshot.sessionId,
             itemId: snapshot.itemId,
@@ -289,14 +290,14 @@ public final class CompactControlDispatcher {
             exposedCommands: exposedCommands,
             availableCommands: availableCommands,
             timeline: canonicalRuntime.compactTimelineEntries(),
-            compactSurfaceReady: canDisplay && snapshot.sessionId != nil,
+            compactSurfaceReady: compactSurfaceReady,
             surfaceProfileId: surfaceProfile.id
         )
     }
 
     private func isCommandAvailable(_ command: CompactControlCommand, snapshot: SessionSnapshot) -> Bool {
         guard surfaceProfile.has("remoteControl", "display_snapshot"),
-              snapshot.sessionId != nil else {
+              isCompactSessionEligible(snapshot) else {
             return false
         }
 
@@ -329,6 +330,18 @@ public final class CompactControlDispatcher {
         case .submitFollowup:
             return !snapshot.isRecording
                 && surfaceProfile.has("remoteControl", "send_ai_commands")
+        }
+    }
+
+    private func isCompactSessionEligible(_ snapshot: SessionSnapshot) -> Bool {
+        guard snapshot.sessionId != nil else { return false }
+        switch snapshot.phase {
+        case .abandoned:
+            return false
+        case .finished where snapshot.status == .idle:
+            return false
+        default:
+            return true
         }
     }
 

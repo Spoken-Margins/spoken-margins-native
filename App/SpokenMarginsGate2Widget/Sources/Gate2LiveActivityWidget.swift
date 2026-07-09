@@ -6,7 +6,7 @@ import WidgetKit
 struct Gate2LiveActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: Gate2LiveActivityAttributes.self) { context in
-            Gate2LiveActivityView(state: context.state)
+            Gate2LiveActivityContent(state: context.state)
                 .activityBackgroundTint(Color(red: 0.08, green: 0.09, blue: 0.12))
                 .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
@@ -33,6 +33,82 @@ struct Gate2LiveActivityWidget: Widget {
                 Image(systemName: context.state.isRecording ? "record.circle.fill" : "waveform")
             }
         }
+        .supplementalActivityFamilies([.small])
+    }
+}
+
+private struct Gate2LiveActivityContent: View {
+    @Environment(\.activityFamily) private var activityFamily
+    let state: Gate2LiveActivityAttributes.ContentState
+
+    var body: some View {
+        switch activityFamily {
+        case .small:
+            Gate2LiveActivitySmallView(state: state)
+        case .medium:
+            Gate2LiveActivityView(state: state)
+        @unknown default:
+            Gate2LiveActivityView(state: state)
+        }
+    }
+}
+
+private struct Gate2LiveActivitySmallView: View {
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
+    let state: Gate2LiveActivityAttributes.ContentState
+
+    private var isPlaying: Bool {
+        state.status == "playing" || state.status == "starting"
+    }
+
+    private var stateText: String {
+        if state.isRecording { return "REC" }
+        if isPlaying { return "PLAY" }
+        return state.status.uppercased()
+    }
+
+    private var stateImage: String {
+        if state.isRecording { return "record.circle.fill" }
+        return isPlaying ? "waveform" : "pause.fill"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .center, spacing: 8) {
+                Image(systemName: stateImage)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(state.isRecording ? .red : .green)
+                    .frame(width: 22, height: 22)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(state.title)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.76)
+                    Text(state.chapterTitle)
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.74))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.76)
+                }
+            }
+
+            HStack(alignment: .lastTextBaseline, spacing: 6) {
+                Text(stateText)
+                    .font(.caption2.weight(.bold).monospaced())
+                    .foregroundStyle(state.isRecording ? .red : .white.opacity(0.84))
+                Spacer(minLength: 4)
+                Text("\(max(0, min(100, state.progressPercent)))%")
+                    .font(.caption.weight(.bold).monospacedDigit())
+                    .foregroundStyle(.white)
+            }
+
+            ProgressView(value: Double(max(0, min(100, state.progressPercent))), total: 100)
+                .tint(isLuminanceReduced ? .white.opacity(0.72) : .green)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
     }
 }
 

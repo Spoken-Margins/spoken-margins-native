@@ -163,6 +163,7 @@ final class Gate1AppModel: ObservableObject {
     private let sourceLinkResolver: LinkResolutionClient?
     private let sourceLinkHandoffStore: SourceLinkHandoffStore?
     private let audioPlaybackClientOverride: AudioPlaybackClient?
+    private let recordingClientOverride: RecordingClient?
     private let forcePreparedTextGate: Bool
     private let sourceTranscriptionClient: SourceTranscriptionClient
     private let preparedTextAudioPrewarmHandler: PreparedTextAudioPrewarmHandler?
@@ -177,6 +178,8 @@ final class Gate1AppModel: ObservableObject {
     private var activeWatchPackageRenderItemIds: Set<String> = []
     private var failedWatchPackageRenderItemIds: Set<String> = []
     private let preparedTextAudioStarterDurationMs = 30_000
+    private let sourceWindowContextBeforeMs = 60_000
+    private let sourceWindowContextAfterMs = 60_000
     private let transcriptionClient = SystemSpeechTranscriptionClient()
     private let quickAccessFolderBookmarkKey = "quickAccessFolderBookmark"
     #if canImport(AVFoundation)
@@ -214,6 +217,7 @@ final class Gate1AppModel: ObservableObject {
         sourceLinkResolver: LinkResolutionClient? = nil,
         sourceLinkHandoffStore: SourceLinkHandoffStore? = nil,
         audioPlaybackClient: AudioPlaybackClient? = nil,
+        recordingClient: RecordingClient? = nil,
         forcePreparedTextGate: Bool = false,
         sourceTranscriptionClient: SourceTranscriptionClient = SystemSourceTranscriptionClient(),
         preparedTextAudioPrewarmHandler: PreparedTextAudioPrewarmHandler? = nil
@@ -221,6 +225,7 @@ final class Gate1AppModel: ObservableObject {
         self.sourceLinkResolver = sourceLinkResolver
         self.sourceLinkHandoffStore = sourceLinkHandoffStore
         self.audioPlaybackClientOverride = audioPlaybackClient
+        self.recordingClientOverride = recordingClient
         self.forcePreparedTextGate = forcePreparedTextGate
         self.sourceTranscriptionClient = sourceTranscriptionClient
         self.preparedTextAudioPrewarmHandler = preparedTextAudioPrewarmHandler
@@ -859,9 +864,10 @@ final class Gate1AppModel: ObservableObject {
         stopSpeechPreviews()
         scheduleTextAudioPrewarmIfNeeded(itemId: activeItemId)
         run { engine in
+            let requestedMediaPlaybackRate = mediaPlaybackRate
             snapshot = try engine.startSession(itemId: activeItemId)
-            if isMediaPlaybackSnapshot, mediaPlaybackRate != snapshot.playbackRate {
-                snapshot = try engine.setPlaybackRate(mediaPlaybackRate)
+            if isMediaPlaybackSnapshot, requestedMediaPlaybackRate != snapshot.playbackRate {
+                snapshot = try engine.setPlaybackRate(requestedMediaPlaybackRate)
             }
             if let store, let sessionId = snapshot.sessionId {
                 try seedUITestingGeneratedTimelineIfNeeded(sessionId: sessionId, engine: engine, store: store)
@@ -1198,6 +1204,19 @@ final class Gate1AppModel: ObservableObject {
             snapshot = try engine.setPlaybackRate(clamped)
             refreshSelectedItem()
             diagnostics["mediaPlaybackRate"] = String(format: "%.2f", clamped)
+        }
+    }
+
+    func playbackSpeechRateChanged() {
+        saveSpeechSettings()
+        guard snapshot.status.isPlaybackActive,
+              !isMediaPlaybackSnapshot else {
+            return
+        }
+        run { engine in
+            snapshot = try engine.restartPlaybackFromCurrentPosition()
+            refreshSelectedItem()
+            diagnostics["speechRateApplied"] = String(format: "%.2f", speechRate)
         }
     }
 
@@ -1541,6 +1560,10 @@ final class Gate1AppModel: ObservableObject {
         origin: String = "app_ui"
     ) {
         if command == .beginInterjection {
+            if recordingClientOverride != nil {
+                performGate2CompactCommand(command, chapterId: chapterId, mediaTimeMs: mediaTimeMs, playbackRate: playbackRate, origin: origin)
+                return
+            }
             Task {
                 let granted = await SystemRecordingClient.requestRecordPermission()
                 guard granted else {
@@ -2779,7 +2802,7 @@ final class Gate1AppModel: ObservableObject {
             profile: profile,
             repository: store,
             audio: try makeAudioPlaybackClient(),
-            recorder: SystemRecordingClient(),
+            recorder: recordingClientOverride ?? SystemRecordingClient(),
             aiProvider: provider,
             linkResolver: sourceLinkResolver ?? PublicPodcastLinkResolver(),
             textAudio: try makeTextAudioPreparationClient()
@@ -3715,7 +3738,7 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         diagnostics["sourceWindowTranscription:\(interjection.id)"] = "scheduled"
-        Task { [weak self, interjectionId = interjection.id, itemId = item.id, durationMs = item.media?.durationMs] in
+        Task { [weak self, interjectionId = interjection.id, itemId = item.id, durationMs = item.media?.durationMs, windowBeforeMs = sourceWindowContextBeforeMs, windowAfterMs = sourceWindowContextAfterMs] in
             guard let self else { return }
             do {
                 let timeline = try await self.sourceTranscriptionClient.transcribeSourceAudioWindow(
@@ -3723,8 +3746,8 @@ final class Gate1AppModel: ObservableObject {
                     itemId: itemId,
                     anchorMediaTimeMs: anchorMediaTimeMs,
                     durationMs: durationMs,
-                    windowBeforeMs: 90_000,
-                    windowAfterMs: 120_000
+                    windowBeforeMs: windowBeforeMs,
+                    windowAfterMs: windowAfterMs
                 )
                 await MainActor.run {
                     self.run { engine in

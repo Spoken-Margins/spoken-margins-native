@@ -69,8 +69,8 @@ public extension SourceTranscriptionClient {
         itemId: String,
         anchorMediaTimeMs: Int,
         durationMs: Int?,
-        windowBeforeMs: Int = 90_000,
-        windowAfterMs: Int = 120_000
+        windowBeforeMs: Int = 60_000,
+        windowAfterMs: Int = 60_000
     ) async throws -> TranscriptTimeline {
         throw SessionKitError.persistenceFailed("source_audio_window_transcription_unavailable")
     }

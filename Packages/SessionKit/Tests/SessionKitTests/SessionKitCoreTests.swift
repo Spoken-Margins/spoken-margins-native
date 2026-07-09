@@ -121,6 +121,53 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.timeline.filter { $0.kind == "source_chapter" }.map(\.title), ["Opening", "Middle"])
     }
 
+    func testCompactControlSnapshotIsNotReadyAfterSessionEnds() throws {
+        let surfaceProfile = RuntimeCapabilityProfile(
+            id: "lock-screen-widget",
+            displayName: "Lock Screen / Widget",
+            capabilities: [
+                "timeline": ["chapter_timing"],
+                "interjection": ["delegate_interjection_to_canonical_runtime"],
+                "remoteControl": ["display_snapshot", "send_transport_commands", "send_chapter_jump", "send_interjection_commands"]
+            ],
+            forbiddenCapabilities: ["record_audio", "summarize_interjections", "continue_discussion"]
+        )
+        let engine = try compactControlEngine()
+        _ = try engine.startSession(itemId: "item-pill")
+        _ = try engine.endSession()
+
+        let snapshot = CompactControlDispatcher(surfaceProfile: surfaceProfile, canonicalRuntime: engine).snapshot()
+
+        XCTAssertEqual(snapshot.phase, .finished)
+        XCTAssertFalse(snapshot.compactSurfaceReady)
+        XCTAssertTrue(snapshot.availableCommands.isEmpty)
+    }
+
+    func testCompactControlKeepsDiscussionAvailableAfterNaturalPlaybackFinish() throws {
+        let surfaceProfile = RuntimeCapabilityProfile(
+            id: "watch-tethered",
+            displayName: "Watch Tethered",
+            capabilities: [
+                "timeline": ["chapter_timing"],
+                "remoteControl": ["display_snapshot", "send_transport_commands", "send_chapter_jump", "send_ai_commands"]
+            ],
+            forbiddenCapabilities: ["record_audio", "continue_discussion"]
+        )
+        let engine = try compactControlEngine()
+        _ = try engine.startSession(itemId: "item-pill")
+        _ = try engine.skipForward(unit: "chapter")
+        _ = try engine.skipForward(unit: "chapter")
+
+        let dispatcher = CompactControlDispatcher(surfaceProfile: surfaceProfile, canonicalRuntime: engine)
+        let snapshot = dispatcher.snapshot()
+
+        XCTAssertEqual(snapshot.phase, .finished)
+        XCTAssertEqual(snapshot.status, .paused)
+        XCTAssertTrue(snapshot.compactSurfaceReady)
+        XCTAssertTrue(snapshot.availableCommands.contains(.submitFollowup))
+        XCTAssertNoThrow(try dispatcher.dispatch(.submitFollowup, followUpText: "Discuss this."))
+    }
+
     func testCompactControlCommandsDelegateToCanonicalRuntime() throws {
         let surfaceProfile = RuntimeCapabilityProfile(
             id: "lock-screen-widget",
@@ -810,11 +857,21 @@ final class SessionKitCoreTests: XCTestCase {
         let updated = try XCTUnwrap(try repo.loadInterjections(sessionId: engine.currentSession?.id ?? "").first)
         XCTAssertEqual(updated.anchor.anchorType, .transcript)
         XCTAssertEqual(updated.anchor.mediaTimeMs, 123_000)
-        XCTAssertEqual(updated.anchor.anchorBefore, "Context at the note.")
+        XCTAssertEqual(updated.anchor.anchorBefore, "Context before the note. Context at the note.")
         XCTAssertEqual(updated.anchor.anchorAfter, "Context after the note.")
         XCTAssertNotNil(updated.anchor.transcriptSegmentId)
         XCTAssertNil(updated.transcript)
         XCTAssertEqual(updated.transcriptionStatus, "pending")
+
+        let export = try engine.buildExport(options: ExportOptions(
+            includeFullText: false,
+            includeReference: true,
+            includeListeningMap: false,
+            includeInterjections: true
+        ))
+        let markdown = SessionExportMarkdownRenderer.render(export)
+        XCTAssertTrue(markdown.contains("Context before the note. Context at the note."))
+        XCTAssertTrue(markdown.contains("Context after the note."))
     }
 
     func testNativeAudioSkipWorksWithoutWatchPackage() throws {
@@ -881,6 +938,37 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.playbackRate, 1.5)
         XCTAssertEqual(engine.currentSession?.playbackRate, 1.5)
         XCTAssertEqual(audio.playbackRates.last, 1.5)
+    }
+
+    func testRestartPlaybackFromCurrentPositionReplaysTextFromSyncedOffset() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"]
+            ]
+        )
+        let item = Item(
+            id: "item-text-restart",
+            title: "Text Restart",
+            mediaType: "text",
+            text: "One. Two. Three.",
+            externalReference: nil,
+            status: "ready"
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentOffset = "One. ".count
+        let snapshot = try engine.restartPlaybackFromCurrentPosition()
+
+        XCTAssertEqual(snapshot.status, .playing)
+        XCTAssertEqual(snapshot.currentTextStart, "One. ".count)
+        XCTAssertEqual(engine.currentSession?.position.charOffset, "One. ".count)
+        XCTAssertEqual(audio.playedOffsets.last, "One. ".count)
     }
 
     func testPreparedTextAudioUsesMediaPlaybackAndTranscriptAnchors() throws {
@@ -1672,6 +1760,36 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(engine.lastScheduledTranscriptionInterjectionId, interjection.id)
     }
 
+    func testRecordingInterjectionIgnoresPausedSpeechCompletion() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "interjection": ["record_audio"]
+            ]
+        )
+        let text = "One. Two. Three."
+        let item = Item(id: "item-interject-pause-complete", title: "Pause Complete", mediaType: "text", text: text, externalReference: nil, status: "ready")
+        let audio = RecordingAudioClient()
+        audio.completeActiveTargetOnPause = true
+        audio.completionOffsetOnPause = text.count
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentOffset = "One. ".count
+        _ = try engine.beginInterjection()
+        let recording = try engine.syncPlaybackProgress()
+        _ = try engine.finishInterjection(audioRef: "interjections/ij-001.m4a")
+
+        XCTAssertEqual(recording.status, .recording)
+        XCTAssertLessThan(recording.sourceProgressPercent, 100)
+        XCTAssertLessThan(engine.currentSession?.position.charOffset ?? text.count, text.count)
+        XCTAssertEqual(audio.playedOffsets.last, 0)
+    }
+
     func testPlayTurnPreparesTurnTextInsteadOfReusingItemText() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
@@ -2421,6 +2539,8 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     var currentDurationMs: Int?
     var activeTargetId: String?
     var completedTargetIds = Set<String>()
+    var completeActiveTargetOnPause = false
+    var completionOffsetOnPause: Int?
     var seekRequests: [Int] = []
     var playbackRates: [Double] = []
     var playbackRate = 1.0
@@ -2469,6 +2589,12 @@ private final class RecordingAudioClient: AudioPlaybackClient {
 
     func pause() throws {
         pauseCount += 1
+        if completeActiveTargetOnPause, let activeTargetId {
+            completedTargetIds.insert(activeTargetId)
+            if let completionOffsetOnPause {
+                currentOffset = completionOffsetOnPause
+            }
+        }
     }
 
     func currentCharOffset() -> Int? {

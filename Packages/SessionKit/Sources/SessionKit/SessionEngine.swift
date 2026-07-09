@@ -197,6 +197,22 @@ public final class SessionEngine {
     }
 
     @discardableResult
+    public func restartPlaybackFromCurrentPosition() throws -> SessionSnapshot {
+        try requirePlayback("restartPlaybackFromCurrentPosition")
+        guard var session = currentSession else {
+            throw SessionKitError.invalidCommandForState("restartPlaybackFromCurrentPosition")
+        }
+        session = try syncCurrentPositionFromAudio(session)
+        currentSession = session
+        try repository.saveSession(session)
+        if snapshot.status.isPlaybackActive {
+            try playCurrentTarget(session)
+        }
+        publishPlaybackContinuation(for: session)
+        return snapshot
+    }
+
+    @discardableResult
     public func stopPlayback() throws -> SessionSnapshot {
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("stopPlayback")
@@ -212,6 +228,9 @@ public final class SessionEngine {
     @discardableResult
     public func syncPlaybackProgress() throws -> SessionSnapshot {
         guard var session = currentSession else {
+            return snapshot
+        }
+        guard snapshot.status != .recording else {
             return snapshot
         }
         let playbackCompleted = audio.isPlaybackComplete(targetId: session.currentTargetId)
@@ -1205,16 +1224,48 @@ public final class SessionEngine {
                 timeline: normalized,
                 playbackRateObserved: interjection.anchor.playbackRateObserved
             )
+            let context = sourceWindowContext(mediaTimeMs: mediaTimeMs, timeline: normalized, resolved: resolved)
             interjection.anchor.anchorType = resolved.transcriptSegmentId == nil ? .media : .transcript
             interjection.anchor.startChar = resolved.startChar
             interjection.anchor.endChar = resolved.endChar
-            interjection.anchor.anchorBefore = resolved.anchorBefore
-            interjection.anchor.anchorAfter = resolved.anchorAfter
+            interjection.anchor.anchorBefore = context.before
+            interjection.anchor.anchorAfter = context.after
             interjection.anchor.mediaTimeMs = resolved.mediaTimeMs
             interjection.anchor.playbackRateObserved = resolved.playbackRateObserved
             interjection.anchor.transcriptSegmentId = resolved.transcriptSegmentId
         }
         return snapshot
+    }
+
+    private func sourceWindowContext(
+        mediaTimeMs: Int,
+        timeline: TranscriptTimeline,
+        resolved: MediaResolvedAnchor
+    ) -> (before: String, after: String) {
+        let segments = timeline.segments.sorted { $0.startMs < $1.startMs }
+        guard !segments.isEmpty else {
+            return (resolved.anchorBefore, resolved.anchorAfter)
+        }
+        let anchorIndex = resolved.transcriptSegmentId
+            .flatMap { transcriptSegmentId in segments.firstIndex { $0.id == transcriptSegmentId } }
+            ?? segments.lastIndex { $0.startMs <= mediaTimeMs }
+            ?? segments.startIndex
+        let before = joinedSourceWindowText(segments[segments.startIndex...anchorIndex])
+        let afterStart = segments.index(after: anchorIndex)
+        let after = afterStart < segments.endIndex
+            ? joinedSourceWindowText(segments[afterStart..<segments.endIndex])
+            : ""
+        return (
+            before.isEmpty ? resolved.anchorBefore : before,
+            after.isEmpty ? resolved.anchorAfter : after
+        )
+    }
+
+    private func joinedSourceWindowText(_ segments: ArraySlice<MediaTimelineSegment>) -> String {
+        segments
+            .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     @discardableResult

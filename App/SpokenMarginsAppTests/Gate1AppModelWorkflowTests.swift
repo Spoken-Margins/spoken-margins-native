@@ -108,6 +108,32 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.diagnostics["playbackLifecycleSync"], "saved")
     }
 
+    func testPlaybackSpeechRateChangeRestartsActiveNativeTextAtCurrentOffset() throws {
+        let previousSpeechRate = UserDefaults.standard.object(forKey: "speechRate")
+        defer {
+            if let previousSpeechRate {
+                UserDefaults.standard.set(previousSpeechRate, forKey: "speechRate")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "speechRate")
+            }
+        }
+        let audio = WorkflowRecordingAudioClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio)
+        model.resetAndSeed()
+        model.importTitle = "Rate Change"
+        model.importText = "One. Two. Three."
+
+        model.importTextItem()
+        audio.currentOffset = "One. ".count
+        model.speechRate = 0.65
+        model.playbackSpeechRateChanged()
+
+        XCTAssertEqual(model.snapshot.status, .playing)
+        XCTAssertEqual(model.snapshot.currentTextStart, "One. ".count)
+        XCTAssertEqual(audio.playedOffsets.last, "One. ".count)
+        XCTAssertEqual(UserDefaults.standard.double(forKey: "speechRate"), 0.65, accuracy: 0.001)
+    }
+
     func testPiperModeFailsExplicitlyInsteadOfFallingBackToSystemSpeech() {
         let model = Gate1AppModel()
         model.resetAndSeed()

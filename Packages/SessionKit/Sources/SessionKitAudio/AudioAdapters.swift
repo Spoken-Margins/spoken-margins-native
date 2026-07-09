@@ -453,6 +453,10 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
     private let voiceIdentifier: String?
     private let speechRate: Float
     private let readsSpeechSettingsAtPlayback: Bool
+    #if canImport(AVFoundation)
+    private weak var activeUtterance: AVSpeechUtterance?
+    private var intentionallyStoppedUtteranceIds = Set<ObjectIdentifier>()
+    #endif
 
     public override init() {
         self.voiceIdentifier = nil
@@ -541,6 +545,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         startedTargetId = nil
         playbackStartFailure = nil
         paused = false
+        activeUtterance = utterance
         synthesizer.speak(utterance)
         #else
         if preparedSpeechText.isEmpty {
@@ -603,6 +608,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
     public func pause() throws {
         #if canImport(AVFoundation)
         if synthesizer.isSpeaking {
+            markActiveUtteranceAsIntentionallyStopped()
             paused = true
             synthesizer.stopSpeaking(at: .immediate)
         }
@@ -631,6 +637,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
 
     public func stop() throws {
         #if canImport(AVFoundation)
+        markActiveUtteranceAsIntentionallyStopped()
         synthesizer.stopSpeaking(at: .immediate)
         paused = false
         playbackComplete = false
@@ -672,7 +679,18 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         synthesizer.delegate = nil
         synthesizer.stopSpeaking(at: .immediate)
         synthesizer = AVSpeechSynthesizer()
+        activeUtterance = nil
         installSynthesizerDelegate()
+    }
+
+    private func markActiveUtteranceAsIntentionallyStopped() {
+        if let activeUtterance {
+            intentionallyStoppedUtteranceIds.insert(ObjectIdentifier(activeUtterance))
+        }
+    }
+
+    private func consumeIntentionalStop(for utterance: AVSpeechUtterance) -> Bool {
+        intentionallyStoppedUtteranceIds.remove(ObjectIdentifier(utterance)) != nil
     }
 
     private func playbackSpeechPreviewMode() -> SpeechPreviewMode {
@@ -741,6 +759,18 @@ extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
         _ synthesizer: AVSpeechSynthesizer,
         didFinish utterance: AVSpeechUtterance
     ) {
+        if consumeIntentionalStop(for: utterance) {
+            if activeUtterance === utterance {
+                activeUtterance = nil
+            }
+            playbackComplete = false
+            completedTargetId = nil
+            pendingStartTargetId = nil
+            return
+        }
+        if activeUtterance === utterance {
+            activeUtterance = nil
+        }
         currentOffset = preparedSourceText.count
         currentRangeLength = 0
         completedTargetId = lastTargetId
@@ -752,6 +782,19 @@ extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
         _ synthesizer: AVSpeechSynthesizer,
         didCancel utterance: AVSpeechUtterance
     ) {
+        if consumeIntentionalStop(for: utterance) {
+            if activeUtterance === utterance {
+                activeUtterance = nil
+            }
+            playbackComplete = false
+            completedTargetId = nil
+            pendingStartTargetId = nil
+            playbackStartFailure = nil
+            return
+        }
+        if activeUtterance === utterance {
+            activeUtterance = nil
+        }
         playbackComplete = false
         completedTargetId = nil
         if pendingStartTargetId == lastTargetId {

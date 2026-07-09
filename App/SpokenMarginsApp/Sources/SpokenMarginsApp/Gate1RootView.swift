@@ -787,7 +787,7 @@ private struct PlaybackScreen: View {
                     Slider(value: $model.speechRate, in: 0.35...0.85, step: 0.01)
                         .accessibilityIdentifier("playback.speechRate.slider")
                         .onChange(of: model.speechRate) { _, _ in
-                            model.saveSpeechSettings()
+                            model.playbackSpeechRateChanged()
                         }
                 }
                 if model.isMediaPlaybackSnapshot {
