@@ -43,7 +43,7 @@ final class Gate1FlowUITests: XCTestCase {
         app.buttons["home.settings.button"].tap()
 
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 4))
-        XCTAssertTrue(app.textFields["provider.baseURL.field"].exists)
+        XCTAssertTrue(app.staticTexts["OpenAI"].exists)
         XCTAssertTrue(app.textFields["provider.mapModel.field"].exists)
         XCTAssertTrue(app.textFields["provider.summaryModel.field"].exists)
         XCTAssertTrue(app.textFields["provider.conversationModel.field"].exists)

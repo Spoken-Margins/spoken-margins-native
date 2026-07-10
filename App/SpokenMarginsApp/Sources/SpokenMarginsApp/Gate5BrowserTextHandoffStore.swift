@@ -96,7 +96,7 @@ private struct BrowserTextPayload: Decodable {
             source: source,
             text: cleanedText,
             selection: selection,
-            requestedContinuation: requestedContinuation ?? BrowserTextContinuation(startSession: true, preferredPlaybackOwner: "app")
+            requestedContinuation: requestedContinuation ?? BrowserTextContinuation(startSession: false, preferredPlaybackOwner: "app")
         )
     }
 }

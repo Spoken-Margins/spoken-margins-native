@@ -23,7 +23,7 @@
         "includeInterjections": true
       },
       "expect": {
-        "schemaVersion": "session-export.v1",
+        "schemaVersion": "spoken-margins.export.v1",
         "interjectionCount": 1,
         "containsAnchorBefore": true,
         "containsAnchorAfter": true

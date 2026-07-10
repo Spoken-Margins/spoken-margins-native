@@ -1094,6 +1094,8 @@ public final class SessionEngine {
         job.attempts += 1
         try repository.updateAIJob(job)
         if let turnId = job.turnId {
+            streamingBuffers[turnId] = ""
+            spokenPrefixes[turnId] = 0
             var turns = try repository.loadTurns(sessionId: session.id)
             if let idx = turns.firstIndex(where: { $0.id == turnId }) {
                 turns[idx].status = "streaming"
@@ -1170,6 +1172,11 @@ public final class SessionEngine {
         if turn.chapters == nil || turn.chapters?.isEmpty == true {
             turn.chapters = parsed.chapters
         }
+        let allSpeechUnits = sentenceUnits(in: parsed.response, includeTrailingFragment: true)
+        let alreadySpoken = spokenPrefixes[turnId] ?? 0
+        snapshot.spokenUnits = Array(allSpeechUnits.dropFirst(alreadySpoken))
+        spokenPrefixes[turnId] = allSpeechUnits.count
+        streamingBuffers.removeValue(forKey: turnId)
         try repository.saveTurn(turn)
         for var job in try repository.loadAIJobs(sessionId: session.id) where job.turnId == turnId {
             job.status = "complete"
@@ -1189,6 +1196,17 @@ public final class SessionEngine {
         }
         publish(status: snapshot.status, phase: nextPhase)
         _ = turns
+        return snapshot
+    }
+
+    @discardableResult
+    public func aiChaptersCompleted(turnId: String, chapters: [Chapter]) throws -> SessionSnapshot {
+        let session = try resolveSession(nil)
+        guard var turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == turnId }) else {
+            throw SessionKitError.invalidCommandForState("aiChaptersCompleted")
+        }
+        turn.chapters = chapters.sorted { $0.startChar < $1.startChar }
+        try repository.saveTurn(turn)
         return snapshot
     }
 
@@ -1372,6 +1390,12 @@ public final class SessionEngine {
         let item = try repository.loadItem(id: session.itemId)
         let allInterjections = try repository.loadInterjections(sessionId: session.id)
         let allTurns = try repository.loadTurns(sessionId: session.id)
+        let sourceTranscript = options.includeFullText
+            ? try repository.loadTranscriptTimeline(itemId: item.id)?.timeline.segments
+                .sorted { $0.startMs < $1.startMs }
+                .map(\.text)
+                .joined(separator: " ")
+            : nil
         let interjections = options.includeInterjections ? scopedExportInterjections(options: options, session: session, interjections: allInterjections) : []
         let turns = options.includeTurns ? scopedExportTurns(options: options, turns: allTurns, interjections: interjections) : []
         let export = SessionExport(
@@ -1382,7 +1406,8 @@ public final class SessionEngine {
                 sourceURL: options.includeReference ? item.media?.url : nil,
                 mediaSourceType: item.media?.sourceType.rawValue,
                 includedFullText: options.includeFullText,
-                text: options.includeFullText ? item.text : nil
+                text: options.includeFullText ? item.text : nil,
+                sourceTranscript: sourceTranscript
             ),
             session: ExportSession(id: session.id, status: session.status, completionPercent: session.completionPercent),
             listeningMap: options.includeListeningMap ? try repository.loadListeningMap(itemId: item.id) : nil,
@@ -1400,7 +1425,7 @@ public final class SessionEngine {
                     mediaTimeMs: $0.anchor.mediaTimeMs,
                     transcriptionStatus: $0.transcriptionStatus,
                     transcript: $0.cleanedTranscript ?? $0.transcript,
-                    audioPath: $0.audioPath
+                    audioPath: nil
                 )
             }
         )
@@ -3274,6 +3299,10 @@ public final class SessionEngine {
     }
 
     private func completeSentenceUnits(in text: String) -> [String] {
+        sentenceUnits(in: text, includeTrailingFragment: false)
+    }
+
+    private func sentenceUnits(in text: String, includeTrailingFragment: Bool) -> [String] {
         var units: [String] = []
         var current = ""
         for char in text {
@@ -3283,6 +3312,10 @@ public final class SessionEngine {
                 if !unit.isEmpty { units.append(unit) }
                 current = ""
             }
+        }
+        if includeTrailingFragment {
+            let unit = current.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !unit.isEmpty { units.append(unit) }
         }
         return units
     }

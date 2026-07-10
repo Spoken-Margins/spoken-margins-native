@@ -134,18 +134,15 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(UserDefaults.standard.double(forKey: "speechRate"), 0.65, accuracy: 0.001)
     }
 
-    func testPiperModeFailsExplicitlyInsteadOfFallingBackToSystemSpeech() {
-        let model = Gate1AppModel()
+    func testLegacyEmbeddedPiperModeMigratesToInstalledSystemVoicePath() {
+        let model = Gate1AppModel(audioPlaybackClient: WorkflowRecordingAudioClient())
         model.resetAndSeed()
         model.ttsMode = "piper"
-        model.importTitle = "Piper Item"
-        model.importText = "This should not silently use system speech."
 
-        model.importTextItem()
+        model.speechSettingsChanged()
 
-        XCTAssertFalse(model.snapshot.status.isPlaybackActive)
-        XCTAssertEqual(model.diagnostics["sessionTTS"], "Piper unavailable; system fallback blocked")
-        XCTAssertTrue(model.lastError?.contains("piper_renderer_unavailable") == true)
+        XCTAssertEqual(model.ttsMode, "systemImmediate")
+        XCTAssertEqual(UserDefaults.standard.string(forKey: "ttsMode"), "systemImmediate")
     }
 
     private func waitFor(

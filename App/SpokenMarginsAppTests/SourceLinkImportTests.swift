@@ -123,7 +123,7 @@ final class SourceLinkImportTests: XCTestCase {
         model.dispatchGate2CompactCommand(.finishInterjection)
         let request = await transcriber.waitForWindowRequest()
         try await waitFor("source window context to attach") {
-            model.diagnostics["sourceWindowTranscription:ij-001"] == "complete"
+            model.diagnostics["sourceWindowTranscription:ij-001"] == "complete:speech_window"
         }
 
         XCTAssertEqual(request.anchorMediaTimeMs, 123_000)
@@ -132,6 +132,25 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(request.durationMs, 300_000)
         XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorBefore, "Minute before. Interjection context.")
         XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorAfter, "Minute after.")
+        XCTAssertEqual(model.diagnostics["sourceWindowContextProvenance:ij-001"], "speech_window")
+    }
+
+    func testStoredTranscriptWindowIsUsedOnlyWhenItCoversPodcastAnchor() throws {
+        let timeline = TranscriptTimeline(
+            segments: [
+                MediaTimelineSegment(id: "before", startMs: 50_000, endMs: 100_000, text: "Before."),
+                MediaTimelineSegment(id: "anchor", startMs: 100_000, endMs: 140_000, text: "At anchor."),
+                MediaTimelineSegment(id: "after", startMs: 140_000, endMs: 200_000, text: "After."),
+                MediaTimelineSegment(id: "far", startMs: 400_000, endMs: 450_000, text: "Far away.")
+            ],
+            chapters: [],
+            durationMs: 600_000
+        )
+
+        let window = try XCTUnwrap(Gate1AppModel.sourceContextWindow(from: timeline, anchorMediaTimeMs: 123_000))
+
+        XCTAssertEqual(window.segments.map(\.id), ["before", "anchor", "after"])
+        XCTAssertNil(Gate1AppModel.sourceContextWindow(from: timeline, anchorMediaTimeMs: 300_000))
     }
 
     func testClipboardButtonExtractsSourceLinkURL() throws {
@@ -148,7 +167,7 @@ final class SourceLinkImportTests: XCTestCase {
         #endif
     }
 
-    func testIncomingPayloadIsRetainedAfterUnsupportedImport() throws {
+    func testIncomingPayloadIsDeletedAfterUnsupportedImport() throws {
         let store = makePayloadStore()
         let handoff = SourceLinkHandoff(
             id: "source-link-unsupported",
@@ -174,12 +193,51 @@ final class SourceLinkImportTests: XCTestCase {
         model.handleIncomingURL(SourceLinkHandoffURL.url(forPayloadID: handoff.id))
 
         XCTAssertEqual(model.diagnostics["lastSourceLinkStatus"], LinkResolutionStatus.unsupported.rawValue)
-        XCTAssertEqual(model.diagnostics["lastSourceLinkPayloadCleanup"], "retained_after_failed_import")
+        XCTAssertEqual(model.diagnostics["lastSourceLinkPayloadCleanup"], "deleted_after_failed_import")
         XCTAssertEqual(
             model.lastError,
             "This looks like a Spotify-only episode. Spoken Margins could not find a public audio file for it yet."
         )
-        XCTAssertEqual(try store.handoff(payloadID: handoff.id), handoff)
+        XCTAssertThrowsError(try store.handoff(payloadID: handoff.id)) { error in
+            XCTAssertEqual(error as? SourceLinkHandoffStoreError, .missingPayload(handoff.id))
+        }
+    }
+
+    func testForegroundActivationRoutesActivePlaybackWithoutImportingPendingSourceLinks() throws {
+        let store = makePayloadStore()
+        let staleHandoff = SourceLinkHandoff(
+            id: "source-link-stale",
+            inputURL: "https://open.spotify.com/episode/stale",
+            sourceSurface: "share_sheet",
+            startSession: true
+        )
+        try store.save(staleHandoff)
+        let resolver = CountingAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "audio_file"),
+                title: "Active Episode",
+                audioURL: "https://cdn.example.com/active.mp3",
+                confidence: 1
+            )
+        ))
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            sourceLinkHandoffStore: store,
+            audioPlaybackClient: NoopAudioPlaybackClient()
+        )
+        model.resetAndSeed()
+        XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/episode", sourceSurface: "paste"))
+        model.screen = .home
+
+        model.handleAppBecameActive()
+
+        XCTAssertEqual(model.screen, .playback)
+        XCTAssertEqual(model.diagnostics["foregroundRoute"], "active_playback")
+        XCTAssertEqual(resolver.resolveCount, 1)
+        XCTAssertEqual(try store.handoff(payloadID: staleHandoff.id), staleHandoff)
     }
 
     func testPendingSourceLinkHandoffImportsAndDeletesOnSuccess() async throws {
@@ -452,6 +510,27 @@ private struct StaticAppLinkResolver: LinkResolutionClient {
 
     func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult {
         LinkResolutionResult(
+            requestId: request.id,
+            status: result.status,
+            originalLink: SourceLink(url: request.inputURL, provider: result.originalLink.provider, title: result.originalLink.title, role: result.originalLink.role),
+            selectedCandidate: result.selectedCandidate,
+            candidates: result.candidates,
+            failureReason: result.failureReason
+        )
+    }
+}
+
+private final class CountingAppLinkResolver: LinkResolutionClient {
+    var result: LinkResolutionResult
+    private(set) var resolveCount = 0
+
+    init(result: LinkResolutionResult) {
+        self.result = result
+    }
+
+    func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult {
+        resolveCount += 1
+        return LinkResolutionResult(
             requestId: request.id,
             status: result.status,
             originalLink: SourceLink(url: request.inputURL, provider: result.originalLink.provider, title: result.originalLink.title, role: result.originalLink.role),

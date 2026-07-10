@@ -17,20 +17,6 @@ final class TraceReplayTests: XCTestCase {
         }
     }
 
-    func testGate3TracesReplay() throws {
-        for traceName in TraceHarness.gate3TraceNames {
-            let harness = try TraceHarness(traceName: traceName)
-            try harness.replay()
-        }
-    }
-
-    func testGate4TracesReplay() throws {
-        for traceName in TraceHarness.gate4TraceNames {
-            let harness = try TraceHarness(traceName: traceName)
-            try harness.replay()
-        }
-    }
-
     func testGate5TracesReplay() throws {
         for traceName in TraceHarness.gate5TraceNames {
             let harness = try TraceHarness(traceName: traceName)
@@ -61,15 +47,6 @@ final class TraceHarness {
         "lock-screen-widget-controls"
     ]
 
-    static let gate3TraceNames = [
-        "watch-chapter-navigation"
-    ]
-
-    static let gate4TraceNames = [
-        "watch-offline-prerendered-session",
-        "watch-sync-interjections-after-reconnect"
-    ]
-
     static let gate5TraceNames = [
         "browser-text-session",
         "browser-readable-text-session"
@@ -84,7 +61,7 @@ final class TraceHarness {
 
     init(traceName: String) throws {
         let root = try RepoPaths.root()
-        let traceURL = root.appending(path: "traces/\(traceName).json")
+        let traceURL = root.appending(path: "Contracts/traces/\(traceName).json")
         self.trace = try JSON.object(at: traceURL)
         let runtimeProfile = trace["runtimeProfile"] as? String ?? "phone-tablet-online"
         let repo = InMemorySessionRepository()

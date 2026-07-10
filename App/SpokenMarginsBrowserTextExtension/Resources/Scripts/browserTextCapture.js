@@ -101,7 +101,7 @@
       text: normalizeWhitespace(text),
       selection: selection || null,
       requestedContinuation: {
-        startSession: true,
+        startSession: false,
         preferredPlaybackOwner: "app"
       },
       createdAt: new Date().toISOString(),

@@ -27,22 +27,44 @@ final class Gate1ProviderRequestFactoryTests: XCTestCase {
         XCTAssertTrue(prompt.contains(followUp))
     }
 
-    func testChatCompletionsRequestEncodesSystemThenUserMessages() throws {
-        let request = try XCTUnwrap(Gate1ProviderRequestFactory.makeChatCompletionsRequest(
-            baseURL: " https://provider.example/v1/ ",
+    func testResponsesRequestUsesFixedOpenAIEndpointAndStreamingPayload() throws {
+        let request = try XCTUnwrap(OpenAIResponsesClient.makeRequest(
             apiKey: "secret",
-            messages: ["User request"],
             model: "conversation-model",
-            systemPrompt: "System prompt"
+            instructions: "System prompt",
+            messages: ["User request"],
+            stream: true
         ))
-        XCTAssertEqual(request.url?.absoluteString, "https://provider.example/v1/chat/completions")
+        XCTAssertEqual(request.url?.absoluteString, "https://api.openai.com/v1/responses")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer secret")
         let data = try XCTUnwrap(request.httpBody)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         XCTAssertEqual(json["model"] as? String, "conversation-model")
-        let messages = try XCTUnwrap(json["messages"] as? [[String: Any]])
-        XCTAssertEqual(messages.map { $0["role"] as? String }, ["system", "user"])
-        XCTAssertEqual(messages.map { $0["content"] as? String }, ["System prompt", "User request"])
+        XCTAssertEqual(json["instructions"] as? String, "System prompt")
+        XCTAssertEqual(json["input"] as? String, "User request")
+        XCTAssertEqual(json["stream"] as? Bool, true)
+    }
+
+    func testResponsesSSEParserEmitsTextAndSurfacesErrors() throws {
+        XCTAssertEqual(
+            try OpenAIResponsesClient.event(fromSSELine: #"data: {"type":"response.output_text.delta","delta":"Hello."}"#),
+            .textDelta("Hello.")
+        )
+        XCTAssertEqual(
+            try OpenAIResponsesClient.event(fromSSELine: #"data: {"type":"response.completed","response":{"id":"resp-1"}}"#),
+            .completed(responseId: "resp-1")
+        )
+        XCTAssertThrowsError(try OpenAIResponsesClient.event(
+            fromSSELine: #"data: {"type":"error","error":{"message":"rate limited"}}"#
+        ))
+    }
+
+    func testSpokenPromptsContainNoStructuredTags() {
+        for kind in ["interjection_summary", "assistant_response"] {
+            let prompt = Gate1ProviderRequestFactory.systemPromptForAIJob(kind: kind)
+            XCTAssertFalse(prompt.contains("<sm_"))
+            XCTAssertTrue(prompt.contains("text-to-speech") || prompt.contains("spoken answer"))
+        }
     }
 
     private func model(kind: String) -> String {

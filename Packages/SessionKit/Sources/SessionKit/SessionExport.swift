@@ -1,7 +1,7 @@
 import Foundation
 
 public struct SessionExport: Codable, Equatable {
-    public var schemaVersion: String = "session-export.v1"
+    public var schemaVersion: String = "spoken-margins.export.v1"
     public var item: ExportItem
     public var session: ExportSession
     public var listeningMap: ListeningMap?
@@ -18,6 +18,7 @@ public struct ExportItem: Codable, Equatable {
     public var mediaSourceType: String?
     public var includedFullText: Bool
     public var text: String?
+    public var sourceTranscript: String? = nil
 }
 
 public struct ExportSession: Codable, Equatable {
@@ -90,7 +91,7 @@ public struct ExportOptions: Equatable {
 public enum SessionExportMarkdownRenderer {
     public static func render(_ export: SessionExport) -> String {
         var lines: [String] = []
-        lines.append("# Listening Session: \(export.item.title)")
+        lines.append("# Spoken Margins AI Handoff: \(export.item.title)")
         lines.append("")
         if let reference = export.item.externalReference, !reference.isEmpty {
             lines.append("Item: \(reference)")
@@ -110,6 +111,12 @@ public enum SessionExportMarkdownRenderer {
             lines.append(text)
             lines.append("")
         }
+        if let transcript = export.item.sourceTranscript?.trimmingCharacters(in: .whitespacesAndNewlines), !transcript.isEmpty {
+            lines.append("## Source Transcript")
+            lines.append("")
+            lines.append(transcript)
+            lines.append("")
+        }
         lines.append("## Session")
         lines.append("")
         lines.append("Status: \(export.session.status)")
@@ -120,6 +127,12 @@ public enum SessionExportMarkdownRenderer {
             lines.append("")
             lines.append(overview)
             lines.append("")
+            for chapter in export.listeningMap?.chapters ?? [] {
+                lines.append("- \(chapter.title) (\(chapter.percent)%)")
+            }
+            if export.listeningMap?.chapters.isEmpty == false {
+                lines.append("")
+            }
         }
 
         let interjectionsById = Dictionary(uniqueKeysWithValues: export.interjections.map { ($0.id, $0) })
@@ -156,6 +169,10 @@ public enum SessionExportMarkdownRenderer {
     private static func append(turn: ConversationTurn, to lines: inout [String]) {
         lines.append("### \(title(for: turn))")
         lines.append("")
+        if turn.status != "complete" {
+            lines.append("Status: \(turn.status)")
+            lines.append("")
+        }
         if let summary = turn.summary?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
             lines.append("Summary:")
             lines.append(summary)
@@ -194,11 +211,6 @@ public enum SessionExportMarkdownRenderer {
             lines.append("")
         } else {
             lines.append("Transcript: \(interjection.transcriptionStatus)")
-            lines.append("")
-        }
-        if let audioPath = interjection.audioPath, !audioPath.isEmpty {
-            lines.append("Audio:")
-            lines.append(audioPath)
             lines.append("")
         }
     }

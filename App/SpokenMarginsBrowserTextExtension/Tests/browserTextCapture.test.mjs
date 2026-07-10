@@ -76,7 +76,7 @@ test("selected text capture preserves page metadata", () => {
   assert.equal(payload.source.title, "Article Title");
   assert.equal(payload.source.url, "https://example.com/selected");
   assert.equal(payload.source.author, "A. Writer");
-  assert.equal(payload.requestedContinuation.startSession, true);
+  assert.equal(payload.requestedContinuation.startSession, false);
 });
 
 test("readable page capture prefers article text and excludes page chrome", () => {

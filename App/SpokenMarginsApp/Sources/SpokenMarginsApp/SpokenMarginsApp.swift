@@ -14,13 +14,10 @@ struct SpokenMarginsApp: App {
                 }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active {
-                        model.importPendingSourceLinkHandoffs()
+                        model.handleAppBecameActive()
                     } else if phase == .inactive || phase == .background {
                         model.syncPlaybackProgressForLifecycle()
                     }
-                }
-                .task {
-                    model.importPendingSourceLinkHandoffs()
                 }
         }
     }

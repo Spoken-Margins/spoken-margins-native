@@ -25,9 +25,7 @@ struct Gate1RootView: View {
         }
         .background(AppColors.background.ignoresSafeArea())
         .onAppear {
-            if model.libraryItems.isEmpty {
-                model.resetAndSeed()
-            }
+            model.bootstrapLibraryIfNeeded()
         }
     }
 }
@@ -596,17 +594,6 @@ private struct ItemScreen: View {
             .buttonStyle(SecondaryButtonStyle())
             .accessibilityIdentifier("item.export.button")
             Button {
-                model.renderSelectedItemForWatchPackage()
-            } label: {
-                Label(model.isRenderingWatchPackage ? "Rendering Watch Audio" : "Render Watch Audio", systemImage: "waveform")
-            }
-            .buttonStyle(SecondaryButtonStyle())
-            .disabled(model.isRenderingWatchPackage)
-            .accessibilityIdentifier("item.renderWatchAudio.button")
-            Text(model.watchPackageRenderStatus)
-                .font(.footnote)
-                .foregroundStyle(AppColors.secondaryText)
-            Button {
                 model.copyTargetInterjections(targetType: InterjectionTargetType.item.rawValue, targetId: model.selectedItem.id)
             } label: {
                 Label("Copy Item Notes", systemImage: "doc.on.doc")
@@ -632,7 +619,7 @@ private struct PlaybackScreen: View {
                 Group {
                     if horizontalSizeClass == .regular {
                         HStack(alignment: .top, spacing: 24) {
-                            watchSurface
+                            playbackControls
                                 .frame(width: 430)
                             VStack(spacing: 20) {
                                 timeline
@@ -644,7 +631,7 @@ private struct PlaybackScreen: View {
                         .frame(maxWidth: 1160, alignment: .topLeading)
                     } else {
                         VStack(spacing: 20) {
-                            watchSurface
+                            playbackControls
                             timeline
                             conversation
                             StatusBanner()
@@ -710,7 +697,7 @@ private struct PlaybackScreen: View {
             || ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TESTING"] == "1"
     }
 
-    private var watchSurface: some View {
+    private var playbackControls: some View {
         VStack(spacing: 18) {
             VStack(spacing: 8) {
                 Text(model.snapshot.targetType == "summary_turn_tts" ? "CURRENT SUMMARY" : "CURRENT CHAPTER")
@@ -1108,42 +1095,13 @@ private struct PlaybackScreen: View {
 
 private struct SettingsScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
-    @State private var isSettingsFileImporterPresented = false
-    @State private var activeSettingsImportRequest: SettingsImportRequest?
     @FocusState private var focusedField: Field?
 
-    private enum SettingsImportRequest {
-        case kokoroAssets
-        case piperVoice
-    }
-
     private enum Field {
-        case baseURL
         case mapModel
         case summaryModel
         case conversationModel
         case apiKey
-        case kokoroVoice
-    }
-
-    private var settingsImportAllowedContentTypes: [UTType] {
-        switch activeSettingsImportRequest {
-        case .kokoroAssets:
-            return [
-                UTType(filenameExtension: "safetensors") ?? .data,
-                UTType(filenameExtension: "npz") ?? .data
-            ]
-        case .piperVoice, .none:
-            return [
-                UTType(filenameExtension: "onnx") ?? .data,
-                UTType(filenameExtension: "json") ?? .json
-            ]
-        }
-    }
-
-    private func presentSettingsImporter(_ request: SettingsImportRequest) {
-        activeSettingsImportRequest = request
-        isSettingsFileImporterPresented = true
     }
 
     var body: some View {
@@ -1151,11 +1109,7 @@ private struct SettingsScreen: View {
             Form {
                 StatusBanner()
                 Section("Provider") {
-                    TextField("Base URL", text: $model.providerBaseURL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .focused($focusedField, equals: .baseURL)
-                        .accessibilityIdentifier("provider.baseURL.field")
+                    LabeledContent("Provider", value: "OpenAI")
                     TextField("Listening Map Model", text: $model.listeningMapModel)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -1182,7 +1136,6 @@ private struct SettingsScreen: View {
                         .accessibilityIdentifier("provider.probe.button")
                     LabeledContent("Probe", value: model.providerProbeStatus)
                 }
-                .onChange(of: model.providerBaseURL) { _, _ in model.settingsValueChanged() }
                 .onChange(of: model.listeningMapModel) { _, _ in model.settingsValueChanged() }
                 .onChange(of: model.summaryModel) { _, _ in model.settingsValueChanged() }
                 .onChange(of: model.conversationModel) { _, _ in model.settingsValueChanged() }
@@ -1252,76 +1205,6 @@ private struct SettingsScreen: View {
                         .buttonStyle(SecondaryButtonStyle())
                         .accessibilityIdentifier("settings.preview.assistiveTech.button")
                     }
-                    Picker("Session TTS", selection: $model.ttsMode) {
-                        Text("System Speech").tag("systemImmediate")
-                        if model.isKokoroDeviceBuild {
-                            Text("Kokoro Pre-render").tag("kokoro")
-                        }
-                    }
-                    .accessibilityIdentifier("settings.ttsMode.picker")
-                    .onChange(of: model.ttsMode) { _, _ in
-                        model.speechSettingsChanged()
-                    }
-                    Text(model.isKokoroDeviceBuild ? "Kokoro renders bounded segments on device and reports a playback failure if a segment cannot render." : "Kokoro requires the SpokenMarginsAppDevice scheme on a physical device.")
-                        .font(.caption)
-                        .foregroundStyle(AppColors.secondaryText)
-                    if model.isKokoroDeviceBuild {
-                        TextField("Kokoro Voice", text: $model.kokoroVoiceName)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .focused($focusedField, equals: .kokoroVoice)
-                            .accessibilityIdentifier("settings.kokoroVoice.field")
-                            .onChange(of: model.kokoroVoiceName) { _, _ in
-                                model.speechSettingsChanged()
-                            }
-                        LabeledContent("Kokoro MLX Cache", value: "\(model.kokoroCacheLimitMB) MB fixed")
-                        VStack(alignment: .leading) {
-                            HStack {
-                                Text("Kokoro Chunk Size")
-                                Spacer()
-                                Text("\(Int(model.kokoroChunkCharacters.rounded())) chars")
-                                    .foregroundStyle(AppColors.secondaryText)
-                            }
-                            Slider(value: $model.kokoroChunkCharacters, in: 80...140, step: 10)
-                                .accessibilityIdentifier("settings.kokoroChunkCharacters.slider")
-                        }
-                        .onChange(of: model.kokoroChunkCharacters) { _, _ in
-                            model.speechSettingsChanged()
-                        }
-                        Button {
-                            presentSettingsImporter(.kokoroAssets)
-                        } label: {
-                            Label("Import Kokoro Assets", systemImage: "square.and.arrow.down")
-                        }
-                        .buttonStyle(SecondaryButtonStyle())
-                        .accessibilityIdentifier("settings.import.kokoroAssets.button")
-                        Text("Expected: kokoro-v1_0.safetensors, roughly hundreds of MB, and voices.npz, roughly tens of MB. Individual .pt voice files are not enough for this renderer.")
-                            .font(.caption)
-                            .foregroundStyle(AppColors.secondaryText)
-                        Button {
-                            model.previewKokoroVoice()
-                        } label: {
-                            Label(
-                                model.isRenderingKokoroPreview ? "Rendering Kokoro Preview" : "Render Kokoro Preview",
-                                systemImage: "waveform"
-                            )
-                        }
-                        .buttonStyle(SecondaryButtonStyle())
-                        .disabled(model.isRenderingKokoroPreview)
-                        .accessibilityIdentifier("settings.preview.kokoro.button")
-                        Button {
-                            model.runKokoroMemoryCheck()
-                        } label: {
-                            Label(
-                                model.isRunningKokoroMemoryCheck ? "Running Kokoro Memory Check" : "Run Kokoro Memory Check",
-                                systemImage: "memorychip"
-                            )
-                        }
-                        .buttonStyle(SecondaryButtonStyle())
-                        .disabled(model.isRunningKokoroMemoryCheck || model.isRenderingKokoroPreview)
-                        .accessibilityIdentifier("settings.memoryCheck.kokoro.button")
-                        LabeledContent("Kokoro", value: model.kokoroStatus)
-                    }
                     Picker("Skip Increment", selection: $model.skipUnit) {
                         Text("Sentence").tag("sentence")
                         Text("Paragraph").tag("paragraph")
@@ -1344,6 +1227,8 @@ private struct SettingsScreen: View {
                         .accessibilityIdentifier("settings.reset.button")
                     Button("Refresh Diagnostics", action: model.refreshDiagnostics)
                         .accessibilityIdentifier("settings.diagnostics.button")
+                    Button("Copy Privacy-Safe Diagnostics", action: model.copyDiagnosticsExport)
+                        .accessibilityIdentifier("settings.copyDiagnostics.button")
                 }
                 Section("Diagnostics") {
                     ForEach(model.diagnostics.keys.sorted(), id: \.self) { key in
@@ -1360,33 +1245,6 @@ private struct SettingsScreen: View {
             .navigationTitle("Settings")
             .onAppear {
                 model.refreshSpeechVoiceOptions()
-                model.refreshKokoroAssetStatus()
-                model.refreshPiperVoiceStatus()
-            }
-            .fileImporter(
-                isPresented: Binding(
-                    get: { isSettingsFileImporterPresented },
-                    set: { isSettingsFileImporterPresented = $0 }
-                ),
-                allowedContentTypes: settingsImportAllowedContentTypes,
-                allowsMultipleSelection: true
-            ) { result in
-                let request = activeSettingsImportRequest
-                activeSettingsImportRequest = nil
-                isSettingsFileImporterPresented = false
-                switch result {
-                case .success(let urls):
-                    switch request {
-                    case .kokoroAssets:
-                        model.importKokoroAssets(urls: urls)
-                    case .piperVoice:
-                        model.importPiperVoiceAssets(urls: urls)
-                    case .none:
-                        model.reportImportFailure(FileImportPresentationError.missingRequest)
-                    }
-                case .failure(let error):
-                    model.reportImportFailure(error)
-                }
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -1417,8 +1275,8 @@ private struct ExportScreen: View {
                     ProductPanel {
                         VStack(alignment: .leading, spacing: 14) {
                             Picker("Format", selection: $model.exportFormat) {
-                                Text("Markdown").tag("markdown")
-                                Text("JSON").tag("json")
+                                Text("AI Handoff Markdown").tag("markdown")
+                                Text("Full JSON Archive").tag("json")
                             }
                             .pickerStyle(.segmented)
                             .accessibilityIdentifier("export.format.picker")

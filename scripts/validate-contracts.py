@@ -7,7 +7,8 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCHEMAS = ROOT / "schemas"
+CONTRACTS = ROOT / "Contracts"
+SCHEMAS = CONTRACTS / "schemas"
 
 
 PATH_SCHEMA_RULES = [
@@ -53,7 +54,7 @@ def validate_trace_references(trace_path: Path) -> list[str]:
     errors: list[str] = []
     profile = trace.get("runtimeProfile")
     if profile:
-        profile_path = ROOT / "fixtures" / "capabilities" / f"{profile}.json"
+        profile_path = CONTRACTS / "fixtures" / "capabilities" / f"{profile}.json"
         if not profile_path.exists():
             errors.append(f"{trace_path}: runtimeProfile {profile!r} has no capability fixture")
         else:
@@ -66,7 +67,7 @@ def validate_trace_references(trace_path: Path) -> list[str]:
                             f"{trace_path}: requires {category}.{capability}, absent from {profile_path}"
                         )
     for label, value in trace.get("fixtures", {}).items():
-        if isinstance(value, str) and not (ROOT / value).exists():
+        if isinstance(value, str) and not (CONTRACTS / value).exists():
             errors.append(f"{trace_path}: fixture {label} points to missing path {value}")
     return errors
 
@@ -77,7 +78,7 @@ def main() -> int:
         pattern, schema_name, *rest = rule
         mode = rest[0] if rest else None
         schema_path = SCHEMAS / schema_name
-        for path in sorted(ROOT.glob(pattern)):
+        for path in sorted(CONTRACTS.glob(pattern)):
             errors.extend(validate_file(path, schema_path, mode))
             if pattern == "traces/*.json":
                 errors.extend(validate_trace_references(path))

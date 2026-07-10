@@ -1308,6 +1308,15 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(mapSnapshot.itemId, item.id)
         XCTAssertFalse(map.chapters.isEmpty)
         XCTAssertTrue((try repo.loadItem(id: item.id).text ?? "").contains("Important middle point."))
+
+        let handoff = try engine.buildExport(options: ExportOptions(
+            includeFullText: true,
+            includeReference: true,
+            includeListeningMap: true,
+            includeInterjections: true
+        ))
+        XCTAssertTrue(handoff.item.sourceTranscript?.contains("Important middle point.") == true)
+        XCTAssertEqual(handoff.schemaVersion, "spoken-margins.export.v1")
     }
 
     func testInMemoryRepositoryListsWatchPackagesByItem() throws {
@@ -2046,6 +2055,27 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(turn.summary, "Two parts.")
         XCTAssertEqual(turn.text, "Hello world. Second point.")
         XCTAssertEqual(turn.chapters?.first?.id, "ch-1")
+    }
+
+    func testAIStreamingEmitsEachStableSentenceOnceAndFlushesFinalFragment() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: ["sync": ["canonical_persistence"]]
+        )
+        let item = Item(id: "item-pill", title: "Pill", mediaType: "text", text: "Source.", externalReference: nil, status: "ready")
+        let session = Session(id: "session-pill", itemId: item.id, status: "in_progress", phase: .conversation, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 0, playbackRate: 1)
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session])
+        let engine = SessionEngine(profile: profile, repository: repo)
+
+        let first = try engine.aiStreamDelta(turnId: "turn-response-stream", content: "First sentence. Final")
+        let second = try engine.aiStreamDelta(turnId: "turn-response-stream", content: " fragment")
+        let completed = try engine.aiJobCompleted(turnId: "turn-response-stream")
+
+        XCTAssertEqual(first.spokenUnits, ["First sentence."])
+        XCTAssertTrue(second.spokenUnits.isEmpty)
+        XCTAssertEqual(completed.spokenUnits, ["Final fragment"])
+        XCTAssertEqual(try repo.loadTurns(sessionId: session.id).first?.text, "First sentence. Final fragment")
     }
 
     func testImportAssistantResponseCreatesCompletedPlayableTurn() throws {

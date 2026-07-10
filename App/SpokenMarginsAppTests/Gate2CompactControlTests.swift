@@ -48,35 +48,6 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertEqual(model.gate2CompactSnapshot?.compactSurfaceReady, true)
     }
 
-    func testCompactCommandURLDelegatesThroughCanonicalRuntime() {
-        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
-        model.resetAndSeed()
-        model.startItem(id: "item-pill")
-
-        model.handleGate2CompactURL(Gate2CompactCommandURL.url(command: "togglePlayPause"))
-
-        XCTAssertEqual(model.snapshot.status, .paused)
-        XCTAssertEqual(model.diagnostics["gate2LastCommand"], "togglePlayPause")
-    }
-
-    func testWidgetCommandQueueBuffersAndDrainsCommands() {
-        let suiteName = "Gate2CompactCommandQueueTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defer {
-            defaults.removePersistentDomain(forName: suiteName)
-        }
-
-        Gate2CompactCommandQueue.enqueue(command: "togglePlayPause", id: "first", defaults: defaults)
-        Gate2CompactCommandQueue.enqueue(command: "skipForward", id: "second", defaults: defaults)
-        Gate2CompactCommandQueue.enqueue(command: Gate2CompactApplicationCommand.summarizeInterjections, id: "third", defaults: defaults)
-
-        let drained = Gate2CompactCommandQueue.drain(defaults: defaults)
-
-        XCTAssertEqual(drained.map(\.id), ["first", "second", "third"])
-        XCTAssertEqual(drained.map(\.command), ["togglePlayPause", "skipForward", "summarizeInterjections"])
-        XCTAssertTrue(Gate2CompactCommandQueue.drain(defaults: defaults).isEmpty)
-    }
-
     func testNowPlayingAvailabilityUsesCompactAvailableCommandsForSeekAndRate() {
         let textSnapshot = compactSnapshot(
             targetType: TargetType.itemTextTTS.rawValue,
@@ -98,44 +69,6 @@ final class Gate2CompactControlTests: XCTestCase {
 
         XCTAssertTrue(mediaAvailability.canSeek)
         XCTAssertTrue(mediaAvailability.canSetPlaybackRate)
-    }
-
-    func testLiveActivityContentStateDecodesLegacyPayloadWithoutAvailableCommands() throws {
-        let data = Data("""
-        {
-          "title": "Pill",
-          "chapterTitle": "Opening",
-          "status": "playing",
-          "phase": "itemPlayback",
-          "progressPercent": 42,
-          "isRecording": false
-        }
-        """.utf8)
-
-        let state = try JSONDecoder().decode(Gate2LiveActivityAttributes.ContentState.self, from: data)
-
-        XCTAssertEqual(state.title, "Pill")
-        XCTAssertEqual(state.availableCommands, [])
-    }
-
-    func testLiveActivityPolicyRejectsFinishedAndStaleSessions() {
-        let active = compactSnapshot(
-            targetType: TargetType.itemTextTTS.rawValue,
-            availableCommands: [.togglePlayPause],
-            durationMs: nil
-        )
-        var finished = active
-        finished.phase = .finished
-        finished.status = .idle
-
-        XCTAssertTrue(Gate2LiveActivityPolicy.isEligible(active))
-        XCTAssertFalse(Gate2LiveActivityPolicy.isEligible(finished))
-        XCTAssertFalse(Gate2LiveActivityPolicy.shouldEnd(activitySessionId: "session-pill", currentSessionId: "session-pill"))
-        XCTAssertTrue(Gate2LiveActivityPolicy.shouldEnd(activitySessionId: "session-old", currentSessionId: "session-pill"))
-        XCTAssertTrue(Gate2LiveActivityPolicy.shouldEnd(activitySessionId: "session-pill", currentSessionId: nil))
-        XCTAssertTrue(Gate2LiveActivityPolicy.shouldEndInactive(activitySessionId: "session-pill", activityId: "activity-1", inactiveSessionId: "session-pill", trackedActivityId: nil))
-        XCTAssertFalse(Gate2LiveActivityPolicy.shouldEndInactive(activitySessionId: "session-new", activityId: "activity-2", inactiveSessionId: "session-pill", trackedActivityId: nil))
-        XCTAssertTrue(Gate2LiveActivityPolicy.shouldEndInactive(activitySessionId: "session-any", activityId: "activity-1", inactiveSessionId: nil, trackedActivityId: "activity-1"))
     }
 
     private func compactSnapshot(
