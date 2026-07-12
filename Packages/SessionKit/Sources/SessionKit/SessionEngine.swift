@@ -32,6 +32,7 @@ public final class SessionEngine {
     private var priorPhase: SessionPhase?
     private var streamingBuffers: [String: String] = [:]
     private var spokenPrefixes: [String: Int] = [:]
+    private var externallyStreamedTurnId: String?
     private var playbackStartAttemptId = 0
     private var activePlaybackStartAttemptId: Int?
     private var playbackStartPendingAttemptId: Int?
@@ -822,15 +823,20 @@ public final class SessionEngine {
             session.position.charOffset = max(0, previousBoundary(before: session.position.charOffset, unit: "sentence", text: item.text ?? ""))
             session.completionPercent = percent(for: session.position.charOffset, text: item.text ?? "")
             session.position.chapterId = chapterId(for: session.position.charOffset)
-        } else if let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == targetId }) {
+        } else if externallyStreamedTurnId != targetId,
+                  let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == targetId }) {
             let text = generatedTurnNavigationText(for: turn)
             session.position.charOffset = max(0, previousBoundary(before: session.position.charOffset, unit: "sentence", text: text))
             session.position.chapterId = turn.chapters?.last(where: { $0.startChar <= session.position.charOffset })?.id
         }
         currentSession = session
         try repository.saveSession(session)
-        try playCurrentTarget(session)
-        publishPlaybackStart(for: session, phase: session.phase)
+        if externallyStreamedTurnId == session.currentTargetId {
+            publish(status: .playing, phase: session.phase)
+        } else {
+            try playCurrentTarget(session)
+            publishPlaybackStart(for: session, phase: session.phase)
+        }
         return snapshot
     }
 
@@ -846,6 +852,7 @@ public final class SessionEngine {
             session.completionPercent = percent(for: session.position.charOffset, text: item.text ?? "")
             session.position.chapterId = chapterId(for: session.position.charOffset)
         } else if let targetId = recordingTargetId,
+                  externallyStreamedTurnId != targetId,
                   let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == targetId }) {
             let text = generatedTurnNavigationText(for: turn)
             session.position.charOffset = max(0, previousBoundary(before: session.position.charOffset, unit: "sentence", text: text))
@@ -856,8 +863,12 @@ public final class SessionEngine {
         recordingTargetId = nil
         currentSession = session
         try repository.saveSession(session)
-        try playCurrentTarget(session)
-        publishPlaybackStart(for: session, phase: session.phase)
+        if externallyStreamedTurnId == session.currentTargetId {
+            publish(status: .playing, phase: session.phase)
+        } else {
+            try playCurrentTarget(session)
+            publishPlaybackStart(for: session, phase: session.phase)
+        }
         return snapshot
     }
 
@@ -933,6 +944,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func playTurn(turnId: String) throws -> SessionSnapshot {
+        externallyStreamedTurnId = nil
         var session = try resolveSession(nil)
         let turns = try repository.loadTurns(sessionId: session.id)
         let targetType: TargetType
@@ -954,6 +966,51 @@ public final class SessionEngine {
         try repository.saveSession(session)
         try playCurrentTarget(session)
         publishPlaybackStart(for: session, phase: phase)
+        return snapshot
+    }
+
+    /// Makes an incrementally generated turn the canonical interjection target while
+    /// its audio is owned by the app's streaming speech queue.
+    @discardableResult
+    public func activateStreamingTurn(turnId: String) throws -> SessionSnapshot {
+        var session = try resolveSession(nil)
+        let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == turnId })
+        let targetType: TargetType = turn?.turnType == "interjection_summary" ? .summaryTurnTTS : .assistantTurnTTS
+        let phase: SessionPhase = targetType == .summaryTurnTTS ? .summaryPlayback : .aiResponsePlayback
+
+        externallyStreamedTurnId = turnId
+        if session.currentTargetId != turnId || session.currentTargetType != targetType {
+            session.currentTargetType = targetType
+            session.currentTargetId = turnId
+            session.position = Position(charOffset: 0)
+        }
+        session.phase = phase
+        currentSession = session
+        try repository.saveSession(session)
+        publish(status: .playing, phase: phase)
+        return snapshot
+    }
+
+    /// Updates the conservative sentence-level cursor supplied by the streaming
+    /// speech queue. The canonical audio client must not overwrite this position.
+    @discardableResult
+    public func updateStreamingTurnPosition(turnId: String, charOffset: Int) throws -> SessionSnapshot {
+        guard var session = currentSession,
+              externallyStreamedTurnId == turnId,
+              session.currentTargetId == turnId,
+              session.currentTargetType == .summaryTurnTTS || session.currentTargetType == .assistantTurnTTS else {
+            return snapshot
+        }
+        let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == turnId })
+        let turnText = turn.map { generatedTurnNavigationText(for: $0) } ?? ""
+        session.position.charOffset = max(0, min(charOffset, turnText.count))
+        session.position.chapterId = turn?
+            .chapters?
+            .last(where: { $0.startChar <= session.position.charOffset })?
+            .id
+        currentSession = session
+        try repository.saveSession(session)
+        publish(status: snapshot.status, phase: session.phase)
         return snapshot
     }
 
@@ -2264,7 +2321,7 @@ public final class SessionEngine {
             let turn = try? repository.loadTurns(sessionId: session.id).first(where: { $0.id == targetId })
             let turnText = turn.map { generatedTurnNavigationText(for: $0) } ?? ""
             let start = max(0, min(playbackPosition.textStart ?? session.position.charOffset, turnText.count))
-            let sentenceStart = previousBoundary(before: start, unit: "sentence", text: turnText)
+            let sentenceStart = previousBoundary(before: min(start + 1, turnText.count), unit: "sentence", text: turnText)
             let end = min(turnText.count, max(sentenceStart + 1, nextBoundary(after: start, unit: "sentence", text: turnText)))
             let segmentIndex = completeSentenceUnits(in: slice(turnText, start: 0, end: sentenceStart)).count
             return Anchor(
@@ -2777,6 +2834,7 @@ public final class SessionEngine {
 
     private func syncGeneratedTurnPositionFromAudio(_ session: Session) throws -> Session {
         guard session.currentTargetType == .summaryTurnTTS || session.currentTargetType == .assistantTurnTTS,
+              externallyStreamedTurnId != session.currentTargetId,
               let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == session.currentTargetId }),
               let textStart = playbackPosition(for: session).textStart,
               textStart >= 0 else {

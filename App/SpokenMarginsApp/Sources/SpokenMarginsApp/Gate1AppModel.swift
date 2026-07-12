@@ -1263,6 +1263,7 @@ final class Gate1AppModel: ObservableObject {
                 reportFailure("Microphone access is required to record interjections. Enable microphone access in Settings and try again.")
                 return
             }
+            synchronizeStreamingSpeechAnchorIfNeeded()
             streamingSpeechQueue.pauseForInterjection()
             run { engine in
                 snapshot = try engine.beginInterjection()
@@ -2597,6 +2598,7 @@ final class Gate1AppModel: ObservableObject {
         origin: String = "app_ui"
     ) {
         if command == .beginInterjection {
+            synchronizeStreamingSpeechAnchorIfNeeded()
             streamingSpeechQueue.pauseForInterjection()
         }
         do {
@@ -2626,6 +2628,21 @@ final class Gate1AppModel: ObservableObject {
                 streamingSpeechQueue.resumeAfterInterjection()
             }
             reportFailure(error, context: "Compact control failed")
+        }
+    }
+
+    private func synchronizeStreamingSpeechAnchorIfNeeded() {
+        guard let engine,
+              let turnId = streamingSpeechQueue.currentTurnId,
+              let sentenceStart = streamingSpeechQueue.currentSentenceStartOffset else {
+            return
+        }
+        do {
+            snapshot = try engine.updateStreamingTurnPosition(turnId: turnId, charOffset: sentenceStart)
+            diagnostics["streamingInterjectionTurnId"] = turnId
+            diagnostics["streamingInterjectionSentenceStart"] = "\(sentenceStart)"
+        } catch {
+            diagnostics["streamingInterjectionAnchorError"] = String(describing: error)
         }
     }
 
@@ -3282,6 +3299,9 @@ final class Gate1AppModel: ObservableObject {
                         case .textDelta(let delta):
                             receivedText = true
                             snapshot = try engine.aiStreamDelta(turnId: turnId, content: delta)
+                            if snapshot.targetId != turnId {
+                                snapshot = try engine.activateStreamingTurn(turnId: turnId)
+                            }
                             let stableUnits = snapshot.spokenUnits
                             streamingSpeechQueue.enqueue(stableUnits, turnId: turnId)
                             diagnostics["streamingSpeechPending"] = "\(streamingSpeechQueue.pendingCount)"

@@ -2078,6 +2078,39 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(try repo.loadTurns(sessionId: session.id).first?.text, "First sentence. Final fragment")
     }
 
+    func testInterjectionDuringExternallyStreamedSpeechTargetsCurrentAssistantSentenceWithoutDoubleResume() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["assistant_turn_tts"],
+                "interjection": ["record_audio"]
+            ]
+        )
+        let item = Item(id: "item-stream", title: "Stream", mediaType: "text", text: "Source.", externalReference: nil, status: "ready")
+        let session = Session(id: "session-stream", itemId: item.id, status: "in_progress", phase: .conversation, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 0, playbackRate: 1)
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.aiStreamDelta(turnId: "turn-response-stream", content: "First response. Second point has the detail.")
+        _ = try engine.activateStreamingTurn(turnId: "turn-response-stream")
+        let secondSentenceStart = "First response. ".count
+        _ = try engine.updateStreamingTurnPosition(turnId: "turn-response-stream", charOffset: secondSentenceStart)
+        _ = try engine.beginInterjection()
+        let resumed = try engine.finishInterjection(audioRef: "interjections/ij-ai-001.m4a")
+
+        let interjection = try XCTUnwrap(try repo.loadInterjections(sessionId: session.id).first)
+        XCTAssertEqual(interjection.targetType, .assistantTurn)
+        XCTAssertEqual(interjection.targetId, "turn-response-stream")
+        XCTAssertEqual(interjection.anchor.anchorType, .turn)
+        XCTAssertEqual(interjection.anchor.anchorBefore, "Second point has the detail.")
+        XCTAssertEqual(engine.currentSession?.position.charOffset, secondSentenceStart)
+        XCTAssertEqual(resumed.status, .playing)
+        XCTAssertTrue(audio.playedOffsets.isEmpty)
+    }
+
     func testImportAssistantResponseCreatesCompletedPlayableTurn() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
