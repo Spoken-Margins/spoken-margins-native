@@ -19,6 +19,9 @@ struct SpokenMarginsApp: App {
                         model.syncPlaybackProgressForLifecycle()
                     }
                 }
+                .task {
+                    model.importPendingSourceLinkHandoffs()
+                }
         }
     }
 }

@@ -6,9 +6,9 @@ Spoken Margins is a personal conversational listening app. A complete daily-driv
 
 ## Active Boundary
 
-Keep the iPhone/iPad app, Safari extension, share extension, Obsidian import, native Now Playing controls, Speech.framework transcription, installed `AVSpeechSynthesizer` voices, OpenAI with a user-supplied key, three editable model identifiers, AI response playback, interjections, manual AI Listening Maps, and JSON/AI-handoff Markdown export.
+Keep the iPhone/iPad app, Safari extension, share extension, Obsidian import, native Now Playing controls, the listening Live Activity, Speech.framework transcription, installed `AVSpeechSynthesizer` voices, OpenAI with a user-supplied key, three editable model identifiers, AI response playback, interjections, manual AI Listening Maps, and JSON/AI-handoff Markdown export. Native media owns Now Playing during podcasts and prepared audio; the live-speech coordinator owns it only during immediate `AVSpeechSynthesizer` playback so the two command paths do not replace each other.
 
-Do not add Watch, widgets, Live Activities, Kokoro/MLX, arbitrary providers, dedicated car UI, automatic map generation, or an embedded Piper runtime. Bundled Piper is a separate post-MVP investigation behind the existing speech client.
+Do not add Watch, standalone Home Screen widgets, Kokoro/MLX, arbitrary providers, dedicated car UI, automatic map generation, or an embedded Piper runtime. The WidgetKit target exists only as the required ActivityKit host. Bundled Piper is a separate post-MVP investigation behind the existing speech client.
 
 ## Evidence Gates
 
@@ -20,6 +20,6 @@ Before requesting either check, provide a build number and SHA, supported device
 
 ## Stopping Rules
 
-Do not advance with a crash or data-loss defect, wrong-source context, wrong audio, duplicated import/turn/spoken sentence, or regression in preserved playback. Do not add another target, provider, voice runtime, or automatic AI workflow until the daily-driver loop is verified and then human-validated.
+Do not advance with a crash or data-loss defect, wrong-source context, wrong audio, duplicated import/turn/spoken sentence, or regression in preserved playback. Do not add another product surface, provider, voice runtime, or automatic AI workflow until the daily-driver loop is verified and then human-validated.
 
 When a human check fails, reproduce it from diagnostics, add focused regression evidence, and return only the failed bounded flow for validation. The product owner should not be used as the exploratory test harness.

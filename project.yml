@@ -16,15 +16,12 @@ targets:
           - SpokenMarginsApp/Gate3WatchConnectivityController.swift
           - SpokenMarginsApp/WatchPackageRenderCoordinator.swift
       - path: App/Gate2Shared/Sources
-        excludes:
-          - Gate2CompactCommandQueue.swift
-          - Gate2CompactCommandURL.swift
-          - Gate2LiveActivityAttributes.swift
       - path: Contracts/fixtures
         type: folder
       - path: Contracts/traces
         type: folder
     dependencies:
+      - target: SpokenMarginsGate2Widget
       - target: SpokenMarginsShareExtension
       - target: SpokenMarginsBrowserTextExtension
       - package: SessionKit
@@ -59,10 +56,34 @@ targets:
         UILaunchScreen: {}
         NSMicrophoneUsageDescription: Spoken Margins records spoken interjections during listening sessions.
         NSSpeechRecognitionUsageDescription: Spoken Margins may transcribe spoken interjections when enabled.
+        NSSupportsLiveActivities: true
         UIBackgroundModes:
           - audio
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: true
+  SpokenMarginsGate2Widget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: App/SpokenMarginsGate2Widget/Sources
+      - path: App/Gate2Shared/Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.gate2widget
+        CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsGate2Widget/SpokenMarginsGate2Widget.entitlements
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: J8SWC6J3VY
+        ENABLE_DEBUG_DYLIB: NO
+        MARKETING_VERSION: "0.1"
+        SWIFT_VERSION: "6.0"
+    info:
+      path: App/SpokenMarginsGate2Widget/Info.plist
+      properties:
+        CFBundleDisplayName: Spoken Margins Controls
+        CFBundleShortVersionString: "0.1"
+        CFBundleVersion: "1"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
   SpokenMarginsBrowserTextExtension:
     type: app-extension
     platform: iOS

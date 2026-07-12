@@ -71,6 +71,64 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertTrue(mediaAvailability.canSetPlaybackRate)
     }
 
+    func testLiveActivityContentStateDecodesLegacyPayloadWithoutAvailableCommands() throws {
+        let data = Data("""
+        {
+          "title": "Pill",
+          "chapterTitle": "Opening",
+          "status": "playing",
+          "phase": "itemPlayback",
+          "progressPercent": 42,
+          "isRecording": false
+        }
+        """.utf8)
+
+        let state = try JSONDecoder().decode(Gate2LiveActivityAttributes.ContentState.self, from: data)
+
+        XCTAssertEqual(state.title, "Pill")
+        XCTAssertEqual(state.availableCommands, [])
+    }
+
+    func testLiveActivityPolicyRejectsFinishedAndStaleSessions() {
+        let active = compactSnapshot(
+            targetType: TargetType.itemTextTTS.rawValue,
+            availableCommands: [.togglePlayPause],
+            durationMs: nil
+        )
+        var finished = active
+        finished.phase = .finished
+        finished.status = .idle
+
+        XCTAssertTrue(Gate2LiveActivityPolicy.isEligible(active))
+        XCTAssertFalse(Gate2LiveActivityPolicy.isEligible(finished))
+        XCTAssertFalse(Gate2LiveActivityPolicy.shouldEnd(activitySessionId: "session-pill", currentSessionId: "session-pill"))
+        XCTAssertTrue(Gate2LiveActivityPolicy.shouldEnd(activitySessionId: "session-old", currentSessionId: "session-pill"))
+        XCTAssertTrue(Gate2LiveActivityPolicy.shouldEnd(activitySessionId: "session-pill", currentSessionId: nil))
+        XCTAssertTrue(Gate2LiveActivityPolicy.shouldEndInactive(activitySessionId: "session-pill", activityId: "activity-1", inactiveSessionId: "session-pill", trackedActivityId: nil))
+        XCTAssertFalse(Gate2LiveActivityPolicy.shouldEndInactive(activitySessionId: "session-new", activityId: "activity-2", inactiveSessionId: "session-pill", trackedActivityId: nil))
+        XCTAssertTrue(Gate2LiveActivityPolicy.shouldEndInactive(activitySessionId: "session-any", activityId: "activity-1", inactiveSessionId: nil, trackedActivityId: "activity-1"))
+    }
+
+    func testLiveSpeechNowPlayingPolicyDoesNotCompeteWithNativeMedia() {
+        let liveSpeech = compactSnapshot(
+            targetType: TargetType.itemTextTTS.rawValue,
+            availableCommands: [.togglePlayPause, .skipBack, .skipForward],
+            durationMs: nil
+        )
+        let nativeMedia = compactSnapshot(
+            targetType: TargetType.transcriptBackedMedia.rawValue,
+            availableCommands: [.togglePlayPause, .skipBack, .skipForward],
+            durationMs: 120_000
+        )
+        var finishedSpeech = liveSpeech
+        finishedSpeech.phase = .finished
+        finishedSpeech.status = .idle
+
+        XCTAssertTrue(Gate2LiveSpeechNowPlayingPolicy.shouldPublish(liveSpeech))
+        XCTAssertFalse(Gate2LiveSpeechNowPlayingPolicy.shouldPublish(nativeMedia))
+        XCTAssertFalse(Gate2LiveSpeechNowPlayingPolicy.shouldPublish(finishedSpeech))
+    }
+
     private func compactSnapshot(
         targetType: String,
         availableCommands: [CompactControlCommand],

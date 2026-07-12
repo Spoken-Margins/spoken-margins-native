@@ -531,7 +531,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
             replaceSynthesizer()
         }
         #if os(iOS)
-        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [])
         try AVAudioSession.sharedInstance().setActive(true)
         #endif
         let utterance = makeUtterance(textToSpeak, mode: playbackSpeechPreviewMode())
@@ -986,7 +986,7 @@ public final class PreparedAudioPlaybackClient: NSObject, AudioPlaybackClient, @
         #if os(watchOS)
         try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [])
         #else
-        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [])
         #endif
     }
     #endif
@@ -1016,6 +1016,9 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private var knownDurations: [String: Int] = [:]
     private var playbackRate: Double = 1
     private var paused = true
+    #if canImport(MediaPlayer) && os(iOS)
+    private var remoteCommandTargets: [(command: MPRemoteCommand, target: Any)] = []
+    #endif
 
     public init(remoteCommandHandler: (@Sendable (CompactControlCommand, Int?, Double?) -> Void)? = nil) {
         self.remoteCommandHandler = remoteCommandHandler
@@ -1025,6 +1028,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     deinit {
         removeCompletionObserver()
         removeTimeObserver()
+        removeRemoteCommandHandlers()
     }
 
     public func configureMediaContext(_ context: PlaybackMediaContext?) throws {
@@ -1304,68 +1308,49 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private func installRemoteCommandHandlers() {
         #if canImport(MediaPlayer) && os(iOS)
         let center = MPRemoteCommandCenter.shared()
-        center.playCommand.removeTarget(nil)
-        center.pauseCommand.removeTarget(nil)
-        center.togglePlayPauseCommand.removeTarget(nil)
-        center.skipBackwardCommand.removeTarget(nil)
-        center.skipForwardCommand.removeTarget(nil)
-        center.previousTrackCommand.removeTarget(nil)
-        center.nextTrackCommand.removeTarget(nil)
-        center.stopCommand.removeTarget(nil)
-        center.changePlaybackPositionCommand.removeTarget(nil)
-        center.changePlaybackRateCommand.removeTarget(nil)
+        removeRemoteCommandHandlers()
 
         center.skipBackwardCommand.preferredIntervals = [15]
         center.skipForwardCommand.preferredIntervals = [15]
         center.changePlaybackRateCommand.supportedPlaybackRates = [0.75, 1.0, 1.25, 1.5, 2.0]
         configureRemoteCommandAvailability(canSeek: false)
 
-        center.playCommand.addTarget { [weak self] _ in
-            self?.dispatchRemoteCommand(.play)
-            return .success
+        register(center.playCommand) { [weak self] _ in
+            self?.dispatchRemoteCommand(.play) == true ? .success : .noSuchContent
         }
-        center.pauseCommand.addTarget { [weak self] _ in
-            self?.dispatchRemoteCommand(.pause)
-            return .success
+        register(center.pauseCommand) { [weak self] _ in
+            self?.dispatchRemoteCommand(.pause) == true ? .success : .noSuchContent
         }
-        center.togglePlayPauseCommand.addTarget { [weak self] _ in
-            self?.dispatchRemoteCommand(.togglePlayPause)
-            return .success
+        register(center.togglePlayPauseCommand) { [weak self] _ in
+            self?.dispatchRemoteCommand(.togglePlayPause) == true ? .success : .noSuchContent
         }
-        center.stopCommand.addTarget { [weak self] _ in
-            self?.dispatchRemoteCommand(.pause)
-            return .success
+        register(center.stopCommand) { [weak self] _ in
+            self?.dispatchRemoteCommand(.pause) == true ? .success : .noSuchContent
         }
-        center.skipBackwardCommand.addTarget { [weak self] _ in
-            self?.dispatchRemoteCommand(.skipBack)
-            return .success
+        register(center.skipBackwardCommand) { [weak self] _ in
+            self?.dispatchRemoteCommand(.skipBack) == true ? .success : .noSuchContent
         }
-        center.previousTrackCommand.addTarget { [weak self] _ in
-            self?.dispatchRemoteCommand(.skipBack)
-            return .success
+        register(center.previousTrackCommand) { [weak self] _ in
+            self?.dispatchRemoteCommand(.skipBack) == true ? .success : .noSuchContent
         }
-        center.skipForwardCommand.addTarget { [weak self] _ in
-            self?.dispatchRemoteCommand(.skipForward)
-            return .success
+        register(center.skipForwardCommand) { [weak self] _ in
+            self?.dispatchRemoteCommand(.skipForward) == true ? .success : .noSuchContent
         }
-        center.nextTrackCommand.addTarget { [weak self] _ in
-            self?.dispatchRemoteCommand(.skipForward)
-            return .success
+        register(center.nextTrackCommand) { [weak self] _ in
+            self?.dispatchRemoteCommand(.skipForward) == true ? .success : .noSuchContent
         }
-        center.changePlaybackPositionCommand.addTarget { [weak self] event in
+        register(center.changePlaybackPositionCommand) { [weak self] event in
             guard let event = event as? MPChangePlaybackPositionCommandEvent else {
                 return .commandFailed
             }
             let mediaTimeMs = max(0, Int((event.positionTime * 1000).rounded()))
-            self?.dispatchRemoteCommand(.seekToMediaTime, mediaTimeMs: mediaTimeMs)
-            return .success
+            return self?.dispatchRemoteCommand(.seekToMediaTime, mediaTimeMs: mediaTimeMs) == true ? .success : .noSuchContent
         }
-        center.changePlaybackRateCommand.addTarget { [weak self] event in
+        register(center.changePlaybackRateCommand) { [weak self] event in
             guard let event = event as? MPChangePlaybackRateCommandEvent else {
                 return .commandFailed
             }
-            self?.dispatchRemoteCommand(.setPlaybackRate, playbackRate: Double(event.playbackRate))
-            return .success
+            return self?.dispatchRemoteCommand(.setPlaybackRate, playbackRate: Double(event.playbackRate)) == true ? .success : .noSuchContent
         }
         #endif
     }
@@ -1386,9 +1371,31 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         #endif
     }
 
-    private func dispatchRemoteCommand(_ command: CompactControlCommand, mediaTimeMs: Int? = nil, playbackRate: Double? = nil) {
+    @discardableResult
+    private func dispatchRemoteCommand(_ command: CompactControlCommand, mediaTimeMs: Int? = nil, playbackRate: Double? = nil) -> Bool {
+        guard activeTargetId != nil else { return false }
         remoteCommandHandler?(command, mediaTimeMs, playbackRate)
+        return remoteCommandHandler != nil
     }
+
+    #if canImport(MediaPlayer) && os(iOS)
+    private func register(
+        _ command: MPRemoteCommand,
+        handler: @escaping (MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus
+    ) {
+        let target = command.addTarget(handler: handler)
+        remoteCommandTargets.append((command, target))
+    }
+
+    private func removeRemoteCommandHandlers() {
+        for registration in remoteCommandTargets {
+            registration.command.removeTarget(registration.target)
+        }
+        remoteCommandTargets.removeAll()
+    }
+    #else
+    private func removeRemoteCommandHandlers() {}
+    #endif
 
     #if canImport(AVFoundation) && (os(iOS) || os(watchOS))
     private func configureStreamAudioSession() throws {

@@ -16,7 +16,7 @@ Runtime profiles exercised: phone-tablet-online, lock-screen-widget
 - iOS app plus `SpokenMarginsGate2Widget` extension simulator build: passed.
 - Signed real-device install: TBD.
 - Now Playing Lock Screen item/chapter/playback display: TBD.
-- Now Playing pause/resume/skip back/skip forward while locked: nice-to-have; not required for Gate 2 pass if Live Activity controls work.
+- Now Playing pause/resume/skip back/skip forward while locked: required for both native media and immediate live-speech playback.
 - Live Activity item/chapter/status/progress display: TBD.
 - Live Activity pause/resume/skip back/skip forward buttons enqueue commands without opening the app: TBD.
 - Live Activity interjection mic opens the app and starts interjection recording: TBD.
@@ -49,7 +49,7 @@ Runtime profiles exercised: phone-tablet-online, lock-screen-widget
 ## Known Issues
 
 - Live Activity command buttons use `LiveActivityIntent`/`AudioPlaybackIntent` plus the shared App Group command queue. A real-device pass still needs to prove that the background audio process drains commands quickly while the phone is locked.
-- Control Center transport is not required for Gate 2. Current AVSpeechSynthesizer-backed playback may show Now Playing metadata without reliable Control Center command handling; robust Control Center support likely requires an AVPlayer-backed playback path.
+- Native media and immediate live speech have separate Now Playing owners. The device pass must prove that switching routes does not duplicate commands or replace the active owner's handlers; an automated build cannot establish this.
 - Real Lock Screen, Live Activity, background audio, route-change, and microphone-permission evidence requires a signed physical-device pass.
 
 Product-owner result:

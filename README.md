@@ -11,11 +11,12 @@ The active recovery boundary is:
 - iPhone/iPad on iOS 18+
 - article, podcast, Safari/share-sheet, and Obsidian intake
 - installed system voices through `AVSpeechSynthesizer`
-- native lock-screen transport through Now Playing
+- native lock-screen transport through Now Playing for podcasts, prepared audio, and immediate live speech
+- a Live Activity control surface while listening, including live-fallback speech
 - OpenAI Responses API with a user-supplied key and three model settings
 - manual AI Listening Maps and AI-handoff export
 
-Watch, Live Activities/widgets, Kokoro/MLX, bundled Piper, arbitrary AI providers, and dedicated car behavior are not part of the active release.
+Watch, standalone Home Screen widgets, Kokoro/MLX, bundled Piper, arbitrary AI providers, and dedicated car behavior are not part of the active release. The WidgetKit extension remains only because ActivityKit requires it to host the listening Live Activity.
 
 ## Repository Map
 

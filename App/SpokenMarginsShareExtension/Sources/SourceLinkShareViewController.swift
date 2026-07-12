@@ -10,9 +10,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
     private var didProcess = false
     private typealias ExtractionCompletion = @Sendable (Result<String, Error>) -> Void
     private let statusLabel = UILabel()
-    private let openButton = UIButton(type: .system)
     private let closeButton = UIButton(type: .system)
-    private var savedPayloadID: String?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -86,7 +84,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
             )
             do {
                 let store = try SourceLinkHandoffStore.appGroup()
-                savedPayloadID = try store.save(handoff)
+                _ = try store.save(handoff)
                 showSaved()
             } catch {
                 completeWithError(error)
@@ -112,22 +110,13 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         closeButton.addTarget(self, action: #selector(close), for: .touchUpInside)
         closeButton.isHidden = true
 
-        openButton.translatesAutoresizingMaskIntoConstraints = false
-        openButton.setTitle("Open Spoken Margins", for: .normal)
-        openButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
-        openButton.addTarget(self, action: #selector(openSpokenMargins), for: .touchUpInside)
-        openButton.isHidden = true
-
         view.addSubview(statusLabel)
-        view.addSubview(openButton)
         view.addSubview(closeButton)
         NSLayoutConstraint.activate([
             statusLabel.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
             statusLabel.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
             statusLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -20),
-            openButton.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 20),
-            openButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            closeButton.topAnchor.constraint(equalTo: openButton.bottomAnchor, constant: 12),
+            closeButton.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 20),
             closeButton.centerXAnchor.constraint(equalTo: view.centerXAnchor)
         ])
     }
@@ -142,23 +131,8 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
     }
 
     private func showSaved() {
-        updateStatus("Saved to Spoken Margins. Open the app to finish importing this link.")
-        openButton.isHidden = false
+        updateStatus("Saved to Spoken Margins. Open the app to import this link.")
         closeButton.isHidden = false
-    }
-
-    @objc private func openSpokenMargins() {
-        guard let savedPayloadID else { return }
-        let url = SourceLinkHandoffURL.url(forPayloadID: savedPayloadID)
-        extensionContext?.open(url) { [weak self] opened in
-            DispatchQueue.main.async {
-                if opened {
-                    self?.extensionContext?.completeRequest(returningItems: nil)
-                } else {
-                    self?.showError("Spoken Margins could not be opened. The saved link remains available.")
-                }
-            }
-        }
     }
 
     @objc private func close() {

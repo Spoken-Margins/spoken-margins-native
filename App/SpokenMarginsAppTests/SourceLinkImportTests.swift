@@ -167,7 +167,7 @@ final class SourceLinkImportTests: XCTestCase {
         #endif
     }
 
-    func testIncomingPayloadIsDeletedAfterUnsupportedImport() throws {
+    func testIncomingPayloadIsRetainedAfterUnsupportedImport() throws {
         let store = makePayloadStore()
         let handoff = SourceLinkHandoff(
             id: "source-link-unsupported",
@@ -193,33 +193,31 @@ final class SourceLinkImportTests: XCTestCase {
         model.handleIncomingURL(SourceLinkHandoffURL.url(forPayloadID: handoff.id))
 
         XCTAssertEqual(model.diagnostics["lastSourceLinkStatus"], LinkResolutionStatus.unsupported.rawValue)
-        XCTAssertEqual(model.diagnostics["lastSourceLinkPayloadCleanup"], "deleted_after_failed_import")
+        XCTAssertEqual(model.diagnostics["lastSourceLinkPayloadCleanup"], "retained_after_failed_import")
         XCTAssertEqual(
             model.lastError,
             "This looks like a Spotify-only episode. Spoken Margins could not find a public audio file for it yet."
         )
-        XCTAssertThrowsError(try store.handoff(payloadID: handoff.id)) { error in
-            XCTAssertEqual(error as? SourceLinkHandoffStoreError, .missingPayload(handoff.id))
-        }
+        XCTAssertEqual(try store.handoff(payloadID: handoff.id), handoff)
     }
 
-    func testForegroundActivationRoutesActivePlaybackWithoutImportingPendingSourceLinks() throws {
+    func testForegroundActivationImportsSavedSharePayloadIntoLibraryWithoutAutoplay() async throws {
         let store = makePayloadStore()
-        let staleHandoff = SourceLinkHandoff(
-            id: "source-link-stale",
-            inputURL: "https://open.spotify.com/episode/stale",
+        let sharedHandoff = SourceLinkHandoff(
+            id: "source-link-shared",
+            inputURL: "https://example.com/shared-episode",
             sourceSurface: "share_sheet",
-            startSession: true
+            startSession: false
         )
-        try store.save(staleHandoff)
+        try store.save(sharedHandoff)
         let resolver = CountingAppLinkResolver(result: LinkResolutionResult(
             requestId: "ignored",
             status: .playable,
-            originalLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "discovery"),
+            originalLink: SourceLink(url: sharedHandoff.inputURL, provider: "direct_audio", role: "discovery"),
             selectedCandidate: LinkResolutionCandidate(
-                sourceLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "audio_file"),
-                title: "Active Episode",
-                audioURL: "https://cdn.example.com/active.mp3",
+                sourceLink: SourceLink(url: sharedHandoff.inputURL, provider: "direct_audio", role: "audio_file"),
+                title: "Shared Episode",
+                audioURL: "https://cdn.example.com/shared.mp3",
                 confidence: 1
             )
         ))
@@ -229,15 +227,20 @@ final class SourceLinkImportTests: XCTestCase {
             audioPlaybackClient: NoopAudioPlaybackClient()
         )
         model.resetAndSeed()
-        XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/episode", sourceSurface: "paste"))
         model.screen = .home
 
         model.handleAppBecameActive()
+        await Task.yield()
+        await Task.yield()
 
-        XCTAssertEqual(model.screen, .playback)
-        XCTAssertEqual(model.diagnostics["foregroundRoute"], "active_playback")
+        XCTAssertEqual(model.screen, .item)
+        XCTAssertEqual(model.snapshot.status, .idle)
+        XCTAssertEqual(model.selectedItem.title, "Shared Episode")
+        XCTAssertTrue(model.libraryItems.contains { $0.title == "Shared Episode" })
         XCTAssertEqual(resolver.resolveCount, 1)
-        XCTAssertEqual(try store.handoff(payloadID: staleHandoff.id), staleHandoff)
+        XCTAssertThrowsError(try store.handoff(payloadID: sharedHandoff.id)) { error in
+            XCTAssertEqual(error as? SourceLinkHandoffStoreError, .missingPayload(sharedHandoff.id))
+        }
     }
 
     func testPendingSourceLinkHandoffImportsAndDeletesOnSuccess() async throws {

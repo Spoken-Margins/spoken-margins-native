@@ -354,6 +354,7 @@ final class Gate1AppModel: ObservableObject {
 
     func handleAppBecameActive() {
         syncPlaybackProgressForLifecycle()
+        importPendingSourceLinkHandoffs()
         guard snapshot.status.isPlaybackActive, screen == .home else { return }
         screen = .playback
         diagnostics["foregroundRoute"] = "active_playback"
@@ -609,7 +610,7 @@ final class Gate1AppModel: ObservableObject {
                         itemId: itemId
                     )
                 }
-                reportSuccess("Imported and started \(title).")
+                reportSuccess(startSession ? "Imported and started \(title)." : "Imported \(title).")
                 return true
             }
             screen = .home
@@ -654,7 +655,7 @@ final class Gate1AppModel: ObservableObject {
                         itemId: itemId
                     )
                 }
-                reportSuccess("Imported and started \(title).")
+                reportSuccess(startSession ? "Imported and started \(title)." : "Imported \(title).")
                 return true
             }
             screen = .home
@@ -1648,6 +1649,15 @@ final class Gate1AppModel: ObservableObject {
         performGate2CompactCommand(command, chapterId: chapterId, mediaTimeMs: mediaTimeMs, playbackRate: playbackRate, origin: origin)
     }
 
+    func handleGate2CompactURL(_ url: URL) {
+        guard let rawCommand = Gate2CompactCommandURL.command(from: url),
+              let command = CompactControlCommand(rawValue: rawCommand) else {
+            reportFailure("Unsupported compact control URL.")
+            return
+        }
+        dispatchGate2CompactCommand(command, origin: "compact_url")
+    }
+
     func importPendingSourceLinkHandoffs() {
         Task { @MainActor in
             await importPendingSourceLinkHandoffsAsync()
@@ -1676,8 +1686,7 @@ final class Gate1AppModel: ObservableObject {
                         try? handoffStore.deletePayload(payloadID: payloadID)
                         diagnostics["pendingSourceLinkPayload:\(payloadID)"] = "deleted_after_import"
                     } else {
-                        try? handoffStore.deletePayload(payloadID: payloadID)
-                        diagnostics["pendingSourceLinkPayload:\(payloadID)"] = "deleted_after_failed_import"
+                        diagnostics["pendingSourceLinkPayload:\(payloadID)"] = "retained_after_failed_import"
                     }
                 } catch SourceLinkHandoffStoreError.invalidPayload {
                     try? handoffStore.deletePayload(payloadID: payloadID)
@@ -1710,8 +1719,7 @@ final class Gate1AppModel: ObservableObject {
                                 try? handoffStore.deletePayload(payloadID: payloadID)
                                 diagnostics["lastSourceLinkPayloadCleanup"] = "deleted_after_import"
                             } else {
-                                try? handoffStore.deletePayload(payloadID: payloadID)
-                                diagnostics["lastSourceLinkPayloadCleanup"] = "deleted_after_failed_import"
+                                diagnostics["lastSourceLinkPayloadCleanup"] = "retained_after_failed_import"
                             }
                         }
                     } else {
@@ -1720,8 +1728,7 @@ final class Gate1AppModel: ObservableObject {
                             try? handoffStore.deletePayload(payloadID: payloadID)
                             diagnostics["lastSourceLinkPayloadCleanup"] = "deleted_after_import"
                         } else {
-                            try? handoffStore.deletePayload(payloadID: payloadID)
-                            diagnostics["lastSourceLinkPayloadCleanup"] = "deleted_after_failed_import"
+                            diagnostics["lastSourceLinkPayloadCleanup"] = "retained_after_failed_import"
                         }
                     }
                 } else if let handoff = SourceLinkHandoffURL.handoff(from: url) {
@@ -1758,7 +1765,30 @@ final class Gate1AppModel: ObservableObject {
             }
             return
         }
-        reportFailure("Unsupported Spoken Margins URL.")
+        handleGate2CompactURL(url)
+    }
+
+    @discardableResult
+    func handleGate2CompactApplicationCommand(_ command: String) -> Bool {
+        switch command {
+        case Gate2CompactApplicationCommand.summarizeInterjections:
+            guard gate2CompactSnapshot?.availableCommands.contains(.generateInterjectionSummary) == true else {
+                reportFailure("Summary is unavailable for the current compact surface state.")
+                return false
+            }
+            summarize()
+            return true
+        case Gate2CompactApplicationCommand.discussInterjections:
+            guard gate2CompactSnapshot?.availableCommands.contains(.submitFollowup) == true else {
+                reportFailure("Discuss is unavailable for the current compact surface state.")
+                return false
+            }
+            discuss(followUp: "")
+            return true
+        default:
+            reportFailure("Unsupported compact application command.")
+            return false
+        }
     }
 
     func saveProviderSettings() {
@@ -2319,6 +2349,8 @@ final class Gate1AppModel: ObservableObject {
                 skipUnit: "time_15s"
             ) { [weak self] command, origin, mediaTimeMs, playbackRate in
                 self?.dispatchGate2CompactCommand(command, mediaTimeMs: mediaTimeMs, playbackRate: playbackRate, origin: origin)
+            } applicationCommandHandler: { [weak self] command in
+                self?.handleGate2CompactApplicationCommand(command) ?? false
             }
             updateGate2CompactState()
             diagnostics.merge(gate2CompactControls.diagnostics(), uniquingKeysWith: { _, new in new })
