@@ -118,6 +118,9 @@ targets:
           NSExtensionAttributes:
             NSExtensionJavaScriptPreprocessingFile: SourceLinkPreprocessor
             NSExtensionActivationRule:
+              NSExtensionActivationSupportsAttachmentsWithMaxCount: 1
+              NSExtensionActivationSupportsFileWithMaxCount: 1
+              NSExtensionActivationSupportsMovieWithMaxCount: 1
               NSExtensionActivationSupportsText: true
               NSExtensionActivationSupportsWebPageWithMaxCount: 1
               NSExtensionActivationSupportsWebURLWithMaxCount: 1

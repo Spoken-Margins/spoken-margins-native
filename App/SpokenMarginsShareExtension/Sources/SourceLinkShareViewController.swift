@@ -2,6 +2,11 @@ import UIKit
 import UniformTypeIdentifiers
 
 final class SourceLinkShareViewController: UIViewController, @unchecked Sendable {
+    private struct ProviderCandidate: @unchecked Sendable {
+        let provider: NSItemProvider
+        let identifier: String
+    }
+
     private var didProcess = false
     private typealias ExtractionCompletion = @Sendable (Result<String, Error>) -> Void
     private let statusLabel = UILabel()
@@ -35,54 +40,39 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
             completion(.failure(SourceLinkShareError.noInput))
             return
         }
-        if let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.propertyList.identifier) }) {
-            provider.loadItem(forTypeIdentifier: UTType.propertyList.identifier, options: nil) { item, error in
-                if let error {
-                    completion(.failure(error))
-                    return
-                }
-                if let url = Self.urlFromPropertyList(item) {
-                    completion(.success(url.absoluteString))
-                } else {
-                    completion(.failure(SourceLinkShareError.noURL))
-                }
-            }
+        let preferredIdentifiers = [
+            UTType.url.identifier,
+            UTType.propertyList.identifier,
+            UTType.plainText.identifier,
+            UTType.text.identifier
+        ]
+        let candidates = providers.flatMap { provider -> [ProviderCandidate] in
+            let identifiers = preferredIdentifiers.filter(provider.hasItemConformingToTypeIdentifier)
+                + provider.registeredTypeIdentifiers.filter { !preferredIdentifiers.contains($0) }
+            return identifiers.map { ProviderCandidate(provider: provider, identifier: $0) }
+        }
+        loadFirstSharedURL(candidates, index: 0, completion: completion)
+    }
+
+    private func loadFirstSharedURL(
+        _ candidates: [ProviderCandidate],
+        index: Int,
+        completion: @escaping ExtractionCompletion
+    ) {
+        guard index < candidates.count else {
+            completion(.failure(SourceLinkShareError.noURL))
             return
         }
-        if let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.url.identifier) }) {
-            provider.loadItem(forTypeIdentifier: UTType.url.identifier, options: nil) { item, error in
-                if let error {
-                    completion(.failure(error))
-                    return
-                }
-                if let url = item as? URL {
-                    completion(.success(url.absoluteString))
-                } else if let text = item as? String, let url = Self.firstURL(in: text) {
-                    completion(.success(url.absoluteString))
-                } else {
-                    completion(.failure(SourceLinkShareError.noURL))
+        let candidate = candidates[index]
+        candidate.provider.loadItem(forTypeIdentifier: candidate.identifier, options: nil) { [weak self] item, _ in
+            if let url = Self.urlFromSharedItem(item) {
+                completion(.success(url.absoluteString))
+            } else {
+                DispatchQueue.main.async {
+                    self?.loadFirstSharedURL(candidates, index: index + 1, completion: completion)
                 }
             }
-            return
         }
-        let textIdentifiers = [UTType.plainText.identifier, UTType.text.identifier]
-        for identifier in textIdentifiers {
-            if let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(identifier) }) {
-                provider.loadItem(forTypeIdentifier: identifier, options: nil) { item, error in
-                    if let error {
-                        completion(.failure(error))
-                        return
-                    }
-                    if let text = item as? String, let url = Self.firstURL(in: text) {
-                        completion(.success(url.absoluteString))
-                    } else {
-                        completion(.failure(SourceLinkShareError.noURL))
-                    }
-                }
-                return
-            }
-        }
-        completion(.failure(SourceLinkShareError.noURL))
     }
 
     private func handle(_ result: Result<String, Error>) {
@@ -204,6 +194,30 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
             if let value = candidate as? String, let url = URL(string: value) {
                 return url
             }
+        }
+        return nil
+    }
+
+    nonisolated private static func urlFromSharedItem(_ item: Any?) -> URL? {
+        if let url = item as? URL {
+            return url
+        }
+        if let text = item as? String {
+            return firstURL(in: text) ?? URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        if let data = item as? Data,
+           let text = String(data: data, encoding: .utf8),
+           let url = firstURL(in: text) {
+            return url
+        }
+        if let url = urlFromPropertyList(item) {
+            return url
+        }
+        if let values = item as? [Any] {
+            return values.lazy.compactMap(urlFromSharedItem).first
+        }
+        if let dictionary = item as? NSDictionary {
+            return dictionary.allValues.lazy.compactMap(urlFromSharedItem).first
         }
         return nil
     }

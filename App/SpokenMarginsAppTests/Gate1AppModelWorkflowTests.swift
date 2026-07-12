@@ -145,6 +145,38 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(UserDefaults.standard.string(forKey: "ttsMode"), "systemImmediate")
     }
 
+    func testObsidianImportImmediatelyLoadsHeadingBasedListeningMap() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "spoken-margins-markdown-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appending(path: "Structured Article.md")
+        try """
+        ---
+        title: "Structured Article"
+        ---
+        ### Key takeaways
+
+        Opening content.
+
+        ### 1\\. First section
+
+        First body.
+
+        ### 2\\. Second section
+
+        Second body.
+        """.write(to: file, atomically: true, encoding: .utf8)
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+
+        model.importObsidianMarkdownFiles(urls: [file])
+
+        XCTAssertEqual(model.selectedItem.title, "Structured Article")
+        XCTAssertEqual(model.selectedItem.chapters.map(\.title), ["Key takeaways", "1. First section", "2. Second section"])
+        XCTAssertEqual(model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.status, "ready")
+    }
+
     private func waitFor(
         _ description: String,
         timeoutNanoseconds: UInt64 = 1_000_000_000,

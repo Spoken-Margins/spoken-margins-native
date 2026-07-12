@@ -68,6 +68,133 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertFalse(parsed.text.contains("https://"))
     }
 
+    func testObsidianHeadingsPrebuildDeterministicListeningMap() throws {
+        let markdown = """
+        ---
+        title: "5 ways HSAs can help with your retirement"
+        source: "https://example.com/hsa"
+        ---
+        ### Key takeaways
+
+        HSAs can support long-term medical savings.
+
+        ### 1\\. Understand the triple tax advantage
+
+        Contributions and qualified withdrawals receive favorable treatment.
+
+        ## Tax-deferred growth versus HSAs
+
+        This section compares account outcomes.
+
+        ### 2\\. Earmark savings for health care
+
+        Set aside assets for future costs.
+        """
+
+        let parsed = try ObsidianMarkdownParser.parse(fileName: "hsa.md", contents: markdown)
+        let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "item-hsa"))
+
+        XCTAssertEqual(parsed.headings.map(\.title), [
+            "Key takeaways",
+            "1. Understand the triple tax advantage",
+            "Tax-deferred growth versus HSAs",
+            "2. Earmark savings for health care"
+        ])
+        XCTAssertEqual(map.chapters.map(\.title), parsed.headings.map(\.title))
+        XCTAssertEqual(map.chapters.first?.startChar, 0)
+        XCTAssertEqual(map.chapters.last?.endChar, parsed.text.count)
+        XCTAssertTrue(zip(map.chapters, map.chapters.dropFirst()).allSatisfy { $0.endChar == $1.startChar })
+    }
+
+    func testDeterministicListeningMapStopsAtUsefulShallowHeadingDepth() throws {
+        let filler = Array(repeating: "detail", count: 60).joined(separator: " ")
+        var markdown = "---\ntitle: Header Happy\n---\n"
+        for major in 1...6 {
+            markdown += "\n## Major \(major)\n"
+            for minor in 1...5 {
+                markdown += "\n### Minor \(major).\(minor)\n\n\(filler)\n"
+            }
+        }
+
+        let parsed = try ObsidianMarkdownParser.parse(fileName: "header-happy.md", contents: markdown)
+        let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "item-header-happy"))
+
+        XCTAssertEqual(map.chapters.map(\.title), (1...6).map { "Major \($0)" })
+        XCTAssertLessThanOrEqual(map.chapters.count, 12)
+    }
+
+    func testHSAStyleMapKeepsNumberedSectionsAndMergesShortCallouts() throws {
+        func words(_ count: Int) -> String {
+            Array(repeating: "content", count: count).joined(separator: " ")
+        }
+        let markdown = """
+        ---
+        title: 5 ways HSAs can help with your retirement
+        ---
+        ### Key takeaways
+        \(words(285))
+        ### 1\\. Understand the triple tax advantage and how HSAs work
+        \(words(423))
+        ### 2\\. Earmark savings just for health care
+        \(words(298))
+        ### 3\\. Consider putting your HSA dollars to work by investing them
+        \(words(346))
+        ## Tax-deferred growth versus HSAs
+        \(words(46))
+        ### 4\\. Plan to use your HSA in retirement
+        \(words(267))
+        ### 5\\. Let HSAs play a role in your estate plan
+        \(words(259))
+        ### Plan ahead
+        \(words(60))
+        """
+
+        let parsed = try ObsidianMarkdownParser.parse(fileName: "hsa.md", contents: markdown)
+        let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "item-hsa-realistic"))
+
+        XCTAssertEqual(map.chapters.map(\.title), [
+            "Key takeaways",
+            "1. Understand the triple tax advantage and how HSAs work",
+            "2. Earmark savings just for health care",
+            "3. Consider putting your HSA dollars to work by investing them",
+            "4. Plan to use your HSA in retirement",
+            "5. Let HSAs play a role in your estate plan"
+        ])
+    }
+
+    func testDeterministicListeningMapMergesHeaderExplosionWithinHardCap() throws {
+        let filler = Array(repeating: "brief", count: 20).joined(separator: " ")
+        var markdown = "---\ntitle: Deep Outline\n---\n"
+        for major in 1...2 {
+            markdown += "\n## Group \(major)\n\n\(filler)\n"
+            for minor in 1...12 {
+                markdown += "\n### Detail \(major).\(minor)\n\n\(filler)\n"
+            }
+        }
+
+        let parsed = try ObsidianMarkdownParser.parse(fileName: "deep-outline.md", contents: markdown)
+        let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "item-deep-outline"))
+
+        XCTAssertGreaterThanOrEqual(map.chapters.count, 5)
+        XCTAssertLessThanOrEqual(map.chapters.count, 12)
+        XCTAssertTrue(zip(map.chapters, map.chapters.dropFirst()).allSatisfy { $0.endChar == $1.startChar })
+        XCTAssertEqual(map.chapters.first?.startChar, 0)
+        XCTAssertEqual(map.chapters.last?.endChar, parsed.text.count)
+    }
+
+    func testDeterministicListeningMapSplitsVeryLongSectionsAtNaturalBoundaries() throws {
+        let paragraph = Array(repeating: "substantive", count: 300).joined(separator: " ") + "."
+        let markdown = "---\ntitle: Long Read\n---\n\n## Main argument\n\n" + Array(repeating: paragraph, count: 8).joined(separator: "\n\n")
+
+        let parsed = try ObsidianMarkdownParser.parse(fileName: "long-read.md", contents: markdown)
+        let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "item-long-read"))
+
+        XCTAssertEqual(map.chapters.count, 2)
+        XCTAssertEqual(map.chapters.first?.title, "Main argument")
+        XCTAssertEqual(map.chapters.last?.title, "Main argument — continued")
+        XCTAssertEqual(map.chapters.first?.endChar, map.chapters.last?.startChar)
+    }
+
     func testCapabilityGateRejectsUnsupportedCommand() throws {
         let profile = RuntimeCapabilityProfile(
             id: "lock-screen-widget",

@@ -427,15 +427,20 @@ final class Gate1AppModel: ObservableObject {
                 do {
                     let raw = try String(contentsOf: url, encoding: .utf8)
                     let parsed = try ObsidianMarkdownParser.parse(fileName: url.lastPathComponent, contents: raw)
+                    let itemId = obsidianItemId(fileName: url.lastPathComponent, index: index)
+                    let deterministicMap = parsed.deterministicListeningMap(itemId: itemId)
                     let item = Item(
-                        id: obsidianItemId(fileName: url.lastPathComponent, index: index),
+                        id: itemId,
                         title: parsed.title,
                         mediaType: "text",
                         text: parsed.text,
                         externalReference: parsed.source ?? url.lastPathComponent,
-                        status: "needs_listening_map"
+                        status: deterministicMap == nil ? "needs_listening_map" : "ready"
                     )
                     try store.saveItem(item)
+                    if let deterministicMap {
+                        try store.saveListeningMap(deterministicMap)
+                    }
                     imported.append(item)
                 } catch {
                     failures.append("\(url.lastPathComponent): \(error)")

@@ -123,7 +123,9 @@ private final class Gate2NowPlayingController {
     func publish(_ snapshot: CompactControlSnapshot) {
         #if canImport(MediaPlayer)
         guard snapshot.compactSurfaceReady, snapshot.sessionId != nil else {
-            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            let infoCenter = MPNowPlayingInfoCenter.default()
+            infoCenter.nowPlayingInfo = nil
+            infoCenter.playbackState = .stopped
             let center = MPRemoteCommandCenter.shared()
             center.playCommand.isEnabled = false
             center.pauseCommand.isEnabled = false
@@ -160,7 +162,16 @@ private final class Gate2NowPlayingController {
         if let targetId = snapshot.targetId, let url = URL(string: targetId), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
             info[MPNowPlayingInfoPropertyAssetURL] = url
         }
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        let infoCenter = MPNowPlayingInfoCenter.default()
+        infoCenter.nowPlayingInfo = info
+        switch snapshot.status {
+        case .starting, .playing:
+            infoCenter.playbackState = .playing
+        case .paused, .recording:
+            infoCenter.playbackState = .paused
+        case .idle, .failed:
+            infoCenter.playbackState = .stopped
+        }
         let center = MPRemoteCommandCenter.shared()
         let availability = Gate2NowPlayingCommandAvailability(snapshot: snapshot)
         center.playCommand.isEnabled = availability.canPlay
