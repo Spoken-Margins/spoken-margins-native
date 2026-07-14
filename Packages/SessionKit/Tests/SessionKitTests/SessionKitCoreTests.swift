@@ -2697,6 +2697,99 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(audio.playedTargets.last, "item-browser-readable")
     }
 
+    func testMarkdownBrowserImportCreatesDeterministicListeningMap() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "browser-markdown",
+            displayName: "Browser Markdown",
+            capabilities: ["sync": ["browser_session_handoff"]]
+        )
+        let repo = InMemorySessionRepository()
+        let engine = SessionEngine(profile: profile, repository: repo)
+        let sectionBody = String(repeating: "Useful retirement guidance and supporting detail. ", count: 80)
+        let markdown = """
+        # Retirement Guide
+        ### First strategy
+        \(sectionBody)
+        ### Second strategy
+        \(sectionBody)
+        ### Third strategy
+        \(sectionBody)
+        ### Fourth strategy
+        \(sectionBody)
+        ### Fifth strategy
+        \(sectionBody)
+        """
+        let handoff = BrowserTextHandoff(
+            itemId: "item-browser-markdown",
+            captureMode: .readablePage,
+            source: BrowserTextSource(url: "https://example.com/retirement", title: "Retirement Guide"),
+            text: markdown,
+            contentFormat: .markdown
+        )
+
+        let snapshot = try engine.importBrowserText(handoff)
+        let item = try repo.loadItem(id: "item-browser-markdown")
+        let map = try XCTUnwrap(repo.loadListeningMap(itemId: item.id))
+
+        XCTAssertEqual(snapshot.itemId, item.id)
+        XCTAssertEqual(item.status, "ready")
+        XCTAssertFalse(item.text?.contains("###") == true)
+        XCTAssertEqual(map.chapters.first?.title, "First strategy")
+        XCTAssertGreaterThanOrEqual(map.chapters.count, 5)
+    }
+
+    func testBackgroundBrowserImportDoesNotReplaceActiveSession() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "browser-background",
+            displayName: "Browser Background",
+            capabilities: [
+                "sync": ["browser_session_handoff"],
+                "playback": ["realtime_tts"]
+            ]
+        )
+        let active = Item(id: "item-active", title: "Active", mediaType: "text", text: "Keep listening.", externalReference: nil, status: "ready")
+        let repo = InMemorySessionRepository(items: [active.id: active])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: RecordingAudioClient())
+        _ = try engine.startSession(itemId: active.id)
+        let snapshotBeforeImport = engine.snapshot
+
+        let imported = try engine.importBrowserTextInBackground(BrowserTextHandoff(
+            itemId: "item-shared-background",
+            captureMode: .plainTextFile,
+            source: BrowserTextSource(url: "file:///shared.txt", title: "Shared"),
+            text: "Shared while listening.",
+            contentFormat: .plainText
+        ))
+
+        XCTAssertEqual(imported.id, "item-shared-background")
+        XCTAssertEqual(engine.snapshot, snapshotBeforeImport)
+        XCTAssertEqual(engine.currentItem?.id, active.id)
+        XCTAssertEqual(try repo.loadItem(id: imported.id).title, "Shared")
+    }
+
+    func testPlaybackProgressReconcilesSystemInitiatedPause() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "physical-pause",
+            displayName: "Physical Pause",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"]
+            ]
+        )
+        let item = Item(id: "item-physical-pause", title: "Pause", mediaType: "text", text: "Keep this position.", externalReference: nil, status: "ready")
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let audio = RecordingAudioClient()
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+        _ = try engine.startSession(itemId: item.id)
+        audio.transportState = .paused
+
+        let snapshot = try engine.syncPlaybackProgress()
+
+        XCTAssertEqual(snapshot.status, .paused)
+        XCTAssertEqual(snapshot.itemId, item.id)
+        XCTAssertEqual(snapshot.phase, .itemPlayback)
+    }
+
     func testBrowserTextImportRequiresSyncImportCapability() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
@@ -2736,6 +2829,7 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     var playbackRate = 1.0
     var mediaContexts: [PlaybackMediaContext?] = []
     var startStatus: PlaybackStartStatus = .confirmed
+    var transportState: PlaybackTransportState?
 
     func configureMediaContext(_ context: PlaybackMediaContext?) throws {
         mediaContexts.append(context)
@@ -2826,6 +2920,10 @@ private final class RecordingAudioClient: AudioPlaybackClient {
 
     func playbackStartStatus(targetId: String) -> PlaybackStartStatus {
         startStatus
+    }
+
+    func playbackTransportState(targetId: String) -> PlaybackTransportState? {
+        transportState
     }
 }
 

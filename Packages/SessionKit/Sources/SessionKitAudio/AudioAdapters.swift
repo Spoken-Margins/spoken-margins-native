@@ -1006,6 +1006,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private var player: AVPlayer?
     private var completionObserver: NSObjectProtocol?
     private var timeObserverToken: Any?
+    private var playerStateObservation: NSKeyValueObservation?
     #endif
     private let remoteCommandHandler: (@Sendable (CompactControlCommand, Int?, Double?) -> Void)?
     private var mediaContext: PlaybackMediaContext?
@@ -1026,6 +1027,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     }
 
     deinit {
+        removePlayerStateObserver()
         removeCompletionObserver()
         removeTimeObserver()
         removeRemoteCommandHandlers()
@@ -1057,12 +1059,14 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             throw SessionKitError.invalidCommandForState("stream_audio_invalid_url:\(targetId)")
         }
         if activeTargetId != targetId || player == nil {
+            removePlayerStateObserver()
             removeCompletionObserver()
             removeTimeObserver()
             let item = AVPlayerItem(url: url)
             player = AVPlayer(playerItem: item)
             activeTargetId = targetId
             observeCompletion(for: item)
+            installPlayerStateObserver()
             installTimeObserver()
         }
         #if os(iOS) || os(watchOS)
@@ -1170,6 +1174,29 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         #endif
     }
 
+    public func playbackTransportState(targetId: String) -> PlaybackTransportState? {
+        guard activeTargetId == targetId else { return .stopped }
+        #if canImport(AVFoundation)
+        if player?.currentItem?.error != nil {
+            return .failed
+        }
+        switch player?.timeControlStatus {
+        case .playing:
+            return .playing
+        case .waitingToPlayAtSpecifiedRate:
+            return .waiting
+        case .paused:
+            return playbackComplete ? .stopped : .paused
+        case nil:
+            return .stopped
+        @unknown default:
+            return nil
+        }
+        #else
+        return paused ? .paused : .playing
+        #endif
+    }
+
     public func pause() throws {
         #if canImport(AVFoundation)
         player?.pause()
@@ -1181,6 +1208,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     public func stop() throws {
         #if canImport(AVFoundation)
         player?.pause()
+        removePlayerStateObserver()
         player = nil
         removeCompletionObserver()
         removeTimeObserver()
@@ -1245,12 +1273,38 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         }
     }
 
+    private func installPlayerStateObserver() {
+        playerStateObservation?.invalidate()
+        playerStateObservation = player?.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] player, _ in
+            guard let self else { return }
+            switch player.timeControlStatus {
+            case .playing:
+                self.paused = false
+                self.publishNowPlaying(isPlaying: true)
+            case .paused:
+                self.paused = true
+                self.publishNowPlaying(isPlaying: false)
+            case .waitingToPlayAtSpecifiedRate:
+                self.paused = false
+                self.publishNowPlaying(isPlaying: true)
+            @unknown default:
+                break
+            }
+        }
+    }
+
+    private func removePlayerStateObserver() {
+        playerStateObservation?.invalidate()
+        playerStateObservation = nil
+    }
+
     private func removeTimeObserver() {
         guard let timeObserverToken else { return }
         player?.removeTimeObserver(timeObserverToken)
         self.timeObserverToken = nil
     }
     #else
+    private func removePlayerStateObserver() {}
     private func removeCompletionObserver() {}
     private func removeTimeObserver() {}
     #endif
@@ -1507,6 +1561,18 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
                 return mediaStatus
             }
             return speech.playbackStartStatus(targetId: targetId)
+        }
+    }
+
+    public func playbackTransportState(targetId: String) -> PlaybackTransportState? {
+        switch activeRoute {
+        case .speech:
+            return speech.playbackTransportState(targetId: targetId)
+        case .media:
+            return media.playbackTransportState(targetId: targetId)
+        case nil:
+            return media.playbackTransportState(targetId: targetId)
+                ?? speech.playbackTransportState(targetId: targetId)
         }
     }
 

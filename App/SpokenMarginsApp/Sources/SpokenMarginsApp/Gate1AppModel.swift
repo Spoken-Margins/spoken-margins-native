@@ -68,6 +68,20 @@ struct QuickAccessFile: Identifiable, Hashable {
     let modifiedAtDescription: String
 }
 
+struct ImportInboxEntry: Identifiable, Hashable {
+    enum Kind: String, Hashable {
+        case sourceLink
+        case browserText
+    }
+
+    let id: String
+    let payloadID: String
+    let kind: Kind
+    let title: String
+    let source: String
+    let reason: String
+}
+
 private enum AppSpeechPreviewMode {
     case spokenContent
     case appVoice(voiceIdentifier: String?, rate: Float)
@@ -117,6 +131,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var pastedAssistantResponse = ""
     @Published var quickAccessFolderName = UserDefaults.standard.string(forKey: "quickAccessFolderName") ?? "No folder selected"
     @Published var quickAccessRecentFiles: [QuickAccessFile] = []
+    @Published var importInbox: [ImportInboxEntry] = []
     @Published var selectedProfileId = "phone-tablet-online"
     @Published var importTitle = "Gate 1 Article With Links"
     @Published var importText = "Read the background at https://example.com/long/url before continuing. A labeled [reference](https://example.com/essay) should stay readable while raw URLs are skipped."
@@ -167,6 +182,7 @@ final class Gate1AppModel: ObservableObject {
     private let streamingSpeechQueue = StreamingSpeechQueue()
     private let sourceLinkResolver: LinkResolutionClient?
     private let sourceLinkHandoffStore: SourceLinkHandoffStore?
+    private let browserTextHandoffStore: Gate5BrowserTextHandoffStore?
     private let audioPlaybackClientOverride: AudioPlaybackClient?
     private let recordingClientOverride: RecordingClient?
     private let forcePreparedTextGate: Bool
@@ -227,6 +243,7 @@ final class Gate1AppModel: ObservableObject {
     init(
         sourceLinkResolver: LinkResolutionClient? = nil,
         sourceLinkHandoffStore: SourceLinkHandoffStore? = nil,
+        browserTextHandoffStore: Gate5BrowserTextHandoffStore? = nil,
         audioPlaybackClient: AudioPlaybackClient? = nil,
         recordingClient: RecordingClient? = nil,
         forcePreparedTextGate: Bool = false,
@@ -235,6 +252,7 @@ final class Gate1AppModel: ObservableObject {
     ) {
         self.sourceLinkResolver = sourceLinkResolver
         self.sourceLinkHandoffStore = sourceLinkHandoffStore
+        self.browserTextHandoffStore = browserTextHandoffStore
         self.audioPlaybackClientOverride = audioPlaybackClient
         self.recordingClientOverride = recordingClient
         self.forcePreparedTextGate = forcePreparedTextGate
@@ -669,6 +687,63 @@ final class Gate1AppModel: ObservableObject {
             reportFailure(error, context: "Source link import failed")
             return false
         }
+    }
+
+    private func importSourceLinkInBackground(_ handoff: SourceLinkHandoff) async throws {
+        let trimmed = handoff.inputURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed),
+              let scheme = url.scheme?.lowercased(),
+              ["http", "https"].contains(scheme) else {
+            throw SessionKitError.persistenceFailed("This share does not contain a valid podcast, RSS, or audio URL.")
+        }
+        let request = LinkResolutionRequest(
+            id: handoff.id,
+            inputURL: url.absoluteString,
+            sourceSurface: handoff.sourceSurface,
+            createdAt: Date()
+        )
+        let result: LinkResolutionResult
+        if let sourceLinkResolver {
+            result = try sourceLinkResolver.resolve(request)
+        } else {
+            result = try await PublicPodcastLinkResolver().resolveAsync(request)
+        }
+        guard result.status == .playable else {
+            let provider = result.originalLink.provider ?? result.candidates.first?.sourceLink.provider
+            throw SessionKitError.persistenceFailed(sourceLinkFailureMessage(
+                status: result.status.rawValue,
+                reason: result.failureReason,
+                provider: provider
+            ))
+        }
+
+        let store = try requireStore()
+        if engine == nil {
+            installEngine(try makeEngine(store: store))
+        }
+        guard let engine,
+              let item = try engine.importResolvedSourceLinkInBackground(request, result: result) else {
+            throw SessionKitError.persistenceFailed("The shared podcast did not expose playable audio.")
+        }
+        libraryItems = try loadLibraryRows(store: store)
+        diagnostics["lastBackgroundSourceLinkImport"] = item.id
+        scheduleSourceTranscriptImportIfAvailable(
+            result.selectedCandidate?.transcriptLinks ?? result.candidates.flatMap(\.transcriptLinks),
+            itemId: item.id
+        )
+    }
+
+    private func importBrowserTextInBackground(_ handoff: BrowserTextHandoff) throws {
+        let store = try requireStore()
+        if engine == nil {
+            installEngine(try makeEngine(store: store))
+        }
+        guard let engine else {
+            throw SessionKitError.persistenceFailed("Browser text importer is unavailable.")
+        }
+        let item = try engine.importBrowserTextInBackground(handoff)
+        libraryItems = try loadLibraryRows(store: store)
+        diagnostics["lastBackgroundBrowserTextImport"] = item.id
     }
 
     func configureQuickAccessFolder(url: URL) {
@@ -1591,7 +1666,69 @@ final class Gate1AppModel: ObservableObject {
             diagnostics.merge(gate2CompactControls.diagnostics(), uniquingKeysWith: { _, new in new })
             settingsValueChanged()
             diagnostics["streamingSpeechPending"] = "\(streamingSpeechQueue.pendingCount)"
+            refreshImportInbox()
             reportSuccess("Diagnostics refreshed.")
+        }
+    }
+
+    func refreshImportInbox() {
+        var entries: [ImportInboxEntry] = []
+        do {
+            for failed in try resolvedSourceLinkHandoffStore().failedHandoffs() {
+                entries.append(ImportInboxEntry(
+                    id: "source:\(failed.id)",
+                    payloadID: failed.id,
+                    kind: .sourceLink,
+                    title: "Podcast or audio link",
+                    source: failed.handoff.inputURL,
+                    reason: failed.reason
+                ))
+            }
+        } catch {
+            diagnostics["sourceLinkImportInbox"] = "unavailable:\(error.localizedDescription)"
+        }
+        do {
+            for failed in try resolvedBrowserTextHandoffStore().failedHandoffs() {
+                entries.append(ImportInboxEntry(
+                    id: "text:\(failed.id)",
+                    payloadID: failed.id,
+                    kind: .browserText,
+                    title: failed.handoff.source.title,
+                    source: failed.handoff.source.url,
+                    reason: failed.reason
+                ))
+            }
+        } catch {
+            diagnostics["browserTextImportInbox"] = "unavailable:\(error.localizedDescription)"
+        }
+        importInbox = entries
+    }
+
+    func retryImportInboxEntry(_ entry: ImportInboxEntry) {
+        do {
+            switch entry.kind {
+            case .sourceLink:
+                try resolvedSourceLinkHandoffStore().retryFailed(payloadID: entry.payloadID)
+            case .browserText:
+                try resolvedBrowserTextHandoffStore().retryFailed(payloadID: entry.payloadID)
+            }
+            importPendingSourceLinkHandoffs()
+        } catch {
+            reportFailure(error, context: "Import retry failed")
+        }
+    }
+
+    func deleteImportInboxEntry(_ entry: ImportInboxEntry) {
+        do {
+            switch entry.kind {
+            case .sourceLink:
+                try resolvedSourceLinkHandoffStore().deleteFailed(payloadID: entry.payloadID)
+            case .browserText:
+                try resolvedBrowserTextHandoffStore().deleteFailed(payloadID: entry.payloadID)
+            }
+            refreshImportInbox()
+        } catch {
+            reportFailure(error, context: "Import removal failed")
         }
     }
 
@@ -1660,45 +1797,64 @@ final class Gate1AppModel: ObservableObject {
 
     func importPendingSourceLinkHandoffs() {
         Task { @MainActor in
-            await importPendingSourceLinkHandoffsAsync()
+            await importPendingHandoffsAsync()
         }
     }
 
-    private func importPendingSourceLinkHandoffsAsync() async {
+    private func importPendingHandoffsAsync() async {
         guard !isImportingPendingSourceLinkHandoffs else { return }
         isImportingPendingSourceLinkHandoffs = true
-        defer { isImportingPendingSourceLinkHandoffs = false }
+        defer {
+            isImportingPendingSourceLinkHandoffs = false
+            refreshImportInbox()
+        }
+
         do {
             let handoffStore = try resolvedSourceLinkHandoffStore()
             let payloadIDs = try handoffStore.pendingPayloadIDs()
-            guard !payloadIDs.isEmpty else { return }
             diagnostics["pendingSourceLinkPayloads"] = "\(payloadIDs.count)"
             for payloadID in payloadIDs {
                 do {
                     let handoff = try handoffStore.handoff(payloadID: payloadID)
-                    let imported: Bool
-                    if sourceLinkResolver == nil {
-                        imported = await importSourceLinkAsync(handoff)
-                    } else {
-                        imported = importSourceLink(handoff)
-                    }
-                    if imported {
-                        try? handoffStore.deletePayload(payloadID: payloadID)
-                        diagnostics["pendingSourceLinkPayload:\(payloadID)"] = "deleted_after_import"
-                    } else {
-                        diagnostics["pendingSourceLinkPayload:\(payloadID)"] = "retained_after_failed_import"
-                    }
+                    try await importSourceLinkInBackground(handoff)
+                    try handoffStore.deletePayload(payloadID: payloadID)
+                    diagnostics["pendingSourceLinkPayload:\(payloadID)"] = "imported"
                 } catch SourceLinkHandoffStoreError.invalidPayload {
                     try? handoffStore.deletePayload(payloadID: payloadID)
                     diagnostics["pendingSourceLinkPayload:\(payloadID)"] = "deleted_invalid_payload"
                 } catch SourceLinkHandoffStoreError.missingPayload {
                     diagnostics["pendingSourceLinkPayload:\(payloadID)"] = "missing"
                 } catch {
-                    diagnostics["pendingSourceLinkPayload:\(payloadID)"] = "retained_error:\(error.localizedDescription)"
+                    try? handoffStore.quarantine(payloadID: payloadID, reason: error.localizedDescription)
+                    diagnostics["pendingSourceLinkPayload:\(payloadID)"] = "quarantined:\(error.localizedDescription)"
                 }
             }
         } catch {
             diagnostics["pendingSourceLinkImport"] = "unavailable:\(error.localizedDescription)"
+        }
+
+        do {
+            let handoffStore = try resolvedBrowserTextHandoffStore()
+            let payloadIDs = try handoffStore.pendingPayloadIDs()
+            diagnostics["pendingBrowserTextPayloads"] = "\(payloadIDs.count)"
+            for payloadID in payloadIDs {
+                do {
+                    let handoff = try handoffStore.handoff(payloadID: payloadID)
+                    try importBrowserTextInBackground(handoff)
+                    try handoffStore.deletePayload(payloadID: payloadID)
+                    diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "imported"
+                } catch Gate5BrowserTextHandoffStoreError.invalidPayload {
+                    try? handoffStore.deletePayload(payloadID: payloadID)
+                    diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "deleted_invalid_payload"
+                } catch Gate5BrowserTextHandoffStoreError.missingPayload {
+                    diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "missing"
+                } catch {
+                    try? handoffStore.quarantine(payloadID: payloadID, reason: error.localizedDescription)
+                    diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "quarantined:\(error.localizedDescription)"
+                }
+            }
+        } catch {
+            diagnostics["pendingBrowserTextImport"] = "unavailable:\(error.localizedDescription)"
         }
     }
 
@@ -1711,26 +1867,9 @@ final class Gate1AppModel: ObservableObject {
             do {
                 if let payloadID = SourceLinkHandoffURL.payloadID(from: url) {
                     let handoffStore = try resolvedSourceLinkHandoffStore()
-                    let handoff = try SourceLinkHandoffURL.handoff(from: url, store: handoffStore)
-                    if sourceLinkResolver == nil {
-                        Task { @MainActor in
-                            let imported = await importSourceLinkAsync(handoff)
-                            if imported {
-                                try? handoffStore.deletePayload(payloadID: payloadID)
-                                diagnostics["lastSourceLinkPayloadCleanup"] = "deleted_after_import"
-                            } else {
-                                diagnostics["lastSourceLinkPayloadCleanup"] = "retained_after_failed_import"
-                            }
-                        }
-                    } else {
-                        let imported = importSourceLink(handoff)
-                        if imported {
-                            try? handoffStore.deletePayload(payloadID: payloadID)
-                            diagnostics["lastSourceLinkPayloadCleanup"] = "deleted_after_import"
-                        } else {
-                            diagnostics["lastSourceLinkPayloadCleanup"] = "retained_after_failed_import"
-                        }
-                    }
+                    _ = try SourceLinkHandoffURL.handoff(from: url, store: handoffStore)
+                    diagnostics["lastSourceLinkPayloadCleanup"] = "queued:\(payloadID)"
+                    importPendingSourceLinkHandoffs()
                 } else if let handoff = SourceLinkHandoffURL.handoff(from: url) {
                     if sourceLinkResolver == nil {
                         Task { @MainActor in
@@ -1742,6 +1881,8 @@ final class Gate1AppModel: ObservableObject {
                 } else {
                     reportFailure("Unsupported source link URL.")
                 }
+            } catch SourceLinkHandoffStoreError.missingPayload(let payloadID) {
+                diagnostics["lastSourceLinkPayloadCleanup"] = "already_consumed:\(payloadID)"
             } catch {
                 reportFailure(error, context: "Source link import failed")
             }
@@ -1750,9 +1891,13 @@ final class Gate1AppModel: ObservableObject {
         guard !Gate5BrowserTextHandoffURL.isBrowserTextURL(url) else {
             do {
                 if let payloadID = Gate5BrowserTextHandoffURL.payloadID(from: url) {
-                    let handoffStore = try Gate5BrowserTextHandoffStore.appGroup()
+                    let handoffStore = try resolvedBrowserTextHandoffStore()
                     let handoff = try Gate5BrowserTextHandoffURL.handoff(from: url, store: handoffStore)
-                    if importBrowserText(handoff) {
+                    if screen == .playback {
+                        try importBrowserTextInBackground(handoff)
+                        try? handoffStore.deletePayload(payloadID: payloadID)
+                        diagnostics["lastBrowserTextPayloadCleanup"] = "imported_without_session_replacement"
+                    } else if importBrowserText(handoff) {
                         try? handoffStore.deletePayload(payloadID: payloadID)
                     }
                 } else if let handoff = Gate5BrowserTextHandoffURL.handoff(from: url) {
@@ -1760,6 +1905,8 @@ final class Gate1AppModel: ObservableObject {
                 } else {
                     reportFailure("Unsupported browser text URL.")
                 }
+            } catch Gate5BrowserTextHandoffStoreError.missingPayload(let payloadID) {
+                diagnostics["lastBrowserTextPayloadCleanup"] = "already_consumed:\(payloadID)"
             } catch {
                 reportFailure(error, context: "Browser text import failed")
             }
@@ -3196,6 +3343,7 @@ final class Gate1AppModel: ObservableObject {
     private func makeMediaPlaybackClient() -> AudioPlaybackClient {
         AVPlayerStreamPlaybackClient { [weak self] command, mediaTimeMs, playbackRate in
             Task { @MainActor [weak self] in
+                self?.syncPlaybackProgressForLifecycle()
                 self?.performGate2CompactCommand(
                     command,
                     mediaTimeMs: mediaTimeMs,
@@ -3260,6 +3408,13 @@ final class Gate1AppModel: ObservableObject {
             return sourceLinkHandoffStore
         }
         return try SourceLinkHandoffStore.appGroup()
+    }
+
+    private func resolvedBrowserTextHandoffStore() throws -> Gate5BrowserTextHandoffStore {
+        if let browserTextHandoffStore {
+            return browserTextHandoffStore
+        }
+        return try Gate5BrowserTextHandoffStore.appGroup()
     }
 
     private func sourceLinkFailureMessage(status: String?, reason: String?, provider: String?) -> String {

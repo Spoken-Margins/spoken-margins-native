@@ -1230,6 +1230,34 @@ private struct SettingsScreen: View {
                     Button("Copy Privacy-Safe Diagnostics", action: model.copyDiagnosticsExport)
                         .accessibilityIdentifier("settings.copyDiagnostics.button")
                 }
+                Section("Import Inbox") {
+                    if model.importInbox.isEmpty {
+                        Text("No failed shares.")
+                            .foregroundStyle(AppColors.secondaryText)
+                    } else {
+                        ForEach(model.importInbox) { entry in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(entry.title)
+                                    .font(.headline)
+                                Text(entry.source)
+                                    .font(.caption)
+                                    .foregroundStyle(AppColors.secondaryText)
+                                    .lineLimit(2)
+                                Text(entry.reason)
+                                    .font(.caption)
+                                    .foregroundStyle(.red)
+                                HStack {
+                                    Button("Retry") {
+                                        model.retryImportInboxEntry(entry)
+                                    }
+                                    Button("Delete", role: .destructive) {
+                                        model.deleteImportInboxEntry(entry)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 Section("Diagnostics") {
                     ForEach(model.diagnostics.keys.sorted(), id: \.self) { key in
                         LabeledContent(key, value: model.diagnostics[key] ?? "")
@@ -1245,6 +1273,7 @@ private struct SettingsScreen: View {
             .navigationTitle("Settings")
             .onAppear {
                 model.refreshSpeechVoiceOptions()
+                model.refreshImportInbox()
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {

@@ -6,15 +6,17 @@ Spoken Margins is a personal conversational listening app. A complete daily-driv
 
 ## Active Boundary
 
-Keep the iPhone/iPad app, Safari extension, share extension, Obsidian import, native Now Playing controls, the listening Live Activity, Speech.framework transcription, installed `AVSpeechSynthesizer` voices, OpenAI with a user-supplied key, three editable model identifiers, AI response playback, interjections, manual AI Listening Maps, and JSON/AI-handoff Markdown export. Native media owns Now Playing during podcasts and prepared audio; the live-speech coordinator owns it only during immediate `AVSpeechSynthesizer` playback so the two command paths do not replace each other.
+Keep the iPhone/iPad app, Safari extension, share extension, Obsidian import, native Now Playing controls, the listening Live Activity, Speech.framework transcription, installed `AVSpeechSynthesizer` voices, OpenAI with a user-supplied key, three editable model identifiers, AI response playback, interjections, manual AI Listening Maps, deterministic maps from captured Markdown structure, and JSON/AI-handoff Markdown export. Native media owns Now Playing during podcasts and prepared audio; the live-speech coordinator owns it only during immediate `AVSpeechSynthesizer` playback so the two command paths do not replace each other. AVPlayer's observed transport state is authoritative after route changes or system pauses.
 
-Do not add Watch, standalone Home Screen widgets, Kokoro/MLX, arbitrary providers, dedicated car UI, automatic map generation, or an embedded Piper runtime. The WidgetKit target exists only as the required ActivityKit host. Bundled Piper is a separate post-MVP investigation behind the existing speech client.
+Share intake is typed before resolution: podcast/RSS/audio URLs go to source-link resolution, while web pages, Markdown files, and text files go to text import. Browser article extraction uses the pinned, locally bundled Defuddle build with network fallback disabled and preserves Markdown headings. Pending shares import into the library without replacing the active session or screen. A failed share is quarantined once in Settings > Import Inbox for retry or deletion; it is not retried on every foreground activation.
+
+Do not add Watch, standalone Home Screen widgets, Kokoro/MLX, arbitrary providers, dedicated car UI, automatic AI map generation, or an embedded Piper runtime. Deterministic maps derived locally from source headings are intake normalization, not an AI workflow. The WidgetKit target exists only as the required ActivityKit host. Bundled Piper is a separate post-MVP investigation behind the existing speech client.
 
 ## Evidence Gates
 
 Every core flow has three distinct states: `implemented`, `verified`, and `human_validated`. Tests and builds can establish only `verified`.
 
-The preservation check covers installed-Piper selection, article and podcast playback, foreground controls, background continuity, and lock-screen play/pause/back/forward. The final daily-driver check adds Safari/share/Obsidian intake without autoplay, podcast context around a timestamp, interjection during AI streaming, Listening Map generation/navigation, and AI-handoff export.
+The preservation check covers installed-Piper selection, article and podcast playback, AirPod removal/reinsertion, foreground controls, background continuity, and lock-screen play/pause/back/forward. The final daily-driver check adds podcast-link, Safari-page, Files Markdown, Safari-extension, and Obsidian intake without autoplay or session replacement; deterministic and AI Listening Map navigation; podcast context around a timestamp; interjection during AI streaming; Import Inbox retry/delete; and AI-handoff export.
 
 Before requesting either check, provide a build number and SHA, supported device/OS, exact in/out scope, known issues, reset instructions, seeded items, privacy-safe diagnostics, automated evidence, and a pass/fail checklist.
 

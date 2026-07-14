@@ -42,6 +42,7 @@ final class Gate5BrowserTextImportTests: XCTestCase {
             "schemaVersion": "browser-text-handoff.v1",
             "itemId": "item-payload-readable",
             "captureMode": "readable_page",
+            "contentFormat": "markdown",
             "source": [
                 "url": "https://example.com/payload",
                 "title": "Payload Page",
@@ -61,6 +62,7 @@ final class Gate5BrowserTextImportTests: XCTestCase {
 
         XCTAssertEqual(parsed.itemId, "item-payload-readable")
         XCTAssertEqual(parsed.captureMode, .readablePage)
+        XCTAssertEqual(parsed.contentFormat, .markdown)
         XCTAssertEqual(parsed.source.url, "https://example.com/payload")
         XCTAssertEqual(parsed.source.title, "Payload Page")
         XCTAssertEqual(parsed.source.author, "A. Writer")
@@ -127,6 +129,40 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         XCTAssertEqual(model.statusMessage, "Imported browser text from Route Page.")
     }
 
+    func testIncomingBrowserPayloadDoesNotReplacePlaybackScreen() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("spoken-margins-browser-route-\(UUID().uuidString)", isDirectory: true)
+        temporaryDirectories.append(directory)
+        let browserStore = Gate5BrowserTextHandoffStore(baseDirectory: directory)
+        let sourceStore = SourceLinkHandoffStore(baseDirectory: directory)
+        let payloadID = "payload-browser-during-playback"
+        try browserStore.save(BrowserTextHandoff(
+            itemId: "item-browser-during-playback",
+            captureMode: .selectedText,
+            source: BrowserTextSource(url: "https://example.com/during-playback", title: "Shared During Playback"),
+            text: "Do not replace the active session.",
+            contentFormat: .plainText
+        ), payloadID: payloadID)
+        let model = Gate1AppModel(
+            sourceLinkHandoffStore: sourceStore,
+            browserTextHandoffStore: browserStore,
+            audioPlaybackClient: NoopAudioPlaybackClient()
+        )
+        model.resetAndSeed()
+        let activeItemID = try XCTUnwrap(model.libraryItems.first?.id)
+        model.startItem(id: activeItemID)
+        let sessionID = model.snapshot.sessionId
+
+        model.handleIncomingURL(Gate5BrowserTextHandoffURL.url(forPayloadID: payloadID))
+
+        XCTAssertEqual(model.screen, .playback)
+        XCTAssertEqual(model.snapshot.sessionId, sessionID)
+        XCTAssertEqual(model.snapshot.itemId, activeItemID)
+        XCTAssertTrue(model.libraryItems.contains { $0.id == "item-browser-during-playback" })
+        XCTAssertEqual(model.diagnostics["lastBrowserTextPayloadCleanup"], "imported_without_session_replacement")
+        XCTAssertThrowsError(try browserStore.handoff(payloadID: payloadID))
+    }
+
     func testPayloadIsDeletedAfterSuccessfulImport() throws {
         let payloadID = "payload-delete"
         let store = try makePayloadStore(payloadID: payloadID, payload: [
@@ -159,6 +195,57 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         }
     }
 
+    func testPendingMarkdownShareImportsMapWithoutReplacingPlayback() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("spoken-margins-markdown-share-\(UUID().uuidString)", isDirectory: true)
+        temporaryDirectories.append(directory)
+        let browserStore = Gate5BrowserTextHandoffStore(baseDirectory: directory)
+        let sourceStore = SourceLinkHandoffStore(baseDirectory: directory)
+        let body = String(repeating: "Useful article content with enough spacing for listening. ", count: 70)
+        let handoff = BrowserTextHandoff(
+            itemId: "item-shared-markdown",
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: "file:///HSA.md", title: "HSA Guide"),
+            text: """
+            # HSA Guide
+            ### First use
+            \(body)
+            ### Second use
+            \(body)
+            ### Third use
+            \(body)
+            ### Fourth use
+            \(body)
+            ### Fifth use
+            \(body)
+            """,
+            contentFormat: .markdown
+        )
+        try browserStore.save(handoff, payloadID: "payload-shared-markdown")
+        let model = Gate1AppModel(
+            sourceLinkHandoffStore: sourceStore,
+            browserTextHandoffStore: browserStore,
+            audioPlaybackClient: NoopAudioPlaybackClient()
+        )
+        model.resetAndSeed()
+        let activeItemID = try XCTUnwrap(model.libraryItems.first?.id)
+        model.startItem(id: activeItemID)
+        let snapshotBeforeImport = model.snapshot
+
+        model.importPendingSourceLinkHandoffs()
+        try await waitFor("Markdown share import") {
+            model.libraryItems.contains { $0.id == "item-shared-markdown" }
+        }
+
+        XCTAssertEqual(model.snapshot, snapshotBeforeImport)
+        XCTAssertEqual(model.screen, .playback)
+        XCTAssertThrowsError(try browserStore.handoff(payloadID: "payload-shared-markdown"))
+
+        model.openItem(id: "item-shared-markdown")
+        XCTAssertEqual(model.selectedItem.title, "HSA Guide")
+        XCTAssertFalse(model.selectedItem.chapters.isEmpty)
+    }
+
     private func makePayloadStore(payloadID: String, payload: [String: Any]) throws -> Gate5BrowserTextHandoffStore {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("spoken-margins-gate5-\(UUID().uuidString)", isDirectory: true)
@@ -169,5 +256,20 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
         try data.write(to: payloadURL)
         return Gate5BrowserTextHandoffStore(baseDirectory: directory)
+    }
+
+    private func waitFor(
+        _ description: String,
+        timeoutNanoseconds: UInt64 = 1_000_000_000,
+        condition: @escaping () -> Bool
+    ) async throws {
+        let interval: UInt64 = 10_000_000
+        var elapsed: UInt64 = 0
+        while elapsed < timeoutNanoseconds {
+            if condition() { return }
+            try await Task.sleep(nanoseconds: interval)
+            elapsed += interval
+        }
+        XCTFail("Timed out waiting for \(description).")
     }
 }

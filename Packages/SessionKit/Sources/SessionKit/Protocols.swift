@@ -43,6 +43,7 @@ public protocol AudioPlaybackClient {
     func currentPlaybackDurationMs() -> Int?
     func isPlaybackComplete(targetId: String) -> Bool
     func playbackStartStatus(targetId: String) -> PlaybackStartStatus
+    func playbackTransportState(targetId: String) -> PlaybackTransportState?
     func pause() throws
     func stop() throws
 }
@@ -121,6 +122,10 @@ public extension AudioPlaybackClient {
 
     func playbackStartStatus(targetId: String) -> PlaybackStartStatus {
         .confirmed
+    }
+
+    func playbackTransportState(targetId: String) -> PlaybackTransportState? {
+        nil
     }
 }
 

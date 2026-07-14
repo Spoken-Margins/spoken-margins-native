@@ -47,7 +47,7 @@ targets:
       properties:
         CFBundleDisplayName: Spoken Margins
         CFBundleShortVersionString: "0.1"
-        CFBundleVersion: "1"
+        CFBundleVersion: "2"
         CFBundleURLTypes:
           - CFBundleURLName: SpokenMarginsCompactControls
             CFBundleURLSchemes:
@@ -81,7 +81,7 @@ targets:
       properties:
         CFBundleDisplayName: Spoken Margins Controls
         CFBundleShortVersionString: "0.1"
-        CFBundleVersion: "1"
+        CFBundleVersion: "2"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
   SpokenMarginsBrowserTextExtension:
@@ -95,7 +95,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.browsertext
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsBrowserTextExtension/SpokenMarginsBrowserTextExtension.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "1"
+        CURRENT_PROJECT_VERSION: "2"
         DEVELOPMENT_TEAM: J8SWC6J3VY
         ENABLE_DEBUG_DYLIB: NO
         INFOPLIST_FILE: App/SpokenMarginsBrowserTextExtension/Info.plist
@@ -119,7 +119,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.share
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsShareExtension/SpokenMarginsShareExtension.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "1"
+        CURRENT_PROJECT_VERSION: "2"
         DEVELOPMENT_TEAM: J8SWC6J3VY
         ENABLE_DEBUG_DYLIB: NO
         INFOPLIST_FILE: App/SpokenMarginsShareExtension/Info.plist
@@ -132,7 +132,7 @@ targets:
       properties:
         CFBundleDisplayName: Spoken Margins
         CFBundleShortVersionString: "0.1"
-        CFBundleVersion: "1"
+        CFBundleVersion: "2"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.share-services
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).SourceLinkShareViewController

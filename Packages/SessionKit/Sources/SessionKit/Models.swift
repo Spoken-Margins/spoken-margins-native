@@ -54,6 +54,14 @@ public enum PlaybackStartStatus: Equatable, Sendable {
     case failed(String)
 }
 
+public enum PlaybackTransportState: String, Codable, Equatable, Sendable {
+    case playing
+    case paused
+    case waiting
+    case stopped
+    case failed
+}
+
 public enum TargetType: String, Codable, Equatable, Sendable {
     case itemTextTTS = "item_text_tts"
     case transcriptBackedMedia = "transcript_backed_media"
@@ -404,6 +412,13 @@ public struct Item: Codable, Equatable, Sendable {
 public enum BrowserTextCaptureMode: String, Codable, Equatable, Sendable {
     case selectedText = "selected_text"
     case readablePage = "readable_page"
+    case markdownFile = "markdown_file"
+    case plainTextFile = "plain_text_file"
+}
+
+public enum BrowserTextContentFormat: String, Codable, Equatable, Sendable {
+    case plainText = "plain_text"
+    case markdown
 }
 
 public struct BrowserTextSource: Codable, Equatable, Sendable {
@@ -450,6 +465,7 @@ public struct BrowserTextHandoff: Codable, Equatable, Sendable {
     public var captureMode: BrowserTextCaptureMode
     public var source: BrowserTextSource
     public var text: String
+    public var contentFormat: BrowserTextContentFormat?
     public var selection: BrowserTextSelection?
     public var requestedContinuation: BrowserTextContinuation
 
@@ -459,6 +475,7 @@ public struct BrowserTextHandoff: Codable, Equatable, Sendable {
         captureMode: BrowserTextCaptureMode,
         source: BrowserTextSource,
         text: String,
+        contentFormat: BrowserTextContentFormat? = nil,
         selection: BrowserTextSelection? = nil,
         requestedContinuation: BrowserTextContinuation = BrowserTextContinuation()
     ) {
@@ -467,6 +484,7 @@ public struct BrowserTextHandoff: Codable, Equatable, Sendable {
         self.captureMode = captureMode
         self.source = source
         self.text = text
+        self.contentFormat = contentFormat
         self.selection = selection
         self.requestedContinuation = requestedContinuation
     }

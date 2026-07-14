@@ -50,6 +50,29 @@ final class SourceLinkImportTests: XCTestCase {
         }
     }
 
+    func testSourceLinkPayloadStoreQuarantinesAndRetriesFailure() throws {
+        let store = makePayloadStore()
+        let handoff = SourceLinkHandoff(
+            id: "payload-source-link-failed",
+            inputURL: "https://example.com/unresolved",
+            sourceSurface: "share_sheet",
+            startSession: false
+        )
+        try store.save(handoff)
+
+        try store.quarantine(payloadID: handoff.id, reason: "No playable audio")
+
+        XCTAssertThrowsError(try store.handoff(payloadID: handoff.id))
+        let failed = try XCTUnwrap(store.failedHandoffs().first)
+        XCTAssertEqual(failed.handoff, handoff)
+        XCTAssertEqual(failed.reason, "No playable audio")
+
+        try store.retryFailed(payloadID: handoff.id)
+
+        XCTAssertEqual(try store.handoff(payloadID: handoff.id), handoff)
+        XCTAssertTrue(try store.failedHandoffs().isEmpty)
+    }
+
     func testIncomingSourceLinkURLImportsAndStartsPlayableItem() {
         let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
             requestId: "ignored",
@@ -167,7 +190,7 @@ final class SourceLinkImportTests: XCTestCase {
         #endif
     }
 
-    func testIncomingPayloadIsRetainedAfterUnsupportedImport() throws {
+    func testIncomingPayloadIsQuarantinedAfterUnsupportedImport() async throws {
         let store = makePayloadStore()
         let handoff = SourceLinkHandoff(
             id: "source-link-unsupported",
@@ -191,17 +214,19 @@ final class SourceLinkImportTests: XCTestCase {
         model.resetAndSeed()
 
         model.handleIncomingURL(SourceLinkHandoffURL.url(forPayloadID: handoff.id))
+        try await waitFor("unsupported share quarantine") {
+            (try? store.failedHandoffs().count) == 1
+        }
 
-        XCTAssertEqual(model.diagnostics["lastSourceLinkStatus"], LinkResolutionStatus.unsupported.rawValue)
-        XCTAssertEqual(model.diagnostics["lastSourceLinkPayloadCleanup"], "retained_after_failed_import")
-        XCTAssertEqual(
-            model.lastError,
-            "This looks like a Spotify-only episode. Spoken Margins could not find a public audio file for it yet."
-        )
-        XCTAssertEqual(try store.handoff(payloadID: handoff.id), handoff)
+        XCTAssertEqual(model.diagnostics["lastSourceLinkPayloadCleanup"], "queued:\(handoff.id)")
+        XCTAssertTrue(model.diagnostics["pendingSourceLinkPayload:\(handoff.id)"]?.hasPrefix("quarantined:") == true)
+        XCTAssertNil(model.lastError)
+        XCTAssertThrowsError(try store.handoff(payloadID: handoff.id))
+        XCTAssertEqual(try store.failedHandoffs().first?.handoff, handoff)
+        XCTAssertEqual(model.importInbox.first?.payloadID, handoff.id)
     }
 
-    func testForegroundActivationImportsSavedSharePayloadIntoLibraryWithoutAutoplay() async throws {
+    func testForegroundActivationImportsSavedShareWithoutReplacingPlayback() async throws {
         let store = makePayloadStore()
         let sharedHandoff = SourceLinkHandoff(
             id: "source-link-shared",
@@ -227,15 +252,23 @@ final class SourceLinkImportTests: XCTestCase {
             audioPlaybackClient: NoopAudioPlaybackClient()
         )
         model.resetAndSeed()
-        model.screen = .home
+        let activeItemID = try XCTUnwrap(model.libraryItems.first?.id)
+        model.startItem(id: activeItemID)
+        let snapshotBeforeImport = model.snapshot
 
         model.handleAppBecameActive()
-        await Task.yield()
-        await Task.yield()
+        try await waitFor("shared episode import") {
+            model.libraryItems.contains { $0.title == "Shared Episode" }
+        }
 
-        XCTAssertEqual(model.screen, .item)
-        XCTAssertEqual(model.snapshot.status, .idle)
-        XCTAssertEqual(model.selectedItem.title, "Shared Episode")
+        XCTAssertEqual(model.screen, .playback)
+        XCTAssertEqual(model.snapshot.sessionId, snapshotBeforeImport.sessionId)
+        XCTAssertEqual(model.snapshot.itemId, snapshotBeforeImport.itemId)
+        XCTAssertEqual(model.snapshot.targetId, snapshotBeforeImport.targetId)
+        XCTAssertEqual(model.snapshot.status, snapshotBeforeImport.status)
+        XCTAssertEqual(model.snapshot.phase, snapshotBeforeImport.phase)
+        XCTAssertEqual(model.snapshot.currentTextStart, snapshotBeforeImport.currentTextStart)
+        XCTAssertNotEqual(model.selectedItem.title, "Shared Episode")
         XCTAssertTrue(model.libraryItems.contains { $0.title == "Shared Episode" })
         XCTAssertEqual(resolver.resolveCount, 1)
         XCTAssertThrowsError(try store.handoff(payloadID: sharedHandoff.id)) { error in
@@ -271,12 +304,13 @@ final class SourceLinkImportTests: XCTestCase {
         model.resetAndSeed()
 
         model.importPendingSourceLinkHandoffs()
-        await Task.yield()
-        await Task.yield()
+        try await waitFor("pending episode import") {
+            model.libraryItems.contains { $0.title == "Pending Episode" }
+        }
 
-        XCTAssertEqual(model.screen, .playback)
-        XCTAssertEqual(model.selectedItem.title, "Pending Episode")
-        XCTAssertEqual(model.diagnostics["pendingSourceLinkPayload:\(handoff.id)"], "deleted_after_import")
+        XCTAssertEqual(model.screen, .home)
+        XCTAssertNotEqual(model.selectedItem.title, "Pending Episode")
+        XCTAssertEqual(model.diagnostics["pendingSourceLinkPayload:\(handoff.id)"], "imported")
         XCTAssertThrowsError(try store.handoff(payloadID: handoff.id)) { error in
             XCTAssertEqual(error as? SourceLinkHandoffStoreError, .missingPayload(handoff.id))
         }

@@ -22,6 +22,20 @@ public struct SourceLinkHandoff: Codable, Equatable, Sendable {
     }
 }
 
+public struct FailedSourceLinkHandoff: Codable, Equatable, Identifiable, Sendable {
+    public var id: String
+    public var handoff: SourceLinkHandoff
+    public var reason: String
+    public var failedAt: Date
+
+    public init(id: String, handoff: SourceLinkHandoff, reason: String, failedAt: Date = Date()) {
+        self.id = id
+        self.handoff = handoff
+        self.reason = reason
+        self.failedAt = failedAt
+    }
+}
+
 public enum SourceLinkHandoffStoreError: Error, Equatable, LocalizedError {
     case appGroupUnavailable(String)
     case invalidPayload(String)
@@ -43,6 +57,7 @@ public struct SourceLinkHandoffStore {
     public static let appGroupIdentifier = "group.com.spokenmargins.native"
 
     private static let payloadDirectoryName = "SourceLinkHandoffs"
+    private static let failedPayloadDirectoryName = "FailedSourceLinkHandoffs"
     private let baseDirectory: URL
     private let fileManager: FileManager
 
@@ -119,6 +134,60 @@ public struct SourceLinkHandoffStore {
             .appendingPathComponent(id)
             .appendingPathExtension("json")
         try? fileManager.removeItem(at: url)
+    }
+
+    public func quarantine(payloadID: String, reason: String) throws {
+        let handoff = try handoff(payloadID: payloadID)
+        let failed = FailedSourceLinkHandoff(
+            id: handoff.id,
+            handoff: handoff,
+            reason: reason.trimmingCharacters(in: .whitespacesAndNewlines),
+            failedAt: Date()
+        )
+        let directory = baseDirectory.appendingPathComponent(Self.failedPayloadDirectoryName, isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent(failed.id).appendingPathExtension("json")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(failed).write(to: url, options: [.atomic])
+        try deletePayload(payloadID: payloadID)
+    }
+
+    public func failedHandoffs() throws -> [FailedSourceLinkHandoff] {
+        let directory = baseDirectory.appendingPathComponent(Self.failedPayloadDirectoryName, isDirectory: true)
+        guard fileManager.fileExists(atPath: directory.path) else { return [] }
+        return try fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+            .filter { $0.pathExtension == "json" }
+            .compactMap { url in
+                try? JSONDecoder().decode(FailedSourceLinkHandoff.self, from: Data(contentsOf: url))
+            }
+            .sorted { $0.failedAt < $1.failedAt }
+    }
+
+    public func retryFailed(payloadID: String) throws {
+        let failed = try failedHandoff(payloadID: payloadID)
+        try save(failed.handoff)
+        try deleteFailed(payloadID: payloadID)
+    }
+
+    public func deleteFailed(payloadID: String) throws {
+        try? fileManager.removeItem(at: failedPayloadURL(payloadID: payloadID))
+    }
+
+    private func failedHandoff(payloadID: String) throws -> FailedSourceLinkHandoff {
+        let id = payloadID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let url = failedPayloadURL(payloadID: id)
+        guard !id.isEmpty, fileManager.fileExists(atPath: url.path) else {
+            throw SourceLinkHandoffStoreError.missingPayload(id)
+        }
+        return try JSONDecoder().decode(FailedSourceLinkHandoff.self, from: Data(contentsOf: url))
+    }
+
+    private func failedPayloadURL(payloadID: String) -> URL {
+        baseDirectory
+            .appendingPathComponent(Self.failedPayloadDirectoryName, isDirectory: true)
+            .appendingPathComponent(payloadID)
+            .appendingPathExtension("json")
     }
 
     private func validated(_ handoff: SourceLinkHandoff) throws -> SourceLinkHandoff {

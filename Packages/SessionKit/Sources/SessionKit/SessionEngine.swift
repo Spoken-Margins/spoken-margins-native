@@ -158,6 +158,25 @@ public final class SessionEngine {
         return snapshot
     }
 
+    /// Persists a resolved source without replacing the item or session the user is
+    /// currently listening to. Background share intake must use this path.
+    @discardableResult
+    public func importResolvedSourceLinkInBackground(
+        _ request: LinkResolutionRequest,
+        result: LinkResolutionResult
+    ) throws -> Item? {
+        try require("importSourceLink", category: "sync", capabilities: ["canonical_persistence"])
+        guard result.status == .playable,
+              let candidate = result.selectedCandidate,
+              let audioURL = candidate.audioURL,
+              !audioURL.isEmpty else {
+            return nil
+        }
+        let item = item(from: candidate, result: result, request: request)
+        try repository.saveItem(item)
+        return item
+    }
+
     @discardableResult
     public func togglePlayPause() throws -> SessionSnapshot {
         if snapshot.status.isPlaybackActive {
@@ -235,6 +254,7 @@ public final class SessionEngine {
             return snapshot
         }
         let playbackCompleted = audio.isPlaybackComplete(targetId: session.currentTargetId)
+        let transportState = audio.playbackTransportState(targetId: session.currentTargetId)
         var updated = try syncCurrentPositionFromAudio(session)
         if snapshot.status == .starting {
             switch playbackStartStatus(for: session.currentTargetId, attemptId: activePlaybackStartAttemptId ?? playbackStartAttemptId) {
@@ -279,7 +299,13 @@ public final class SessionEngine {
             currentSession = session
             try repository.saveSession(session)
         }
-        publish(status: playbackCompleted ? .paused : snapshot.status, phase: session.phase)
+        let reconciledStatus: PlaybackStatus
+        if playbackCompleted || (snapshot.status == .playing && transportState == .paused) {
+            reconciledStatus = .paused
+        } else {
+            reconciledStatus = snapshot.status
+        }
+        publish(status: reconciledStatus, phase: session.phase)
         return snapshot
     }
 
@@ -421,23 +447,13 @@ public final class SessionEngine {
     @discardableResult
     public func importBrowserText(_ handoff: BrowserTextHandoff) throws -> SessionSnapshot {
         try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
-        let title = cleanedBrowserTextTitle(handoff.source.title, url: handoff.source.url)
-        let text = handoff.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else {
-            throw SessionKitError.invalidCommandForState("importBrowserText")
-        }
-        let item = Item(
-            id: handoff.itemId ?? browserTextItemId(title: title, url: handoff.source.url),
-            title: title,
-            mediaType: "text",
-            text: text,
-            externalReference: handoff.source.url,
-            status: "needs_listening_map",
-            externalReferenceType: "url"
-        )
+        let (item, deterministicMap) = try browserTextImportRecords(handoff)
         try repository.saveItem(item)
+        if let deterministicMap {
+            try repository.saveListeningMap(deterministicMap)
+        }
         currentItem = item
-        currentMap = nil
+        currentMap = deterministicMap
         snapshot.itemId = item.id
         snapshot.targetType = TargetType.itemTextTTS.rawValue
         snapshot.targetId = item.id
@@ -452,6 +468,18 @@ public final class SessionEngine {
             return try startSession(itemId: item.id)
         }
         return snapshot
+    }
+
+    /// Persists a browser or file share without disturbing active playback state.
+    @discardableResult
+    public func importBrowserTextInBackground(_ handoff: BrowserTextHandoff) throws -> Item {
+        try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
+        let (item, deterministicMap) = try browserTextImportRecords(handoff)
+        try repository.saveItem(item)
+        if let deterministicMap {
+            try repository.saveListeningMap(deterministicMap)
+        }
+        return item
     }
 
     @discardableResult
@@ -2217,6 +2245,39 @@ public final class SessionEngine {
             || profile.has("remoteControl", "send_transport_commands") else {
             throw SessionKitError.invalidCommandForCapability(command)
         }
+    }
+
+    private func browserTextImportRecords(_ handoff: BrowserTextHandoff) throws -> (Item, ListeningMap?) {
+        let fallbackTitle = cleanedBrowserTextTitle(handoff.source.title, url: handoff.source.url)
+        let rawText = handoff.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawText.isEmpty else {
+            throw SessionKitError.invalidCommandForState("importBrowserText")
+        }
+
+        let parsedMarkdown: ParsedObsidianMarkdown?
+        if handoff.contentFormat == .markdown {
+            parsedMarkdown = try? ObsidianMarkdownParser.parse(fileName: fallbackTitle, contents: rawText)
+        } else {
+            parsedMarkdown = nil
+        }
+        let title = parsedMarkdown?.title ?? fallbackTitle
+        let text = (parsedMarkdown?.text ?? rawText).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            throw SessionKitError.invalidCommandForState("importBrowserText")
+        }
+        let itemId = handoff.itemId ?? browserTextItemId(title: title, url: handoff.source.url)
+        let deterministicMap = parsedMarkdown?.deterministicListeningMap(itemId: itemId)
+        let source = parsedMarkdown?.source ?? handoff.source.url
+        let item = Item(
+            id: itemId,
+            title: title,
+            mediaType: "text",
+            text: text,
+            externalReference: source,
+            status: deterministicMap == nil ? "needs_listening_map" : "ready",
+            externalReferenceType: handoff.captureMode == .markdownFile || handoff.captureMode == .plainTextFile ? "file" : "url"
+        )
+        return (item, deterministicMap)
     }
 
     private func cleanedBrowserTextTitle(_ title: String, url: String) -> String {

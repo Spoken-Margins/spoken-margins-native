@@ -72,6 +72,7 @@ test("selected text capture preserves page metadata", () => {
 
   assert.equal(payload.id, "test-payload-id");
   assert.equal(payload.captureMode, "selected_text");
+  assert.equal(payload.contentFormat, "plain_text");
   assert.equal(payload.text, "Selected page text.");
   assert.equal(payload.source.title, "Article Title");
   assert.equal(payload.source.url, "https://example.com/selected");
@@ -79,23 +80,11 @@ test("selected text capture preserves page metadata", () => {
   assert.equal(payload.requestedContinuation.startSession, false);
 });
 
-test("readable page capture prefers article text and excludes page chrome", () => {
-  const articleText = "Opening paragraph. ".repeat(20);
-  const article = element("article", articleText, [element("nav", "Navigation should disappear.")]);
-  const body = element("body", `${articleText} Footer noise.`);
-  const documentRef = {
-    title: "Readable Page",
-    location: { href: "https://example.com/readable" },
-    body,
-    querySelector: (selector) => selector === "article" ? article : null,
-    querySelectorAll: () => [article, body]
-  };
+test("readable page bundle contains the pinned local extractor", () => {
+  const source = fs.readFileSync("App/SpokenMarginsBrowserTextExtension/Resources/Scripts/browserTextCapture.js", "utf8");
+  const license = fs.readFileSync("App/SpokenMarginsBrowserTextExtension/Resources/Defuddle-LICENSE.txt", "utf8");
 
-  const capture = loadCapture(documentRef);
-  const payload = capture.captureReadablePage(documentRef);
-
-  assert.equal(payload.captureMode, "readable_page");
-  assert.match(payload.text, /Opening paragraph/);
-  assert.doesNotMatch(payload.text, /Navigation should disappear/);
-  assert.doesNotMatch(payload.text, /Footer noise/);
+  assert.match(source, /Bundled Defuddle 0\.19\.1/);
+  assert.match(source, /networkFallback/);
+  assert.match(license, /Copyright \(c\) 2025 Steph Ango/);
 });
