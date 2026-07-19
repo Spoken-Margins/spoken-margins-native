@@ -24,7 +24,8 @@ public enum ContractFixtureLoader {
                     nativeMediaId: mediaObject["nativeMediaId"] as? String
                 )
             },
-            transcriptId: object["transcriptId"] as? String
+            transcriptId: object["transcriptId"] as? String,
+            deletedAt: (object["deletedAt"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) }
         )
     }
 

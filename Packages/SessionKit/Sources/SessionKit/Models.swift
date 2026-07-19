@@ -385,6 +385,7 @@ public struct Item: Codable, Equatable, Sendable {
     public var media: ItemMedia?
     public var transcriptId: String?
     public var status: String
+    public var deletedAt: Date?
 
     public init(
         id: String,
@@ -395,7 +396,8 @@ public struct Item: Codable, Equatable, Sendable {
         status: String,
         externalReferenceType: String? = nil,
         media: ItemMedia? = nil,
-        transcriptId: String? = nil
+        transcriptId: String? = nil,
+        deletedAt: Date? = nil
     ) {
         self.id = id
         self.title = title
@@ -406,6 +408,7 @@ public struct Item: Codable, Equatable, Sendable {
         self.media = media
         self.transcriptId = transcriptId
         self.status = status
+        self.deletedAt = deletedAt
     }
 }
 

@@ -416,13 +416,31 @@ final class SourceLinkImportTests: XCTestCase {
     func testPublicResolverUsesAppleLookupAudioURL() throws {
         let lookup = """
         {
-          "resultCount": 1,
-          "results": [{
-            "wrapperType": "podcastEpisode",
-            "trackName": "Apple Episode",
-            "collectionName": "Apple Show",
-            "episodeUrl": "https://cdn.example.com/apple-episode.mp3"
-          }]
+          "resultCount": 3,
+          "results": [
+            {
+              "wrapperType": "track",
+              "kind": "podcast",
+              "trackId": 123456,
+              "collectionName": "Apple Show",
+              "feedUrl": "https://feeds.example.com/apple-show.xml"
+            },
+            {
+              "wrapperType": "podcastEpisode",
+              "kind": "podcast-episode",
+              "trackId": 111,
+              "trackName": "Different Episode",
+              "episodeUrl": "https://cdn.example.com/wrong-episode.mp3"
+            },
+            {
+              "wrapperType": "podcastEpisode",
+              "kind": "podcast-episode",
+              "trackId": 999,
+              "trackName": "Apple Episode",
+              "collectionName": "Apple Show",
+              "episodeUrl": "https://cdn.example.com/apple-episode.mp3"
+            }
+          ]
         }
         """
         let request = LinkResolutionRequest(
@@ -434,6 +452,9 @@ final class SourceLinkImportTests: XCTestCase {
 
         let result = try PublicPodcastLinkResolver(fetch: { url in
             XCTAssertTrue(url.absoluteString.contains("itunes.apple.com/lookup"))
+            XCTAssertTrue(url.absoluteString.contains("id=123456"))
+            XCTAssertTrue(url.absoluteString.contains("entity=podcastEpisode"))
+            XCTAssertTrue(url.absoluteString.contains("limit=200"))
             return Data(lookup.utf8)
         }).resolve(request)
 
@@ -449,6 +470,7 @@ final class SourceLinkImportTests: XCTestCase {
           "resultCount": 1,
           "results": [{
             "wrapperType": "podcastEpisode",
+            "trackId": 999,
             "trackName": "Apple Episode",
             "collectionName": "Apple Show",
             "episodeUrl": "https://traffic.example.net/APPLEEPISODE123"
@@ -499,6 +521,98 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(result.selectedCandidate?.showTitle, "Apple Page Show")
         XCTAssertEqual(result.selectedCandidate?.durationMs, 1_971_000)
         XCTAssertEqual(result.selectedCandidate?.audioURL, "https://traffic.example.net/page-episode.mp3")
+    }
+
+    func testPublicResolverFallsBackToFeedWhenEpisodeIsOutsideAppleLookupWindow() throws {
+        let lookup = """
+        {
+          "resultCount": 1,
+          "results": [{
+            "wrapperType": "track",
+            "kind": "podcast",
+            "trackId": 123456,
+            "feedUrl": "https://feeds.example.com/apple-show.xml"
+          }]
+        }
+        """
+        let feed = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0">
+          <channel>
+            <title>Apple Show</title>
+            <item>
+              <title>Another Episode</title>
+              <enclosure url="https://cdn.example.com/wrong-episode.mp3" type="audio/mpeg" />
+            </item>
+            <item>
+              <title>Requested Old Episode</title>
+              <enclosure url="https://cdn.example.com/requested-old-episode.mp3" type="audio/mpeg" />
+            </item>
+          </channel>
+        </rss>
+        """
+        let request = LinkResolutionRequest(
+            id: "request-apple-feed-fallback",
+            inputURL: "https://podcasts.apple.com/us/podcast/requested-old-episode/id123456?i=999",
+            sourceSurface: "paste",
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+
+        let result = try PublicPodcastLinkResolver(fetch: { url in
+            if url.host == "itunes.apple.com" {
+                return Data(lookup.utf8)
+            }
+            XCTAssertEqual(url.absoluteString, "https://feeds.example.com/apple-show.xml")
+            return Data(feed.utf8)
+        }).resolve(request)
+
+        XCTAssertEqual(result.status, .playable)
+        XCTAssertEqual(result.selectedCandidate?.title, "Requested Old Episode")
+        XCTAssertEqual(result.selectedCandidate?.audioURL, "https://cdn.example.com/requested-old-episode.mp3")
+    }
+
+    func testAppleFeedFallbackNeverSelectsADifferentEpisode() throws {
+        let lookup = """
+        {
+          "resultCount": 1,
+          "results": [{
+            "wrapperType": "track",
+            "kind": "podcast",
+            "trackId": 123456,
+            "feedUrl": "https://feeds.example.com/apple-show.xml"
+          }]
+        }
+        """
+        let feed = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0">
+          <channel>
+            <title>Apple Show</title>
+            <item>
+              <title>Newest Episode</title>
+              <enclosure url="https://cdn.example.com/newest-episode.mp3" type="audio/mpeg" />
+            </item>
+            <item>
+              <title>Another Episode</title>
+              <enclosure url="https://cdn.example.com/another-episode.mp3" type="audio/mpeg" />
+            </item>
+          </channel>
+        </rss>
+        """
+        let request = LinkResolutionRequest(
+            id: "request-apple-no-wrong-fallback",
+            inputURL: "https://podcasts.apple.com/us/podcast/requested-missing-episode/id123456?i=999",
+            sourceSurface: "paste",
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+
+        let result = try PublicPodcastLinkResolver(fetch: { url in
+            url.host == "itunes.apple.com" ? Data(lookup.utf8) : Data(feed.utf8)
+        }).resolve(request)
+
+        XCTAssertEqual(result.status, .needsReview)
+        XCTAssertNil(result.selectedCandidate)
+        XCTAssertEqual(result.failureReason, "rss_episode_ambiguous")
     }
 
     func testPublicResolverFallsBackForSpotifyExclusive() throws {

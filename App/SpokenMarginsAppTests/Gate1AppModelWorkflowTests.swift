@@ -18,6 +18,47 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.title, "Scratch Item")
     }
 
+    func testLeavingPlaybackKeepsSessionPlayingAndShowsMiniPlayer() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.importTitle = "Currently Playing"
+        model.importText = "This remains the Now Playing item."
+        model.importTextItem()
+        let playingItemId = model.selectedItem.id
+
+        model.openHome()
+        model.openItem(id: "item-pill")
+        model.openHome()
+
+        XCTAssertEqual(model.screen, .home)
+        XCTAssertEqual(model.snapshot.status, .playing)
+        XCTAssertTrue(model.shouldShowMiniPlayer)
+        model.openPlayback()
+        XCTAssertEqual(model.screen, .playback)
+        XCTAssertEqual(model.selectedItem.id, playingItemId)
+        XCTAssertFalse(model.shouldShowMiniPlayer)
+    }
+
+    func testTrashUndoPreservesItemSessions() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        XCTAssertFalse(model.selectedItem.sessions.isEmpty)
+
+        model.moveItemToTrash(id: "item-pill")
+
+        XCTAssertFalse(model.libraryItems.contains(where: { $0.id == "item-pill" }))
+        XCTAssertTrue(model.recentlyDeletedItems.contains(where: { $0.id == "item-pill" }))
+        XCTAssertEqual(model.trashUndo?.itemId, "item-pill")
+
+        model.undoLastTrash()
+        model.openItem(id: "item-pill")
+
+        XCTAssertTrue(model.libraryItems.contains(where: { $0.id == "item-pill" }))
+        XCTAssertFalse(model.recentlyDeletedItems.contains(where: { $0.id == "item-pill" }))
+        XCTAssertFalse(model.selectedItem.sessions.isEmpty, "Restoring an item should restore its existing sessions")
+    }
+
     func testTextImportStartsLiveSpeechWhenPreparedRenderingIsUnavailable() {
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
@@ -174,7 +215,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         XCTAssertEqual(model.selectedItem.title, "Structured Article")
         XCTAssertEqual(model.selectedItem.chapters.map(\.title), ["Key takeaways", "1. First section", "2. Second section"])
-        XCTAssertEqual(model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.status, "ready")
+        XCTAssertEqual(model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.status, "Ready to listen")
     }
 
     private func waitFor(

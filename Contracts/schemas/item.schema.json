@@ -26,6 +26,7 @@
     "externalReferenceType": { "enum": ["obsidian", "url", "plain", "none"] },
     "createdAt": { "type": "string", "format": "date-time" },
     "updatedAt": { "type": "string", "format": "date-time" },
+    "deletedAt": { "type": ["string", "null"], "format": "date-time" },
     "status": { "enum": ["needs_listening_map", "ready", "in_progress", "finished", "map_needs_repair"] },
     "listeningMapId": { "type": ["string", "null"] },
     "transcriptId": { "type": ["string", "null"] }

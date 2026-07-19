@@ -1549,6 +1549,33 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertNil(try store.loadSession(id: "session-import"))
     }
 
+    func testSQLiteStoreTrashRestoreAndPermanentDeleteLifecycle() throws {
+        let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-\(UUID().uuidString).sqlite").path
+        let store = try SQLiteSessionStore(path: path)
+        let item = Item(id: "item-trash", title: "Recoverable", mediaType: "text", text: "Keep the related records.", externalReference: nil, status: "ready")
+        let session = Session(id: "session-trash", itemId: item.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 10, playbackRate: 1)
+        try store.saveItem(item)
+        try store.saveSession(session)
+
+        let deletedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        try store.moveItemToTrash(id: item.id, at: deletedAt)
+
+        XCTAssertTrue(try store.listItems().isEmpty)
+        XCTAssertEqual(try store.listDeletedItems().first?.deletedAt, deletedAt)
+        XCTAssertNotNil(try store.loadSession(id: session.id), "Moving an item to trash must preserve its related records")
+
+        try store.restoreItem(id: item.id)
+
+        XCTAssertEqual(try store.listItems().map(\.id), [item.id])
+        XCTAssertTrue(try store.listDeletedItems().isEmpty)
+
+        try store.moveItemToTrash(id: item.id, at: deletedAt)
+        try store.deleteItem(id: item.id)
+
+        XCTAssertTrue(try store.listItems(includeDeleted: true).isEmpty)
+        XCTAssertNil(try store.loadSession(id: session.id))
+    }
+
     func testSQLiteStoreReplacesListeningMapForItem() throws {
         let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-\(UUID().uuidString).sqlite").path
         let store = try SQLiteSessionStore(path: path)
@@ -2300,6 +2327,24 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(export.turns.map(\.id), [response.id])
         XCTAssertTrue(markdown.contains("turn note"))
         XCTAssertFalse(markdown.contains("source note"))
+
+        let selected = try engine.buildExport(options: ExportOptions(
+            sessionId: session.id,
+            includeFullText: false,
+            includeReference: true,
+            includeListeningMap: false,
+            includeInterjections: true,
+            includeTurns: true,
+            scope: "selected_interjections",
+            interjectionIds: [turnInterjection.id]
+        ))
+        let selectedMarkdown = SessionExportMarkdownRenderer.render(selected)
+
+        XCTAssertEqual(selected.interjections.map(\.id), [turnInterjection.id])
+        XCTAssertTrue(selectedMarkdown.contains("turn note"))
+        XCTAssertTrue(selectedMarkdown.contains("Response"))
+        XCTAssertTrue(selectedMarkdown.contains("text."))
+        XCTAssertFalse(selectedMarkdown.contains("source note"))
     }
 
     func testMalformedAIChaptersPreserveResponseText() throws {

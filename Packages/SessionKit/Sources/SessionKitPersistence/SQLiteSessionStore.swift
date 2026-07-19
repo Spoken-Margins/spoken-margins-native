@@ -178,8 +178,27 @@ public final class SQLiteSessionStore: SessionRepository {
         try saveTurn(turn)
     }
 
-    public func listItems() throws -> [Item] {
-        try query("SELECT payload FROM records WHERE kind = ? ORDER BY updated_at DESC, id;", ["item"])
+    public func listItems(includeDeleted: Bool = false) throws -> [Item] {
+        let items: [Item] = try query("SELECT payload FROM records WHERE kind = ? ORDER BY updated_at DESC, id;", ["item"])
+        return includeDeleted ? items : items.filter { $0.deletedAt == nil }
+    }
+
+    public func listDeletedItems() throws -> [Item] {
+        try listItems(includeDeleted: true)
+            .filter { $0.deletedAt != nil }
+            .sorted { ($0.deletedAt ?? .distantPast) > ($1.deletedAt ?? .distantPast) }
+    }
+
+    public func moveItemToTrash(id: String, at date: Date = Date()) throws {
+        var item = try loadItem(id: id)
+        item.deletedAt = date
+        try saveItem(item)
+    }
+
+    public func restoreItem(id: String) throws {
+        var item = try loadItem(id: id)
+        item.deletedAt = nil
+        try saveItem(item)
     }
 
     public func deleteItem(id: String) throws {

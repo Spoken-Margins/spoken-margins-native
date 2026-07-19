@@ -106,7 +106,8 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
 
     private func resolveApplePodcastsURL(_ url: URL, request: LinkResolutionRequest) throws -> LinkResolutionResult? {
         if let episodeId = queryValue("i", in: url),
-           let lookupResult = try resolveAppleLookup(episodeId: episodeId, url: url, request: request) {
+           let showId = appleShowId(in: url),
+           let lookupResult = try resolveAppleLookup(showId: showId, episodeId: episodeId, url: url, request: request) {
             return lookupResult
         }
 
@@ -124,7 +125,8 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         requestTimeoutSeconds: TimeInterval
     ) async throws -> LinkResolutionResult? {
         if let episodeId = queryValue("i", in: url),
-           let lookupResult = try await resolveAppleLookupAsync(episodeId: episodeId, url: url, request: request, requestTimeoutSeconds: requestTimeoutSeconds) {
+           let showId = appleShowId(in: url),
+           let lookupResult = try await resolveAppleLookupAsync(showId: showId, episodeId: episodeId, url: url, request: request, requestTimeoutSeconds: requestTimeoutSeconds) {
             return lookupResult
         }
 
@@ -136,14 +138,24 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         return needsReview(request: request, provider: "apple_podcasts", title: title(from: url), reason: reason)
     }
 
-    private func resolveAppleLookup(episodeId: String, url: URL, request: LinkResolutionRequest) throws -> LinkResolutionResult? {
-        let lookupURL = URL(string: "https://itunes.apple.com/lookup?id=\(episodeId)&entity=podcastEpisode")!
+    private func resolveAppleLookup(showId: String, episodeId: String, url: URL, request: LinkResolutionRequest) throws -> LinkResolutionResult? {
+        let lookupURL = appleLookupURL(showId: showId)
         guard let data = try? fetch(lookupURL) else {
             return nil
         }
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let results = object["results"] as? [[String: Any]],
-              let episode = results.first(where: { ($0["wrapperType"] as? String) == "podcastEpisode" || ($0["kind"] as? String) == "podcast-episode" }) ?? results.first else {
+              let results = object["results"] as? [[String: Any]] else {
+            return nil
+        }
+        guard let episode = appleEpisode(id: episodeId, in: results) else {
+            if let feedURL = appleFeedURL(in: results) {
+                return try resolveRSSFeed(
+                    feedURL,
+                    request: request,
+                    expectedTitle: appleEpisodeTitleHint(in: url),
+                    expectedURL: url.absoluteString
+                )
+            }
             return nil
         }
         let title = episode["trackName"] as? String ?? episode["collectionName"] as? String
@@ -168,18 +180,30 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
     }
 
     private func resolveAppleLookupAsync(
+        showId: String,
         episodeId: String,
         url: URL,
         request: LinkResolutionRequest,
         requestTimeoutSeconds: TimeInterval
     ) async throws -> LinkResolutionResult? {
-        let lookupURL = URL(string: "https://itunes.apple.com/lookup?id=\(episodeId)&entity=podcastEpisode")!
+        let lookupURL = appleLookupURL(showId: showId)
         guard let data = try? await fetchAsync(lookupURL, timeout: requestTimeoutSeconds) else {
             return nil
         }
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let results = object["results"] as? [[String: Any]],
-              let episode = results.first(where: { ($0["wrapperType"] as? String) == "podcastEpisode" || ($0["kind"] as? String) == "podcast-episode" }) ?? results.first else {
+              let results = object["results"] as? [[String: Any]] else {
+            return nil
+        }
+        guard let episode = appleEpisode(id: episodeId, in: results) else {
+            if let feedURL = appleFeedURL(in: results) {
+                return try await resolveRSSFeedAsync(
+                    feedURL,
+                    request: request,
+                    expectedTitle: appleEpisodeTitleHint(in: url),
+                    expectedURL: url.absoluteString,
+                    requestTimeoutSeconds: requestTimeoutSeconds
+                )
+            }
             return nil
         }
         let title = episode["trackName"] as? String ?? episode["collectionName"] as? String
@@ -353,6 +377,9 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         if items.count == 1 {
             return items[0]
         }
+        if let expectedTitle, !expectedTitle.isEmpty {
+            return nil
+        }
         return items.first(where: { $0.enclosureURL != nil })
     }
 
@@ -437,6 +464,61 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             .queryItems?
             .first(where: { $0.name == name })?
             .value
+    }
+
+    private func appleShowId(in url: URL) -> String? {
+        url.pathComponents.lazy.compactMap { component -> String? in
+            guard component.hasPrefix("id") else { return nil }
+            let identifier = String(component.dropFirst(2))
+            guard !identifier.isEmpty, identifier.allSatisfy(\.isNumber) else { return nil }
+            return identifier
+        }.first
+    }
+
+    private func appleEpisodeTitleHint(in url: URL) -> String? {
+        let components = url.pathComponents
+        guard let showIdIndex = components.firstIndex(where: { component in
+            guard component.hasPrefix("id") else { return false }
+            let identifier = component.dropFirst(2)
+            return !identifier.isEmpty && identifier.allSatisfy(\.isNumber)
+        }), showIdIndex > components.startIndex else {
+            return nil
+        }
+        let slug = components[components.index(before: showIdIndex)]
+        guard slug != "/", !slug.isEmpty else { return nil }
+        return slug.replacingOccurrences(of: "-", with: " ")
+    }
+
+    private func appleLookupURL(showId: String) -> URL {
+        var components = URLComponents(string: "https://itunes.apple.com/lookup")!
+        components.queryItems = [
+            URLQueryItem(name: "id", value: showId),
+            URLQueryItem(name: "entity", value: "podcastEpisode"),
+            URLQueryItem(name: "limit", value: "200")
+        ]
+        return components.url!
+    }
+
+    private func appleEpisode(id: String, in results: [[String: Any]]) -> [String: Any]? {
+        results.first { result in
+            let isEpisode = (result["wrapperType"] as? String) == "podcastEpisode"
+                || (result["kind"] as? String) == "podcast-episode"
+            guard isEpisode else { return false }
+            if let trackId = result["trackId"] as? NSNumber {
+                return trackId.stringValue == id
+            }
+            if let trackId = result["trackId"] as? String {
+                return trackId == id
+            }
+            return false
+        }
+    }
+
+    private func appleFeedURL(in results: [[String: Any]]) -> URL? {
+        results.lazy.compactMap { result in
+            guard let value = result["feedUrl"] as? String else { return nil }
+            return URL(string: value)
+        }.first
     }
 
     private func title(from url: URL) -> String {

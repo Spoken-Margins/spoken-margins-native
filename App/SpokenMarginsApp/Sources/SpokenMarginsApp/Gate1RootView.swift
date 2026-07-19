@@ -24,9 +24,106 @@ struct Gate1RootView: View {
             }
         }
         .background(AppColors.background.ignoresSafeArea())
+        .safeAreaInset(edge: .bottom, spacing: 8) {
+            VStack(spacing: 8) {
+                if model.lastError != nil {
+                    StatusBanner()
+                }
+                if let undo = model.trashUndo {
+                    TrashUndoBanner(undo: undo)
+                }
+                if model.shouldShowMiniPlayer {
+                    MiniPlayerBar()
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 4)
+        }
         .onAppear {
             model.bootstrapLibraryIfNeeded()
         }
+    }
+}
+
+private struct MiniPlayerBar: View {
+    @EnvironmentObject private var model: Gate1AppModel
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button(action: model.openPlayback) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        if model.snapshot.isRecording {
+                            Image(systemName: "waveform.circle.fill")
+                                .foregroundStyle(.red)
+                            Text("Recording interjection")
+                        } else {
+                            Text(model.snapshot.chapterTitle ?? model.snapshot.title ?? model.selectedItem.title)
+                        }
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                    ProgressView(value: Double(model.displayPlaybackProgressPercent), total: 100)
+                        .tint(AppColors.primaryAction)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open Now Playing")
+            .accessibilityIdentifier("miniPlayer.open.button")
+
+            if model.snapshot.isRecording {
+                Button(action: model.finishInterjection) {
+                    Image(systemName: "checkmark")
+                        .frame(width: 42, height: 42)
+                }
+                .buttonStyle(IconButtonStyle())
+                .accessibilityLabel("Finish interjection")
+            } else {
+                Button(action: model.playPause) {
+                    Image(systemName: model.snapshot.status.isPlaybackActive ? "pause.fill" : "play.fill")
+                        .frame(width: 42, height: 42)
+                }
+                .buttonStyle(IconButtonStyle())
+                .accessibilityLabel(model.snapshot.status.isPlaybackActive ? "Pause" : "Play")
+                .accessibilityIdentifier("miniPlayer.playPause.button")
+            }
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, 8)
+        .padding(.vertical, 8)
+        .foregroundStyle(AppColors.text)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AppColors.border))
+        .shadow(color: .black.opacity(0.12), radius: 12, y: 5)
+        .accessibilityIdentifier("miniPlayer.bar")
+    }
+}
+
+private struct TrashUndoBanner: View {
+    @EnvironmentObject private var model: Gate1AppModel
+    let undo: TrashUndoState
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text("Moved \(undo.title) to Recently Deleted")
+                .font(.subheadline)
+                .lineLimit(2)
+            Spacer()
+            Button("Undo", action: model.undoLastTrash)
+                .font(.subheadline.bold())
+            Button(action: model.dismissTrashUndo) {
+                Image(systemName: "xmark")
+            }
+            .accessibilityLabel("Dismiss")
+        }
+        .padding(12)
+        .foregroundStyle(.white)
+        .background(Color.black.opacity(0.88))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .accessibilityIdentifier("trash.undo.banner")
     }
 }
 
@@ -44,6 +141,8 @@ private struct HomeScreen: View {
     @FocusState private var focusedField: Field?
     @State private var isFileImporterPresented = false
     @State private var activeFileImportRequest: FileImportRequest?
+    @State private var isAddSourcePresented = false
+    @State private var pendingTrashItem: LibraryItemRow?
 
     private enum Field {
         case title
@@ -59,45 +158,31 @@ private struct HomeScreen: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                Group {
-                    if horizontalSizeClass == .regular {
-                        HStack(alignment: .top, spacing: 24) {
-                            VStack(alignment: .leading, spacing: 22) {
-                                header
-                                StatusBanner()
-                                createItem
-                                quickAccessFolder
-                            }
-                            .frame(maxWidth: 620, alignment: .topLeading)
-
-                            VStack(alignment: .leading, spacing: 22) {
-                                Color.clear.frame(height: 154)
-                                queue
-                            }
-                            .frame(maxWidth: 520, alignment: .topLeading)
-                        }
-                        .frame(maxWidth: 1180, alignment: .topLeading)
-                    } else {
-                        VStack(alignment: .leading, spacing: 22) {
-                            header
-                            StatusBanner()
-                            createItem
-                            quickAccessFolder
-                            queue
-                        }
-                    }
+                VStack(alignment: .leading, spacing: 22) {
+                    header
+                    queue
                 }
                 .padding(20)
+                .frame(maxWidth: horizontalSizeClass == .regular ? 840 : .infinity)
+                .frame(maxWidth: .infinity)
             }
             .accessibilityIdentifier("home.screen")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .topBarLeading) {
                     Button(action: model.openSettings) {
                         Image(systemName: "gearshape")
                     }
                     .accessibilityLabel("Settings")
                     .accessibilityIdentifier("home.settings.button")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        isAddSourcePresented = true
+                    } label: {
+                        Label("Add Source", systemImage: "plus")
+                    }
+                    .accessibilityIdentifier("home.addSource.button")
                 }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
@@ -105,32 +190,47 @@ private struct HomeScreen: View {
                 }
             }
             .scrollDismissesKeyboard(.interactively)
-            .fileImporter(
-                isPresented: Binding(
-                    get: { isFileImporterPresented },
-                    set: { isFileImporterPresented = $0 }
-                ),
-                allowedContentTypes: fileImportAllowedContentTypes,
-                allowsMultipleSelection: activeFileImportRequest == .obsidianFiles
-            ) { result in
-                let request = activeFileImportRequest
-                activeFileImportRequest = nil
-                isFileImporterPresented = false
-                switch result {
-                case .success(let urls):
-                    switch request {
-                    case .obsidianFiles:
-                        model.importObsidianMarkdownFiles(urls: urls)
-                    case .quickFolder:
-                        if let url = urls.first {
-                            model.configureQuickAccessFolder(url: url)
+            .sheet(isPresented: $isAddSourcePresented) {
+                NavigationStack {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 18) {
+                            createItem
+                            quickAccessFolder
                         }
-                    case .none:
-                        model.reportImportFailure(FileImportPresentationError.missingRequest)
+                        .padding(20)
                     }
-                case .failure(let error):
-                    model.reportImportFailure(error)
+                    .navigationTitle("Add Source")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Close") { isAddSourcePresented = false }
+                        }
+                    }
+                    .fileImporter(
+                        isPresented: $isFileImporterPresented,
+                        allowedContentTypes: fileImportAllowedContentTypes,
+                        allowsMultipleSelection: activeFileImportRequest == .obsidianFiles,
+                        onCompletion: handleFileImportResult
+                    )
                 }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+            }
+            .alert(
+                "Move to Recently Deleted?",
+                isPresented: Binding(
+                    get: { pendingTrashItem != nil },
+                    set: { if !$0 { pendingTrashItem = nil } }
+                ),
+                presenting: pendingTrashItem
+            ) { item in
+                Button("Cancel", role: .cancel) {}
+                Button("Move to Recently Deleted", role: .destructive) {
+                    model.moveItemToTrash(id: item.id)
+                    pendingTrashItem = nil
+                }
+            } message: { item in
+                Text("\(item.title) can be restored from Settings.")
             }
         }
     }
@@ -149,25 +249,49 @@ private struct HomeScreen: View {
         isFileImporterPresented = true
     }
 
+    private func handleFileImportResult(_ result: Result<[URL], Error>) {
+        let request = activeFileImportRequest
+        activeFileImportRequest = nil
+        isFileImporterPresented = false
+        switch result {
+        case .success(let urls):
+            switch request {
+            case .obsidianFiles:
+                model.importObsidianMarkdownFiles(urls: urls)
+                isAddSourcePresented = false
+            case .quickFolder:
+                if let url = urls.first {
+                    model.configureQuickAccessFolder(url: url)
+                }
+            case .none:
+                model.reportImportFailure(FileImportPresentationError.missingRequest)
+            }
+        case .failure(let error):
+            model.reportImportFailure(error)
+        }
+    }
+
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             Text("Spoken Margins")
-                .font(.system(size: 44, weight: .bold, design: .default))
-                .minimumScaleFactor(0.72)
+                .font(.largeTitle.bold())
+            Text("Listen, respond, and keep the useful parts.")
+                .font(.subheadline)
+                .foregroundStyle(AppColors.secondaryText)
         }
     }
 
     private var createItem: some View {
         ProductPanel {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Create Item")
+                Text("Paste Text")
                     .font(.headline)
                 TextField("Title", text: $model.importTitle)
                     .textFieldStyle(.roundedBorder)
                     .focused($focusedField, equals: .title)
                     .accessibilityIdentifier("create.title.field")
                 TextEditor(text: $model.importText)
-                    .frame(height: 150)
+                    .frame(height: 120)
                     .padding(8)
                     .background(AppColors.inputBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -176,9 +300,10 @@ private struct HomeScreen: View {
                     .accessibilityIdentifier("create.text.editor")
                 Button(action: {
                     focusedField = nil
+                    isAddSourcePresented = false
                     model.importTextItem()
                 }) {
-                    Label("Create And Start", systemImage: "plus")
+                    Label("Add and Listen", systemImage: "plus")
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .accessibilityIdentifier("create.start.button")
@@ -212,6 +337,7 @@ private struct HomeScreen: View {
                 }
                 Button {
                     focusedField = nil
+                    isAddSourcePresented = false
                     model.beginSourceLinkImportFromForm()
                 } label: {
                     if model.isResolvingSourceLink {
@@ -220,7 +346,7 @@ private struct HomeScreen: View {
                             Text("Resolving Link")
                         }
                     } else {
-                        Label("Import Link And Start", systemImage: "link.badge.plus")
+                        Label("Add Link and Listen", systemImage: "link.badge.plus")
                     }
                 }
                 .buttonStyle(SecondaryButtonStyle())
@@ -297,17 +423,28 @@ private struct HomeScreen: View {
     private var queue: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("Listening Queue", systemImage: "music.note.list")
+                Label("Your Library", systemImage: "music.note.list")
                     .font(.headline)
                 Spacer()
-                Button("Reset Samples", action: model.resetAndSeed)
-                    .buttonStyle(SecondaryButtonStyle())
-                    .accessibilityIdentifier("reset.samples.button")
             }
             if model.libraryItems.isEmpty {
                 ProductPanel {
-                    Text("No items yet.")
-                        .foregroundStyle(AppColors.secondaryText)
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("Your library is empty")
+                            .font(.headline)
+                        Text("Add pasted text, a podcast link, or a Markdown file. You can also explore with a sample.")
+                            .foregroundStyle(AppColors.secondaryText)
+                        HStack {
+                            Button {
+                                isAddSourcePresented = true
+                            } label: {
+                                Label("Add Source", systemImage: "plus")
+                            }
+                            .buttonStyle(PrimaryButtonStyle())
+                            Button("Try a Sample", action: model.addSampleItem)
+                                .buttonStyle(SecondaryButtonStyle())
+                        }
+                    }
                 }
             } else {
                 ForEach(model.libraryItems) { item in
@@ -342,13 +479,13 @@ private struct HomeScreen: View {
 
                             if item.canDelete {
                                 Button(role: .destructive) {
-                                    model.deleteItem(id: item.id)
+                                    pendingTrashItem = item
                                 } label: {
                                     Image(systemName: "trash")
                                         .frame(width: 42, height: 42)
                                 }
                                 .buttonStyle(DangerIconButtonStyle())
-                                .accessibilityLabel("Delete \(item.title)")
+                                .accessibilityLabel("Move \(item.title) to Recently Deleted")
                                 .accessibilityIdentifier("queue.delete.\(item.id)")
                             }
                         }
@@ -362,13 +499,13 @@ private struct HomeScreen: View {
 private struct ItemScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @State private var showsManualListeningMapEditor = false
+    @State private var isTrashConfirmationPresented = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     detailHeader
-                    StatusBanner()
                     if !model.selectedItem.overview.isEmpty {
                         overview
                     }
@@ -388,15 +525,23 @@ private struct ItemScreen: View {
                     .accessibilityIdentifier("item.home.button")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    if model.selectedItem.id.hasPrefix("item-import-") || model.selectedItem.id.hasPrefix("item-obsidian-") || model.selectedItem.id.hasPrefix("item-browser-") {
+                    if !model.selectedItem.id.isEmpty {
                         Button(role: .destructive) {
-                            model.deleteItem(id: model.selectedItem.id)
+                            isTrashConfirmationPresented = true
                         } label: {
-                            Label("Delete", systemImage: "trash")
+                            Label("Move to Recently Deleted", systemImage: "trash")
                         }
                         .accessibilityIdentifier("item.delete.button")
                     }
                 }
+            }
+            .alert("Move to Recently Deleted?", isPresented: $isTrashConfirmationPresented) {
+                Button("Cancel", role: .cancel) {}
+                Button("Move to Recently Deleted", role: .destructive) {
+                    model.moveItemToTrash(id: model.selectedItem.id)
+                }
+            } message: {
+                Text("\(model.selectedItem.title) can be restored from Settings.")
             }
         }
     }
@@ -416,11 +561,25 @@ private struct ItemScreen: View {
                     .textSelection(.enabled)
                     .accessibilityIdentifier("item.externalReference")
             }
-            HStack {
-                Pill(model.selectedItem.status)
-                Pill("\(max(1, model.selectedItem.chapters.count)) chapters")
-                Pill("\(model.selectedItem.interjections.count) interjections")
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    itemMetadataPills
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    itemMetadataPills
+                }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var itemMetadataPills: some View {
+        Pill(humanizedItemStatus(model.selectedItem.status))
+        if !model.selectedItem.chapters.isEmpty {
+            Pill("\(model.selectedItem.chapters.count) \(model.selectedItem.chapters.count == 1 ? "chapter" : "chapters")")
+        }
+        if !model.selectedItem.interjections.isEmpty {
+                Pill("\(model.selectedItem.interjections.count) interjections")
         }
     }
 
@@ -554,7 +713,7 @@ private struct ItemScreen: View {
                                 model.openSession(session)
                             } label: {
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text(session.status)
+                                    Text(humanizedItemStatus(session.status))
                                         .font(.headline)
                                     Text("\(session.completionPercent)% complete")
                                         .font(.subheadline)
@@ -608,9 +767,11 @@ private struct ItemScreen: View {
 private struct PlaybackScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @State private var followUp = "Can you respond to my interjection?"
+    @State private var followUp = ""
     @State private var selectedInterjection: Interjection?
     @State private var isPastingAssistantResponse = false
+    @State private var scrubberSeconds = 0.0
+    @State private var isScrubbing = false
     @FocusState private var followUpFocused: Bool
 
     var body: some View {
@@ -624,7 +785,6 @@ private struct PlaybackScreen: View {
                             VStack(spacing: 20) {
                                 timeline
                                 conversation
-                                StatusBanner()
                             }
                             .frame(maxWidth: 680)
                         }
@@ -634,7 +794,6 @@ private struct PlaybackScreen: View {
                             playbackControls
                             timeline
                             conversation
-                            StatusBanner()
                         }
                     }
                 }
@@ -689,6 +848,13 @@ private struct PlaybackScreen: View {
                 PastedAssistantResponseView(isPresented: $isPastingAssistantResponse)
                     .environmentObject(model)
             }
+            .onAppear {
+                scrubberSeconds = Double(model.snapshot.currentMediaTimeMs ?? 0) / 1_000
+            }
+            .onChange(of: model.snapshot.currentMediaTimeMs) { _, mediaTimeMs in
+                guard !isScrubbing else { return }
+                scrubberSeconds = Double(mediaTimeMs ?? 0) / 1_000
+            }
         }
     }
 
@@ -699,140 +865,174 @@ private struct PlaybackScreen: View {
 
     private var playbackControls: some View {
         VStack(spacing: 18) {
-            VStack(spacing: 8) {
-                Text(model.snapshot.targetType == "summary_turn_tts" ? "CURRENT SUMMARY" : "CURRENT CHAPTER")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(AppColors.watchSecondary)
-                Text(model.snapshot.chapterTitle ?? model.selectedItem.title)
-                    .font(.title2.weight(.bold))
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.white)
-                Text(playbackProgressLabel)
-                    .font(.subheadline)
-                    .foregroundStyle(AppColors.watchSecondary)
-            }
-
+            playbackHeader
             if isUITesting {
                 gate2CompactValidation
             }
+            playbackPosition
+            playbackTransport
+            playbackRateControl
+            interjectionControls
+        }
+        .padding(24)
+        .frame(maxWidth: 430)
+        .background(AppColors.watchBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 34))
+        .shadow(color: .black.opacity(0.18), radius: 22, y: 12)
+    }
 
-            HStack(spacing: 16) {
-                Button(action: model.skipBack) {
-                    Image(systemName: "chevron.left")
-                }
-                .buttonStyle(RoundPlaybackButtonStyle())
-                .disabled(!model.hasActiveSession)
-                .accessibilityIdentifier("playback.back.button")
+    private var playbackHeader: some View {
+        VStack(spacing: 8) {
+            Text(model.snapshot.targetType == "summary_turn_tts" ? "CURRENT SUMMARY" : "CURRENT CHAPTER")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(AppColors.watchSecondary)
+            Text(model.snapshot.chapterTitle ?? model.selectedItem.title)
+                .font(.title2.weight(.bold))
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.white)
+            Text(playbackProgressLabel)
+                .font(.subheadline)
+                .foregroundStyle(AppColors.watchSecondary)
+        }
+    }
 
-                ZStack {
-                    Circle()
-                        .stroke(AppColors.watchControl, lineWidth: 12)
-                    Circle()
-                        .trim(from: 0, to: CGFloat(max(0, min(100, model.displayPlaybackProgressPercent))) / 100)
-                        .stroke(AppColors.accent, style: StrokeStyle(lineWidth: 12, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                    Button(action: model.playPause) {
-                        Image(systemName: model.snapshot.status.isPlaybackActive ? "pause.fill" : "play.fill")
-                            .font(.title)
+    @ViewBuilder
+    private var playbackPosition: some View {
+        if model.isMediaPlaybackSnapshot, mediaDurationMs > 0 {
+            VStack(spacing: 6) {
+                Slider(
+                    value: Binding(
+                        get: { isScrubbing ? scrubberSeconds : Double(model.snapshot.currentMediaTimeMs ?? 0) / 1_000 },
+                        set: { scrubberSeconds = $0 }
+                    ),
+                    in: 0...Double(mediaDurationMs) / 1_000,
+                    onEditingChanged: { editing in
+                        isScrubbing = editing
+                        if !editing { model.seekMedia(toMediaTimeMs: Int(scrubberSeconds * 1_000)) }
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(AppColors.text)
-                    .accessibilityIdentifier("playback.play.button")
-                }
-                .frame(width: 108, height: 108)
-                .background(Circle().fill(AppColors.accentSoft))
-
-                Button(action: model.skipForward) {
-                    Image(systemName: "chevron.right")
-                }
-                .buttonStyle(RoundPlaybackButtonStyle())
-                .disabled(!model.hasActiveSession)
-                .accessibilityIdentifier("playback.forward.button")
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
+                )
+                .tint(AppColors.accent)
+                .accessibilityLabel("Playback position")
+                .accessibilityValue("\(formatPlaybackTime(Int(scrubberSeconds * 1_000))) of \(formatPlaybackTime(mediaDurationMs))")
+                .accessibilityIdentifier("playback.scrubber")
                 HStack {
-                    Text(model.isMediaPlaybackSnapshot ? "Playback Speed" : "Speech Rate")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(AppColors.watchSecondary)
+                    Text(formatPlaybackTime(Int(scrubberDisplaySeconds * 1_000)))
                     Spacer()
-                    Text(model.isMediaPlaybackSnapshot ? model.mediaPlaybackRateDescription : model.speechRateDescription)
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(AppColors.watchSecondary)
+                    Text("−\(formatPlaybackTime(max(0, mediaDurationMs - Int(scrubberDisplaySeconds * 1_000))))")
                 }
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(AppColors.watchSecondary)
+            }
+        } else {
+            ProgressView(value: Double(model.displayPlaybackProgressPercent), total: 100)
+                .tint(AppColors.accent)
+                .accessibilityLabel("Playback progress")
+                .accessibilityValue("\(model.displayPlaybackProgressPercent) percent")
+        }
+    }
+
+    private var playbackTransport: some View {
+        HStack(spacing: 22) {
+            Button {
                 if model.isMediaPlaybackSnapshot {
-                    Slider(
-                        value: Binding(
-                            get: { model.mediaPlaybackRate },
-                            set: { model.setMediaPlaybackRate($0) }
-                        ),
-                        in: 0.75...2.0,
-                        step: 0.25
-                    )
+                    model.skipBack15Seconds()
+                } else {
+                    model.skipBack()
+                }
+            } label: {
+                Image(systemName: model.isMediaPlaybackSnapshot ? "gobackward.15" : "backward.end.fill")
+            }
+            .buttonStyle(RoundPlaybackButtonStyle())
+            .disabled(!model.hasActiveSession)
+            .accessibilityLabel(model.isMediaPlaybackSnapshot ? "Back 15 seconds" : "Previous \(model.skipUnit)")
+            .accessibilityIdentifier("playback.back.button")
+
+            Button(action: model.playPause) {
+                Image(systemName: model.snapshot.status.isPlaybackActive ? "pause.fill" : "play.fill")
+            }
+            .buttonStyle(MainPlaybackButtonStyle())
+            .accessibilityLabel(model.snapshot.status.isPlaybackActive ? "Pause" : "Play")
+            .accessibilityIdentifier("playback.play.button")
+
+            Button {
+                if model.isMediaPlaybackSnapshot {
+                    model.skipForward15Seconds()
+                } else {
+                    model.skipForward()
+                }
+            } label: {
+                Image(systemName: model.isMediaPlaybackSnapshot ? "goforward.15" : "forward.end.fill")
+            }
+            .buttonStyle(RoundPlaybackButtonStyle())
+            .disabled(!model.hasActiveSession)
+            .accessibilityLabel(model.isMediaPlaybackSnapshot ? "Forward 15 seconds" : "Next \(model.skipUnit)")
+            .accessibilityIdentifier("playback.forward.button")
+        }
+    }
+
+    private var playbackRateControl: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(model.isMediaPlaybackSnapshot ? "Playback Speed" : "Speech Rate")
+                    .font(.caption.weight(.semibold))
+                Spacer()
+                Text(model.isMediaPlaybackSnapshot ? model.mediaPlaybackRateDescription : model.speechRateDescription)
+                    .font(.caption.monospacedDigit())
+            }
+            .foregroundStyle(AppColors.watchSecondary)
+            if model.isMediaPlaybackSnapshot {
+                Slider(value: Binding(get: { model.mediaPlaybackRate }, set: { model.setMediaPlaybackRate($0) }), in: 0.75...2.0, step: 0.25)
                     .accessibilityIdentifier("playback.mediaRate.slider")
-                } else {
-                    Slider(value: $model.speechRate, in: 0.35...0.85, step: 0.01)
-                        .accessibilityIdentifier("playback.speechRate.slider")
-                        .onChange(of: model.speechRate) { _, _ in
-                            model.playbackSpeechRateChanged()
-                        }
-                }
-                if model.isMediaPlaybackSnapshot {
-                    Text("Transcript: \(model.sourceTranscriptStatusDescription)")
-                        .font(.caption2)
-                        .foregroundStyle(AppColors.watchSecondary)
-                        .accessibilityIdentifier("playback.sourceTranscript.status")
-                } else {
-                    Text("Prepared audio: \(model.preparedTextAudioStatusDescription)")
-                        .font(.caption2)
-                        .foregroundStyle(AppColors.watchSecondary)
-                        .accessibilityIdentifier("playback.preparedAudio.status")
-                    if model.canPlayLiveSpeechInstead {
-                        Button(action: model.playLiveSpeechInstead) {
-                            Label("Play Live Speech Instead", systemImage: "speaker.wave.2")
-                        }
+                Text("Transcript: \(model.sourceTranscriptStatusDescription)")
+                    .font(.caption2)
+                    .foregroundStyle(AppColors.watchSecondary)
+                    .accessibilityIdentifier("playback.sourceTranscript.status")
+            } else {
+                Slider(value: $model.speechRate, in: 0.35...0.85, step: 0.01)
+                    .accessibilityIdentifier("playback.speechRate.slider")
+                    .onChange(of: model.speechRate) { _, _ in model.playbackSpeechRateChanged() }
+                Text("Prepared audio: \(model.preparedTextAudioStatusDescription)")
+                    .font(.caption2)
+                    .foregroundStyle(AppColors.watchSecondary)
+                    .accessibilityIdentifier("playback.preparedAudio.status")
+                if model.canPlayLiveSpeechInstead {
+                    Button(action: model.playLiveSpeechInstead) { Label("Play Live Speech Instead", systemImage: "speaker.wave.2") }
                         .buttonStyle(SecondaryButtonStyle())
                         .accessibilityIdentifier("playback.liveSpeechFallback.button")
-                    }
                 }
             }
+        }
+    }
 
-            if model.snapshot.isRecording {
-                VStack(spacing: 12) {
-                    Label("Recording", systemImage: "record.circle.fill")
-                        .foregroundStyle(.red)
-                    HStack {
-                        Button(action: model.finishInterjection) {
-                            Label("Done", systemImage: "checkmark")
-                        }
+    @ViewBuilder
+    private var interjectionControls: some View {
+        if model.snapshot.isRecording {
+            VStack(spacing: 12) {
+                Label("Recording", systemImage: "record.circle.fill").foregroundStyle(.red)
+                HStack {
+                    Button(action: model.finishInterjection) { Label("Done", systemImage: "checkmark") }
                         .buttonStyle(PrimaryButtonStyle())
                         .accessibilityIdentifier("interjection.done.button")
-                        Button(action: model.cancelInterjection) {
-                            Label("Cancel", systemImage: "xmark")
-                        }
+                    Button(action: model.cancelInterjection) { Label("Cancel", systemImage: "xmark") }
                         .buttonStyle(LightButtonStyle())
                         .accessibilityIdentifier("interjection.cancel.button")
-                    }
                 }
-            } else {
+            }
+        } else {
+            VStack(spacing: 10) {
                 HStack(spacing: 10) {
                     Button(action: model.summarize) {
-                        if model.isSummarizingInterjections {
-                            ProgressView()
-                                .frame(width: 44, height: 52)
-                        } else {
-                            Image(systemName: "sparkles")
-                                .frame(width: 44, height: 52)
+                        Group {
+                            if model.isSummarizingInterjections { ProgressView() } else { Image(systemName: "sparkles") }
                         }
+                        .frame(width: 44, height: 52)
                     }
                     .buttonStyle(WatchSecondaryButtonStyle())
                     .disabled(!model.canSummarizeInterjections || model.isSummarizingInterjections)
                     .accessibilityLabel(model.isSummarizingInterjections ? "Summarizing interjections" : "Summarize interjections")
                     .accessibilityIdentifier("playback.summary.button")
-
                     Button(action: model.beginInterjection) {
-                        Label(model.interjectionButtonTitle, systemImage: "mic")
-                            .frame(maxWidth: .infinity)
+                        Label(model.interjectionButtonTitle, systemImage: "mic").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(InterjectButtonStyle())
                     .disabled(!model.hasActiveSession)
@@ -845,16 +1045,10 @@ private struct PlaybackScreen: View {
                     Label("Discuss", systemImage: "play")
                 }
                 .buttonStyle(LightButtonStyle())
-                .disabled(!model.hasActiveSession)
+                .disabled(!model.hasActiveSession || followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityIdentifier("playback.discuss.button")
             }
-
         }
-        .padding(24)
-        .frame(maxWidth: 430)
-        .background(AppColors.watchBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 34))
-        .shadow(color: .black.opacity(0.18), radius: 22, y: 12)
     }
 
     private var gate2CompactValidation: some View {
@@ -906,6 +1100,14 @@ private struct PlaybackScreen: View {
         return "\(current) · Source \(model.snapshot.sourceProgressPercent)%"
     }
 
+    private var mediaDurationMs: Int {
+        max(0, model.snapshot.currentPlaybackDurationMs ?? 0)
+    }
+
+    private var scrubberDisplaySeconds: Double {
+        isScrubbing ? scrubberSeconds : Double(model.snapshot.currentMediaTimeMs ?? 0) / 1_000
+    }
+
     private var timeline: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -930,18 +1132,13 @@ private struct PlaybackScreen: View {
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("timeline.source.play")
                     case .overview:
-                        Button {
-                            model.playSourceFromBeginning()
-                        } label: {
-                            TimelineRow(percent: "SUM", title: "Summary", subtitle: model.selectedItem.overview)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("timeline.overview.play")
+                        TimelineRow(percent: "MAP", title: "Listening overview", subtitle: model.selectedItem.overview)
+                            .accessibilityIdentifier("timeline.overview")
                     case .chapter(let chapter):
                         Button {
                             model.jumpToChapter(chapter)
                         } label: {
-                            TimelineRow(percent: "\(chapter.percent)%", title: chapter.title, subtitle: chapter.id)
+                            TimelineRow(percent: "\(chapter.percent)%", title: chapter.title, subtitle: "Starts around \(chapter.percent)%")
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("timeline.chapter.jump.\(chapter.id)")
@@ -961,7 +1158,7 @@ private struct PlaybackScreen: View {
                         Button {
                             model.playTurn(turn)
                         } label: {
-                            TimelineRow(percent: turnBadge(turn), title: turnTitle(turn), subtitle: turn.summary ?? turn.text ?? turn.status)
+                            TimelineRow(percent: turnBadge(turn), title: turnTitle(turn), subtitle: turn.summary ?? turn.text ?? humanizedTurnStatus(turn.status))
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("timeline.turn.play.\(turn.id)")
@@ -1044,8 +1241,9 @@ private struct PlaybackScreen: View {
                                     Button {
                                         model.copyTargetInterjections(targetType: turn.turnType == "interjection_summary" ? InterjectionTargetType.summaryTurn.rawValue : InterjectionTargetType.assistantTurn.rawValue, targetId: turn.id)
                                     } label: {
-                                        Image(systemName: "square.and.arrow.up")
-                                            .frame(width: 34, height: 34)
+                                        Label("Copy notes", systemImage: "doc.on.doc")
+                                            .padding(.horizontal, 10)
+                                            .frame(minHeight: 34)
                                     }
                                     .buttonStyle(IconButtonStyle())
                                     .disabled(model.selectedItem.interjections.filter { $0.targetId == turn.id && $0.targetType != .item }.isEmpty)
@@ -1061,7 +1259,7 @@ private struct PlaybackScreen: View {
                                     .accessibilityLabel("Play \(turnTitle(turn))")
                                     .accessibilityIdentifier("conversation.playTurn.\(turn.id)")
                                 }
-                                Pill(turn.status)
+                                Pill(humanizedTurnStatus(turn.status))
                             }
                             Text(turn.summary ?? turn.text ?? turn.rawText ?? "")
                                 .font(.subheadline)
@@ -1070,7 +1268,7 @@ private struct PlaybackScreen: View {
                         Divider()
                     }
                 }
-                TextField("Continue the conversation...", text: $followUp, axis: .vertical)
+                TextField("Ask a follow-up…", text: $followUp, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .focused($followUpFocused)
                     .accessibilityIdentifier("conversation.followup.field")
@@ -1080,7 +1278,7 @@ private struct PlaybackScreen: View {
                         model.followUp(followUp)
                     }
                     .buttonStyle(PrimaryButtonStyle())
-                    .disabled(!model.hasActiveSession)
+                    .disabled(!model.hasActiveSession || followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityIdentifier("conversation.submit.button")
                     Button("Retry AI", action: model.retryPendingAI)
                         .buttonStyle(SecondaryButtonStyle())
@@ -1096,6 +1294,10 @@ private struct PlaybackScreen: View {
 private struct SettingsScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @FocusState private var focusedField: Field?
+    @State private var showsAdvancedAISettings = false
+    @State private var showsDeveloperTools = false
+    @State private var pendingPermanentDeletion: LibraryItemRow?
+    @State private var isResetConfirmationPresented = false
 
     private enum Field {
         case mapModel
@@ -1107,24 +1309,8 @@ private struct SettingsScreen: View {
     var body: some View {
         NavigationStack {
             Form {
-                StatusBanner()
-                Section("Provider") {
+                Section("AI Features") {
                     LabeledContent("Provider", value: "OpenAI")
-                    TextField("Listening Map Model", text: $model.listeningMapModel)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .focused($focusedField, equals: .mapModel)
-                        .accessibilityIdentifier("provider.mapModel.field")
-                    TextField("Summary Model", text: $model.summaryModel)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .focused($focusedField, equals: .summaryModel)
-                        .accessibilityIdentifier("provider.summaryModel.field")
-                    TextField("Conversation Model", text: $model.conversationModel)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .focused($focusedField, equals: .conversationModel)
-                        .accessibilityIdentifier("provider.conversationModel.field")
                     SecureField("API Key", text: $model.providerAPIKey)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -1135,11 +1321,28 @@ private struct SettingsScreen: View {
                     Button("Probe Provider", action: model.probeProvider)
                         .accessibilityIdentifier("provider.probe.button")
                     LabeledContent("Probe", value: model.providerProbeStatus)
+                    DisclosureGroup("Advanced model settings", isExpanded: $showsAdvancedAISettings) {
+                        TextField("Listening Map Model", text: $model.listeningMapModel)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .focused($focusedField, equals: .mapModel)
+                            .accessibilityIdentifier("provider.mapModel.field")
+                        TextField("Summary Model", text: $model.summaryModel)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .focused($focusedField, equals: .summaryModel)
+                            .accessibilityIdentifier("provider.summaryModel.field")
+                        TextField("Conversation Model", text: $model.conversationModel)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .focused($focusedField, equals: .conversationModel)
+                            .accessibilityIdentifier("provider.conversationModel.field")
+                    }
                 }
                 .onChange(of: model.listeningMapModel) { _, _ in model.settingsValueChanged() }
                 .onChange(of: model.summaryModel) { _, _ in model.settingsValueChanged() }
                 .onChange(of: model.conversationModel) { _, _ in model.settingsValueChanged() }
-                Section("Validation") {
+                Section("Playback & Voice") {
                     HStack {
                         Text("Native Voices")
                         Spacer()
@@ -1215,20 +1418,25 @@ private struct SettingsScreen: View {
                         model.settingsValueChanged()
                         model.saveProviderSettings()
                     }
-                    Picker("Runtime Profile", selection: $model.selectedProfileId) {
-                        Text("Phone/Tablet Online").tag("phone-tablet-online")
-                        Text("Phone/Tablet Offline").tag("phone-tablet-offline")
+                }
+                Section("Recently Deleted") {
+                    if model.recentlyDeletedItems.isEmpty {
+                        Text("Items moved here can be restored. Nothing is deleted automatically.")
+                            .foregroundStyle(AppColors.secondaryText)
+                    } else {
+                        ForEach(model.recentlyDeletedItems) { item in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(item.title)
+                                    .font(.headline)
+                                HStack {
+                                    Button("Restore") { model.restoreItem(id: item.id) }
+                                    Button("Delete Permanently", role: .destructive) {
+                                        pendingPermanentDeletion = item
+                                    }
+                                }
+                            }
+                        }
                     }
-                    .accessibilityIdentifier("runtime.profile.picker")
-                    .onChange(of: model.selectedProfileId) { _, _ in
-                        model.runtimeProfileChanged()
-                    }
-                    Button("Reset Seed Data", action: model.resetAndSeed)
-                        .accessibilityIdentifier("settings.reset.button")
-                    Button("Refresh Diagnostics", action: model.refreshDiagnostics)
-                        .accessibilityIdentifier("settings.diagnostics.button")
-                    Button("Copy Privacy-Safe Diagnostics", action: model.copyDiagnosticsExport)
-                        .accessibilityIdentifier("settings.copyDiagnostics.button")
                 }
                 Section("Import Inbox") {
                     if model.importInbox.isEmpty {
@@ -1258,14 +1466,33 @@ private struct SettingsScreen: View {
                         }
                     }
                 }
-                Section("Diagnostics") {
-                    ForEach(model.diagnostics.keys.sorted(), id: \.self) { key in
-                        LabeledContent(key, value: model.diagnostics[key] ?? "")
-                    }
-                }
-                Section("Known Issues") {
-                    ForEach(model.knownIssues, id: \.self) { issue in
-                        Text(issue)
+                Section("Developer") {
+                    DisclosureGroup("Developer tools", isExpanded: $showsDeveloperTools) {
+                        Button("Add Sample Item", action: model.addSampleItem)
+                        Picker("Runtime Profile", selection: $model.selectedProfileId) {
+                            Text("Phone/Tablet Online").tag("phone-tablet-online")
+                            Text("Phone/Tablet Offline").tag("phone-tablet-offline")
+                        }
+                        .accessibilityIdentifier("runtime.profile.picker")
+                        .onChange(of: model.selectedProfileId) { _, _ in
+                            model.runtimeProfileChanged()
+                        }
+                        Button("Reset Library and Load Sample", role: .destructive) {
+                            isResetConfirmationPresented = true
+                        }
+                        .accessibilityIdentifier("settings.reset.button")
+                        Button("Refresh Diagnostics", action: model.refreshDiagnostics)
+                            .accessibilityIdentifier("settings.diagnostics.button")
+                        Button("Copy Privacy-Safe Diagnostics", action: model.copyDiagnosticsExport)
+                            .accessibilityIdentifier("settings.copyDiagnostics.button")
+                        ForEach(model.diagnostics.keys.sorted(), id: \.self) { key in
+                            LabeledContent(key, value: model.diagnostics[key] ?? "")
+                        }
+                        ForEach(model.knownIssues, id: \.self) { issue in
+                            Text(issue)
+                                .font(.caption)
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
                     }
                 }
             }
@@ -1287,6 +1514,28 @@ private struct SettingsScreen: View {
                     Button("Done") { focusedField = nil }
                 }
             }
+            .alert(
+                "Delete Permanently?",
+                isPresented: Binding(
+                    get: { pendingPermanentDeletion != nil },
+                    set: { if !$0 { pendingPermanentDeletion = nil } }
+                ),
+                presenting: pendingPermanentDeletion
+            ) { item in
+                Button("Cancel", role: .cancel) {}
+                Button("Delete Permanently", role: .destructive) {
+                    model.permanentlyDeleteItem(id: item.id)
+                    pendingPermanentDeletion = nil
+                }
+            } message: { item in
+                Text("\(item.title) and all of its sessions, notes, and transcripts will be deleted. This cannot be undone.")
+            }
+            .alert("Reset the entire library?", isPresented: $isResetConfirmationPresented) {
+                Button("Cancel", role: .cancel) {}
+                Button("Reset Library", role: .destructive, action: model.resetAndSeed)
+            } message: {
+                Text("This permanently deletes every item and its related records, then loads the sample.")
+            }
         }
     }
 }
@@ -1300,7 +1549,6 @@ private struct ExportScreen: View {
                 VStack(alignment: .leading, spacing: 16) {
                     Text("Export")
                         .font(.largeTitle.bold())
-                    StatusBanner()
                     ProductPanel {
                         VStack(alignment: .leading, spacing: 14) {
                             Picker("Format", selection: $model.exportFormat) {
@@ -1484,28 +1732,34 @@ private struct InterjectionDetailView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dismiss) private var dismiss
     let interjection: Interjection
+    @State private var pendingDeletion: PendingInterjectionDeletion?
+
+    private enum PendingInterjectionDeletion: Equatable {
+        case transcript
+        case interjection
+    }
 
     var body: some View {
         NavigationStack {
             List {
-                Section("Status") {
-                    LabeledContent("Transcription", value: interjection.transcriptionStatus)
-                    LabeledContent("Audio", value: interjection.audioPath ?? "none")
-                    LabeledContent("Session", value: interjection.sessionId)
-                    LabeledContent("Target", value: "\(interjection.targetType.rawValue):\(interjection.targetId)")
+                Section("Context") {
+                    LabeledContent("Attached to", value: interjectionTargetLabel(interjection))
+                    LabeledContent("Position", value: "Around \(interjection.roughPercent)%")
+                    if interjection.transcriptionStatus != "complete" {
+                        LabeledContent("Transcript status", value: humanizedTurnStatus(interjection.transcriptionStatus))
+                    }
                 }
                 Section("Transcript") {
                     Text(interjection.cleanedTranscript ?? interjection.transcript ?? "No transcript yet.")
                         .textSelection(.enabled)
                     Button {
-                        model.copyTargetInterjections(targetType: interjection.targetType.rawValue, targetId: interjection.targetId)
+                        model.copyInterjectionWithContext(interjection)
                     } label: {
-                        Label("Copy Target Interjections", systemImage: "doc.on.doc")
+                        Label("Copy Transcript and Anchors", systemImage: "doc.on.doc")
                     }
-                    .accessibilityIdentifier("interjection.detail.copyTarget")
+                    .accessibilityIdentifier("interjection.detail.copy")
                     Button("Delete Transcript") {
-                        model.deleteTranscript(interjection: interjection)
-                        dismiss()
+                        pendingDeletion = .transcript
                     }
                     .disabled(interjection.transcript == nil && interjection.cleanedTranscript == nil)
                     .accessibilityIdentifier("interjection.detail.deleteTranscript")
@@ -1522,8 +1776,7 @@ private struct InterjectionDetailView: View {
                 }
                 Section {
                     Button(role: .destructive) {
-                        model.deleteInterjection(interjection)
-                        dismiss()
+                        pendingDeletion = .interjection
                     } label: {
                         Label("Delete Interjection", systemImage: "trash")
                     }
@@ -1536,6 +1789,29 @@ private struct InterjectionDetailView: View {
                     Button("Close") { dismiss() }
                         .accessibilityIdentifier("interjection.detail.close")
                 }
+            }
+            .confirmationDialog(
+                pendingDeletion == .transcript ? "Delete this transcript?" : "Delete this interjection?",
+                isPresented: Binding(
+                    get: { pendingDeletion != nil },
+                    set: { if !$0 { pendingDeletion = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                if pendingDeletion == .transcript {
+                    Button("Delete Transcript", role: .destructive) {
+                        model.deleteTranscript(interjection: interjection)
+                        pendingDeletion = nil
+                        dismiss()
+                    }
+                } else {
+                    Button("Delete Interjection", role: .destructive) {
+                        model.deleteInterjection(interjection)
+                        pendingDeletion = nil
+                        dismiss()
+                    }
+                }
+                Button("Cancel", role: .cancel) { pendingDeletion = nil }
             }
         }
     }
@@ -1572,17 +1848,25 @@ private struct PlainPanelButtonStyle: ButtonStyle {
 private struct StatusBanner: View {
     @EnvironmentObject private var model: Gate1AppModel
 
+    @ViewBuilder
     var body: some View {
-        ProductPanel {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(model.statusMessage)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(model.lastError == nil ? AppColors.text : Color.red)
-                if let error = model.lastError {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .textSelection(.enabled)
+        if let error = model.lastError {
+            ProductPanel {
+                HStack(alignment: .top, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Something needs attention", systemImage: "exclamationmark.triangle")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(AppColors.dangerText)
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(AppColors.dangerText)
+                            .textSelection(.enabled)
+                    }
+                    Spacer()
+                    Button(action: model.dismissError) {
+                        Image(systemName: "xmark")
+                    }
+                    .accessibilityLabel("Dismiss error")
                 }
             }
         }
@@ -1679,6 +1963,46 @@ private func turnSequenceNumber(_ id: String) -> Int? {
     return value
 }
 
+private func humanizedItemStatus(_ status: String) -> String {
+    switch status {
+    case "needs_listening_map": return "Ready to listen"
+    case "ready": return "Ready"
+    case "in_progress": return "In progress"
+    case "finished": return "Finished"
+    case "map_needs_repair": return "Map needs attention"
+    default: return status.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+}
+
+private func humanizedTurnStatus(_ status: String) -> String {
+    switch status {
+    case "complete": return "Ready"
+    case "streaming": return "Generating"
+    case "failed_partial": return "Needs retry"
+    case "pending": return "Waiting"
+    default: return status.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+}
+
+private func interjectionTargetLabel(_ interjection: Interjection) -> String {
+    switch interjection.targetType {
+    case .item: return "Source"
+    case .assistantTurn: return "AI response"
+    case .summaryTurn: return "Interjection summary"
+    }
+}
+
+private func formatPlaybackTime(_ milliseconds: Int) -> String {
+    let totalSeconds = max(0, milliseconds / 1_000)
+    let hours = totalSeconds / 3_600
+    let minutes = (totalSeconds % 3_600) / 60
+    let seconds = totalSeconds % 60
+    if hours > 0 {
+        return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+    }
+    return String(format: "%d:%02d", minutes, seconds)
+}
+
 private enum AppColors {
     static let background = dynamicColor(light: (0.96, 0.97, 0.94), dark: (0.07, 0.09, 0.08))
     static let panel = dynamicColor(light: (1.00, 1.00, 1.00), dark: (0.13, 0.16, 0.14))
@@ -1687,6 +2011,7 @@ private enum AppColors {
     static let text = dynamicColor(light: (0.09, 0.13, 0.11), dark: (0.92, 0.95, 0.91))
     static let secondaryText = dynamicColor(light: (0.38, 0.44, 0.41), dark: (0.66, 0.72, 0.68))
     static let green = dynamicColor(light: (0.13, 0.43, 0.30), dark: (0.50, 0.84, 0.62))
+    static let primaryAction = dynamicColor(light: (0.08, 0.32, 0.22), dark: (0.12, 0.36, 0.23))
     static let softGreen = dynamicColor(light: (0.91, 0.94, 0.88), dark: (0.18, 0.25, 0.20))
     static let accent = dynamicColor(light: (0.48, 0.82, 0.59), dark: (0.56, 0.89, 0.67))
     static let accentSoft = dynamicColor(light: (0.67, 0.91, 0.72), dark: (0.25, 0.39, 0.28))
@@ -1695,6 +2020,7 @@ private enum AppColors {
     static let watchSecondary = Color(red: 0.69, green: 0.75, blue: 0.70)
     static let dangerText = dynamicColor(light: (0.55, 0.13, 0.11), dark: (1.00, 0.55, 0.48))
     static let dangerBackground = dynamicColor(light: (0.96, 0.88, 0.86), dark: (0.34, 0.15, 0.13))
+    static let interjectText = Color(red: 0.08, green: 0.10, blue: 0.08)
 
     private static func dynamicColor(light: (Double, Double, Double), dark: (Double, Double, Double)) -> Color {
         #if canImport(UIKit)
@@ -1715,7 +2041,7 @@ private struct PrimaryButtonStyle: ButtonStyle {
             .padding(.horizontal, 16)
             .frame(minHeight: 44)
             .foregroundStyle(.white)
-            .background(AppColors.green.opacity(configuration.isPressed ? 0.78 : 1))
+            .background(AppColors.primaryAction.opacity(configuration.isPressed ? 0.78 : 1))
             .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
@@ -1773,6 +2099,17 @@ private struct RoundPlaybackButtonStyle: ButtonStyle {
     }
 }
 
+private struct MainPlaybackButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.title2)
+            .foregroundStyle(AppColors.interjectText)
+            .frame(width: 76, height: 76)
+            .background(AppColors.accent.opacity(configuration.isPressed ? 0.75 : 1))
+            .clipShape(Circle())
+    }
+}
+
 private struct WatchSecondaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -1787,7 +2124,7 @@ private struct InterjectButtonStyle: ButtonStyle {
         configuration.label
             .font(.headline)
             .frame(minHeight: 52)
-            .foregroundStyle(AppColors.text)
+            .foregroundStyle(AppColors.interjectText)
             .background(Color(red: 0.94, green: 0.82, blue: 0.42).opacity(configuration.isPressed ? 0.78 : 1))
             .clipShape(RoundedRectangle(cornerRadius: 8))
     }

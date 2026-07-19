@@ -11,14 +11,9 @@ final class Gate1FlowUITests: XCTestCase {
         app.launch()
     }
 
-    func testSeededGate1FlowHasVisibleFeedbackPlaybackExportAndSettings() throws {
+    func testSeededGate1FlowHasPlaybackMiniPlayerExportAndSettings() throws {
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["Spoken Margins"].exists)
-
-        let reset = app.buttons["reset.samples.button"]
-        XCTAssertTrue(reset.waitForExistence(timeout: 4))
-        reset.tap()
-        XCTAssertTrue(app.staticTexts["Listening queue ready."].waitForExistence(timeout: 4))
 
         let seededStart = app.buttons["queue.start.item-pill"]
         XCTAssertTrue(seededStart.waitForExistence(timeout: 4))
@@ -29,21 +24,20 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("conversation.section").waitForExistence(timeout: 4))
 
         app.buttons["playback.forward.button"].tap()
-        XCTAssertTrue(app.staticTexts["Skipped forward."].waitForExistence(timeout: 4))
         app.buttons["playback.back.button"].tap()
-        XCTAssertTrue(app.staticTexts["Skipped back."].waitForExistence(timeout: 4))
 
         app.buttons["playback.export.button"].tap()
         XCTAssertTrue(element("export.screen").waitForExistence(timeout: 4))
-        XCTAssertTrue(app.staticTexts["Built session export."].waitForExistence(timeout: 4))
         XCTAssertTrue(element("export.preview").waitForExistence(timeout: 4))
 
         app.buttons["export.home.button"].tap()
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 4))
+        XCTAssertTrue(element("miniPlayer.bar").waitForExistence(timeout: 4))
         app.buttons["home.settings.button"].tap()
 
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 4))
         XCTAssertTrue(app.staticTexts["OpenAI"].exists)
+        app.buttons["Advanced model settings"].tap()
         XCTAssertTrue(app.textFields["provider.mapModel.field"].exists)
         XCTAssertTrue(app.textFields["provider.summaryModel.field"].exists)
         XCTAssertTrue(app.textFields["provider.conversationModel.field"].exists)
@@ -69,16 +63,11 @@ final class Gate1FlowUITests: XCTestCase {
         let apply = scrollToElement("item.applyMap.button")
         apply.tap()
 
-        XCTAssertTrue(app.staticTexts["Applied Listening Map."].waitForExistence(timeout: 4))
         XCTAssertTrue(scrollToElement("chapter.jump.manual-process").exists)
     }
 
     func testGeneratedTurnTimelineRowsAreLabeledAndTappable() throws {
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
-        let reset = app.buttons["reset.samples.button"]
-        XCTAssertTrue(reset.waitForExistence(timeout: 4))
-        reset.tap()
-
         let seededStart = app.buttons["queue.start.item-pill"]
         XCTAssertTrue(seededStart.waitForExistence(timeout: 4))
         seededStart.tap()
@@ -92,19 +81,15 @@ final class Gate1FlowUITests: XCTestCase {
 
         let aiResponse = scrollToButton(containingLabel: "Here is a quick response to your interjection.")
         aiResponse.tap()
-        XCTAssertTrue(app.staticTexts["Playing AI response."].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["CURRENT CHAPTER"].waitForExistence(timeout: 4))
 
         let aiChapter = scrollToButton(containingLabel: "Timeline Navigation")
         aiChapter.tap()
-        XCTAssertTrue(app.staticTexts["Jumped to Timeline Navigation."].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["Timeline Navigation"].waitForExistence(timeout: 4))
     }
 
     func testExportAfterTwoSessionsStaysSessionIsolated() throws {
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
-        let reset = app.buttons["reset.samples.button"]
-        XCTAssertTrue(reset.waitForExistence(timeout: 4))
-        reset.tap()
-
         let seededStart = app.buttons["queue.start.item-pill"]
         XCTAssertTrue(seededStart.waitForExistence(timeout: 4))
         seededStart.tap()
@@ -129,10 +114,6 @@ final class Gate1FlowUITests: XCTestCase {
 
     func testGate2CompactValidationControlsDelegateTransportCommands() throws {
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
-        let reset = app.buttons["reset.samples.button"]
-        XCTAssertTrue(reset.waitForExistence(timeout: 4))
-        reset.tap()
-
         let seededStart = app.buttons["queue.start.item-pill"]
         XCTAssertTrue(seededStart.waitForExistence(timeout: 4))
         seededStart.tap()
@@ -142,10 +123,10 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("gate2.compact.chapter").label.contains("Reasonable distrust"))
 
         app.buttons["gate2.compact.playPause.button"].tap()
-        XCTAssertTrue(app.staticTexts["Compact control togglePlayPause delegated."].waitForExistence(timeout: 4))
+        XCTAssertTrue(element("playback.play.button").waitForExistence(timeout: 4))
 
         app.buttons["gate2.compact.forward.button"].tap()
-        XCTAssertTrue(app.staticTexts["Compact control skipForward delegated."].waitForExistence(timeout: 4))
+        XCTAssertTrue(element("gate2.compact.chapter").waitForExistence(timeout: 4))
     }
 
     private func element(_ identifier: String) -> XCUIElement {

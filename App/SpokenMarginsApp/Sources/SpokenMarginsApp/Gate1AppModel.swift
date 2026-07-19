@@ -29,6 +29,11 @@ struct LibraryItemRow: Identifiable, Hashable {
     let canDelete: Bool
 }
 
+struct TrashUndoState: Equatable {
+    let itemId: String
+    let title: String
+}
+
 struct ItemDetailState {
     var id = ""
     var title = ""
@@ -127,14 +132,16 @@ final class Gate1AppModel: ObservableObject {
     @Published var exportIncludesInterjections = UserDefaults.standard.object(forKey: "exportIncludesInterjections") as? Bool ?? true
     @Published var exportIncludesTurns = UserDefaults.standard.object(forKey: "exportIncludesTurns") as? Bool ?? true
     @Published var libraryItems: [LibraryItemRow] = []
+    @Published var recentlyDeletedItems: [LibraryItemRow] = []
+    @Published var trashUndo: TrashUndoState?
     @Published var selectedItem = ItemDetailState()
     @Published var pastedAssistantResponse = ""
     @Published var quickAccessFolderName = UserDefaults.standard.string(forKey: "quickAccessFolderName") ?? "No folder selected"
     @Published var quickAccessRecentFiles: [QuickAccessFile] = []
     @Published var importInbox: [ImportInboxEntry] = []
     @Published var selectedProfileId = "phone-tablet-online"
-    @Published var importTitle = "Gate 1 Article With Links"
-    @Published var importText = "Read the background at https://example.com/long/url before continuing. A labeled [reference](https://example.com/essay) should stay readable while raw URLs are skipped."
+    @Published var importTitle = ""
+    @Published var importText = ""
     @Published var sourceLinkURL = ""
     @Published var isResolvingSourceLink = false
     @Published var listeningMapJSON = ""
@@ -348,11 +355,11 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func bootstrapLibraryIfNeeded() {
-        guard libraryItems.isEmpty else { return }
+        guard libraryItems.isEmpty, store == nil else { return }
         do {
             let store = try requireStore()
             let rows = try loadLibraryRows(store: store)
-            guard !rows.isEmpty else {
+            if rows.isEmpty && CommandLine.arguments.contains("--ui-testing") {
                 resetAndSeed()
                 return
             }
@@ -361,10 +368,15 @@ final class Gate1AppModel: ObservableObject {
             }
             try recoverInterruptedAIJobs(store: store, rows: rows)
             libraryItems = rows
-            activeItemId = rows.first?.id ?? activeItemId
-            selectedItem = try loadItemDetail(id: activeItemId, store: store)
+            recentlyDeletedItems = try loadDeletedLibraryRows(store: store)
+            if let first = rows.first {
+                activeItemId = first.id
+                selectedItem = try loadItemDetail(id: first.id, store: store)
+            } else {
+                selectedItem = ItemDetailState()
+            }
             diagnostics["libraryBootstrap"] = "loaded:\(rows.count)"
-            reportSuccess("Listening queue ready.")
+            reportSuccess(rows.isEmpty ? "Add a source to begin." : "Library ready.")
         } catch {
             reportFailure(error, context: "Library bootstrap failed")
         }
@@ -373,9 +385,6 @@ final class Gate1AppModel: ObservableObject {
     func handleAppBecameActive() {
         syncPlaybackProgressForLifecycle()
         importPendingSourceLinkHandoffs()
-        guard snapshot.status.isPlaybackActive, screen == .home else { return }
-        screen = .playback
-        diagnostics["foregroundRoute"] = "active_playback"
     }
 
     func resetAndSeed() {
@@ -392,6 +401,8 @@ final class Gate1AppModel: ObservableObject {
             activeItemId = item.id
             snapshot = SessionSnapshot()
             libraryItems = try loadLibraryRows(store: store)
+            recentlyDeletedItems = []
+            trashUndo = nil
             selectedItem = try loadItemDetail(id: item.id, store: store)
             diagnostics = [
                 "runtimeProfile": selectedProfileId,
@@ -402,6 +413,27 @@ final class Gate1AppModel: ObservableObject {
             reportSuccess("Listening queue ready.")
         } catch {
             reportFailure(error, context: "Reset and seed failed")
+        }
+    }
+
+    func addSampleItem() {
+        do {
+            let store = try requireStore()
+            var item = try loadFixtureItem(name: "text-with-listening-map")
+            item.deletedAt = nil
+            let map = try loadFixtureMap(name: "valid-listening-map")
+            try store.saveItem(item)
+            try store.saveListeningMap(map)
+            if engine == nil {
+                installEngine(try makeEngine(store: store))
+            }
+            activeItemId = item.id
+            try refreshLibraryRows(store: store)
+            selectedItem = try loadItemDetail(id: item.id, store: store)
+            screen = .item
+            reportSuccess("Sample added.")
+        } catch {
+            reportFailure(error, context: "Add sample failed")
         }
     }
 
@@ -1159,16 +1191,22 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func openHome() {
-        if hasActiveSession {
-            run { engine in
-                snapshot = try engine.stopPlayback()
-            }
-        }
         screen = .home
     }
 
     func openSettings() {
         screen = .settings
+    }
+
+    func openPlayback() {
+        guard hasActiveSession else { return }
+        if let itemId = snapshot.itemId, let store {
+            activeItemId = itemId
+            if let detail = try? loadItemDetail(id: itemId, store: store) {
+                selectedItem = detail
+            }
+        }
+        screen = .playback
     }
 
     func openExport() {
@@ -1259,14 +1297,18 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func deleteItem(id: String) {
+        moveItemToTrash(id: id)
+    }
+
+    func moveItemToTrash(id: String) {
         do {
             let store = try requireStore()
-            guard isUserImportedItem(id) else {
-                reportFailure("Seeded fixture items cannot be deleted. Use reset to restore the Gate 1 fixture set.")
-                return
+            let item = try store.loadItem(id: id)
+            if snapshot.itemId == id {
+                _ = try? engine?.stopPlayback()
             }
-            try store.deleteItem(id: id)
-            libraryItems = try loadLibraryRows(store: store)
+            try store.moveItemToTrash(id: id)
+            try refreshLibraryRows(store: store)
             if activeItemId == id {
                 activeItemId = libraryItems.first?.id ?? "item-pill"
                 snapshot = SessionSnapshot()
@@ -1274,9 +1316,58 @@ final class Gate1AppModel: ObservableObject {
                 selectedItem = libraryItems.first.map { (try? loadItemDetail(id: $0.id, store: store)) ?? ItemDetailState() } ?? ItemDetailState()
             }
             screen = .home
-            reportSuccess("Deleted imported item.")
+            trashUndo = TrashUndoState(itemId: id, title: item.title)
+            reportSuccess("Moved \(item.title) to Recently Deleted.")
         } catch {
-            reportFailure(error, context: "Delete failed")
+            reportFailure(error, context: "Move to Recently Deleted failed")
+        }
+    }
+
+    func undoLastTrash() {
+        guard let trashUndo else { return }
+        restoreItem(id: trashUndo.itemId)
+    }
+
+    func dismissTrashUndo() {
+        trashUndo = nil
+    }
+
+    func dismissError() {
+        lastError = nil
+        if statusMessage == "Error" {
+            statusMessage = "Ready."
+        }
+    }
+
+    func restoreItem(id: String) {
+        do {
+            let store = try requireStore()
+            let item = try store.loadItem(id: id)
+            try store.restoreItem(id: id)
+            try refreshLibraryRows(store: store)
+            trashUndo = nil
+            reportSuccess("Restored \(item.title).")
+        } catch {
+            reportFailure(error, context: "Restore failed")
+        }
+    }
+
+    func permanentlyDeleteItem(id: String) {
+        do {
+            let store = try requireStore()
+            let item = try store.loadItem(id: id)
+            guard item.deletedAt != nil else {
+                reportFailure("Move the item to Recently Deleted before deleting it permanently.")
+                return
+            }
+            try store.deleteItem(id: id)
+            try refreshLibraryRows(store: store)
+            if trashUndo?.itemId == id {
+                trashUndo = nil
+            }
+            reportSuccess("Permanently deleted \(item.title).")
+        } catch {
+            reportFailure(error, context: "Permanent delete failed")
         }
     }
 
@@ -1285,6 +1376,13 @@ final class Gate1AppModel: ObservableObject {
             snapshot = try engine.skipBack(unit: skipUnitForCurrentTarget())
             refreshSelectedItem()
             reportSuccess("Skipped back.")
+        }
+    }
+
+    func skipBack15Seconds() {
+        run { engine in
+            snapshot = try engine.skipBack(unit: "time_15s")
+            refreshSelectedItem()
         }
     }
 
@@ -1301,6 +1399,13 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    func skipForward15Seconds() {
+        run { engine in
+            snapshot = try engine.skipForward(unit: "time_15s")
+            refreshSelectedItem()
+        }
+    }
+
     func setMediaPlaybackRate(_ rate: Double) {
         let clamped = max(0.75, min(2.0, rate))
         mediaPlaybackRate = clamped
@@ -1309,6 +1414,13 @@ final class Gate1AppModel: ObservableObject {
             snapshot = try engine.setPlaybackRate(clamped)
             refreshSelectedItem()
             diagnostics["mediaPlaybackRate"] = String(format: "%.2f", clamped)
+        }
+    }
+
+    func seekMedia(toMediaTimeMs mediaTimeMs: Int) {
+        run { engine in
+            snapshot = try engine.seekMedia(toMediaTimeMs: mediaTimeMs)
+            refreshSelectedItem()
         }
     }
 
@@ -1620,6 +1732,29 @@ final class Gate1AppModel: ObservableObject {
             #else
             exportPreview = text
             reportSuccess("Built target interjection export.")
+            #endif
+        }
+    }
+
+    func copyInterjectionWithContext(_ interjection: Interjection, format: String = "markdown") {
+        run { engine in
+            let export = try engine.buildExport(options: ExportOptions(
+                sessionId: interjection.sessionId,
+                includeFullText: false,
+                includeReference: true,
+                includeListeningMap: false,
+                includeInterjections: true,
+                includeTurns: interjection.targetType != .item,
+                scope: "selected_interjections",
+                interjectionIds: [interjection.id]
+            ))
+            let text = try renderExport(export, format: format)
+            #if canImport(UIKit)
+            UIPasteboard.general.string = text
+            reportSuccess("Copied interjection with its anchors.")
+            #else
+            exportPreview = text
+            reportSuccess("Built interjection export.")
             #endif
         }
     }
@@ -2360,6 +2495,10 @@ final class Gate1AppModel: ObservableObject {
         snapshot.sessionId != nil
     }
 
+    var shouldShowMiniPlayer: Bool {
+        hasActiveSession && screen != .playback && snapshot.phase != .finished && snapshot.phase != .abandoned
+    }
+
     var isMediaPlaybackSnapshot: Bool {
         snapshot.targetType == TargetType.transcriptBackedMedia.rawValue ||
             snapshot.targetType == TargetType.browserOwnedMedia.rawValue
@@ -2740,7 +2879,8 @@ final class Gate1AppModel: ObservableObject {
     private func performGate3WatchCommand(_ request: Gate3WatchCommandRequest) {
         do {
             if engine == nil {
-                resetAndSeed()
+                let store = try requireStore()
+                installEngine(try makeEngine(store: store))
             }
             guard let dispatcher = gate3WatchDispatcher else {
                 throw SessionKitError.invalidCommandForState("watch_tethered_unconfigured")
@@ -2832,7 +2972,12 @@ final class Gate1AppModel: ObservableObject {
 
     private func run(_ operation: (SessionEngine) throws -> Void) {
         if engine == nil {
-            resetAndSeed()
+            do {
+                let store = try requireStore()
+                installEngine(try makeEngine(store: store))
+            } catch {
+                reportFailure(error, context: "Playback setup failed")
+            }
         }
         guard let engine else { return }
         do {
@@ -3370,9 +3515,20 @@ final class Gate1AppModel: ObservableObject {
                 id: item.id,
                 title: item.title,
                 status: libraryStatusLabel(for: item),
-                canDelete: isUserImportedItem(item.id)
+                canDelete: true
             )
         }
+    }
+
+    private func loadDeletedLibraryRows(store: SQLiteSessionStore) throws -> [LibraryItemRow] {
+        try store.listDeletedItems().map { item in
+            LibraryItemRow(id: item.id, title: item.title, status: "Recently deleted", canDelete: true)
+        }
+    }
+
+    private func refreshLibraryRows(store: SQLiteSessionStore) throws {
+        libraryItems = try loadLibraryRows(store: store)
+        recentlyDeletedItems = try loadDeletedLibraryRows(store: store)
     }
 
     private func recoverInterruptedAIJobs(store: SQLiteSessionStore, rows: [LibraryItemRow]) throws {
@@ -3396,11 +3552,19 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func libraryStatusLabel(for item: Item) -> String {
-        guard item.status == "ready" else { return item.status }
+        guard item.status == "ready" else {
+            switch item.status {
+            case "needs_listening_map": return "Ready to listen · map optional"
+            case "in_progress": return "In progress"
+            case "finished": return "Finished"
+            case "map_needs_repair": return "Listening map needs attention"
+            default: return item.status.replacingOccurrences(of: "_", with: " ").capitalized
+            }
+        }
         if item.media != nil || item.mediaType == TargetType.transcriptBackedMedia.rawValue {
             return "Audio ready"
         }
-        return item.status
+        return "Ready to listen"
     }
 
     private func resolvedSourceLinkHandoffStore() throws -> SourceLinkHandoffStore {
