@@ -1098,6 +1098,44 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(audio.playedOffsets.last, "One. ".count)
     }
 
+    func testMissingPreparedTextAudioCacheFallsBackToLiveTextPlayback() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts", "prerendered_audio", "native_media"]
+            ]
+        )
+        let missingURL = FileManager.default.temporaryDirectory
+            .appending(path: "missing-prepared-\(UUID().uuidString).caf")
+        let item = Item(
+            id: "item-missing-prepared-audio",
+            title: "Recoverable Text",
+            mediaType: "text",
+            text: "This text must remain playable after its generated audio cache is purged.",
+            externalReference: nil,
+            status: "ready",
+            media: ItemMedia(
+                sourceType: .generatedTTSPrerendered,
+                url: missingURL.absoluteString,
+                durationMs: 2_000,
+                nativeMediaId: missingURL.absoluteString
+            )
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        let started = try engine.startSession(itemId: item.id)
+
+        XCTAssertEqual(started.targetType, TargetType.itemTextTTS.rawValue)
+        XCTAssertEqual(started.targetId, item.id)
+        XCTAssertEqual(audio.playedTargets.last, item.id)
+        XCTAssertEqual(audio.preparedTexts.last, item.text)
+        XCTAssertNil(try repo.loadItem(id: item.id).media)
+    }
+
     func testPreparedTextAudioUsesMediaPlaybackAndTranscriptAnchors() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
@@ -1237,6 +1275,9 @@ final class SessionKitCoreTests: XCTestCase {
     }
 
     func testPreparedTextAudioAttachmentReplacesStarterMediaWithoutLosingPlayhead() throws {
+        let starterFile = URL(fileURLWithPath: "/tmp/generated-starter.caf")
+        try Data().write(to: starterFile)
+        defer { try? FileManager.default.removeItem(at: starterFile) }
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
             displayName: "Phone/Tablet Online",
@@ -1320,6 +1361,9 @@ final class SessionKitCoreTests: XCTestCase {
     }
 
     func testPartialStarterGeneratedTextAudioCompletionDoesNotCompleteSource() throws {
+        let starterFile = URL(fileURLWithPath: "/tmp/generated-partial-starter.caf")
+        try Data().write(to: starterFile)
+        defer { try? FileManager.default.removeItem(at: starterFile) }
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
             displayName: "Phone/Tablet Online",

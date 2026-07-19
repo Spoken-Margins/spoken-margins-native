@@ -24,21 +24,31 @@ struct Gate1RootView: View {
             }
         }
         .background(AppColors.background.ignoresSafeArea())
-        .safeAreaInset(edge: .bottom, spacing: 8) {
-            VStack(spacing: 8) {
-                if model.lastError != nil {
-                    StatusBanner()
+        .safeAreaInset(edge: .top, spacing: 8) {
+            if model.lastError != nil || model.trashUndo != nil || model.sourceImportProgressMessage != nil {
+                VStack(spacing: 8) {
+                    if let progressMessage = model.sourceImportProgressMessage {
+                        SourceOperationBanner(message: progressMessage)
+                    }
+                    if model.lastError != nil {
+                        StatusBanner()
+                    }
+                    if let undo = model.trashUndo {
+                        TrashUndoBanner(undo: undo)
+                    }
                 }
-                if let undo = model.trashUndo {
-                    TrashUndoBanner(undo: undo)
-                }
-                if model.shouldShowMiniPlayer {
-                    MiniPlayerBar()
-                }
+                .padding(.horizontal, 12)
+                .padding(.top, 4)
             }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 4)
         }
+        .safeAreaInset(edge: .bottom, spacing: 8) {
+            if model.shouldShowMiniPlayer {
+                MiniPlayerBar()
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
+            }
+        }
+        .edgeSwipeBack(enabled: model.screen != .home, action: model.openHome)
         .onAppear {
             model.bootstrapLibraryIfNeeded()
         }
@@ -82,8 +92,14 @@ private struct MiniPlayerBar: View {
                 .accessibilityLabel("Finish interjection")
             } else {
                 Button(action: model.playPause) {
-                    Image(systemName: model.snapshot.status.isPlaybackActive ? "pause.fill" : "play.fill")
-                        .frame(width: 42, height: 42)
+                    Group {
+                        if model.snapshot.status == .starting {
+                            ProgressView()
+                        } else {
+                            Image(systemName: model.snapshot.status.isPlaybackActive ? "pause.fill" : "play.fill")
+                        }
+                    }
+                    .frame(width: 42, height: 42)
                 }
                 .buttonStyle(IconButtonStyle())
                 .accessibilityLabel(model.snapshot.status.isPlaybackActive ? "Pause" : "Play")
@@ -99,6 +115,31 @@ private struct MiniPlayerBar: View {
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AppColors.border))
         .shadow(color: .black.opacity(0.12), radius: 12, y: 5)
         .accessibilityIdentifier("miniPlayer.bar")
+    }
+}
+
+private struct SourceOperationBanner: View {
+    let message: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+            Text(message)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(2)
+            Spacer()
+            Text("You can keep listening")
+                .font(.caption)
+                .foregroundStyle(AppColors.secondaryText)
+        }
+        .padding(12)
+        .foregroundStyle(AppColors.text)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(AppColors.border))
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("sourceImport.progress.banner")
     }
 }
 
@@ -366,10 +407,17 @@ private struct HomeScreen: View {
                     Button {
                         model.refreshQuickAccessFolder()
                     } label: {
-                        Image(systemName: "arrow.clockwise")
+                        Group {
+                            if model.isRefreshingQuickAccessFolder {
+                                ProgressView()
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                        }
                             .frame(width: 34, height: 34)
                     }
                     .buttonStyle(IconButtonStyle())
+                    .disabled(model.isRefreshingQuickAccessFolder)
                     .accessibilityLabel("Refresh Quick Folder")
                     .accessibilityIdentifier("quickFolder.refresh.button")
                 }
@@ -398,6 +446,7 @@ private struct HomeScreen: View {
                     ForEach(model.quickAccessRecentFiles) { file in
                         Button {
                             model.importQuickAccessFile(file)
+                            isAddSourcePresented = false
                         } label: {
                             HStack {
                                 Image(systemName: "doc.text")
@@ -409,10 +458,15 @@ private struct HomeScreen: View {
                                         .foregroundStyle(AppColors.secondaryText)
                                 }
                                 Spacer()
-                                Image(systemName: "plus")
+                                if model.isImportingSources {
+                                    ProgressView()
+                                } else {
+                                    Image(systemName: "plus")
+                                }
                             }
                         }
                         .buttonStyle(.plain)
+                        .disabled(model.isImportingSources)
                         .accessibilityIdentifier("quickFolder.recent.\(file.id)")
                     }
                 }
@@ -948,7 +1002,14 @@ private struct PlaybackScreen: View {
             .accessibilityIdentifier("playback.back.button")
 
             Button(action: model.playPause) {
-                Image(systemName: model.snapshot.status.isPlaybackActive ? "pause.fill" : "play.fill")
+                Group {
+                    if model.snapshot.status == .starting {
+                        ProgressView()
+                            .tint(.white)
+                    } else {
+                        Image(systemName: model.snapshot.status.isPlaybackActive ? "pause.fill" : "play.fill")
+                    }
+                }
             }
             .buttonStyle(MainPlaybackButtonStyle())
             .accessibilityLabel(model.snapshot.status.isPlaybackActive ? "Pause" : "Play")
@@ -1870,6 +1931,34 @@ private struct StatusBanner: View {
                 }
             }
         }
+    }
+}
+
+private struct EdgeSwipeBackModifier: ViewModifier {
+    let enabled: Bool
+    let action: () -> Void
+
+    func body(content: Content) -> some View {
+        content.simultaneousGesture(
+            DragGesture(minimumDistance: 18, coordinateSpace: .global)
+                .onEnded { value in
+                    guard enabled else { return }
+                    let horizontal = value.translation.width
+                    let vertical = abs(value.translation.height)
+                    guard value.startLocation.x <= 32,
+                          horizontal >= 72,
+                          horizontal > vertical * 1.4 else {
+                        return
+                    }
+                    action()
+                }
+        )
+    }
+}
+
+private extension View {
+    func edgeSwipeBack(enabled: Bool, action: @escaping () -> Void) -> some View {
+        modifier(EdgeSwipeBackModifier(enabled: enabled, action: action))
     }
 }
 

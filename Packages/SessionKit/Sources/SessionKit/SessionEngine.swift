@@ -78,6 +78,7 @@ public final class SessionEngine {
     public func startSession(itemId: String) throws -> SessionSnapshot {
         try require("startSession", category: "sync", capabilities: ["canonical_persistence", "receive_prepared_packages", "browser_session_handoff"])
         var item = try repository.loadItem(id: itemId)
+        item = try discardUnavailableGeneratedTextAudio(from: item)
         currentItem = item
         currentMap = try repository.loadListeningMap(itemId: itemId)
         item = try prepareGeneratedTextAudioIfAvailable(for: item)
@@ -1731,6 +1732,28 @@ public final class SessionEngine {
             return item
         }
         return try applyPreparedTextAudio(prepared, to: item)
+    }
+
+    /// Prepared narration is cache-backed. If iOS purges that cache, the text item
+    /// remains playable through live speech and can be rendered again in the
+    /// background instead of handing AVPlayer a permanently missing file URL.
+    private func discardUnavailableGeneratedTextAudio(from item: Item) throws -> Item {
+        guard let media = item.media,
+              media.sourceType == .generatedTTSPrerendered else {
+            return item
+        }
+        let identifier = [media.url, media.nativeMediaId]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty }) ?? ""
+        guard let url = URL(string: identifier),
+              url.isFileURL,
+              !FileManager.default.fileExists(atPath: url.path) else {
+            return item
+        }
+        var repaired = item
+        repaired.media = nil
+        try repository.saveItem(repaired)
+        return repaired
     }
 
     private func applyPreparedTextAudio(_ prepared: PreparedTextAudio, to item: Item) throws -> Item {

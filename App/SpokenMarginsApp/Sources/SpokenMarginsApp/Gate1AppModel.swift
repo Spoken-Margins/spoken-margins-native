@@ -66,11 +66,38 @@ struct PiperVoiceOption: Identifiable, Hashable {
     }
 }
 
-struct QuickAccessFile: Identifiable, Hashable {
+struct QuickAccessFile: Identifiable, Hashable, Sendable {
     let id: String
     let name: String
     let relativePath: String
     let modifiedAtDescription: String
+}
+
+private struct ObsidianImportRequest: Sendable {
+    let url: URL
+    let itemId: String
+}
+
+private struct PreparedObsidianImport: Sendable {
+    let item: Item
+    let listeningMap: ListeningMap?
+}
+
+private struct ObsidianImportBatch: Sendable {
+    let prepared: [PreparedObsidianImport]
+    let failures: [String]
+}
+
+private struct QuickAccessFileCandidate: Sendable {
+    let id: String
+    let name: String
+    let relativePath: String
+    let modifiedAt: Date
+}
+
+private struct QuickAccessFolderScan: Sendable {
+    let files: [QuickAccessFileCandidate]
+    let errorDescription: String?
 }
 
 struct ImportInboxEntry: Identifiable, Hashable {
@@ -138,6 +165,8 @@ final class Gate1AppModel: ObservableObject {
     @Published var pastedAssistantResponse = ""
     @Published var quickAccessFolderName = UserDefaults.standard.string(forKey: "quickAccessFolderName") ?? "No folder selected"
     @Published var quickAccessRecentFiles: [QuickAccessFile] = []
+    @Published private(set) var sourceImportProgressMessage: String?
+    @Published private(set) var isRefreshingQuickAccessFolder = false
     @Published var importInbox: [ImportInboxEntry] = []
     @Published var selectedProfileId = "phone-tablet-online"
     @Published var importTitle = ""
@@ -202,6 +231,9 @@ final class Gate1AppModel: ObservableObject {
     private var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-5.6"
     private var playbackProgressTask: Task<Void, Never>?
     private var textAudioPrewarmTasks: [String: Task<Void, Never>] = [:]
+    private var sourceImportTask: Task<Void, Never>?
+    private var quickAccessRefreshTask: Task<Void, Never>?
+    private var quickAccessRefreshID = UUID()
     private var liveSpeechFallbackItemIds: Set<String> = []
     private var isImportingPendingSourceLinkHandoffs = false
     private var pendingAutoPlayQueue = Gate1PlaybackAutoplayQueue()
@@ -274,6 +306,8 @@ final class Gate1AppModel: ObservableObject {
     deinit {
         playbackProgressTask?.cancel()
         textAudioPrewarmTasks.values.forEach { $0.cancel() }
+        sourceImportTask?.cancel()
+        quickAccessRefreshTask?.cancel()
     }
 
     private func reconcilePlaybackProgressTicker() {
@@ -464,37 +498,102 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func importObsidianMarkdownFiles(urls: [URL]) {
+        beginObsidianMarkdownImport(urls: urls, securityScopedURLs: urls)
+    }
+
+    var isImportingSources: Bool {
+        sourceImportProgressMessage != nil
+    }
+
+    private func beginObsidianMarkdownImport(
+        urls: [URL],
+        securityScopedURLs: [URL],
+        refreshQuickFolderWhenFinished: Bool = false
+    ) {
+        guard !urls.isEmpty else {
+            reportFailure("Choose at least one Markdown or text file to import.")
+            return
+        }
+        guard sourceImportTask == nil else {
+            reportFailure("Another source is already importing. You can keep using playback while it finishes.")
+            return
+        }
+
+        let requests = urls.enumerated().map { index, url in
+            ObsidianImportRequest(
+                url: url,
+                itemId: obsidianItemId(fileName: url.lastPathComponent, index: index)
+            )
+        }
+        let scopedAccess = securityScopedURLs.map { url in
+            (url: url, didAccess: url.startAccessingSecurityScopedResource())
+        }
+        sourceImportProgressMessage = urls.count == 1 ? "Importing \(urls[0].lastPathComponent)…" : "Importing \(urls.count) files…"
+        statusMessage = sourceImportProgressMessage ?? "Importing sources…"
+        lastError = nil
+
+        sourceImportTask = Task { [weak self] in
+            let batch = await Task.detached(priority: .userInitiated) {
+                Self.prepareObsidianImports(requests)
+            }.value
+            scopedAccess.forEach { entry in
+                if entry.didAccess {
+                    entry.url.stopAccessingSecurityScopedResource()
+                }
+            }
+            guard let self else { return }
+            self.completeObsidianMarkdownImport(batch, refreshQuickFolderWhenFinished: refreshQuickFolderWhenFinished)
+        }
+    }
+
+    private nonisolated static func prepareObsidianImports(_ requests: [ObsidianImportRequest]) -> ObsidianImportBatch {
+        var prepared: [PreparedObsidianImport] = []
+        var failures: [String] = []
+        for request in requests {
+            do {
+                let raw = try String(contentsOf: request.url, encoding: .utf8)
+                let parsed = try ObsidianMarkdownParser.parse(fileName: request.url.lastPathComponent, contents: raw)
+                let deterministicMap = parsed.deterministicListeningMap(itemId: request.itemId)
+                let item = Item(
+                    id: request.itemId,
+                    title: parsed.title,
+                    mediaType: "text",
+                    text: parsed.text,
+                    externalReference: parsed.source ?? request.url.lastPathComponent,
+                    status: deterministicMap == nil ? "needs_listening_map" : "ready"
+                )
+                prepared.append(PreparedObsidianImport(item: item, listeningMap: deterministicMap))
+            } catch {
+                failures.append("\(request.url.lastPathComponent): \(error)")
+            }
+        }
+        return ObsidianImportBatch(prepared: prepared, failures: failures)
+    }
+
+    private func completeObsidianMarkdownImport(
+        _ batch: ObsidianImportBatch,
+        refreshQuickFolderWhenFinished: Bool
+    ) {
+        defer {
+            sourceImportTask = nil
+            sourceImportProgressMessage = nil
+            if refreshQuickFolderWhenFinished {
+                refreshQuickAccessFolder()
+            }
+        }
         do {
             let store = try requireStore()
             var imported: [Item] = []
-            var failures: [String] = []
-            for (index, url) in urls.enumerated() {
-                let didAccess = url.startAccessingSecurityScopedResource()
-                defer {
-                    if didAccess {
-                        url.stopAccessingSecurityScopedResource()
-                    }
-                }
+            var failures = batch.failures
+            for prepared in batch.prepared {
                 do {
-                    let raw = try String(contentsOf: url, encoding: .utf8)
-                    let parsed = try ObsidianMarkdownParser.parse(fileName: url.lastPathComponent, contents: raw)
-                    let itemId = obsidianItemId(fileName: url.lastPathComponent, index: index)
-                    let deterministicMap = parsed.deterministicListeningMap(itemId: itemId)
-                    let item = Item(
-                        id: itemId,
-                        title: parsed.title,
-                        mediaType: "text",
-                        text: parsed.text,
-                        externalReference: parsed.source ?? url.lastPathComponent,
-                        status: deterministicMap == nil ? "needs_listening_map" : "ready"
-                    )
-                    try store.saveItem(item)
-                    if let deterministicMap {
-                        try store.saveListeningMap(deterministicMap)
+                    try store.saveItem(prepared.item)
+                    if let listeningMap = prepared.listeningMap {
+                        try store.saveListeningMap(listeningMap)
                     }
-                    imported.append(item)
+                    imported.append(prepared.item)
                 } catch {
-                    failures.append("\(url.lastPathComponent): \(error)")
+                    failures.append("\(prepared.item.title): \(error)")
                 }
             }
             guard !imported.isEmpty else {
@@ -799,47 +898,74 @@ final class Gate1AppModel: ObservableObject {
 
     func refreshQuickAccessFolder() {
         guard let folderURL = resolvedQuickAccessFolderURL() else {
+            quickAccessRefreshID = UUID()
+            quickAccessRefreshTask?.cancel()
+            quickAccessRefreshTask = nil
+            isRefreshingQuickAccessFolder = false
             quickAccessRecentFiles = []
             return
         }
+        let refreshID = UUID()
+        quickAccessRefreshID = refreshID
+        quickAccessRefreshTask?.cancel()
         let didAccess = folderURL.startAccessingSecurityScopedResource()
-        defer {
+        isRefreshingQuickAccessFolder = true
+        quickAccessRefreshTask = Task { [weak self] in
+            let scan = await Task.detached(priority: .utility) {
+                Self.scanQuickAccessFolder(folderURL)
+            }.value
             if didAccess {
                 folderURL.stopAccessingSecurityScopedResource()
             }
+            guard let self, self.quickAccessRefreshID == refreshID else { return }
+            self.quickAccessRefreshTask = nil
+            self.isRefreshingQuickAccessFolder = false
+            if let errorDescription = scan.errorDescription {
+                self.quickAccessRecentFiles = []
+                self.diagnostics["quickAccessError"] = errorDescription
+                return
+            }
+            let formatter = RelativeDateTimeFormatter()
+            formatter.unitsStyle = .short
+            self.quickAccessRecentFiles = scan.files.map { entry in
+                QuickAccessFile(
+                    id: entry.id,
+                    name: entry.name,
+                    relativePath: entry.relativePath,
+                    modifiedAtDescription: formatter.localizedString(for: entry.modifiedAt, relativeTo: Date())
+                )
+            }
+            self.quickAccessFolderName = folderURL.lastPathComponent
+            self.diagnostics["quickAccessFolder"] = folderURL.lastPathComponent
+            self.diagnostics["quickAccessRecentFiles"] = "\(self.quickAccessRecentFiles.count)"
         }
+    }
+
+    private nonisolated static func scanQuickAccessFolder(_ folderURL: URL) -> QuickAccessFolderScan {
         do {
             let files = try FileManager.default.contentsOfDirectory(
                 at: folderURL,
                 includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
                 options: [.skipsHiddenFiles]
             )
-            let supported = files.compactMap { url -> (url: URL, date: Date)? in
+            let supported = files.compactMap { url -> QuickAccessFileCandidate? in
                 let ext = url.pathExtension.lowercased()
                 guard ["md", "markdown", "txt"].contains(ext) else { return nil }
                 let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey])
                 guard values?.isRegularFile == true else { return nil }
-                return (url, values?.contentModificationDate ?? .distantPast)
+                return QuickAccessFileCandidate(
+                    id: url.lastPathComponent,
+                    name: url.deletingPathExtension().lastPathComponent,
+                    relativePath: url.lastPathComponent,
+                    modifiedAt: values?.contentModificationDate ?? .distantPast
+                )
             }
-            let formatter = RelativeDateTimeFormatter()
-            formatter.unitsStyle = .short
-            quickAccessRecentFiles = supported
-                .sorted { $0.date > $1.date }
-                .prefix(2)
-                .map { entry in
-                    QuickAccessFile(
-                        id: entry.url.lastPathComponent,
-                        name: entry.url.deletingPathExtension().lastPathComponent,
-                        relativePath: entry.url.lastPathComponent,
-                        modifiedAtDescription: formatter.localizedString(for: entry.date, relativeTo: Date())
-                    )
-                }
-            quickAccessFolderName = folderURL.lastPathComponent
-            diagnostics["quickAccessFolder"] = folderURL.lastPathComponent
-            diagnostics["quickAccessRecentFiles"] = "\(quickAccessRecentFiles.count)"
+            return QuickAccessFolderScan(
+                files: Array(supported.sorted { $0.modifiedAt > $1.modifiedAt }.prefix(2)),
+                errorDescription: nil
+            )
         } catch {
-            quickAccessRecentFiles = []
-            diagnostics["quickAccessError"] = String(describing: error)
+            return QuickAccessFolderScan(files: [], errorDescription: String(describing: error))
         }
     }
 
@@ -849,14 +975,11 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         let fileURL = folderURL.appending(path: file.relativePath)
-        let didAccess = folderURL.startAccessingSecurityScopedResource()
-        defer {
-            if didAccess {
-                folderURL.stopAccessingSecurityScopedResource()
-            }
-        }
-        importObsidianMarkdownFiles(urls: [fileURL])
-        refreshQuickAccessFolder()
+        beginObsidianMarkdownImport(
+            urls: [fileURL],
+            securityScopedURLs: [folderURL],
+            refreshQuickFolderWhenFinished: true
+        )
     }
 
     @discardableResult
@@ -3365,7 +3488,7 @@ final class Gate1AppModel: ObservableObject {
         case .none, .some(.generatedTTSRealtime):
             return true
         case .some(.generatedTTSPrerendered):
-            return isStarterPreparedTextMedia(item.media)
+            return !isPreparedTextMediaAvailable(item.media) || isStarterPreparedTextMedia(item.media)
         case .some(.nativeMediaFile), .some(.browserOwnedMedia), .some(.remoteStream):
             return false
         }
@@ -3375,6 +3498,15 @@ final class Gate1AppModel: ObservableObject {
         guard media?.sourceType == .generatedTTSPrerendered else { return false }
         let identifier = media?.nativeMediaId ?? media?.url ?? ""
         return identifier.contains("-starter.caf") || identifier.contains("-starter.")
+    }
+
+    private func isPreparedTextMediaAvailable(_ media: ItemMedia?) -> Bool {
+        guard media?.sourceType == .generatedTTSPrerendered else { return false }
+        let identifier = [media?.url, media?.nativeMediaId]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty }) ?? ""
+        guard let url = URL(string: identifier), url.isFileURL else { return true }
+        return FileManager.default.fileExists(atPath: url.path)
     }
 
     private func cancelTextAudioPrewarmTasks() {

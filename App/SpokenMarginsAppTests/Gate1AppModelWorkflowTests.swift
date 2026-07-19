@@ -186,7 +186,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(UserDefaults.standard.string(forKey: "ttsMode"), "systemImmediate")
     }
 
-    func testObsidianImportImmediatelyLoadsHeadingBasedListeningMap() throws {
+    func testObsidianImportRunsInBackgroundAndLoadsHeadingBasedListeningMap() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appending(path: "spoken-margins-markdown-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -213,9 +213,39 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         model.importObsidianMarkdownFiles(urls: [file])
 
+        XCTAssertTrue(model.isImportingSources)
+        try await waitFor("Obsidian import to finish") {
+            !model.isImportingSources
+        }
+
         XCTAssertEqual(model.selectedItem.title, "Structured Article")
         XCTAssertEqual(model.selectedItem.chapters.map(\.title), ["Key takeaways", "1. First section", "2. Second section"])
         XCTAssertEqual(model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.status, "Ready to listen")
+    }
+
+    func testPlaybackControlsRemainUsableWhileObsidianImportIsPending() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "spoken-margins-responsive-import-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appending(path: "Long Import.md")
+        let paragraphs = Array(repeating: "A source paragraph that takes some work to normalize.", count: 2_000)
+        try paragraphs.joined(separator: "\n\n").write(to: file, atomically: true, encoding: .utf8)
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        XCTAssertEqual(model.snapshot.status, .playing)
+
+        model.importObsidianMarkdownFiles(urls: [file])
+        XCTAssertTrue(model.isImportingSources)
+
+        model.playPause()
+
+        XCTAssertEqual(model.snapshot.status, .paused)
+        try await waitFor("responsive Obsidian import to finish", timeoutNanoseconds: 5_000_000_000) {
+            !model.isImportingSources
+        }
+        XCTAssertEqual(model.selectedItem.title, "Long Import")
     }
 
     private func waitFor(
