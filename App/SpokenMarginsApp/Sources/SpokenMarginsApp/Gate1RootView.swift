@@ -25,8 +25,14 @@ struct Gate1RootView: View {
         }
         .background(AppColors.background.ignoresSafeArea())
         .safeAreaInset(edge: .top, spacing: 8) {
-            if model.lastError != nil || model.trashUndo != nil || model.sourceImportProgressMessage != nil {
+            if model.lastError != nil || model.trashUndo != nil || model.sourceImportProgressMessage != nil || model.isReviewDemoActive || model.legacyLibraryResetNotice != nil {
                 VStack(spacing: 8) {
+                    if model.isReviewDemoActive {
+                        ReviewDemoBanner()
+                    }
+                    if let resetNotice = model.legacyLibraryResetNotice {
+                        LegacyLibraryResetBanner(message: resetNotice)
+                    }
                     if let progressMessage = model.sourceImportProgressMessage {
                         SourceOperationBanner(message: progressMessage)
                     }
@@ -52,6 +58,91 @@ struct Gate1RootView: View {
         .onAppear {
             model.bootstrapLibraryIfNeeded()
         }
+        .sheet(isPresented: $model.isAIDataSharingConsentPresented) {
+            AIDataSharingConsentView()
+                .environmentObject(model)
+                .interactiveDismissDisabled()
+        }
+    }
+}
+
+private struct LegacyLibraryResetBanner: View {
+    @EnvironmentObject private var model: Gate1AppModel
+    let message: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "archivebox")
+                .foregroundStyle(AppColors.secondaryText)
+            Text(message)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            Button(action: model.dismissLegacyLibraryResetNotice) {
+                Image(systemName: "xmark")
+                    .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss library notice")
+        }
+        .padding(12)
+        .foregroundStyle(AppColors.text)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(AppColors.border))
+        .accessibilityIdentifier("libraryReset.notice.banner")
+        .task {
+            do {
+                try await Task.sleep(for: .seconds(8))
+                guard model.legacyLibraryResetNotice == message else { return }
+                model.dismissLegacyLibraryResetNotice()
+            } catch {
+                // The banner disappeared or changed before its auto-dismiss timer fired.
+            }
+        }
+    }
+}
+
+private struct ReviewDemoBanner: View {
+    var body: some View {
+        Label("Review Demo · simulated AI · no content leaves this device", systemImage: "checkmark.shield")
+            .font(.caption.weight(.semibold))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .foregroundStyle(AppColors.text)
+            .background(AppColors.accentSoft)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .accessibilityIdentifier("reviewDemo.banner")
+    }
+}
+
+private struct AIDataSharingConsentView: View {
+    @EnvironmentObject private var model: Gate1AppModel
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Label("Send this content to OpenAI?", systemImage: "hand.raised.fill")
+                        .font(.title2.bold())
+                    Text("A live AI request can include the source text needed for the task, your interjection transcripts, the current follow-up, nearby anchors, and recent conversation turns.")
+                    Text("Spoken Margins does not send recorded audio, local file paths, or internal database identifiers. Requests disable OpenAI response storage. You can revoke permission or delete your API key in Settings.")
+                        .foregroundStyle(AppColors.secondaryText)
+                    Link("Read the Privacy Policy", destination: AppLinks.privacy)
+                    Button("Send to OpenAI", action: model.grantAIDataSharingConsent)
+                        .buttonStyle(PrimaryButtonStyle())
+                        .accessibilityIdentifier("aiConsent.allow.button")
+                    Button("Not Now", role: .cancel, action: model.declineAIDataSharingConsent)
+                        .buttonStyle(SecondaryButtonStyle())
+                        .accessibilityIdentifier("aiConsent.decline.button")
+                }
+                .padding(24)
+            }
+            .navigationTitle("AI Data Sharing")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.medium, .large])
+        .accessibilityIdentifier("aiConsent.sheet")
     }
 }
 
@@ -281,7 +372,7 @@ private struct HomeScreen: View {
         case .quickFolder:
             return [.folder]
         case .obsidianFiles, .none:
-            return [UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText, .plainText]
+            return [UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText, .plainText, .pdf]
         }
     }
 
@@ -331,14 +422,27 @@ private struct HomeScreen: View {
                     .textFieldStyle(.roundedBorder)
                     .focused($focusedField, equals: .title)
                     .accessibilityIdentifier("create.title.field")
-                TextEditor(text: $model.importText)
-                    .frame(height: 120)
-                    .padding(8)
-                    .background(AppColors.inputBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppColors.border))
-                    .focused($focusedField, equals: .text)
-                    .accessibilityIdentifier("create.text.editor")
+                HStack(alignment: .top, spacing: 8) {
+                    TextEditor(text: $model.importText)
+                        .frame(height: model.importText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 44 : 120)
+                        .padding(.horizontal, 4)
+                        .background(AppColors.inputBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppColors.border))
+                        .focused($focusedField, equals: .text)
+                        .accessibilityLabel("Source text")
+                        .accessibilityIdentifier("create.text.editor")
+                    Button {
+                        focusedField = nil
+                        model.pasteImportTextFromClipboard()
+                    } label: {
+                        Image(systemName: "doc.on.clipboard")
+                            .frame(width: 34, height: 34)
+                    }
+                    .buttonStyle(IconButtonStyle())
+                    .accessibilityLabel("Paste Text From Clipboard")
+                    .accessibilityIdentifier("create.text.clipboard.button")
+                }
                 Button(action: {
                     focusedField = nil
                     isAddSourcePresented = false
@@ -347,12 +451,13 @@ private struct HomeScreen: View {
                     Label("Add and Listen", systemImage: "plus")
                 }
                 .buttonStyle(PrimaryButtonStyle())
+                .disabled(model.importText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityIdentifier("create.start.button")
                 Button {
                     focusedField = nil
                     presentFileImporter(.obsidianFiles)
                 } label: {
-                    Label("Import Obsidian Files", systemImage: "doc.badge.plus")
+                    Label("Import Text or PDF Files", systemImage: "doc.badge.plus")
                 }
                 .buttonStyle(SecondaryButtonStyle())
                 .accessibilityIdentifier("obsidian.import.button")
@@ -486,7 +591,7 @@ private struct HomeScreen: View {
                     VStack(alignment: .leading, spacing: 14) {
                         Text("Your library is empty")
                             .font(.headline)
-                        Text("Add pasted text, a podcast link, or a Markdown file. You can also explore with a sample.")
+                        Text("Add pasted text, a podcast link, or a text/PDF file. You can also explore with a sample.")
                             .foregroundStyle(AppColors.secondaryText)
                         HStack {
                             Button {
@@ -694,6 +799,7 @@ private struct ItemScreen: View {
                         .background(AppColors.inputBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                         .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppColors.border))
+                        .accessibilityLabel("Listening Map JSON")
                         .accessibilityIdentifier("item.mapJSON.editor")
                     Button {
                         model.applyListeningMapJSON()
@@ -989,16 +1095,16 @@ private struct PlaybackScreen: View {
         HStack(spacing: 22) {
             Button {
                 if model.isMediaPlaybackSnapshot {
-                    model.skipBack15Seconds()
+                    model.skipBackMedia()
                 } else {
                     model.skipBack()
                 }
             } label: {
-                Image(systemName: model.isMediaPlaybackSnapshot ? "gobackward.15" : "backward.end.fill")
+                Image(systemName: model.isMediaPlaybackSnapshot ? "gobackward.\(model.mediaSkipBackSeconds)" : "backward.end.fill")
             }
             .buttonStyle(RoundPlaybackButtonStyle())
             .disabled(!model.hasActiveSession)
-            .accessibilityLabel(model.isMediaPlaybackSnapshot ? "Back 15 seconds" : "Previous \(model.skipUnit)")
+            .accessibilityLabel(model.isMediaPlaybackSnapshot ? "Back \(model.mediaSkipBackSeconds) seconds" : "Previous \(model.skipUnit)")
             .accessibilityIdentifier("playback.back.button")
 
             Button(action: model.playPause) {
@@ -1017,16 +1123,16 @@ private struct PlaybackScreen: View {
 
             Button {
                 if model.isMediaPlaybackSnapshot {
-                    model.skipForward15Seconds()
+                    model.skipForwardMedia()
                 } else {
                     model.skipForward()
                 }
             } label: {
-                Image(systemName: model.isMediaPlaybackSnapshot ? "goforward.15" : "forward.end.fill")
+                Image(systemName: model.isMediaPlaybackSnapshot ? "goforward.\(model.mediaSkipForwardSeconds)" : "forward.end.fill")
             }
             .buttonStyle(RoundPlaybackButtonStyle())
             .disabled(!model.hasActiveSession)
-            .accessibilityLabel(model.isMediaPlaybackSnapshot ? "Forward 15 seconds" : "Next \(model.skipUnit)")
+            .accessibilityLabel(model.isMediaPlaybackSnapshot ? "Forward \(model.mediaSkipForwardSeconds) seconds" : "Next \(model.skipUnit)")
             .accessibilityIdentifier("playback.forward.button")
         }
     }
@@ -1043,6 +1149,8 @@ private struct PlaybackScreen: View {
             .foregroundStyle(AppColors.watchSecondary)
             if model.isMediaPlaybackSnapshot {
                 Slider(value: Binding(get: { model.mediaPlaybackRate }, set: { model.setMediaPlaybackRate($0) }), in: 0.75...2.0, step: 0.25)
+                    .accessibilityLabel("Playback speed")
+                    .accessibilityValue(String(format: "%.2f times", model.mediaPlaybackRate))
                     .accessibilityIdentifier("playback.mediaRate.slider")
                 Text("Transcript: \(model.sourceTranscriptStatusDescription)")
                     .font(.caption2)
@@ -1050,6 +1158,8 @@ private struct PlaybackScreen: View {
                     .accessibilityIdentifier("playback.sourceTranscript.status")
             } else {
                 Slider(value: $model.speechRate, in: 0.35...0.85, step: 0.01)
+                    .accessibilityLabel("Speaking rate")
+                    .accessibilityValue(model.speechRateDescription)
                     .accessibilityIdentifier("playback.speechRate.slider")
                     .onChange(of: model.speechRate) { _, _ in model.playbackSpeechRateChanged() }
                 Text("Prepared audio: \(model.preparedTextAudioStatusDescription)")
@@ -1114,7 +1224,7 @@ private struct PlaybackScreen: View {
 
     private var gate2CompactValidation: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Gate 2 Compact")
+            Text("Compact Controls")
                 .font(.caption.weight(.bold))
                 .foregroundStyle(AppColors.watchSecondary)
             Text(model.gate2CompactSnapshot?.chapterTitle ?? "No compact snapshot")
@@ -1128,7 +1238,7 @@ private struct PlaybackScreen: View {
                     Image(systemName: "gobackward.15")
                 }
                 .buttonStyle(WatchSecondaryButtonStyle())
-                .accessibilityLabel("Gate 2 Compact Skip Back")
+                .accessibilityLabel("Compact controls skip back")
                 .accessibilityIdentifier("gate2.compact.back.button")
 
                 Button {
@@ -1137,7 +1247,7 @@ private struct PlaybackScreen: View {
                     Image(systemName: "playpause")
                 }
                 .buttonStyle(WatchSecondaryButtonStyle())
-                .accessibilityLabel("Gate 2 Compact Play Pause")
+                .accessibilityLabel("Compact controls play or pause")
                 .accessibilityIdentifier("gate2.compact.playPause.button")
 
                 Button {
@@ -1146,7 +1256,7 @@ private struct PlaybackScreen: View {
                     Image(systemName: "goforward.15")
                 }
                 .buttonStyle(WatchSecondaryButtonStyle())
-                .accessibilityLabel("Gate 2 Compact Skip Forward")
+                .accessibilityLabel("Compact controls skip forward")
                 .accessibilityIdentifier("gate2.compact.forward.button")
             }
         }
@@ -1332,6 +1442,7 @@ private struct PlaybackScreen: View {
                 TextField("Ask a follow-up…", text: $followUp, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .focused($followUpFocused)
+                    .accessibilityLabel("Ask a follow-up")
                     .accessibilityIdentifier("conversation.followup.field")
                 HStack {
                     Button("Submit") {
@@ -1372,6 +1483,12 @@ private struct SettingsScreen: View {
             Form {
                 Section("AI Features") {
                     LabeledContent("Provider", value: "OpenAI")
+                        .accessibilityIdentifier("provider.name")
+                    LabeledContent("Data Sharing", value: model.aiDataSharingConsentDescription)
+                    if model.aiDataSharingConsent == .grantedV1 {
+                        Button("Revoke OpenAI Data Sharing", role: .destructive, action: model.revokeAIDataSharingConsent)
+                            .accessibilityIdentifier("provider.revokeConsent.button")
+                    }
                     SecureField("API Key", text: $model.providerAPIKey)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -1379,6 +1496,9 @@ private struct SettingsScreen: View {
                         .accessibilityIdentifier("provider.apiKey.field")
                     Button("Save Provider Settings", action: model.saveProviderSettings)
                         .accessibilityIdentifier("provider.save.button")
+                    Button("Delete API Key", role: .destructive, action: model.deleteProviderAPIKey)
+                        .disabled(model.providerAPIKey.isEmpty)
+                        .accessibilityIdentifier("provider.deleteAPIKey.button")
                     Button("Probe Provider", action: model.probeProvider)
                         .accessibilityIdentifier("provider.probe.button")
                     LabeledContent("Probe", value: model.providerProbeStatus)
@@ -1399,10 +1519,31 @@ private struct SettingsScreen: View {
                             .focused($focusedField, equals: .conversationModel)
                             .accessibilityIdentifier("provider.conversationModel.field")
                     }
+                    .accessibilityIdentifier("provider.advanced.disclosure")
                 }
                 .onChange(of: model.listeningMapModel) { _, _ in model.settingsValueChanged() }
                 .onChange(of: model.summaryModel) { _, _ in model.settingsValueChanged() }
                 .onChange(of: model.conversationModel) { _, _ in model.settingsValueChanged() }
+                Section("Review Demo") {
+                    LabeledContent("Status", value: model.reviewDemoStatus)
+                        .accessibilityIdentifier("reviewDemo.status")
+                    if model.isReviewDemoActive {
+                        Text("AI responses are simulated on this device. No source text, transcripts, or follow-ups are sent to OpenAI.")
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                        Button("Disable Review Demo", role: .destructive, action: model.disableReviewDemo)
+                            .accessibilityIdentifier("reviewDemo.disable.button")
+                    } else {
+                        SecureField("Review access code", text: $model.reviewDemoUnlockCode)
+                            .textInputAutocapitalization(.characters)
+                            .autocorrectionDisabled()
+                            .accessibilityLabel("Review access code")
+                            .accessibilityIdentifier("reviewDemo.code.field")
+                        Button("Unlock Review Demo", action: model.unlockReviewDemo)
+                            .disabled(model.reviewDemoUnlockCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .accessibilityIdentifier("reviewDemo.unlock.button")
+                    }
+                }
                 Section("Playback & Voice") {
                     HStack {
                         Text("Native Voices")
@@ -1439,6 +1580,8 @@ private struct SettingsScreen: View {
                                 .foregroundStyle(AppColors.secondaryText)
                         }
                         Slider(value: $model.speechRate, in: 0.35...0.85, step: 0.01)
+                            .accessibilityLabel("Speaking rate")
+                            .accessibilityValue(model.speechRateDescription)
                             .accessibilityIdentifier("settings.speechRate.slider")
                     }
                     .onChange(of: model.speechRate) { _, _ in
@@ -1469,7 +1612,7 @@ private struct SettingsScreen: View {
                         .buttonStyle(SecondaryButtonStyle())
                         .accessibilityIdentifier("settings.preview.assistiveTech.button")
                     }
-                    Picker("Skip Increment", selection: $model.skipUnit) {
+                    Picker("Text Navigation", selection: $model.skipUnit) {
                         Text("Sentence").tag("sentence")
                         Text("Paragraph").tag("paragraph")
                         Text("Section").tag("section")
@@ -1478,6 +1621,24 @@ private struct SettingsScreen: View {
                     .onChange(of: model.skipUnit) { _, _ in
                         model.settingsValueChanged()
                         model.saveProviderSettings()
+                    }
+                    Picker("Native Audio Back", selection: $model.mediaSkipBackSeconds) {
+                        ForEach(Gate1AppModel.supportedMediaSkipSeconds, id: \.self) { seconds in
+                            Text("\(seconds) seconds").tag(seconds)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.mediaSkipBack.picker")
+                    .onChange(of: model.mediaSkipBackSeconds) { _, _ in
+                        model.mediaSkipSettingsChanged()
+                    }
+                    Picker("Native Audio Forward", selection: $model.mediaSkipForwardSeconds) {
+                        ForEach(Gate1AppModel.supportedMediaSkipSeconds, id: \.self) { seconds in
+                            Text("\(seconds) seconds").tag(seconds)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.mediaSkipForward.picker")
+                    .onChange(of: model.mediaSkipForwardSeconds) { _, _ in
+                        model.mediaSkipSettingsChanged()
                     }
                 }
                 Section("Recently Deleted") {
@@ -1527,6 +1688,14 @@ private struct SettingsScreen: View {
                         }
                     }
                 }
+                Section("Support & Privacy") {
+                    Link("Privacy Policy", destination: AppLinks.privacy)
+                    Link("Support", destination: AppLinks.support)
+                    Button("Copy Privacy-Safe Diagnostics", action: model.copyDiagnosticsExport)
+                        .accessibilityIdentifier("settings.copyDiagnostics.button")
+                    LabeledContent("Version", value: AppLinks.versionDescription)
+                }
+                #if DEBUG
                 Section("Developer") {
                     DisclosureGroup("Developer tools", isExpanded: $showsDeveloperTools) {
                         Button("Add Sample Item", action: model.addSampleItem)
@@ -1544,8 +1713,6 @@ private struct SettingsScreen: View {
                         .accessibilityIdentifier("settings.reset.button")
                         Button("Refresh Diagnostics", action: model.refreshDiagnostics)
                             .accessibilityIdentifier("settings.diagnostics.button")
-                        Button("Copy Privacy-Safe Diagnostics", action: model.copyDiagnosticsExport)
-                            .accessibilityIdentifier("settings.copyDiagnostics.button")
                         ForEach(model.diagnostics.keys.sorted(), id: \.self) { key in
                             LabeledContent(key, value: model.diagnostics[key] ?? "")
                         }
@@ -1556,6 +1723,7 @@ private struct SettingsScreen: View {
                         }
                     }
                 }
+                #endif
             }
             .accessibilityIdentifier("settings.screen")
             .navigationTitle("Settings")
@@ -1706,6 +1874,7 @@ private struct PastedAssistantResponseView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppColors.border))
                     .focused($isFocused)
+                    .accessibilityLabel("Assistant response text")
                     .accessibilityIdentifier("pasteResponse.editor")
                 HStack {
                     Button {
@@ -2090,6 +2259,22 @@ private func formatPlaybackTime(_ milliseconds: Int) -> String {
         return String(format: "%d:%02d:%02d", hours, minutes, seconds)
     }
     return String(format: "%d:%02d", minutes, seconds)
+}
+
+private enum AppLinks {
+    static var privacy: URL {
+        URL(string: "https://spokenmargins.proximitytoprogress.com/privacy/") ?? URL(fileURLWithPath: "/")
+    }
+
+    static var support: URL {
+        URL(string: "https://spokenmargins.proximitytoprogress.com/support/") ?? URL(fileURLWithPath: "/")
+    }
+
+    static var versionDescription: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "Unknown"
+        return "\(version) (\(build))"
+    }
 }
 
 private enum AppColors {

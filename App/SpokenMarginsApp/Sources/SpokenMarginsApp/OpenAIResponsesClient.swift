@@ -128,7 +128,8 @@ struct OpenAIResponsesClient: Sendable {
             model: trimmedModel,
             instructions: instructions,
             input: messages.joined(separator: "\n\n"),
-            stream: stream
+            stream: stream,
+            store: false
         ))
         return request
     }
@@ -160,6 +161,7 @@ struct OpenAIResponsesClient: Sendable {
         var instructions: String
         var input: String
         var stream: Bool
+        var store: Bool
     }
 
     private struct StreamEnvelope: Decodable {
@@ -189,5 +191,103 @@ struct OpenAIResponsesClient: Sendable {
     private struct Content: Decodable {
         var type: String
         var text: String?
+    }
+}
+
+struct ReviewDemoAIClient: Sendable {
+    func stream(kind: String, messages: [String]) -> AsyncThrowingStream<OpenAIStreamEvent, Error> {
+        let response = response(kind: kind, messages: messages)
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                continuation.yield(.started(responseId: "review-demo"))
+                let words = response.split(separator: " ", omittingEmptySubsequences: false)
+                for start in stride(from: 0, to: words.count, by: 8) {
+                    try Task.checkCancellation()
+                    let end = min(start + 8, words.count)
+                    let chunk = words[start..<end].joined(separator: " ") + (end < words.count ? " " : "")
+                    continuation.yield(.textDelta(chunk))
+                    try? await Task.sleep(for: .milliseconds(35))
+                }
+                continuation.yield(.completed(responseId: "review-demo"))
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    func complete(kind: String, messages: [String]) async -> String {
+        response(kind: kind, messages: messages)
+    }
+
+    private func response(kind: String, messages: [String]) -> String {
+        let prompt = messages.joined(separator: "\n\n")
+        switch kind {
+        case "listening_map":
+            return listeningMapResponse(prompt: prompt)
+        case "assistant_chapters":
+            return assistantChapterResponse(prompt: prompt)
+        case "interjection_summary":
+            return "Review demo summary: your interjections question the source's assumptions and ask for clearer evidence. The strongest next step is to compare the claim with the surrounding passage and identify what would change your conclusion."
+        default:
+            return "Review demo response: I hear the concern in your follow-up. The source's main idea should be evaluated against the evidence immediately around the point you marked. A useful next step is to separate the claim, the supporting example, and the assumption connecting them. This response is simulated locally and no content was sent off device."
+        }
+    }
+
+    private func listeningMapResponse(prompt: String) -> String {
+        let source = delimitedSection(named: "ITEM CONTENT", in: prompt)
+        let normalized = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        let paragraphs = normalized
+            .components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let candidates = paragraphs.isEmpty ? [normalized] : Array(paragraphs.prefix(3))
+        let chapters: [[String: String]] = candidates.enumerated().compactMap { index, paragraph in
+            let words = paragraph.split(whereSeparator: \.isWhitespace)
+            guard !words.isEmpty else { return nil }
+            let anchor = words.prefix(min(10, words.count)).joined(separator: " ")
+            return [
+                "id": "demo-ch-\(index + 1)",
+                "title": "Section \(index + 1)",
+                "description": "A locally generated navigation point for review.",
+                "anchor": anchor
+            ]
+        }
+        let object: [String: Any] = [
+            "schemaVersion": "listening-map.v1",
+            "overview": "A deterministic on-device Listening Map created for TestFlight review.",
+            "claims": [["id": "demo-claim-1", "text": "Review the source's central claim and supporting evidence."]],
+            "chapters": chapters
+        ]
+        guard JSONSerialization.isValidJSONObject(object),
+              let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+              let string = String(data: data, encoding: .utf8) else {
+            return #"{"schemaVersion":"listening-map.v1","overview":"Review demo","claims":[],"chapters":[]}"#
+        }
+        return string
+    }
+
+    private func assistantChapterResponse(prompt: String) -> String {
+        let response = delimitedSection(named: "RESPONSE", in: prompt)
+        let words = response.split(whereSeparator: \.isWhitespace)
+        guard words.count >= 12 else {
+            return #"{"schemaVersion":"assistant-response-map.v1","chapters":[]}"#
+        }
+        let anchor = words.prefix(min(8, words.count)).joined(separator: " ")
+        let object: [String: Any] = [
+            "schemaVersion": "assistant-response-map.v1",
+            "chapters": [["id": "demo-response-ch-1", "title": "Review response", "anchor": anchor]]
+        ]
+        let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        return data.flatMap { String(data: $0, encoding: .utf8) }
+            ?? #"{"schemaVersion":"assistant-response-map.v1","chapters":[]}"#
+    }
+
+    private func delimitedSection(named name: String, in prompt: String) -> String {
+        guard let header = prompt.range(of: "\(name):", options: .backwards),
+              let startMarker = prompt.range(of: "<<<", range: header.upperBound..<prompt.endIndex),
+              let endMarker = prompt.range(of: ">>>", range: startMarker.upperBound..<prompt.endIndex) else {
+            return prompt
+        }
+        return String(prompt[startMarker.upperBound..<endMarker.lowerBound])
     }
 }

@@ -13,6 +13,9 @@ import UIKit
 #if canImport(AVFoundation)
 import AVFoundation
 #endif
+#if canImport(PDFKit)
+import PDFKit
+#endif
 
 enum Gate1Screen: Hashable {
     case home
@@ -20,6 +23,24 @@ enum Gate1Screen: Hashable {
     case playback
     case settings
     case export
+}
+
+enum AIExecutionMode: String, CaseIterable {
+    case liveOpenAI
+    case reviewDemo
+}
+
+enum AIDataSharingConsent: String {
+    case unknown
+    case grantedV1
+    case declined
+}
+
+private struct PendingProviderJob {
+    let kind: String
+    let turnId: String
+    let messages: [String]
+    let force: Bool
 }
 
 struct LibraryItemRow: Identifiable, Hashable {
@@ -86,6 +107,20 @@ private struct PreparedObsidianImport: Sendable {
 private struct ObsidianImportBatch: Sendable {
     let prepared: [PreparedObsidianImport]
     let failures: [String]
+}
+
+private enum SourceFileImportError: LocalizedError {
+    case pdfHasNoExtractableText
+    case pdfImportUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .pdfHasNoExtractableText:
+            return "This PDF has no extractable text. Scanned PDFs need OCR before they can be imported."
+        case .pdfImportUnavailable:
+            return "PDF text extraction is unavailable in this build."
+        }
+    }
 }
 
 private struct QuickAccessFileCandidate: Sendable {
@@ -180,6 +215,8 @@ final class Gate1AppModel: ObservableObject {
     @Published var summaryModel = UserDefaults.standard.string(forKey: "summaryModel") ?? UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-5.6"
     @Published var conversationModel = UserDefaults.standard.string(forKey: "conversationModel") ?? UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-5.6"
     @Published var skipUnit = UserDefaults.standard.string(forKey: "skipUnit") ?? "paragraph"
+    @Published var mediaSkipBackSeconds = Gate1AppModel.storedMediaSkipSeconds(forKey: "mediaSkipBackSeconds")
+    @Published var mediaSkipForwardSeconds = Gate1AppModel.storedMediaSkipSeconds(forKey: "mediaSkipForwardSeconds")
     @Published var speechRate = UserDefaults.standard.double(forKey: "speechRate") == 0 ? 0.5 : UserDefaults.standard.double(forKey: "speechRate")
     @Published var mediaPlaybackRate = UserDefaults.standard.double(forKey: "mediaPlaybackRate") == 0 ? 1.0 : UserDefaults.standard.double(forKey: "mediaPlaybackRate")
     @Published var preparedTextAudioStatus = "Not started"
@@ -202,8 +239,18 @@ final class Gate1AppModel: ObservableObject {
     #endif
     @Published var providerAPIKey = KeychainStore.load(service: "SpokenMargins", account: "OpenAICompatibleAPIKey") ?? ""
     @Published var providerProbeStatus = "Not checked"
+    @Published var aiExecutionMode = AIExecutionMode(
+        rawValue: UserDefaults.standard.string(forKey: "aiExecutionMode") ?? ""
+    ) ?? .liveOpenAI
+    @Published var aiDataSharingConsent = AIDataSharingConsent(
+        rawValue: UserDefaults.standard.string(forKey: "aiDataSharingConsent") ?? ""
+    ) ?? .unknown
+    @Published var isAIDataSharingConsentPresented = false
+    @Published var reviewDemoUnlockCode = ""
+    @Published private(set) var reviewDemoStatus = "Locked"
+    @Published private(set) var legacyLibraryResetNotice: String?
     @Published var knownIssues = [
-        "Gate 1 simulator app builds; signed device installation still requires local team/provisioning configuration.",
+        "Physical-device product validation remains pending.",
         "Now Playing lock-screen controls require signed real-device validation.",
         "Source link, public podcast, and share-extension intake are experimental until they have their own human validation record."
     ]
@@ -215,11 +262,13 @@ final class Gate1AppModel: ObservableObject {
     private let gate3WatchConnectivity = Gate3WatchConnectivityController()
     #endif
     private let openAIResponsesClient = OpenAIResponsesClient()
+    private let reviewDemoAIClient = ReviewDemoAIClient()
     private let streamingSpeechQueue = StreamingSpeechQueue()
     private let sourceLinkResolver: LinkResolutionClient?
     private let sourceLinkHandoffStore: SourceLinkHandoffStore?
     private let browserTextHandoffStore: Gate5BrowserTextHandoffStore?
     private let audioPlaybackClientOverride: AudioPlaybackClient?
+    private var mediaPlaybackClient: AVPlayerStreamPlaybackClient?
     private let recordingClientOverride: RecordingClient?
     private let forcePreparedTextGate: Bool
     private let sourceTranscriptionClient: SourceTranscriptionClient
@@ -239,6 +288,8 @@ final class Gate1AppModel: ObservableObject {
     private var pendingAutoPlayQueue = Gate1PlaybackAutoplayQueue()
     private var pendingSourceContextInterjectionIds: Set<String> = []
     private var pendingMapGenerationItemId: String?
+    private var pendingProviderJobForConsent: PendingProviderJob?
+    private var pendingMapGenerationAfterConsent = false
     #if SPOKEN_MARGINS_WATCH
     private var activeWatchPackageRenderItemIds: Set<String> = []
     private var failedWatchPackageRenderItemIds: Set<String> = []
@@ -297,10 +348,120 @@ final class Gate1AppModel: ObservableObject {
         self.forcePreparedTextGate = forcePreparedTextGate
         self.sourceTranscriptionClient = sourceTranscriptionClient
         self.preparedTextAudioPrewarmHandler = preparedTextAudioPrewarmHandler
+        reviewDemoStatus = aiExecutionMode == .reviewDemo ? "Unlocked · simulated responses" : "Locked"
         refreshSpeechVoiceOptions()
         sanitizeTTSMode()
         settingsValueChanged()
         refreshQuickAccessFolder()
+    }
+
+    var isReviewDemoActive: Bool {
+        aiExecutionMode == .reviewDemo
+    }
+
+    var aiDataSharingConsentDescription: String {
+        switch aiDataSharingConsent {
+        case .unknown: return "Not decided"
+        case .grantedV1: return "Allowed for live OpenAI requests"
+        case .declined: return "Not allowed"
+        }
+    }
+
+    static let supportedMediaSkipSeconds = [10, 15, 30, 45, 60]
+
+    private static func storedMediaSkipSeconds(forKey key: String) -> Int {
+        let value = UserDefaults.standard.integer(forKey: key)
+        return supportedMediaSkipSeconds.contains(value) ? value : 15
+    }
+
+    func unlockReviewDemo() {
+        let normalized = reviewDemoUnlockCode.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard normalized == "MARGINS-BETA-01" else {
+            reviewDemoStatus = "Code not recognized"
+            reportFailure("Review demo code not recognized.")
+            return
+        }
+        aiExecutionMode = .reviewDemo
+        UserDefaults.standard.set(aiExecutionMode.rawValue, forKey: "aiExecutionMode")
+        reviewDemoUnlockCode = ""
+        reviewDemoStatus = "Unlocked · simulated responses"
+        diagnostics["aiExecutionMode"] = aiExecutionMode.rawValue
+        _ = rebuildEngineForCurrentSettings()
+        if libraryItems.isEmpty {
+            addSampleItem()
+            diagnostics["reviewDemoSample"] = "seeded"
+        }
+        reportSuccess("Review Demo enabled. AI responses are simulated on device.")
+    }
+
+    func disableReviewDemo() {
+        aiExecutionMode = .liveOpenAI
+        UserDefaults.standard.set(aiExecutionMode.rawValue, forKey: "aiExecutionMode")
+        reviewDemoStatus = "Locked"
+        diagnostics["aiExecutionMode"] = aiExecutionMode.rawValue
+        _ = rebuildEngineForCurrentSettings()
+        reportSuccess("Review Demo disabled.")
+    }
+
+    func grantAIDataSharingConsent() {
+        aiDataSharingConsent = .grantedV1
+        UserDefaults.standard.set(aiDataSharingConsent.rawValue, forKey: "aiDataSharingConsent")
+        isAIDataSharingConsentPresented = false
+        diagnostics["aiDataSharingConsent"] = aiDataSharingConsent.rawValue
+
+        let pendingJob = pendingProviderJobForConsent
+        pendingProviderJobForConsent = nil
+        let shouldGenerateMap = pendingMapGenerationAfterConsent
+        pendingMapGenerationAfterConsent = false
+        if shouldGenerateMap {
+            generateListeningMap()
+        }
+        if let pendingJob {
+            submitProviderJobIfNeeded(
+                kind: pendingJob.kind,
+                turnId: pendingJob.turnId,
+                messages: pendingJob.messages,
+                force: pendingJob.force
+            )
+        }
+    }
+
+    func declineAIDataSharingConsent() {
+        aiDataSharingConsent = .declined
+        UserDefaults.standard.set(aiDataSharingConsent.rawValue, forKey: "aiDataSharingConsent")
+        isAIDataSharingConsentPresented = false
+        pendingMapGenerationAfterConsent = false
+        if pendingProviderJobForConsent != nil {
+            markProviderFailure("ai_data_sharing_not_allowed", userMessage: "Live AI request cancelled. No content was sent.")
+        } else {
+            reportSuccess("Live AI request cancelled. No content was sent.")
+        }
+        pendingProviderJobForConsent = nil
+    }
+
+    func revokeAIDataSharingConsent() {
+        aiDataSharingConsent = .unknown
+        UserDefaults.standard.removeObject(forKey: "aiDataSharingConsent")
+        pendingProviderJobForConsent = nil
+        pendingMapGenerationAfterConsent = false
+        diagnostics["aiDataSharingConsent"] = aiDataSharingConsent.rawValue
+        reportSuccess("OpenAI data-sharing permission revoked.")
+    }
+
+    func deleteProviderAPIKey() {
+        let existingKey = providerAPIKey
+        providerAPIKey = ""
+        let status = KeychainStore.save("", service: "SpokenMargins", account: "OpenAICompatibleAPIKey")
+        guard status == errSecSuccess else {
+            providerAPIKey = existingKey
+            diagnostics["keychainStatus"] = "delete_failed:\(status)"
+            reportFailure("The OpenAI API key could not be deleted from Keychain (\(status)).")
+            return
+        }
+        diagnostics["apiKeyConfigured"] = "false"
+        diagnostics["keychainStatus"] = "deleted"
+        _ = rebuildEngineForCurrentSettings()
+        reportSuccess("OpenAI API key deleted from Keychain.")
     }
 
     deinit {
@@ -497,6 +658,20 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    func pasteImportTextFromClipboard() {
+        #if canImport(UIKit)
+        guard let clipboardText = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !clipboardText.isEmpty else {
+            reportFailure("Clipboard does not contain text.")
+            return
+        }
+        importText = clipboardText
+        reportSuccess("Pasted text from Clipboard.")
+        #else
+        reportFailure("Clipboard paste is unavailable on this platform.")
+        #endif
+    }
+
     func importObsidianMarkdownFiles(urls: [URL]) {
         beginObsidianMarkdownImport(urls: urls, securityScopedURLs: urls)
     }
@@ -511,7 +686,7 @@ final class Gate1AppModel: ObservableObject {
         refreshQuickFolderWhenFinished: Bool = false
     ) {
         guard !urls.isEmpty else {
-            reportFailure("Choose at least one Markdown or text file to import.")
+            reportFailure("Choose at least one Markdown, text, or PDF file to import.")
             return
         }
         guard sourceImportTask == nil else {
@@ -551,7 +726,7 @@ final class Gate1AppModel: ObservableObject {
         var failures: [String] = []
         for request in requests {
             do {
-                let raw = try String(contentsOf: request.url, encoding: .utf8)
+                let raw = try importableText(from: request.url)
                 let parsed = try ObsidianMarkdownParser.parse(fileName: request.url.lastPathComponent, contents: raw)
                 let deterministicMap = parsed.deterministicListeningMap(itemId: request.itemId)
                 let item = Item(
@@ -568,6 +743,22 @@ final class Gate1AppModel: ObservableObject {
             }
         }
         return ObsidianImportBatch(prepared: prepared, failures: failures)
+    }
+
+    private nonisolated static func importableText(from url: URL) throws -> String {
+        guard url.pathExtension.lowercased() == "pdf" else {
+            return try String(contentsOf: url, encoding: .utf8)
+        }
+        #if canImport(PDFKit)
+        guard let document = PDFDocument(url: url),
+              let text = document.string?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else {
+            throw SourceFileImportError.pdfHasNoExtractableText
+        }
+        return text
+        #else
+        throw SourceFileImportError.pdfImportUnavailable
+        #endif
     }
 
     private func completeObsidianMarkdownImport(
@@ -597,7 +788,7 @@ final class Gate1AppModel: ObservableObject {
                 }
             }
             guard !imported.isEmpty else {
-                reportFailure(failures.isEmpty ? "No Markdown files were imported." : failures.joined(separator: "\n"))
+                reportFailure(failures.isEmpty ? "No source files were imported." : failures.joined(separator: "\n"))
                 return
             }
             installEngine(try makeEngine(store: store))
@@ -609,9 +800,9 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["lastObsidianImportFailures"] = "\(failures.count)"
             screen = .home
             let suffix = failures.isEmpty ? "" : " \(failures.count) failed."
-            reportSuccess("Imported \(imported.count) Obsidian file\(imported.count == 1 ? "" : "s").\(suffix)")
+            reportSuccess("Imported \(imported.count) source file\(imported.count == 1 ? "" : "s").\(suffix)")
         } catch {
-            reportFailure(error, context: "Obsidian import failed")
+            reportFailure(error, context: "File import failed")
         }
     }
 
@@ -634,17 +825,21 @@ final class Gate1AppModel: ObservableObject {
             reportFailure("Paste or enter a podcast, RSS, or audio URL first.")
             return
         }
+        let submittedURL = sourceLinkURL
         isResolvingSourceLink = true
         statusMessage = "Resolving source link..."
         lastError = nil
         diagnostics["lastSourceLinkButtonTap"] = "registered"
         Task { @MainActor in
             await Task.yield()
-            _ = await importSourceLinkAsync(
-                urlString: sourceLinkURL,
+            let imported = await importSourceLinkAsync(
+                urlString: submittedURL,
                 sourceSurface: "paste",
                 startSession: true
             )
+            if imported, sourceLinkURL == submittedURL {
+                sourceLinkURL = ""
+            }
         }
     }
 
@@ -950,7 +1145,7 @@ final class Gate1AppModel: ObservableObject {
             )
             let supported = files.compactMap { url -> QuickAccessFileCandidate? in
                 let ext = url.pathExtension.lowercased()
-                guard ["md", "markdown", "txt"].contains(ext) else { return nil }
+                guard ["md", "markdown", "txt", "pdf"].contains(ext) else { return nil }
                 let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey])
                 guard values?.isRegularFile == true else { return nil }
                 return QuickAccessFileCandidate(
@@ -1188,7 +1383,7 @@ final class Gate1AppModel: ObservableObject {
             reportSuccess("Preparing the podcast transcript for its Listening Map. Playback remains available.")
             return
         }
-        guard !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard isReviewDemoActive || !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             run { engine in
                 snapshot = try engine.generateListeningMap(itemId: activeItemId)
                 if let store {
@@ -1204,7 +1399,17 @@ final class Gate1AppModel: ObservableObject {
             return
         }
 
-        statusMessage = "Calling \(modelForAIJob(kind: "listening_map")) for Listening Map."
+        guard isReviewDemoActive || aiDataSharingConsent == .grantedV1 else {
+            pendingMapGenerationAfterConsent = true
+            isGeneratingListeningMap = false
+            isAIDataSharingConsentPresented = true
+            reportSuccess("Review how live AI uses this source before continuing.")
+            return
+        }
+
+        statusMessage = isReviewDemoActive
+            ? "Creating a simulated on-device Listening Map."
+            : "Calling \(modelForAIJob(kind: "listening_map")) for Listening Map."
         lastError = nil
         Task {
             await generateProviderListeningMap()
@@ -1248,7 +1453,7 @@ final class Gate1AppModel: ObservableObject {
         libraryItems = try loadLibraryRows(store: store)
         selectedItem = try loadItemDetail(id: item.id, store: store)
         diagnostics["lastGeneratedMapItem"] = item.id
-        diagnostics["lastListeningMapMode"] = "provider"
+        diagnostics["lastListeningMapMode"] = isReviewDemoActive ? "review_demo" : "provider"
         scheduleTextAudioPrewarmIfNeeded(itemId: item.id)
     }
 
@@ -1462,6 +1667,10 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    func dismissLegacyLibraryResetNotice() {
+        legacyLibraryResetNotice = nil
+    }
+
     func restoreItem(id: String) {
         do {
             let store = try requireStore()
@@ -1502,9 +1711,9 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func skipBack15Seconds() {
+    func skipBackMedia() {
         run { engine in
-            snapshot = try engine.skipBack(unit: "time_15s")
+            snapshot = try engine.skipBack(unit: mediaSkipUnit(seconds: mediaSkipBackSeconds))
             refreshSelectedItem()
         }
     }
@@ -1522,11 +1731,24 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func skipForward15Seconds() {
+    func skipForwardMedia() {
         run { engine in
-            snapshot = try engine.skipForward(unit: "time_15s")
+            snapshot = try engine.skipForward(unit: mediaSkipUnit(seconds: mediaSkipForwardSeconds))
             refreshSelectedItem()
         }
+    }
+
+    func mediaSkipSettingsChanged() {
+        mediaSkipBackSeconds = Self.validatedMediaSkipSeconds(mediaSkipBackSeconds)
+        mediaSkipForwardSeconds = Self.validatedMediaSkipSeconds(mediaSkipForwardSeconds)
+        UserDefaults.standard.set(mediaSkipBackSeconds, forKey: "mediaSkipBackSeconds")
+        UserDefaults.standard.set(mediaSkipForwardSeconds, forKey: "mediaSkipForwardSeconds")
+        mediaPlaybackClient?.setPreferredSkipIntervals(
+            backSeconds: mediaSkipBackSeconds,
+            forwardSeconds: mediaSkipForwardSeconds
+        )
+        diagnostics["mediaSkipBackSeconds"] = "\(mediaSkipBackSeconds)"
+        diagnostics["mediaSkipForwardSeconds"] = "\(mediaSkipForwardSeconds)"
     }
 
     func setMediaPlaybackRate(_ rate: Double) {
@@ -1563,10 +1785,18 @@ final class Gate1AppModel: ObservableObject {
     private func skipUnitForCurrentTarget() -> String {
         switch snapshot.targetType {
         case TargetType.transcriptBackedMedia.rawValue, TargetType.browserOwnedMedia.rawValue:
-            return "time_15s"
+            return mediaSkipUnit(seconds: mediaSkipForwardSeconds)
         default:
             return skipUnit
         }
+    }
+
+    private func mediaSkipUnit(seconds: Int) -> String {
+        "time_\(Self.validatedMediaSkipSeconds(seconds))s"
+    }
+
+    private static func validatedMediaSkipSeconds(_ seconds: Int) -> Int {
+        supportedMediaSkipSeconds.contains(seconds) ? seconds : 15
     }
 
     func beginInterjection() {
@@ -1991,7 +2221,9 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func copyDiagnosticsExport() {
-        var safe = diagnostics.mapValues(Self.redactedDiagnosticValue)
+        var safe = diagnostics
+            .filter { !Self.diagnosticKeyMayContainUserContent($0.key) }
+            .mapValues(Self.redactedDiagnosticValue)
         safe["schemaVersion"] = "spoken-margins.diagnostics.v1"
         safe["exportedAt"] = ISO8601DateFormatter().string(from: Date())
         safe["playbackStatus"] = snapshot.status.rawValue
@@ -2017,6 +2249,16 @@ final class Gate1AppModel: ObservableObject {
         value
             .replacingOccurrences(of: #"https?://[^\s]+"#, with: "<redacted-url>", options: .regularExpression)
             .replacingOccurrences(of: #"/(?:private|Users|var)/[^\s]+"#, with: "<redacted-path>", options: .regularExpression)
+    }
+
+    private static func diagnosticKeyMayContainUserContent(_ key: String) -> Bool {
+        [
+            "lastStatus",
+            "recentFailure",
+            "quickAccessFolder",
+            "lastSourceLinkClipboardPaste",
+            "lastBrowserTextSource"
+        ].contains(key)
     }
 
     func dispatchGate2CompactCommand(
@@ -2204,13 +2446,21 @@ final class Gate1AppModel: ObservableObject {
         UserDefaults.standard.set(summaryModel, forKey: "summaryModel")
         UserDefaults.standard.set(conversationModel, forKey: "conversationModel")
         UserDefaults.standard.set(skipUnit, forKey: "skipUnit")
+        UserDefaults.standard.set(mediaSkipBackSeconds, forKey: "mediaSkipBackSeconds")
+        UserDefaults.standard.set(mediaSkipForwardSeconds, forKey: "mediaSkipForwardSeconds")
         UserDefaults.standard.set(speechRate, forKey: "speechRate")
         UserDefaults.standard.set(speechVoiceIdentifier, forKey: "speechVoiceIdentifier")
         UserDefaults.standard.set(ttsMode, forKey: "ttsMode")
         UserDefaults.standard.set(kokoroVoiceName, forKey: "kokoroVoiceName")
         UserDefaults.standard.set(piperVoiceId, forKey: "piperVoiceId")
         UserDefaults.standard.set(kokoroChunkCharacters, forKey: "kokoroChunkCharacters")
-        KeychainStore.save(providerAPIKey, service: "SpokenMargins", account: "OpenAICompatibleAPIKey")
+        let keychainStatus = KeychainStore.save(providerAPIKey, service: "SpokenMargins", account: "OpenAICompatibleAPIKey")
+        guard keychainStatus == errSecSuccess else {
+            diagnostics["keychainStatus"] = "save_failed:\(keychainStatus)"
+            reportFailure("Provider settings were not saved because Keychain returned \(keychainStatus).")
+            return
+        }
+        diagnostics["keychainStatus"] = providerAPIKey.isEmpty ? "empty" : "saved"
         cancelTextAudioPrewarmTasks()
         diagnostics["providerBaseURL"] = providerBaseURL
         diagnostics["fallbackModel"] = providerModel
@@ -2218,6 +2468,8 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["summaryModel"] = summaryModel
         diagnostics["conversationModel"] = conversationModel
         diagnostics["skipUnit"] = skipUnit
+        diagnostics["mediaSkipBackSeconds"] = "\(mediaSkipBackSeconds)"
+        diagnostics["mediaSkipForwardSeconds"] = "\(mediaSkipForwardSeconds)"
         diagnostics["speechRate"] = String(format: "%.2f", speechRate)
         diagnostics["speechVoice"] = speechVoiceDescription
         diagnostics["ttsMode"] = ttsMode
@@ -2574,6 +2826,8 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["summaryModel"] = summaryModel
         diagnostics["conversationModel"] = conversationModel
         diagnostics["skipUnit"] = skipUnit
+        diagnostics["mediaSkipBackSeconds"] = "\(mediaSkipBackSeconds)"
+        diagnostics["mediaSkipForwardSeconds"] = "\(mediaSkipForwardSeconds)"
         diagnostics["speechRate"] = String(format: "%.2f", speechRate)
         diagnostics["speechVoice"] = speechVoiceDescription
         diagnostics["ttsMode"] = ttsMode
@@ -2755,7 +3009,7 @@ final class Gate1AppModel: ObservableObject {
             gate2CompactControls.configure(
                 canonicalRuntime: engine,
                 surfaceProfile: surfaceProfile,
-                skipUnit: "time_15s"
+                skipUnit: mediaSkipUnit(seconds: mediaSkipForwardSeconds)
             ) { [weak self] command, origin, mediaTimeMs, playbackRate in
                 self?.dispatchGate2CompactCommand(command, mediaTimeMs: mediaTimeMs, playbackRate: playbackRate, origin: origin)
             } applicationCommandHandler: { [weak self] command in
@@ -3052,6 +3306,7 @@ final class Gate1AppModel: ObservableObject {
             let result = try gate2CompactControls.dispatch(
                 command,
                 chapterId: chapterId,
+                unit: compactSkipUnit(for: command),
                 mediaTimeMs: mediaTimeMs,
                 playbackRate: playbackRate,
                 origin: origin
@@ -3075,6 +3330,18 @@ final class Gate1AppModel: ObservableObject {
                 streamingSpeechQueue.resumeAfterInterjection()
             }
             reportFailure(error, context: "Compact control failed")
+        }
+    }
+
+    private func compactSkipUnit(for command: CompactControlCommand) -> String? {
+        guard isMediaPlaybackSnapshot else { return nil }
+        switch command {
+        case .skipBack:
+            return mediaSkipUnit(seconds: mediaSkipBackSeconds)
+        case .skipForward:
+            return mediaSkipUnit(seconds: mediaSkipForwardSeconds)
+        default:
+            return nil
         }
     }
 
@@ -3618,7 +3885,10 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func makeMediaPlaybackClient() -> AudioPlaybackClient {
-        AVPlayerStreamPlaybackClient { [weak self] command, mediaTimeMs, playbackRate in
+        let client = AVPlayerStreamPlaybackClient(
+            preferredSkipBackSeconds: mediaSkipBackSeconds,
+            preferredSkipForwardSeconds: mediaSkipForwardSeconds
+        ) { [weak self] command, mediaTimeMs, playbackRate in
             Task { @MainActor [weak self] in
                 self?.syncPlaybackProgressForLifecycle()
                 self?.performGate2CompactCommand(
@@ -3629,6 +3899,8 @@ final class Gate1AppModel: ObservableObject {
                 )
             }
         }
+        mediaPlaybackClient = client
+        return client
     }
 
     @discardableResult
@@ -3717,9 +3989,15 @@ final class Gate1AppModel: ObservableObject {
         switch reason {
         case "spotify_audio_requires_provider_playback":
             if provider == "spotify" {
-                return "This looks like a Spotify-only episode. Spoken Margins could not find a public audio file for it yet."
+                return "Spoken Margins could not find a public audio file for this Spotify episode."
             }
             return "This provider did not expose a public audio file that Spoken Margins can play yet."
+        case "spotify_metadata_unavailable":
+            return "Spotify did not return enough episode metadata to search for a public copy."
+        case "spotify_episode_not_found_on_apple":
+            return "I could not find a confident Apple Podcasts match for this Spotify episode. It may be Spotify-only."
+        case "spotify_episode_match_ambiguous":
+            return "I found more than one Apple Podcasts episode with this title, so I did not risk importing the wrong one."
         case "apple_episode_id_missing":
             return "That Apple Podcasts link did not identify a specific episode."
         case "apple_lookup_empty":
@@ -3758,12 +4036,18 @@ final class Gate1AppModel: ObservableObject {
 
     private func submitProviderJobIfNeeded(kind: String, turnId: String, messages: [String], force: Bool = false) {
         guard force || snapshot.pendingAiJobStatus == "pending" else { return }
-        guard !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard isReviewDemoActive || !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             markProviderFailure("provider_api_key_missing", userMessage: "AI provider API key required.")
             screen = .settings
             return
         }
-        let selectedModel = modelForAIJob(kind: kind)
+        guard isReviewDemoActive || aiDataSharingConsent == .grantedV1 else {
+            pendingProviderJobForConsent = PendingProviderJob(kind: kind, turnId: turnId, messages: messages, force: true)
+            isAIDataSharingConsentPresented = true
+            reportSuccess("Review how live AI uses this source before continuing.")
+            return
+        }
+        let selectedModel = isReviewDemoActive ? "review-demo" : modelForAIJob(kind: kind)
         recordModelForPendingJob(kind: kind, model: selectedModel)
         statusMessage = "Streaming \(selectedModel) for \(kind)."
         lastError = nil
@@ -3773,17 +4057,20 @@ final class Gate1AppModel: ObservableObject {
             while automaticAttempts < 2 {
                 do {
                     var completed = false
-                    for try await event in openAIResponsesClient.stream(
-                        apiKey: providerAPIKey,
-                        model: selectedModel,
-                        instructions: systemPromptForAIJob(kind: kind),
-                        messages: messages
-                    ) {
+                    let stream = isReviewDemoActive
+                        ? reviewDemoAIClient.stream(kind: kind, messages: messages)
+                        : openAIResponsesClient.stream(
+                            apiKey: providerAPIKey,
+                            model: selectedModel,
+                            instructions: systemPromptForAIJob(kind: kind),
+                            messages: messages
+                        )
+                    for try await event in stream {
                         guard let engine else { return }
                         switch event {
                         case .started(let responseId):
                             diagnostics["lastOpenAIResponseId"] = responseId ?? "pending"
-                            diagnostics["lastProviderTransport"] = "responses_sse"
+                            diagnostics["lastProviderTransport"] = isReviewDemoActive ? "review_demo" : "responses_sse"
                         case .textDelta(let delta):
                             receivedText = true
                             snapshot = try engine.aiStreamDelta(turnId: turnId, content: delta)
@@ -3851,12 +4138,17 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         do {
-            let response = try await openAIResponsesClient.complete(
-                apiKey: providerAPIKey,
-                model: model,
-                instructions: "Return only strict JSON for assistant response chapters. Do not use Markdown.",
-                messages: [assistantChapterPrompt(responseText: text)]
-            )
+            let messages = [assistantChapterPrompt(responseText: text)]
+            let response = if isReviewDemoActive {
+                await reviewDemoAIClient.complete(kind: "assistant_chapters", messages: messages)
+            } else {
+                try await openAIResponsesClient.complete(
+                    apiKey: providerAPIKey,
+                    model: model,
+                    instructions: "Return only strict JSON for assistant response chapters. Do not use Markdown.",
+                    messages: messages
+                )
+            }
             let chapters = try assistantChapters(from: response, responseText: text)
             if let engine {
                 snapshot = try engine.aiChaptersCompleted(turnId: turnId, chapters: chapters)
@@ -3907,8 +4199,18 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func callProvider(messages: [String], model: String, systemPrompt: String) async throws -> String {
+        if isReviewDemoActive {
+            diagnostics["lastProviderTransport"] = "review_demo"
+            return await reviewDemoAIClient.complete(
+                kind: systemPrompt.contains("Listening Map") ? "listening_map" : "assistant_response",
+                messages: messages
+            )
+        }
         guard !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ProviderCallError.missingAPIKey
+        }
+        guard aiDataSharingConsent == .grantedV1 else {
+            throw ProviderCallError.dataSharingConsentRequired
         }
         diagnostics["lastProviderRequestURL"] = OpenAIResponsesClient.endpoint.absoluteString
         diagnostics["lastProviderRequestStartedAt"] = "\(Date().timeIntervalSince1970)"
@@ -4516,16 +4818,13 @@ final class Gate1AppModel: ObservableObject {
         let map: [String: Any] = [
             "schemaVersion": currentFollowUp == nil ? "session-export.v1" : "conversation-context.v2",
             "item": [
-                "id": selectedItem.id,
                 "title": selectedItem.title,
-                "externalReference": selectedItem.externalReference,
                 "text": selectedItem.text
             ],
             "listeningMap": [
                 "overview": selectedItem.overview,
                 "chapters": selectedItem.chapters.map { chapter in
                     [
-                        "id": chapter.id,
                         "title": chapter.title,
                         "startChar": chapter.startChar,
                         "endChar": chapter.endChar
@@ -4534,14 +4833,11 @@ final class Gate1AppModel: ObservableObject {
             ],
             "interjections": interjections.map { interjection in
                 [
-                    "id": interjection.id,
                     "targetType": interjection.targetType.rawValue,
-                    "targetId": interjection.targetId,
                     "anchorBefore": interjection.anchor.anchorBefore,
                     "anchorAfter": interjection.anchor.anchorAfter,
                     "transcriptionStatus": interjection.transcriptionStatus,
-                    "transcript": interjection.cleanedTranscript ?? interjection.transcript ?? "pending",
-                    "audioPath": interjection.audioPath ?? ""
+                    "transcript": interjection.cleanedTranscript ?? interjection.transcript ?? "pending"
                 ]
             },
             "primaryUserIntent": currentFollowUp.map { followUp in
@@ -4552,13 +4848,10 @@ final class Gate1AppModel: ObservableObject {
                     ),
                     "request": followUp,
                     "targetType": currentPlaybackTargetType,
-                    "targetId": currentPlaybackTargetId ?? "",
                     "target": currentDiscussionTargetContext(),
                     "interjections": primaryInterjections.map { interjection in
                         [
-                            "id": interjection.id,
                             "targetType": interjection.targetType.rawValue,
-                            "targetId": interjection.targetId,
                             "anchorBefore": interjection.anchor.anchorBefore,
                             "anchorAfter": interjection.anchor.anchorAfter,
                             "transcriptionStatus": interjection.transcriptionStatus,
@@ -4569,10 +4862,8 @@ final class Gate1AppModel: ObservableObject {
             } ?? NSNull(),
             "recentTurns": selectedItem.turns.suffix(6).map { turn in
                 [
-                    "id": turn.id,
                     "role": turn.role,
                     "turnType": turn.turnType,
-                    "status": turn.status,
                     "text": turn.summary ?? turn.text ?? turn.rawText ?? ""
                 ]
             },
@@ -4598,7 +4889,6 @@ final class Gate1AppModel: ObservableObject {
         case TargetType.summaryTurnTTS.rawValue, TargetType.assistantTurnTTS.rawValue:
             if let turn = selectedItem.turns.first(where: { $0.id == targetId }) {
                 return [
-                    "id": turn.id,
                     "targetType": targetType,
                     "role": turn.role,
                     "turnType": turn.turnType,
@@ -4610,7 +4900,6 @@ final class Gate1AppModel: ObservableObject {
             break
         }
         return [
-            "id": selectedItem.id,
             "targetType": TargetType.itemTextTTS.rawValue,
             "title": selectedItem.title,
             "overview": selectedItem.overview
@@ -5079,9 +5368,39 @@ final class Gate1AppModel: ObservableObject {
 
     private func requireStore() throws -> SQLiteSessionStore {
         if let store { return store }
-        let store = try SQLiteSessionStore(path: databaseURL().path)
+        let url = try databaseURL()
+        if let backupURL = try archiveLegacyLibraryIfNeeded(at: url) {
+            legacyLibraryResetNotice = "This beta starts with a fresh library. Your earlier test database was archived at \(backupURL.lastPathComponent)."
+            diagnostics["legacyLibraryArchive"] = backupURL.path
+        }
+        let store = try SQLiteSessionStore(path: url.path)
         self.store = store
         return store
+    }
+
+    private func archiveLegacyLibraryIfNeeded(at databaseURL: URL) throws -> URL? {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: databaseURL.path),
+              SQLiteSessionStore.schemaVersion(atPath: databaseURL.path) == 1 else { return nil }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let archiveDirectory = databaseURL
+            .deletingLastPathComponent()
+            .appending(path: "LegacyLibraryBackup")
+            .appending(path: formatter.string(from: Date()))
+        try fileManager.createDirectory(at: archiveDirectory, withIntermediateDirectories: true)
+
+        for suffix in ["", "-wal", "-shm"] {
+            let source = URL(fileURLWithPath: databaseURL.path + suffix)
+            guard fileManager.fileExists(atPath: source.path) else { continue }
+            try fileManager.moveItem(
+                at: source,
+                to: archiveDirectory.appending(path: source.lastPathComponent)
+            )
+        }
+        return archiveDirectory
     }
 
     private func databaseURL() throws -> URL {
@@ -5163,6 +5482,7 @@ private enum ProviderCallError: Error, CustomStringConvertible {
     case emptyResponse
     case invalidURL
     case missingAPIKey
+    case dataSharingConsentRequired
 
     var description: String {
         switch self {
@@ -5174,6 +5494,8 @@ private enum ProviderCallError: Error, CustomStringConvertible {
             return "provider_url_invalid"
         case .missingAPIKey:
             return "provider_api_key_missing"
+        case .dataSharingConsentRequired:
+            return "ai_data_sharing_consent_required"
         }
     }
 }
@@ -5930,17 +6252,27 @@ private func voiceQualityName(_ voice: AVSpeechSynthesisVoice) -> String {
 #endif
 
 enum KeychainStore {
-    static func save(_ value: String, service: String, account: String) {
+    @discardableResult
+    static func save(_ value: String, service: String, account: String) -> OSStatus {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
-        SecItemDelete(query as CFDictionary)
-        guard let data = value.data(using: .utf8), !value.isEmpty else { return }
-        var attributes = query
-        attributes[kSecValueData as String] = data
-        SecItemAdd(attributes as CFDictionary, nil)
+        guard let data = value.data(using: .utf8), !value.isEmpty else {
+            let deleteStatus = SecItemDelete(query as CFDictionary)
+            return deleteStatus == errSecItemNotFound ? errSecSuccess : deleteStatus
+        }
+        let protectedAttributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        ]
+        let updateStatus = SecItemUpdate(query as CFDictionary, protectedAttributes as CFDictionary)
+        guard updateStatus == errSecItemNotFound else { return updateStatus }
+
+        var addAttributes = query
+        protectedAttributes.forEach { addAttributes[$0.key] = $0.value }
+        return SecItemAdd(addAttributes as CFDictionary, nil)
     }
 
     static func load(service: String, account: String) -> String? {

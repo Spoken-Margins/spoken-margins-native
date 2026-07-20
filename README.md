@@ -9,7 +9,7 @@ Ship a dependable personal listening environment: import an article or podcast, 
 The active recovery boundary is:
 
 - iPhone/iPad on iOS 18+
-- article, podcast, Safari/share-sheet, and Obsidian intake
+- article, podcast, Safari/share-sheet, plain-text/Markdown, Obsidian, and text-based PDF intake
 - installed system voices through `AVSpeechSynthesizer`
 - native lock-screen transport through Now Playing for podcasts, prepared audio, and immediate live speech
 - a Live Activity control surface while listening, including live-fallback speech

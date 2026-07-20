@@ -1,6 +1,9 @@
 import XCTest
 import SessionKit
 @testable import SpokenMarginsApp
+#if canImport(UIKit)
+import UIKit
+#endif
 
 @MainActor
 final class Gate1AppModelWorkflowTests: XCTestCase {
@@ -222,6 +225,34 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.chapters.map(\.title), ["Key takeaways", "1. First section", "2. Second section"])
         XCTAssertEqual(model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.status, "Ready to listen")
     }
+
+    #if canImport(UIKit)
+    func testTextBasedPDFImportExtractsReadableText() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "spoken-margins-pdf-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appending(path: "Readable PDF.pdf")
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        try renderer.writePDF(to: file) { context in
+            context.beginPage()
+            ("A readable PDF paragraph for Spoken Margins." as NSString).draw(
+                at: CGPoint(x: 40, y: 40),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 18)]
+            )
+        }
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+
+        model.importObsidianMarkdownFiles(urls: [file])
+        try await waitFor("PDF import to finish") {
+            !model.isImportingSources
+        }
+
+        XCTAssertEqual(model.selectedItem.title, "Readable PDF")
+        XCTAssertTrue(model.selectedItem.text.contains("A readable PDF paragraph for Spoken Margins."))
+    }
+    #endif
 
     func testPlaybackControlsRemainUsableWhileObsidianImportIsPending() async throws {
         let directory = FileManager.default.temporaryDirectory

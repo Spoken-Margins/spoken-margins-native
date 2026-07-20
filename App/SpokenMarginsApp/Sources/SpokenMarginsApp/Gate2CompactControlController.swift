@@ -146,6 +146,7 @@ final class Gate2CompactControlController {
     func dispatch(
         _ command: CompactControlCommand,
         chapterId: String? = nil,
+        unit: String? = nil,
         mediaTimeMs: Int? = nil,
         playbackRate: Double? = nil,
         origin: String = "app_ui"
@@ -153,7 +154,13 @@ final class Gate2CompactControlController {
         guard let dispatcher else {
             throw SessionKitError.invalidCommandForState("compact_control_unconfigured")
         }
-        let result = try dispatcher.dispatch(command, chapterId: chapterId, mediaTimeMs: mediaTimeMs, playbackRate: playbackRate)
+        let result = try dispatcher.dispatch(
+            command,
+            chapterId: chapterId,
+            unit: unit,
+            mediaTimeMs: mediaTimeMs,
+            playbackRate: playbackRate
+        )
         lastCommand = command
         lastCommandOrigin = origin
         lastResult = result.delegatedToCanonicalRuntime ? "delegated" : (result.rejectedReason ?? "rejected")

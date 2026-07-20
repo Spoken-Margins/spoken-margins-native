@@ -21,6 +21,10 @@
 
   async function capture(action) {
     const tab = await activeTab();
+    await extensionAPI.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ["browserTextCapture.js"]
+    });
     const response = await extensionAPI.tabs.sendMessage(tab.id, { action });
     if (!response || !response.ok || !response.payload) {
       throw new Error((response && response.error) || "Unable to capture page text.");

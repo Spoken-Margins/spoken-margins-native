@@ -2715,10 +2715,8 @@ public final class SessionEngine {
         let next: Int
         if let package = currentWatchPackage, unit == "chapter" {
             next = package.chapters.first(where: { $0.startMs > current })?.startMs ?? package.primaryAudioAsset?.durationMs ?? current
-        } else if unit == "time_30s" {
-            next = current + 30_000
-        } else if unit == "time_15s" {
-            next = current + 15_000
+        } else if let intervalMs = mediaSkipIntervalMs(for: unit) {
+            next = current + intervalMs
         } else if unit == "chapter", let timeline = sourceTranscriptTimeline(for: session) {
             next = timeline.chapters.first(where: { $0.startMs > current })?.startMs ?? timeline.durationMs ?? current
         } else if let package = currentWatchPackage {
@@ -2746,10 +2744,8 @@ public final class SessionEngine {
         let previous: Int
         if let package = currentWatchPackage, unit == "chapter" {
             previous = package.chapters.last(where: { $0.startMs < current })?.startMs ?? 0
-        } else if unit == "time_30s" {
-            previous = current - 30_000
-        } else if unit == "time_15s" {
-            previous = current - 15_000
+        } else if let intervalMs = mediaSkipIntervalMs(for: unit) {
+            previous = current - intervalMs
         } else if unit == "chapter", let timeline = sourceTranscriptTimeline(for: session) {
             previous = timeline.chapters.last(where: { $0.startMs < current })?.startMs ?? 0
         } else if let package = currentWatchPackage {
@@ -2769,6 +2765,14 @@ public final class SessionEngine {
         }
         publish(status: snapshot.status, phase: updated.phase)
         return snapshot
+    }
+
+    private func mediaSkipIntervalMs(for unit: String) -> Int? {
+        guard unit.hasPrefix("time_"), unit.hasSuffix("s") else { return nil }
+        let start = unit.index(unit.startIndex, offsetBy: "time_".count)
+        let end = unit.index(before: unit.endIndex)
+        guard let seconds = Int(unit[start..<end]), (1...300).contains(seconds) else { return nil }
+        return seconds * 1_000
     }
 
     private func applyMediaRollback(_ session: Session, package: WatchAudioPackage) -> Session {

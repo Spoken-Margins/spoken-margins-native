@@ -1,7 +1,21 @@
 import XCTest
+import Security
 @testable import SpokenMarginsApp
 
 final class Gate1ProviderRequestFactoryTests: XCTestCase {
+    func testKeychainStoreAddsUpdatesAndDeletesProtectedSecret() {
+        let service = "SpokenMarginsTests.\(UUID().uuidString)"
+        let account = "api-key"
+        defer { KeychainStore.save("", service: service, account: account) }
+
+        XCTAssertEqual(KeychainStore.save("first", service: service, account: account), errSecSuccess)
+        XCTAssertEqual(KeychainStore.load(service: service, account: account), "first")
+        XCTAssertEqual(KeychainStore.save("second", service: service, account: account), errSecSuccess)
+        XCTAssertEqual(KeychainStore.load(service: service, account: account), "second")
+        XCTAssertEqual(KeychainStore.save("", service: service, account: account), errSecSuccess)
+        XCTAssertNil(KeychainStore.load(service: service, account: account))
+    }
+
     func testModelRoutingUsesThreeGate1ActivitiesAndListeningMapFallback() {
         XCTAssertEqual(model(kind: "listening_map"), "map-model")
         XCTAssertEqual(model(kind: "interjection_summary"), "summary-model")
@@ -43,6 +57,25 @@ final class Gate1ProviderRequestFactoryTests: XCTestCase {
         XCTAssertEqual(json["instructions"] as? String, "System prompt")
         XCTAssertEqual(json["input"] as? String, "User request")
         XCTAssertEqual(json["stream"] as? Bool, true)
+        XCTAssertEqual(json["store"] as? Bool, false)
+    }
+
+    func testReviewDemoProducesValidMapWithoutNetwork() async throws {
+        let response = await ReviewDemoAIClient().complete(
+            kind: "listening_map",
+            messages: ["""
+            ITEM CONTENT:
+            <<<
+            First paragraph contains enough ordinary words for a stable navigation anchor.
+
+            Second paragraph supplies another deterministic section for the review map.
+            >>>
+            """]
+        )
+        let data = try XCTUnwrap(response.data(using: .utf8))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(json["schemaVersion"] as? String, "listening-map.v1")
+        XCTAssertEqual((json["chapters"] as? [[String: Any]])?.count, 2)
     }
 
     func testResponsesSSEParserEmitsTextAndSurfacesErrors() throws {

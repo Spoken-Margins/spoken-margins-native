@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+IFS=$'\n\t'
+
+repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+site_directory="${repository_root}/Site"
+vps_remote="${SPOKEN_MARGINS_VPS_REMOTE:-root@72.60.117.194}"
+ssh_key="${SPOKEN_MARGINS_VPS_SSH_KEY:-}"
+site_host="spokenmargins.proximitytoprogress.com"
+web_root="/srv/www/spokenmargins"
+
+if [[ ! -f "${site_directory}/index.html" || ! -f "${site_directory}/privacy/index.html" || ! -f "${site_directory}/support/index.html" ]]; then
+  echo "The Site directory is incomplete: ${site_directory}" >&2
+  exit 1
+fi
+
+control_directory="$(mktemp -d "/tmp/spoken-margins-deploy.XXXXXX")"
+control_socket="${control_directory}/ssh-control"
+
+cleanup() {
+  ssh -S "${control_socket}" -O exit "${vps_remote}" >/dev/null 2>&1 || true
+  rmdir "${control_directory}" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+ssh_master_arguments=(
+  -M
+  -S "${control_socket}"
+  -o ControlPersist=60
+  -o ServerAliveInterval=15
+  -o ServerAliveCountMax=4
+)
+
+if [[ -n "${ssh_key}" ]]; then
+  if [[ ! -f "${ssh_key}" ]]; then
+    echo "SSH key not found: ${ssh_key}" >&2
+    exit 1
+  fi
+  ssh_master_arguments+=(
+    -i "${ssh_key}"
+    -o IdentitiesOnly=yes
+  )
+fi
+
+echo "Opening one SSH connection to ${vps_remote}."
+echo "Enter the VPS password at the prompt, or set SPOKEN_MARGINS_VPS_SSH_KEY to an authorized private key."
+ssh "${ssh_master_arguments[@]}" -fnNT "${vps_remote}"
+
+echo "Preparing ${web_root}."
+ssh -S "${control_socket}" "${vps_remote}" "install -d -m 0755 '${web_root}'"
+
+echo "Uploading ${site_directory}/."
+rsync \
+  --archive \
+  --compress \
+  --delete \
+  --exclude '.DS_Store' \
+  -e "ssh -S ${control_socket}" \
+  "${site_directory}/" \
+  "${vps_remote}:${web_root}/"
+
+echo "Configuring and validating Caddy."
+ssh -S "${control_socket}" "${vps_remote}" bash -s -- "${site_host}" "${web_root}" <<'REMOTE_SCRIPT'
+set -euo pipefail
+
+site_host="$1"
+web_root="$2"
+caddy_config="/etc/caddy/Caddyfile"
+
+test -f "${web_root}/index.html"
+test -f "${web_root}/privacy/index.html"
+test -f "${web_root}/support/index.html"
+
+if ! grep -Fqx "${site_host} {" "${caddy_config}"; then
+  caddy_backup="${caddy_config}.before-spoken-margins.$(date -u +%Y%m%dT%H%M%SZ)"
+  cp -a "${caddy_config}" "${caddy_backup}"
+
+  {
+    printf '\n%s {\n' "${site_host}"
+    printf '  root * %s\n' "${web_root}"
+    printf '  encode gzip\n'
+    printf '  file_server\n'
+    printf '}\n'
+  } >> "${caddy_config}"
+
+  if ! caddy validate --config "${caddy_config}"; then
+    cp -a "${caddy_backup}" "${caddy_config}"
+    echo "Caddy validation failed; restored ${caddy_backup}." >&2
+    exit 1
+  fi
+fi
+
+caddy validate --config "${caddy_config}"
+systemctl reload caddy
+systemctl is-active --quiet caddy
+REMOTE_SCRIPT
+
+echo "Verifying public HTTPS pages."
+for route in / /privacy/ /support/; do
+  if ! status_code="$(curl --silent --location --output /dev/null --write-out '%{http_code}' --max-time 30 --retry 5 --retry-delay 2 --retry-all-errors "https://${site_host}${route}")"; then
+    echo "Verification failed: could not reach https://${site_host}${route}." >&2
+    exit 1
+  fi
+  if [[ "${status_code}" != "200" ]]; then
+    echo "Verification failed: https://${site_host}${route} returned HTTP ${status_code}." >&2
+    exit 1
+  fi
+  echo "HTTP 200 https://${site_host}${route}"
+done
+
+echo "Spoken Margins support site deployment succeeded."

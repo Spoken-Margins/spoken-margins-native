@@ -158,6 +158,45 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.diagnostics["sourceWindowContextProvenance:ij-001"], "speech_window")
     }
 
+    func testConfiguredNativeAudioSkipIntervalsAreAppliedAndPersisted() {
+        defer {
+            UserDefaults.standard.removeObject(forKey: "mediaSkipBackSeconds")
+            UserDefaults.standard.removeObject(forKey: "mediaSkipForwardSeconds")
+        }
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "audio_file"),
+                title: "Configurable Skip Episode",
+                durationMs: 300_000,
+                audioURL: "https://cdn.example.com/configurable-skip.mp3",
+                confidence: 1
+            )
+        ))
+        let audio = WindowContextAudioClient()
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: audio,
+            sourceTranscriptionClient: ThrowingSourceTranscriptionClient()
+        )
+        model.resetAndSeed()
+        XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/episode", sourceSurface: "paste"))
+        model.mediaSkipBackSeconds = 30
+        model.mediaSkipForwardSeconds = 45
+        model.mediaSkipSettingsChanged()
+
+        audio.currentMediaTimeValue = 60_000
+        model.skipForwardMedia()
+        XCTAssertEqual(model.snapshot.currentMediaTimeMs, 105_000)
+        audio.currentMediaTimeValue = 105_000
+        model.skipBackMedia()
+        XCTAssertEqual(model.snapshot.currentMediaTimeMs, 75_000)
+        XCTAssertEqual(UserDefaults.standard.integer(forKey: "mediaSkipBackSeconds"), 30)
+        XCTAssertEqual(UserDefaults.standard.integer(forKey: "mediaSkipForwardSeconds"), 45)
+    }
+
     func testStoredTranscriptWindowIsUsedOnlyWhenItCoversPodcastAnchor() throws {
         let timeline = TranscriptTimeline(
             segments: [
@@ -188,6 +227,48 @@ final class SourceLinkImportTests: XCTestCase {
         #else
         throw XCTSkip("Clipboard is only available with UIKit")
         #endif
+    }
+
+    func testTextClipboardButtonFillsManualImportField() throws {
+        #if canImport(UIKit)
+        UIPasteboard.general.string = "A fresh passage to import."
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+
+        model.pasteImportTextFromClipboard()
+
+        XCTAssertEqual(model.importText, "A fresh passage to import.")
+        XCTAssertEqual(model.statusMessage, "Pasted text from Clipboard.")
+        #else
+        throw XCTSkip("Clipboard is only available with UIKit")
+        #endif
+    }
+
+    func testAsyncSourceLinkFormClearsLinkAfterSuccessfulProcessing() async throws {
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: "https://example.com/form-episode", provider: "direct_audio", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://example.com/form-episode", provider: "direct_audio", role: "audio_file"),
+                title: "Form Episode",
+                audioURL: "https://cdn.example.com/form-episode.mp3",
+                confidence: 1
+            )
+        ))
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            sourceTranscriptionClient: ThrowingSourceTranscriptionClient()
+        )
+        model.resetAndSeed()
+        model.sourceLinkURL = "https://example.com/form-episode"
+
+        model.beginSourceLinkImportFromForm()
+        try await waitFor("source link field to clear") {
+            model.sourceLinkURL.isEmpty
+        }
+
+        XCTAssertEqual(model.selectedItem.title, "Form Episode")
     }
 
     func testIncomingPayloadIsQuarantinedAfterUnsupportedImport() async throws {
@@ -355,6 +436,20 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(result.status, .playable)
         XCTAssertEqual(result.selectedCandidate?.audioURL, request.inputURL)
         XCTAssertEqual(result.originalLink.provider, "direct_audio")
+    }
+
+    func testPublicResolverRejectsInsecureHTTPBeforeFetching() throws {
+        let request = LinkResolutionRequest(
+            id: "request-http",
+            inputURL: "http://cdn.example.com/audio.mp3",
+            sourceSurface: "paste",
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+
+        let result = try PublicPodcastLinkResolver(fetch: { _ in throw URLError(.badURL) }).resolve(request)
+
+        XCTAssertEqual(result.status, .unsupported)
+        XCTAssertEqual(result.failureReason, "invalid_url")
     }
 
     func testPublicResolverAsyncAcceptsDirectAudioURL() async throws {
@@ -615,8 +710,8 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(result.failureReason, "rss_episode_ambiguous")
     }
 
-    func testPublicResolverFallsBackForSpotifyExclusive() throws {
-        let html = #"<html><head><meta property="og:title" content="Spotify Episode"></head></html>"#
+    func testPublicResolverExplainsWhenSpotifyEpisodeHasNoAppleMatch() throws {
+        let oEmbed = #"{"title":"Spotify Episode"}"#
         let request = LinkResolutionRequest(
             id: "request-spotify",
             inputURL: "https://open.spotify.com/episode/abc123",
@@ -624,11 +719,109 @@ final class SourceLinkImportTests: XCTestCase {
             createdAt: Date(timeIntervalSince1970: 1)
         )
 
-        let result = try PublicPodcastLinkResolver(fetch: { _ in Data(html.utf8) }).resolve(request)
+        let result = try PublicPodcastLinkResolver(fetch: { url in
+            if url.path == "/oembed" {
+                return Data(oEmbed.utf8)
+            }
+            XCTAssertEqual(url.host, "itunes.apple.com")
+            return Data(#"{"resultCount":0,"results":[]}"#.utf8)
+        }).resolve(request)
 
         XCTAssertEqual(result.status, .needsReview)
         XCTAssertEqual(result.candidates.first?.title, "Spotify Episode")
-        XCTAssertEqual(result.failureReason, "spotify_audio_requires_provider_playback")
+        XCTAssertEqual(result.failureReason, "spotify_episode_not_found_on_apple")
+    }
+
+    func testPublicResolverNormalizesSpotifyEpisodeToExactAppleMatch() throws {
+        let oEmbed = #"{"title":"The Shared Episode!"}"#
+        let appleSearch = """
+        {
+          "resultCount": 2,
+          "results": [
+            {
+              "wrapperType": "podcastEpisode",
+              "kind": "podcast-episode",
+              "trackName": "A Different Episode",
+              "collectionName": "Wrong Show",
+              "episodeUrl": "https://cdn.example.com/wrong.mp3"
+            },
+            {
+              "wrapperType": "podcastEpisode",
+              "kind": "podcast-episode",
+              "trackName": "The Shared Episode",
+              "collectionName": "Shared Show",
+              "trackViewUrl": "https://podcasts.apple.com/us/podcast/shared-show/id123?i=456",
+              "episodeUrl": "https://cdn.example.com/shared.mp3",
+              "trackTimeMillis": 123000,
+              "releaseDate": "2026-07-01T12:00:00Z"
+            }
+          ]
+        }
+        """
+        let request = LinkResolutionRequest(
+            id: "request-spotify-apple-match",
+            inputURL: "https://open.spotify.com/episode/shared123",
+            sourceSurface: "paste",
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+
+        let result = try PublicPodcastLinkResolver(fetch: { url in
+            if url.path == "/oembed" {
+                XCTAssertEqual(
+                    URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "url" })?.value,
+                    request.inputURL
+                )
+                return Data(oEmbed.utf8)
+            }
+            XCTAssertEqual(url.host, "itunes.apple.com")
+            XCTAssertEqual(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "entity" })?.value, "podcastEpisode")
+            return Data(appleSearch.utf8)
+        }).resolve(request)
+
+        XCTAssertEqual(result.status, .playable)
+        XCTAssertEqual(result.originalLink.provider, "spotify")
+        XCTAssertEqual(result.selectedCandidate?.sourceLink.provider, "apple_podcasts")
+        XCTAssertEqual(result.selectedCandidate?.title, "The Shared Episode")
+        XCTAssertEqual(result.selectedCandidate?.showTitle, "Shared Show")
+        XCTAssertEqual(result.selectedCandidate?.durationMs, 123_000)
+        XCTAssertEqual(result.selectedCandidate?.audioURL, "https://cdn.example.com/shared.mp3")
+    }
+
+    func testPublicResolverDoesNotGuessBetweenAmbiguousSpotifyAppleMatches() throws {
+        let oEmbed = #"{"title":"Trailer"}"#
+        let appleSearch = """
+        {
+          "resultCount": 2,
+          "results": [
+            {
+              "wrapperType": "podcastEpisode",
+              "trackName": "Trailer",
+              "collectionName": "Show One",
+              "episodeUrl": "https://cdn.example.com/show-one.mp3"
+            },
+            {
+              "wrapperType": "podcastEpisode",
+              "trackName": "Trailer",
+              "collectionName": "Show Two",
+              "episodeUrl": "https://cdn.example.com/show-two.mp3"
+            }
+          ]
+        }
+        """
+        let request = LinkResolutionRequest(
+            id: "request-spotify-ambiguous",
+            inputURL: "https://open.spotify.com/episode/trailer123",
+            sourceSurface: "paste",
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+
+        let result = try PublicPodcastLinkResolver(fetch: { url in
+            url.path == "/oembed" ? Data(oEmbed.utf8) : Data(appleSearch.utf8)
+        }).resolve(request)
+
+        XCTAssertEqual(result.status, .needsReview)
+        XCTAssertNil(result.selectedCandidate)
+        XCTAssertEqual(result.failureReason, "spotify_episode_match_ambiguous")
     }
 
     private func makePayloadStore() -> SourceLinkHandoffStore {

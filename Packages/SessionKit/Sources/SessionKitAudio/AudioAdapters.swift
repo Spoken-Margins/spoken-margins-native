@@ -1017,13 +1017,35 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private var knownDurations: [String: Int] = [:]
     private var playbackRate: Double = 1
     private var paused = true
+    private var preferredSkipBackSeconds: Int
+    private var preferredSkipForwardSeconds: Int
     #if canImport(MediaPlayer) && os(iOS)
     private var remoteCommandTargets: [(command: MPRemoteCommand, target: Any)] = []
     #endif
 
-    public init(remoteCommandHandler: (@Sendable (CompactControlCommand, Int?, Double?) -> Void)? = nil) {
+    public init(
+        preferredSkipBackSeconds: Int = 15,
+        preferredSkipForwardSeconds: Int = 15,
+        remoteCommandHandler: (@Sendable (CompactControlCommand, Int?, Double?) -> Void)? = nil
+    ) {
+        self.preferredSkipBackSeconds = Self.validatedSkipSeconds(preferredSkipBackSeconds)
+        self.preferredSkipForwardSeconds = Self.validatedSkipSeconds(preferredSkipForwardSeconds)
         self.remoteCommandHandler = remoteCommandHandler
         installRemoteCommandHandlers()
+    }
+
+    public func setPreferredSkipIntervals(backSeconds: Int, forwardSeconds: Int) {
+        preferredSkipBackSeconds = Self.validatedSkipSeconds(backSeconds)
+        preferredSkipForwardSeconds = Self.validatedSkipSeconds(forwardSeconds)
+        #if canImport(MediaPlayer) && os(iOS)
+        let center = MPRemoteCommandCenter.shared()
+        center.skipBackwardCommand.preferredIntervals = [NSNumber(value: preferredSkipBackSeconds)]
+        center.skipForwardCommand.preferredIntervals = [NSNumber(value: preferredSkipForwardSeconds)]
+        #endif
+    }
+
+    private static func validatedSkipSeconds(_ seconds: Int) -> Int {
+        max(1, min(300, seconds))
     }
 
     deinit {
@@ -1364,8 +1386,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         let center = MPRemoteCommandCenter.shared()
         removeRemoteCommandHandlers()
 
-        center.skipBackwardCommand.preferredIntervals = [15]
-        center.skipForwardCommand.preferredIntervals = [15]
+        center.skipBackwardCommand.preferredIntervals = [NSNumber(value: preferredSkipBackSeconds)]
+        center.skipForwardCommand.preferredIntervals = [NSNumber(value: preferredSkipForwardSeconds)]
         center.changePlaybackRateCommand.supportedPlaybackRates = [0.75, 1.0, 1.25, 1.5, 2.0]
         configureRemoteCommandAvailability(canSeek: false)
 

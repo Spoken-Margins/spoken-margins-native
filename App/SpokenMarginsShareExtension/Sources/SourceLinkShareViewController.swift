@@ -36,6 +36,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
     }
 
     private var didProcess = false
+    private var didCompleteRequest = false
     private typealias ExtractionCompletion = @Sendable (Result<SharedImport, Error>) -> Void
     private let statusLabel = UILabel()
     private let closeButton = UIButton(type: .system)
@@ -115,10 +116,10 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                     startSession: false
                 )
                 _ = try SourceLinkHandoffStore.appGroup().save(handoff)
-                showSaved("Saved podcast link to Spoken Margins. Open the app to finish importing it.")
+                showSaved("Sent podcast link to Spoken Margins.")
             case .success(.browserText(let payload)):
                 try saveBrowserText(payload)
-                showSaved("Saved \(payload.source.title) to Spoken Margins. Open the app to finish importing it.")
+                showSaved("Sent \(payload.source.title) to Spoken Margins.")
             case .failure(let error):
                 throw error
             }
@@ -180,9 +181,14 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
     private func showSaved(_ message: String) {
         updateStatus(message)
         closeButton.isHidden = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            self?.close()
+        }
     }
 
     @objc private func close() {
+        guard !didCompleteRequest else { return }
+        didCompleteRequest = true
         extensionContext?.completeRequest(returningItems: nil)
     }
 
@@ -193,7 +199,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         }
         if let url = item as? URL {
             if url.isFileURL {
-                return browserPayloadFromFile(url).map(SharedImport.browserText)
+                return browserPayloadFromFile(url, identifier: identifier).map(SharedImport.browserText)
             }
             return validatedWebURL(url).map { .sourceLink($0.absoluteString) }
         }
@@ -212,9 +218,10 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         return nil
     }
 
-    nonisolated private static func browserPayloadFromFile(_ url: URL) -> BrowserTextSharePayload? {
+    nonisolated private static func browserPayloadFromFile(_ url: URL, identifier: String) -> BrowserTextSharePayload? {
         let fileExtension = url.pathExtension.lowercased()
-        guard ["md", "markdown", "txt"].contains(fileExtension) else { return nil }
+        let declaredType = UTType(identifier)
+        guard ["md", "markdown", "txt"].contains(fileExtension) || declaredType?.conforms(to: .text) == true else { return nil }
         let didAccess = url.startAccessingSecurityScopedResource()
         defer {
             if didAccess { url.stopAccessingSecurityScopedResource() }
@@ -281,7 +288,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
     }
 
     nonisolated private static func validatedWebURL(_ url: URL) -> URL? {
-        guard let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme) else { return nil }
+        guard url.scheme?.lowercased() == "https" else { return nil }
         return url
     }
 }

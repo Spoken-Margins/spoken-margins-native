@@ -12,7 +12,7 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
 
     func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult {
         let trimmed = request.inputURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed), let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme) else {
+        guard let url = URL(string: trimmed), url.scheme?.lowercased() == "https" else {
             return unsupported(request: request, reason: "invalid_url")
         }
 
@@ -35,7 +35,7 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         }
 
         if isSpotifyURL(url) {
-            return try metadataOnlyResult(request: request, url: url, provider: "spotify", reason: "spotify_audio_requires_provider_playback")
+            return try resolveSpotifyURL(url, request: request)
         }
 
         if let result = try resolveRSSFeed(url, request: request, expectedTitle: nil, expectedURL: nil) {
@@ -71,7 +71,7 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         requestTimeoutSeconds: TimeInterval
     ) async throws -> LinkResolutionResult {
         let trimmed = request.inputURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed), let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme) else {
+        guard let url = URL(string: trimmed), url.scheme?.lowercased() == "https" else {
             return unsupported(request: request, reason: "invalid_url")
         }
 
@@ -94,7 +94,11 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         }
 
         if isSpotifyURL(url) {
-            return try await metadataOnlyResultAsync(request: request, url: url, provider: "spotify", reason: "spotify_audio_requires_provider_playback", requestTimeoutSeconds: requestTimeoutSeconds)
+            return try await resolveSpotifyURLAsync(
+                url,
+                request: request,
+                requestTimeoutSeconds: requestTimeoutSeconds
+            )
         }
 
         if let result = try await resolveRSSFeedAsync(url, request: request, expectedTitle: nil, expectedURL: nil, requestTimeoutSeconds: requestTimeoutSeconds) {
@@ -117,6 +121,152 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
 
         let reason = queryValue("i", in: url) == nil ? "apple_episode_id_missing" : "apple_lookup_empty"
         return needsReview(request: request, provider: "apple_podcasts", title: title(from: url), reason: reason)
+    }
+
+    private func resolveSpotifyURL(_ url: URL, request: LinkResolutionRequest) throws -> LinkResolutionResult {
+        let oEmbedData = try? fetch(spotifyOEmbedURL(for: url))
+        let pageData = oEmbedData == nil ? try? fetch(url) : nil
+        guard let episodeTitle = spotifyEpisodeTitle(oEmbedData: oEmbedData, pageData: pageData) else {
+            return needsReview(
+                request: request,
+                provider: "spotify",
+                title: title(from: url),
+                reason: "spotify_metadata_unavailable"
+            )
+        }
+        guard let searchData = try? fetch(appleEpisodeSearchURL(title: episodeTitle)),
+              let results = appleSearchResults(from: searchData) else {
+            return needsReview(
+                request: request,
+                provider: "spotify",
+                title: episodeTitle,
+                reason: "spotify_episode_not_found_on_apple"
+            )
+        }
+        return spotifyAppleMatchResult(
+            request: request,
+            spotifyURL: url,
+            episodeTitle: episodeTitle,
+            results: results
+        )
+    }
+
+    private func resolveSpotifyURLAsync(
+        _ url: URL,
+        request: LinkResolutionRequest,
+        requestTimeoutSeconds: TimeInterval
+    ) async throws -> LinkResolutionResult {
+        let oEmbedData = try? await fetchAsync(spotifyOEmbedURL(for: url), timeout: requestTimeoutSeconds)
+        let pageData = oEmbedData == nil ? try? await fetchAsync(url, timeout: requestTimeoutSeconds) : nil
+        guard let episodeTitle = spotifyEpisodeTitle(oEmbedData: oEmbedData, pageData: pageData) else {
+            return needsReview(
+                request: request,
+                provider: "spotify",
+                title: title(from: url),
+                reason: "spotify_metadata_unavailable"
+            )
+        }
+        guard let searchData = try? await fetchAsync(appleEpisodeSearchURL(title: episodeTitle), timeout: requestTimeoutSeconds),
+              let results = appleSearchResults(from: searchData) else {
+            return needsReview(
+                request: request,
+                provider: "spotify",
+                title: episodeTitle,
+                reason: "spotify_episode_not_found_on_apple"
+            )
+        }
+        return spotifyAppleMatchResult(
+            request: request,
+            spotifyURL: url,
+            episodeTitle: episodeTitle,
+            results: results
+        )
+    }
+
+    private func spotifyAppleMatchResult(
+        request: LinkResolutionRequest,
+        spotifyURL: URL,
+        episodeTitle: String,
+        results: [[String: Any]]
+    ) -> LinkResolutionResult {
+        let normalizedTitle = normalize(episodeTitle)
+        let exactMatches = results.filter { result in
+            let isEpisode = (result["wrapperType"] as? String) == "podcastEpisode"
+                || (result["kind"] as? String) == "podcast-episode"
+            guard isEpisode,
+                  normalize(result["trackName"] as? String ?? "") == normalizedTitle,
+                  let audioURLString = result["episodeUrl"] as? String,
+                  let audioURL = URL(string: audioURLString),
+                  isHTTPURL(audioURL) else {
+                return false
+            }
+            return true
+        }
+        guard exactMatches.count == 1, let episode = exactMatches.first else {
+            return needsReview(
+                request: request,
+                provider: "spotify",
+                title: episodeTitle,
+                reason: exactMatches.isEmpty ? "spotify_episode_not_found_on_apple" : "spotify_episode_match_ambiguous"
+            )
+        }
+        let appleURL = (episode["trackViewUrl"] as? String).flatMap(URL.init(string:))
+        let candidate = LinkResolutionCandidate(
+            sourceLink: SourceLink(
+                url: appleURL?.absoluteString ?? spotifyURL.absoluteString,
+                provider: "apple_podcasts",
+                title: episode["collectionName"] as? String,
+                role: "canonical_source"
+            ),
+            title: episode["trackName"] as? String ?? episodeTitle,
+            showTitle: episode["collectionName"] as? String,
+            durationMs: (episode["trackTimeMillis"] as? NSNumber)?.intValue,
+            publishedAt: episode["releaseDate"] as? String,
+            audioURL: episode["episodeUrl"] as? String,
+            confidence: 0.92
+        )
+        return playable(request: request, provider: "spotify", candidate: candidate)
+    }
+
+    private func spotifyOEmbedURL(for url: URL) -> URL {
+        var components = URLComponents(string: "https://open.spotify.com/oembed")!
+        components.queryItems = [URLQueryItem(name: "url", value: url.absoluteString)]
+        return components.url!
+    }
+
+    private func appleEpisodeSearchURL(title: String) -> URL {
+        var components = URLComponents(string: "https://itunes.apple.com/search")!
+        components.queryItems = [
+            URLQueryItem(name: "term", value: title),
+            URLQueryItem(name: "country", value: "US"),
+            URLQueryItem(name: "media", value: "podcast"),
+            URLQueryItem(name: "entity", value: "podcastEpisode"),
+            URLQueryItem(name: "limit", value: "25")
+        ]
+        return components.url!
+    }
+
+    private func spotifyEpisodeTitle(oEmbedData: Data?, pageData: Data?) -> String? {
+        if let oEmbedData,
+           let object = try? JSONSerialization.jsonObject(with: oEmbedData) as? [String: Any],
+           let title = object["title"] as? String,
+           !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return title.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard let pageData,
+              let html = String(data: pageData, encoding: .utf8),
+              let title = htmlTitle(html) else {
+            return nil
+        }
+        return title
+            .replacingOccurrences(of: " | Podcast on Spotify", with: "")
+            .replacingOccurrences(of: " - song and lyrics by", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func appleSearchResults(from data: Data) -> [[String: Any]]? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return object["results"] as? [[String: Any]]
     }
 
     private func resolveApplePodcastsURLAsync(
@@ -442,7 +592,7 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
 
     private func isHTTPURL(_ url: URL) -> Bool {
         guard let scheme = url.scheme?.lowercased() else { return false }
-        return ["http", "https"].contains(scheme)
+        return scheme == "https"
     }
 
     private func looksLikeRSSURL(_ url: URL) -> Bool {

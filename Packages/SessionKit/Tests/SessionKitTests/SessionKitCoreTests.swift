@@ -1036,6 +1036,39 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(audio.playedOffsets.last, 30_000)
     }
 
+    func testNativeAudioSkipAcceptsConfiguredTimeUnits() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["native_media"]
+            ]
+        )
+        let item = Item(
+            id: "item-native-configured-skip",
+            title: "Configured Native Skip",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/episode",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://cdn.example.com/episode.mp3", durationMs: 120_000)
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentMediaTimeValue = 40_000
+        let forward = try engine.skipForward(unit: "time_45s")
+        XCTAssertEqual(forward.currentMediaTimeMs, 85_000)
+
+        audio.currentMediaTimeValue = 85_000
+        let back = try engine.skipBack(unit: "time_30s")
+        XCTAssertEqual(back.currentMediaTimeMs, 55_000)
+    }
+
     func testNativeAudioPlaybackRatePropagatesToAudioClientAndSnapshot() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
