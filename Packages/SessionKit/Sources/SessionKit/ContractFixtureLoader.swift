@@ -3,6 +3,7 @@ import Foundation
 public enum ContractFixtureLoader {
     public static func item(at url: URL) throws -> Item {
         let object = try object(at: url)
+        let media = object["media"] as? [String: Any]
         return Item(
             id: object["id"] as? String ?? "",
             title: object["title"] as? String ?? "",
@@ -10,7 +11,21 @@ public enum ContractFixtureLoader {
             text: object["text"] as? String,
             externalReference: object["externalReference"] as? String,
             status: object["status"] as? String ?? "ready",
-            externalReferenceType: object["externalReferenceType"] as? String
+            externalReferenceType: object["externalReferenceType"] as? String,
+            media: media.flatMap { mediaObject in
+                guard let rawSourceType = mediaObject["sourceType"] as? String,
+                      let sourceType = AudioSourceType(rawValue: rawSourceType) else {
+                    return nil
+                }
+                return ItemMedia(
+                    sourceType: sourceType,
+                    url: mediaObject["url"] as? String,
+                    durationMs: mediaObject["durationMs"] as? Int,
+                    nativeMediaId: mediaObject["nativeMediaId"] as? String
+                )
+            },
+            transcriptId: object["transcriptId"] as? String,
+            deletedAt: (object["deletedAt"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) }
         )
     }
 
@@ -124,6 +139,66 @@ public enum ContractFixtureLoader {
         )
     }
 
+    public static func watchAudioPackage(at url: URL) throws -> WatchAudioPackage {
+        let object = try object(at: url)
+        let itemObject = object["item"] as? [String: Any] ?? [:]
+        let transcriptObject = object["transcript"] as? [String: Any] ?? [:]
+        let settingsObject = object["settings"] as? [String: Any] ?? [:]
+        return WatchAudioPackage(
+            schemaVersion: object["schemaVersion"] as? String ?? "watch-audio-package.v1",
+            id: object["id"] as? String ?? "",
+            itemId: object["itemId"] as? String ?? "",
+            sessionId: object["sessionId"] as? String ?? "",
+            createdAt: date(from: object["createdAt"] as? String),
+            expiresAt: (object["expiresAt"] as? String).map(date(from:)),
+            item: WatchPackageItem(
+                title: itemObject["title"] as? String ?? "",
+                mediaType: itemObject["mediaType"] as? String ?? "text",
+                externalReference: itemObject["externalReference"] as? String
+            ),
+            audioAssets: (object["audioAssets"] as? [[String: Any]] ?? []).map { asset in
+                WatchPackageAudioAsset(
+                    audioAssetId: asset["audioAssetId"] as? String ?? "",
+                    fileName: asset["fileName"] as? String ?? "",
+                    durationMs: asset["durationMs"] as? Int ?? 0,
+                    sha256: asset["sha256"] as? String
+                )
+            },
+            transcript: WatchPackageTranscript(
+                transcriptId: transcriptObject["transcriptId"] as? String ?? "",
+                segments: (transcriptObject["segments"] as? [[String: Any]] ?? []).map(mediaSegment)
+            ),
+            chapters: (object["chapters"] as? [[String: Any]] ?? []).map(mediaChapter),
+            settings: WatchPackageSettings(
+                rollbackUnit: settingsObject["rollbackUnit"] as? String ?? "previous_segment",
+                defaultPlaybackRate: settingsObject["defaultPlaybackRate"] as? Double ?? 1
+            )
+        )
+    }
+
+    public static func watchSyncEvent(at url: URL) throws -> WatchSyncEvent {
+        let object = try object(at: url)
+        let payload = object["payload"] as? [String: Any] ?? [:]
+        return WatchSyncEvent(
+            schemaVersion: object["schemaVersion"] as? String ?? "watch-sync-event.v1",
+            id: object["id"] as? String ?? "",
+            watchPackageId: object["watchPackageId"] as? String ?? "",
+            sessionId: object["sessionId"] as? String ?? "",
+            itemId: object["itemId"] as? String,
+            eventType: object["eventType"] as? String ?? "",
+            createdAt: date(from: object["createdAt"] as? String),
+            payload: WatchSyncEventPayload(
+                mediaTimeMs: payload["mediaTimeMs"] as? Int,
+                chapterId: payload["chapterId"] as? String,
+                transcriptSegmentId: payload["transcriptSegmentId"] as? String,
+                playbackRate: payload["playbackRate"] as? Double,
+                audioFileName: payload["audioFileName"] as? String,
+                audioDurationMs: payload["audioDurationMs"] as? Int,
+                error: payload["error"] as? String
+            )
+        )
+    }
+
     private static func object(at url: URL) throws -> [String: Any] {
         let data = try Data(contentsOf: url)
         return try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
@@ -132,5 +207,36 @@ public enum ContractFixtureLoader {
     private static func array(at url: URL) throws -> [[String: Any]] {
         let data = try Data(contentsOf: url)
         return try JSONSerialization.jsonObject(with: data) as? [[String: Any]] ?? []
+    }
+
+    private static func mediaSegment(_ object: [String: Any]) -> MediaTimelineSegment {
+        MediaTimelineSegment(
+            id: object["id"] as? String ?? "",
+            startMs: object["startMs"] as? Int ?? 0,
+            endMs: object["endMs"] as? Int ?? 0,
+            startChar: object["startChar"] as? Int,
+            endChar: object["endChar"] as? Int,
+            text: object["text"] as? String ?? ""
+        )
+    }
+
+    private static func mediaChapter(_ object: [String: Any]) -> MediaTimelineChapter {
+        MediaTimelineChapter(
+            id: object["id"] as? String ?? "",
+            title: object["title"] as? String ?? "",
+            description: object["description"] as? String,
+            startMs: object["startMs"] as? Int ?? 0,
+            transcriptSegmentId: object["transcriptSegmentId"] as? String ?? ""
+        )
+    }
+
+    private static func date(from raw: String?) -> Date {
+        guard let raw else { return Date(timeIntervalSince1970: 0) }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: raw) {
+            return date
+        }
+        return ISO8601DateFormatter().date(from: raw) ?? Date(timeIntervalSince1970: 0)
     }
 }

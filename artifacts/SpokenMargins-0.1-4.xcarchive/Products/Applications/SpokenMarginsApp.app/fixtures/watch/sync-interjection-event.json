@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "watch-sync-event.v1",
+  "id": "watch-event-ij-001",
+  "watchPackageId": "watch-package-pill-001",
+  "sessionId": "session-watch-pill-001",
+  "itemId": "item-pill",
+  "eventType": "interjection_recorded",
+  "createdAt": "2026-06-11T12:30:00.000Z",
+  "payload": {
+    "mediaTimeMs": 42000,
+    "chapterId": "ch-anecdotes",
+    "transcriptSegmentId": "seg-pill-003",
+    "playbackRate": 1,
+    "audioFileName": "watch-ij-001.m4a",
+    "audioDurationMs": 4800,
+    "error": null
+  }
+}

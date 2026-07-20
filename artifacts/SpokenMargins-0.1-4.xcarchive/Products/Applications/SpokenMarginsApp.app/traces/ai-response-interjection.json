@@ -1,0 +1,41 @@
+{
+  "schemaVersion": "session-trace.v1",
+  "name": "ai-response-interjection",
+  "description": "Play an AI response and capture an interjection anchored to that response.",
+  "runtimeProfile": "phone-tablet-online",
+  "requiresCapabilities": {
+    "playback": ["assistant_turn_tts"],
+    "interjection": ["record_audio", "capture_turn_anchor"],
+    "sync": ["canonical_persistence"]
+  },
+  "fixtures": {
+    "item": "fixtures/items/text-with-listening-map.json",
+    "session": "fixtures/sessions/summary-addendum-discussion.json",
+    "turns": "fixtures/turns/summary-and-response.json"
+  },
+  "steps": [
+    {
+      "command": "playTurn",
+      "args": { "turnId": "turn-response-001" },
+      "expect": { "phase": "ai_response_playback", "targetType": "assistant_turn_tts" }
+    },
+    {
+      "command": "beginInterjection",
+      "expect": { "phase": "recording_interjection", "recordingTargetId": "turn-response-001" }
+    },
+    {
+      "command": "finishInterjection",
+      "args": { "audioRef": "interjections/ij-ai-001.m4a" },
+      "expect": {
+        "phase": "ai_response_playback",
+        "lastInterjectionTargetType": "assistant_turn",
+        "lastInterjectionAnchorType": "turn"
+      }
+    }
+  ],
+  "assertions": [
+    "The interjection target is the assistant turn.",
+    "The anchor uses assistant turn text, not original item text.",
+    "Export places the interjection after the AI response entry."
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "session-trace.v1",
+  "name": "browser-text-session",
+  "description": "Browser extension packages selected text as an item and starts app-owned TTS playback.",
+  "runtimeProfile": "browser-text",
+  "requiresCapabilities": {
+    "playback": ["realtime_tts"],
+    "timeline": ["text_char_offsets"],
+    "interjection": ["record_audio", "capture_text_anchor"],
+    "sync": ["browser_session_handoff"]
+  },
+  "fixtures": {
+    "item": "fixtures/items/text-mapless.json"
+  },
+  "steps": [
+    {
+      "command": "importBrowserText",
+      "args": {
+        "title": "You Can't Inspect the Pill",
+        "externalReference": "https://example.com/pill",
+        "text": "Opening distrust is reasonable. Maybe their diet changed. Maybe their sleep changed."
+      },
+      "expect": { "itemMediaType": "text", "targetType": "item_text_tts" }
+    },
+    {
+      "command": "startSession",
+      "args": { "itemId": "item-pill" },
+      "expect": { "phase": "item_playback", "status": "playing" }
+    },
+    {
+      "command": "beginInterjection",
+      "expect": { "phase": "recording_interjection" }
+    },
+    {
+      "command": "finishInterjection",
+      "args": { "audioRef": "interjections/browser-text-001.m4a" },
+      "expect": { "phase": "item_playback", "lastInterjectionAnchorType": "text" }
+    }
+  ],
+  "assertions": [
+    "Browser text sessions become normal text-backed items.",
+    "Interjections use text anchors and can be continued later in the app."
+  ]
+}

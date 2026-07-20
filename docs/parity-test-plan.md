@@ -66,6 +66,20 @@ The Swift SessionKit test suite should load these traces and replay them against
 
 The test harness should reject unsupported commands before state execution and assert `invalid_command_for_capability` when a command is intentionally invoked from an insufficient profile.
 
+Trace files are executable behavior contracts, not narrative examples. A trace change is valid only when its commands, events, and expectation keys are supported by both the JSON schema and the Swift replay harness. Schema validation alone is not sufficient evidence that a trace will replay.
+
+If a desired behavior needs new trace language, snapshot fields, command payloads, fixture shapes, or runtime state, a gate agent should add a backend request instead of changing an active replayed trace. The steward owns the paired harness/runtime/schema update that makes the new trace language executable.
+
+### Validator Limits
+
+The contract validators prove that JSON parses, known schemas match, referenced fixtures exist, and surface contracts use registered command/snapshot/delegation ids. They do not prove:
+
+- Swift trace replay support for every expectation key
+- runtime behavior exists
+- Xcode targets build
+- newly invented fixture directories are schema-validated
+- a contract proposal has been promoted to shared vocabulary
+
 ### Browser Extension Parity
 
 Browser extension tests should generate session packages that conform to the same schemas.

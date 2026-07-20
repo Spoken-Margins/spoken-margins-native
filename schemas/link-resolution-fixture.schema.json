@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spokenmargins.local/schemas/link-resolution-fixture.schema.json",
+  "title": "LinkResolutionFixture",
+  "type": "object",
+  "required": ["schemaVersion", "name"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": "link-resolution-fixture.v1" },
+    "name": { "type": "string", "minLength": 1 },
+    "case": { "$ref": "#/$defs/case" },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/case" }
+    }
+  },
+  "oneOf": [
+    { "required": ["case"], "not": { "required": ["cases"] } },
+    { "required": ["cases"], "not": { "required": ["case"] } }
+  ],
+  "$defs": {
+    "case": {
+      "type": "object",
+      "required": ["request", "result", "queueState"],
+      "additionalProperties": false,
+      "properties": {
+        "provider": { "type": ["string", "null"] },
+        "queueState": {
+          "enum": ["resolving", "playable", "needs_review", "unsupported"]
+        },
+        "expectedQueueItemId": { "type": ["string", "null"] },
+        "request": {
+          "type": "object",
+          "required": ["type", "id", "inputURL", "sourceSurface", "createdAt"],
+          "additionalProperties": false,
+          "properties": {
+            "type": { "const": "LinkResolutionRequest" },
+            "id": { "type": "string", "minLength": 1 },
+            "inputURL": { "type": "string", "format": "uri" },
+            "sourceSurface": { "enum": ["share_sheet", "paste_url", "manual_entry"] },
+            "createdAt": { "type": "string", "format": "date-time" }
+          }
+        },
+        "result": {
+          "type": "object",
+          "required": ["type", "requestId", "status", "originalLink", "selectedCandidate", "candidates", "failureReason"],
+          "additionalProperties": false,
+          "properties": {
+            "type": { "const": "LinkResolutionResult" },
+            "requestId": { "type": "string", "minLength": 1 },
+            "status": { "enum": ["playable", "needs_review", "unsupported"] },
+            "originalLink": { "$ref": "#/$defs/sourceLink" },
+            "selectedCandidate": {
+              "anyOf": [
+                { "$ref": "#/$defs/candidate" },
+                { "type": "null" }
+              ]
+            },
+            "candidates": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/candidate" }
+            },
+            "failureReason": { "type": ["string", "null"] }
+          }
+        },
+        "audioRepresentation": {
+          "type": ["object", "null"],
+          "required": ["type", "id", "sourceType", "url", "durationMs", "transcriptId"],
+          "additionalProperties": false,
+          "properties": {
+            "type": { "const": "AudioRepresentation" },
+            "id": { "type": "string", "minLength": 1 },
+            "sourceType": {
+              "enum": [
+                "generated_tts_realtime",
+                "generated_tts_prerendered",
+                "native_media_file",
+                "browser_owned_media",
+                "remote_stream"
+              ]
+            },
+            "url": { "type": ["string", "null"], "format": "uri" },
+            "durationMs": { "type": ["integer", "null"], "minimum": 0 },
+            "transcriptId": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "required": ["sourceLink", "title", "showTitle", "durationMs", "publishedAt", "audioURL", "confidence"],
+      "additionalProperties": false,
+      "properties": {
+        "sourceLink": { "$ref": "#/$defs/sourceLink" },
+        "title": { "type": ["string", "null"] },
+        "showTitle": { "type": ["string", "null"] },
+        "durationMs": { "type": ["integer", "null"], "minimum": 0 },
+        "publishedAt": { "type": ["string", "null"], "format": "date-time" },
+        "audioURL": { "type": ["string", "null"], "format": "uri" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "sourceLink": {
+      "type": "object",
+      "required": ["type", "url", "provider", "title", "role"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "SourceLink" },
+        "url": { "type": "string", "format": "uri" },
+        "provider": { "type": ["string", "null"] },
+        "title": { "type": ["string", "null"] },
+        "role": { "enum": ["discovery", "canonical_feed", "audio_enclosure", "canonical_source"] }
+      }
+    }
+  }
+}

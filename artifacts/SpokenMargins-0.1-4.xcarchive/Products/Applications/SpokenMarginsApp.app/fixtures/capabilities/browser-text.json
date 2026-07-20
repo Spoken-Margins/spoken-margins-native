@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "runtime-capability-profile.v1",
+  "id": "browser-text",
+  "displayName": "Browser Text Runtime",
+  "surface": "browser_extension",
+  "connectivity": "browser_page",
+  "mediaOwnership": "mixed",
+  "capabilities": {
+    "playback": ["realtime_tts"],
+    "timeline": ["text_char_offsets", "chapter_timing"],
+    "interjection": ["record_audio", "capture_text_anchor"],
+    "ai": ["defer_ai_jobs"],
+    "sync": ["browser_session_handoff"],
+    "remoteControl": ["display_snapshot", "send_transport_commands", "send_chapter_jump", "send_interjection_commands"]
+  },
+  "forbiddenCapabilities": ["native_media", "prerendered_audio", "browser_owned_media"],
+  "notes": ["Browser may own text TTS and recording if permissions allow, but canonical persistence and AI can be delegated to the app."]
+}

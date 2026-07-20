@@ -1,7 +1,7 @@
 import Foundation
 
 public struct SessionExport: Codable, Equatable {
-    public var schemaVersion: String = "session-export.v1"
+    public var schemaVersion: String = "spoken-margins.export.v1"
     public var item: ExportItem
     public var session: ExportSession
     public var listeningMap: ListeningMap?
@@ -14,8 +14,11 @@ public struct ExportItem: Codable, Equatable {
     public var id: String
     public var title: String
     public var externalReference: String?
+    public var sourceURL: String?
+    public var mediaSourceType: String?
     public var includedFullText: Bool
     public var text: String?
+    public var sourceTranscript: String? = nil
 }
 
 public struct ExportSession: Codable, Equatable {
@@ -88,16 +91,30 @@ public struct ExportOptions: Equatable {
 public enum SessionExportMarkdownRenderer {
     public static func render(_ export: SessionExport) -> String {
         var lines: [String] = []
-        lines.append("# Listening Session: \(export.item.title)")
+        lines.append("# Spoken Margins AI Handoff: \(export.item.title)")
         lines.append("")
         if let reference = export.item.externalReference, !reference.isEmpty {
             lines.append("Item: \(reference)")
+            lines.append("")
+        }
+        if let sourceURL = export.item.sourceURL, !sourceURL.isEmpty, sourceURL != export.item.externalReference {
+            lines.append("Source URL: \(sourceURL)")
+            lines.append("")
+        }
+        if let mediaSourceType = export.item.mediaSourceType, !mediaSourceType.isEmpty {
+            lines.append("Source Type: \(mediaSourceType)")
             lines.append("")
         }
         if let text = export.item.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
             lines.append("## Source Text")
             lines.append("")
             lines.append(text)
+            lines.append("")
+        }
+        if let transcript = export.item.sourceTranscript?.trimmingCharacters(in: .whitespacesAndNewlines), !transcript.isEmpty {
+            lines.append("## Source Transcript")
+            lines.append("")
+            lines.append(transcript)
             lines.append("")
         }
         lines.append("## Session")
@@ -110,6 +127,12 @@ public enum SessionExportMarkdownRenderer {
             lines.append("")
             lines.append(overview)
             lines.append("")
+            for chapter in export.listeningMap?.chapters ?? [] {
+                lines.append("- \(chapter.title) (\(chapter.percent)%)")
+            }
+            if export.listeningMap?.chapters.isEmpty == false {
+                lines.append("")
+            }
         }
 
         let interjectionsById = Dictionary(uniqueKeysWithValues: export.interjections.map { ($0.id, $0) })
@@ -146,6 +169,10 @@ public enum SessionExportMarkdownRenderer {
     private static func append(turn: ConversationTurn, to lines: inout [String]) {
         lines.append("### \(title(for: turn))")
         lines.append("")
+        if turn.status != "complete" {
+            lines.append("Status: \(turn.status)")
+            lines.append("")
+        }
         if let summary = turn.summary?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
             lines.append("Summary:")
             lines.append(summary)
@@ -174,17 +201,16 @@ public enum SessionExportMarkdownRenderer {
             lines.append(interjection.anchorAfter)
             lines.append("")
         }
+        if let mediaTimeMs = interjection.mediaTimeMs {
+            lines.append("Media time: \(formattedMediaTime(mediaTimeMs))")
+            lines.append("")
+        }
         if let transcript = interjection.transcript?.trimmingCharacters(in: .whitespacesAndNewlines), !transcript.isEmpty {
             lines.append("Transcript:")
             lines.append(transcript)
             lines.append("")
         } else {
             lines.append("Transcript: \(interjection.transcriptionStatus)")
-            lines.append("")
-        }
-        if let audioPath = interjection.audioPath, !audioPath.isEmpty {
-            lines.append("Audio:")
-            lines.append(audioPath)
             lines.append("")
         }
     }
@@ -200,5 +226,16 @@ public enum SessionExportMarkdownRenderer {
         default:
             return turn.turnType.replacingOccurrences(of: "_", with: " ").capitalized
         }
+    }
+
+    private static func formattedMediaTime(_ mediaTimeMs: Int) -> String {
+        let totalSeconds = max(0, mediaTimeMs / 1000)
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let seconds = totalSeconds % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+        }
+        return String(format: "%d:%02d", minutes, seconds)
     }
 }

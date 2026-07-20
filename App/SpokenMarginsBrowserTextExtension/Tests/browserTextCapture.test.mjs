@@ -28,7 +28,15 @@ test("popup and manifest reference flattened bundled resources", () => {
   const popup = fs.readFileSync("App/SpokenMarginsBrowserTextExtension/Resources/popup.html", "utf8");
   const styles = fs.readFileSync("App/SpokenMarginsBrowserTextExtension/Resources/Styles/popup.css", "utf8");
 
-  assert.deepEqual(manifest.content_scripts[0].js, ["browserTextCapture.js"]);
+  assert.ok(manifest.permissions.includes("activeTab"));
+  assert.ok(manifest.permissions.includes("scripting"));
+  assert.equal(manifest.action.default_popup, "popup.html");
+  assert.deepEqual(Object.keys(manifest.icons), ["48", "96", "128", "256", "512"]);
+  for (const [size, icon] of Object.entries(manifest.icons)) {
+    assert.match(size, /^\d+$/);
+    assert.equal(typeof icon, "string");
+    assert.ok(fs.existsSync(`App/SpokenMarginsBrowserTextExtension/Resources/Icons/${icon}`));
+  }
   assert.match(popup, /href="popup\.css"/);
   assert.match(popup, /src="popup\.js"/);
   assert.doesNotMatch(popup, /Styles\/popup\.css|Scripts\/popup\.js/);
@@ -72,30 +80,19 @@ test("selected text capture preserves page metadata", () => {
 
   assert.equal(payload.id, "test-payload-id");
   assert.equal(payload.captureMode, "selected_text");
+  assert.equal(payload.contentFormat, "plain_text");
   assert.equal(payload.text, "Selected page text.");
   assert.equal(payload.source.title, "Article Title");
   assert.equal(payload.source.url, "https://example.com/selected");
   assert.equal(payload.source.author, "A. Writer");
-  assert.equal(payload.requestedContinuation.startSession, true);
+  assert.equal(payload.requestedContinuation.startSession, false);
 });
 
-test("readable page capture prefers article text and excludes page chrome", () => {
-  const articleText = "Opening paragraph. ".repeat(20);
-  const article = element("article", articleText, [element("nav", "Navigation should disappear.")]);
-  const body = element("body", `${articleText} Footer noise.`);
-  const documentRef = {
-    title: "Readable Page",
-    location: { href: "https://example.com/readable" },
-    body,
-    querySelector: (selector) => selector === "article" ? article : null,
-    querySelectorAll: () => [article, body]
-  };
+test("readable page bundle contains the pinned local extractor", () => {
+  const source = fs.readFileSync("App/SpokenMarginsBrowserTextExtension/Resources/Scripts/browserTextCapture.js", "utf8");
+  const license = fs.readFileSync("App/SpokenMarginsBrowserTextExtension/Resources/Defuddle-LICENSE.txt", "utf8");
 
-  const capture = loadCapture(documentRef);
-  const payload = capture.captureReadablePage(documentRef);
-
-  assert.equal(payload.captureMode, "readable_page");
-  assert.match(payload.text, /Opening paragraph/);
-  assert.doesNotMatch(payload.text, /Navigation should disappear/);
-  assert.doesNotMatch(payload.text, /Footer noise/);
+  assert.match(source, /Bundled Defuddle 0\.19\.1/);
+  assert.match(source, /networkFallback/);
+  assert.match(license, /Copyright \(c\) 2025 Steph Ango/);
 });

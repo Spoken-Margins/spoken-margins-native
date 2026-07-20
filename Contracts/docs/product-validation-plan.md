@@ -1,5 +1,7 @@
 # Product Validation Plan
 
+> Historical gate plan. The active release boundary and its two validation checks are defined in `recovery-mvp.md`. Watch, widgets, Live Activities, and offline Watch packages below are archived context, not active milestones.
+
 ## Purpose
 
 This plan defines user validation gates for the full production suite.

@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "session-trace.v1",
+  "name": "browser-video-1_75x-session",
+  "description": "Browser-owned media is playing at 1.75x; interjection anchors to source media time and transcript span.",
+  "runtimeProfile": "browser-media",
+  "requiresCapabilities": {
+    "playback": ["browser_owned_media"],
+    "timeline": ["transcript_segments", "media_time", "playback_rate_observation"],
+    "interjection": ["record_audio", "capture_transcript_anchor", "capture_media_anchor"],
+    "sync": ["browser_session_handoff"]
+  },
+  "fixtures": {
+    "item": "fixtures/items/transcript-backed-video.json",
+    "transcript": "fixtures/transcripts/video-transcript.json",
+    "session": "fixtures/sessions/browser-video-1_75x.json"
+  },
+  "steps": [
+    {
+      "command": "attachBrowserMedia",
+      "args": {
+        "itemId": "item-video-001",
+        "mediaTimeMs": 428000,
+        "playbackRate": 1.75,
+        "transcriptSegmentId": "seg-003"
+      },
+      "expect": { "targetType": "browser_owned_media", "playbackRate": 1.75 }
+    },
+    {
+      "command": "beginInterjection",
+      "expect": { "phase": "recording_interjection", "capturedMediaTimeMs": 428000 }
+    },
+    {
+      "command": "finishInterjection",
+      "args": { "audioRef": "interjections/ij-video-001.m4a" },
+      "expect": {
+        "phase": "item_playback",
+        "lastInterjectionAnchorType": "transcript",
+        "lastInterjectionMediaTimeMs": 428000,
+        "lastInterjectionPlaybackRateObserved": 1.75
+      }
+    }
+  ],
+  "assertions": [
+    "The anchor uses source media time, not wall-clock elapsed time.",
+    "The transcript segment id is preserved.",
+    "Playback rate is stored only as observation metadata."
+  ]
+}

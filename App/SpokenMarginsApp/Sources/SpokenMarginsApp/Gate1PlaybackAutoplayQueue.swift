@@ -26,21 +26,27 @@ struct Gate1PlaybackAutoplayQueue {
     }
 
     func shouldDeferGeneratedTurnPlayback(snapshot: SessionSnapshot, turnId: String, completedCurrentAudio: Bool = false) -> Bool {
+        if isOriginalContentUnfinished(snapshot) {
+            return true
+        }
         if completedCurrentAudio {
             return false
         }
-        return snapshot.status == .playing && snapshot.targetId != turnId
+        return snapshot.status.isPlaybackActive && snapshot.targetId != turnId
     }
 
     func shouldPlayPendingTurnNow(snapshot: SessionSnapshot, turnId: String, completedCurrentAudio: Bool = false) -> Bool {
         guard snapshot.targetId != turnId else { return false }
+        if isOriginalContentUnfinished(snapshot) {
+            return false
+        }
         if completedCurrentAudio {
             return true
         }
         if snapshot.phase == .finished {
             return true
         }
-        return snapshot.status != .playing
+        return !snapshot.status.isPlaybackActive
     }
 
     mutating func popReadyTurn(snapshot: SessionSnapshot, completedCurrentAudio: Bool = false) -> String? {
@@ -50,5 +56,17 @@ struct Gate1PlaybackAutoplayQueue {
         }
         pendingTurnIds.removeFirst()
         return turnId
+    }
+
+    private func isOriginalContentUnfinished(_ snapshot: SessionSnapshot) -> Bool {
+        guard snapshot.sourceProgressPercent < 100 else { return false }
+        switch snapshot.targetType {
+        case TargetType.itemTextTTS.rawValue,
+            TargetType.transcriptBackedMedia.rawValue,
+            TargetType.browserOwnedMedia.rawValue:
+            return snapshot.phase != .finished
+        default:
+            return false
+        }
     }
 }

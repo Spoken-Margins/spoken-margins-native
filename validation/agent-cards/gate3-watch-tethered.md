@@ -10,6 +10,8 @@ Advance the Gate 3 Watch Tethered surface contract without changing shared Sessi
 - `validation/agent-cards/gate3-watch-tethered.md`
 - Gate 3-specific notes under `docs/` if needed
 
+Gate 3 must also follow `docs/parallel-track-coordination.md`, `docs/surface-contract-governance.md`, and the steward packet for the active branch.
+
 ## Forbidden Files
 
 - `SpokenMarginsNative.xcodeproj/project.pbxproj`
@@ -36,6 +38,16 @@ python3 scripts/validate-surface-contracts.py
 - Trace or fixture gaps for `traces/watch-chapter-navigation.json`.
 - Backend requests for compact snapshot and delegated command behavior.
 - Final handoff with changed files, contract deltas, backend requests, tests run, tests not run, and open risks.
+
+## Contract-First Limits
+
+- Use only command ids already listed in `validation/contracts/command-matrix.json`.
+- Use only snapshot fields already listed in `validation/contracts/snapshot-fields.json`.
+- Use only delegation modes already listed in `validation/contracts/delegation-modes.json`.
+- Do not add new fixture families unless the steward packet says they are schema-validated.
+- Do not change replayed traces unless every new command, event, and expectation key is already supported by the SessionKit trace harness.
+- If Gate 3 needs a new snapshot field, command payload, trace expectation, schema, validator, or runtime behavior, record a backend request instead of changing shared vocabulary.
+- Validator success is not runtime or trace-replay proof.
 
 ## Steward Verification
 

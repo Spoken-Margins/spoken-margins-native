@@ -518,7 +518,7 @@ JSON export:
 
 ```json
 {
-  "schemaVersion": "session-export.v1",
+  "schemaVersion": "spoken-margins.export.v1",
   "item": {
     "id": "item-001",
     "title": "You Can't Inspect the Pill",

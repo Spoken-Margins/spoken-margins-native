@@ -11,7 +11,18 @@
     "watchPackageId": { "type": "string", "minLength": 1 },
     "sessionId": { "type": "string", "minLength": 1 },
     "itemId": { "type": ["string", "null"] },
-    "eventType": { "enum": ["playback_position", "interjection_recorded", "interjection_cancelled", "session_finished", "error"] },
+    "eventType": {
+      "enum": [
+        "playback_position",
+        "interjection_recorded",
+        "interjection_cancelled",
+        "session_finished",
+        "prerender_requested",
+        "watch_transfer_requested",
+        "package_delete_requested",
+        "error"
+      ]
+    },
     "createdAt": { "type": "string", "format": "date-time" },
     "payload": {
       "type": "object",

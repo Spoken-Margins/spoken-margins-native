@@ -1,0 +1,234 @@
+{
+  "schemaVersion": "surface-contract.v1",
+  "gate": "gate4-watch-untethered",
+  "runtimeProfile": "watch-untethered",
+  "surfaceOwns": [
+    "package_library_ui",
+    "prepared_package_activation",
+    "local_prepared_audio_playback",
+    "local_chapter_navigation",
+    "watch_owned_interjection_recording",
+    "offline_sync_event_queue",
+    "package_request_intents"
+  ],
+  "delegatesTo": [
+    "phone-tablet-online",
+    "phone-tablet-offline"
+  ],
+  "snapshotFields": [
+    "sessionId",
+    "itemId",
+    "targetType",
+    "targetId",
+    "status",
+    "phase",
+    "title",
+    "chapterTitle",
+    "progressPercent",
+    "sourceProgressPercent",
+    "currentPlaybackProgressPercent",
+    "playbackRate",
+    "isRecording",
+    "activeInterjectionCount",
+    "lastInterjectionAnchorType",
+    "availableCommands",
+    "timeline"
+  ],
+  "commands": [
+    {
+      "id": "loadWatchPackage",
+      "delegationMode": "local",
+      "exposed": true,
+      "requiredCapabilities": {
+        "sync": ["receive_prepared_packages"],
+        "playback": ["prerendered_audio"]
+      },
+      "backendCommand": "SessionEngine.loadWatchPackage",
+      "notes": "Activates a prepared package locally without conflating package activation with canonical phone/tablet item start."
+    },
+    {
+      "id": "play",
+      "delegationMode": "local",
+      "exposed": true,
+      "requiredCapabilities": {
+        "playback": ["prerendered_audio"]
+      },
+      "backendCommand": "SessionEngine.resumePlayback",
+      "notes": "Watch starts or resumes local package audio only after the local audio runtime confirms playback has begun."
+    },
+    {
+      "id": "pause",
+      "delegationMode": "local",
+      "exposed": true,
+      "requiredCapabilities": {
+        "playback": ["prerendered_audio"]
+      },
+      "backendCommand": "SessionEngine.pause",
+      "notes": "Watch pauses local package audio and preserves source media time."
+    },
+    {
+      "id": "togglePlayPause",
+      "delegationMode": "local",
+      "exposed": true,
+      "requiredCapabilities": {
+        "playback": ["prerendered_audio"]
+      },
+      "backendCommand": "SessionEngine.togglePlayPause"
+    },
+    {
+      "id": "skipBack",
+      "delegationMode": "local",
+      "exposed": true,
+      "requiredCapabilities": {
+        "playback": ["prerendered_audio"],
+        "timeline": ["media_time"]
+      },
+      "backendCommand": "SessionEngine.skipBack",
+      "notes": "Local skip should resolve through the package timeline, not through text chunk ids or tethered phone state."
+    },
+    {
+      "id": "skipForward",
+      "delegationMode": "local",
+      "exposed": true,
+      "requiredCapabilities": {
+        "playback": ["prerendered_audio"],
+        "timeline": ["media_time"]
+      },
+      "backendCommand": "SessionEngine.skipForward",
+      "notes": "Local skip should resolve through the package timeline and remain idempotent at package boundaries."
+    },
+    {
+      "id": "jumpToChapter",
+      "delegationMode": "local",
+      "exposed": true,
+      "requiredCapabilities": {
+        "playback": ["prerendered_audio"],
+        "timeline": ["chapter_timing", "media_time"]
+      },
+      "backendCommand": "SessionEngine.jumpToChapter",
+      "notes": "Watch jumps to the packaged chapter startMs and recomputes transcript segment context locally."
+    },
+    {
+      "id": "beginInterjection",
+      "delegationMode": "local",
+      "exposed": true,
+      "requiredCapabilities": {
+        "interjection": ["record_audio", "capture_media_anchor", "capture_transcript_anchor", "queue_offline_interjections"]
+      },
+      "backendCommand": "SessionEngine.beginInterjection",
+      "notes": "Watch pauses local package playback, captures source media time and transcript segment from the package timeline, and records locally."
+    },
+    {
+      "id": "finishInterjection",
+      "delegationMode": "queued_offline",
+      "exposed": true,
+      "requiredCapabilities": {
+        "interjection": ["record_audio", "capture_media_anchor", "capture_transcript_anchor", "queue_offline_interjections"],
+        "sync": ["queue_offline_events"]
+      },
+      "backendCommand": "SessionEngine.finishInterjection",
+      "notes": "Watch saves audio locally and queues an interjection_recorded sync event. Phone/tablet later imports it idempotently."
+    },
+    {
+      "id": "cancelInterjection",
+      "delegationMode": "local",
+      "exposed": true,
+      "requiredCapabilities": {
+        "interjection": ["record_audio"]
+      },
+      "backendCommand": "SessionEngine.cancelInterjection",
+      "notes": "Watch discards local unsaved recording and resumes package playback from the rollback policy."
+    },
+    {
+      "id": "generateInterjectionSummary",
+      "delegationMode": "unsupported",
+      "exposed": false,
+      "requiredCapabilities": {},
+      "backendCommand": null,
+      "notes": "Watch untethered has no AI capability. Summary is phone/tablet work after sync import and transcription."
+    },
+    {
+      "id": "submitFollowup",
+      "delegationMode": "unsupported",
+      "exposed": false,
+      "requiredCapabilities": {},
+      "backendCommand": null,
+      "notes": "Watch untethered has no discussion capability. Follow-up should occur on phone/tablet after sync import."
+    },
+    {
+      "id": "endSession",
+      "delegationMode": "queued_offline",
+      "exposed": true,
+      "requiredCapabilities": {
+        "sync": ["queue_offline_events"]
+      },
+      "backendCommand": "SessionEngine.endSession",
+      "notes": "Watch may queue a session_finished event, but canonical session completion is reconciled by phone/tablet."
+    }
+  ],
+  "traces": [
+    "traces/watch-offline-prerendered-session.json"
+  ],
+  "fixtures": [
+    "fixtures/capabilities/watch-untethered.json",
+    "fixtures/watch/offline-package.json",
+    "fixtures/audio/prerendered-pill-audio.json"
+  ],
+  "backendRequests": [
+    {
+      "id": "gate4-load-watch-package-command",
+      "title": "Add package-specific loadWatchPackage command",
+      "status": "resolved",
+      "details": "Command matrix and SessionKit expose loadWatchPackage for prepared package activation."
+    },
+    {
+      "id": "gate4-import-watch-sync-event-command",
+      "title": "Add idempotent importWatchSyncEvent command",
+      "status": "resolved",
+      "details": "Command matrix and SessionKit expose importWatchSyncEvent. Phone/tablet imports each watch event once by event id, preserving audio and anchors before transcription."
+    },
+    {
+      "id": "gate4-shared-media-timeline-anchor-resolver",
+      "title": "Build shared media timeline anchor resolver",
+      "status": "resolved",
+      "details": "SessionKit now exposes MediaTimelineAnchorResolver for source media time, transcript segment, chapter, playback-rate observation, and optional text range anchoring."
+    },
+    {
+      "id": "gate4-watch-package-library-status",
+      "title": "Publish package availability and transfer statuses",
+      "status": "resolved",
+      "details": "Phone publishes package availability rows and Watch merges them with local manifests to distinguish loaded, queued for transfer, pre-rendered but not loaded, not yet pre-rendered, rendering, failed, and expired package states."
+    },
+    {
+      "id": "gate4-watch-package-request-event",
+      "title": "Add durable package request event",
+      "status": "resolved",
+      "details": "Watch taps send durable package request events. Phone persists prerender_requested and watch_transfer_requested, and starts package transfer for available packages."
+    },
+    {
+      "id": "gate4-icloud-package-manifest",
+      "title": "Define multi-device iCloud package manifest",
+      "status": "open",
+      "details": "Laptop, phone, and tablet should be able to share package manifests and assets through a user-owned sync container. Watch should still receive assets through an explicit phone-mediated transfer path."
+    },
+    {
+      "id": "gate4-local-watch-audio-runtime",
+      "title": "Implement local Watch audio playback with source time",
+      "status": "resolved",
+      "details": "SessionKitAudio exposes PreparedAudioPlaybackClient with current media time and completion state. Watch untethered uses it through a local SessionEngine when package audio assets are present."
+    },
+    {
+      "id": "gate4-watch-reconnect-conflict-policy",
+      "title": "Define reconnect merge and conflict policy",
+      "status": "resolved",
+      "details": "Watch sync events are sent durably and imported through SessionEngine.importWatchSyncEvent, which is idempotent by event id. Interjection imports create anchored records without being overwritten by playback-position events."
+    }
+  ],
+  "notes": [
+    "Gate 4 starts from watch-untethered, not watch-tethered plus more delegated commands.",
+    "Pre-rendered TTS packages and first-party audio/podcast sessions should share the same transcript/media timeline anchoring model once either has timestamped transcript segments.",
+    "The Watch owns package playback and recording locally, but not transcription, cleanup, summary, discussion, provider calls, canonical persistence, or package rendering.",
+    "The companion reconnect trace uses phone-tablet-online and should be owned by the steward or a phone-import gate contract because surface contract validation requires trace runtimeProfile to match the surface runtimeProfile.",
+    "Package request and transfer status probably require new snapshot fields or a separate package library model; those shared contract changes are steward-owned."
+  ]
+}

@@ -4,7 +4,7 @@
   "description": "Lock screen or widget surface displays the session snapshot and delegates transport, chapter, and interjection commands to the phone/tablet runtime.",
   "runtimeProfile": "lock-screen-widget",
   "requiresCapabilities": {
-    "timeline": ["chapter_timing"],
+    "timeline": ["media_time", "chapter_timing", "playback_rate_observation"],
     "interjection": ["delegate_interjection_to_canonical_runtime"],
     "remoteControl": ["display_snapshot", "send_transport_commands", "send_chapter_jump", "send_interjection_commands"]
   },
@@ -44,6 +44,7 @@
     "The lock screen/widget does not own playback, recording, persistence, or AI.",
     "The surface only shows commands allowed by the active profile.",
     "Interjection commands are delegated to the canonical phone/tablet runtime.",
-    "Chapter jumps require chapter timing and remote chapter command capability."
+    "Chapter jumps require chapter timing and remote chapter command capability.",
+    "Media seek and playback-rate commands are available only when the canonical target publishes a duration."
   ]
 }

@@ -14,33 +14,118 @@ public protocol SessionRepository {
     func saveAIJob(_ job: AIJob) throws
     func loadAIJobs(sessionId: String) throws -> [AIJob]
     func updateAIJob(_ job: AIJob) throws
+    func saveWatchAudioPackage(_ package: WatchAudioPackage) throws
+    func loadWatchAudioPackage(id: String) throws -> WatchAudioPackage?
+    func loadWatchAudioPackages(itemId: String) throws -> [WatchAudioPackage]
+    func saveWatchSyncEvent(_ event: WatchSyncEvent) throws
+    func loadWatchSyncEvents(sessionId: String) throws -> [WatchSyncEvent]
+    func loadWatchSyncEvent(id: String) throws -> WatchSyncEvent?
+    func markWatchSyncEventImported(id: String) throws
+    func hasImportedWatchSyncEvent(id: String) throws -> Bool
+    func saveWatchPackageRequest(_ request: WatchPackageRequestEvent) throws
+    func loadWatchPackageRequests(itemId: String) throws -> [WatchPackageRequestEvent]
+    func saveTranscriptTimeline(_ transcript: SourceTranscriptTimeline) throws
+    func loadTranscriptTimeline(id: String) throws -> SourceTranscriptTimeline?
+    func loadTranscriptTimeline(itemId: String) throws -> SourceTranscriptTimeline?
 }
 
 public protocol AudioPlaybackClient {
+    func configureMediaContext(_ context: PlaybackMediaContext?) throws
     func prepareSpeechText(_ text: String) throws -> String
     func play(targetId: String) throws
     func play(targetId: String, from charOffset: Int) throws
+    func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws
+    func seek(toMediaTimeMs mediaTimeMs: Int) throws
+    func setPlaybackRate(_ rate: Double) throws
+    func currentPlaybackPosition() -> PlaybackPosition?
     func currentCharOffset() -> Int?
+    func currentMediaTimeMs() -> Int?
+    func currentPlaybackDurationMs() -> Int?
     func isPlaybackComplete(targetId: String) -> Bool
+    func playbackStartStatus(targetId: String) -> PlaybackStartStatus
+    func playbackTransportState(targetId: String) -> PlaybackTransportState?
     func pause() throws
     func stop() throws
 }
 
+public protocol LinkResolutionClient {
+    func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult
+}
+
+public protocol SourceTranscriptionClient: Sendable {
+    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline
+    func transcribeSourceAudioWindow(
+        url: URL,
+        itemId: String,
+        anchorMediaTimeMs: Int,
+        durationMs: Int?,
+        windowBeforeMs: Int,
+        windowAfterMs: Int
+    ) async throws -> TranscriptTimeline
+}
+
+public extension SourceTranscriptionClient {
+    func transcribeSourceAudioWindow(
+        url: URL,
+        itemId: String,
+        anchorMediaTimeMs: Int,
+        durationMs: Int?,
+        windowBeforeMs: Int = 60_000,
+        windowAfterMs: Int = 60_000
+    ) async throws -> TranscriptTimeline {
+        throw SessionKitError.persistenceFailed("source_audio_window_transcription_unavailable")
+    }
+}
+
+public protocol TextAudioPreparationClient: Sendable {
+    func prepareTextAudio(itemId: String, title: String, text: String) throws -> PreparedTextAudio?
+}
+
 public extension AudioPlaybackClient {
+    func configureMediaContext(_ context: PlaybackMediaContext?) throws {}
+
     func play(targetId: String, from charOffset: Int) throws {
         try play(targetId: targetId)
     }
+
+    func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {
+        try play(targetId: targetId, from: mediaTimeMs)
+    }
+
+    func seek(toMediaTimeMs mediaTimeMs: Int) throws {}
+
+    func setPlaybackRate(_ rate: Double) throws {}
 
     func stop() throws {
         try pause()
     }
 
     func currentCharOffset() -> Int? {
+        currentPlaybackPosition()?.textStart
+    }
+
+    func currentMediaTimeMs() -> Int? {
+        currentPlaybackPosition()?.mediaTimeMs
+    }
+
+    func currentPlaybackDurationMs() -> Int? {
+        currentPlaybackPosition()?.durationMs
+    }
+
+    func currentPlaybackPosition() -> PlaybackPosition? {
         nil
     }
 
     func isPlaybackComplete(targetId: String) -> Bool {
         false
+    }
+
+    func playbackStartStatus(targetId: String) -> PlaybackStartStatus {
+        .confirmed
+    }
+
+    func playbackTransportState(targetId: String) -> PlaybackTransportState? {
+        nil
     }
 }
 

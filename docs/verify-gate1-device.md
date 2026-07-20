@@ -1,8 +1,18 @@
 # Gate 1 Device Verification
 
-Use this checklist after `./scripts/verify-gate1.sh` passes. Record device model, iOS version, build SHA, provider, audio route, and pass/fail notes for each item.
+Use this checklist after routine verification passes and closeout UI routes have been run for the build being presented. Record device model, iOS version, build SHA, provider, audio route, and pass/fail notes for each item.
 
 Use the default `SpokenMarginsApp` scheme for Gate 1 device validation. Gate 1 TTS evidence is system speech. The separate `SpokenMarginsAppDevice` scheme preserves Kokoro/MLX work for a later gate and is not required for Gate 1.
+
+## Optional Kokoro Device Build
+
+`SpokenMarginsAppDevice` links Kokoro/MLX and requires Xcode's Metal Toolchain component. Install it from Xcode > Settings > Components, or run:
+
+```bash
+xcodebuild -downloadComponent MetalToolchain
+```
+
+Without that component, the device scheme fails in the MLX `Cmlx` target with `cannot execute tool 'metal' due to missing Metal Toolchain`.
 
 ## Required Device Pass
 
@@ -23,7 +33,9 @@ Use the default `SpokenMarginsApp` scheme for Gate 1 device validation. Gate 1 T
 
 ## Evidence To Attach
 
-- `./scripts/verify-gate1.sh` terminal log.
+- `./scripts/verify-gate1-routine.sh` terminal log.
+- App integration build and `SpokenMarginsAppTests` terminal log.
+- `./scripts/verify-gate1-closeout.sh` terminal log when the build is being presented for gate closeout.
 - Device screen recordings for source playback -> summary auto-play and AI response -> AI-targeted summary queuing.
 - Screenshot or recording evidence for microphone allowed/denied, saved `.m4a`, Speech transcription result, provider settings, provider success/failure/retry, offline deferred recovery, diagnostics, and export preview.
 - Notes for any pass-with-issues result, including exact date, device, route, and reproduction steps.

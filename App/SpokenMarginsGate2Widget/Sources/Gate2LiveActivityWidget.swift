@@ -6,7 +6,7 @@ import WidgetKit
 struct Gate2LiveActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: Gate2LiveActivityAttributes.self) { context in
-            Gate2LiveActivityView(state: context.state)
+            Gate2LiveActivityContent(state: context.state)
                 .activityBackgroundTint(Color(red: 0.08, green: 0.09, blue: 0.12))
                 .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
@@ -33,6 +33,82 @@ struct Gate2LiveActivityWidget: Widget {
                 Image(systemName: context.state.isRecording ? "record.circle.fill" : "waveform")
             }
         }
+        .supplementalActivityFamilies([.small])
+    }
+}
+
+private struct Gate2LiveActivityContent: View {
+    @Environment(\.activityFamily) private var activityFamily
+    let state: Gate2LiveActivityAttributes.ContentState
+
+    var body: some View {
+        switch activityFamily {
+        case .small:
+            Gate2LiveActivitySmallView(state: state)
+        case .medium:
+            Gate2LiveActivityView(state: state)
+        @unknown default:
+            Gate2LiveActivityView(state: state)
+        }
+    }
+}
+
+private struct Gate2LiveActivitySmallView: View {
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
+    let state: Gate2LiveActivityAttributes.ContentState
+
+    private var isPlaying: Bool {
+        state.status == "playing" || state.status == "starting"
+    }
+
+    private var stateText: String {
+        if state.isRecording { return "REC" }
+        if isPlaying { return "PLAY" }
+        return state.status.uppercased()
+    }
+
+    private var stateImage: String {
+        if state.isRecording { return "record.circle.fill" }
+        return isPlaying ? "waveform" : "pause.fill"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .center, spacing: 8) {
+                Image(systemName: stateImage)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(state.isRecording ? .red : .green)
+                    .frame(width: 22, height: 22)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(state.title)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.76)
+                    Text(state.chapterTitle)
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.74))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.76)
+                }
+            }
+
+            HStack(alignment: .lastTextBaseline, spacing: 6) {
+                Text(stateText)
+                    .font(.caption2.weight(.bold).monospaced())
+                    .foregroundStyle(state.isRecording ? .red : .white.opacity(0.84))
+                Spacer(minLength: 4)
+                Text("\(max(0, min(100, state.progressPercent)))%")
+                    .font(.caption.weight(.bold).monospacedDigit())
+                    .foregroundStyle(.white)
+            }
+
+            ProgressView(value: Double(max(0, min(100, state.progressPercent))), total: 100)
+                .tint(isLuminanceReduced ? .white.opacity(0.72) : .green)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
     }
 }
 
@@ -64,41 +140,61 @@ private struct Gate2LiveActivityView: View {
                 .tint(.green)
 
             HStack(spacing: 16) {
-                CompactRoundIntentButton(command: "skipBack", systemImage: "gobackward.15", size: 56)
-                CompactPlayPauseButton(
-                    command: "togglePlayPause",
-                    isPlaying: state.status == "playing"
-                )
-                CompactRoundIntentButton(command: "skipForward", systemImage: "goforward.15", size: 56)
-                Spacer()
-                Link(destination: Gate2CompactCommandURL.url(command: "beginInterjection")) {
-                    Image(systemName: state.isRecording ? "checkmark" : "mic.fill")
-                        .font(.title2.weight(.semibold))
-                        .frame(width: 56, height: 56)
-                        .foregroundStyle(.white)
-                        .background(Color.white.opacity(0.16))
-                        .clipShape(Circle())
+                if state.canRun("skipBack") {
+                    CompactRoundIntentButton(command: "skipBack", systemImage: "gobackward.15", size: 56)
                 }
-                .accessibilityLabel(state.isRecording ? "Recording" : "Interject")
+                if state.canRun("togglePlayPause") {
+                    CompactPlayPauseButton(
+                        command: "togglePlayPause",
+                        isPlaying: state.status == "playing" || state.status == "starting"
+                    )
+                }
+                if state.canRun("skipForward") {
+                    CompactRoundIntentButton(command: "skipForward", systemImage: "goforward.15", size: 56)
+                }
+                Spacer()
+                if state.canRun("beginInterjection") || state.canRun("finishInterjection") {
+                    Link(destination: Gate2CompactCommandURL.url(command: state.isRecording ? "finishInterjection" : "beginInterjection")) {
+                        Image(systemName: state.isRecording ? "checkmark" : "mic.fill")
+                            .font(.title2.weight(.semibold))
+                            .frame(width: 56, height: 56)
+                            .foregroundStyle(.white)
+                            .background(Color.white.opacity(0.16))
+                            .clipShape(Circle())
+                    }
+                    .accessibilityLabel(state.isRecording ? "Finish interjection" : "Interject")
+                }
             }
             .buttonStyle(.plain)
 
-            HStack(spacing: 10) {
-                CompactActionIntentButton(
-                    command: Gate2CompactApplicationCommand.summarizeInterjections,
-                    title: "Summary",
-                    systemImage: "sparkles"
-                )
+            if state.canRun("generateInterjectionSummary") || state.canRun("submitFollowup") {
+                HStack(spacing: 10) {
+                    if state.canRun("generateInterjectionSummary") {
+                        CompactActionIntentButton(
+                            command: Gate2CompactApplicationCommand.summarizeInterjections,
+                            title: "Summary",
+                            systemImage: "sparkles"
+                        )
+                    }
 
-                CompactActionIntentButton(
-                    command: Gate2CompactApplicationCommand.discussInterjections,
-                    title: "Discuss",
-                    systemImage: "text.bubble.fill"
-                )
+                    if state.canRun("submitFollowup") {
+                        CompactActionIntentButton(
+                            command: Gate2CompactApplicationCommand.discussInterjections,
+                            title: "Discuss",
+                            systemImage: "text.bubble.fill"
+                        )
+                    }
+                }
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+    }
+}
+
+private extension Gate2LiveActivityAttributes.ContentState {
+    func canRun(_ command: String) -> Bool {
+        availableCommands.contains(command)
     }
 }
 
@@ -126,17 +222,8 @@ private struct CompactPlayPauseButton: View {
     let isPlaying: Bool
 
     var body: some View {
-        Group {
-            if isPlaying {
-                Button(intent: Gate2CompactPlaybackIntent(command: command)) {
-                    playPauseLabel
-                }
-            } else {
-                Link(destination: URL(string: "spokenmargins://open")!) {
-                    playPauseLabel
-                }
-                .accessibilityHint("Opens Spoken Margins to resume playback.")
-            }
+        Button(intent: Gate2CompactPlaybackIntent(command: command)) {
+            playPauseLabel
         }
         .frame(width: 60, height: 60)
         .contentShape(Circle())

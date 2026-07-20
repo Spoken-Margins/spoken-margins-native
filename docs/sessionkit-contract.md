@@ -62,6 +62,24 @@ Anchor types:
 
 Playback rate never changes the source anchor. If a video is played at 1.75x, an interjection still anchors to source media time and transcript span.
 
+### Shared Vocabulary Governance
+
+SessionKit vocabulary is shared runtime surface, not gate-local implementation detail.
+
+Accepted command ids live in `validation/contracts/command-matrix.json`. Accepted snapshot field ids live in `validation/contracts/snapshot-fields.json`. Accepted delegation modes live in `validation/contracts/delegation-modes.json`. Gate agents should not introduce parallel names for the same concept.
+
+Model placement rules:
+
+- `Item.mediaType` describes the durable source category, such as `text` or `transcript_backed_media`.
+- `AudioRepresentation` describes a playable audio rendering or media asset for an item, such as remote stream, prepared audio, or generated TTS audio.
+- `PlaybackPosition` describes where playback currently is, including source text, transcript, media time, chapter, playback rate, and confidence.
+- `Interjection.anchor` stores the durable source location captured when the user interjects.
+- AI context should be derived from the item, playback position, transcript timeline, and interjection anchor unless the steward promotes a persisted `AIContext` model.
+
+Generated TTS is not a separate source item type when it is a rendering of text. Native podcast/audio is not a generated TTS rendering. New source categories, audio representation types, or persisted AI context shapes require steward acceptance before gate contracts depend on them.
+
+When a gate needs a new shared field, command, model, fixture family, or trace expectation key, it records a backend request. The vocabulary is accepted only after the steward lands the schema, validator, matrix, runtime model, and trace harness support needed for that shape.
+
 ## Commands
 
 SessionKit exposes these commands. Commands return either a new session snapshot or a structured failure.

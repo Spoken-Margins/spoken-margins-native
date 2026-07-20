@@ -12,6 +12,7 @@ The browser extension should hand off one text capture payload to the canonical 
 {
   "schemaVersion": "browser-text-handoff.v1",
   "captureMode": "selected_text",
+  "contentFormat": "plain_text",
   "source": {
     "url": "https://example.com/pill",
     "title": "You Can't Inspect the Pill",
@@ -35,7 +36,8 @@ The browser extension should hand off one text capture payload to the canonical 
 Required fields:
 
 - `schemaVersion`
-- `captureMode`: `selected_text` or `readable_page`
+- `captureMode`: `selected_text`, `readable_page`, `markdown_file`, or `plain_text_file`
+- `contentFormat`: `plain_text` or `markdown` for new payloads; omitted legacy payloads are treated as plain text
 - `source.url`
 - `source.title`
 - `text`
@@ -59,19 +61,21 @@ For real browser capture, full page text is not encoded into the URL. The Safari
 spokenmargins://browser-text?payloadId=<payloadId>
 ```
 
-The native app reads the payload, imports it through `importBrowserText`, and deletes the payload after a successful import.
+The native app reads the payload and imports it without replacing an active session. It deletes the payload after success. A failed payload moves once to `FailedBrowserTextHandoffs` and appears in Settings > Import Inbox, where the user can retry or delete it.
 
 ## Runtime Behavior
 
-- `importBrowserText` creates a normal `item.v1` record with `mediaType: text`, `externalReferenceType: url`, and `externalReference` set to the source URL.
-- Selected text and readable-page text use the same import command. `captureMode` only describes where the text came from.
-- For this Gate 5 validation slice, Safari owns capture/extraction/metadata and delegates playback plus interjections to the native app.
+- `importBrowserText` creates a normal `item.v1` record with `mediaType: text` and preserves the source URL or file reference.
+- Selected text remains plain text. Readable pages and Markdown files preserve Markdown headings, which are normalized through `ObsidianMarkdownParser` and can produce a deterministic Listening Map immediately.
+- Both the Safari Web Extension and Safari share preprocessor use the pinned local Defuddle 0.19.1 bundle with `useAsync: false`. Extraction cannot send the page to a third-party fallback.
+- Safari owns capture/extraction/metadata and delegates playback plus interjections to the native app.
 - Browser-owned TTS and browser recording remain follow-up work.
 - Summary and discussion continue in the app for Gate 5.
 
 ## Failure Cases
 
-- If the native app is unavailable, the extension keeps the App Group payload so the same `payloadId` can be retried.
+- If the native app is unavailable, the extension keeps the App Group payload for the next app activation.
+- A failed import is quarantined rather than retried on every app activation.
 - If microphone permission is missing, interjection commands are unavailable but text capture and handoff remain valid.
 - If readable extraction fails, selected-text capture remains valid.
 - If no title is available, the browser should derive a title from the URL host or first text heading before handoff.

@@ -6,7 +6,7 @@
   "required": ["schemaVersion", "item", "session", "timeline", "interjections"],
   "additionalProperties": true,
   "properties": {
-    "schemaVersion": { "const": "session-export.v1" },
+    "schemaVersion": { "const": "spoken-margins.export.v1" },
     "item": {
       "type": "object",
       "required": ["id", "title", "includedFullText"],
@@ -14,8 +14,11 @@
         "id": { "type": "string" },
         "title": { "type": "string" },
         "externalReference": { "type": ["string", "null"] },
+        "sourceURL": { "type": ["string", "null"] },
+        "mediaSourceType": { "type": ["string", "null"] },
         "includedFullText": { "type": "boolean" },
-        "text": { "type": ["string", "null"] }
+        "text": { "type": ["string", "null"] },
+        "sourceTranscript": { "type": ["string", "null"] }
       }
     },
     "session": {

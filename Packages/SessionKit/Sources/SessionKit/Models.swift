@@ -35,9 +35,30 @@ public enum SessionPhase: String, Codable, Equatable, Sendable {
 
 public enum PlaybackStatus: String, Codable, Equatable, Sendable {
     case idle
+    case starting
     case playing
     case paused
     case recording
+    case failed
+}
+
+public extension PlaybackStatus {
+    var isPlaybackActive: Bool {
+        self == .starting || self == .playing
+    }
+}
+
+public enum PlaybackStartStatus: Equatable, Sendable {
+    case confirmed
+    case pending
+    case failed(String)
+}
+
+public enum PlaybackTransportState: String, Codable, Equatable, Sendable {
+    case playing
+    case paused
+    case waiting
+    case stopped
     case failed
 }
 
@@ -62,6 +83,262 @@ public enum AnchorType: String, Codable, Equatable, Sendable {
     case turn
 }
 
+public enum AnchorConfidence: String, Codable, Equatable, Sendable {
+    case transcriptSpan = "transcript_span"
+    case mediaTime = "media_time"
+    case textRange = "text_range"
+    case providerMetadata = "provider_metadata"
+    case localFallback = "local_fallback"
+}
+
+public enum AudioSourceType: String, Codable, Equatable, Sendable {
+    case generatedTTSRealtime = "generated_tts_realtime"
+    case generatedTTSPrerendered = "generated_tts_prerendered"
+    case nativeMediaFile = "native_media_file"
+    case browserOwnedMedia = "browser_owned_media"
+    case remoteStream = "remote_stream"
+}
+
+public struct SourceLink: Codable, Equatable, Sendable {
+    public var url: String
+    public var provider: String?
+    public var title: String?
+    public var role: String
+
+    public init(url: String, provider: String? = nil, title: String? = nil, role: String = "source") {
+        self.url = url
+        self.provider = provider
+        self.title = title
+        self.role = role
+    }
+}
+
+public enum LinkResolutionStatus: String, Codable, Equatable, Sendable {
+    case resolving
+    case playable
+    case needsReview = "needs_review"
+    case unsupported
+}
+
+public struct LinkResolutionCandidate: Codable, Equatable, Sendable {
+    public var sourceLink: SourceLink
+    public var title: String
+    public var showTitle: String?
+    public var durationMs: Int?
+    public var publishedAt: String?
+    public var audioURL: String?
+    public var transcriptLinks: [SourceTranscriptLink]
+    public var confidence: Double
+
+    public init(
+        sourceLink: SourceLink,
+        title: String,
+        showTitle: String? = nil,
+        durationMs: Int? = nil,
+        publishedAt: String? = nil,
+        audioURL: String? = nil,
+        transcriptLinks: [SourceTranscriptLink] = [],
+        confidence: Double
+    ) {
+        self.sourceLink = sourceLink
+        self.title = title
+        self.showTitle = showTitle
+        self.durationMs = durationMs
+        self.publishedAt = publishedAt
+        self.audioURL = audioURL
+        self.transcriptLinks = transcriptLinks
+        self.confidence = confidence
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sourceLink
+        case title
+        case showTitle
+        case durationMs
+        case publishedAt
+        case audioURL
+        case transcriptLinks
+        case confidence
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sourceLink = try container.decode(SourceLink.self, forKey: .sourceLink)
+        title = try container.decode(String.self, forKey: .title)
+        showTitle = try container.decodeIfPresent(String.self, forKey: .showTitle)
+        durationMs = try container.decodeIfPresent(Int.self, forKey: .durationMs)
+        publishedAt = try container.decodeIfPresent(String.self, forKey: .publishedAt)
+        audioURL = try container.decodeIfPresent(String.self, forKey: .audioURL)
+        transcriptLinks = try container.decodeIfPresent([SourceTranscriptLink].self, forKey: .transcriptLinks) ?? []
+        confidence = try container.decode(Double.self, forKey: .confidence)
+    }
+}
+
+public struct SourceTranscriptLink: Codable, Equatable, Sendable {
+    public var url: String
+    public var type: String
+    public var language: String?
+    public var rel: String?
+
+    public init(url: String, type: String, language: String? = nil, rel: String? = nil) {
+        self.url = url
+        self.type = type
+        self.language = language
+        self.rel = rel
+    }
+}
+
+public struct LinkResolutionRequest: Codable, Equatable, Sendable {
+    public var id: String
+    public var inputURL: String
+    public var sourceSurface: String
+    public var createdAt: Date
+
+    public init(id: String, inputURL: String, sourceSurface: String, createdAt: Date) {
+        self.id = id
+        self.inputURL = inputURL
+        self.sourceSurface = sourceSurface
+        self.createdAt = createdAt
+    }
+}
+
+public struct LinkResolutionResult: Codable, Equatable, Sendable {
+    public var requestId: String
+    public var status: LinkResolutionStatus
+    public var originalLink: SourceLink
+    public var selectedCandidate: LinkResolutionCandidate?
+    public var candidates: [LinkResolutionCandidate]
+    public var failureReason: String?
+
+    public init(
+        requestId: String,
+        status: LinkResolutionStatus,
+        originalLink: SourceLink,
+        selectedCandidate: LinkResolutionCandidate? = nil,
+        candidates: [LinkResolutionCandidate] = [],
+        failureReason: String? = nil
+    ) {
+        self.requestId = requestId
+        self.status = status
+        self.originalLink = originalLink
+        self.selectedCandidate = selectedCandidate
+        self.candidates = candidates
+        self.failureReason = failureReason
+    }
+}
+
+public struct AudioRepresentation: Codable, Equatable, Sendable {
+    public var id: String
+    public var sourceType: AudioSourceType
+    public var url: String?
+    public var durationMs: Int?
+    public var transcriptId: String?
+
+    public init(id: String, sourceType: AudioSourceType, url: String? = nil, durationMs: Int? = nil, transcriptId: String? = nil) {
+        self.id = id
+        self.sourceType = sourceType
+        self.url = url
+        self.durationMs = durationMs
+        self.transcriptId = transcriptId
+    }
+}
+
+public struct PreparedTextAudio: Codable, Equatable, Sendable {
+    public var normalizedText: String
+    public var media: ItemMedia
+    public var timeline: TranscriptTimeline
+    public var createdAt: Date
+
+    public init(normalizedText: String, media: ItemMedia, timeline: TranscriptTimeline, createdAt: Date = Date()) {
+        self.normalizedText = normalizedText
+        self.media = media
+        self.timeline = timeline
+        self.createdAt = createdAt
+    }
+}
+
+public struct PlaybackPosition: Codable, Equatable, Sendable {
+    public var itemId: String?
+    public var targetType: TargetType?
+    public var targetId: String?
+    public var mediaTimeMs: Int?
+    public var durationMs: Int?
+    public var textStart: Int?
+    public var textEnd: Int?
+    public var transcriptSegmentId: String?
+    public var chapterId: String?
+    public var playbackRate: Double
+    public var anchorConfidence: AnchorConfidence
+
+    public init(
+        itemId: String? = nil,
+        targetType: TargetType? = nil,
+        targetId: String? = nil,
+        mediaTimeMs: Int? = nil,
+        durationMs: Int? = nil,
+        textStart: Int? = nil,
+        textEnd: Int? = nil,
+        transcriptSegmentId: String? = nil,
+        chapterId: String? = nil,
+        playbackRate: Double = 1,
+        anchorConfidence: AnchorConfidence = .localFallback
+    ) {
+        self.itemId = itemId
+        self.targetType = targetType
+        self.targetId = targetId
+        self.mediaTimeMs = mediaTimeMs
+        self.durationMs = durationMs
+        self.textStart = textStart
+        self.textEnd = textEnd
+        self.transcriptSegmentId = transcriptSegmentId
+        self.chapterId = chapterId
+        self.playbackRate = playbackRate
+        self.anchorConfidence = anchorConfidence
+    }
+
+    public var textRange: Range<Int>? {
+        guard let textStart, let textEnd, textEnd >= textStart else { return nil }
+        return textStart..<textEnd
+    }
+}
+
+public struct PlaybackMediaContext: Codable, Equatable, Sendable {
+    public var itemId: String
+    public var targetType: TargetType
+    public var targetId: String
+    public var title: String
+    public var subtitle: String?
+    public var sourceURL: String?
+    public var artworkURL: String?
+    public var durationMs: Int?
+    public var sourceType: AudioSourceType?
+    public var chapters: [MediaTimelineChapter]
+
+    public init(
+        itemId: String,
+        targetType: TargetType,
+        targetId: String,
+        title: String,
+        subtitle: String? = nil,
+        sourceURL: String? = nil,
+        artworkURL: String? = nil,
+        durationMs: Int? = nil,
+        sourceType: AudioSourceType? = nil,
+        chapters: [MediaTimelineChapter] = []
+    ) {
+        self.itemId = itemId
+        self.targetType = targetType
+        self.targetId = targetId
+        self.title = title
+        self.subtitle = subtitle
+        self.sourceURL = sourceURL
+        self.artworkURL = artworkURL
+        self.durationMs = durationMs
+        self.sourceType = sourceType
+        self.chapters = chapters
+    }
+}
+
 public struct RuntimeCapabilityProfile: Codable, Equatable, Sendable {
     public let id: String
     public let displayName: String
@@ -84,6 +361,20 @@ public struct RuntimeCapabilityProfile: Codable, Equatable, Sendable {
     }
 }
 
+public struct ItemMedia: Codable, Equatable, Sendable {
+    public var sourceType: AudioSourceType
+    public var url: String?
+    public var durationMs: Int?
+    public var nativeMediaId: String?
+
+    public init(sourceType: AudioSourceType, url: String? = nil, durationMs: Int? = nil, nativeMediaId: String? = nil) {
+        self.sourceType = sourceType
+        self.url = url
+        self.durationMs = durationMs
+        self.nativeMediaId = nativeMediaId
+    }
+}
+
 public struct Item: Codable, Equatable, Sendable {
     public var id: String
     public var title: String
@@ -91,7 +382,10 @@ public struct Item: Codable, Equatable, Sendable {
     public var text: String?
     public var externalReference: String?
     public var externalReferenceType: String?
+    public var media: ItemMedia?
+    public var transcriptId: String?
     public var status: String
+    public var deletedAt: Date?
 
     public init(
         id: String,
@@ -100,7 +394,10 @@ public struct Item: Codable, Equatable, Sendable {
         text: String?,
         externalReference: String?,
         status: String,
-        externalReferenceType: String? = nil
+        externalReferenceType: String? = nil,
+        media: ItemMedia? = nil,
+        transcriptId: String? = nil,
+        deletedAt: Date? = nil
     ) {
         self.id = id
         self.title = title
@@ -108,13 +405,23 @@ public struct Item: Codable, Equatable, Sendable {
         self.text = text
         self.externalReference = externalReference
         self.externalReferenceType = externalReferenceType
+        self.media = media
+        self.transcriptId = transcriptId
         self.status = status
+        self.deletedAt = deletedAt
     }
 }
 
 public enum BrowserTextCaptureMode: String, Codable, Equatable, Sendable {
     case selectedText = "selected_text"
     case readablePage = "readable_page"
+    case markdownFile = "markdown_file"
+    case plainTextFile = "plain_text_file"
+}
+
+public enum BrowserTextContentFormat: String, Codable, Equatable, Sendable {
+    case plainText = "plain_text"
+    case markdown
 }
 
 public struct BrowserTextSource: Codable, Equatable, Sendable {
@@ -161,6 +468,7 @@ public struct BrowserTextHandoff: Codable, Equatable, Sendable {
     public var captureMode: BrowserTextCaptureMode
     public var source: BrowserTextSource
     public var text: String
+    public var contentFormat: BrowserTextContentFormat?
     public var selection: BrowserTextSelection?
     public var requestedContinuation: BrowserTextContinuation
 
@@ -170,6 +478,7 @@ public struct BrowserTextHandoff: Codable, Equatable, Sendable {
         captureMode: BrowserTextCaptureMode,
         source: BrowserTextSource,
         text: String,
+        contentFormat: BrowserTextContentFormat? = nil,
         selection: BrowserTextSelection? = nil,
         requestedContinuation: BrowserTextContinuation = BrowserTextContinuation()
     ) {
@@ -178,6 +487,7 @@ public struct BrowserTextHandoff: Codable, Equatable, Sendable {
         self.captureMode = captureMode
         self.source = source
         self.text = text
+        self.contentFormat = contentFormat
         self.selection = selection
         self.requestedContinuation = requestedContinuation
     }
@@ -210,6 +520,356 @@ public struct ListeningMap: Codable, Equatable, Sendable {
         self.itemId = itemId
         self.overview = overview
         self.chapters = chapters
+    }
+}
+
+public struct MediaTimelineSegment: Codable, Equatable, Sendable {
+    public var id: String
+    public var startMs: Int
+    public var endMs: Int
+    public var startChar: Int?
+    public var endChar: Int?
+    public var text: String
+
+    public init(id: String, startMs: Int, endMs: Int, startChar: Int? = nil, endChar: Int? = nil, text: String) {
+        self.id = id
+        self.startMs = startMs
+        self.endMs = endMs
+        self.startChar = startChar
+        self.endChar = endChar
+        self.text = text
+    }
+}
+
+public struct MediaTimelineChapter: Codable, Equatable, Sendable {
+    public var id: String
+    public var title: String
+    public var description: String?
+    public var startMs: Int
+    public var transcriptSegmentId: String
+
+    public init(id: String, title: String, description: String? = nil, startMs: Int, transcriptSegmentId: String) {
+        self.id = id
+        self.title = title
+        self.description = description
+        self.startMs = startMs
+        self.transcriptSegmentId = transcriptSegmentId
+    }
+}
+
+public struct MediaTimeline: Codable, Equatable, Sendable {
+    public var segments: [MediaTimelineSegment]
+    public var chapters: [MediaTimelineChapter]
+    public var durationMs: Int?
+
+    public init(segments: [MediaTimelineSegment], chapters: [MediaTimelineChapter], durationMs: Int? = nil) {
+        self.segments = segments
+        self.chapters = chapters
+        self.durationMs = durationMs
+    }
+}
+
+public typealias TranscriptTimeline = MediaTimeline
+
+public struct SourceTranscriptTimeline: Codable, Equatable, Sendable {
+    public var id: String
+    public var itemId: String
+    public var createdAt: Date
+    public var timeline: TranscriptTimeline
+
+    public init(id: String, itemId: String, createdAt: Date, timeline: TranscriptTimeline) {
+        self.id = id
+        self.itemId = itemId
+        self.createdAt = createdAt
+        self.timeline = timeline
+    }
+}
+
+public struct MediaResolvedAnchor: Codable, Equatable, Sendable {
+    public var mediaTimeMs: Int
+    public var chapterId: String?
+    public var transcriptSegmentId: String?
+    public var startChar: Int
+    public var endChar: Int
+    public var anchorBefore: String
+    public var anchorAfter: String
+    public var playbackRateObserved: Double
+
+    public init(
+        mediaTimeMs: Int,
+        chapterId: String?,
+        transcriptSegmentId: String?,
+        startChar: Int,
+        endChar: Int,
+        anchorBefore: String,
+        anchorAfter: String,
+        playbackRateObserved: Double
+    ) {
+        self.mediaTimeMs = mediaTimeMs
+        self.chapterId = chapterId
+        self.transcriptSegmentId = transcriptSegmentId
+        self.startChar = startChar
+        self.endChar = endChar
+        self.anchorBefore = anchorBefore
+        self.anchorAfter = anchorAfter
+        self.playbackRateObserved = playbackRateObserved
+    }
+}
+
+public enum MediaTimelineAnchorResolver {
+    public static func resolve(
+        mediaTimeMs: Int,
+        timeline: MediaTimeline,
+        playbackRateObserved: Double = 1,
+        boundaryToleranceMs: Int = 250
+    ) -> MediaResolvedAnchor {
+        let clampedTime = max(0, mediaTimeMs)
+        let sortedSegments = timeline.segments.sorted { $0.startMs < $1.startMs }
+        let segment = segment(containing: clampedTime, in: sortedSegments, toleranceMs: boundaryToleranceMs)
+        let chapter = timeline.chapters
+            .filter { $0.startMs <= clampedTime }
+            .sorted { $0.startMs < $1.startMs }
+            .last
+        let segmentIndex = segment.flatMap { selected in sortedSegments.firstIndex(where: { $0.id == selected.id }) }
+        let nextSegmentText = segmentIndex.flatMap { index -> String? in
+            guard sortedSegments.indices.contains(index + 1) else { return nil }
+            return sortedSegments[index + 1].text
+        }
+        return MediaResolvedAnchor(
+            mediaTimeMs: clampedTime,
+            chapterId: chapter?.id,
+            transcriptSegmentId: segment?.id,
+            startChar: segment?.startChar ?? 0,
+            endChar: segment?.endChar ?? 0,
+            anchorBefore: segment?.text ?? "",
+            anchorAfter: nextSegmentText ?? "",
+            playbackRateObserved: playbackRateObserved
+        )
+    }
+
+    private static func segment(
+        containing mediaTimeMs: Int,
+        in segments: [MediaTimelineSegment],
+        toleranceMs: Int
+    ) -> MediaTimelineSegment? {
+        if let exact = segments.first(where: { $0.startMs <= mediaTimeMs && mediaTimeMs < $0.endMs }) {
+            return exact
+        }
+        if let next = segments.first(where: { abs($0.startMs - mediaTimeMs) <= toleranceMs }) {
+            return next
+        }
+        return segments.last(where: { $0.startMs <= mediaTimeMs }) ?? segments.first
+    }
+}
+
+public struct WatchPackageItem: Codable, Equatable, Sendable {
+    public var title: String
+    public var mediaType: String
+    public var externalReference: String?
+
+    public init(title: String, mediaType: String, externalReference: String? = nil) {
+        self.title = title
+        self.mediaType = mediaType
+        self.externalReference = externalReference
+    }
+}
+
+public struct WatchPackageAudioAsset: Codable, Equatable, Sendable {
+    public var audioAssetId: String
+    public var fileName: String
+    public var durationMs: Int
+    public var sha256: String?
+
+    public init(audioAssetId: String, fileName: String, durationMs: Int, sha256: String? = nil) {
+        self.audioAssetId = audioAssetId
+        self.fileName = fileName
+        self.durationMs = durationMs
+        self.sha256 = sha256
+    }
+}
+
+public struct WatchPackageTranscript: Codable, Equatable, Sendable {
+    public var transcriptId: String
+    public var segments: [MediaTimelineSegment]
+
+    public init(transcriptId: String, segments: [MediaTimelineSegment]) {
+        self.transcriptId = transcriptId
+        self.segments = segments
+    }
+}
+
+public struct WatchPackageSettings: Codable, Equatable, Sendable {
+    public var rollbackUnit: String
+    public var defaultPlaybackRate: Double
+
+    public init(rollbackUnit: String, defaultPlaybackRate: Double) {
+        self.rollbackUnit = rollbackUnit
+        self.defaultPlaybackRate = defaultPlaybackRate
+    }
+}
+
+public struct WatchAudioPackage: Codable, Equatable, Sendable {
+    public var schemaVersion: String
+    public var id: String
+    public var itemId: String
+    public var sessionId: String
+    public var createdAt: Date
+    public var expiresAt: Date?
+    public var item: WatchPackageItem
+    public var audioAssets: [WatchPackageAudioAsset]
+    public var transcript: WatchPackageTranscript
+    public var chapters: [MediaTimelineChapter]
+    public var settings: WatchPackageSettings
+
+    public init(
+        schemaVersion: String = "watch-audio-package.v1",
+        id: String,
+        itemId: String,
+        sessionId: String,
+        createdAt: Date,
+        expiresAt: Date? = nil,
+        item: WatchPackageItem,
+        audioAssets: [WatchPackageAudioAsset],
+        transcript: WatchPackageTranscript,
+        chapters: [MediaTimelineChapter],
+        settings: WatchPackageSettings
+    ) {
+        self.schemaVersion = schemaVersion
+        self.id = id
+        self.itemId = itemId
+        self.sessionId = sessionId
+        self.createdAt = createdAt
+        self.expiresAt = expiresAt
+        self.item = item
+        self.audioAssets = audioAssets
+        self.transcript = transcript
+        self.chapters = chapters
+        self.settings = settings
+    }
+
+    public var timeline: MediaTimeline {
+        MediaTimeline(
+            segments: transcript.segments,
+            chapters: chapters,
+            durationMs: audioAssets.map(\.durationMs).max()
+        )
+    }
+
+    public var primaryAudioAsset: WatchPackageAudioAsset? {
+        audioAssets.first
+    }
+}
+
+public struct WatchSyncEventPayload: Codable, Equatable, Sendable {
+    public var mediaTimeMs: Int?
+    public var chapterId: String?
+    public var transcriptSegmentId: String?
+    public var playbackRate: Double?
+    public var audioFileName: String?
+    public var audioDurationMs: Int?
+    public var error: String?
+
+    public init(
+        mediaTimeMs: Int? = nil,
+        chapterId: String? = nil,
+        transcriptSegmentId: String? = nil,
+        playbackRate: Double? = nil,
+        audioFileName: String? = nil,
+        audioDurationMs: Int? = nil,
+        error: String? = nil
+    ) {
+        self.mediaTimeMs = mediaTimeMs
+        self.chapterId = chapterId
+        self.transcriptSegmentId = transcriptSegmentId
+        self.playbackRate = playbackRate
+        self.audioFileName = audioFileName
+        self.audioDurationMs = audioDurationMs
+        self.error = error
+    }
+}
+
+public struct WatchSyncEvent: Codable, Equatable, Sendable {
+    public var schemaVersion: String
+    public var id: String
+    public var watchPackageId: String
+    public var sessionId: String
+    public var itemId: String?
+    public var eventType: String
+    public var createdAt: Date
+    public var payload: WatchSyncEventPayload
+
+    public init(
+        schemaVersion: String = "watch-sync-event.v1",
+        id: String,
+        watchPackageId: String,
+        sessionId: String,
+        itemId: String? = nil,
+        eventType: String,
+        createdAt: Date,
+        payload: WatchSyncEventPayload
+    ) {
+        self.schemaVersion = schemaVersion
+        self.id = id
+        self.watchPackageId = watchPackageId
+        self.sessionId = sessionId
+        self.itemId = itemId
+        self.eventType = eventType
+        self.createdAt = createdAt
+        self.payload = payload
+    }
+}
+
+public enum WatchPackageLibraryStatus: String, Codable, Equatable, Sendable {
+    case loadedOnWatch = "loaded_on_watch"
+    case queuedForTransfer = "queued_for_transfer"
+    case availableForTransfer = "available_for_transfer"
+    case needsPrerender = "needs_prerender"
+    case rendering
+    case failed
+    case expired
+}
+
+public struct WatchPackageLibraryRow: Codable, Equatable, Sendable {
+    public var itemId: String
+    public var title: String
+    public var status: WatchPackageLibraryStatus
+    public var packageId: String?
+    public var progressPercent: Int?
+
+    public init(
+        itemId: String,
+        title: String,
+        status: WatchPackageLibraryStatus,
+        packageId: String? = nil,
+        progressPercent: Int? = nil
+    ) {
+        self.itemId = itemId
+        self.title = title
+        self.status = status
+        self.packageId = packageId
+        self.progressPercent = progressPercent
+    }
+}
+
+public enum WatchPackageRequestType: String, Codable, Equatable, Sendable {
+    case prerenderRequested = "prerender_requested"
+    case watchTransferRequested = "watch_transfer_requested"
+    case packageDeleteRequested = "package_delete_requested"
+}
+
+public struct WatchPackageRequestEvent: Codable, Equatable, Sendable {
+    public var id: String
+    public var itemId: String
+    public var packageId: String?
+    public var requestType: WatchPackageRequestType
+    public var createdAt: Date
+
+    public init(id: String, itemId: String, packageId: String? = nil, requestType: WatchPackageRequestType, createdAt: Date) {
+        self.id = id
+        self.itemId = itemId
+        self.packageId = packageId
+        self.requestType = requestType
+        self.createdAt = createdAt
     }
 }
 
@@ -331,6 +991,12 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     public var progressPercent: Int
     public var sourceProgressPercent: Int
     public var currentPlaybackProgressPercent: Int
+    public var currentMediaTimeMs: Int?
+    public var currentPlaybackDurationMs: Int?
+    public var currentTextStart: Int?
+    public var currentTextEnd: Int?
+    public var currentTranscriptSegmentId: String?
+    public var currentAnchorConfidence: AnchorConfidence?
     public var playbackRate: Double
     public var isRecording: Bool
     public var activeInterjectionCount: Int
@@ -345,6 +1011,10 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     public var lastUserTurnType: String?
     public var spokenUnits: [String]
     public var lastFailure: String?
+    public var linkResolutionStatus: String?
+    public var linkResolutionFailureReason: String?
+    public var preparedTextAudioStatus: String?
+    public var sourceTranscriptStatus: String?
 
     public init() {
         sessionId = nil
@@ -358,6 +1028,12 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         progressPercent = 0
         sourceProgressPercent = 0
         currentPlaybackProgressPercent = 0
+        currentMediaTimeMs = nil
+        currentPlaybackDurationMs = nil
+        currentTextStart = nil
+        currentTextEnd = nil
+        currentTranscriptSegmentId = nil
+        currentAnchorConfidence = nil
         playbackRate = 1
         isRecording = false
         activeInterjectionCount = 0
@@ -372,5 +1048,9 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         lastUserTurnType = nil
         spokenUnits = []
         lastFailure = nil
+        linkResolutionStatus = nil
+        linkResolutionFailureReason = nil
+        preparedTextAudioStatus = nil
+        sourceTranscriptStatus = nil
     }
 }

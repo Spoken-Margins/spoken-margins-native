@@ -1,0 +1,89 @@
+{
+  "schemaVersion": "spoken-margins.export.v1",
+  "item": {
+    "id": "item-pill",
+    "title": "You Can't Inspect the Pill",
+    "externalReference": "[[You Can't Inspect the Pill]]",
+    "includedFullText": true,
+    "text": "Opening distrust is reasonable. Maybe their diet changed. Maybe their sleep changed. Maybe their symptoms were about to improve anyway. The paper trail around the medicine is what can be inspected."
+  },
+  "session": {
+    "id": "session-pill-discussion",
+    "status": "in_progress",
+    "completionPercent": 100
+  },
+  "listeningMap": {
+    "id": "map-pill",
+    "schemaVersion": "listening-map.v1"
+  },
+  "turns": [
+    {
+      "id": "turn-summary-001",
+      "sessionId": "session-pill-discussion",
+      "role": "assistant",
+      "turnType": "interjection_summary",
+      "status": "complete"
+    },
+    {
+      "id": "turn-response-001",
+      "sessionId": "session-pill-discussion",
+      "role": "assistant",
+      "turnType": "assistant_response",
+      "status": "complete"
+    }
+  ],
+  "timeline": [
+    {
+      "type": "interjection",
+      "interjectionId": "ij-source-001",
+      "targetType": "item",
+      "targetId": "item-pill",
+      "percent": 18
+    },
+    {
+      "type": "ai_turn",
+      "turnId": "turn-summary-001",
+      "title": "Interjection summary 1"
+    },
+    {
+      "type": "ai_turn",
+      "turnId": "turn-response-001",
+      "title": "AI response 1"
+    },
+    {
+      "type": "interjection",
+      "interjectionId": "ij-ai-001",
+      "targetType": "assistant_turn",
+      "targetId": "turn-response-001",
+      "percent": 40
+    }
+  ],
+  "interjections": [
+    {
+      "id": "ij-source-001",
+      "sessionId": "session-pill-discussion",
+      "targetType": "item",
+      "targetId": "item-pill",
+      "roughPercent": 18,
+      "anchorBefore": "Maybe their diet changed. Maybe their sleep changed.",
+      "anchorAfter": "Maybe their symptoms were about to improve anyway.",
+      "mediaTimeMs": null,
+      "transcriptionStatus": "transcribed",
+      "transcript": "This list works, but it feels repetitive.",
+      "audioPath": "interjections/ij-source-001.m4a"
+    },
+    {
+      "id": "ij-ai-001",
+      "sessionId": "session-pill-discussion",
+      "targetType": "assistant_turn",
+      "targetId": "turn-response-001",
+      "roughPercent": 40,
+      "anchorBefore": "AI response first point.",
+      "anchorAfter": "AI response second point.",
+      "mediaTimeMs": null,
+      "transcriptionStatus": "transcribed",
+      "transcript": "The first response point needs more nuance.",
+      "audioPath": "interjections/ij-ai-001.m4a"
+    }
+  ]
+}

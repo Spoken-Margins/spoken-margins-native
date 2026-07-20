@@ -12,6 +12,10 @@
     { "id": "progressPercent", "status": "implemented", "source": "SessionSnapshot.progressPercent" },
     { "id": "sourceProgressPercent", "status": "implemented", "source": "SessionSnapshot.sourceProgressPercent" },
     { "id": "currentPlaybackProgressPercent", "status": "implemented", "source": "SessionSnapshot.currentPlaybackProgressPercent" },
+    { "id": "currentMediaTimeMs", "status": "implemented", "source": "SessionSnapshot.currentMediaTimeMs" },
+    { "id": "currentPlaybackDurationMs", "status": "implemented", "source": "SessionSnapshot.currentPlaybackDurationMs" },
+    { "id": "currentTranscriptSegmentId", "status": "implemented", "source": "SessionSnapshot.currentTranscriptSegmentId" },
+    { "id": "currentAnchorConfidence", "status": "implemented", "source": "SessionSnapshot.currentAnchorConfidence" },
     { "id": "playbackRate", "status": "implemented", "source": "SessionSnapshot.playbackRate" },
     { "id": "isRecording", "status": "implemented", "source": "SessionSnapshot.isRecording" },
     { "id": "activeInterjectionCount", "status": "implemented", "source": "SessionSnapshot.activeInterjectionCount" },
@@ -37,6 +41,30 @@
       "status": "implemented",
       "source": "CompactControlSnapshot.timeline",
       "notes": "Compact surfaces publish source chapters and generated AI/summary timeline rows for constrained UIs such as Watch."
+    },
+    {
+      "id": "linkResolutionStatus",
+      "status": "implemented",
+      "source": "SessionSnapshot.linkResolutionStatus",
+      "notes": "Current import/queue state for share-sheet and paste URL intake."
+    },
+    {
+      "id": "linkResolutionFailureReason",
+      "status": "implemented",
+      "source": "SessionSnapshot.linkResolutionFailureReason",
+      "notes": "Diagnostic text for unsupported or needs-review link resolution outcomes."
+    },
+    {
+      "id": "preparedTextAudioStatus",
+      "status": "implemented",
+      "source": "SessionSnapshot.preparedTextAudioStatus",
+      "notes": "Prepared/generated TTS audio state for playback UI and diagnostics."
+    },
+    {
+      "id": "sourceTranscriptStatus",
+      "status": "implemented",
+      "source": "SessionSnapshot.sourceTranscriptStatus",
+      "notes": "Native-audio source transcription state for maps, anchors, and UI messaging."
     }
   ]
 }

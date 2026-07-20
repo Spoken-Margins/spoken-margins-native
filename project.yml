@@ -3,7 +3,6 @@ options:
   bundleIdPrefix: com.spokenmargins
   deploymentTarget:
     iOS: "18.0"
-    watchOS: "11.0"
 packages:
   SessionKit:
     path: Packages/SessionKit
@@ -13,16 +12,19 @@ targets:
     platform: iOS
     sources:
       - path: App/SpokenMarginsApp/Sources
+        excludes:
+          - SpokenMarginsApp/Gate3WatchConnectivityController.swift
+          - SpokenMarginsApp/WatchPackageRenderCoordinator.swift
       - path: App/Gate2Shared/Sources
+      - path: App/SharedSources
       - path: Contracts/fixtures
         type: folder
       - path: Contracts/traces
         type: folder
     dependencies:
-      - target: SpokenMarginsWatch
-        embed: true
-      - target: SpokenMarginsBrowserTextExtension
       - target: SpokenMarginsGate2Widget
+      - target: SpokenMarginsShareExtension
+      - target: SpokenMarginsBrowserTextExtension
       - package: SessionKit
         product: SessionKit
       - package: SessionKit
@@ -34,11 +36,15 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native
-        CODE_SIGN_IDENTITY: Apple Development
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsApp/SpokenMarginsApp.entitlements
         CODE_SIGN_STYLE: Automatic
+        CURRENT_PROJECT_VERSION: "4"
         DEVELOPMENT_TEAM: J8SWC6J3VY
         INFOPLIST_FILE: App/SpokenMarginsApp/Info.plist
+        INFOPLIST_KEY_CFBundleDisplayName: Spoken Margins
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        MARKETING_VERSION: "0.1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SWIFT_VERSION: "6.0"
         TARGETED_DEVICE_FAMILY: "1,2"
     info:
@@ -46,75 +52,29 @@ targets:
       properties:
         CFBundleDisplayName: Spoken Margins
         CFBundleShortVersionString: "0.1"
-        CFBundleVersion: "1"
+        CFBundleVersion: "4"
         CFBundleURLTypes:
           - CFBundleURLName: SpokenMarginsCompactControls
             CFBundleURLSchemes:
               - spokenmargins
         LSRequiresIPhoneOS: true
+        ITSAppUsesNonExemptEncryption: false
         UILaunchScreen: {}
         NSMicrophoneUsageDescription: Spoken Margins records spoken interjections during listening sessions.
         NSSpeechRecognitionUsageDescription: Spoken Margins may transcribe spoken interjections when enabled.
         NSSupportsLiveActivities: true
         UIBackgroundModes:
           - audio
-        UIApplicationSceneManifest:
-          UIApplicationSupportsMultipleScenes: true
-  SpokenMarginsAppDevice:
-    type: application
-    platform: iOS
-    supportedDestinations:
-      - iOS
-    sources:
-      - path: App/SpokenMarginsApp/Sources
-      - path: App/Gate2Shared/Sources
-      - path: Contracts/fixtures
-        type: folder
-      - path: Contracts/traces
-        type: folder
-    dependencies:
-      - target: SpokenMarginsWatch
-        embed: true
-      - target: SpokenMarginsBrowserTextExtension
-      - target: SpokenMarginsGate2Widget
-      - package: SessionKit
-        product: SessionKit
-      - package: SessionKit
-        product: SessionKitPersistence
-      - package: SessionKit
-        product: SessionKitAudio
-      - package: SessionKit
-        product: SessionKitAI
-      - package: SessionKit
-        product: SessionKitKokoro
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native
-        CODE_SIGN_IDENTITY: Apple Development
-        CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsApp/SpokenMarginsApp.entitlements
-        CODE_SIGN_STYLE: Automatic
-        DEVELOPMENT_TEAM: J8SWC6J3VY
-        INFOPLIST_FILE: App/SpokenMarginsApp/Info.plist
-        SWIFT_VERSION: "6.0"
-        TARGETED_DEVICE_FAMILY: "1,2"
-        OTHER_SWIFT_FLAGS: "$(inherited) -D KOKORO_DEVICE"
-    info:
-      path: App/SpokenMarginsApp/Info.plist
-      properties:
-        CFBundleDisplayName: Spoken Margins
-        CFBundleShortVersionString: "0.1"
-        CFBundleVersion: "1"
-        CFBundleURLTypes:
-          - CFBundleURLName: SpokenMarginsCompactControls
-            CFBundleURLSchemes:
-              - spokenmargins
-        LSRequiresIPhoneOS: true
-        UILaunchScreen: {}
-        NSMicrophoneUsageDescription: Spoken Margins records spoken interjections during listening sessions.
-        NSSpeechRecognitionUsageDescription: Spoken Margins may transcribe spoken interjections when enabled.
-        NSSupportsLiveActivities: true
-        UIBackgroundModes:
-          - audio
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: true
   SpokenMarginsGate2Widget:
@@ -128,8 +88,9 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.gate2widget
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsGate2Widget/SpokenMarginsGate2Widget.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "1"
+        CURRENT_PROJECT_VERSION: "4"
         DEVELOPMENT_TEAM: J8SWC6J3VY
+        ENABLE_DEBUG_DYLIB: NO
         MARKETING_VERSION: "0.1"
         SWIFT_VERSION: "6.0"
     info:
@@ -137,7 +98,7 @@ targets:
       properties:
         CFBundleDisplayName: Spoken Margins Controls
         CFBundleShortVersionString: "0.1"
-        CFBundleVersion: "1"
+        CFBundleVersion: "4"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
   SpokenMarginsBrowserTextExtension:
@@ -151,38 +112,55 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.browsertext
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsBrowserTextExtension/SpokenMarginsBrowserTextExtension.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "1"
+        CURRENT_PROJECT_VERSION: "4"
         DEVELOPMENT_TEAM: J8SWC6J3VY
+        ENABLE_DEBUG_DYLIB: NO
         INFOPLIST_FILE: App/SpokenMarginsBrowserTextExtension/Info.plist
         MARKETING_VERSION: "0.1"
         SDKROOT: iphoneos
         SWIFT_VERSION: "6.0"
         TARGETED_DEVICE_FAMILY: "1,2"
-  SpokenMarginsWatch:
-    type: application
-    platform: watchOS
+  SpokenMarginsShareExtension:
+    type: app-extension
+    platform: iOS
     sources:
-      - path: App/SpokenMarginsWatch/Sources
-    dependencies:
-      - package: SessionKit
-        product: SessionKit
+      - path: App/SpokenMarginsShareExtension/Sources
+      - path: App/SpokenMarginsShareExtension/Resources
+      - path: App/Gate2Shared/Sources
+        excludes:
+          - Gate2CompactCommandQueue.swift
+          - Gate2CompactCommandURL.swift
+          - Gate2LiveActivityAttributes.swift
+      - path: App/SharedSources
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.watch
-        CODE_SIGN_IDENTITY: Apple Development
+        PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.share
+        CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsShareExtension/SpokenMarginsShareExtension.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "1"
+        CURRENT_PROJECT_VERSION: "4"
         DEVELOPMENT_TEAM: J8SWC6J3VY
+        ENABLE_DEBUG_DYLIB: NO
+        INFOPLIST_FILE: App/SpokenMarginsShareExtension/Info.plist
         MARKETING_VERSION: "0.1"
+        SDKROOT: iphoneos
         SWIFT_VERSION: "6.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
     info:
-      path: App/SpokenMarginsWatch/Info.plist
+      path: App/SpokenMarginsShareExtension/Info.plist
       properties:
         CFBundleDisplayName: Spoken Margins
         CFBundleShortVersionString: "0.1"
-        CFBundleVersion: "1"
-        WKApplication: true
-        WKCompanionAppBundleIdentifier: com.spokenmargins.native
+        CFBundleVersion: "4"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).SourceLinkShareViewController
+          NSExtensionAttributes:
+            NSExtensionJavaScriptPreprocessingFile: SourceLinkPreprocessor
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsFileWithMaxCount: 1
+              NSExtensionActivationSupportsText: true
+              NSExtensionActivationSupportsWebPageWithMaxCount: 1
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
   SpokenMarginsAppUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -200,6 +178,8 @@ targets:
     platform: iOS
     sources:
       - path: App/SpokenMarginsAppTests
+        excludes:
+          - Gate4WatchPackageRenderTests.swift
     dependencies:
       - target: SpokenMarginsApp
       - package: SessionKit
@@ -207,6 +187,7 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
+        DEVELOPMENT_TEAM: J8SWC6J3VY
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.tests
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/SpokenMarginsApp.app/SpokenMarginsApp"
         BUNDLE_LOADER: "$(TEST_HOST)"
@@ -222,15 +203,3 @@ schemes:
       targets:
         - SpokenMarginsAppTests
         - SpokenMarginsAppUITests
-  SpokenMarginsAppDevice:
-    build:
-      targets:
-        SpokenMarginsAppDevice: all
-    run:
-      config: Debug
-  SpokenMarginsWatch:
-    build:
-      targets:
-        SpokenMarginsWatch: all
-    run:
-      config: Debug

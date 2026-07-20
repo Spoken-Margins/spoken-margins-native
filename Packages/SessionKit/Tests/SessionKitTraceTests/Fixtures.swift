@@ -72,6 +72,18 @@ enum Fixtures {
                 repository.turns[turn.id] = turn
             }
         }
+        if let packagePath = fixtures["watchPackage"] as? String {
+            let package = try ContractFixtureLoader.watchAudioPackage(at: root.appending(path: packagePath))
+            repository.watchPackages[package.id] = package
+        }
+        if let eventPath = fixtures["interjectionEvent"] as? String {
+            let event = try ContractFixtureLoader.watchSyncEvent(at: root.appending(path: eventPath))
+            repository.watchSyncEvents[event.id] = event
+        }
+        if let eventPath = fixtures["positionEvent"] as? String {
+            let event = try ContractFixtureLoader.watchSyncEvent(at: root.appending(path: eventPath))
+            repository.watchSyncEvents[event.id] = event
+        }
     }
 
     static func item(at url: URL) throws -> Item {

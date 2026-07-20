@@ -1,71 +1,73 @@
-# Agent Coordination Rules
+# Agent Rules
 
-## Current Phase
+## Default Workflow
 
-Phase: `surface-contract-scaffold`
+This repository uses a single-agent workflow by default. An agent should work end to end on the requested task unless the product owner explicitly asks for parallel agents.
 
-The steward owns shared contracts, shared runtime code, Xcode project changes, and full app build authority. Gate agents work contract-first and produce backend requests instead of directly changing shared runtime implementation.
+Parallel-agent rules are archived in `docs/parallel-agent-workflow-archive.md`. Do not use that workflow unless the product owner explicitly names a steward, gate agents, allowed files, forbidden files, and merge order.
 
-## Steward-Only Files
+## Human Validation Rule
 
-Do not edit these files without explicit steward assignment:
+Only the product owner validates product flows.
 
-- `SpokenMarginsNative.xcodeproj/project.pbxproj`
-- `Packages/SessionKit/Sources/SessionKit/SessionEngine.swift`
-- `Packages/SessionKit/Sources/SessionKit/Models.swift`
-- `App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift`
-- `App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift`
-- `validation/contracts/command-matrix.json`
-- `validation/contracts/snapshot-fields.json`
-- `validation/contracts/delegation-modes.json`
-- `schemas/surface-contract.schema.json`
-- `scripts/validate-surface-contracts.py`
+Agents verify implementation claims with tests, builds, traces, static checks, and checklists. Agents must not call a flow validated because automated checks passed. Once the product owner validates a flow, agents may add focused regression coverage to preserve that behavior.
 
-## Build Policy
+Use these states consistently:
 
-- Gate agents may run contract validators only.
-- Gate agents must not run full app or Xcode builds.
-- Only the steward runs `xcodebuild`.
-- If a gate needs shared runtime, snapshot, command, or Xcode changes, record a backend request in the surface contract or final handoff.
+- `implemented`: the app has a user path or runtime path.
+- `verified`: automated checks or developer evidence support the implementation.
+- `human_validated`: the product owner used the flow and accepted it.
 
-Allowed gate-agent commands:
+## Test And Build Policy
+
+Routine development should prefer fast checks:
 
 ```bash
 python3 scripts/validate-contracts.py
 python3 scripts/validate-surface-contracts.py
+swift build --build-tests --package-path Packages/SessionKit
 ```
 
-Steward/local verification commands, for agents explicitly assigned build authority:
+Use app builds when app, Watch, widget, extension, project, signing, or package integration changes need verification:
 
 ```bash
 xcodegen generate
-xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsAppDevice -destination 'generic/platform=iOS' build | xcbeautify
 xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -destination 'generic/platform=iOS Simulator' build | xcbeautify
+xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -destination 'generic/platform=iOS' build | xcbeautify
 xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsWatch -destination 'generic/platform=watchOS' build | xcbeautify
 ```
 
-Expected local tooling:
+`SpokenMarginsAppDevice` is the optional Kokoro/MLX device scheme. Run it only when validating Kokoro-specific work and only after Xcode's Metal Toolchain component is installed:
 
-- `/opt/homebrew/bin` should be on `PATH`.
-- `python3` should resolve to Python 3.10 or newer with `jsonschema` installed.
-- `git-lfs` should be installed and initialized with `git lfs install`.
-- `xcodegen` should be available for regenerating `SpokenMarginsNative.xcodeproj` from `project.yml`.
-- `xcbeautify` should be available for readable Xcode build output.
+```bash
+xcodebuild -downloadComponent MetalToolchain
+xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsAppDevice -destination 'generic/platform=iOS' build | xcbeautify
+```
 
-## Required Agent Output
+Broad UI route automation is late-gate evidence. Run it before asking the product owner to close a gate, or after a human-validated flow needs regression protection. Do not require broad UI routes for every development iteration.
 
-Every gate handoff must include:
+## Product Validation Handoff
 
-- changed files
-- contract deltas
-- backend requests
-- tests run
-- tests not run
-- open risks
+Before asking for human validation, provide:
 
-## Parallel Gate Rules
+- build number and commit SHA
+- supported devices and OS versions
+- exact in-scope and out-of-scope flows
+- known issues
+- reset instructions
+- seeded sample items
+- diagnostics location or export
+- verification summary
+- product-owner checklist with pass/fail notes
 
-- Gate 3 owns Watch Tethered contract work.
-- Gate 5 owns Browser Text contract and handoff-shape work.
-- Gate agents may not mutate shared command, snapshot, delegation, schema, or validator files after kickoff without steward approval.
-- Gate agents may not edit Xcode project files or shared SessionKit implementation files.
+Record human validation evidence under `artifacts/validation/gate-N/`.
+
+## Specification Discipline
+
+Contrast implementation work against the product/spec docs. If the product direction changes, update the relevant docs instead of preserving stale gate language.
+
+Do not introduce new command ids, snapshot field ids, delegation modes, fixture families, or trace language unless the matching schema, validator, runtime, and tests are updated in the same intentional change.
+
+## Working Tree Safety
+
+The worktree may contain user or agent changes. Do not revert files you did not intentionally change. If unrelated dirty files exist, leave them alone. If existing changes affect the task, work with them and call out any residual risk in the handoff.
