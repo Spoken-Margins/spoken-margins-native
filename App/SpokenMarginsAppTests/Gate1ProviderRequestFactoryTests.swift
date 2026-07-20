@@ -61,24 +61,6 @@ final class Gate1ProviderRequestFactoryTests: XCTestCase {
         XCTAssertEqual(json["store"] as? Bool, false)
     }
 
-    func testReviewDemoProducesValidMapWithoutNetwork() async throws {
-        let response = await ReviewDemoAIClient().complete(
-            kind: "listening_map",
-            messages: ["""
-            ITEM CONTENT:
-            <<<
-            First paragraph contains enough ordinary words for a stable navigation anchor.
-
-            Second paragraph supplies another deterministic section for the review map.
-            >>>
-            """]
-        )
-        let data = try XCTUnwrap(response.data(using: .utf8))
-        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        XCTAssertEqual(json["schemaVersion"] as? String, "listening-map.v1")
-        XCTAssertEqual((json["chapters"] as? [[String: Any]])?.count, 2)
-    }
-
     func testResponsesSSEParserEmitsTextAndSurfacesErrors() throws {
         XCTAssertEqual(
             try OpenAIResponsesClient.event(fromSSELine: #"data: {"type":"response.output_text.delta","delta":"Hello."}"#),

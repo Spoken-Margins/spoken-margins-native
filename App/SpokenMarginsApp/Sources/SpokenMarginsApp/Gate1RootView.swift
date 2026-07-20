@@ -25,11 +25,8 @@ struct Gate1RootView: View {
         }
         .background(AppColors.background.ignoresSafeArea())
         .safeAreaInset(edge: .top, spacing: 8) {
-            if model.lastError != nil || model.trashUndo != nil || model.sourceImportProgressMessage != nil || model.isReviewDemoActive || model.legacyLibraryResetNotice != nil {
+            if model.lastError != nil || model.trashUndo != nil || model.sourceImportProgressMessage != nil || model.legacyLibraryResetNotice != nil {
                 VStack(spacing: 8) {
-                    if model.isReviewDemoActive {
-                        ReviewDemoBanner()
-                    }
                     if let resetNotice = model.legacyLibraryResetNotice {
                         LegacyLibraryResetBanner(message: resetNotice)
                     }
@@ -100,26 +97,6 @@ private struct LegacyLibraryResetBanner: View {
                 // The banner disappeared or changed before its auto-dismiss timer fired.
             }
         }
-    }
-}
-
-private struct ReviewDemoBanner: View {
-    var body: some View {
-        HStack {
-            Spacer(minLength: 0)
-            Label("Review Demo · on-device AI", systemImage: "checkmark.shield")
-                .font(.caption2.weight(.semibold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .foregroundStyle(AppColors.text)
-                .background(AppColors.accentSoft, in: Capsule())
-            Spacer(minLength: 0)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Review Demo. Simulated AI. No content leaves this device.")
-        .accessibilityIdentifier("reviewDemo.banner")
     }
 }
 
@@ -1572,26 +1549,6 @@ private struct SettingsScreen: View {
                 .onChange(of: model.listeningMapModel) { _, _ in model.settingsValueChanged() }
                 .onChange(of: model.summaryModel) { _, _ in model.settingsValueChanged() }
                 .onChange(of: model.conversationModel) { _, _ in model.settingsValueChanged() }
-                Section("Review Demo") {
-                    LabeledContent("Status", value: model.reviewDemoStatus)
-                        .accessibilityIdentifier("reviewDemo.status")
-                    if model.isReviewDemoActive {
-                        Text("AI responses are simulated on this device. No source text, transcripts, or follow-ups are sent to OpenAI.")
-                            .font(.caption)
-                            .foregroundStyle(AppColors.secondaryText)
-                        Button("Disable Review Demo", role: .destructive, action: model.disableReviewDemo)
-                            .accessibilityIdentifier("reviewDemo.disable.button")
-                    } else {
-                        SecureField("Review access code", text: $model.reviewDemoUnlockCode)
-                            .textInputAutocapitalization(.characters)
-                            .autocorrectionDisabled()
-                            .accessibilityLabel("Review access code")
-                            .accessibilityIdentifier("reviewDemo.code.field")
-                        Button("Unlock Review Demo", action: model.unlockReviewDemo)
-                            .disabled(model.reviewDemoUnlockCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                            .accessibilityIdentifier("reviewDemo.unlock.button")
-                    }
-                }
                 Section("Playback & Voice") {
                     HStack {
                         Text("Native Voices")

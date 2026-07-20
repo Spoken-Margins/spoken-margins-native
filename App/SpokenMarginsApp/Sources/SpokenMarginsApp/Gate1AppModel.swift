@@ -25,11 +25,6 @@ enum Gate1Screen: Hashable {
     case export
 }
 
-enum AIExecutionMode: String, CaseIterable {
-    case liveOpenAI
-    case reviewDemo
-}
-
 enum AIDataSharingConsent: String {
     case unknown
     case grantedV1
@@ -242,15 +237,10 @@ final class Gate1AppModel: ObservableObject {
     #endif
     @Published var providerAPIKey = KeychainStore.load(service: "SpokenMargins", account: "OpenAICompatibleAPIKey") ?? ""
     @Published var providerProbeStatus = "Not checked"
-    @Published var aiExecutionMode = AIExecutionMode(
-        rawValue: UserDefaults.standard.string(forKey: "aiExecutionMode") ?? ""
-    ) ?? .liveOpenAI
     @Published var aiDataSharingConsent = AIDataSharingConsent(
         rawValue: UserDefaults.standard.string(forKey: "aiDataSharingConsent") ?? ""
     ) ?? .unknown
     @Published var isAIDataSharingConsentPresented = false
-    @Published var reviewDemoUnlockCode = ""
-    @Published private(set) var reviewDemoStatus = "Locked"
     @Published private(set) var legacyLibraryResetNotice: String?
     @Published var knownIssues = [
         "Physical-device product validation remains pending.",
@@ -265,7 +255,6 @@ final class Gate1AppModel: ObservableObject {
     private let gate3WatchConnectivity = Gate3WatchConnectivityController()
     #endif
     private let openAIResponsesClient = OpenAIResponsesClient()
-    private let reviewDemoAIClient = ReviewDemoAIClient()
     private let streamingSpeechQueue = StreamingSpeechQueue()
     private let sourceLinkResolver: LinkResolutionClient?
     private let sourceLinkHandoffStore: SourceLinkHandoffStore?
@@ -352,7 +341,7 @@ final class Gate1AppModel: ObservableObject {
         self.forcePreparedTextGate = forcePreparedTextGate
         self.sourceTranscriptionClient = sourceTranscriptionClient
         self.preparedTextAudioPrewarmHandler = preparedTextAudioPrewarmHandler
-        reviewDemoStatus = aiExecutionMode == .reviewDemo ? "Unlocked · simulated responses" : "Locked"
+        UserDefaults.standard.removeObject(forKey: "aiExecutionMode")
         refreshSpeechVoiceOptions()
         sanitizeTTSMode()
         settingsValueChanged()
@@ -360,10 +349,6 @@ final class Gate1AppModel: ObservableObject {
         streamingSpeechQueue.onTurnDrained = { [weak self] turnId in
             self?.finishStreamingTurnIfReady(turnId)
         }
-    }
-
-    var isReviewDemoActive: Bool {
-        aiExecutionMode == .reviewDemo
     }
 
     var aiDataSharingConsentDescription: String {
@@ -379,35 +364,6 @@ final class Gate1AppModel: ObservableObject {
     private static func storedMediaSkipSeconds(forKey key: String) -> Int {
         let value = UserDefaults.standard.integer(forKey: key)
         return supportedMediaSkipSeconds.contains(value) ? value : 15
-    }
-
-    func unlockReviewDemo() {
-        let normalized = reviewDemoUnlockCode.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        guard normalized == "MARGINS-BETA-01" else {
-            reviewDemoStatus = "Code not recognized"
-            reportFailure("Review demo code not recognized.")
-            return
-        }
-        aiExecutionMode = .reviewDemo
-        UserDefaults.standard.set(aiExecutionMode.rawValue, forKey: "aiExecutionMode")
-        reviewDemoUnlockCode = ""
-        reviewDemoStatus = "Unlocked · simulated responses"
-        diagnostics["aiExecutionMode"] = aiExecutionMode.rawValue
-        _ = rebuildEngineForCurrentSettings()
-        if libraryItems.isEmpty {
-            addSampleItem()
-            diagnostics["reviewDemoSample"] = "seeded"
-        }
-        reportSuccess("Review Demo enabled. AI responses are simulated on device.")
-    }
-
-    func disableReviewDemo() {
-        aiExecutionMode = .liveOpenAI
-        UserDefaults.standard.set(aiExecutionMode.rawValue, forKey: "aiExecutionMode")
-        reviewDemoStatus = "Locked"
-        diagnostics["aiExecutionMode"] = aiExecutionMode.rawValue
-        _ = rebuildEngineForCurrentSettings()
-        reportSuccess("Review Demo disabled.")
     }
 
     func grantAIDataSharingConsent() {
@@ -706,7 +662,7 @@ final class Gate1AppModel: ObservableObject {
             status: "ready"
         )
         guard var map = parsed.deterministicListeningMap(itemId: itemId) else {
-            throw SessionKitError.persistenceFailed("review_demo_listening_map_missing")
+            throw SessionKitError.persistenceFailed("welcome_sample_listening_map_missing")
         }
         map.overview = "Take a guided tour of the Listening Map, playback navigation, spoken interjections, and the three ways to add your own sources."
         return (item, map)
@@ -1462,7 +1418,7 @@ final class Gate1AppModel: ObservableObject {
             reportSuccess("Preparing the podcast transcript for its Listening Map. Playback remains available.")
             return
         }
-        guard isReviewDemoActive || !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             run { engine in
                 snapshot = try engine.generateListeningMap(itemId: activeItemId)
                 if let store {
@@ -1478,7 +1434,7 @@ final class Gate1AppModel: ObservableObject {
             return
         }
 
-        guard isReviewDemoActive || aiDataSharingConsent == .grantedV1 else {
+        guard aiDataSharingConsent == .grantedV1 else {
             pendingMapGenerationAfterConsent = true
             isGeneratingListeningMap = false
             isAIDataSharingConsentPresented = true
@@ -1486,9 +1442,7 @@ final class Gate1AppModel: ObservableObject {
             return
         }
 
-        statusMessage = isReviewDemoActive
-            ? "Creating a simulated on-device Listening Map."
-            : "Calling \(modelForAIJob(kind: "listening_map")) for Listening Map."
+        statusMessage = "Calling \(modelForAIJob(kind: "listening_map")) for Listening Map."
         lastError = nil
         Task {
             await generateProviderListeningMap()
@@ -1536,7 +1490,7 @@ final class Gate1AppModel: ObservableObject {
         libraryItems = try loadLibraryRows(store: store)
         selectedItem = try loadItemDetail(id: item.id, store: store)
         diagnostics["lastGeneratedMapItem"] = item.id
-        diagnostics["lastListeningMapMode"] = isReviewDemoActive ? "review_demo" : "provider"
+        diagnostics["lastListeningMapMode"] = "provider"
         scheduleTextAudioPrewarmIfNeeded(itemId: item.id)
     }
 
@@ -4122,18 +4076,18 @@ final class Gate1AppModel: ObservableObject {
 
     private func submitProviderJobIfNeeded(kind: String, turnId: String, messages: [String], force: Bool = false) {
         guard force || snapshot.pendingAiJobStatus == "pending" else { return }
-        guard isReviewDemoActive || !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             markProviderFailure("provider_api_key_missing", userMessage: "AI provider API key required.")
             screen = .settings
             return
         }
-        guard isReviewDemoActive || aiDataSharingConsent == .grantedV1 else {
+        guard aiDataSharingConsent == .grantedV1 else {
             pendingProviderJobForConsent = PendingProviderJob(kind: kind, turnId: turnId, messages: messages, force: true)
             isAIDataSharingConsentPresented = true
             reportSuccess("Review how live AI uses this source before continuing.")
             return
         }
-        let selectedModel = isReviewDemoActive ? "review-demo" : modelForAIJob(kind: kind)
+        let selectedModel = modelForAIJob(kind: kind)
         recordModelForPendingJob(kind: kind, model: selectedModel)
         statusMessage = "Streaming \(selectedModel) for \(kind)."
         lastError = nil
@@ -4144,20 +4098,18 @@ final class Gate1AppModel: ObservableObject {
             while automaticAttempts < 2 {
                 do {
                     var completed = false
-                    let stream = isReviewDemoActive
-                        ? reviewDemoAIClient.stream(kind: kind, messages: messages)
-                        : openAIResponsesClient.stream(
-                            apiKey: providerAPIKey,
-                            model: selectedModel,
-                            instructions: systemPromptForAIJob(kind: kind),
-                            messages: messages
-                        )
+                    let stream = openAIResponsesClient.stream(
+                        apiKey: providerAPIKey,
+                        model: selectedModel,
+                        instructions: systemPromptForAIJob(kind: kind),
+                        messages: messages
+                    )
                     for try await event in stream {
                         guard let engine else { return }
                         switch event {
                         case .started(let responseId):
                             diagnostics["lastOpenAIResponseId"] = responseId ?? "pending"
-                            diagnostics["lastProviderTransport"] = isReviewDemoActive ? "review_demo" : "responses_sse"
+                            diagnostics["lastProviderTransport"] = "responses_sse"
                         case .textDelta(let delta):
                             receivedText = true
                             snapshot = try engine.aiStreamDelta(turnId: turnId, content: delta)
@@ -4262,16 +4214,12 @@ final class Gate1AppModel: ObservableObject {
         }
         do {
             let messages = [assistantChapterPrompt(responseText: text)]
-            let response = if isReviewDemoActive {
-                await reviewDemoAIClient.complete(kind: "assistant_chapters", messages: messages)
-            } else {
-                try await openAIResponsesClient.complete(
-                    apiKey: providerAPIKey,
-                    model: model,
-                    instructions: "Return only strict JSON for assistant response chapters. Do not use Markdown.",
-                    messages: messages
-                )
-            }
+            let response = try await openAIResponsesClient.complete(
+                apiKey: providerAPIKey,
+                model: model,
+                instructions: "Return only strict JSON for assistant response chapters. Do not use Markdown.",
+                messages: messages
+            )
             let chapters = try assistantChapters(from: response, responseText: text)
             if let engine {
                 snapshot = try engine.aiChaptersCompleted(turnId: turnId, chapters: chapters)
@@ -4322,13 +4270,6 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func callProvider(messages: [String], model: String, systemPrompt: String) async throws -> String {
-        if isReviewDemoActive {
-            diagnostics["lastProviderTransport"] = "review_demo"
-            return await reviewDemoAIClient.complete(
-                kind: systemPrompt.contains("Listening Map") ? "listening_map" : "assistant_response",
-                messages: messages
-            )
-        }
         guard !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ProviderCallError.missingAPIKey
         }
