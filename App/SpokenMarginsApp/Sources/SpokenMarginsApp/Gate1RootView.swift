@@ -931,6 +931,7 @@ private struct PlaybackScreen: View {
     @State private var selectedInterjection: Interjection?
     @State private var isPastingAssistantResponse = false
     @State private var scrubberSeconds = 0.0
+    @State private var scrubberTextOffset = 0.0
     @State private var isScrubbing = false
     @FocusState private var followUpFocused: Bool
 
@@ -1010,10 +1011,15 @@ private struct PlaybackScreen: View {
             }
             .onAppear {
                 scrubberSeconds = Double(model.snapshot.currentMediaTimeMs ?? 0) / 1_000
+                scrubberTextOffset = Double(model.snapshot.currentTextStart ?? 0)
             }
             .onChange(of: model.snapshot.currentMediaTimeMs) { _, mediaTimeMs in
                 guard !isScrubbing else { return }
                 scrubberSeconds = Double(mediaTimeMs ?? 0) / 1_000
+            }
+            .onChange(of: model.snapshot.currentTextStart) { _, textOffset in
+                guard !isScrubbing else { return }
+                scrubberTextOffset = Double(textOffset ?? 0)
             }
         }
     }
@@ -1079,6 +1085,31 @@ private struct PlaybackScreen: View {
                     Text(formatPlaybackTime(Int(scrubberDisplaySeconds * 1_000)))
                     Spacer()
                     Text("−\(formatPlaybackTime(max(0, mediaDurationMs - Int(scrubberDisplaySeconds * 1_000))))")
+                }
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(AppColors.watchSecondary)
+            }
+        } else if model.snapshot.targetType == TargetType.itemTextTTS.rawValue, textLength > 0 {
+            VStack(spacing: 6) {
+                Slider(
+                    value: Binding(
+                        get: { isScrubbing ? scrubberTextOffset : Double(model.snapshot.currentTextStart ?? 0) },
+                        set: { scrubberTextOffset = $0 }
+                    ),
+                    in: 0...Double(textLength),
+                    onEditingChanged: { editing in
+                        isScrubbing = editing
+                        if !editing { model.seekText(toCharOffset: Int(scrubberTextOffset)) }
+                    }
+                )
+                .tint(AppColors.accent)
+                .accessibilityLabel("Playback position")
+                .accessibilityValue("\(textScrubberPercent) percent")
+                .accessibilityIdentifier("playback.scrubber")
+                HStack {
+                    Text("\(textScrubberPercent)%")
+                    Spacer()
+                    Text("100%")
                 }
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(AppColors.watchSecondary)
@@ -1277,6 +1308,16 @@ private struct PlaybackScreen: View {
 
     private var scrubberDisplaySeconds: Double {
         isScrubbing ? scrubberSeconds : Double(model.snapshot.currentMediaTimeMs ?? 0) / 1_000
+    }
+
+    private var textLength: Int {
+        model.selectedItem.text.count
+    }
+
+    private var textScrubberPercent: Int {
+        guard textLength > 0 else { return 0 }
+        let offset = isScrubbing ? scrubberTextOffset : Double(model.snapshot.currentTextStart ?? 0)
+        return max(0, min(100, Int((offset / Double(textLength) * 100).rounded())))
     }
 
     private var timeline: some View {

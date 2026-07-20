@@ -16,6 +16,7 @@ targets:
           - SpokenMarginsApp/Gate3WatchConnectivityController.swift
           - SpokenMarginsApp/WatchPackageRenderCoordinator.swift
       - path: App/Gate2Shared/Sources
+      - path: App/SharedSources
       - path: Contracts/fixtures
         type: folder
       - path: Contracts/traces
@@ -40,6 +41,8 @@ targets:
         CURRENT_PROJECT_VERSION: "3"
         DEVELOPMENT_TEAM: J8SWC6J3VY
         INFOPLIST_FILE: App/SpokenMarginsApp/Info.plist
+        INFOPLIST_KEY_CFBundleDisplayName: Spoken Margins
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
         MARKETING_VERSION: "0.1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SWIFT_VERSION: "6.0"
@@ -128,6 +131,7 @@ targets:
           - Gate2CompactCommandQueue.swift
           - Gate2CompactCommandURL.swift
           - Gate2LiveActivityAttributes.swift
+      - path: App/SharedSources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.share
@@ -183,6 +187,7 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
+        DEVELOPMENT_TEAM: J8SWC6J3VY
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.tests
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/SpokenMarginsApp.app/SpokenMarginsApp"
         BUNDLE_LOADER: "$(TEST_HOST)"

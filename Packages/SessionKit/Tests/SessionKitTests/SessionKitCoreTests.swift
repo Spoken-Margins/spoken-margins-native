@@ -1249,7 +1249,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(interjection.anchor.anchorBefore, "Second sentence.")
     }
 
-    func testPreparedTextAudioAttachmentMigratesActiveLiveTextSessionToMedia() throws {
+    func testPreparedTextAudioAttachmentDoesNotReplaceActiveLiveTextSession() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
             displayName: "Phone/Tablet Online",
@@ -1296,15 +1296,13 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(engine.currentSession?.currentTargetType, .itemTextTTS)
         audio.currentOffset = 16
 
-        let migrated = try engine.attachPreparedTextAudio(itemId: item.id, prepared: prepared)
+        let retained = try engine.attachPreparedTextAudio(itemId: item.id, prepared: prepared)
 
-        XCTAssertEqual(migrated.targetType, TargetType.transcriptBackedMedia.rawValue)
-        XCTAssertEqual(migrated.targetId, "file:///tmp/live-to-media.caf")
-        XCTAssertEqual(migrated.currentMediaTimeMs, 1_000)
-        XCTAssertEqual(migrated.currentTranscriptSegmentId, "tts-2")
-        XCTAssertEqual(engine.currentSession?.currentTargetType, .transcriptBackedMedia)
-        XCTAssertEqual(audio.playedTargets.last, "file:///tmp/live-to-media.caf")
-        XCTAssertEqual(audio.playedOffsets.last, 1_000)
+        XCTAssertEqual(retained.targetType, TargetType.itemTextTTS.rawValue)
+        XCTAssertEqual(retained.currentTextStart, 16)
+        XCTAssertEqual(engine.currentSession?.currentTargetType, .itemTextTTS)
+        XCTAssertNotEqual(audio.playedTargets.last, "file:///tmp/live-to-media.caf")
+        XCTAssertEqual(try repo.loadItem(id: item.id).media?.url, "file:///tmp/live-to-media.caf")
     }
 
     func testPreparedTextAudioAttachmentReplacesStarterMediaWithoutLosingPlayhead() throws {
@@ -1709,6 +1707,70 @@ final class SessionKitCoreTests: XCTestCase {
         let snapshot = try engine.jumpToChapter(chapterId: target.id)
         XCTAssertEqual(snapshot.chapterTitle, target.title)
         XCTAssertEqual(engine.currentSession?.position.charOffset, target.startChar)
+    }
+
+    func testAttachingProviderListeningMapUpdatesActiveSessionChapterNavigation() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "timeline": ["chapter_timing"]
+            ]
+        )
+        let item = Item(
+            id: "item-provider-map",
+            title: "Provider Map",
+            mediaType: "text",
+            text: "Opening context. A navigable middle section. A final conclusion.",
+            externalReference: nil,
+            status: "needs_listening_map"
+        )
+        let map = ListeningMap(
+            id: "map-provider-map",
+            itemId: item.id,
+            overview: "A provider-generated map.",
+            chapters: [
+                Chapter(id: "ch-opening", title: "Opening", startChar: 0, endChar: 17, percent: 0),
+                Chapter(id: "ch-middle", title: "Middle", startChar: 17, endChar: 46, percent: 27)
+            ]
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        _ = try engine.attachListeningMap(map)
+        let jumped = try engine.jumpToChapter(chapterId: "ch-middle")
+
+        XCTAssertEqual(jumped.chapterTitle, "Middle")
+        XCTAssertEqual(engine.currentSession?.position.charOffset, 17)
+        XCTAssertEqual(try repo.loadItem(id: item.id).status, "ready")
+    }
+
+    func testSeekTextMovesAndRestartsActiveNativeTextPlayback() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"]
+            ]
+        )
+        let text = "First paragraph. Second paragraph. Third paragraph."
+        let item = Item(id: "item-text-seek", title: "Seekable", mediaType: "text", text: text, externalReference: nil, status: "ready")
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        let sought = try engine.seekText(toCharOffset: 28)
+
+        XCTAssertEqual(sought.currentTextStart, 28)
+        XCTAssertEqual(engine.currentSession?.position.charOffset, 28)
+        XCTAssertEqual(audio.playedOffsets.last, 28)
+        XCTAssertEqual(sought.phase, .itemPlayback)
     }
 
     func testStartSessionSpeaksListeningMapOverviewBeforeItemText() throws {

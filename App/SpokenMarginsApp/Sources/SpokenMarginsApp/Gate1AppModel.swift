@@ -750,12 +750,11 @@ final class Gate1AppModel: ObservableObject {
             return try String(contentsOf: url, encoding: .utf8)
         }
         #if canImport(PDFKit)
-        guard let document = PDFDocument(url: url),
-              let text = document.string?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !text.isEmpty else {
+        do {
+            return try PDFStructuredTextExtractor.markdown(from: url)
+        } catch PDFStructuredTextExtractor.ExtractionError.noExtractableText {
             throw SourceFileImportError.pdfHasNoExtractableText
         }
-        return text
         #else
         throw SourceFileImportError.pdfImportUnavailable
         #endif
@@ -1447,7 +1446,11 @@ final class Gate1AppModel: ObservableObject {
 
     private func saveProviderListeningMapResponse(_ response: String, item: inout Item, store: SQLiteSessionStore) throws {
         let map = try parseListeningMapJSON(response, item: item)
-        try store.saveListeningMap(map)
+        if let engine {
+            snapshot = try engine.attachListeningMap(map)
+        } else {
+            try store.saveListeningMap(map)
+        }
         item.status = "ready"
         try store.saveItem(item)
         libraryItems = try loadLibraryRows(store: store)
@@ -1475,7 +1478,11 @@ final class Gate1AppModel: ObservableObject {
             let store = try requireStore()
             var item = try store.loadItem(id: activeItemId)
             let map = try parseListeningMapJSON(listeningMapJSON, item: item)
-            try store.saveListeningMap(map)
+            if let engine {
+                snapshot = try engine.attachListeningMap(map)
+            } else {
+                try store.saveListeningMap(map)
+            }
             item.status = "ready"
             try store.saveItem(item)
             libraryItems = try loadLibraryRows(store: store)
@@ -1765,6 +1772,13 @@ final class Gate1AppModel: ObservableObject {
     func seekMedia(toMediaTimeMs mediaTimeMs: Int) {
         run { engine in
             snapshot = try engine.seekMedia(toMediaTimeMs: mediaTimeMs)
+            refreshSelectedItem()
+        }
+    }
+
+    func seekText(toCharOffset charOffset: Int) {
+        run { engine in
+            snapshot = try engine.seekText(toCharOffset: charOffset)
             refreshSelectedItem()
         }
     }
@@ -3879,7 +3893,10 @@ final class Gate1AppModel: ObservableObject {
         #endif
         diagnostics["sessionTTS"] = "System speech"
         return RoutedAudioPlaybackClient(
-            speech: SystemSpeechPlaybackClient(),
+            speech: SystemSpeechPlaybackClient(
+                voiceIdentifier: selectedVoice.isEmpty ? nil : selectedVoice,
+                speechRate: Float(speechRate)
+            ),
             media: makeMediaPlaybackClient()
         )
     }
@@ -4214,13 +4231,31 @@ final class Gate1AppModel: ObservableObject {
         }
         diagnostics["lastProviderRequestURL"] = OpenAIResponsesClient.endpoint.absoluteString
         diagnostics["lastProviderRequestStartedAt"] = "\(Date().timeIntervalSince1970)"
-        diagnostics["lastProviderTransport"] = "responses"
-        return try await openAIResponsesClient.complete(
+        diagnostics["lastProviderTransport"] = "responses_stream"
+        var responseText = ""
+        var completed = false
+        for try await event in openAIResponsesClient.stream(
             apiKey: providerAPIKey,
             model: model,
             instructions: systemPrompt,
             messages: messages
-        )
+        ) {
+            switch event {
+            case .started(let responseId):
+                diagnostics["lastOpenAIResponseId"] = responseId ?? diagnostics["lastOpenAIResponseId"]
+            case .textDelta(let delta):
+                responseText += delta
+            case .completed(let responseId):
+                diagnostics["lastOpenAIResponseId"] = responseId ?? diagnostics["lastOpenAIResponseId"]
+                completed = true
+            }
+        }
+        guard completed else {
+            throw OpenAIResponsesError.api("OpenAI ended the Listening Map stream before response.completed.")
+        }
+        let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw OpenAIResponsesError.emptyResponse }
+        return trimmed
     }
 
     private func performProviderDataRequest(_ request: URLRequest, timeoutSeconds: TimeInterval = 30) async throws -> (Data, URLResponse) {
@@ -5305,7 +5340,9 @@ final class Gate1AppModel: ObservableObject {
 
     private func reportFailure(_ error: Error, context: String? = nil) {
         let message: String
-        if let localized = error as? LocalizedError,
+        if let urlError = error as? URLError, urlError.code == .timedOut {
+            message = "The request timed out. Please try again."
+        } else if let localized = error as? LocalizedError,
            let description = localized.errorDescription {
             message = description
         } else {

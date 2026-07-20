@@ -121,7 +121,7 @@ struct OpenAIResponsesClient: Sendable {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         // URLSession treats this as the request inactivity timeout; incoming SSE data resets progress.
-        request.timeoutInterval = 30
+        request.timeoutInterval = 90
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(trimmedKey)", forHTTPHeaderField: "Authorization")
         request.httpBody = try? JSONEncoder().encode(RequestPayload(

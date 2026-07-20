@@ -358,17 +358,14 @@ public final class SessionEngine {
             currentItem = updated
             if let session = currentSession, session.itemId == updated.id {
                 if session.currentTargetType == .itemTextTTS, session.phase == .itemPlayback {
-                    var migrated = syncSessionPositionFromAudio(session, item: updated)
-                    migrated.currentTargetType = .transcriptBackedMedia
-                    migrated.currentTargetId = itemPlaybackTargetId(for: updated, targetType: .transcriptBackedMedia)
-                    migrated.position.mediaTimeMs = mediaTimeMs(forTextOffset: migrated.position.charOffset, timeline: prepared.timeline)
-                    migrated = mediaSession(migrated, movedTo: migrated.position.mediaTimeMs ?? 0)
-                    currentSession = migrated
-                    try repository.saveSession(migrated)
-                    if snapshot.status.isPlaybackActive {
-                        try playCurrentTarget(migrated)
-                    }
-                    publishPlaybackContinuation(for: migrated)
+                    // Do not replace a live AVSpeechSynthesizer utterance mid-session.
+                    // The prepared file is retained for the next session; switching
+                    // transports here can produce an audible voice change and reset
+                    // the user's current narration cadence.
+                    let synchronized = syncSessionPositionFromAudio(session, item: updated)
+                    currentSession = synchronized
+                    try repository.saveSession(synchronized)
+                    publish(status: snapshot.status, phase: synchronized.phase)
                 } else if session.currentTargetType == .transcriptBackedMedia,
                           item.media?.sourceType == .generatedTTSPrerendered,
                           updated.media?.sourceType == .generatedTTSPrerendered {
@@ -417,6 +414,36 @@ public final class SessionEngine {
         } else {
             try audio.seek(toMediaTimeMs: updated.position.mediaTimeMs ?? 0)
             publish(status: snapshot.status, phase: updated.phase)
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func seekText(toCharOffset charOffset: Int) throws -> SessionSnapshot {
+        try requirePlayback("seekText")
+        guard var session = currentSession,
+              session.currentTargetType == .itemTextTTS,
+              let item = currentItem ?? (try? repository.loadItem(id: session.itemId)),
+              let text = item.text,
+              !text.isEmpty else {
+            throw SessionKitError.invalidCommandForState("seekText")
+        }
+        currentItem = item
+        session.position.charOffset = max(0, min(charOffset, text.count))
+        session.position.mediaTimeMs = nil
+        session.position.chapterId = chapterId(for: session.position.charOffset)
+        session.completionPercent = percent(for: session.position.charOffset, text: text)
+        session.phase = session.position.charOffset >= text.count ? .finished : .itemPlayback
+        currentSession = session
+        try repository.saveSession(session)
+        if session.phase == .finished {
+            try audio.stop()
+            publish(status: .paused, phase: .finished)
+        } else if snapshot.status.isPlaybackActive {
+            try playCurrentTarget(session)
+            publishPlaybackContinuation(for: session)
+        } else {
+            publish(status: snapshot.status, phase: session.phase)
         }
         return snapshot
     }
@@ -578,6 +605,34 @@ public final class SessionEngine {
             } else {
                 snapshot.title = item.title
             }
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func attachListeningMap(_ map: ListeningMap) throws -> SessionSnapshot {
+        try require("attachListeningMap", category: "sync", capabilities: ["canonical_persistence"])
+        var item = try repository.loadItem(id: map.itemId)
+        try repository.saveListeningMap(map)
+        if item.status == "needs_listening_map" {
+            item.status = "ready"
+            try repository.saveItem(item)
+        }
+        guard currentItem?.id == map.itemId || currentSession?.itemId == map.itemId else {
+            return snapshot
+        }
+        currentItem = item
+        currentMap = map
+        if var session = currentSession, session.itemId == map.itemId {
+            if session.currentTargetType == .itemTextTTS {
+                session.position.chapterId = chapterId(for: session.position.charOffset)
+                currentSession = session
+                try repository.saveSession(session)
+            }
+            publish(status: snapshot.status, phase: session.phase)
+        } else {
+            snapshot.itemId = item.id
+            snapshot.title = item.title
         }
         return snapshot
     }

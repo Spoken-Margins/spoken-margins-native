@@ -50,6 +50,7 @@ final class Gate1ProviderRequestFactoryTests: XCTestCase {
             stream: true
         ))
         XCTAssertEqual(request.url?.absoluteString, "https://api.openai.com/v1/responses")
+        XCTAssertEqual(request.timeoutInterval, 90)
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer secret")
         let data = try XCTUnwrap(request.httpBody)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])

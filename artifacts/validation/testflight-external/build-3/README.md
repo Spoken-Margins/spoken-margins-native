@@ -31,20 +31,24 @@
 - Network source imports accept HTTPS only.
 - Public privacy/support pages are under `Site/` and are published at the dedicated VPS host `spokenmargins.proximitytoprogress.com`.
 - The production app icon is in the app asset catalog.
+- Listening Map responses now stream, use a longer inactivity timeout, present concise timeout copy, and attach to the active session so newly shown chapters are immediately navigable.
+- Native-text playback has a seek slider, and a selected system voice remains fixed for the life of the session. Background prepared audio is cached for the next session instead of replacing live speech mid-session.
+- PDF imports infer Markdown-style headings from PDF outlines and typography, allowing structured PDFs to receive deterministic Listening Maps without an AI request.
+- The Share extension accepts PDF, Markdown, and plain-text files and routes PDF/text content through the same import handoff as in-app file imports.
 
 ## Automated verification
 
 - `python3 scripts/validate-contracts.py` — passed.
 - `python3 scripts/validate-surface-contracts.py` — passed.
-- `swift test --package-path Packages/SessionKit` — 95 tests passed, including schema and quarantine coverage.
-- `SpokenMarginsAppTests` on iPhone 16 Pro / iOS 18.6 simulator — 65 tests passed across the full run plus focused HTTPS and Keychain regressions.
+- `swift test --package-path Packages/SessionKit` — 98 tests passed, including active-map reconciliation, native-text seeking, and stable live-text playback coverage.
+- `SpokenMarginsAppTests` on iPhone 16 Pro / iOS 18.6 simulator — 72 tests passed, including heading-aware PDF import and prepared-audio voice-stability regressions.
 - Broad UI routes — all 5 passed across the initial run and focused reruns: playback/export/settings, manual map import, generated-turn timeline, active-session export isolation, compact controls.
 - Debug simulator build — passed.
 - Release simulator build — passed; developer-tool strings absent from the executable.
 - Generic iOS Release build without signing — passed.
 - Signed generic iOS Release build — passed for the app and all three extensions.
-- Release `.xcarchive` at `/tmp/SpokenMarginsBuild3-final.xcarchive` — passed; arm64, version `0.1` build `3`, four privacy manifests, all extension build numbers `3`.
-- App Store Connect export — blocked because Xcode currently exposes only the free Personal Team and has no App Store distribution profiles; details below.
+- The previous Release `.xcarchive` at `/tmp/SpokenMarginsBuild3-final.xcarchive` passed, but it predates the current uncommitted fixes and is superseded. Create and inspect a fresh archive before upload.
+- App Store Connect export — pending a fresh archive and confirmation that the renewed paid team and App Store profiles are visible to Xcode; details below.
 - Production website — verified July 20, 2026: home, privacy, support, and stylesheet return HTTP 200 over HTTPS; the hostname has a valid Let's Encrypt certificate.
 
 ## Review notes
@@ -62,7 +66,7 @@ AI is optional. To review AI without an API key or network dependency:
 
 Review Demo is deterministic and entirely on-device. For live OpenAI testing, enter a reviewer-owned OpenAI API key. At the first live AI action, the app explains the text categories sent and requires explicit permission. Permission can be revoked and the key deleted in Settings.
 
-The Share extension accepts an explicitly shared web page/URL, text, Markdown, or plain-text file. The Safari extension reads the current page only after the reviewer invokes its action; it has no blanket host permission or persistent content script.
+The Share extension accepts an explicitly shared web page/URL, text, PDF, Markdown, or plain-text file. The Safari extension reads the current page only after the reviewer invokes its action; it has no blanket host permission or persistent content script.
 
 ## Reset and diagnostics
 
@@ -81,6 +85,11 @@ Record pass/fail and notes for every line before marking this build `human_valid
 - [ ] A live AI action presents the disclosure before transmission; decline sends nothing; allow completes; revoke prompts again.
 - [ ] API key survives relaunch and Delete API Key removes it.
 - [ ] Text/Markdown import, source listening, play/pause, skip, chapter jump, background audio, lock-screen controls, and relaunch resume behave correctly.
+- [ ] Generate a Listening Map for a long PDF; if the request fails or is retried, any map that appears can jump chapters immediately without ending and restarting the session.
+- [ ] During native-text playback, scrub both backward and forward and confirm playback resumes near the selected position.
+- [ ] Listen to native text with the preferred app voice for at least two minutes and confirm it never alternates with the accessibility/default voice.
+- [ ] Import a PDF with visible section headings and confirm a heading-derived Listening Map appears without an AI request.
+- [ ] From Files or another app, share one PDF and one plain-text file to Spoken Margins and confirm both arrive in the library with readable titles and content.
 - [ ] Microphone permission, interjection recording, transcription, summary, follow-up, and export behave correctly.
 - [ ] Recently Deleted restore and permanent deletion behave correctly.
 - [ ] Widget/Live Activity shows current playback and delegates supported controls.
@@ -98,13 +107,13 @@ Record pass/fail and notes for every line before marking this build `human_valid
 
 ## Remaining external submission blockers and actions
 
-1. Complete or confirm Apple Developer Program enrollment for `cmlax7@gmail.com`, then open Xcode → Settings → Apple Accounts. Xcode currently shows that account but only the free `Personal Team`, which cannot distribute through TestFlight.
-2. Select the paid Apple Developer Program team in Signing & Capabilities, then refresh/create App Store distribution profiles for:
+1. Apple Developer Program membership was renewed by the product owner. Open Xcode → Settings → Apple Accounts and confirm the paid team now appears, then refresh signing assets.
+2. Select the paid Apple Developer Program team in Signing & Capabilities and refresh/create App Store distribution profiles for:
    - `com.spokenmargins.native`
    - `com.spokenmargins.native.gate2widget`
    - `com.spokenmargins.native.share`
    - `com.spokenmargins.native.browsertext`
-3. Re-run archive export with `Config/ExportOptions-TestFlight.plist`. Current failure: exit 70, no App Store profiles for the four bundle IDs.
+3. Commit the current fixes, record the final SHA above, create a fresh Release archive, and export it with `Config/ExportOptions-TestFlight.plist`. If export still reports missing profiles, capture the new error after the paid-team refresh rather than relying on the pre-renewal exit-70 result.
 4. In App Store Connect, set the Support URL, Privacy Policy URL, review notes, and review code exactly as above.
 5. Complete App Privacy consistently with the manifest: no tracking; Other User Content, linked, used for App Functionality; no developer analytics/advertising collection.
 6. Answer export compliance as no non-exempt encryption; the bundle sets `ITSAppUsesNonExemptEncryption` to false.

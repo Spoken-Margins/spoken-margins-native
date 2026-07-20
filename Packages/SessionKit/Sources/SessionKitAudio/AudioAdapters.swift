@@ -158,11 +158,12 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
             try fileManager.removeItem(at: outputURL)
         }
         let accumulator = AudioFileAccumulator(outputURL: outputURL)
+        let synthesizer = AVSpeechSynthesizer()
         var renderedSegments: [MediaTimelineSegment] = []
         var cursorMs = 0
         for (index, segment) in segments.enumerated() {
             let framesBefore = accumulator.totalFrames
-            try writeUtterance(segment.text, accumulator: accumulator)
+            try writeUtterance(segment.text, synthesizer: synthesizer, accumulator: accumulator)
             let frameDelta = max(0, accumulator.totalFrames - framesBefore)
             let segmentDurationMs = accumulator.milliseconds(forFrameCount: frameDelta)
             let endMs = cursorMs + max(1, segmentDurationMs)
@@ -186,7 +187,11 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
         )
     }
 
-    private func writeUtterance(_ text: String, accumulator: AudioFileAccumulator) throws {
+    private func writeUtterance(
+        _ text: String,
+        synthesizer: AVSpeechSynthesizer,
+        accumulator: AudioFileAccumulator
+    ) throws {
         let utterance = AVSpeechUtterance(string: text)
         utterance.rate = speechRate
         utterance.preUtteranceDelay = 0
@@ -195,7 +200,6 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
            let configuredVoice = AVSpeechSynthesisVoice(identifier: voiceIdentifier) {
             utterance.voice = configuredVoice
         }
-        let synthesizer = AVSpeechSynthesizer()
         let semaphore = DispatchSemaphore(value: 0)
         let callbackState = SpeechWriteCallbackState()
         synthesizer.write(utterance) { buffer in

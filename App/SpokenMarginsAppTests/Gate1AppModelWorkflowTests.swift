@@ -82,7 +82,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.canPlayLiveSpeechInstead)
     }
 
-    func testTextImportStartsLiveSpeechWhilePreparedMediaRendersInBackground() async throws {
+    func testTextImportKeepsLiveSpeechStableWhilePreparedMediaRendersInBackground() async throws {
         let prewarm = PreparedTextAudioPrewarmProbe()
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
@@ -111,8 +111,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         }
 
         XCTAssertEqual(model.snapshot.preparedTextAudioStatus, "ready")
-        XCTAssertEqual(model.snapshot.targetType, TargetType.transcriptBackedMedia.rawValue)
-        XCTAssertEqual(model.snapshot.targetId, "file:///tmp/\(request.itemId)-full.caf")
+        XCTAssertEqual(model.snapshot.targetType, TargetType.itemTextTTS.rawValue)
+        XCTAssertEqual(model.snapshot.targetId, request.itemId)
         XCTAssertFalse(model.canPlayLiveSpeechInstead)
     }
 
@@ -251,6 +251,42 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         XCTAssertEqual(model.selectedItem.title, "Readable PDF")
         XCTAssertTrue(model.selectedItem.text.contains("A readable PDF paragraph for Spoken Margins."))
+    }
+
+    func testPDFVisualHeadingsPrebuildDeterministicListeningMap() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "spoken-margins-structured-pdf-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appending(path: "Structured PDF.pdf")
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        try renderer.writePDF(to: file) { context in
+            context.beginPage()
+            var y: CGFloat = 30
+            func draw(_ text: String, size: CGFloat, bold: Bool = false) {
+                (text as NSString).draw(
+                    at: CGPoint(x: 40, y: y),
+                    withAttributes: [.font: bold ? UIFont.boldSystemFont(ofSize: size) : UIFont.systemFont(ofSize: size)]
+                )
+                y += size + 13
+            }
+            draw("A Structured Report", size: 26, bold: true)
+            for section in ["Context", "Evidence", "Tradeoffs", "Recommendations", "Conclusion"] {
+                draw(section, size: 18, bold: true)
+                draw("This section contains enough readable body text to establish the ordinary document font size.", size: 12)
+            }
+        }
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+
+        model.importObsidianMarkdownFiles(urls: [file])
+        try await waitFor("structured PDF import to finish") {
+            !model.isImportingSources
+        }
+
+        XCTAssertEqual(model.selectedItem.title, "A Structured Report")
+        XCTAssertEqual(model.selectedItem.chapters.map(\.title), ["Context", "Evidence", "Tradeoffs", "Recommendations", "Conclusion"])
+        XCTAssertEqual(model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.status, "Ready to listen")
     }
     #endif
 

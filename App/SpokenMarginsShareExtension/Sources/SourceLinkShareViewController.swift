@@ -71,10 +71,11 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         // before the generic URL representation supplied by the same share.
         let preferredIdentifiers = [
             UTType.propertyList.identifier,
+            UTType.pdf.identifier,
             UTType.fileURL.identifier,
-            UTType.url.identifier,
             UTType.plainText.identifier,
-            UTType.text.identifier
+            UTType.text.identifier,
+            UTType.url.identifier
         ]
         let candidates = providers.flatMap { provider -> [ProviderCandidate] in
             let identifiers = preferredIdentifiers.filter(provider.hasItemConformingToTypeIdentifier)
@@ -94,6 +95,33 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
             return
         }
         let candidate = candidates[index]
+        let candidateType = UTType(candidate.identifier)
+        if candidateType?.conforms(to: .pdf) == true || candidateType?.conforms(to: .text) == true {
+            candidate.provider.loadFileRepresentation(forTypeIdentifier: candidate.identifier) { [weak self] url, _ in
+                if let url,
+                   let payload = Self.browserPayloadFromFile(
+                       url,
+                       identifier: candidate.identifier,
+                       suggestedName: candidate.provider.suggestedName
+                   ) {
+                    completion(.success(.browserText(payload)))
+                } else {
+                    DispatchQueue.main.async {
+                        self?.loadCandidateItem(candidate, candidates: candidates, index: index, completion: completion)
+                    }
+                }
+            }
+            return
+        }
+        loadCandidateItem(candidate, candidates: candidates, index: index, completion: completion)
+    }
+
+    private func loadCandidateItem(
+        _ candidate: ProviderCandidate,
+        candidates: [ProviderCandidate],
+        index: Int,
+        completion: @escaping ExtractionCompletion
+    ) {
         candidate.provider.loadItem(forTypeIdentifier: candidate.identifier, options: nil) { [weak self] item, _ in
             if let sharedImport = Self.sharedImport(from: item, identifier: candidate.identifier) {
                 completion(.success(sharedImport))
@@ -218,24 +246,43 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         return nil
     }
 
-    nonisolated private static func browserPayloadFromFile(_ url: URL, identifier: String) -> BrowserTextSharePayload? {
+    nonisolated private static func browserPayloadFromFile(
+        _ url: URL,
+        identifier: String,
+        suggestedName: String? = nil
+    ) -> BrowserTextSharePayload? {
         let fileExtension = url.pathExtension.lowercased()
         let declaredType = UTType(identifier)
-        guard ["md", "markdown", "txt"].contains(fileExtension) || declaredType?.conforms(to: .text) == true else { return nil }
+        let isPDF = fileExtension == "pdf" || declaredType?.conforms(to: .pdf) == true
+        guard isPDF || ["md", "markdown", "txt"].contains(fileExtension) || declaredType?.conforms(to: .text) == true else { return nil }
         let didAccess = url.startAccessingSecurityScopedResource()
         defer {
             if didAccess { url.stopAccessingSecurityScopedResource() }
         }
-        guard let text = try? String(contentsOf: url, encoding: .utf8),
+        let extractedText: String?
+        if isPDF {
+            extractedText = try? PDFStructuredTextExtractor.markdown(from: url)
+        } else {
+            extractedText = try? String(contentsOf: url, encoding: .utf8)
+        }
+        guard let text = extractedText,
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }
-        let isMarkdown = fileExtension == "md" || fileExtension == "markdown"
+        let isMarkdown = isPDF || fileExtension == "md" || fileExtension == "markdown"
+        let sourceFileName = suggestedName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? suggestedName!
+            : url.lastPathComponent
+        let sourceTitle = (sourceFileName as NSString).deletingPathExtension
+        let encodedFileName = sourceFileName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "shared-file"
         return BrowserTextSharePayload(
             id: "browser-text-\(UUID().uuidString)",
             captureMode: isMarkdown ? "markdown_file" : "plain_text_file",
             contentFormat: isMarkdown ? "markdown" : "plain_text",
-            source: .init(url: url.absoluteString, title: url.deletingPathExtension().lastPathComponent),
+            source: .init(
+                url: "shared-file://share-sheet/\(encodedFileName)",
+                title: sourceTitle.isEmpty ? "Shared File" : sourceTitle
+            ),
             text: text
         )
     }
@@ -302,7 +349,7 @@ private enum SourceLinkShareError: Error, LocalizedError {
         case .noInput:
             return "No shared input was provided."
         case .unsupportedInput:
-            return "Spoken Margins could not read this share. Share a web page, podcast link, Markdown file, or text file."
+            return "Spoken Margins could not read this share. Share a web page, podcast link, PDF, Markdown file, or text file."
         }
     }
 }
