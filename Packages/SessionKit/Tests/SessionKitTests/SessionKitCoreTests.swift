@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 @testable import SessionKit
 import SessionKitPersistence
+@testable import SessionKitAudio
 
 final class SessionKitCoreTests: XCTestCase {
     func testSpeechNormalizationPreservesSource() {
@@ -9,6 +10,50 @@ final class SessionKitCoreTests: XCTestCase {
         let spoken = SpeechTextNormalizer.normalize(source)
         XCTAssertEqual(spoken, "A reference and plus.")
         XCTAssertTrue(source.contains("https://example.com/x"))
+    }
+
+    func testSpeechNormalizationMapsSpokenTextBackToSourceOffsets() {
+        let source = "Read [the reference](https://example.com/x) now."
+        let normalized = SpeechTextNormalizer.normalizeWithSourceOffsets(source)
+        let spokenOffset = normalized.text.distance(
+            from: normalized.text.startIndex,
+            to: normalized.text.range(of: "reference")!.lowerBound
+        )
+        let expectedSourceOffset = source.distance(
+            from: source.startIndex,
+            to: source.range(of: "reference")!.lowerBound
+        )
+
+        XCTAssertEqual(normalized.text, "Read the reference now.")
+        XCTAssertEqual(normalized.sourceOffset(atSpokenCharacterOffset: spokenOffset), expectedSourceOffset)
+        XCTAssertEqual(normalized.sourceOffset(atSpokenCharacterOffset: normalized.text.count), source.count)
+    }
+
+    func testLiveSpeechPlannerBoundsLongDocumentsWithoutTreatingFirstChunkAsCompletion() {
+        let preface = "A short listening overview.\n\n"
+        let paragraph = "This paragraph explains one part of the document in enough detail to exercise continuous spoken playback. "
+        let source = preface + Array(repeating: paragraph, count: 40).joined()
+
+        let chunks = SpeechPlaybackPlanner.chunks(in: source, from: 0, targetChunkCharacters: 360)
+
+        XCTAssertGreaterThan(chunks.count, 2)
+        XCTAssertLessThan(chunks[0].sourceEnd, source.count)
+        XCTAssertEqual(chunks.last?.sourceEnd, source.count)
+        XCTAssertTrue(chunks.allSatisfy { !$0.spokenText.isEmpty && $0.sourceStart < $0.sourceEnd })
+        XCTAssertTrue(chunks.allSatisfy { $0.spokenText.count <= 720 })
+        XCTAssertTrue(zip(chunks, chunks.dropFirst()).allSatisfy { $0.sourceEnd <= $1.sourceStart })
+    }
+
+    func testLiveSpeechChunkMapsUTF16RangesAcrossEmojiAndRemovedURLs() throws {
+        let source = "Intro 😀 read [the reference](https://example.com/path) and finish."
+        let chunk = try XCTUnwrap(SpeechPlaybackPlanner.chunks(in: source, from: 0).first)
+        let spokenRange = (chunk.spokenText as NSString).range(of: "finish")
+        let expected = source.distance(
+            from: source.startIndex,
+            to: try XCTUnwrap(source.range(of: "finish")).lowerBound
+        )
+
+        XCTAssertEqual(chunk.sourceOffset(atSpokenUTF16Offset: spokenRange.location), expected)
     }
 
     func testObsidianWebClipperImportCleansTranscriptTimestampsAndMetadata() throws {
@@ -2369,6 +2414,35 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertTrue(second.spokenUnits.isEmpty)
         XCTAssertEqual(completed.spokenUnits, ["Final fragment"])
         XCTAssertEqual(try repo.loadTurns(sessionId: session.id).first?.text, "First sentence. Final fragment")
+    }
+
+    func testStreamingTurnPausesPriorAudioAndFinishesAtItsOwnEnd() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts", "assistant_turn_tts"]
+            ]
+        )
+        let item = Item(id: "item-stream", title: "Stream", mediaType: "text", text: "Source text continues.", externalReference: nil, status: "ready")
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentOffset = 7
+        _ = try engine.aiStreamDelta(turnId: "turn-response-stream", content: "First response. Final fragment")
+        let active = try engine.activateStreamingTurn(turnId: "turn-response-stream")
+        _ = try engine.aiJobCompleted(turnId: "turn-response-stream")
+        let finished = try engine.finishStreamingTurnPlayback(turnId: "turn-response-stream")
+
+        XCTAssertEqual(audio.pauseCount, 1)
+        XCTAssertEqual(active.targetId, "turn-response-stream")
+        XCTAssertEqual(active.status, .playing)
+        XCTAssertEqual(finished.status, .paused)
+        XCTAssertEqual(finished.phase, .aiResponsePlayback)
+        XCTAssertEqual(engine.currentSession?.position.charOffset, "First response. Final fragment".count)
     }
 
     func testInterjectionDuringExternallyStreamedSpeechTargetsCurrentAssistantSentenceWithoutDoubleResume() throws {

@@ -1062,6 +1062,10 @@ public final class SessionEngine {
         let targetType: TargetType = turn?.turnType == "interjection_summary" ? .summaryTurnTTS : .assistantTurnTTS
         let phase: SessionPhase = targetType == .summaryTurnTTS ? .summaryPlayback : .aiResponsePlayback
 
+        if session.currentTargetId != turnId, snapshot.status.isPlaybackActive {
+            session = try syncCurrentPositionFromAudio(session)
+            try audio.pause()
+        }
         externallyStreamedTurnId = turnId
         if session.currentTargetId != turnId || session.currentTargetType != targetType {
             session.currentTargetType = targetType
@@ -1072,6 +1076,25 @@ public final class SessionEngine {
         currentSession = session
         try repository.saveSession(session)
         publish(status: .playing, phase: phase)
+        return snapshot
+    }
+
+    @discardableResult
+    public func finishStreamingTurnPlayback(turnId: String) throws -> SessionSnapshot {
+        guard var session = currentSession,
+              externallyStreamedTurnId == turnId,
+              session.currentTargetId == turnId,
+              session.currentTargetType == .summaryTurnTTS || session.currentTargetType == .assistantTurnTTS else {
+            return snapshot
+        }
+        let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == turnId })
+        let text = turn.map { generatedTurnNavigationText(for: $0) } ?? ""
+        session.position.charOffset = text.count
+        session.position.chapterId = turn?.chapters?.last?.id
+        externallyStreamedTurnId = nil
+        currentSession = session
+        try repository.saveSession(session)
+        publish(status: .paused, phase: session.phase)
         return snapshot
     }
 

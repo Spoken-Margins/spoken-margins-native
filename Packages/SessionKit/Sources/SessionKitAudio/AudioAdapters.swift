@@ -438,6 +438,84 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
     #endif
 }
 
+struct SpeechPlaybackChunk: Equatable, Sendable {
+    var sourceStart: Int
+    var sourceEnd: Int
+    var spokenText: String
+    var spokenSourceOffsets: [Int]
+
+    func sourceOffset(atSpokenUTF16Offset utf16Offset: Int) -> Int {
+        guard !spokenSourceOffsets.isEmpty else { return sourceEnd }
+        let clamped = max(0, min(utf16Offset, spokenText.utf16.count))
+        let index = String.Index(utf16Offset: clamped, in: spokenText)
+        let characterOffset = spokenText.distance(from: spokenText.startIndex, to: index)
+        guard characterOffset < spokenSourceOffsets.count else { return sourceEnd }
+        return spokenSourceOffsets[characterOffset]
+    }
+}
+
+enum SpeechPlaybackPlanner {
+    static func chunks(
+        in source: String,
+        from requestedOffset: Int,
+        targetChunkCharacters: Int = 700
+    ) -> [SpeechPlaybackChunk] {
+        let characters = Array(source)
+        let start = max(0, min(requestedOffset, characters.count))
+        let target = max(240, targetChunkCharacters)
+        var chunks: [SpeechPlaybackChunk] = []
+        var fragment: [Character] = []
+        var fragmentStart = start
+
+        func appendFragment() {
+            var lower = 0
+            var upper = fragment.count
+            while lower < upper, fragment[lower].isWhitespace { lower += 1 }
+            while upper > lower, fragment[upper - 1].isWhitespace { upper -= 1 }
+            guard lower < upper else {
+                if !chunks.isEmpty {
+                    chunks[chunks.count - 1].sourceEnd = fragmentStart + fragment.count
+                }
+                fragment.removeAll(keepingCapacity: true)
+                return
+            }
+            let sourceStart = fragmentStart + lower
+            let sourceEnd = fragmentStart + fragment.count
+            let trimmed = String(fragment[lower..<upper])
+            let normalized = SpeechTextNormalizer.normalizeWithSourceOffsets(trimmed)
+            guard !normalized.text.isEmpty else {
+                fragment.removeAll(keepingCapacity: true)
+                return
+            }
+            chunks.append(SpeechPlaybackChunk(
+                sourceStart: sourceStart,
+                // Treat whitespace removed at the end of the fragment as
+                // consumed source so the final chunk reaches document EOF.
+                sourceEnd: sourceEnd,
+                spokenText: normalized.text,
+                spokenSourceOffsets: normalized.sourceOffsets.map { sourceStart + $0 }
+            ))
+            fragment.removeAll(keepingCapacity: true)
+        }
+
+        for offset in start..<characters.count {
+            if fragment.isEmpty { fragmentStart = offset }
+            let character = characters[offset]
+            fragment.append(character)
+            let previous = fragment.dropLast().last
+            let paragraphBoundary = character == "\n" && previous == "\n" && fragment.count >= 24
+            let sentenceBoundary = ".!?".contains(character) && fragment.count >= target / 2
+            let lengthBoundary = fragment.count >= target && character.isWhitespace
+            let hardBoundary = fragment.count >= target * 2
+            if paragraphBoundary || sentenceBoundary || lengthBoundary || hardBoundary {
+                appendFragment()
+            }
+        }
+        appendFragment()
+        return chunks
+    }
+}
+
 public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unchecked Sendable {
     #if canImport(AVFoundation)
     private var synthesizer = AVSpeechSynthesizer()
@@ -459,7 +537,8 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
     private let readsSpeechSettingsAtPlayback: Bool
     #if canImport(AVFoundation)
     private weak var activeUtterance: AVSpeechUtterance?
-    private var intentionallyStoppedUtteranceIds = Set<ObjectIdentifier>()
+    private var chunksByUtteranceId: [ObjectIdentifier: SpeechPlaybackChunk] = [:]
+    private var finalUtteranceId: ObjectIdentifier?
     #endif
 
     public override init() {
@@ -517,31 +596,21 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
 
     public func play(targetId: String, from charOffset: Int) throws {
         #if canImport(AVFoundation)
-        let textToSpeak = speechText(from: charOffset)
-        guard !textToSpeak.isEmpty else {
+        let source = preparedSourceText.isEmpty ? preparedSpeechText : preparedSourceText
+        let chunks = SpeechPlaybackPlanner.chunks(in: source, from: charOffset)
+        guard !chunks.isEmpty else {
             throw SessionKitError.invalidCommandForState("playback_text_empty")
         }
-        if synthesizer.isSpeaking {
-            if paused, lastTargetId == targetId, lastStartOffset == charOffset {
-                synthesizer.continueSpeaking()
-                pendingStartTargetId = nil
-                startedTargetId = targetId
-                playbackStartFailure = nil
-                paused = false
-                return
-            }
-            replaceSynthesizer()
-        } else if paused {
+        if synthesizer.isSpeaking || paused || !chunksByUtteranceId.isEmpty {
             replaceSynthesizer()
         }
         #if os(iOS)
         try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [])
         try AVAudioSession.sharedInstance().setActive(true)
         #endif
-        let utterance = makeUtterance(textToSpeak, mode: playbackSpeechPreviewMode())
         lastTargetId = targetId
         lastStartOffset = charOffset
-        currentOffset = charOffset
+        currentOffset = chunks[0].sourceStart
         currentRangeLength = 0
         completedTargetId = nil
         playbackComplete = false
@@ -549,8 +618,15 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         startedTargetId = nil
         playbackStartFailure = nil
         paused = false
-        activeUtterance = utterance
-        synthesizer.speak(utterance)
+        chunksByUtteranceId.removeAll(keepingCapacity: true)
+        let mode = playbackSpeechPreviewMode()
+        for chunk in chunks {
+            let utterance = makeUtterance(chunk.spokenText, mode: mode)
+            let identifier = ObjectIdentifier(utterance)
+            chunksByUtteranceId[identifier] = chunk
+            finalUtteranceId = identifier
+            synthesizer.speak(utterance)
+        }
         #else
         if preparedSpeechText.isEmpty {
             throw SessionKitError.invalidCommandForState("playback_text_empty")
@@ -582,9 +658,8 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         guard !textToSpeak.isEmpty else {
             throw SessionKitError.invalidCommandForState("preview_text_empty")
         }
-        if synthesizer.isSpeaking {
-            synthesizer.stopSpeaking(at: .immediate)
-        }
+        if synthesizer.isSpeaking || !chunksByUtteranceId.isEmpty { replaceSynthesizer() }
+        resetPlaybackStateForPreview()
         #if os(iOS)
         try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
         try AVAudioSession.sharedInstance().setActive(true)
@@ -611,10 +686,9 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
 
     public func pause() throws {
         #if canImport(AVFoundation)
-        if synthesizer.isSpeaking {
-            markActiveUtteranceAsIntentionallyStopped()
+        if synthesizer.isSpeaking || !chunksByUtteranceId.isEmpty {
             paused = true
-            synthesizer.stopSpeaking(at: .immediate)
+            replaceSynthesizer()
         }
         #endif
     }
@@ -641,25 +715,19 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
 
     public func stop() throws {
         #if canImport(AVFoundation)
-        markActiveUtteranceAsIntentionallyStopped()
-        synthesizer.stopSpeaking(at: .immediate)
+        replaceSynthesizer()
         paused = false
         playbackComplete = false
         completedTargetId = nil
         pendingStartTargetId = nil
         startedTargetId = nil
         playbackStartFailure = nil
+        currentOffset = nil
+        currentRangeLength = 0
         #if os(iOS) || os(watchOS)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         #endif
         #endif
-    }
-
-    private func speechText(from charOffset: Int) -> String {
-        guard !preparedSourceText.isEmpty else { return preparedSpeechText }
-        let clamped = max(0, min(charOffset, preparedSourceText.count))
-        let start = preparedSourceText.index(preparedSourceText.startIndex, offsetBy: clamped)
-        return SpeechTextNormalizer.normalize(String(preparedSourceText[start...]))
     }
 
     private func currentSpeechSettings() -> (voiceIdentifier: String?, rate: Float) {
@@ -684,17 +752,21 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         synthesizer.stopSpeaking(at: .immediate)
         synthesizer = AVSpeechSynthesizer()
         activeUtterance = nil
+        chunksByUtteranceId.removeAll(keepingCapacity: true)
+        finalUtteranceId = nil
         installSynthesizerDelegate()
     }
 
-    private func markActiveUtteranceAsIntentionallyStopped() {
-        if let activeUtterance {
-            intentionallyStoppedUtteranceIds.insert(ObjectIdentifier(activeUtterance))
-        }
-    }
-
-    private func consumeIntentionalStop(for utterance: AVSpeechUtterance) -> Bool {
-        intentionallyStoppedUtteranceIds.remove(ObjectIdentifier(utterance)) != nil
+    private func resetPlaybackStateForPreview() {
+        activeUtterance = nil
+        chunksByUtteranceId.removeAll(keepingCapacity: true)
+        finalUtteranceId = nil
+        pendingStartTargetId = nil
+        startedTargetId = nil
+        playbackStartFailure = nil
+        playbackComplete = false
+        completedTargetId = nil
+        paused = false
     }
 
     private func playbackSpeechPreviewMode() -> SpeechPreviewMode {
@@ -745,6 +817,11 @@ extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
         _ synthesizer: AVSpeechSynthesizer,
         didStart utterance: AVSpeechUtterance
     ) {
+        activeUtterance = utterance
+        if let chunk = chunksByUtteranceId[ObjectIdentifier(utterance)] {
+            currentOffset = chunk.sourceStart
+            currentRangeLength = 0
+        }
         startedTargetId = lastTargetId
         pendingStartTargetId = nil
         playbackStartFailure = nil
@@ -755,30 +832,29 @@ extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
         willSpeakRangeOfSpeechString characterRange: NSRange,
         utterance: AVSpeechUtterance
     ) {
-        currentOffset = lastStartOffset + max(0, characterRange.location)
-        currentRangeLength = max(0, characterRange.length)
+        guard let chunk = chunksByUtteranceId[ObjectIdentifier(utterance)] else { return }
+        let start = chunk.sourceOffset(atSpokenUTF16Offset: characterRange.location)
+        let end = chunk.sourceOffset(atSpokenUTF16Offset: characterRange.location + characterRange.length)
+        currentOffset = start
+        currentRangeLength = max(0, end - start)
     }
 
     public func speechSynthesizer(
         _ synthesizer: AVSpeechSynthesizer,
         didFinish utterance: AVSpeechUtterance
     ) {
-        if consumeIntentionalStop(for: utterance) {
-            if activeUtterance === utterance {
-                activeUtterance = nil
-            }
-            playbackComplete = false
-            completedTargetId = nil
-            pendingStartTargetId = nil
-            return
-        }
+        let identifier = ObjectIdentifier(utterance)
+        guard let chunk = chunksByUtteranceId.removeValue(forKey: identifier) else { return }
         if activeUtterance === utterance {
             activeUtterance = nil
         }
-        currentOffset = preparedSourceText.count
+        currentOffset = chunk.sourceEnd
         currentRangeLength = 0
-        completedTargetId = lastTargetId
-        playbackComplete = true
+        if finalUtteranceId == identifier {
+            finalUtteranceId = nil
+            completedTargetId = lastTargetId
+            playbackComplete = true
+        }
         pendingStartTargetId = nil
     }
 
@@ -786,22 +862,14 @@ extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
         _ synthesizer: AVSpeechSynthesizer,
         didCancel utterance: AVSpeechUtterance
     ) {
-        if consumeIntentionalStop(for: utterance) {
-            if activeUtterance === utterance {
-                activeUtterance = nil
-            }
-            playbackComplete = false
-            completedTargetId = nil
-            pendingStartTargetId = nil
-            playbackStartFailure = nil
-            return
-        }
+        let identifier = ObjectIdentifier(utterance)
+        let wasPlaybackUtterance = chunksByUtteranceId.removeValue(forKey: identifier) != nil
         if activeUtterance === utterance {
             activeUtterance = nil
         }
         playbackComplete = false
         completedTargetId = nil
-        if pendingStartTargetId == lastTargetId {
+        if wasPlaybackUtterance, pendingStartTargetId == lastTargetId {
             playbackStartFailure = "speech_cancelled_before_start"
         }
         pendingStartTargetId = nil

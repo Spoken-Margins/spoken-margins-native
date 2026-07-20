@@ -31,7 +31,7 @@ let package = Package(
         ),
         .testTarget(
             name: "SessionKitTests",
-            dependencies: ["SessionKit", "SessionKitPersistence", "SessionKitAI"]
+            dependencies: ["SessionKit", "SessionKitPersistence", "SessionKitAudio", "SessionKitAI"]
         ),
         .testTarget(
             name: "SessionKitTraceTests",

@@ -7,6 +7,46 @@ import UIKit
 
 @MainActor
 final class Gate1AppModelWorkflowTests: XCTestCase {
+    func testWelcomeSampleSeedsOnlyForANewEmptyNonUITestLibrary() {
+        XCTAssertTrue(Gate1AppModel.shouldSeedWelcomeSample(
+            libraryIsEmpty: true,
+            storedVersion: 0,
+            isUITesting: false
+        ))
+        XCTAssertFalse(Gate1AppModel.shouldSeedWelcomeSample(
+            libraryIsEmpty: false,
+            storedVersion: 0,
+            isUITesting: false
+        ))
+        XCTAssertFalse(Gate1AppModel.shouldSeedWelcomeSample(
+            libraryIsEmpty: true,
+            storedVersion: 1,
+            isUITesting: false
+        ))
+        XCTAssertFalse(Gate1AppModel.shouldSeedWelcomeSample(
+            libraryIsEmpty: true,
+            storedVersion: 0,
+            isUITesting: true
+        ))
+    }
+
+    func testBundledSampleExplainsTheAppInsteadOfSeedingTheContractArticle() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+
+        model.addSampleItem()
+
+        XCTAssertEqual(model.selectedItem.title, "Welcome to Spoken Margins")
+        XCTAssertTrue(model.selectedItem.text.contains("structured listening workspace"))
+        XCTAssertTrue(model.selectedItem.text.contains("Listening Map"))
+        XCTAssertTrue(model.selectedItem.text.contains("Tap Interject"))
+        XCTAssertTrue(model.selectedItem.text.contains("backward and forward buttons"))
+        XCTAssertTrue(model.selectedItem.text.contains("paste a podcast"))
+        XCTAssertTrue(model.selectedItem.text.contains("Import Text or PDF Files"))
+        XCTAssertFalse(model.selectedItem.text.contains("You Can't Inspect the Pill"))
+        XCTAssertEqual(model.selectedItem.chapters.count, 5)
+    }
+
     func testManualImportClearsEntryFieldsAfterSuccessfulCreate() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()

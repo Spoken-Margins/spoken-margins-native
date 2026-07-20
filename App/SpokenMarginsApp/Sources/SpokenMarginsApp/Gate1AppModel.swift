@@ -166,6 +166,9 @@ typealias PreparedTextAudioPrewarmHandler = @Sendable (
 
 @MainActor
 final class Gate1AppModel: ObservableObject {
+    private static let welcomeSampleSeedVersion = 1
+    private static let welcomeSampleSeedVersionKey = "welcomeSampleSeedVersion"
+
     @Published var screen: Gate1Screen = .home
     @Published var snapshot = SessionSnapshot() {
         didSet {
@@ -286,6 +289,7 @@ final class Gate1AppModel: ObservableObject {
     private var liveSpeechFallbackItemIds: Set<String> = []
     private var isImportingPendingSourceLinkHandoffs = false
     private var pendingAutoPlayQueue = Gate1PlaybackAutoplayQueue()
+    private var completedStreamingTurnIds: Set<String> = []
     private var pendingSourceContextInterjectionIds: Set<String> = []
     private var pendingMapGenerationItemId: String?
     private var pendingProviderJobForConsent: PendingProviderJob?
@@ -353,6 +357,9 @@ final class Gate1AppModel: ObservableObject {
         sanitizeTTSMode()
         settingsValueChanged()
         refreshQuickAccessFolder()
+        streamingSpeechQueue.onTurnDrained = { [weak self] turnId in
+            self?.finishStreamingTurnIfReady(turnId)
+        }
     }
 
     var isReviewDemoActive: Bool {
@@ -553,10 +560,31 @@ final class Gate1AppModel: ObservableObject {
         guard libraryItems.isEmpty, store == nil else { return }
         do {
             let store = try requireStore()
-            let rows = try loadLibraryRows(store: store)
+            var rows = try loadLibraryRows(store: store)
             if rows.isEmpty && CommandLine.arguments.contains("--ui-testing") {
                 resetAndSeed()
                 return
+            }
+            let storedWelcomeSampleVersion = UserDefaults.standard.integer(
+                forKey: Self.welcomeSampleSeedVersionKey
+            )
+            if Self.shouldSeedWelcomeSample(
+                libraryIsEmpty: rows.isEmpty,
+                storedVersion: storedWelcomeSampleVersion,
+                isUITesting: CommandLine.arguments.contains("--ui-testing")
+            ) {
+                let (item, map) = try makeAppOverviewSample()
+                try store.saveItem(item)
+                try store.saveListeningMap(map)
+                rows = try loadLibraryRows(store: store)
+                diagnostics["welcomeSample"] = "seeded:v\(Self.welcomeSampleSeedVersion)"
+            }
+            if !CommandLine.arguments.contains("--ui-testing"),
+               storedWelcomeSampleVersion < Self.welcomeSampleSeedVersion {
+                UserDefaults.standard.set(
+                    Self.welcomeSampleSeedVersion,
+                    forKey: Self.welcomeSampleSeedVersionKey
+                )
             }
             if engine == nil {
                 installEngine(try makeEngine(store: store))
@@ -575,6 +603,14 @@ final class Gate1AppModel: ObservableObject {
         } catch {
             reportFailure(error, context: "Library bootstrap failed")
         }
+    }
+
+    static func shouldSeedWelcomeSample(
+        libraryIsEmpty: Bool,
+        storedVersion: Int,
+        isUITesting: Bool
+    ) -> Bool {
+        libraryIsEmpty && storedVersion < welcomeSampleSeedVersion && !isUITesting
     }
 
     func handleAppBecameActive() {
@@ -614,9 +650,7 @@ final class Gate1AppModel: ObservableObject {
     func addSampleItem() {
         do {
             let store = try requireStore()
-            var item = try loadFixtureItem(name: "text-with-listening-map")
-            item.deletedAt = nil
-            let map = try loadFixtureMap(name: "valid-listening-map")
+            let (item, map) = try makeAppOverviewSample()
             try store.saveItem(item)
             try store.saveListeningMap(map)
             if engine == nil {
@@ -630,6 +664,52 @@ final class Gate1AppModel: ObservableObject {
         } catch {
             reportFailure(error, context: "Add sample failed")
         }
+    }
+
+    private func makeAppOverviewSample() throws -> (Item, ListeningMap) {
+        let itemId = "item-spoken-margins-overview"
+        let markdown = """
+        # Welcome to Spoken Margins
+
+        Spoken Margins is a structured listening workspace. It restores the headings, progress, margin notes, and easy navigation that ordinary audio loses, so reading can become an active listening session.
+
+        ## Start with the Listening Map
+
+        Tap Start Listening on this source. The overview plays first, and the Timeline shows the chapters below. Tap any chapter to jump directly to it while keeping your place in the source.
+
+        ## Move forward and backward
+
+        On Now Playing, use the backward and forward buttons around Play to move by paragraph. The progress slider can move farther through the source, and the speech-rate slider changes how quickly it is read.
+
+        ## Interject while you listen
+
+        Tap Interject when an idea or question occurs to you, speak your note, then tap Done. Spoken Margins anchors the interjection near the passage you were hearing and resumes without losing your place. Your note appears in the Timeline.
+
+        ## Load your own sources
+
+        Return Home and tap Add Source. Paste text and choose Add and Listen; paste a podcast, RSS, or public audio link and choose Add Link and Listen; or choose Import Text or PDF Files to upload Markdown, plain-text, or text-based PDF files.
+
+        ## Keep what matters
+
+        Ask for a summary or follow-up when it helps, review your notes and generated responses as a conversation, then export the useful context for another writing or thinking tool. Live AI is optional and requires explicit sharing consent. The goal is not passive playback; it is to help you retain and develop the ideas that mattered.
+        """
+        let parsed = try ObsidianMarkdownParser.parse(
+            fileName: "Welcome to Spoken Margins.md",
+            contents: markdown
+        )
+        let item = Item(
+            id: itemId,
+            title: parsed.title,
+            mediaType: "text",
+            text: parsed.text,
+            externalReference: "",
+            status: "ready"
+        )
+        guard var map = parsed.deterministicListeningMap(itemId: itemId) else {
+            throw SessionKitError.persistenceFailed("review_demo_listening_map_missing")
+        }
+        map.overview = "Take a guided tour of the Listening Map, playback navigation, spoken interjections, and the three ways to add your own sources."
+        return (item, map)
     }
 
     func importTextItem() {
@@ -3624,7 +3704,10 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func scheduleTextAudioPrewarmIfNeeded(itemId: String) {
-        guard preparedTextAudioPrewarmHandler != nil || audioPlaybackClientOverride == nil, ttsMode != "kokoro" else { return }
+        // AVSpeechSynthesizer serializes or competes with live utterances on real
+        // devices. Only an explicitly injected preparation job may pre-render in
+        // the background; production playback must stay on the immediate path.
+        guard let prewarmHandler = preparedTextAudioPrewarmHandler, ttsMode != "kokoro" else { return }
         guard ttsMode != "piper" else { return }
         guard textAudioPrewarmTasks[itemId] == nil else { return }
         do {
@@ -3637,24 +3720,10 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["textAudioPrewarm:\(itemId)"] = "scheduled"
             preparedTextAudioStatus = "rendering"
             snapshot.preparedTextAudioStatus = preparedTextAudioStatus
-            let prewarmHandler = preparedTextAudioPrewarmHandler
             textAudioPrewarmTasks[itemId] = Task { [weak self, itemId, title = item.title, text, outputDirectory, voiceIdentifier, rate] in
                 guard let self else { return }
                 self.diagnostics["textAudioPrewarm:\(itemId)"] = "rendering_full"
-                let fullResult: Result<PreparedTextAudio?, Error>
-                if let prewarmHandler {
-                    fullResult = await prewarmHandler(itemId, title, text, outputDirectory, voiceIdentifier, rate)
-                } else {
-                    fullResult = await Self.prepareTextAudioInBackground(
-                        itemId: itemId,
-                        title: title,
-                        text: text,
-                        outputDirectory: outputDirectory,
-                        voiceIdentifier: voiceIdentifier,
-                        speechRate: rate,
-                        renderScope: .complete
-                    )
-                }
+                let fullResult = await prewarmHandler(itemId, title, text, outputDirectory, voiceIdentifier, rate)
                 guard !Task.isCancelled else { return }
                 self.textAudioPrewarmTasks[itemId] = nil
                 switch fullResult {
@@ -4071,6 +4140,7 @@ final class Gate1AppModel: ObservableObject {
         Task {
             var receivedText = false
             var automaticAttempts = 0
+            var streamsSpeechImmediately: Bool?
             while automaticAttempts < 2 {
                 do {
                     var completed = false
@@ -4091,13 +4161,18 @@ final class Gate1AppModel: ObservableObject {
                         case .textDelta(let delta):
                             receivedText = true
                             snapshot = try engine.aiStreamDelta(turnId: turnId, content: delta)
-                            if snapshot.targetId != turnId {
-                                snapshot = try engine.activateStreamingTurn(turnId: turnId)
+                            if streamsSpeechImmediately == nil {
+                                streamsSpeechImmediately = !shouldDeferGeneratedTurnPlayback(turnId: turnId)
                             }
-                            let stableUnits = snapshot.spokenUnits
-                            streamingSpeechQueue.enqueue(stableUnits, turnId: turnId)
-                            diagnostics["streamingSpeechPending"] = "\(streamingSpeechQueue.pendingCount)"
-                            diagnostics["streamingTurnId"] = turnId
+                            if streamsSpeechImmediately == true {
+                                if snapshot.targetId != turnId {
+                                    snapshot = try engine.activateStreamingTurn(turnId: turnId)
+                                }
+                                let stableUnits = snapshot.spokenUnits
+                                streamingSpeechQueue.enqueue(stableUnits, turnId: turnId)
+                                diagnostics["streamingSpeechPending"] = "\(streamingSpeechQueue.pendingCount)"
+                                diagnostics["streamingTurnId"] = turnId
+                            }
                             refreshSelectedItem()
                         case .completed(let responseId):
                             diagnostics["lastOpenAIResponseId"] = responseId ?? diagnostics["lastOpenAIResponseId"]
@@ -4109,10 +4184,24 @@ final class Gate1AppModel: ObservableObject {
                     }
                     guard let engine else { return }
                     snapshot = try engine.aiJobCompleted(turnId: turnId)
-                    streamingSpeechQueue.enqueue(snapshot.spokenUnits, turnId: turnId)
-                    diagnostics["streamingSpeechPending"] = "\(streamingSpeechQueue.pendingCount)"
+                    if streamsSpeechImmediately == true {
+                        streamingSpeechQueue.enqueue(snapshot.spokenUnits, turnId: turnId)
+                        completedStreamingTurnIds.insert(turnId)
+                        diagnostics["streamingSpeechPending"] = "\(streamingSpeechQueue.pendingCount)"
+                        finishStreamingTurnIfReady(turnId)
+                    } else {
+                        let completedCurrentAudio = syncPlaybackProgressBeforeGeneratedTurnDecision(engine: engine)
+                        try autoPlayCompletedTurn(
+                            kind: kind,
+                            turnId: turnId,
+                            engine: engine,
+                            completedCurrentAudio: completedCurrentAudio
+                        )
+                    }
                     refreshSelectedItem()
-                    reportSuccess("Provider response saved and streamed to speech.")
+                    reportSuccess(streamsSpeechImmediately == true
+                        ? "Provider response saved and streamed to speech."
+                        : "Provider response saved and queued after the current source.")
                     await generateAssistantChaptersIfUseful(turnId: turnId, model: selectedModel)
                     return
                 } catch {
@@ -4126,6 +4215,23 @@ final class Gate1AppModel: ObservableObject {
                     return
                 }
             }
+        }
+    }
+
+    private func finishStreamingTurnIfReady(_ turnId: String) {
+        guard completedStreamingTurnIds.contains(turnId),
+              !streamingSpeechQueue.hasPendingSpeech(for: turnId),
+              let engine else {
+            return
+        }
+        do {
+            snapshot = try engine.finishStreamingTurnPlayback(turnId: turnId)
+            completedStreamingTurnIds.remove(turnId)
+            diagnostics["streamingSpeechPending"] = "\(streamingSpeechQueue.pendingCount)"
+            diagnostics["streamingTurnCompleted"] = turnId
+            refreshSelectedItem()
+        } catch {
+            diagnostics["streamingTurnCompletionError"] = String(describing: error)
         }
     }
 

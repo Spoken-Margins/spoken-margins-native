@@ -32,7 +32,7 @@
 - Public privacy/support pages are under `Site/` and are published at the dedicated VPS host `spokenmargins.proximitytoprogress.com`.
 - The production app icon is in the app asset catalog.
 - Listening Map responses now stream, use a longer inactivity timeout, present concise timeout copy, and attach to the active session so newly shown chapters are immediately navigable.
-- Native-text playback has a seek slider, and a selected system voice remains fixed for the life of the session. Background prepared audio is cached for the next session instead of replacing live speech mid-session.
+- Native-text playback has a seek slider, keeps one selected system voice, and reads long sources as bounded utterances with source-accurate progress. Full-file background speech rendering no longer competes with immediate playback.
 - PDF imports infer Markdown-style headings from PDF outlines and typography, allowing structured PDFs to receive deterministic Listening Maps without an AI request.
 - The Share extension accepts PDF, Markdown, and plain-text files and routes PDF/text content through the same import handoff as in-app file imports.
 
@@ -40,8 +40,8 @@
 
 - `python3 scripts/validate-contracts.py` — passed.
 - `python3 scripts/validate-surface-contracts.py` — passed.
-- `swift test --package-path Packages/SessionKit` — 98 tests passed, including active-map reconciliation, native-text seeking, and stable live-text playback coverage.
-- `SpokenMarginsAppTests` on iPhone 16 Pro / iOS 18.6 simulator — 72 tests passed, including heading-aware PDF import and prepared-audio voice-stability regressions.
+- `swift test --package-path Packages/SessionKit` — 102 tests passed, including active-map reconciliation, bounded native-text speech, source-offset mapping, and streamed-turn completion.
+- `SpokenMarginsAppTests` on iPhone 16 Pro / iOS 18.6 simulator — 74 tests passed, including heading-aware PDF import, generated-turn autoplay policy, and the bundled overview sample.
 - Broad UI routes — all 5 passed across the initial run and focused reruns: playback/export/settings, manual map import, generated-turn timeline, active-session export isolation, compact controls.
 - Debug simulator build — passed.
 - Release simulator build — passed; developer-tool strings absent from the executable.
@@ -62,7 +62,7 @@ AI is optional. To review AI without an API key or network dependency:
 3. Tap Unlock Review Demo.
 4. On an empty install, the app adds the bundled sample automatically.
 5. Open the sample, start listening, and generate a Listening Map, summary, or discussion response.
-6. The banner “Review Demo · simulated AI · no content leaves this device” remains visible while this mode is active.
+6. The centered banner “Review Demo · on-device AI” remains visible while this mode is active; its accessibility label includes the full no-content-leaves-device disclosure.
 
 Review Demo is deterministic and entirely on-device. For live OpenAI testing, enter a reviewer-owned OpenAI API key. At the first live AI action, the app explains the text categories sent and requires explicit permission. Permission can be revoked and the key deleted in Settings.
 
@@ -72,7 +72,7 @@ The Share extension accepts an explicitly shared web page/URL, text, PDF, Markdo
 
 - Fresh beta reset: delete the TestFlight app, reinstall, then use Settings → Delete API Key if the key should also be removed from Keychain.
 - Upgrade reset: a schema-v1 private-beta database is moved into `Application Support/LegacyLibraryBackup/<timestamp>` and a notice is shown. It is not silently deleted.
-- Review sample: unlocking Review Demo on an empty library seeds “You Can't Inspect the Pill.”
+- Review sample: unlocking Review Demo on an empty library seeds “Welcome to Spoken Margins,” a guided overview of the app's core listening workflow.
 - Diagnostics: Settings → Support & Privacy → Copy Privacy-Safe Diagnostics. The export omits source text, transcripts, API keys, local paths, URLs, folder names, and user-facing status/error copy.
 
 ## Product-owner physical-device checklist
@@ -84,8 +84,8 @@ Record pass/fail and notes for every line before marking this build `human_valid
 - [ ] Review Demo unlocks with the supplied code, adds the sample on an empty library, shows the banner, and produces maps/responses without a key.
 - [ ] A live AI action presents the disclosure before transmission; decline sends nothing; allow completes; revoke prompts again.
 - [ ] API key survives relaunch and Delete API Key removes it.
-- [ ] Text/Markdown import, source listening, play/pause, skip, chapter jump, background audio, lock-screen controls, and relaunch resume behave correctly.
-- [ ] Generate a Listening Map for a long PDF; if the request fails or is retried, any map that appears can jump chapters immediately without ending and restarting the session.
+- [ ] Text/Markdown import starts playback promptly; after the Listening Map overview, playback continues into the source instead of jumping to the end. Play/pause, skip, chapter jump, background audio, lock-screen controls, and relaunch resume behave correctly.
+- [ ] Generate a Listening Map for a long PDF; confirm its overview continues into source playback without jumping to the end. If the request fails or is retried, any map that appears can jump chapters immediately without ending and restarting the session.
 - [ ] During native-text playback, scrub both backward and forward and confirm playback resumes near the selected position.
 - [ ] Listen to native text with the preferred app voice for at least two minutes and confirm it never alternates with the accessibility/default voice.
 - [ ] Import a PDF with visible section headings and confirm a heading-derived Listening Map appears without an AI request.

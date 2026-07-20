@@ -105,14 +105,21 @@ private struct LegacyLibraryResetBanner: View {
 
 private struct ReviewDemoBanner: View {
     var body: some View {
-        Label("Review Demo · simulated AI · no content leaves this device", systemImage: "checkmark.shield")
-            .font(.caption.weight(.semibold))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
-            .foregroundStyle(AppColors.text)
-            .background(AppColors.accentSoft)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .accessibilityIdentifier("reviewDemo.banner")
+        HStack {
+            Spacer(minLength: 0)
+            Label("Review Demo · on-device AI", systemImage: "checkmark.shield")
+                .font(.caption2.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .foregroundStyle(AppColors.text)
+                .background(AppColors.accentSoft, in: Capsule())
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Review Demo. Simulated AI. No content leaves this device.")
+        .accessibilityIdentifier("reviewDemo.banner")
     }
 }
 

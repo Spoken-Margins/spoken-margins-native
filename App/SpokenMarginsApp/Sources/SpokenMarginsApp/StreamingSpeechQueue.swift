@@ -17,10 +17,15 @@ final class StreamingSpeechQueue {
     private var nextCharacterOffsetByTurn: [String: Int] = [:]
     private var worker: Task<Void, Never>?
     private(set) var isPausedForInterjection = false
+    var onTurnDrained: ((String) -> Void)?
 
     var pendingCount: Int { pending.count + (current == nil ? 0 : 1) }
     var currentTurnId: String? { current?.turnId ?? pending.first?.turnId }
     var currentSentenceStartOffset: Int? { current?.startOffset ?? pending.first?.startOffset }
+
+    func hasPendingSpeech(for turnId: String) -> Bool {
+        current?.turnId == turnId || pending.contains(where: { $0.turnId == turnId })
+    }
 
     func enqueue(_ texts: [String], turnId: String) {
         for text in texts {
@@ -85,6 +90,9 @@ final class StreamingSpeechQueue {
                 }
                 if self.current == unit {
                     self.current = nil
+                }
+                if !self.hasPendingSpeech(for: unit.turnId) {
+                    self.onTurnDrained?(unit.turnId)
                 }
             }
             self.worker = nil
