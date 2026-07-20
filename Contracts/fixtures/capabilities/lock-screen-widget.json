@@ -7,7 +7,7 @@
   "mediaOwnership": "remote_control_only",
   "capabilities": {
     "playback": [],
-    "timeline": ["chapter_timing"],
+    "timeline": ["media_time", "chapter_timing", "playback_rate_observation"],
     "interjection": ["delegate_interjection_to_canonical_runtime"],
     "ai": [],
     "sync": [],

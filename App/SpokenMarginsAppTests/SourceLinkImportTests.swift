@@ -107,6 +107,17 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.externalReference, "https://example.com/episode")
         XCTAssertEqual(model.libraryItems.first(where: { $0.id == model.snapshot.itemId })?.status, "Audio ready")
         XCTAssertEqual(model.diagnostics["lastSourceLinkStatus"], LinkResolutionStatus.playable.rawValue)
+
+        XCTAssertTrue(model.gate2CompactSnapshot?.availableCommands.contains(.seekToMediaTime) == true)
+        XCTAssertTrue(model.gate2CompactSnapshot?.availableCommands.contains(.setPlaybackRate) == true)
+        model.dispatchGate2CompactCommand(.seekToMediaTime, mediaTimeMs: 120_000, origin: "now_playing")
+        model.dispatchGate2CompactCommand(.setPlaybackRate, playbackRate: 1.5, origin: "now_playing")
+
+        XCTAssertEqual(model.snapshot.currentMediaTimeMs, 120_000)
+        XCTAssertEqual(model.snapshot.playbackRate, 1.5)
+        XCTAssertEqual(model.diagnostics["gate2LastCommand"], CompactControlCommand.setPlaybackRate.rawValue)
+        XCTAssertEqual(model.diagnostics["gate2LastResult"], "delegated")
+        XCTAssertNil(model.lastError)
     }
 
     func testNativeAudioInterjectionRequestsOneMinuteSourceWindowContext() async throws {

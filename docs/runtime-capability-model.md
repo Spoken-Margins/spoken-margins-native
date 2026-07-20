@@ -195,6 +195,7 @@ Expected capabilities:
 
 - display snapshot
 - send transport commands
+- display media time and send seek or playback-rate changes when the canonical target publishes a duration
 - send interjection commands when allowed
 - no playback ownership
 - no local recording

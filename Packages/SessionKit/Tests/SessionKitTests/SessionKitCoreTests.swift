@@ -398,6 +398,59 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(discussion.snapshot.pendingAiJobKind, "assistant_response")
     }
 
+    func testCompactLockScreenDelegatesMediaSeekAndPlaybackRate() throws {
+        let canonicalProfile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone / Tablet Online",
+            capabilities: [
+                "playback": ["native_media"],
+                "timeline": ["media_time", "playback_rate_observation"],
+                "sync": ["canonical_persistence"]
+            ]
+        )
+        let lockScreenProfile = RuntimeCapabilityProfile(
+            id: "lock-screen-widget",
+            displayName: "Lock Screen / Widget",
+            capabilities: [
+                "timeline": ["media_time", "chapter_timing", "playback_rate_observation"],
+                "remoteControl": ["display_snapshot", "send_transport_commands"]
+            ]
+        )
+        let mediaURL = "https://cdn.example.com/episode.mp3"
+        let item = Item(
+            id: "item-media",
+            title: "Media",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/episode",
+            status: "ready",
+            media: ItemMedia(sourceType: .remoteStream, url: mediaURL, durationMs: 120_000)
+        )
+        let audio = RecordingAudioClient()
+        audio.currentDurationMs = 120_000
+        let engine = SessionEngine(
+            profile: canonicalProfile,
+            repository: InMemorySessionRepository(items: [item.id: item]),
+            audio: audio
+        )
+        _ = try engine.startSession(itemId: item.id)
+        let dispatcher = CompactControlDispatcher(surfaceProfile: lockScreenProfile, canonicalRuntime: engine)
+
+        XCTAssertTrue(dispatcher.snapshot().availableCommands.contains(.seekToMediaTime))
+        XCTAssertTrue(dispatcher.snapshot().availableCommands.contains(.setPlaybackRate))
+
+        let sought = try dispatcher.dispatch(.seekToMediaTime, mediaTimeMs: 45_000)
+        let rated = try dispatcher.dispatch(.setPlaybackRate, playbackRate: 1.5)
+
+        XCTAssertTrue(sought.delegatedToCanonicalRuntime)
+        XCTAssertEqual(sought.snapshot.currentMediaTimeMs, 45_000)
+        XCTAssertEqual(audio.playedTargets.last, mediaURL)
+        XCTAssertEqual(audio.playedOffsets.last, 45_000)
+        XCTAssertTrue(rated.delegatedToCanonicalRuntime)
+        XCTAssertEqual(rated.snapshot.playbackRate, 1.5)
+        XCTAssertEqual(audio.playbackRates.last, 1.5)
+    }
+
     func testCompactControlRejectsUnsupportedSurfaceCommands() throws {
         let surfaceProfile = RuntimeCapabilityProfile(
             id: "car-basic",

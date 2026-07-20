@@ -16,6 +16,10 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertTrue(model.gate2CompactSnapshot?.exposedCommands.contains(.play) == true)
         XCTAssertTrue(model.gate2CompactSnapshot?.exposedCommands.contains(.pause) == true)
         XCTAssertTrue(model.gate2CompactSnapshot?.exposedCommands.contains(.togglePlayPause) == true)
+        XCTAssertTrue(model.gate2CompactSnapshot?.exposedCommands.contains(.seekToMediaTime) == true)
+        XCTAssertTrue(model.gate2CompactSnapshot?.exposedCommands.contains(.setPlaybackRate) == true)
+        XCTAssertFalse(model.gate2CompactSnapshot?.availableCommands.contains(.seekToMediaTime) == true)
+        XCTAssertFalse(model.gate2CompactSnapshot?.availableCommands.contains(.setPlaybackRate) == true)
         XCTAssertTrue(model.gate2CompactSnapshot?.exposedCommands.contains(.beginInterjection) == true)
     }
 

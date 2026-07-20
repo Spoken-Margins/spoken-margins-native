@@ -33,6 +33,7 @@
 - The production app icon is in the app asset catalog.
 - Listening Map responses now stream, use a longer inactivity timeout, present concise timeout copy, and attach to the active session so newly shown chapters are immediately navigable.
 - Native-text playback has a seek slider, keeps one selected system voice, and reads long sources as bounded utterances with source-accurate progress. Full-file background speech rendering no longer competes with immediate playback.
+- Lock-screen media scrubbing and playback-rate changes now pass through the compact capability gate to the canonical media session; live text still keeps those time-based commands disabled.
 - PDF imports infer Markdown-style headings from PDF outlines and typography, allowing structured PDFs to receive deterministic Listening Maps without an AI request.
 - The Share extension accepts PDF, Markdown, and plain-text files and routes PDF/text content through the same import handoff as in-app file imports.
 
@@ -40,8 +41,8 @@
 
 - `python3 scripts/validate-contracts.py` — passed.
 - `python3 scripts/validate-surface-contracts.py` — passed.
-- `swift test --package-path Packages/SessionKit` — 102 tests passed, including active-map reconciliation, bounded native-text speech, source-offset mapping, and streamed-turn completion.
-- `SpokenMarginsAppTests` on iPhone 16 Pro / iOS 18.6 simulator — 74 tests passed, including heading-aware PDF import, generated-turn autoplay policy, and the bundled overview sample.
+- `swift test --package-path Packages/SessionKit` — 103 tests passed, including active-map reconciliation, bounded native-text speech, source-offset mapping, streamed-turn completion, and delegated lock-screen media seeking.
+- `SpokenMarginsAppTests` on iPhone 16 Pro / iOS 18.6 simulator — 74 tests passed, including heading-aware PDF import, generated-turn autoplay policy, the bundled overview sample, and the source-link lock-screen seek/rate route.
 - Broad UI routes — all 5 passed across the initial run and focused reruns: playback/export/settings, manual map import, generated-turn timeline, active-session export isolation, compact controls.
 - Debug simulator build — passed.
 - Release simulator build — passed; developer-tool strings absent from the executable.
@@ -79,25 +80,26 @@ The Share extension accepts an explicitly shared web page/URL, text, PDF, Markdo
 
 Record pass/fail and notes for every line before marking this build `human_validated`.
 
-- [ ] Fresh install launches on an iPhone running iOS 18 or later.
-- [ ] Fresh install launches and lays out correctly on an iPad in all four declared orientations.
-- [ ] Review Demo unlocks with the supplied code, adds the sample on an empty library, shows the banner, and produces maps/responses without a key.
-- [ ] A live AI action presents the disclosure before transmission; decline sends nothing; allow completes; revoke prompts again.
-- [ ] API key survives relaunch and Delete API Key removes it.
-- [ ] Text/Markdown import starts playback promptly; after the Listening Map overview, playback continues into the source instead of jumping to the end. Play/pause, skip, chapter jump, background audio, lock-screen controls, and relaunch resume behave correctly.
-- [ ] Generate a Listening Map for a long PDF; confirm its overview continues into source playback without jumping to the end. If the request fails or is retried, any map that appears can jump chapters immediately without ending and restarting the session.
-- [ ] During native-text playback, scrub both backward and forward and confirm playback resumes near the selected position.
-- [ ] Listen to native text with the preferred app voice for at least two minutes and confirm it never alternates with the accessibility/default voice.
-- [ ] Import a PDF with visible section headings and confirm a heading-derived Listening Map appears without an AI request.
-- [ ] From Files or another app, share one PDF and one plain-text file to Spoken Margins and confirm both arrive in the library with readable titles and content.
-- [ ] Microphone permission, interjection recording, transcription, summary, follow-up, and export behave correctly.
-- [ ] Recently Deleted restore and permanent deletion behave correctly.
-- [ ] Widget/Live Activity shows current playback and delegates supported controls.
-- [ ] Share extension imports an HTTPS page/link and text file, and rejects unsupported content cleanly.
-- [ ] Safari extension captures selected/readable text only after an explicit action and opens the app handoff.
-- [ ] Dynamic Type, VoiceOver labels, reduced motion, light/dark appearance, and offline behavior are acceptable on the supported devices.
-- [ ] Privacy and Support links open public HTTPS pages and their statements match observed behavior.
-- [ ] Privacy-safe diagnostics are reviewed manually and contain no source, transcript, key, URL, path, or personal folder/title content.
+- [x] Fresh install launches on an iPhone running iOS 18 or later.
+- [x] Fresh install launches and lays out correctly on an iPad in all four declared orientations.
+- [x] Review Demo unlocks with the supplied code, adds the sample on an empty library, shows the banner, and produces maps/responses without a key.
+- [x] A live AI action presents the disclosure before transmission; decline sends nothing; allow completes; revoke prompts again.
+- [x] API key survives relaunch and Delete API Key removes it.
+- [x] Text/Markdown import starts playback promptly; after the Listening Map overview, playback continues into the source instead of jumping to the end. Play/pause, skip, chapter jump, background audio, lock-screen controls, and relaunch resume behave correctly.
+- [x] Generate a Listening Map for a long PDF; confirm its overview continues into source playback without jumping to the end. If the request fails or is retried, any map that appears can jump chapters immediately without ending and restarting the session.
+- [x] During native-text playback, scrub both backward and forward and confirm playback resumes near the selected position.
+- [x] Listen to native text with the preferred app voice for at least two minutes and confirm it never alternates with the accessibility/default voice.
+- [x] Import a PDF with visible section headings and confirm a heading-derived Listening Map appears without an AI request.
+- [x] From Files or another app, share one PDF and one plain-text file to Spoken Margins and confirm both arrive in the library with readable titles and content.
+- [x] Microphone permission, interjection recording, transcription, summary, follow-up, and export behave correctly.
+- [x] Recently Deleted restore and permanent deletion behave correctly.
+- [x] Widget/Live Activity shows current playback and delegates supported controls.
+- [ ] On a physical device with native media playing, scrub backward and forward from the lock screen and change playback rate; confirm the session moves without an `invalid_command_for_capability` error.
+- [x] Share extension imports an HTTPS page/link and text file, and rejects unsupported content cleanly.
+- [x] Safari extension captures selected/readable text only after an explicit action and opens the app handoff.
+- [x] Dynamic Type, VoiceOver labels, reduced motion, light/dark appearance, and offline behavior are acceptable on the supported devices.
+- [x] Privacy and Support links open public HTTPS pages and their statements match observed behavior.
+- [x] Privacy-safe diagnostics are reviewed manually and contain no source, transcript, key, URL, path, or personal folder/title content.
 
 ## Completed external prerequisites
 
