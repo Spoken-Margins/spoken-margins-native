@@ -1,0 +1,41 @@
+{
+  "schemaVersion": "spoken-margins.export.v1",
+  "item": {
+    "id": "item-pill",
+    "title": "You Can't Inspect the Pill",
+    "externalReference": "[[You Can't Inspect the Pill]]",
+    "includedFullText": false,
+    "text": null
+  },
+  "session": {
+    "id": "session-pill-mapless",
+    "status": "in_progress",
+    "completionPercent": 42
+  },
+  "listeningMap": null,
+  "turns": [],
+  "timeline": [
+    {
+      "type": "interjection",
+      "interjectionId": "ij-source-001",
+      "targetType": "item",
+      "targetId": "item-pill",
+      "percent": 18
+    }
+  ],
+  "interjections": [
+    {
+      "id": "ij-source-001",
+      "sessionId": "session-pill-mapless",
+      "targetType": "item",
+      "targetId": "item-pill",
+      "roughPercent": 18,
+      "anchorBefore": "Maybe their diet changed. Maybe their sleep changed.",
+      "anchorAfter": "Maybe their symptoms were about to improve anyway.",
+      "mediaTimeMs": null,
+      "transcriptionStatus": "transcribed",
+      "transcript": "This list works, but it feels repetitive.",
+      "audioPath": "interjections/ij-source-001.m4a"
+    }
+  ]
+}

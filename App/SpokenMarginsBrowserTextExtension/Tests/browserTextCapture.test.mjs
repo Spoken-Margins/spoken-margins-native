@@ -28,7 +28,15 @@ test("popup and manifest reference flattened bundled resources", () => {
   const popup = fs.readFileSync("App/SpokenMarginsBrowserTextExtension/Resources/popup.html", "utf8");
   const styles = fs.readFileSync("App/SpokenMarginsBrowserTextExtension/Resources/Styles/popup.css", "utf8");
 
-  assert.deepEqual(manifest.content_scripts[0].js, ["browserTextCapture.js"]);
+  assert.ok(manifest.permissions.includes("activeTab"));
+  assert.ok(manifest.permissions.includes("scripting"));
+  assert.equal(manifest.action.default_popup, "popup.html");
+  assert.deepEqual(Object.keys(manifest.icons), ["48", "96", "128", "256", "512"]);
+  for (const [size, icon] of Object.entries(manifest.icons)) {
+    assert.match(size, /^\d+$/);
+    assert.equal(typeof icon, "string");
+    assert.ok(fs.existsSync(`App/SpokenMarginsBrowserTextExtension/Resources/Icons/${icon}`));
+  }
   assert.match(popup, /href="popup\.css"/);
   assert.match(popup, /src="popup\.js"/);
   assert.doesNotMatch(popup, /Styles\/popup\.css|Scripts\/popup\.js/);

@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "session-trace.v1",
+  "name": "lock-screen-widget-controls",
+  "description": "Lock screen or widget surface displays the session snapshot and delegates transport, chapter, and interjection commands to the phone/tablet runtime.",
+  "runtimeProfile": "lock-screen-widget",
+  "requiresCapabilities": {
+    "timeline": ["media_time", "chapter_timing", "playback_rate_observation"],
+    "interjection": ["delegate_interjection_to_canonical_runtime"],
+    "remoteControl": ["display_snapshot", "send_transport_commands", "send_chapter_jump", "send_interjection_commands"]
+  },
+  "fixtures": {
+    "item": "fixtures/items/text-with-listening-map.json",
+    "listeningMap": "fixtures/maps/valid-listening-map.json"
+  },
+  "steps": [
+    {
+      "event": "sessionSnapshotReceived",
+      "expect": {
+        "title": "You Can't Inspect the Pill",
+        "chapterTitle": "Reasonable distrust",
+        "status": "playing",
+        "compactSurfaceReady": true
+      }
+    },
+    {
+      "command": "togglePlayPause",
+      "expect": { "delegatedToCanonicalRuntime": true, "status": "paused" }
+    },
+    {
+      "command": "jumpToChapter",
+      "args": { "chapterId": "ch-anecdotes" },
+      "expect": { "delegatedToCanonicalRuntime": true, "chapterTitle": "Anecdotes mislead" }
+    },
+    {
+      "command": "beginInterjection",
+      "expect": { "delegatedToCanonicalRuntime": true, "phase": "recording_interjection" }
+    },
+    {
+      "command": "finishInterjection",
+      "expect": { "delegatedToCanonicalRuntime": true, "phase": "item_playback" }
+    }
+  ],
+  "assertions": [
+    "The lock screen/widget does not own playback, recording, persistence, or AI.",
+    "The surface only shows commands allowed by the active profile.",
+    "Interjection commands are delegated to the canonical phone/tablet runtime.",
+    "Chapter jumps require chapter timing and remote chapter command capability.",
+    "Media seek and playback-rate commands are available only when the canonical target publishes a duration."
+  ]
+}

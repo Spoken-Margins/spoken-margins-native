@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "session.v1",
+  "id": "session-pill-mapless",
+  "itemId": "item-pill",
+  "createdAt": "2026-06-11T12:15:00.000Z",
+  "completedAt": null,
+  "status": "in_progress",
+  "phase": "item_playback",
+  "completionPercent": 42,
+  "currentTarget": {
+    "targetType": "item_text_tts",
+    "targetId": "item-pill",
+    "position": {
+      "charOffset": 81,
+      "mediaTimeMs": null,
+      "segmentIndex": 1,
+      "chapterId": null
+    }
+  },
+  "playbackRate": 1
+}

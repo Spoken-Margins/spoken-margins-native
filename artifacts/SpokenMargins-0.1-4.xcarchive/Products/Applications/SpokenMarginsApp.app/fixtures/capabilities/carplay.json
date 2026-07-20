@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "runtime-capability-profile.v1",
+  "id": "carplay",
+  "displayName": "CarPlay",
+  "surface": "carplay",
+  "connectivity": "tethered",
+  "mediaOwnership": "remote_control_only",
+  "capabilities": {
+    "playback": [],
+    "timeline": ["chapter_timing"],
+    "interjection": ["delegate_interjection_to_canonical_runtime"],
+    "ai": [],
+    "sync": [],
+    "remoteControl": ["display_snapshot", "send_transport_commands", "send_chapter_jump", "send_interjection_commands"]
+  },
+  "forbiddenCapabilities": ["record_audio", "realtime_tts", "prerendered_audio", "native_media", "generate_listening_map", "summarize_interjections", "continue_discussion"],
+  "notes": ["Expanded remote surface. Keep heavy editing and AI management off CarPlay."]
+}
