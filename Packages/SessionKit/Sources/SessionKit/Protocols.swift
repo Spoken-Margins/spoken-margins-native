@@ -27,10 +27,18 @@ public protocol SessionRepository {
     func saveTranscriptTimeline(_ transcript: SourceTranscriptTimeline) throws
     func loadTranscriptTimeline(id: String) throws -> SourceTranscriptTimeline?
     func loadTranscriptTimeline(itemId: String) throws -> SourceTranscriptTimeline?
+    func saveAudioAsset(_ asset: AudioAsset) throws
+    func loadAudioAssets(itemId: String) throws -> [AudioAsset]
+    func deleteAudioAsset(id: String) throws
+    func savePodcastDownload(_ record: PodcastDownloadRecord) throws
+    func loadPodcastDownload(itemId: String) throws -> PodcastDownloadRecord?
+    func loadPodcastDownloads() throws -> [PodcastDownloadRecord]
+    func deletePodcastDownload(id: String) throws
 }
 
 public protocol AudioPlaybackClient {
     func configureMediaContext(_ context: PlaybackMediaContext?) throws
+    func configureSpeechSettings(voiceIdentifier: String?, rate: Float) throws
     func prepareSpeechText(_ text: String) throws -> String
     func play(targetId: String) throws
     func play(targetId: String, from charOffset: Int) throws
@@ -83,6 +91,8 @@ public protocol TextAudioPreparationClient: Sendable {
 
 public extension AudioPlaybackClient {
     func configureMediaContext(_ context: PlaybackMediaContext?) throws {}
+
+    func configureSpeechSettings(voiceIdentifier: String?, rate: Float) throws {}
 
     func play(targetId: String, from charOffset: Int) throws {
         try play(targetId: targetId)

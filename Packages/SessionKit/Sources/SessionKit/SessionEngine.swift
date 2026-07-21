@@ -38,6 +38,7 @@ public final class SessionEngine {
     private var playbackStartPendingAttemptId: Int?
     private var playbackStartPendingTargetId: String?
     private var playbackStartDeadline: Date?
+    private var playbackURLOverrides: [String: String] = [:]
 
     private struct PlaybackPlan {
         var text: String
@@ -230,6 +231,48 @@ public final class SessionEngine {
             try playCurrentTarget(session)
         }
         publishPlaybackContinuation(for: session)
+        return snapshot
+    }
+
+    /// Applies native-speech settings without replacing the playback client. When speech is
+    /// active, restart from the last position reported by the audio client so an unconfirmed
+    /// utterance can never advance the source cursor.
+    @discardableResult
+    public func updateSpeechPlaybackSettings(voiceIdentifier: String?, rate: Float) throws -> SessionSnapshot {
+        try requirePlayback("updateSpeechPlaybackSettings")
+        try audio.configureSpeechSettings(voiceIdentifier: voiceIdentifier, rate: rate)
+        guard currentSession != nil,
+              snapshot.targetType == TargetType.itemTextTTS.rawValue
+                || snapshot.targetType == TargetType.assistantTurnTTS.rawValue
+                || snapshot.targetType == TargetType.summaryTurnTTS.rawValue else {
+            return snapshot
+        }
+        return try restartPlaybackFromCurrentPosition()
+    }
+
+    /// Changes only the transport asset for an item. Canonical target ids, source URLs,
+    /// playback rate, source time, and interjection anchors remain unchanged.
+    @discardableResult
+    public func updatePlaybackTransport(itemId: String, playbackURL: String?) throws -> SessionSnapshot {
+        if let playbackURL {
+            playbackURLOverrides[itemId] = playbackURL
+        } else {
+            playbackURLOverrides[itemId] = nil
+        }
+        guard var session = currentSession,
+              session.itemId == itemId,
+              session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia else {
+            return snapshot
+        }
+        session = try syncCurrentPositionFromAudio(session)
+        currentSession = session
+        try repository.saveSession(session)
+        if snapshot.status.isPlaybackActive {
+            try playCurrentTarget(session)
+            publishPlaybackContinuation(for: session)
+        } else {
+            try audio.configureMediaContext(playbackMediaContext(for: session))
+        }
         return snapshot
     }
 
@@ -2976,6 +3019,7 @@ public final class SessionEngine {
             title: item.title,
             subtitle: subtitle.isEmpty ? nil : subtitle,
             sourceURL: item.media?.url ?? item.externalReference,
+            playbackURL: playbackURLOverrides[item.id],
             artworkURL: nil,
             durationMs: item.media?.durationMs ?? timeline?.durationMs,
             sourceType: item.media?.sourceType,

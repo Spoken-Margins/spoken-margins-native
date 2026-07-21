@@ -3121,6 +3121,70 @@ final class SessionKitCoreTests: XCTestCase {
             XCTAssertEqual(error as? SessionKitError, .invalidCommandForCapability("importBrowserText"))
         }
     }
+
+    func testPodcastDownloadPolicyNeverAutomaticallyDownloadsOnCellular() {
+        XCTAssertEqual(PodcastDownloadPolicy.action(for: .wifi, userInitiated: false), .download)
+        XCTAssertEqual(PodcastDownloadPolicy.action(for: .cellular, userInitiated: false), .streamOnly)
+        XCTAssertEqual(PodcastDownloadPolicy.action(for: .unavailable, userInitiated: false), .waitForWiFi)
+        XCTAssertEqual(PodcastDownloadPolicy.action(for: .cellular, userInitiated: true), .download)
+        XCTAssertEqual(PodcastCacheLimitGB.defaultValue, .five)
+    }
+
+    func testPodcastCacheEvictionIsLRUAndProtectsActiveAndDownloadingItems() {
+        let old = Date(timeIntervalSince1970: 100)
+        let recent = Date(timeIntervalSince1970: 300)
+        let records = [
+            PodcastDownloadRecord(id: "a", itemId: "active", remoteURL: "https://example.com/a", state: .availableOffline, bytesWritten: 3_000, lastPlayedAt: old),
+            PodcastDownloadRecord(id: "b", itemId: "old", remoteURL: "https://example.com/b", state: .availableOffline, bytesWritten: 3_000, lastPlayedAt: old),
+            PodcastDownloadRecord(id: "c", itemId: "recent", remoteURL: "https://example.com/c", state: .availableOffline, bytesWritten: 3_000, lastPlayedAt: recent),
+            PodcastDownloadRecord(id: "d", itemId: "downloading", remoteURL: "https://example.com/d", state: .downloading, bytesWritten: 8_000)
+        ]
+
+        let evictions = PodcastCacheEvictionPlanner.recordsToEvict(
+            from: records,
+            limitBytes: 6_000,
+            protectedItemIds: ["active", "downloading"]
+        )
+
+        XCTAssertEqual(evictions.map(\.itemId), ["old"])
+    }
+
+    func testLocalPodcastTransportSwitchPreservesCanonicalTargetTimeAndRate() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "podcast",
+            displayName: "Podcast",
+            capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media"]]
+        )
+        let remote = "https://example.com/episode.mp3"
+        let item = Item(
+            id: "episode",
+            title: "Episode",
+            mediaType: "audio",
+            text: nil,
+            externalReference: remote,
+            status: "ready",
+            media: ItemMedia(sourceType: .remoteStream, url: remote, durationMs: 120_000)
+        )
+        let repository = InMemorySessionRepository(items: [item.id: item])
+        let audio = RecordingAudioClient()
+        let engine = SessionEngine(profile: profile, repository: repository, audio: audio)
+        _ = try engine.startSession(itemId: item.id)
+        _ = try engine.setPlaybackRate(1.5)
+        audio.currentMediaTimeValue = 42_000
+
+        let snapshot = try engine.updatePlaybackTransport(
+            itemId: item.id,
+            playbackURL: URL(fileURLWithPath: "/tmp/episode.mp3").absoluteString
+        )
+
+        XCTAssertEqual(snapshot.targetId, remote)
+        XCTAssertEqual(snapshot.currentMediaTimeMs, 42_000)
+        XCTAssertEqual(snapshot.playbackRate, 1.5)
+        XCTAssertEqual(audio.playedTargets.last, remote)
+        XCTAssertEqual(audio.playedOffsets.last, 42_000)
+        XCTAssertEqual(audio.mediaContexts.last??.sourceURL, remote)
+        XCTAssertEqual(audio.mediaContexts.last??.playbackURL, "file:///tmp/episode.mp3")
+    }
 }
 
 private final class RecordingAudioClient: AudioPlaybackClient {
@@ -3141,9 +3205,14 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     var mediaContexts: [PlaybackMediaContext?] = []
     var startStatus: PlaybackStartStatus = .confirmed
     var transportState: PlaybackTransportState?
+    var configuredSpeechSettings: [(String?, Float)] = []
 
     func configureMediaContext(_ context: PlaybackMediaContext?) throws {
         mediaContexts.append(context)
+    }
+
+    func configureSpeechSettings(voiceIdentifier: String?, rate: Float) throws {
+        configuredSpeechSettings.append((voiceIdentifier, rate))
     }
 
     func prepareSpeechText(_ text: String) throws -> String {

@@ -163,6 +163,9 @@ typealias PreparedTextAudioPrewarmHandler = @Sendable (
 final class Gate1AppModel: ObservableObject {
     private static let welcomeSampleSeedVersion = 1
     private static let welcomeSampleSeedVersionKey = "welcomeSampleSeedVersion"
+    private static var isRunningUnitTests: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    }
 
     @Published var screen: Gate1Screen = .home
     @Published var snapshot = SessionSnapshot() {
@@ -217,6 +220,10 @@ final class Gate1AppModel: ObservableObject {
     @Published var mediaSkipForwardSeconds = Gate1AppModel.storedMediaSkipSeconds(forKey: "mediaSkipForwardSeconds")
     @Published var speechRate = UserDefaults.standard.double(forKey: "speechRate") == 0 ? 0.5 : UserDefaults.standard.double(forKey: "speechRate")
     @Published var mediaPlaybackRate = UserDefaults.standard.double(forKey: "mediaPlaybackRate") == 0 ? 1.0 : UserDefaults.standard.double(forKey: "mediaPlaybackRate")
+    @Published var podcastCacheLimitGB = PodcastCacheLimitGB(
+        rawValue: UserDefaults.standard.integer(forKey: "podcastCacheLimitGB")
+    )?.rawValue ?? PodcastCacheLimitGB.defaultValue.rawValue
+    @Published private(set) var podcastDownloadRecords: [String: PodcastDownloadRecord] = [:]
     @Published var preparedTextAudioStatus = "Not started"
     @Published var sourceTranscriptStatus = "Not started"
     @Published var pendingPreparedTextStartItemId: String?
@@ -261,6 +268,7 @@ final class Gate1AppModel: ObservableObject {
     private let browserTextHandoffStore: Gate5BrowserTextHandoffStore?
     private let audioPlaybackClientOverride: AudioPlaybackClient?
     private var mediaPlaybackClient: AVPlayerStreamPlaybackClient?
+    private var podcastDownloadCoordinator: PodcastDownloadCoordinator?
     private let recordingClientOverride: RecordingClient?
     private let forcePreparedTextGate: Bool
     private let sourceTranscriptionClient: SourceTranscriptionClient
@@ -360,6 +368,22 @@ final class Gate1AppModel: ObservableObject {
     }
 
     static let supportedMediaSkipSeconds = [10, 15, 30, 45, 60]
+    static let supportedPodcastCacheLimitsGB = PodcastCacheLimitGB.allCases.map(\.rawValue)
+
+    var selectedPodcastDownloadState: PodcastDownloadState? {
+        podcastDownloadRecords[selectedItem.id]?.state
+    }
+
+    var selectedPodcastDownloadDescription: String? {
+        guard let record = podcastDownloadRecords[selectedItem.id] else { return nil }
+        if record.state == .downloading, let progress = record.progress {
+            return "Downloading \(Int((progress * 100).rounded()))%"
+        }
+        if record.state == .failed, let reason = record.failureReason {
+            return "Failed: \(reason)"
+        }
+        return record.state.displayName
+    }
 
     private static func storedMediaSkipSeconds(forKey key: String) -> Int {
         let value = UserDefaults.standard.integer(forKey: key)
@@ -584,6 +608,7 @@ final class Gate1AppModel: ObservableObject {
             try store.seed(item: item)
             try store.seed(map: map)
             self.store = store
+            try configurePodcastDownloads(store: store)
             installEngine(try makeEngine(store: store))
             activeItemId = item.id
             snapshot = SessionSnapshot()
@@ -983,6 +1008,7 @@ final class Gate1AppModel: ObservableObject {
                 sourceTranscriptStatus = snapshot.sourceTranscriptStatus ?? "not_started"
                 diagnostics["sourceTranscriptionStatus"] = sourceTranscriptStatus
                 if let itemId = snapshot.itemId {
+                    schedulePodcastDownloadIfNeeded(itemId: itemId)
                     let resolved = engine.lastLinkResolutionResult
                     scheduleSourceTranscriptImportIfAvailable(
                         resolved?.selectedCandidate?.transcriptLinks ?? resolved?.candidates.flatMap(\.transcriptLinks) ?? [],
@@ -1029,6 +1055,7 @@ final class Gate1AppModel: ObservableObject {
                 sourceTranscriptStatus = snapshot.sourceTranscriptStatus ?? "not_started"
                 diagnostics["sourceTranscriptionStatus"] = sourceTranscriptStatus
                 if let itemId = snapshot.itemId {
+                    schedulePodcastDownloadIfNeeded(itemId: itemId)
                     scheduleSourceTranscriptImportIfAvailable(
                         result.selectedCandidate?.transcriptLinks ?? result.candidates.flatMap(\.transcriptLinks),
                         itemId: itemId
@@ -1088,6 +1115,7 @@ final class Gate1AppModel: ObservableObject {
         }
         libraryItems = try loadLibraryRows(store: store)
         diagnostics["lastBackgroundSourceLinkImport"] = item.id
+        schedulePodcastDownloadIfNeeded(itemId: item.id)
         scheduleSourceTranscriptImportIfAvailable(
             result.selectedCandidate?.transcriptLinks ?? result.candidates.flatMap(\.transcriptLinks),
             itemId: item.id
@@ -1355,6 +1383,7 @@ final class Gate1AppModel: ObservableObject {
     func start() {
         stopSpeechPreviews()
         scheduleTextAudioPrewarmIfNeeded(itemId: activeItemId)
+        preparePodcastPlayback(itemId: activeItemId)
         run { engine in
             let requestedMediaPlaybackRate = mediaPlaybackRate
             snapshot = try engine.startSession(itemId: activeItemId)
@@ -1733,6 +1762,7 @@ final class Gate1AppModel: ObservableObject {
                 reportFailure("Move the item to Recently Deleted before deleting it permanently.")
                 return
             }
+            podcastDownloadCoordinator?.removeItem(id)
             try store.deleteItem(id: id)
             try refreshLibraryRows(store: store)
             if trashUndo?.itemId == id {
@@ -1819,15 +1849,37 @@ final class Gate1AppModel: ObservableObject {
 
     func playbackSpeechRateChanged() {
         saveSpeechSettings()
-        guard snapshot.status.isPlaybackActive,
-              !isMediaPlaybackSnapshot else {
+        guard !isMediaPlaybackSnapshot else {
             return
         }
         run { engine in
-            snapshot = try engine.restartPlaybackFromCurrentPosition()
+            snapshot = try engine.updateSpeechPlaybackSettings(
+                voiceIdentifier: speechVoiceIdentifier.isEmpty ? nil : speechVoiceIdentifier,
+                rate: Float(speechRate)
+            )
             refreshSelectedItem()
             diagnostics["speechRateApplied"] = String(format: "%.2f", speechRate)
         }
+    }
+
+    func podcastCacheLimitChanged() {
+        guard let limit = PodcastCacheLimitGB(rawValue: podcastCacheLimitGB) else {
+            podcastCacheLimitGB = PodcastCacheLimitGB.defaultValue.rawValue
+            return
+        }
+        UserDefaults.standard.set(limit.rawValue, forKey: "podcastCacheLimitGB")
+        podcastDownloadCoordinator?.setCacheLimit(limit)
+        diagnostics["podcastCacheLimitGB"] = "\(limit.rawValue)"
+    }
+
+    func retrySelectedPodcastDownload() {
+        guard !selectedItem.id.isEmpty else { return }
+        podcastDownloadCoordinator?.retry(itemId: selectedItem.id)
+    }
+
+    func clearPodcastDownloads() {
+        podcastDownloadCoordinator?.clearDownloads()
+        reportSuccess("Cleared downloaded podcast audio. Remote sources remain available.")
     }
 
     private func skipUnitForCurrentTarget() -> String {
@@ -2566,7 +2618,18 @@ final class Gate1AppModel: ObservableObject {
         let changed = sanitizeTTSMode()
         settingsValueChanged()
         saveSpeechSettings()
-        _ = rebuildEngineForCurrentSettings()
+        if changed {
+            _ = rebuildEngineForCurrentSettings()
+        } else if !isMediaPlaybackSnapshot {
+            run { engine in
+                snapshot = try engine.updateSpeechPlaybackSettings(
+                    voiceIdentifier: speechVoiceIdentifier.isEmpty ? nil : speechVoiceIdentifier,
+                    rate: Float(speechRate)
+                )
+                refreshSelectedItem()
+                diagnostics["speechSettingsApplied"] = snapshot.status.rawValue
+            }
+        }
         if changed {
             reportFailure("Kokoro requires the SpokenMarginsAppDevice scheme on a physical device.")
         }
@@ -3048,6 +3111,13 @@ final class Gate1AppModel: ObservableObject {
 
     private func installEngine(_ engine: SessionEngine) {
         self.engine = engine
+        for record in podcastDownloadRecords.values where record.state == .availableOffline {
+            guard let path = record.localRelativePath,
+                  let url = try? applicationSupportDirectory()
+                    .appending(path: "PodcastAudio", directoryHint: .isDirectory)
+                    .appending(path: path) else { continue }
+            _ = try? engine.updatePlaybackTransport(itemId: record.itemId, playbackURL: url.absoluteString)
+        }
         configureGate2CompactControls(for: engine)
     }
 
@@ -5459,7 +5529,61 @@ final class Gate1AppModel: ObservableObject {
         }
         let store = try SQLiteSessionStore(path: url.path)
         self.store = store
+        try configurePodcastDownloads(store: store)
         return store
+    }
+
+    private func configurePodcastDownloads(store: SQLiteSessionStore) throws {
+        podcastDownloadCoordinator?.shutdown()
+        let limit = PodcastCacheLimitGB(rawValue: podcastCacheLimitGB) ?? .defaultValue
+        let coordinator = try PodcastDownloadCoordinator(
+            store: store,
+            applicationSupportDirectory: try applicationSupportDirectory(),
+            cacheLimit: limit,
+            monitorsNetwork: !Self.isRunningUnitTests,
+            usesBackgroundSession: !Self.isRunningUnitTests
+        )
+        coordinator.onRecordChanged = { [weak self] record in
+            guard let self else { return }
+            podcastDownloadRecords[record.itemId] = record
+            diagnostics["podcastDownload:\(record.itemId)"] = record.state.rawValue
+        }
+        coordinator.onLocalAssetReady = { [weak self] itemId, url in
+            guard let self, let engine else { return }
+            run { _ in
+                snapshot = try engine.updatePlaybackTransport(itemId: itemId, playbackURL: url.absoluteString)
+                refreshSelectedItem()
+            }
+        }
+        podcastDownloadCoordinator = coordinator
+        podcastDownloadRecords = coordinator.recordsByItemId
+        diagnostics["podcastCacheLimitGB"] = "\(limit.rawValue)"
+    }
+
+    private func schedulePodcastDownloadIfNeeded(itemId: String) {
+        guard let store,
+              let item = try? store.loadItem(id: itemId),
+              item.media?.sourceType == .remoteStream,
+              let rawURL = item.media?.url,
+              let remoteURL = URL(string: rawURL) else { return }
+        podcastDownloadCoordinator?.register(itemId: itemId, remoteURL: remoteURL)
+    }
+
+    private func preparePodcastPlayback(itemId: String) {
+        guard let coordinator = podcastDownloadCoordinator else { return }
+        coordinator.configureActiveItem(itemId)
+        if let record = podcastDownloadRecords[itemId], record.state == .evicted,
+           coordinator.networkTransport == .wifi,
+           let remoteURL = URL(string: record.remoteURL) {
+            coordinator.register(itemId: itemId, remoteURL: remoteURL)
+        }
+        guard let record = podcastDownloadRecords[itemId],
+              record.state == .availableOffline,
+              let path = record.localRelativePath,
+              let localURL = try? applicationSupportDirectory()
+                .appending(path: "PodcastAudio", directoryHint: .isDirectory)
+                .appending(path: path) else { return }
+        _ = try? engine?.updatePlaybackTransport(itemId: itemId, playbackURL: localURL.absoluteString)
     }
 
     private func archiveLegacyLibraryIfNeeded(at databaseURL: URL) throws -> URL? {

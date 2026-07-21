@@ -532,8 +532,8 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
     private var startedTargetId: String?
     private var playbackStartFailure: String?
     private var paused = false
-    private let voiceIdentifier: String?
-    private let speechRate: Float
+    private var voiceIdentifier: String?
+    private var speechRate: Float
     private let readsSpeechSettingsAtPlayback: Bool
     #if canImport(AVFoundation)
     private weak var activeUtterance: AVSpeechUtterance?
@@ -588,6 +588,11 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         let normalized = SpeechTextNormalizer.normalize(text)
         preparedSpeechText = normalized
         return normalized
+    }
+
+    public func configureSpeechSettings(voiceIdentifier: String?, rate: Float) throws {
+        self.voiceIdentifier = voiceIdentifier?.isEmpty == true ? nil : voiceIdentifier
+        speechRate = max(AVSpeechUtteranceMinimumSpeechRate, min(AVSpeechUtteranceMaximumSpeechRate, rate))
     }
 
     public func play(targetId: String) throws {
@@ -1083,6 +1088,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private let remoteCommandHandler: (@Sendable (CompactControlCommand, Int?, Double?) -> Void)?
     private var mediaContext: PlaybackMediaContext?
     private var activeTargetId: String?
+    private var activePlaybackURL: URL?
     private var completedTargetId: String?
     private var playbackComplete = false
     private var lastRequestedMediaTimeMs = 0
@@ -1149,16 +1155,18 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     public func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {
         #if canImport(AVFoundation)
-        guard let url = URL(string: targetId) else {
-            throw SessionKitError.invalidCommandForState("stream_audio_invalid_url:\(targetId)")
+        let requestedURL = mediaContext?.targetId == targetId ? mediaContext?.playbackURL : nil
+        guard let url = URL(string: requestedURL ?? targetId) else {
+            throw SessionKitError.invalidCommandForState("stream_audio_invalid_url:\(requestedURL ?? targetId)")
         }
-        if activeTargetId != targetId || player == nil {
+        if activeTargetId != targetId || activePlaybackURL != url || player == nil {
             removePlayerStateObserver()
             removeCompletionObserver()
             removeTimeObserver()
             let item = AVPlayerItem(url: url)
             player = AVPlayer(playerItem: item)
             activeTargetId = targetId
+            activePlaybackURL = url
             observeCompletion(for: item)
             installPlayerStateObserver()
             installTimeObserver()
@@ -1307,6 +1315,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         removeCompletionObserver()
         removeTimeObserver()
         activeTargetId = nil
+        activePlaybackURL = nil
         completedTargetId = nil
         playbackComplete = false
         paused = true
@@ -1576,6 +1585,10 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
         if context == nil {
             try speech.configureMediaContext(nil)
         }
+    }
+
+    public func configureSpeechSettings(voiceIdentifier: String?, rate: Float) throws {
+        try speech.configureSpeechSettings(voiceIdentifier: voiceIdentifier, rate: rate)
     }
 
     public func prepareSpeechText(_ text: String) throws -> String {

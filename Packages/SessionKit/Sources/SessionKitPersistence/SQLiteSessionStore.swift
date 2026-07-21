@@ -194,6 +194,35 @@ public final class SQLiteSessionStore: SessionRepository {
         return transcripts.last
     }
 
+    public func saveAudioAsset(_ asset: AudioAsset) throws {
+        try save(kind: "audio_asset", id: asset.id, sessionId: nil, itemId: asset.itemId, value: asset)
+    }
+
+    public func loadAudioAssets(itemId: String) throws -> [AudioAsset] {
+        try loadByItem(kind: "audio_asset", itemId: itemId)
+    }
+
+    public func deleteAudioAsset(id: String) throws {
+        try deleteRecord(kind: "audio_asset", id: id)
+    }
+
+    public func savePodcastDownload(_ record: PodcastDownloadRecord) throws {
+        try save(kind: "podcast_download", id: record.id, sessionId: nil, itemId: record.itemId, value: record)
+    }
+
+    public func loadPodcastDownload(itemId: String) throws -> PodcastDownloadRecord? {
+        let records: [PodcastDownloadRecord] = try loadByItem(kind: "podcast_download", itemId: itemId)
+        return records.last
+    }
+
+    public func loadPodcastDownloads() throws -> [PodcastDownloadRecord] {
+        try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at DESC, id;", ["podcast_download"])
+    }
+
+    public func deletePodcastDownload(id: String) throws {
+        try deleteRecord(kind: "podcast_download", id: id)
+    }
+
     public func seed(item: Item) throws {
         try saveItem(item)
     }
@@ -258,6 +287,20 @@ public final class SQLiteSessionStore: SessionRepository {
         bind(statement, index: 2, value: itemId)
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw SessionKitError.persistenceFailed("step_delete_records")
+        }
+    }
+
+    private func deleteRecord(kind: String, id: String) throws {
+        var statement: OpaquePointer?
+        let sql = "DELETE FROM records WHERE kind = ? AND id = ?;"
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SessionKitError.persistenceFailed("prepare_delete_record")
+        }
+        defer { sqlite3_finalize(statement) }
+        bind(statement, index: 1, value: kind)
+        bind(statement, index: 2, value: id)
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw SessionKitError.persistenceFailed("step_delete_record")
         }
     }
 

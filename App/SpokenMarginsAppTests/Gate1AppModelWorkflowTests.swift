@@ -215,6 +215,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.status, .playing)
         XCTAssertEqual(model.snapshot.currentTextStart, "One. ".count)
         XCTAssertEqual(audio.playedOffsets.last, "One. ".count)
+        XCTAssertEqual(try XCTUnwrap(audio.configuredSpeechRates.last), Float(0.65), accuracy: Float(0.001))
         XCTAssertEqual(UserDefaults.standard.double(forKey: "speechRate"), 0.65, accuracy: 0.001)
     }
 
@@ -227,6 +228,26 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         XCTAssertEqual(model.ttsMode, "systemImmediate")
         XCTAssertEqual(UserDefaults.standard.string(forKey: "ttsMode"), "systemImmediate")
+    }
+
+    func testVoiceChangeWhilePausedDoesNotCreatePhantomPlaybackProgress() throws {
+        let audio = WorkflowRecordingAudioClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio)
+        model.resetAndSeed()
+        model.importTitle = "Paused Voice Change"
+        model.importText = "One. Two. Three."
+        model.importTextItem()
+        audio.currentOffset = "One. ".count
+        model.pause()
+        let playCount = audio.playedOffsets.count
+
+        model.speechVoiceIdentifier = "test.voice"
+        model.speechSettingsChanged()
+
+        XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertEqual(model.snapshot.currentTextStart, "One. ".count)
+        XCTAssertEqual(audio.playedOffsets.count, playCount)
+        XCTAssertEqual(audio.configuredSpeechVoices.last!, "test.voice")
     }
 
     func testObsidianImportRunsInBackgroundAndLoadsHeadingBasedListeningMap() async throws {
@@ -436,11 +457,18 @@ private actor PreparedTextAudioPrewarmProbe {
 
 private final class WorkflowRecordingAudioClient: AudioPlaybackClient {
     var playedOffsets: [Int] = []
+    var configuredSpeechRates: [Float] = []
+    var configuredSpeechVoices: [String?] = []
     var currentOffset: Int?
     private var activeTargetId: String?
 
     func prepareSpeechText(_ text: String) throws -> String {
         SpeechTextNormalizer.normalize(text)
+    }
+
+    func configureSpeechSettings(voiceIdentifier: String?, rate: Float) throws {
+        configuredSpeechVoices.append(voiceIdentifier)
+        configuredSpeechRates.append(rate)
     }
 
     func play(targetId: String) throws {

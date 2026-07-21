@@ -712,6 +712,17 @@ private struct ItemScreen: View {
                     itemMetadataPills
                 }
             }
+            if let downloadStatus = model.selectedPodcastDownloadDescription {
+                HStack(spacing: 10) {
+                    Label(downloadStatus, systemImage: model.selectedPodcastDownloadState == .availableOffline ? "arrow.down.circle.fill" : "antenna.radiowaves.left.and.right")
+                    if model.selectedPodcastDownloadState == .failed || model.selectedPodcastDownloadState == .evicted {
+                        Button("Retry", action: model.retrySelectedPodcastDownload)
+                    }
+                }
+                .font(.subheadline)
+                .foregroundStyle(AppColors.secondaryText)
+                .accessibilityIdentifier("item.podcastDownload.status")
+            }
         }
     }
 
@@ -1043,6 +1054,19 @@ private struct PlaybackScreen: View {
             Text(playbackProgressLabel)
                 .font(.subheadline)
                 .foregroundStyle(AppColors.watchSecondary)
+            if let downloadStatus = model.selectedPodcastDownloadDescription {
+                HStack(spacing: 8) {
+                    Image(systemName: model.selectedPodcastDownloadState == .availableOffline ? "arrow.down.circle.fill" : "antenna.radiowaves.left.and.right")
+                    Text(downloadStatus)
+                    if model.selectedPodcastDownloadState == .failed || model.selectedPodcastDownloadState == .evicted {
+                        Button("Retry", action: model.retrySelectedPodcastDownload)
+                            .buttonStyle(.borderless)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(AppColors.watchSecondary)
+                .accessibilityIdentifier("playback.podcastDownload.status")
+            }
         }
     }
 
@@ -1645,6 +1669,22 @@ private struct SettingsScreen: View {
                     .onChange(of: model.mediaSkipForwardSeconds) { _, _ in
                         model.mediaSkipSettingsChanged()
                     }
+                }
+                Section("Podcast Downloads") {
+                    Picker("Cache Limit", selection: $model.podcastCacheLimitGB) {
+                        ForEach(Gate1AppModel.supportedPodcastCacheLimitsGB, id: \.self) { gigabytes in
+                            Text("\(gigabytes) GB").tag(gigabytes)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.podcastCacheLimit.picker")
+                    .onChange(of: model.podcastCacheLimitGB) { _, _ in
+                        model.podcastCacheLimitChanged()
+                    }
+                    Text("Episodes stream immediately. Complete episodes download automatically on Wi-Fi and the least recently played files are removed when this limit is exceeded.")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                    Button("Clear Downloaded Episodes", role: .destructive, action: model.clearPodcastDownloads)
+                        .accessibilityIdentifier("settings.clearPodcastDownloads.button")
                 }
                 Section("Recently Deleted") {
                     if model.recentlyDeletedItems.isEmpty {

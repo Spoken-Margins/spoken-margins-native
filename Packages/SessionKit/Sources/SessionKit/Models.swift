@@ -309,6 +309,8 @@ public struct PlaybackMediaContext: Codable, Equatable, Sendable {
     public var title: String
     public var subtitle: String?
     public var sourceURL: String?
+    /// Concrete transport URL selected for this playback. The target and source URL remain canonical.
+    public var playbackURL: String?
     public var artworkURL: String?
     public var durationMs: Int?
     public var sourceType: AudioSourceType?
@@ -321,6 +323,7 @@ public struct PlaybackMediaContext: Codable, Equatable, Sendable {
         title: String,
         subtitle: String? = nil,
         sourceURL: String? = nil,
+        playbackURL: String? = nil,
         artworkURL: String? = nil,
         durationMs: Int? = nil,
         sourceType: AudioSourceType? = nil,
@@ -332,6 +335,7 @@ public struct PlaybackMediaContext: Codable, Equatable, Sendable {
         self.title = title
         self.subtitle = subtitle
         self.sourceURL = sourceURL
+        self.playbackURL = playbackURL
         self.artworkURL = artworkURL
         self.durationMs = durationMs
         self.sourceType = sourceType
