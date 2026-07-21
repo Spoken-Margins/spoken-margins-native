@@ -457,11 +457,24 @@ struct SpeechPlaybackChunk: Equatable, Sendable {
 
     func sourceOffset(atSpokenUTF16Offset utf16Offset: Int) -> Int {
         guard !spokenSourceOffsets.isEmpty else { return sourceEnd }
-        let clamped = max(0, min(utf16Offset, spokenText.utf16.count))
-        let index = String.Index(utf16Offset: clamped, in: spokenText)
-        let characterOffset = spokenText.distance(from: spokenText.startIndex, to: index)
-        guard characterOffset < spokenSourceOffsets.count else { return sourceEnd }
-        return spokenSourceOffsets[characterOffset]
+        let requestedOffset = max(0, min(utf16Offset, spokenText.utf16.count))
+        var consumedUTF16 = 0
+        for (characterOffset, character) in spokenText.enumerated() {
+            guard characterOffset < spokenSourceOffsets.count else { return sourceEnd }
+            if requestedOffset <= consumedUTF16 {
+                return spokenSourceOffsets[characterOffset]
+            }
+            let nextBoundary = consumedUTF16 + String(character).utf16.count
+            if requestedOffset < nextBoundary {
+                // AVSpeechSynthesizer may report a UTF-16 marker inside a
+                // surrogate pair or joined emoji. Keep progress at the
+                // containing source character instead of constructing an
+                // invalid Swift String.Index.
+                return spokenSourceOffsets[characterOffset]
+            }
+            consumedUTF16 = nextBoundary
+        }
+        return sourceEnd
     }
 }
 
@@ -849,8 +862,10 @@ extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
         utterance: AVSpeechUtterance
     ) {
         guard let chunk = chunksByUtteranceId[ObjectIdentifier(utterance)] else { return }
+        guard characterRange.location != NSNotFound else { return }
+        let (reportedEnd, overflowed) = characterRange.location.addingReportingOverflow(characterRange.length)
         let start = chunk.sourceOffset(atSpokenUTF16Offset: characterRange.location)
-        let end = chunk.sourceOffset(atSpokenUTF16Offset: characterRange.location + characterRange.length)
+        let end = chunk.sourceOffset(atSpokenUTF16Offset: overflowed ? Int.max : reportedEnd)
         currentOffset = start
         currentRangeLength = max(0, end - start)
     }

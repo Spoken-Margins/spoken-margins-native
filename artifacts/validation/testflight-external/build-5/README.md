@@ -45,7 +45,7 @@ Branch verification on July 21, 2026 is recorded below. Re-run it from the final
 - [x] `/opt/anaconda3/bin/python3 scripts/validate-contracts.py` — passed.
 - [x] `/opt/anaconda3/bin/python3 scripts/validate-surface-contracts.py` — passed.
 - [x] `swift build --build-tests --package-path Packages/SessionKit` — passed.
-- [x] `swift test --package-path Packages/SessionKit` — 109 tests passed.
+- [x] `swift test --package-path Packages/SessionKit` — 110 tests passed, including exhaustive UTF-16 marker mapping inside modifier, variation-selector, and ZWJ emoji.
 - [x] `SpokenMarginsAppTests` on iPhone 16 Pro / iOS 18.6 simulator — 84 tests passed.
 - [x] `SpokenMarginsAppUITests` on iPhone 16 Pro / iOS 18.6 simulator — all 7 routes passed, including targeted permanent deletion and diagnostics copy feedback.
 - [x] Generic iOS Simulator Debug and Release app builds — passed for the app and three embedded extensions.

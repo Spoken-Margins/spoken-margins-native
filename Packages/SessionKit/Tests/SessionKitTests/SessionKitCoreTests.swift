@@ -80,6 +80,23 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(chunk.sourceOffset(atSpokenUTF16Offset: spokenRange.location + spokenRange.length), expected)
     }
 
+    func testLiveSpeechChunkSafelyMapsEveryUTF16MarkerInsideJoinedEmoji() throws {
+        let source = "Emoji evolve: 💅 💪💪🏻💪🏼💪🏽💪🏾💪🏿 ❤️ 👨‍👩‍👧‍👦. Language remains readable."
+        let chunk = try XCTUnwrap(SpeechPlaybackPlanner.chunks(in: source, from: 0).first)
+        var previous = chunk.sourceStart
+
+        for marker in 0...chunk.spokenText.utf16.count {
+            let mapped = chunk.sourceOffset(atSpokenUTF16Offset: marker)
+            XCTAssertGreaterThanOrEqual(mapped, chunk.sourceStart, "marker \(marker)")
+            XCTAssertLessThanOrEqual(mapped, chunk.sourceEnd, "marker \(marker)")
+            XCTAssertGreaterThanOrEqual(mapped, previous, "marker \(marker)")
+            previous = mapped
+        }
+
+        XCTAssertEqual(chunk.sourceOffset(atSpokenUTF16Offset: -1), chunk.sourceStart)
+        XCTAssertEqual(chunk.sourceOffset(atSpokenUTF16Offset: Int.max), chunk.sourceEnd)
+    }
+
     func testObsidianWebClipperImportCleansTranscriptTimestampsAndMetadata() throws {
         let markdown = """
         ---
