@@ -102,6 +102,41 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.selectedItem.sessions.isEmpty, "Restoring an item should restore its existing sessions")
     }
 
+    func testPermanentDeletionCannotCrossFireIntoRestore() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.moveItemToTrash(id: "item-pill")
+
+        model.permanentlyDeleteItem(id: "item-pill")
+
+        XCTAssertFalse(model.libraryItems.contains(where: { $0.id == "item-pill" }))
+        XCTAssertFalse(model.recentlyDeletedItems.contains(where: { $0.id == "item-pill" }))
+        model.restoreItem(id: "item-pill")
+        XCTAssertFalse(model.libraryItems.contains(where: { $0.id == "item-pill" }))
+        XCTAssertFalse(model.recentlyDeletedItems.contains(where: { $0.id == "item-pill" }))
+    }
+
+    func testStoppingTextPlaybackKeepsSessionInProgressAndResumable() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let sessionId = model.snapshot.sessionId
+
+        model.endSession()
+
+        XCTAssertEqual(model.snapshot.sessionId, sessionId)
+        XCTAssertEqual(model.snapshot.phase, .itemPlayback)
+        XCTAssertEqual(model.snapshot.status, .paused)
+        let saved = model.selectedItem.sessions.first(where: { $0.id == sessionId })
+        XCTAssertEqual(saved?.status, "in_progress")
+        XCTAssertLessThan(saved?.completionPercent ?? 100, 100)
+        if let saved {
+            model.resumeSession(saved)
+        }
+        XCTAssertEqual(model.snapshot.sessionId, sessionId)
+        XCTAssertEqual(model.snapshot.status, .playing)
+    }
+
     func testTextImportStartsLiveSpeechWhenPreparedRenderingIsUnavailable() {
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
@@ -156,7 +191,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.canPlayLiveSpeechInstead)
     }
 
-    func testResumeCompletedSessionAfterExportRestartsSourcePlayback() throws {
+    func testResumeCompletedSessionAfterExportRequiresExplicitRestart() throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         model.importTitle = "Short Item"
@@ -170,9 +205,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.resumeSession(completedSession)
 
         XCTAssertEqual(model.screen, .playback)
-        XCTAssertEqual(model.snapshot.status, .playing)
+        XCTAssertEqual(model.snapshot.status, .paused)
         XCTAssertEqual(model.snapshot.targetType, "item_text_tts")
-        XCTAssertEqual(model.snapshot.sourceProgressPercent, 0)
+        XCTAssertEqual(model.snapshot.sourceProgressPercent, 100)
+        XCTAssertTrue(model.statusMessage.contains("Play from Beginning"))
     }
 
     func testLifecycleSyncPersistsLatestTextPlaybackPosition() throws {
@@ -231,6 +267,14 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     }
 
     func testVoiceChangeWhilePausedDoesNotCreatePhantomPlaybackProgress() throws {
+        let previousVoice = UserDefaults.standard.string(forKey: "speechVoiceIdentifier")
+        defer {
+            if let previousVoice {
+                UserDefaults.standard.set(previousVoice, forKey: "speechVoiceIdentifier")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "speechVoiceIdentifier")
+            }
+        }
         let audio = WorkflowRecordingAudioClient()
         let model = Gate1AppModel(audioPlaybackClient: audio)
         model.resetAndSeed()

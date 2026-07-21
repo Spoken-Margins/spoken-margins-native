@@ -86,6 +86,18 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
 
     func status(itemId: String) -> PodcastDownloadState? { recordsByItemId[itemId]?.state }
 
+    func validatedLocalURL(for itemId: String) -> URL? {
+        guard let record = recordsByItemId[itemId],
+              record.state == .availableOffline,
+              let url = localURL(for: record),
+              FileManager.default.fileExists(atPath: url.path) else {
+            return nil
+        }
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+        guard size > 0 else { return nil }
+        return url
+    }
+
     func configureActiveItem(_ itemId: String?) {
         activeItemId = itemId
         guard let itemId, var record = recordsByItemId[itemId] else { return }

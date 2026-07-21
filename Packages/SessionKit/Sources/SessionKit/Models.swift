@@ -925,6 +925,12 @@ public struct Anchor: Codable, Equatable, Sendable {
     }
 }
 
+public enum AnchorContextStatus: String, Codable, Equatable, Sendable {
+    case pending
+    case ready
+    case unavailable
+}
+
 public struct Interjection: Codable, Equatable, Sendable {
     public var id: String
     public var itemId: String
@@ -941,6 +947,7 @@ public struct Interjection: Codable, Equatable, Sendable {
     public var cleanedTranscript: String?
     public var displayText: String?
     public var status: String
+    public var anchorContextStatus: AnchorContextStatus? = nil
 }
 
 public struct ConversationTurn: Codable, Equatable, Sendable {

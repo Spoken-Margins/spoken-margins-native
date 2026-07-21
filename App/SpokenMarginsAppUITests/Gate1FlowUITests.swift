@@ -126,6 +126,47 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("gate2.compact.chapter").waitForExistence(timeout: 4))
     }
 
+    func testPermanentDeleteDoesNotRestoreRecentlyDeletedItem() throws {
+        let itemTitle = "Permanent Delete \(UUID().uuidString.prefix(8))"
+        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
+        app.buttons["home.addSource.button"].tap()
+        let title = element("create.title.field")
+        XCTAssertTrue(title.waitForExistence(timeout: 4))
+        title.tap()
+        title.typeText(itemTitle)
+        let text = element("create.text.editor")
+        text.tap()
+        text.typeText("This item exists only to verify permanent deletion.")
+        scrollToElement("create.start.button").tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 4))
+        app.buttons["playback.home.button"].tap()
+        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 4))
+
+        scrollToButton(containingLabel: "Move \(itemTitle) to Recently Deleted").tap()
+        app.buttons["Move to Recently Deleted"].tap()
+
+        app.buttons["home.settings.button"].tap()
+        let delete = scrollToButton(containingLabel: "Delete \(itemTitle) Permanently")
+        delete.tap()
+        let confirmation = app.alerts["Delete Permanently?"]
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 2))
+        confirmation.buttons["Delete Permanently"].tap()
+
+        XCTAssertTrue(waitForDisappearance(app.buttons["Restore \(itemTitle)"], timeout: 2))
+        XCTAssertFalse(app.staticTexts[itemTitle].exists)
+    }
+
+    func testDiagnosticsCopyShowsLocalConfirmation() throws {
+        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
+        app.buttons["home.settings.button"].tap()
+        let copy = scrollToElement("settings.copyDiagnostics.button")
+
+        copy.tap()
+
+        XCTAssertTrue(app.buttons["Copied"].waitForExistence(timeout: 2))
+        XCTAssertTrue(element("app.feedback.banner").waitForExistence(timeout: 2))
+    }
+
     private func element(_ identifier: String) -> XCUIElement {
         app.descendants(matching: .any)[identifier]
     }
@@ -156,6 +197,14 @@ final class Gate1FlowUITests: XCTestCase {
         }
         XCTAssertTrue(candidate.waitForExistence(timeout: 4), "Missing button containing \(text)")
         return candidate
+    }
+
+    private func waitForDisappearance(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: element
+        )
+        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
     }
 
     private static let manualListeningMapJSON = """

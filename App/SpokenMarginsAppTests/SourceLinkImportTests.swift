@@ -166,7 +166,45 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(request.durationMs, 300_000)
         XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorBefore, "Minute before. Interjection context.")
         XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorAfter, "Minute after.")
-        XCTAssertEqual(model.diagnostics["sourceWindowContextProvenance:ij-001"], "speech_window")
+        XCTAssertEqual(model.selectedItem.interjections.first?.anchorContextStatus, .ready)
+        XCTAssertEqual(model.diagnostics["sourceWindowContextProvenance:ij-001"], "bounded_remote_window")
+    }
+
+    func testUnavailablePodcastContextKeepsTimestampAndPersistedRetryState() async throws {
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "audio_file"),
+                title: "Offline Context Episode",
+                durationMs: 300_000,
+                audioURL: "https://cdn.example.com/offline-context.mp3",
+                confidence: 1
+            )
+        ))
+        let audio = WindowContextAudioClient()
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: audio,
+            recordingClient: NoopRecordingClient(),
+            sourceTranscriptionClient: ThrowingSourceTranscriptionClient()
+        )
+        model.resetAndSeed()
+
+        XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/episode", sourceSurface: "paste"))
+        audio.currentMediaTimeValue = 123_000
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        model.dispatchGate2CompactCommand(.finishInterjection)
+        try await waitFor("source window failure to persist") {
+            model.selectedItem.interjections.first?.anchorContextStatus == .unavailable
+        }
+
+        let interjection = try XCTUnwrap(model.selectedItem.interjections.first)
+        XCTAssertEqual(interjection.anchor.mediaTimeMs, 123_000)
+        XCTAssertEqual(interjection.anchorContextStatus, .unavailable)
+        XCTAssertEqual(interjection.anchor.anchorBefore, "")
+        XCTAssertEqual(interjection.anchor.anchorAfter, "")
     }
 
     func testConfiguredNativeAudioSkipIntervalsAreAppliedAndPersisted() {
@@ -279,6 +317,37 @@ final class SourceLinkImportTests: XCTestCase {
             model.sourceLinkURL.isEmpty
         }
 
+        XCTAssertEqual(model.selectedItem.title, "Form Episode")
+    }
+
+    func testSourceLinkFormRejectsMalformedURLWithoutClearingAndDeduplicatesActiveResolution() async throws {
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: "https://example.com/form-episode", provider: "direct_audio", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://example.com/form-episode", provider: "direct_audio", role: "audio_file"),
+                title: "Form Episode",
+                audioURL: "https://cdn.example.com/form-episode.mp3",
+                confidence: 1
+            )
+        ))
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            sourceTranscriptionClient: ThrowingSourceTranscriptionClient()
+        )
+        model.resetAndSeed()
+        model.sourceLinkURL = "not a URL"
+
+        XCTAssertFalse(model.beginSourceLinkImportFromForm())
+        XCTAssertEqual(model.sourceLinkURL, "not a URL")
+        XCTAssertEqual(model.sourceLinkImportState, "failure")
+
+        model.sourceLinkURL = "https://example.com/form-episode"
+        XCTAssertTrue(model.beginSourceLinkImportFromForm())
+        XCTAssertFalse(model.beginSourceLinkImportFromForm())
+        try await waitFor("source resolution to finish") { model.sourceLinkImportState == "success" }
         XCTAssertEqual(model.selectedItem.title, "Form Episode")
     }
 

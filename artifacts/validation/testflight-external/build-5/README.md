@@ -13,8 +13,8 @@
 
 ## State
 
-- `implemented`: #13 runtime fix and #29 offline podcast implementation are present on the readiness branch.
-- `verified`: package tests and simulator/app builds must be recorded below from the final branch commit.
+- `implemented`: #13 runtime/session fixes, #29 offline podcasts and local anchor enrichment, action feedback, safe permanent deletion, and idempotent link intake are present on the readiness branch.
+- `verified`: the branch evidence below supports implementation claims; re-run it from the reviewed merge commit before archiving.
 - `human_validated`: **NO — only the product owner may change this after using the exact archived candidate.**
 - `submitted`: **NO — stop conditions remain below.**
 
@@ -24,6 +24,12 @@
 - #29 Wi-Fi automatic podcast download, cellular streaming-only behavior, honest partial-download state, offline completion, local/remote handoff, adjustable 5 GB-default LRU cache, eviction, retry, clearing, and permanent deletion.
 - #8 share-sheet intake for Safari articles, selected text, audio links, Markdown, plain text, and PDF, including Import Inbox recovery and background intake.
 - #28 clean-install reviewer access to Listening Map, summary, and follow-up AI paths.
+- #32 action feedback, independent destructive actions, and permanent deletion.
+- #33 idempotent Return/focus-loss podcast-link submission.
+- On-device-only podcast anchor enrichment from stored transcripts, downloaded audio, or a bounded remote window, with persisted Pending/Ready/Unavailable states.
+- Copy/action feedback, independent destructive-row hit targets, and verified permanent deletion.
+- Return/focus-loss podcast-link submission with validation, deduplication, and visible resolving/failure state.
+- Fully offline native-text hardening for malformed browser markup and compound emoji, default-voice fallback, navigation-only mini-player behavior, and resumable early stop.
 - Build/signing identity and App Store Connect metadata/submission readiness.
 
 ## Out of scope
@@ -38,9 +44,10 @@ Branch verification on July 21, 2026 is recorded below. Re-run it from the final
 
 - [x] `/opt/anaconda3/bin/python3 scripts/validate-contracts.py` — passed.
 - [x] `/opt/anaconda3/bin/python3 scripts/validate-surface-contracts.py` — passed.
-- [x] `swift test --package-path Packages/SessionKit` — 106 tests passed.
-- [x] `SpokenMarginsAppTests` on iPhone 16 Pro / iOS 18.6 simulator — 77 tests passed.
-- [ ] Focused UI routes for playback, settings, share intake, and podcast status
+- [x] `swift build --build-tests --package-path Packages/SessionKit` — passed.
+- [x] `swift test --package-path Packages/SessionKit` — 109 tests passed.
+- [x] `SpokenMarginsAppTests` on iPhone 16 Pro / iOS 18.6 simulator — 84 tests passed.
+- [x] `SpokenMarginsAppUITests` on iPhone 16 Pro / iOS 18.6 simulator — all 7 routes passed, including targeted permanent deletion and diagnostics copy feedback.
 - [x] Generic iOS Simulator Debug and Release app builds — passed for the app and three embedded extensions.
 - [x] Generic iOS device Debug and Release app builds — passed for the app and three embedded extensions.
 - [ ] Generic watchOS build — not runnable: the generated project contains no `SpokenMarginsWatch` target/scheme; the AGENTS.md command is stale for the current project topology.
@@ -74,6 +81,23 @@ Record device, OS, pass/fail, notes, and diagnostics for each line.
 - [ ] Confirm least-recently-played eviction protects active playback and in-progress downloads.
 - [ ] Retry an evicted/failed episode and confirm redownload policy.
 - [ ] Clear downloads and permanently delete an item; confirm remote-only/record/file behavior is correct.
+- [ ] With a completed download and connectivity disabled, create an interjection; confirm its timestamp saves immediately and Before/After context becomes Ready from local audio.
+- [ ] Without local audio, create an interjection; confirm Pending/Unavailable is shown honestly and Retry enriches it after audio or an imported transcript becomes available.
+
+### Native-text stability and session recovery
+
+- [ ] Fully offline, repeatedly play the supplied emoji-article fixture with the default voice and selected installed voices; confirm no crash, indefinite loading, or silent progress.
+- [ ] While native text is audible, navigate Playback → Settings → mini-player; confirm audio, session, target, and position are unchanged.
+- [ ] Stop near 1%, reopen the same session, and confirm it remains `in_progress` and resumes from the persisted source position rather than replaying the overview.
+- [ ] Complete a source naturally and confirm only that path marks it `finished`; use the explicit restart action to replay it.
+
+### Action feedback, deletion, and link intake
+
+- [ ] Copy an interjection and copy diagnostics; confirm each button shows a temporary checkmark/“Copied” state and VoiceOver announces success.
+- [ ] In Recently Deleted, activate Restore and Delete Permanently separately; confirm only the chosen action fires and permanent deletion cannot restore the item.
+- [ ] In Import Inbox, activate Retry and Delete separately; confirm only the chosen action fires and feedback is visible.
+- [ ] Submit a valid podcast link with Return and valid focus loss; confirm each imports exactly once.
+- [ ] Confirm malformed URLs remain editable and Paste, Close, and explicit Add Link do not cross-trigger focus-loss submission.
 
 ### #8 share sheet
 
@@ -114,4 +138,4 @@ Record device, OS, pass/fail, notes, and diagnostics for each line.
 
 ## Stop conditions
 
-Do not submit for external Beta App Review until #13 is resolved, #29 is genuinely offline-capable, #8 has product-owner evidence on this exact candidate, the reviewer AI credential works from a clean install, this artifact is marked `human_validated`, and a valid distribution IPA exists.
+Do not submit for external Beta App Review until #13 is resolved, #29 is genuinely offline-capable, #32 and #33 are product-owner accepted, #8 has product-owner evidence on this exact candidate, the reviewer AI credential works from a clean install, this artifact is marked `human_validated`, and a valid distribution IPA exists.

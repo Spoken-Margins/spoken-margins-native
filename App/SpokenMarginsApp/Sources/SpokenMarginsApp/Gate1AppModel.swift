@@ -50,6 +50,17 @@ struct TrashUndoState: Equatable {
     let title: String
 }
 
+struct UserFeedbackEvent: Identifiable, Equatable {
+    enum Kind: Equatable {
+        case success
+        case error
+    }
+
+    let id = UUID()
+    let kind: Kind
+    let message: String
+}
+
 struct ItemDetailState {
     var id = ""
     var title = ""
@@ -186,6 +197,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var diagnostics: [String: String] = [:]
     @Published var statusMessage = "Ready."
     @Published var lastError: String?
+    @Published private(set) var feedbackEvent: UserFeedbackEvent?
     @Published var exportPreview = ""
     @Published var exportFormat = UserDefaults.standard.string(forKey: "exportFormat") ?? "markdown"
     @Published var exportScope = UserDefaults.standard.string(forKey: "exportScope") ?? "full_session"
@@ -209,6 +221,8 @@ final class Gate1AppModel: ObservableObject {
     @Published var importText = ""
     @Published var sourceLinkURL = ""
     @Published var isResolvingSourceLink = false
+    @Published private(set) var sourceLinkImportState = "idle"
+    @Published private(set) var sourceLinkImportMessage: String?
     @Published var listeningMapJSON = ""
     @Published var isGeneratingListeningMap = false
     @Published private(set) var providerBaseURL = "https://api.openai.com/v1"
@@ -288,6 +302,7 @@ final class Gate1AppModel: ObservableObject {
     private var pendingAutoPlayQueue = Gate1PlaybackAutoplayQueue()
     private var completedStreamingTurnIds: Set<String> = []
     private var pendingSourceContextInterjectionIds: Set<String> = []
+    private var defaultVoiceFallbackSessionIds: Set<String> = []
     private var pendingMapGenerationItemId: String?
     private var pendingProviderJobForConsent: PendingProviderJob?
     private var pendingMapGenerationAfterConsent = false
@@ -349,6 +364,10 @@ final class Gate1AppModel: ObservableObject {
         self.forcePreparedTextGate = forcePreparedTextGate
         self.sourceTranscriptionClient = sourceTranscriptionClient
         self.preparedTextAudioPrewarmHandler = preparedTextAudioPrewarmHandler
+        if CommandLine.arguments.contains("--ui-testing") {
+            speechVoiceIdentifier = ""
+            UserDefaults.standard.removeObject(forKey: "speechVoiceIdentifier")
+        }
         UserDefaults.standard.removeObject(forKey: "aiExecutionMode")
         refreshSpeechVoiceOptions()
         sanitizeTTSMode()
@@ -488,6 +507,10 @@ final class Gate1AppModel: ObservableObject {
                         let completedCurrentAudio = previousStatus.isPlaybackActive &&
                             updated.status == .paused &&
                             previousTargetId == updated.targetId
+                        if let fallbackSnapshot = self.retryWithDefaultVoiceIfNeeded(updated, engine: engine) {
+                            self.snapshot = fallbackSnapshot
+                            return
+                        }
                         if updated != self.snapshot {
                             self.snapshot = updated
                         }
@@ -503,6 +526,27 @@ final class Gate1AppModel: ObservableObject {
     private func stopPlaybackProgressTicker() {
         playbackProgressTask?.cancel()
         playbackProgressTask = nil
+    }
+
+    private func retryWithDefaultVoiceIfNeeded(_ failedSnapshot: SessionSnapshot, engine: SessionEngine) -> SessionSnapshot? {
+        guard failedSnapshot.status == .failed,
+              failedSnapshot.targetType == TargetType.itemTextTTS.rawValue,
+              let sessionId = failedSnapshot.sessionId,
+              !speechVoiceIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !defaultVoiceFallbackSessionIds.contains(sessionId) else {
+            return nil
+        }
+        defaultVoiceFallbackSessionIds.insert(sessionId)
+        do {
+            _ = try engine.updateSpeechPlaybackSettings(voiceIdentifier: nil, rate: Float(speechRate))
+            let resumed = try engine.resumePlayback()
+            diagnostics["speechVoiceFallback:\(sessionId)"] = "default_voice_from_confirmed_offset"
+            reportSuccess("The selected voice was unavailable offline. Continuing with the installed default voice.")
+            return resumed
+        } catch {
+            diagnostics["speechVoiceFallback:\(sessionId)"] = "failed:\(error.localizedDescription)"
+            return nil
+        }
     }
 
     func syncPlaybackProgressForLifecycle() {
@@ -879,28 +923,41 @@ final class Gate1AppModel: ObservableObject {
         return success
     }
 
-    func beginSourceLinkImportFromForm() {
-        guard !isResolvingSourceLink else { return }
-        guard !sourceLinkURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            reportFailure("Paste or enter a podcast, RSS, or audio URL first.")
-            return
+    @discardableResult
+    func beginSourceLinkImportFromForm() -> Bool {
+        guard !isResolvingSourceLink else { return false }
+        let submittedURL = sourceLinkURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let parsedURL = URL(string: submittedURL),
+              let scheme = parsedURL.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              parsedURL.host != nil else {
+            sourceLinkImportState = "failure"
+            sourceLinkImportMessage = submittedURL.isEmpty
+                ? "Paste or enter a podcast, RSS, or audio URL first."
+                : "Enter a valid HTTP or HTTPS podcast, RSS, or audio URL."
+            reportFailure(sourceLinkImportMessage ?? "Enter a valid source URL.")
+            return false
         }
-        let submittedURL = sourceLinkURL
         isResolvingSourceLink = true
+        sourceLinkImportState = "resolving"
+        sourceLinkImportMessage = "Resolving source link…"
         statusMessage = "Resolving source link..."
         lastError = nil
         diagnostics["lastSourceLinkButtonTap"] = "registered"
         Task { @MainActor in
             await Task.yield()
             let imported = await importSourceLinkAsync(
-                urlString: submittedURL,
+                urlString: parsedURL.absoluteString,
                 sourceSurface: "paste",
                 startSession: true
             )
-            if imported, sourceLinkURL == submittedURL {
+            if imported, sourceLinkURL.trimmingCharacters(in: .whitespacesAndNewlines) == submittedURL {
                 sourceLinkURL = ""
             }
+            sourceLinkImportState = imported ? "success" : "failure"
+            sourceLinkImportMessage = imported ? "Source added." : (lastError ?? "This source could not be added.")
         }
+        return true
     }
 
     func pasteSourceLinkFromClipboard() {
@@ -912,11 +969,19 @@ final class Gate1AppModel: ObservableObject {
         }
         let pasted = Self.firstURL(in: clipboardText)?.absoluteString ?? clipboardText
         sourceLinkURL = pasted
+        sourceLinkImportState = "idle"
+        sourceLinkImportMessage = nil
         reportSuccess("Pasted link from Clipboard.")
         diagnostics["lastSourceLinkClipboardPaste"] = pasted
         #else
         reportFailure("Clipboard paste is unavailable on this platform.")
         #endif
+    }
+
+    func resetSourceLinkImportState() {
+        guard !isResolvingSourceLink else { return }
+        sourceLinkImportState = "idle"
+        sourceLinkImportMessage = nil
     }
 
     @discardableResult
@@ -1130,7 +1195,7 @@ final class Gate1AppModel: ObservableObject {
         guard let engine else {
             throw SessionKitError.persistenceFailed("Browser text importer is unavailable.")
         }
-        let item = try engine.importBrowserTextInBackground(handoff)
+        let item = try engine.importBrowserTextInBackground(Self.sanitizedBrowserTextHandoff(handoff))
         libraryItems = try loadLibraryRows(store: store)
         diagnostics["lastBackgroundBrowserTextImport"] = item.id
     }
@@ -1247,7 +1312,7 @@ final class Gate1AppModel: ObservableObject {
             let engine = try makeEngine(store: store)
             installEngine(engine)
             let shouldStart = handoff.requestedContinuation.startSession
-            var importOnlyHandoff = handoff
+            var importOnlyHandoff = Self.sanitizedBrowserTextHandoff(handoff)
             importOnlyHandoff.requestedContinuation.startSession = false
             snapshot = try engine.importBrowserText(importOnlyHandoff)
             guard let importedItemId = snapshot.itemId ?? handoff.itemId else {
@@ -1678,8 +1743,8 @@ final class Gate1AppModel: ObservableObject {
             }
             _ = try engine.inspectSession(sessionId: session.id)
             do {
-                if session.phase == .finished || session.completionPercent >= 100 {
-                    snapshot = try engine.playSourceFromBeginning()
+                if session.completionPercent >= 100 {
+                    snapshot = try engine.inspectSession(sessionId: session.id)
                 } else {
                     snapshot = try engine.resumePlayback()
                 }
@@ -1688,7 +1753,9 @@ final class Gate1AppModel: ObservableObject {
             }
             selectedItem = try loadItemDetail(id: session.itemId, store: store)
             screen = .playback
-            reportSuccess("Resumed session at \(session.completionPercent)% complete.")
+            reportSuccess(session.completionPercent >= 100
+                ? "Opened completed session. Use Play from Beginning to restart."
+                : "Resumed session at \(session.completionPercent)% complete.")
         } catch {
             reportFailure(error, context: "Resume session failed")
         }
@@ -1732,9 +1799,17 @@ final class Gate1AppModel: ObservableObject {
 
     func dismissError() {
         lastError = nil
+        if feedbackEvent?.kind == .error {
+            feedbackEvent = nil
+        }
         if statusMessage == "Error" {
             statusMessage = "Ready."
         }
+    }
+
+    func dismissFeedback(id: UUID? = nil) {
+        guard id == nil || feedbackEvent?.id == id else { return }
+        feedbackEvent = nil
     }
 
     func dismissLegacyLibraryResetNotice() {
@@ -1765,6 +1840,12 @@ final class Gate1AppModel: ObservableObject {
             podcastDownloadCoordinator?.removeItem(id)
             try store.deleteItem(id: id)
             try refreshLibraryRows(store: store)
+            guard !libraryItems.contains(where: { $0.id == id }),
+                  !recentlyDeletedItems.contains(where: { $0.id == id }),
+                  (try? store.loadItem(id: id)) == nil,
+                  (try? store.loadSessions(itemId: id))?.isEmpty != false else {
+                throw SessionKitError.persistenceFailed("permanent_delete_verification_failed")
+            }
             if trashUndo?.itemId == id {
                 trashUndo = nil
             }
@@ -1870,11 +1951,16 @@ final class Gate1AppModel: ObservableObject {
         UserDefaults.standard.set(limit.rawValue, forKey: "podcastCacheLimitGB")
         podcastDownloadCoordinator?.setCacheLimit(limit)
         diagnostics["podcastCacheLimitGB"] = "\(limit.rawValue)"
+        reportSuccess("Podcast cache limit set to \(limit.rawValue) GB.")
     }
 
     func retrySelectedPodcastDownload() {
-        guard !selectedItem.id.isEmpty else { return }
+        guard !selectedItem.id.isEmpty, podcastDownloadCoordinator != nil else {
+            reportFailure("Podcast download retry is unavailable.")
+            return
+        }
         podcastDownloadCoordinator?.retry(itemId: selectedItem.id)
+        reportSuccess("Retrying podcast download.")
     }
 
     func clearPodcastDownloads() {
@@ -2212,6 +2298,12 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    func retryAnchorContext(_ interjection: Interjection) {
+        guard !pendingSourceContextInterjectionIds.contains(interjection.id) else { return }
+        scheduleSourceWindowContextIfNeeded(for: interjection)
+        reportSuccess("Retrying source context.")
+    }
+
     func importPastedAssistantResponse(autoPlay: Bool = true) {
         let text = pastedAssistantResponse.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
@@ -2301,6 +2393,7 @@ final class Gate1AppModel: ObservableObject {
                 try resolvedBrowserTextHandoffStore().retryFailed(payloadID: entry.payloadID)
             }
             importPendingSourceLinkHandoffs()
+            reportSuccess("Import retry queued.")
         } catch {
             reportFailure(error, context: "Import retry failed")
         }
@@ -2315,6 +2408,7 @@ final class Gate1AppModel: ObservableObject {
                 try resolvedBrowserTextHandoffStore().deleteFailed(payloadID: entry.payloadID)
             }
             refreshImportInbox()
+            reportSuccess("Removed failed import.")
         } catch {
             reportFailure(error, context: "Import removal failed")
         }
@@ -2628,6 +2722,7 @@ final class Gate1AppModel: ObservableObject {
                 )
                 refreshSelectedItem()
                 diagnostics["speechSettingsApplied"] = snapshot.status.rawValue
+                reportSuccess("Speech settings saved.")
             }
         }
         if changed {
@@ -4767,16 +4862,38 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    static func sanitizedBrowserTextHandoff(_ handoff: BrowserTextHandoff) -> BrowserTextHandoff {
+        guard handoff.captureMode == .readablePage,
+              handoff.text.range(of: #"<[^>]+>"#, options: .regularExpression) != nil else {
+            return handoff
+        }
+        var sanitized = handoff
+        sanitized.text = stripHTML(handoff.text)
+            .replacingOccurrences(of: #"[ \t]+"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        sanitized.contentFormat = .plainText
+        return sanitized
+    }
+
     private static func stripHTML(_ html: String) -> String {
         html.replacingOccurrences(of: #"<script[\s\S]*?</script>"#, with: " ", options: [.regularExpression, .caseInsensitive])
             .replacingOccurrences(of: #"<style[\s\S]*?</style>"#, with: " ", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: #"<video[\s\S]*?</video>"#, with: " ", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: #"<source[^>]*>"#, with: " ", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: #"</?(p|div|section|article|h[1-6]|li|br)[^>]*>"#, with: "\n", options: [.regularExpression, .caseInsensitive])
             .replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
     }
 
     private func scheduleSourceTranscriptionIfNeeded(for item: Item) {
         guard item.transcriptId == nil,
               let sourceURLString = item.media?.url,
-              let sourceURL = URL(string: sourceURLString) else {
+              let canonicalURL = URL(string: sourceURLString) else {
+            return
+        }
+        let sourceURL = podcastDownloadCoordinator?.validatedLocalURL(for: item.id) ?? canonicalURL
+        guard sourceURL.isFileURL else {
+            diagnostics["sourceTranscriptionStatus"] = "waiting_for_local_audio"
             return
         }
         diagnostics["sourceTranscriptionStatus"] = "transcribing"
@@ -4829,6 +4946,7 @@ final class Gate1AppModel: ObservableObject {
             pendingMapGenerationItemId = nil
             generateListeningMap()
         }
+        retrySourceWindowContexts(itemId: itemId)
     }
 
     private func scheduleSourceWindowContextIfNeeded(for interjection: Interjection) {
@@ -4837,7 +4955,7 @@ final class Gate1AppModel: ObservableObject {
               let store,
               let item = try? store.loadItem(id: interjection.itemId),
               let sourceURLString = item.media?.url,
-              let sourceURL = URL(string: sourceURLString) else {
+              let canonicalSourceURL = URL(string: sourceURLString) else {
             return
         }
         switch item.media?.sourceType {
@@ -4862,13 +4980,19 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         diagnostics["sourceWindowTranscription:\(interjection.id)"] = "scheduled"
-        diagnostics["sourceWindowContextProvenance:\(interjection.id)"] = "speech_window"
+        let transcriptionURL = podcastDownloadCoordinator?.validatedLocalURL(for: item.id) ?? canonicalSourceURL
+        let provenance = transcriptionURL.isFileURL ? "downloaded_local_audio" : "bounded_remote_window"
+        diagnostics["sourceWindowContextProvenance:\(interjection.id)"] = provenance
         pendingSourceContextInterjectionIds.insert(interjection.id)
+        run { engine in
+            snapshot = try engine.sourceWindowContextPending(interjectionId: interjection.id)
+            refreshSelectedItem()
+        }
         Task { [weak self, interjectionId = interjection.id, itemId = item.id, durationMs = item.media?.durationMs, windowBeforeMs = sourceWindowContextBeforeMs, windowAfterMs = sourceWindowContextAfterMs] in
             guard let self else { return }
             do {
                 let timeline = try await self.sourceTranscriptionClient.transcribeSourceAudioWindow(
-                    url: sourceURL,
+                    url: transcriptionURL,
                     itemId: itemId,
                     anchorMediaTimeMs: anchorMediaTimeMs,
                     durationMs: durationMs,
@@ -4880,6 +5004,7 @@ final class Gate1AppModel: ObservableObject {
                         self.snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjectionId, timeline: timeline)
                         self.refreshSelectedItem()
                         self.diagnostics["sourceWindowTranscription:\(interjectionId)"] = "complete:speech_window"
+                        self.diagnostics["sourceWindowContextProvenance:\(interjectionId)"] = provenance
                         self.pendingSourceContextInterjectionIds.remove(interjectionId)
                     }
                 }
@@ -4888,8 +5013,26 @@ final class Gate1AppModel: ObservableObject {
                     self.diagnostics["sourceWindowTranscription:\(interjectionId)"] = "failed:\(error.localizedDescription)"
                     self.diagnostics["sourceWindowContextProvenance:\(interjectionId)"] = "unavailable"
                     self.pendingSourceContextInterjectionIds.remove(interjectionId)
+                    self.run { engine in
+                        self.snapshot = try engine.sourceWindowContextUnavailable(interjectionId: interjectionId)
+                        self.refreshSelectedItem()
+                    }
                     self.reportFailure("Podcast context could not be prepared. Retry the interjection or continue knowing source context is unavailable.")
                 }
+            }
+        }
+    }
+
+    private func retrySourceWindowContexts(itemId: String) {
+        guard let store else { return }
+        let sessions = (try? store.loadSessions(itemId: itemId)) ?? []
+        for session in sessions {
+            let interjections = (try? store.loadInterjections(sessionId: session.id)) ?? []
+            for interjection in interjections where interjection.targetType == .item
+                && interjection.anchor.mediaTimeMs != nil
+                && interjection.anchorContextStatus != .ready
+                && !pendingSourceContextInterjectionIds.contains(interjection.id) {
+                scheduleSourceWindowContextIfNeeded(for: interjection)
             }
         }
     }
@@ -5451,6 +5594,7 @@ final class Gate1AppModel: ObservableObject {
     private func reportSuccess(_ message: String) {
         statusMessage = message
         lastError = nil
+        feedbackEvent = UserFeedbackEvent(kind: .success, message: message)
         diagnostics["lastStatus"] = message
         diagnostics["recentFailure"] = "none"
     }
@@ -5471,6 +5615,7 @@ final class Gate1AppModel: ObservableObject {
     private func reportFailure(_ message: String) {
         statusMessage = "Error"
         lastError = message
+        feedbackEvent = UserFeedbackEvent(kind: .error, message: message)
         diagnostics["recentFailure"] = message
     }
 
@@ -5554,6 +5699,10 @@ final class Gate1AppModel: ObservableObject {
                 snapshot = try engine.updatePlaybackTransport(itemId: itemId, playbackURL: url.absoluteString)
                 refreshSelectedItem()
             }
+            retrySourceWindowContexts(itemId: itemId)
+            if let item = try? store.loadItem(id: itemId) {
+                scheduleSourceTranscriptionIfNeeded(for: item)
+            }
         }
         podcastDownloadCoordinator = coordinator
         podcastDownloadRecords = coordinator.recordsByItemId
@@ -5577,12 +5726,7 @@ final class Gate1AppModel: ObservableObject {
            let remoteURL = URL(string: record.remoteURL) {
             coordinator.register(itemId: itemId, remoteURL: remoteURL)
         }
-        guard let record = podcastDownloadRecords[itemId],
-              record.state == .availableOffline,
-              let path = record.localRelativePath,
-              let localURL = try? applicationSupportDirectory()
-                .appending(path: "PodcastAudio", directoryHint: .isDirectory)
-                .appending(path: path) else { return }
+        guard let localURL = coordinator.validatedLocalURL(for: itemId) else { return }
         _ = try? engine?.updatePlaybackTransport(itemId: itemId, playbackURL: localURL.absoluteString)
     }
 

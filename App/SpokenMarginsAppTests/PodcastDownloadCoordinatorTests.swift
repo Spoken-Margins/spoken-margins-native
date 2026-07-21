@@ -101,6 +101,38 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
     }
 
+    func testValidatedLocalURLRequiresAvailableNonemptyFile() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let audioDirectory = fixture.support.appending(path: "PodcastAudio", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: true)
+        let validFile = audioDirectory.appending(path: "valid.mp3")
+        let emptyFile = audioDirectory.appending(path: "empty.mp3")
+        try Data([1, 2, 3]).write(to: validFile)
+        try Data().write(to: emptyFile)
+        for (itemId, file) in [("valid", validFile), ("empty", emptyFile)] {
+            try fixture.store.savePodcastDownload(PodcastDownloadRecord(
+                id: "download-\(itemId)",
+                itemId: itemId,
+                remoteURL: "https://example.com/\(itemId).mp3",
+                localRelativePath: file.lastPathComponent,
+                state: .availableOffline,
+                bytesWritten: Int64((try file.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0)
+            ))
+        }
+        let coordinator = try PodcastDownloadCoordinator(
+            store: fixture.store,
+            applicationSupportDirectory: fixture.support,
+            cacheLimit: .five,
+            monitorsNetwork: false,
+            usesBackgroundSession: false
+        )
+
+        XCTAssertEqual(coordinator.validatedLocalURL(for: "valid"), validFile)
+        XCTAssertNil(coordinator.validatedLocalURL(for: "empty"))
+        XCTAssertNil(coordinator.validatedLocalURL(for: "missing"))
+    }
+
     private func makeFixture() throws -> (root: URL, support: URL, store: SQLiteSessionStore) {
         let root = FileManager.default.temporaryDirectory.appending(path: "podcast-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
         let support = root.appending(path: "ApplicationSupport", directoryHint: .isDirectory)

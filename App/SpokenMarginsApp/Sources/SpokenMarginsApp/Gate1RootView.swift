@@ -25,7 +25,7 @@ struct Gate1RootView: View {
         }
         .background(AppColors.background.ignoresSafeArea())
         .safeAreaInset(edge: .top, spacing: 8) {
-            if model.lastError != nil || model.trashUndo != nil || model.sourceImportProgressMessage != nil || model.legacyLibraryResetNotice != nil {
+            if model.feedbackEvent != nil || model.trashUndo != nil || model.sourceImportProgressMessage != nil || model.legacyLibraryResetNotice != nil {
                 VStack(spacing: 8) {
                     if let resetNotice = model.legacyLibraryResetNotice {
                         LegacyLibraryResetBanner(message: resetNotice)
@@ -33,8 +33,8 @@ struct Gate1RootView: View {
                     if let progressMessage = model.sourceImportProgressMessage {
                         SourceOperationBanner(message: progressMessage)
                     }
-                    if model.lastError != nil {
-                        StatusBanner()
+                    if let feedback = model.feedbackEvent {
+                        UserFeedbackBanner(feedback: feedback)
                     }
                     if let undo = model.trashUndo {
                         TrashUndoBanner(undo: undo)
@@ -59,6 +59,40 @@ struct Gate1RootView: View {
             AIDataSharingConsentView()
                 .environmentObject(model)
                 .interactiveDismissDisabled()
+        }
+    }
+}
+
+private struct UserFeedbackBanner: View {
+    @EnvironmentObject private var model: Gate1AppModel
+    let feedback: UserFeedbackEvent
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: feedback.kind == .success ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(feedback.kind == .success ? .green : .red)
+            Text(feedback.message)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(3)
+            Spacer(minLength: 8)
+        }
+        .padding(12)
+        .foregroundStyle(AppColors.text)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(AppColors.border))
+        .padding(.top, 44)
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("app.feedback.banner")
+        .task(id: feedback.id) {
+            #if canImport(UIKit)
+            UIAccessibility.post(notification: .announcement, argument: feedback.message)
+            #endif
+            do {
+                try await Task.sleep(for: .seconds(feedback.kind == .success ? 3 : 6))
+                model.dismissFeedback(id: feedback.id)
+            } catch {}
         }
     }
 }
@@ -259,6 +293,7 @@ private struct HomeScreen: View {
     @State private var activeFileImportRequest: FileImportRequest?
     @State private var isAddSourcePresented = false
     @State private var pendingTrashItem: LibraryItemRow?
+    @State private var suppressSourceLinkBlurSubmission = false
 
     private enum Field {
         case title
@@ -319,7 +354,11 @@ private struct HomeScreen: View {
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .topBarTrailing) {
-                            Button("Close") { isAddSourcePresented = false }
+                            Button("Close") {
+                                suppressSourceLinkBlurSubmission = focusedField == .sourceLink
+                                focusedField = nil
+                                isAddSourcePresented = false
+                            }
                         }
                     }
                     .fileImporter(
@@ -331,6 +370,12 @@ private struct HomeScreen: View {
                 }
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+                .onAppear { model.resetSourceLinkImportState() }
+                .onChange(of: model.sourceLinkImportState) { _, state in
+                    if state == "success" {
+                        isAddSourcePresented = false
+                    }
+                }
             }
             .alert(
                 "Move to Recently Deleted?",
@@ -417,6 +462,7 @@ private struct HomeScreen: View {
                         .accessibilityLabel("Source text")
                         .accessibilityIdentifier("create.text.editor")
                     Button {
+                        suppressSourceLinkBlurSubmission = focusedField == .sourceLink
                         focusedField = nil
                         model.pasteImportTextFromClipboard()
                     } label: {
@@ -428,6 +474,7 @@ private struct HomeScreen: View {
                     .accessibilityIdentifier("create.text.clipboard.button")
                 }
                 Button(action: {
+                    suppressSourceLinkBlurSubmission = focusedField == .sourceLink
                     focusedField = nil
                     isAddSourcePresented = false
                     model.importTextItem()
@@ -438,6 +485,7 @@ private struct HomeScreen: View {
                 .disabled(model.importText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityIdentifier("create.start.button")
                 Button {
+                    suppressSourceLinkBlurSubmission = focusedField == .sourceLink
                     focusedField = nil
                     presentFileImporter(.obsidianFiles)
                 } label: {
@@ -453,8 +501,15 @@ private struct HomeScreen: View {
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
                         .focused($focusedField, equals: .sourceLink)
+                        .submitLabel(.go)
+                        .onSubmit {
+                            suppressSourceLinkBlurSubmission = focusedField == .sourceLink
+                            focusedField = nil
+                            _ = model.beginSourceLinkImportFromForm()
+                        }
                         .accessibilityIdentifier("sourceLink.url.field")
                     Button {
+                        suppressSourceLinkBlurSubmission = focusedField == .sourceLink
                         focusedField = nil
                         model.pasteSourceLinkFromClipboard()
                     } label: {
@@ -465,10 +520,29 @@ private struct HomeScreen: View {
                     .accessibilityLabel("Paste Link From Clipboard")
                     .accessibilityIdentifier("sourceLink.clipboard.button")
                 }
+                .onChange(of: focusedField) { oldValue, newValue in
+                    guard oldValue == .sourceLink, newValue != .sourceLink else { return }
+                    if suppressSourceLinkBlurSubmission {
+                        suppressSourceLinkBlurSubmission = false
+                    } else if isValidSourceLink(model.sourceLinkURL) {
+                        _ = model.beginSourceLinkImportFromForm()
+                    }
+                }
+                if let message = model.sourceLinkImportMessage {
+                    HStack(spacing: 8) {
+                        if model.sourceLinkImportState == "resolving" {
+                            ProgressView()
+                        }
+                        Text(message)
+                            .font(.caption)
+                            .foregroundStyle(model.sourceLinkImportState == "failure" ? .red : AppColors.secondaryText)
+                    }
+                    .accessibilityIdentifier("sourceLink.import.status")
+                }
                 Button {
+                    suppressSourceLinkBlurSubmission = focusedField == .sourceLink
                     focusedField = nil
-                    isAddSourcePresented = false
-                    model.beginSourceLinkImportFromForm()
+                    _ = model.beginSourceLinkImportFromForm()
                 } label: {
                     if model.isResolvingSourceLink {
                         HStack(spacing: 8) {
@@ -484,6 +558,13 @@ private struct HomeScreen: View {
                 .accessibilityIdentifier("sourceLink.import.button")
             }
         }
+    }
+
+    private func isValidSourceLink(_ value: String) -> Bool {
+        guard let url = URL(string: value.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let scheme = url.scheme?.lowercased(),
+              ["http", "https"].contains(scheme) else { return false }
+        return url.host != nil
     }
 
     private var quickAccessFolder: some View {
@@ -981,7 +1062,7 @@ private struct PlaybackScreen: View {
                             Image(systemName: "stop.fill")
                         }
                         .disabled(!model.hasActiveSession)
-                        .accessibilityLabel("End Session")
+                        .accessibilityLabel("Stop Listening and Keep Session Resumable")
                         .accessibilityIdentifier("playback.end.button")
                         Button(action: model.openExport) {
                             Image(systemName: "square.and.arrow.up")
@@ -1519,6 +1600,7 @@ private struct SettingsScreen: View {
     @State private var showsDeveloperTools = false
     @State private var pendingPermanentDeletion: LibraryItemRow?
     @State private var isResetConfirmationPresented = false
+    @State private var copiedDiagnostics = false
 
     private enum Field {
         case mapModel
@@ -1697,9 +1779,15 @@ private struct SettingsScreen: View {
                                     .font(.headline)
                                 HStack {
                                     Button("Restore") { model.restoreItem(id: item.id) }
+                                        .buttonStyle(.borderless)
+                                        .accessibilityLabel("Restore \(item.title)")
+                                        .accessibilityIdentifier("recentlyDeleted.restore.\(item.id)")
                                     Button("Delete Permanently", role: .destructive) {
                                         pendingPermanentDeletion = item
                                     }
+                                    .buttonStyle(.borderless)
+                                    .accessibilityLabel("Delete \(item.title) Permanently")
+                                    .accessibilityIdentifier("recentlyDeleted.delete.\(item.id)")
                                 }
                             }
                         }
@@ -1725,9 +1813,13 @@ private struct SettingsScreen: View {
                                     Button("Retry") {
                                         model.retryImportInboxEntry(entry)
                                     }
+                                    .buttonStyle(.borderless)
+                                    .accessibilityIdentifier("importInbox.retry.\(entry.id)")
                                     Button("Delete", role: .destructive) {
                                         model.deleteImportInboxEntry(entry)
                                     }
+                                    .buttonStyle(.borderless)
+                                    .accessibilityIdentifier("importInbox.delete.\(entry.id)")
                                 }
                             }
                         }
@@ -1736,7 +1828,20 @@ private struct SettingsScreen: View {
                 Section("Support & Privacy") {
                     Link("Privacy Policy", destination: AppLinks.privacy)
                     Link("Support", destination: AppLinks.support)
-                    Button("Copy Privacy-Safe Diagnostics", action: model.copyDiagnosticsExport)
+                    Button {
+                        model.copyDiagnosticsExport()
+                        copiedDiagnostics = true
+                        Task {
+                            try? await Task.sleep(for: .seconds(2))
+                            copiedDiagnostics = false
+                        }
+                    } label: {
+                        Label(
+                            copiedDiagnostics ? "Copied" : "Copy Privacy-Safe Diagnostics",
+                            systemImage: copiedDiagnostics ? "checkmark" : "doc.on.doc"
+                        )
+                    }
+                    .buttonStyle(.borderless)
                         .accessibilityIdentifier("settings.copyDiagnostics.button")
                     LabeledContent("Version", value: AppLinks.versionDescription)
                 }
@@ -2008,46 +2113,64 @@ private struct InterjectionDetailView: View {
     @Environment(\.dismiss) private var dismiss
     let interjection: Interjection
     @State private var pendingDeletion: PendingInterjectionDeletion?
+    @State private var copied = false
 
     private enum PendingInterjectionDeletion: Equatable {
         case transcript
         case interjection
     }
 
+    private var currentInterjection: Interjection {
+        model.selectedItem.interjections.first(where: { $0.id == interjection.id }) ?? interjection
+    }
+
     var body: some View {
+        let current = currentInterjection
         NavigationStack {
             List {
                 Section("Context") {
-                    LabeledContent("Attached to", value: interjectionTargetLabel(interjection))
-                    LabeledContent("Position", value: "Around \(interjection.roughPercent)%")
-                    if interjection.transcriptionStatus != "complete" {
-                        LabeledContent("Transcript status", value: humanizedTurnStatus(interjection.transcriptionStatus))
+                    LabeledContent("Attached to", value: interjectionTargetLabel(current))
+                    LabeledContent("Position", value: "Around \(current.roughPercent)%")
+                    if current.transcriptionStatus != "complete" {
+                        LabeledContent("Transcript status", value: humanizedTurnStatus(current.transcriptionStatus))
                     }
                 }
                 Section("Transcript") {
-                    Text(interjection.cleanedTranscript ?? interjection.transcript ?? "No transcript yet.")
+                    Text(current.cleanedTranscript ?? current.transcript ?? "No transcript yet.")
                         .textSelection(.enabled)
                     Button {
-                        model.copyInterjectionWithContext(interjection)
+                        model.copyInterjectionWithContext(current)
+                        copied = true
+                        Task {
+                            try? await Task.sleep(for: .seconds(2))
+                            copied = false
+                        }
                     } label: {
-                        Label("Copy Transcript and Anchors", systemImage: "doc.on.doc")
+                        Label(copied ? "Copied" : "Copy Transcript and Anchors", systemImage: copied ? "checkmark" : "doc.on.doc")
                     }
                     .accessibilityIdentifier("interjection.detail.copy")
                     Button("Delete Transcript") {
                         pendingDeletion = .transcript
                     }
-                    .disabled(interjection.transcript == nil && interjection.cleanedTranscript == nil)
+                    .disabled(current.transcript == nil && current.cleanedTranscript == nil)
                     .accessibilityIdentifier("interjection.detail.deleteTranscript")
                 }
                 Section("Anchors") {
+                    LabeledContent("Context status", value: anchorContextStatusLabel(current))
                     Text("Before")
                         .font(.headline)
-                    Text(interjection.anchor.anchorBefore.isEmpty ? "None" : interjection.anchor.anchorBefore)
+                    Text(anchorContextText(current.anchor.anchorBefore, status: current.anchorContextStatus))
                         .textSelection(.enabled)
                     Text("After")
                         .font(.headline)
-                    Text(interjection.anchor.anchorAfter.isEmpty ? "None" : interjection.anchor.anchorAfter)
+                    Text(anchorContextText(current.anchor.anchorAfter, status: current.anchorContextStatus))
                         .textSelection(.enabled)
+                    if current.anchorContextStatus == .unavailable {
+                        Button("Retry Context") {
+                            model.retryAnchorContext(current)
+                        }
+                        .accessibilityIdentifier("interjection.detail.retryContext")
+                    }
                 }
                 Section {
                     Button(role: .destructive) {
@@ -2075,13 +2198,13 @@ private struct InterjectionDetailView: View {
             ) {
                 if pendingDeletion == .transcript {
                     Button("Delete Transcript", role: .destructive) {
-                        model.deleteTranscript(interjection: interjection)
+                        model.deleteTranscript(interjection: current)
                         pendingDeletion = nil
                         dismiss()
                     }
                 } else {
                     Button("Delete Interjection", role: .destructive) {
-                        model.deleteInterjection(interjection)
+                        model.deleteInterjection(current)
                         pendingDeletion = nil
                         dismiss()
                     }
@@ -2089,6 +2212,26 @@ private struct InterjectionDetailView: View {
                 Button("Cancel", role: .cancel) { pendingDeletion = nil }
             }
         }
+    }
+}
+
+private func anchorContextStatusLabel(_ interjection: Interjection) -> String {
+    if let status = interjection.anchorContextStatus {
+        switch status {
+        case .pending: return "Pending"
+        case .ready: return "Ready"
+        case .unavailable: return "Unavailable — retry when audio is available"
+        }
+    }
+    return interjection.anchor.anchorBefore.isEmpty && interjection.anchor.anchorAfter.isEmpty ? "Pending" : "Ready"
+}
+
+private func anchorContextText(_ value: String, status: AnchorContextStatus?) -> String {
+    guard value.isEmpty else { return value }
+    switch status {
+    case .pending, .none: return "Preparing context…"
+    case .unavailable: return "Context unavailable"
+    case .ready: return "No nearby speech was recognized"
     }
 }
 

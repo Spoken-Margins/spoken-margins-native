@@ -17,6 +17,17 @@ import Speech
 import UIKit
 #endif
 
+#if canImport(Speech)
+func makeOnDeviceSpeechRecognitionRequest(url: URL) -> SFSpeechURLRecognitionRequest {
+    let request = SFSpeechURLRecognitionRequest(url: url)
+    request.shouldReportPartialResults = false
+    if #available(iOS 13.0, macOS 10.15, *) {
+        request.requiresOnDeviceRecognition = true
+    }
+    return request
+}
+#endif
+
 public struct SpeechVoiceOption: Identifiable, Hashable, Sendable {
     public let id: String
     public let name: String
@@ -1864,11 +1875,10 @@ public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
         guard let recognizer = SFSpeechRecognizer(), recognizer.isAvailable else {
             throw SessionKitError.persistenceFailed("speech_recognizer_unavailable")
         }
-        let request = SFSpeechURLRecognitionRequest(url: url)
-        request.shouldReportPartialResults = false
-        if #available(iOS 13.0, macOS 10.15, *) {
-            request.requiresOnDeviceRecognition = false
+        guard recognizer.supportsOnDeviceRecognition else {
+            throw SessionKitError.persistenceFailed("on_device_speech_recognition_unavailable")
         }
+        let request = makeOnDeviceSpeechRecognitionRequest(url: url)
         return try await withCheckedThrowingContinuation { continuation in
             var didFinish = false
             recognizer.recognitionTask(with: request) { result, error in
@@ -1940,14 +1950,16 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         guard status == .authorized else {
             throw SessionKitError.persistenceFailed("speech_recognition_not_authorized")
         }
-        let localURL = try await localAudioURL(for: url, itemId: itemId)
-        guard localURL.isFileURL, FileManager.default.fileExists(atPath: localURL.path) else {
+        guard url.isFileURL, FileManager.default.fileExists(atPath: url.path) else {
             throw SessionKitError.persistenceFailed("source_audio_file_missing")
         }
         guard let recognizer = SFSpeechRecognizer(), recognizer.isAvailable else {
             throw SessionKitError.persistenceFailed("speech_recognizer_unavailable")
         }
-        let chunks = try await audioChunks(for: localURL, itemId: itemId, durationMs: durationMs)
+        guard recognizer.supportsOnDeviceRecognition else {
+            throw SessionKitError.persistenceFailed("on_device_speech_recognition_unavailable")
+        }
+        let chunks = try await audioChunks(for: url, itemId: itemId, durationMs: durationMs)
         var stitchedSegments: [MediaTimelineSegment] = []
         var stitchedChapters: [MediaTimelineChapter] = []
         var stitchedDurationMs = durationMs
@@ -1981,14 +1993,19 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         guard status == .authorized else {
             throw SessionKitError.persistenceFailed("speech_recognition_not_authorized")
         }
-        let localURL = try await localAudioURL(for: url, itemId: itemId)
-        guard localURL.isFileURL, FileManager.default.fileExists(atPath: localURL.path) else {
+        guard url.isFileURL || ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
+            throw SessionKitError.persistenceFailed("source_audio_url_unsupported")
+        }
+        if url.isFileURL, !FileManager.default.fileExists(atPath: url.path) {
             throw SessionKitError.persistenceFailed("source_audio_file_missing")
         }
         guard let recognizer = SFSpeechRecognizer(), recognizer.isAvailable else {
             throw SessionKitError.persistenceFailed("speech_recognizer_unavailable")
         }
-        let asset = AVURLAsset(url: localURL)
+        guard recognizer.supportsOnDeviceRecognition else {
+            throw SessionKitError.persistenceFailed("on_device_speech_recognition_unavailable")
+        }
+        let asset = AVURLAsset(url: url)
         let loadedDuration = try await asset.load(.duration)
         let loadedDurationMs = Int((max(0, CMTimeGetSeconds(loadedDuration)) * 1000).rounded())
         let effectiveDurationMs = durationMs ?? loadedDurationMs
@@ -2027,11 +2044,7 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         recognizer: SFSpeechRecognizer,
         sourceDurationMs: Int?
     ) async throws -> TranscriptTimeline {
-        let request = SFSpeechURLRecognitionRequest(url: chunk.url)
-        request.shouldReportPartialResults = false
-        if #available(iOS 13.0, macOS 10.15, *) {
-            request.requiresOnDeviceRecognition = false
-        }
+        let request = makeOnDeviceSpeechRecognitionRequest(url: chunk.url)
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<TranscriptTimeline, Error>) in
             var didFinish = false
             recognizer.recognitionTask(with: request) { result, error in
@@ -2132,34 +2145,6 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
             chapters: chapters,
             durationMs: timeline.durationMs.map { chunk.offsetMs + $0 }
         )
-    }
-
-    private func localAudioURL(for url: URL, itemId: String) async throws -> URL {
-        if url.isFileURL {
-            return url
-        }
-        guard ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
-            throw SessionKitError.persistenceFailed("source_audio_url_unsupported")
-        }
-        let caches = try FileManager.default.url(
-            for: .cachesDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        let directory = caches.appending(path: "SourceAudioTranscription", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let extensionName = url.pathExtension.isEmpty ? "m4a" : url.pathExtension
-        let destination = directory.appending(path: "\(itemId).\(extensionName)")
-        if FileManager.default.fileExists(atPath: destination.path) {
-            return destination
-        }
-        let (downloadedURL, _) = try await URLSession.shared.download(from: url)
-        if FileManager.default.fileExists(atPath: destination.path) {
-            try FileManager.default.removeItem(at: destination)
-        }
-        try FileManager.default.moveItem(at: downloadedURL, to: destination)
-        return destination
     }
 
     private static func timeline(from transcription: SFTranscription, itemId: String, durationMs: Int?) -> TranscriptTimeline {

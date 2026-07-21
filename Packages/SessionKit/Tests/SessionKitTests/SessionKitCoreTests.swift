@@ -3,8 +3,19 @@ import XCTest
 @testable import SessionKit
 import SessionKitPersistence
 @testable import SessionKitAudio
+#if canImport(Speech)
+import Speech
+#endif
 
 final class SessionKitCoreTests: XCTestCase {
+    #if canImport(Speech)
+    func testSpeechRecognitionRequestsAreAlwaysOnDeviceOnly() {
+        let request = makeOnDeviceSpeechRecognitionRequest(url: URL(fileURLWithPath: "/tmp/context.m4a"))
+        XCTAssertTrue(request.requiresOnDeviceRecognition)
+        XCTAssertFalse(request.shouldReportPartialResults)
+    }
+    #endif
+
     func testSpeechNormalizationPreservesSource() {
         let source = "A [reference](https://example.com/x) and https://example.org/raw plus example.net/path."
         let spoken = SpeechTextNormalizer.normalize(source)
@@ -54,6 +65,19 @@ final class SessionKitCoreTests: XCTestCase {
         )
 
         XCTAssertEqual(chunk.sourceOffset(atSpokenUTF16Offset: spokenRange.location), expected)
+    }
+
+    func testLiveSpeechChunkMapsRangesAcrossEmojiModifiersVariationSelectorsAndZWJSequences() throws {
+        let source = "Start 💪🏿 ❤️ 👨‍👩‍👧‍👦 then [remove this URL](https://example.com/a) finish safely."
+        let chunk = try XCTUnwrap(SpeechPlaybackPlanner.chunks(in: source, from: 0).first)
+        let spokenRange = (chunk.spokenText as NSString).range(of: "finish safely")
+        let expected = source.distance(
+            from: source.startIndex,
+            to: try XCTUnwrap(source.range(of: "finish safely")).lowerBound
+        )
+
+        XCTAssertEqual(chunk.sourceOffset(atSpokenUTF16Offset: spokenRange.location), expected)
+        XCTAssertGreaterThanOrEqual(chunk.sourceOffset(atSpokenUTF16Offset: spokenRange.location + spokenRange.length), expected)
     }
 
     func testObsidianWebClipperImportCleansTranscriptTimestampsAndMetadata() throws {
@@ -293,7 +317,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.timeline.filter { $0.kind == "source_chapter" }.map(\.title), ["Opening", "Middle"])
     }
 
-    func testCompactControlSnapshotIsNotReadyAfterSessionEnds() throws {
+    func testStopKeepsCompactSessionResumable() throws {
         let surfaceProfile = RuntimeCapabilityProfile(
             id: "lock-screen-widget",
             displayName: "Lock Screen / Widget",
@@ -310,12 +334,44 @@ final class SessionKitCoreTests: XCTestCase {
 
         let snapshot = CompactControlDispatcher(surfaceProfile: surfaceProfile, canonicalRuntime: engine).snapshot()
 
-        XCTAssertEqual(snapshot.phase, .finished)
-        XCTAssertFalse(snapshot.compactSurfaceReady)
-        XCTAssertTrue(snapshot.availableCommands.isEmpty)
+        XCTAssertEqual(snapshot.phase, .itemPlayback)
+        XCTAssertEqual(snapshot.status, .paused)
+        XCTAssertTrue(snapshot.compactSurfaceReady)
+        XCTAssertTrue(snapshot.availableCommands.contains(.play))
     }
 
-    func testCompactControlKeepsDiscussionAvailableAfterNaturalPlaybackFinish() throws {
+    func testInspectNormalizesLegacyPrematureFinishedSession() throws {
+        let item = Item(id: "item-legacy", title: "Legacy", mediaType: "text", text: "One. Two. Three.", externalReference: nil, status: "ready")
+        let session = Session(
+            id: "session-legacy",
+            itemId: item.id,
+            status: "finished",
+            phase: .finished,
+            currentTargetType: .itemTextTTS,
+            currentTargetId: item.id,
+            position: Position(charOffset: 4),
+            completionPercent: 25,
+            playbackRate: 1
+        )
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session])
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-offline",
+            displayName: "Phone/Tablet Offline",
+            capabilities: ["sync": ["canonical_persistence"], "playback": ["realtime_tts"]]
+        )
+        let engine = SessionEngine(profile: profile, repository: repo, audio: RecordingAudioClient())
+
+        let snapshot = try engine.inspectSession(sessionId: session.id)
+        let saved = try XCTUnwrap(repo.sessions[session.id])
+
+        XCTAssertEqual(snapshot.phase, .itemPlayback)
+        XCTAssertEqual(snapshot.status, .paused)
+        XCTAssertEqual(saved.status, "in_progress")
+        XCTAssertEqual(saved.completionPercent, 25)
+        XCTAssertEqual(saved.position.charOffset, 4)
+    }
+
+    func testCompactControlKeepsDiscussionAvailableAfterSkippingToSourceEnd() throws {
         let surfaceProfile = RuntimeCapabilityProfile(
             id: "watch-tethered",
             displayName: "Watch Tethered",
@@ -333,7 +389,7 @@ final class SessionKitCoreTests: XCTestCase {
         let dispatcher = CompactControlDispatcher(surfaceProfile: surfaceProfile, canonicalRuntime: engine)
         let snapshot = dispatcher.snapshot()
 
-        XCTAssertEqual(snapshot.phase, .finished)
+        XCTAssertEqual(snapshot.phase, .itemPlayback)
         XCTAssertEqual(snapshot.status, .paused)
         XCTAssertTrue(snapshot.compactSurfaceReady)
         XCTAssertTrue(snapshot.availableCommands.contains(.submitFollowup))
@@ -2105,6 +2161,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.status, .paused)
         XCTAssertEqual(snapshot.phase, .finished)
         XCTAssertEqual(snapshot.progressPercent, 100)
+        XCTAssertEqual(engine.currentSession?.status, "finished")
         XCTAssertEqual(try XCTUnwrap(engine.currentSession?.position.charOffset), try XCTUnwrap(item.text).count)
     }
 

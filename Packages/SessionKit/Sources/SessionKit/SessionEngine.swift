@@ -310,7 +310,8 @@ public final class SessionEngine {
             case .failed(let message):
                 if updated.position != session.position
                     || updated.completionPercent != session.completionPercent
-                    || updated.phase != session.phase {
+                    || updated.phase != session.phase
+                    || updated.status != session.status {
                     session = updated
                     currentSession = session
                     try repository.saveSession(session)
@@ -323,7 +324,8 @@ public final class SessionEngine {
             if case .failed(let message) = audio.playbackStartStatus(targetId: session.currentTargetId) {
                 if updated.position != session.position
                     || updated.completionPercent != session.completionPercent
-                    || updated.phase != session.phase {
+                    || updated.phase != session.phase
+                    || updated.status != session.status {
                     session = updated
                     currentSession = session
                     try repository.saveSession(session)
@@ -338,7 +340,8 @@ public final class SessionEngine {
         }
         if updated.position != session.position
             || updated.completionPercent != session.completionPercent
-            || updated.phase != session.phase {
+            || updated.phase != session.phase
+            || updated.status != session.status {
             session = updated
             currentSession = session
             try repository.saveSession(session)
@@ -476,12 +479,13 @@ public final class SessionEngine {
         session.position.mediaTimeMs = nil
         session.position.chapterId = chapterId(for: session.position.charOffset)
         session.completionPercent = percent(for: session.position.charOffset, text: text)
-        session.phase = session.position.charOffset >= text.count ? .finished : .itemPlayback
+        session.phase = .itemPlayback
+        session.status = "in_progress"
         currentSession = session
         try repository.saveSession(session)
-        if session.phase == .finished {
+        if session.position.charOffset >= text.count {
             try audio.stop()
-            publish(status: .paused, phase: .finished)
+            publish(status: .paused, phase: .itemPlayback)
         } else if snapshot.status.isPlaybackActive {
             try playCurrentTarget(session)
             publishPlaybackContinuation(for: session)
@@ -715,9 +719,8 @@ public final class SessionEngine {
         }
         session.completionPercent = percent(for: session.position.charOffset, text: text)
         session.position.chapterId = chapterId(for: session.position.charOffset)
-        if session.position.charOffset >= text.count {
-            session.phase = .finished
-        }
+        session.phase = .itemPlayback
+        session.status = "in_progress"
         currentSession = session
         try repository.saveSession(session)
         if snapshot.status.isPlaybackActive, session.position.charOffset < text.count {
@@ -727,7 +730,7 @@ public final class SessionEngine {
         } else if session.position.charOffset >= text.count {
             try audio.stop()
         }
-        publish(status: session.phase == .finished ? .paused : snapshot.status, phase: session.phase)
+        publish(status: session.position.charOffset >= text.count ? .paused : snapshot.status, phase: session.phase)
         return snapshot
     }
 
@@ -869,8 +872,15 @@ public final class SessionEngine {
 
     @discardableResult
     public func inspectSession(sessionId: String) throws -> SessionSnapshot {
-        guard let session = try repository.loadSession(id: sessionId) else {
+        guard var session = try repository.loadSession(id: sessionId) else {
             throw SessionKitError.invalidCommandForState("inspectSession")
+        }
+        if (session.phase == .finished || session.status == "finished"), session.completionPercent < 100 {
+            if session.phase == .finished {
+                session.phase = .itemPlayback
+            }
+            session.status = "in_progress"
+            try repository.saveSession(session)
         }
         currentSession = session
         currentItem = try repository.loadItem(id: session.itemId)
@@ -938,7 +948,8 @@ public final class SessionEngine {
             transcript: nil,
             cleanedTranscript: nil,
             displayText: nil,
-            status: "active"
+            status: "active",
+            anchorContextStatus: anchor.mediaTimeMs == nil || !anchor.anchorBefore.isEmpty || !anchor.anchorAfter.isEmpty ? .ready : .pending
         )
         try repository.saveInterjection(interjection)
         try transcriber.scheduleTranscription(interjection: interjection)
@@ -1441,7 +1452,9 @@ public final class SessionEngine {
     @discardableResult
     public func sourceWindowContextCompleted(interjectionId: String, timeline: TranscriptTimeline) throws -> SessionSnapshot {
         let normalized = normalizedSourceTranscriptTimeline(timeline).timeline
-        guard !normalized.segments.isEmpty else { return snapshot }
+        guard !normalized.segments.isEmpty else {
+            return try sourceWindowContextUnavailable(interjectionId: interjectionId)
+        }
         try updateInterjection(interjectionId) { interjection in
             let mediaTimeMs = interjection.anchor.mediaTimeMs ?? 0
             let resolved = MediaTimelineAnchorResolver.resolve(
@@ -1458,6 +1471,23 @@ public final class SessionEngine {
             interjection.anchor.mediaTimeMs = resolved.mediaTimeMs
             interjection.anchor.playbackRateObserved = resolved.playbackRateObserved
             interjection.anchor.transcriptSegmentId = resolved.transcriptSegmentId
+            interjection.anchorContextStatus = .ready
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func sourceWindowContextUnavailable(interjectionId: String) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId) { interjection in
+            interjection.anchorContextStatus = .unavailable
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func sourceWindowContextPending(interjectionId: String) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId) { interjection in
+            interjection.anchorContextStatus = .pending
         }
         return snapshot
     }
@@ -1532,12 +1562,19 @@ public final class SessionEngine {
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("endSession")
         }
+        session = try syncCurrentPositionFromAudio(session)
         try audio.stop()
-        session.status = "finished"
-        session.phase = .finished
+        if session.phase == .finished, session.completionPercent >= 100 {
+            session.status = "finished"
+        } else {
+            session.status = "in_progress"
+        }
+        if session.phase == .finished, session.completionPercent < 100 {
+            session.phase = .itemPlayback
+        }
         currentSession = session
         try repository.saveSession(session)
-        publish(status: .idle, phase: .finished)
+        publish(status: .paused, phase: session.phase)
         return snapshot
     }
 
@@ -2659,7 +2696,8 @@ public final class SessionEngine {
             transcript: nil,
             cleanedTranscript: nil,
             displayText: nil,
-            status: "active"
+            status: "active",
+            anchorContextStatus: resolved.transcriptSegmentId == nil ? .pending : .ready
         )
         try repository.saveInterjection(interjection)
         try transcriber.scheduleTranscription(interjection: interjection)
@@ -3122,6 +3160,7 @@ public final class SessionEngine {
             updated.position.chapterId = chapterId(for: text.count)
             updated.completionPercent = 100
             updated.phase = .finished
+            updated.status = "finished"
         case .transcriptBackedMedia, .browserOwnedMedia:
             if isPartialGeneratedTextPlayback(session) {
                 let duration = mediaDurationMs(for: session)
@@ -3140,6 +3179,7 @@ public final class SessionEngine {
             }
             updated.completionPercent = 100
             updated.phase = .finished
+            updated.status = "finished"
         case .summaryTurnTTS:
             updated.phase = .summaryPlayback
         case .assistantTurnTTS:

@@ -35,6 +35,39 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         XCTAssertEqual(parsed.requestedContinuation.preferredPlaybackOwner, "browser_or_app")
     }
 
+    func testReadablePageSanitizationPreservesCompoundEmojiAndRemovesMalformedMediaMarkup() {
+        let handoff = BrowserTextHandoff(
+            captureMode: .readablePage,
+            source: BrowserTextSource(url: EmojiArticleRegressionFixture.sourceURL, title: EmojiArticleRegressionFixture.title),
+            text: EmojiArticleRegressionFixture.malformedHTML,
+            contentFormat: .markdown
+        )
+
+        let sanitized = Gate1AppModel.sanitizedBrowserTextHandoff(handoff)
+
+        XCTAssertEqual(sanitized.contentFormat, .plainText)
+        XCTAssertTrue(sanitized.text.contains("💪💪🏻💪🏼💪🏽💪🏾💪🏿"))
+        XCTAssertTrue(sanitized.text.contains("👨‍👩‍👧‍👦"))
+        XCTAssertTrue(sanitized.text.contains("Language only truly lives"))
+        XCTAssertFalse(sanitized.text.localizedCaseInsensitiveContains("<video"))
+        XCTAssertFalse(sanitized.text.localizedCaseInsensitiveContains("<source"))
+        XCTAssertFalse(sanitized.text.localizedCaseInsensitiveContains("browser doesn't support"))
+        XCTAssertFalse(sanitized.text.contains("window.crashTheReader"))
+    }
+
+    func testPlainTextAndMarkdownHandoffsAreNotHTMLStripped() {
+        for captureMode in [BrowserTextCaptureMode.selectedText, .markdownFile, .plainTextFile] {
+            let handoff = BrowserTextHandoff(
+                captureMode: captureMode,
+                source: BrowserTextSource(url: "file:///fixture.md", title: "Deliberate Markup"),
+                text: "Keep <video> as deliberate text 💪🏿.",
+                contentFormat: captureMode == .markdownFile ? .markdown : .plainText
+            )
+
+            XCTAssertEqual(Gate1AppModel.sanitizedBrowserTextHandoff(handoff), handoff)
+        }
+    }
+
     func testBrowserTextPayloadURLParsesHandoffFromStore() throws {
         let payloadID = "payload-readable"
         let store = try makePayloadStore(payloadID: payloadID, payload: [
