@@ -47,7 +47,7 @@ Branch verification on July 21, 2026 is recorded below. Re-run it from the final
 - [x] `swift build --build-tests --package-path Packages/SessionKit` — passed.
 - [x] `swift test --package-path Packages/SessionKit` — 110 tests passed, including exhaustive UTF-16 marker mapping inside modifier, variation-selector, and ZWJ emoji.
 - [x] `SpokenMarginsAppTests` on iPhone 16 Pro / iOS 18.6 simulator — 84 tests passed.
-- [x] `SpokenMarginsAppUITests` on iPhone 16 Pro / iOS 18.6 simulator — all 7 routes passed, including targeted permanent deletion and diagnostics copy feedback.
+- [x] `SpokenMarginsAppUITests` on iPhone 16 Pro / iOS 18.6 simulator — 8 tests passed: the 7 route tests plus the exact supplied emoji article spoken to natural 100% completion at System 0.55 (216.01-second test), including malformed media markup and compound/skin-tone emoji.
 - [x] Generic iOS Simulator Debug and Release app builds — passed for the app and three embedded extensions.
 - [x] Generic iOS device Debug and Release app builds — passed for the app and three embedded extensions.
 - [ ] Generic watchOS build — not runnable: the generated project contains no `SpokenMarginsWatch` target/scheme; the AGENTS.md command is stale for the current project topology.

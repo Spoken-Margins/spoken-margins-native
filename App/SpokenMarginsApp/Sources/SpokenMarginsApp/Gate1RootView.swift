@@ -1135,6 +1135,7 @@ private struct PlaybackScreen: View {
             Text(playbackProgressLabel)
                 .font(.subheadline)
                 .foregroundStyle(AppColors.watchSecondary)
+                .accessibilityIdentifier("playback.progress.label")
             if let downloadStatus = model.selectedPodcastDownloadDescription {
                 HStack(spacing: 8) {
                     Image(systemName: model.selectedPodcastDownloadState == .availableOffline ? "arrow.down.circle.fill" : "antenna.radiowaves.left.and.right")
