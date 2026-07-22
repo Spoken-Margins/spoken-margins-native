@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -88,6 +89,17 @@ def main() -> int:
             print(error, file=sys.stderr)
         print(f"Contract validation failed with {len(errors)} error(s).", file=sys.stderr)
         return 1
+
+    asset_validation = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "validate-supertonic-assets.py")],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if asset_validation.returncode != 0:
+        print(asset_validation.stderr.rstrip(), file=sys.stderr)
+        return asset_validation.returncode
+    print(asset_validation.stdout.rstrip())
 
     print("Contract validation passed.")
     return 0

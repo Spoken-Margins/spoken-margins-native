@@ -8,6 +8,31 @@ import Speech
 #endif
 
 final class SessionKitCoreTests: XCTestCase {
+    func testRoutedPlaybackGivesRemoteCommandOwnershipOnlyToActiveMediaRoute() throws {
+        let speech = RecordingAudioClient()
+        let media = RecordingAudioClient()
+        let routed = RoutedAudioPlaybackClient(speech: speech, media: media)
+
+        XCTAssertEqual(media.remoteCommandHandlingStates, [false])
+
+        _ = try routed.prepareSpeechText("Speech owns playback.")
+        try routed.play(targetId: "speech", from: 0)
+        XCTAssertEqual(media.remoteCommandHandlingStates.last, false)
+
+        try routed.configureMediaContext(PlaybackMediaContext(
+            itemId: "item",
+            targetType: .transcriptBackedMedia,
+            targetId: "media",
+            title: "Media"
+        ))
+        try routed.play(targetId: "media", fromMediaTimeMs: 0)
+        XCTAssertEqual(media.remoteCommandHandlingStates.last, true)
+
+        try routed.configureMediaContext(nil)
+        try routed.play(targetId: "speech", from: 0)
+        XCTAssertEqual(media.remoteCommandHandlingStates.last, false)
+    }
+
     #if canImport(Speech)
     func testSpeechRecognitionRequestsAreAlwaysOnDeviceOnly() {
         let request = makeOnDeviceSpeechRecognitionRequest(url: URL(fileURLWithPath: "/tmp/context.m4a"))
@@ -3290,6 +3315,7 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     var startStatus: PlaybackStartStatus = .confirmed
     var transportState: PlaybackTransportState?
     var configuredSpeechSettings: [(String?, Float)] = []
+    var remoteCommandHandlingStates: [Bool] = []
 
     func configureMediaContext(_ context: PlaybackMediaContext?) throws {
         mediaContexts.append(context)
@@ -3388,6 +3414,10 @@ private final class RecordingAudioClient: AudioPlaybackClient {
 
     func playbackTransportState(targetId: String) -> PlaybackTransportState? {
         transportState
+    }
+
+    func setRemoteCommandHandlingEnabled(_ enabled: Bool) {
+        remoteCommandHandlingStates.append(enabled)
     }
 }
 

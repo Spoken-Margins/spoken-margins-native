@@ -37,8 +37,8 @@ Gate 1 is **not ready for product-owner validation**.
 | G1-MAP-VALIDATION-REPAIR | Map validation and repair reports | Item -> Apply Listening Map JSON | `applyListeningMapJSON`, `parseListeningMapJSON` | Partial | Valid-map UI coverage exists; malformed-map UI coverage and multi-issue repair reporting are still missing. |
 | G1-MAPLESS-SESSION | Mapless playback/export | Create item without map | `startSession`, `buildExport` | Partial | Covered by traces, not UI/runtime evidence. |
 | G1-TTS-URL-CLEANUP | URL cleanup for spoken text | Create/start URL item | `SpeechTextNormalizer` | Ready | Core behavior is tested; runtime audible evidence is still useful but not blocking this narrow behavior. |
-| G1-APP-OWNED-TTS | Production app-owned TTS | Playback controls | `SystemSpeechPlaybackClient` | Partial | Offset-aware playback and Siri/enhanced voice selection exist; device start/progress evidence is still missing. |
-| G1-PLAY-PAUSE-PRESERVE-POSITION | Play/pause preserves position | Play/pause button | `pause`, `resumePlayback` | Partial | Session state is tested, native TTS position is not observable. |
+| G1-APP-OWNED-TTS | Production app-owned TTS | Playback controls | `SupertonicSpeechPlaybackClient`, `SystemSpeechPlaybackClient` fallback | Partial | Bundled M2/F2 rendering, session reuse, chunking, prefetch, cancellation, fixed-synthesis/variable-transport speed, media reset recovery, and fallback are automated-test verified; physical-device performance and listening quality remain pending. |
+| G1-PLAY-PAUSE-PRESERVE-POSITION | Play/pause preserves position | Play/pause button | `pause`, `resumePlayback` | Partial | Native TTS now publishes an interpolated presentation offset and conservative chunk recovery offset; pause-during-render and resume reuse are tested, while physical-device/Lock Screen evidence remains pending. |
 | G1-CHAPTER-JUMP | Tap chapter jumps to anchor | Chapter/timeline row | `jumpToChapter` | Partial | Session state moves and audio restarts from the offset, but UI/device evidence is still missing. |
 | G1-SKIP-BACK-FORWARD | Skip back/forward predictable movement | Back/forward buttons | `skipBack`, `skipForward` | Partial | UI test checks messages only; native TTS movement is unproven. |
 | G1-INTERJECTION-BEGIN | Begin interjection | Interject button | `beginInterjection` | Partial | Mock traces cover core behavior; no device microphone evidence. |
@@ -52,7 +52,7 @@ Gate 1 is **not ready for product-owner validation**.
 | G1-SUMMARY-PLAYBACK | Listen to summary | Conversation play turn / Discuss | `playTurn` | Partial | Product path exists and prepares turn text; UI/device evidence remains. |
 | G1-INTERJECT-INTO-SUMMARY | Interject into summary | Play summary -> Interject | `playTurn` + interjection | Partial | Product path exists; UI/device evidence remains. |
 | G1-FOLLOWUP | Addendum/follow-up | Conversation Submit | `submitFollowup` | Partial | Typed path exists; transcript/audio addendum inputs and UI proof are missing. |
-| G1-AI-DISCUSSION-RESPONSE | AI discussion response | Submit with provider | Provider call + `aiStreamDelta` | Partial | Response text can persist; spoken response loop is not reachable/proven. |
+| G1-AI-DISCUSSION-RESPONSE | AI discussion response | Submit with provider | Provider call + `aiStreamDelta` | Partial | Streaming sentence speech and persisted-turn replay use the canonical routed transport; live-provider and physical-device evidence remain pending. |
 | G1-INTERJECT-INTO-AI-RESPONSE | Interject into AI response | Play assistant response -> Interject | `playTurn` + interjection | Partial | Product path exists; UI/device evidence remains. |
 | G1-AI-FAILURE-RETRY | Retryable AI failure | Retry AI button | `aiProviderFailed`, `retryAIJob` | Partial | Core trace exists; no UI/provider failure evidence. |
 | G1-OFFLINE-DEGRADED | Offline degraded behavior | Settings profile picker | Capability profile | Partial | Profile changes rebuild the engine; deferred-job UI/device evidence remains. |
@@ -82,4 +82,4 @@ Gate 1 is **not ready for product-owner validation**.
 4. Add or attach evidence for generated source-summary auto-play and AI-turn summary queuing on device.
 5. Keep provider payload/model-routing tests green and attach live provider success/failure/retry evidence.
 
-Kokoro is deferred from Gate 1. The Kokoro/MLX implementation remains in the device scheme for later validation, but it is not a Gate 1 readiness blocker.
+Supertonic 3 INT8 is the production app-owned TTS path. The optional Kokoro/MLX device scheme is retained only as legacy experimental code and is not part of the selectable product catalog or Gate 1 acceptance path.

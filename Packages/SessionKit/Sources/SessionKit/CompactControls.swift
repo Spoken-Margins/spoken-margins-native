@@ -310,11 +310,17 @@ public final class CompactControlDispatcher {
             return !snapshot.isRecording
         case .skipBack, .skipForward:
             return !snapshot.isRecording
-        case .seekToMediaTime, .setPlaybackRate:
+        case .seekToMediaTime:
             return !snapshot.isRecording
                 && snapshot.currentPlaybackDurationMs != nil
                 && (snapshot.targetType == TargetType.transcriptBackedMedia.rawValue
                     || snapshot.targetType == TargetType.browserOwnedMedia.rawValue)
+        case .setPlaybackRate:
+            return !snapshot.isRecording
+                && (snapshot.targetType == TargetType.itemTextTTS.rawValue
+                    || snapshot.targetType == TargetType.assistantTurnTTS.rawValue
+                    || snapshot.targetType == TargetType.summaryTurnTTS.rawValue
+                    || snapshot.currentPlaybackDurationMs != nil)
         case .jumpToChapter:
             return !snapshot.isRecording
         case .beginInterjection:

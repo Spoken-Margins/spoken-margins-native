@@ -1138,6 +1138,14 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         installRemoteCommandHandlers()
     }
 
+    public func setRemoteCommandHandlingEnabled(_ enabled: Bool) {
+        if enabled {
+            installRemoteCommandHandlers()
+        } else {
+            removeRemoteCommandHandlers()
+        }
+    }
+
     public func setPreferredSkipIntervals(backSeconds: Int, forwardSeconds: Int) {
         preferredSkipBackSeconds = Self.validatedSkipSeconds(backSeconds)
         preferredSkipForwardSeconds = Self.validatedSkipSeconds(forwardSeconds)
@@ -1604,12 +1612,16 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
     public init(speech: AudioPlaybackClient, media: AudioPlaybackClient) {
         self.speech = speech
         self.media = media
+        media.setRemoteCommandHandlingEnabled(false)
     }
 
     public func configureMediaContext(_ context: PlaybackMediaContext?) throws {
         try media.configureMediaContext(context)
         if context == nil {
+            media.setRemoteCommandHandlingEnabled(false)
             try speech.configureMediaContext(nil)
+        } else {
+            media.setRemoteCommandHandlingEnabled(true)
         }
     }
 
@@ -1623,11 +1635,14 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
 
     public func play(targetId: String) throws {
         activeRoute = .speech
+        media.setRemoteCommandHandlingEnabled(false)
+        try media.stop()
         try speech.play(targetId: targetId)
     }
 
     public func play(targetId: String, from charOffset: Int) throws {
         activeRoute = .speech
+        media.setRemoteCommandHandlingEnabled(false)
         try media.stop()
         try speech.play(targetId: targetId, from: charOffset)
     }
@@ -1635,6 +1650,7 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
     public func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {
         activeRoute = .media
         try speech.stop()
+        media.setRemoteCommandHandlingEnabled(true)
         try media.play(targetId: targetId, fromMediaTimeMs: mediaTimeMs)
     }
 
@@ -1651,6 +1667,10 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
 
     public func currentCharOffset() -> Int? {
         activeRoute == .speech ? speech.currentCharOffset() : nil
+    }
+
+    public func currentRecoveryCharOffset() -> Int? {
+        activeRoute == .speech ? speech.currentRecoveryCharOffset() : nil
     }
 
     public func currentMediaTimeMs() -> Int? {
@@ -1706,6 +1726,20 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
         case nil:
             return media.playbackTransportState(targetId: targetId)
                 ?? speech.playbackTransportState(targetId: targetId)
+        }
+    }
+
+    public func setRemoteCommandHandlingEnabled(_ enabled: Bool) {
+        switch activeRoute {
+        case .speech:
+            speech.setRemoteCommandHandlingEnabled(enabled)
+            media.setRemoteCommandHandlingEnabled(false)
+        case .media:
+            speech.setRemoteCommandHandlingEnabled(false)
+            media.setRemoteCommandHandlingEnabled(enabled)
+        case nil:
+            speech.setRemoteCommandHandlingEnabled(false)
+            media.setRemoteCommandHandlingEnabled(false)
         }
     }
 

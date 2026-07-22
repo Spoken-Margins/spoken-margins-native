@@ -19,7 +19,7 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertTrue(model.gate2CompactSnapshot?.exposedCommands.contains(.seekToMediaTime) == true)
         XCTAssertTrue(model.gate2CompactSnapshot?.exposedCommands.contains(.setPlaybackRate) == true)
         XCTAssertFalse(model.gate2CompactSnapshot?.availableCommands.contains(.seekToMediaTime) == true)
-        XCTAssertFalse(model.gate2CompactSnapshot?.availableCommands.contains(.setPlaybackRate) == true)
+        XCTAssertTrue(model.gate2CompactSnapshot?.availableCommands.contains(.setPlaybackRate) == true)
         XCTAssertTrue(model.gate2CompactSnapshot?.exposedCommands.contains(.beginInterjection) == true)
     }
 
@@ -55,14 +55,14 @@ final class Gate2CompactControlTests: XCTestCase {
     func testNowPlayingAvailabilityUsesCompactAvailableCommandsForSeekAndRate() {
         let textSnapshot = compactSnapshot(
             targetType: TargetType.itemTextTTS.rawValue,
-            availableCommands: [.togglePlayPause, .skipBack, .skipForward],
+            availableCommands: [.togglePlayPause, .skipBack, .skipForward, .setPlaybackRate],
             durationMs: 120_000
         )
         let textAvailability = Gate2NowPlayingCommandAvailability(snapshot: textSnapshot)
 
         XCTAssertTrue(textAvailability.canPause)
         XCTAssertFalse(textAvailability.canSeek)
-        XCTAssertFalse(textAvailability.canSetPlaybackRate)
+        XCTAssertTrue(textAvailability.canSetPlaybackRate)
 
         let mediaSnapshot = compactSnapshot(
             targetType: TargetType.transcriptBackedMedia.rawValue,

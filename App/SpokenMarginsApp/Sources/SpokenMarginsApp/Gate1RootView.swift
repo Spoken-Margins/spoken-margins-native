@@ -1657,33 +1657,47 @@ private struct SettingsScreen: View {
                 .onChange(of: model.summaryModel) { _, _ in model.settingsValueChanged() }
                 .onChange(of: model.conversationModel) { _, _ in model.settingsValueChanged() }
                 Section("Playback & Voice") {
-                    HStack {
-                        Text("Native Voices")
-                        Spacer()
-                        Button {
-                            model.refreshSpeechVoiceOptions()
-                        } label: {
-                            Image(systemName: "arrow.clockwise")
-                                .frame(width: 34, height: 34)
-                        }
-                        .buttonStyle(IconButtonStyle())
-                        .accessibilityLabel("Refresh Native Voices")
-                        .accessibilityIdentifier("settings.refreshSpeechVoices.button")
-                    }
-                    Picker("Speech Voice", selection: $model.speechVoiceIdentifier) {
-                        Text("System Spoken Content Voice (Siri falls back)").tag("")
-                        ForEach(model.speechVoiceOptions) { voice in
-                            Text("\(voice.name) · \(voice.language) · \(voice.quality)")
-                                .tag(voice.id)
+                    Picker("App Voice", selection: $model.ttsVoiceSelection) {
+                        ForEach(AppTTSVoiceSelection.allCases) { voice in
+                            Text(voice.displayName).tag(voice)
                         }
                     }
-                    .accessibilityIdentifier("settings.speechVoice.picker")
-                    .onChange(of: model.speechVoiceIdentifier) { _, _ in
-                        model.speechSettingsChanged()
+                    .accessibilityIdentifier("settings.ttsVoice.picker")
+                    .onChange(of: model.ttsVoiceSelection) { _, _ in
+                        model.ttsVoiceSelectionChanged()
                     }
-                    Text("Voices installed into iOS, including Piper voices exposed through Accessibility, should appear here after refresh.")
+                    Text(model.ttsVoiceSelection.detail)
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
+                    Text("Voice synthesized on-device. Spoken text comes from your selected source.")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                    if model.ttsVoiceSelection == .system {
+                        HStack {
+                            Text("iOS Voice")
+                            Spacer()
+                            Button {
+                                model.refreshSpeechVoiceOptions()
+                            } label: {
+                                Image(systemName: "arrow.clockwise")
+                                    .frame(width: 34, height: 34)
+                            }
+                            .buttonStyle(IconButtonStyle())
+                            .accessibilityLabel("Refresh iOS Voices")
+                            .accessibilityIdentifier("settings.refreshSpeechVoices.button")
+                        }
+                        Picker("Speech Voice", selection: $model.speechVoiceIdentifier) {
+                            Text("System Spoken Content Voice (Siri falls back)").tag("")
+                            ForEach(model.speechVoiceOptions) { voice in
+                                Text("\(voice.name) · \(voice.language) · \(voice.quality)")
+                                    .tag(voice.id)
+                            }
+                        }
+                        .accessibilityIdentifier("settings.speechVoice.picker")
+                        .onChange(of: model.speechVoiceIdentifier) { _, _ in
+                            model.ttsVoiceSelectionChanged()
+                        }
+                    }
                     VStack(alignment: .leading) {
                         HStack {
                             Text("Speaking Rate")
@@ -1714,6 +1728,7 @@ private struct SettingsScreen: View {
                             Label("Try App Voice", systemImage: "slider.horizontal.3")
                         }
                         .buttonStyle(SecondaryButtonStyle())
+                        .disabled(model.isRenderingSupertonicPreview)
                         .accessibilityIdentifier("settings.preview.appVoice.button")
 
                         Button {
@@ -1829,6 +1844,10 @@ private struct SettingsScreen: View {
                 Section("Support & Privacy") {
                     Link("Privacy Policy", destination: AppLinks.privacy)
                     Link("Support", destination: AppLinks.support)
+                    NavigationLink("Legal · On-Device Voice") {
+                        SupertonicLegalView()
+                    }
+                    .accessibilityIdentifier("settings.legal.supertonic.link")
                     Button {
                         model.copyDiagnosticsExport()
                         copiedDiagnostics = true

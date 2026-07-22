@@ -126,8 +126,8 @@ final class Gate2CompactControlController {
         )
         queuedCommandHandler = commandHandler
         queuedApplicationCommandHandler = applicationCommandHandler
-        liveSpeechNowPlaying.commandHandler = { [weak self] command in
-            self?.queuedCommandHandler?(command, "now_playing_live_speech", nil, nil)
+        liveSpeechNowPlaying.commandHandler = { [weak self] command, playbackRate in
+            self?.queuedCommandHandler?(command, "now_playing_live_speech", nil, playbackRate)
         }
         installQueuedWidgetCommandProcessor()
         publishCurrentSnapshot()
@@ -328,7 +328,7 @@ private final class Gate2LiveActivityController {
 
 @MainActor
 private final class Gate2LiveSpeechNowPlayingController {
-    var commandHandler: (@MainActor (CompactControlCommand) -> Void)?
+    var commandHandler: (@MainActor (CompactControlCommand, Double?) -> Void)?
     private(set) var lastRemoteCommand = "none"
     private(set) var lastRemoteCommandDetail = "none"
     private(set) var status = "media_coordinator"
@@ -411,6 +411,18 @@ private final class Gate2LiveSpeechNowPlayingController {
         register(center.previousTrackCommand, command: .skipBack, detail: "previous")
         register(center.nextTrackCommand, command: .skipForward, detail: "next")
         register(center.stopCommand, command: .pause, detail: "none")
+        let rateTarget = center.changePlaybackRateCommand.addTarget { [weak self] event in
+            guard let event = event as? MPChangePlaybackRateCommandEvent else {
+                return .commandFailed
+            }
+            Task { @MainActor [weak self] in
+                self?.lastRemoteCommand = CompactControlCommand.setPlaybackRate.rawValue
+                self?.lastRemoteCommandDetail = String(format: "%.2f", event.playbackRate)
+                self?.commandHandler?(.setPlaybackRate, Double(event.playbackRate))
+            }
+            return .success
+        }
+        remoteCommandTargets.append((center.changePlaybackRateCommand, rateTarget))
         #endif
     }
 
@@ -420,7 +432,7 @@ private final class Gate2LiveSpeechNowPlayingController {
             Task { @MainActor [weak self] in
                 self?.lastRemoteCommand = command.rawValue
                 self?.lastRemoteCommandDetail = detail
-                self?.commandHandler?(command)
+                self?.commandHandler?(command, nil)
             }
             return .success
         }

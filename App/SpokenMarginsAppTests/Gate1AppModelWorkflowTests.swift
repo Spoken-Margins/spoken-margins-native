@@ -166,6 +166,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
                 return .success(prepared)
             }
         )
+        model.ttsVoiceSelection = .system
         model.resetAndSeed()
         model.importTitle = "Prepared First"
         model.importText = "This text should start immediately while generated audio renders in the background."
@@ -255,15 +256,45 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(UserDefaults.standard.double(forKey: "speechRate"), 0.65, accuracy: 0.001)
     }
 
-    func testLegacyEmbeddedPiperModeMigratesToInstalledSystemVoicePath() {
+    func testLegacyEmbeddedPiperModeSanitizesToBundledJamesPath() {
         let model = Gate1AppModel(audioPlaybackClient: WorkflowRecordingAudioClient())
         model.resetAndSeed()
+        model.ttsVoiceSelection = .james
         model.ttsMode = "piper"
 
         model.speechSettingsChanged()
 
-        XCTAssertEqual(model.ttsMode, "systemImmediate")
-        XCTAssertEqual(UserDefaults.standard.string(forKey: "ttsMode"), "systemImmediate")
+        XCTAssertEqual(model.ttsMode, "supertonic")
+        XCTAssertEqual(UserDefaults.standard.string(forKey: "ttsMode"), "supertonic")
+        XCTAssertEqual(UserDefaults.standard.string(forKey: "ttsVoiceSelection"), "supertonic:M2")
+    }
+
+    func testPreOnePointZeroTTSMigrationDefaultsToJamesAndRetainsAppleFallbackVoice() {
+        let defaults = UserDefaults.standard
+        let keys = ["supertonicTTSMigrationV1", "ttsMode", "ttsVoiceSelection", "speechVoiceIdentifier"]
+        let prior = keys.reduce(into: [String: Any]()) { values, key in
+            values[key] = defaults.object(forKey: key)
+        }
+        defer {
+            for key in keys {
+                if let value = prior[key] {
+                    defaults.set(value, forKey: key)
+                } else {
+                    defaults.removeObject(forKey: key)
+                }
+            }
+        }
+        defaults.removeObject(forKey: "supertonicTTSMigrationV1")
+        defaults.removeObject(forKey: "ttsVoiceSelection")
+        defaults.set("piper", forKey: "ttsMode")
+        defaults.set("com.apple.ttsbundle.Samantha-compact", forKey: "speechVoiceIdentifier")
+
+        let model = Gate1AppModel(audioPlaybackClient: WorkflowRecordingAudioClient())
+
+        XCTAssertEqual(model.ttsVoiceSelection, .james)
+        XCTAssertEqual(model.ttsMode, "supertonic")
+        XCTAssertEqual(model.speechVoiceIdentifier, "com.apple.ttsbundle.Samantha-compact")
+        XCTAssertTrue(defaults.bool(forKey: "supertonicTTSMigrationV1"))
     }
 
     func testVoiceChangeWhilePausedDoesNotCreatePhantomPlaybackProgress() throws {
@@ -292,6 +323,26 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.currentTextStart, "One. ".count)
         XCTAssertEqual(audio.playedOffsets.count, playCount)
         XCTAssertEqual(audio.configuredSpeechVoices.last!, "test.voice")
+    }
+
+    func testSupertonicVoiceChangeStopsPlaybackAndWaitsForExplicitPlay() throws {
+        let audio = WorkflowRecordingAudioClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio)
+        model.resetAndSeed()
+        model.importTitle = "Voice switch"
+        model.importText = "One sentence. A second sentence follows."
+        model.importTextItem()
+        audio.currentOffset = "One sentence. ".count
+        let playCount = audio.playedOffsets.count
+
+        model.ttsVoiceSelection = .lily
+        model.ttsVoiceSelectionChanged()
+
+        XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertEqual(model.snapshot.currentTextStart, "One sentence. ".count)
+        XCTAssertEqual(audio.playedOffsets.count, playCount)
+        XCTAssertEqual(UserDefaults.standard.string(forKey: "ttsVoiceSelection"), "supertonic:F2")
+        XCTAssertEqual(UserDefaults.standard.string(forKey: "ttsMode"), "supertonic")
     }
 
     func testObsidianImportRunsInBackgroundAndLoadsHeadingBasedListeningMap() async throws {

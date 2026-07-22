@@ -53,6 +53,11 @@ struct SpokenMarginsApp: App {
                         model.syncPlaybackProgressForLifecycle()
                     }
                 }
+                #if canImport(UIKit)
+                .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+                    model.handleMemoryWarning()
+                }
+                #endif
                 .task {
                     model.importPendingSourceLinkHandoffs()
                 }

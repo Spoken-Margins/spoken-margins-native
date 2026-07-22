@@ -47,11 +47,13 @@ public protocol AudioPlaybackClient {
     func setPlaybackRate(_ rate: Double) throws
     func currentPlaybackPosition() -> PlaybackPosition?
     func currentCharOffset() -> Int?
+    func currentRecoveryCharOffset() -> Int?
     func currentMediaTimeMs() -> Int?
     func currentPlaybackDurationMs() -> Int?
     func isPlaybackComplete(targetId: String) -> Bool
     func playbackStartStatus(targetId: String) -> PlaybackStartStatus
     func playbackTransportState(targetId: String) -> PlaybackTransportState?
+    func setRemoteCommandHandlingEnabled(_ enabled: Bool)
     func pause() throws
     func stop() throws
 }
@@ -114,6 +116,14 @@ public extension AudioPlaybackClient {
         currentPlaybackPosition()?.textStart
     }
 
+    /// A conservative source offset that is safe to use after the active audio
+    /// asset is lost. Rendered speech may return the beginning of the current
+    /// chunk here while exposing a more precise interpolated presentation offset
+    /// through `currentCharOffset()`.
+    func currentRecoveryCharOffset() -> Int? {
+        currentCharOffset()
+    }
+
     func currentMediaTimeMs() -> Int? {
         currentPlaybackPosition()?.mediaTimeMs
     }
@@ -137,6 +147,8 @@ public extension AudioPlaybackClient {
     func playbackTransportState(targetId: String) -> PlaybackTransportState? {
         nil
     }
+
+    func setRemoteCommandHandlingEnabled(_ enabled: Bool) {}
 }
 
 public protocol RecordingClient {

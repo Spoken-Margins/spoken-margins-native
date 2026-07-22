@@ -12,7 +12,14 @@ let package = Package(
         .library(name: "SessionKit", targets: ["SessionKit"]),
         .library(name: "SessionKitPersistence", targets: ["SessionKitPersistence"]),
         .library(name: "SessionKitAudio", targets: ["SessionKitAudio"]),
-        .library(name: "SessionKitAI", targets: ["SessionKitAI"])
+        .library(name: "SessionKitAI", targets: ["SessionKitAI"]),
+        .library(name: "SessionKitSupertonic", targets: ["SessionKitSupertonic"])
+    ],
+    dependencies: [
+        .package(
+            url: "https://github.com/microsoft/onnxruntime-swift-package-manager.git",
+            exact: "1.24.2"
+        )
     ],
     targets: [
         .target(name: "SessionKit"),
@@ -29,9 +36,18 @@ let package = Package(
             name: "SessionKitAI",
             dependencies: ["SessionKit"]
         ),
+        .target(
+            name: "SessionKitSupertonic",
+            dependencies: [
+                .product(
+                    name: "onnxruntime",
+                    package: "onnxruntime-swift-package-manager"
+                )
+            ]
+        ),
         .testTarget(
             name: "SessionKitTests",
-            dependencies: ["SessionKit", "SessionKitPersistence", "SessionKitAudio", "SessionKitAI"]
+            dependencies: ["SessionKit", "SessionKitPersistence", "SessionKitAudio", "SessionKitAI", "SessionKitSupertonic"]
         ),
         .testTarget(
             name: "SessionKitTraceTests",

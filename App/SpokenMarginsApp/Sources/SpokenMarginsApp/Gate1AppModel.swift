@@ -3,6 +3,7 @@ import Security
 import SessionKit
 import SessionKitAI
 import SessionKitAudio
+import SessionKitSupertonic
 #if KOKORO_DEVICE && !targetEnvironment(simulator)
 import SessionKitKokoro
 #endif
@@ -79,6 +80,38 @@ struct SpeechVoiceChoice: Identifiable, Hashable {
     let name: String
     let language: String
     let quality: String
+}
+
+enum AppTTSVoiceSelection: String, CaseIterable, Identifiable {
+    case james = "supertonic:M2"
+    case lily = "supertonic:F2"
+    case system = "system"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .james: "James"
+        case .lily: "Lily"
+        case .system: "iOS System Voice"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .james: "Deep, calm · M2"
+        case .lily: "Bright, cheerful · F2"
+        case .system: "Uses the selected voice installed in iOS"
+        }
+    }
+
+    var supertonicVoice: SupertonicVoiceID? {
+        switch self {
+        case .james: .m2
+        case .lily: .f2
+        case .system: nil
+        }
+    }
 }
 
 struct PiperVoiceOption: Identifiable, Hashable {
@@ -174,6 +207,7 @@ typealias PreparedTextAudioPrewarmHandler = @Sendable (
 final class Gate1AppModel: ObservableObject {
     private static let welcomeSampleSeedVersion = 1
     private static let welcomeSampleSeedVersionKey = "welcomeSampleSeedVersion"
+    private static let supertonicTTSMigrationKey = "supertonicTTSMigrationV1"
     private static var isRunningUnitTests: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     }
@@ -243,7 +277,10 @@ final class Gate1AppModel: ObservableObject {
     @Published var pendingPreparedTextStartItemId: String?
     @Published var speechVoiceOptions: [SpeechVoiceChoice] = []
     @Published var speechVoiceIdentifier = UserDefaults.standard.string(forKey: "speechVoiceIdentifier") ?? ""
-    @Published var ttsMode = UserDefaults.standard.string(forKey: "ttsMode") ?? "systemImmediate"
+    @Published var ttsVoiceSelection = AppTTSVoiceSelection(
+        rawValue: UserDefaults.standard.string(forKey: "ttsVoiceSelection") ?? ""
+    ) ?? .james
+    @Published var ttsMode = UserDefaults.standard.string(forKey: "ttsMode") ?? "supertonic"
     @Published var kokoroVoiceName = UserDefaults.standard.string(forKey: "kokoroVoiceName") ?? "am_echo"
     @Published var kokoroChunkCharacters = min(140, max(80, UserDefaults.standard.double(forKey: "kokoroChunkCharacters") == 0 ? 110 : UserDefaults.standard.double(forKey: "kokoroChunkCharacters")))
     @Published var kokoroStatus = "Not checked"
@@ -252,6 +289,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var piperStatus = "Not checked"
     @Published var isRenderingKokoroPreview = false
     @Published var isRunningKokoroMemoryCheck = false
+    @Published var isRenderingSupertonicPreview = false
     #if SPOKEN_MARGINS_WATCH
     @Published var isRenderingWatchPackage = false
     @Published var watchPackageRenderStatus = "Not rendered"
@@ -277,6 +315,8 @@ final class Gate1AppModel: ObservableObject {
     #endif
     private let openAIResponsesClient = OpenAIResponsesClient()
     private let streamingSpeechQueue = StreamingSpeechQueue()
+    private var speechPlaybackClient: AudioPlaybackClient?
+    private var supertonicRenderer: SupertonicNarrationRenderer?
     private let sourceLinkResolver: LinkResolutionClient?
     private let sourceLinkHandoffStore: SourceLinkHandoffStore?
     private let browserTextHandoffStore: Gate5BrowserTextHandoffStore?
@@ -318,6 +358,8 @@ final class Gate1AppModel: ObservableObject {
     #if canImport(AVFoundation)
     private let speechPreviewSynthesizer = AVSpeechSynthesizer()
     private var kokoroPreviewPlayer: AVAudioPlayer?
+    private var supertonicPreviewPlayer: AVAudioPlayer?
+    private var supertonicPreviewURL: URL?
     #endif
     private let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
@@ -373,6 +415,7 @@ final class Gate1AppModel: ObservableObject {
                 UserDefaults.standard.set(testRate, forKey: "speechRate")
             }
         }
+        migrateTTSSettingsIfNeeded()
         UserDefaults.standard.removeObject(forKey: "aiExecutionMode")
         refreshSpeechVoiceOptions()
         sanitizeTTSMode()
@@ -381,6 +424,27 @@ final class Gate1AppModel: ObservableObject {
         streamingSpeechQueue.onTurnDrained = { [weak self] turnId in
             self?.finishStreamingTurnIfReady(turnId)
         }
+    }
+
+    private func migrateTTSSettingsIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: Self.supertonicTTSMigrationKey) else {
+            synchronizeTTSModeFromSelection()
+            return
+        }
+
+        // This is intentionally a one-way pre-1.0 migration. Legacy Piper,
+        // Kokoro, and system-only modes all move to the bundled default voice;
+        // the prior Apple voice identifier remains available for fallback.
+        ttsVoiceSelection = .james
+        ttsMode = "supertonic"
+        defaults.set(ttsVoiceSelection.rawValue, forKey: "ttsVoiceSelection")
+        defaults.set(ttsMode, forKey: "ttsMode")
+        defaults.set(true, forKey: Self.supertonicTTSMigrationKey)
+    }
+
+    private func synchronizeTTSModeFromSelection() {
+        ttsMode = ttsVoiceSelection == .system ? "systemImmediate" : "supertonic"
     }
 
     var aiDataSharingConsentDescription: String {
@@ -503,6 +567,7 @@ final class Gate1AppModel: ObservableObject {
                     }
                     guard let engine = self.engine else { return }
                     do {
+                        self.synchronizeStreamingSpeechAnchorIfNeeded()
                         let previousStatus = self.snapshot.status
                         let previousTargetId = self.snapshot.targetId
                         let updated = self.snapshotReflectingTextAudioPrewarmStatus(
@@ -557,6 +622,7 @@ final class Gate1AppModel: ObservableObject {
     func syncPlaybackProgressForLifecycle() {
         guard snapshot.status.isPlaybackActive, let engine else { return }
         do {
+            synchronizeStreamingSpeechAnchorIfNeeded()
             let updated = snapshotReflectingTextAudioPrewarmStatus(
                 try engine.syncPlaybackProgress(),
                 itemId: activeItemId
@@ -689,6 +755,12 @@ final class Gate1AppModel: ObservableObject {
     func handleAppBecameActive() {
         syncPlaybackProgressForLifecycle()
         importPendingSourceLinkHandoffs()
+    }
+
+    func handleMemoryWarning() {
+        guard let renderer = supertonicRenderer else { return }
+        diagnostics["supertonicMemoryPressure"] = "sessions_unloaded"
+        Task { await renderer.unload(removingGeneratedAudio: false) }
     }
 
     func resetAndSeed() {
@@ -1496,14 +1568,12 @@ final class Gate1AppModel: ObservableObject {
 
     func start() {
         stopSpeechPreviews()
+        streamingSpeechQueue.stopAndClear()
         scheduleTextAudioPrewarmIfNeeded(itemId: activeItemId)
         preparePodcastPlayback(itemId: activeItemId)
         run { engine in
-            let requestedMediaPlaybackRate = mediaPlaybackRate
-            snapshot = try engine.startSession(itemId: activeItemId)
-            if isMediaPlaybackSnapshot, requestedMediaPlaybackRate != snapshot.playbackRate {
-                snapshot = try engine.setPlaybackRate(requestedMediaPlaybackRate)
-            }
+            let started = try engine.startSession(itemId: activeItemId)
+            snapshot = try applyPreferredPlaybackRate(to: started, engine: engine)
             if let store, let sessionId = snapshot.sessionId {
                 try seedUITestingGeneratedTimelineIfNeeded(sessionId: sessionId, engine: engine, store: store)
             }
@@ -1527,8 +1597,10 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func pause() {
+        synchronizeStreamingSpeechAnchorIfNeeded()
         run { engine in
             snapshot = try engine.pause()
+            streamingSpeechQueue.relinquishToCanonicalPlayback()
             refreshSelectedItem()
             reportSuccess("Paused.")
         }
@@ -1536,6 +1608,7 @@ final class Gate1AppModel: ObservableObject {
 
     func resumePlayback() {
         stopSpeechPreviews()
+        streamingSpeechQueue.relinquishToCanonicalPlayback()
         run { engine in
             snapshot = try engine.resumePlayback()
             refreshSelectedItem()
@@ -1678,7 +1751,8 @@ final class Gate1AppModel: ObservableObject {
         clearPendingAutoPlayTurns()
         run { engine in
             if !hasActiveSession {
-                snapshot = try engine.startSession(itemId: activeItemId)
+                let started = try engine.startSession(itemId: activeItemId)
+                snapshot = try applyPreferredPlaybackRate(to: started, engine: engine)
             }
             snapshot = try engine.jumpToChapter(chapterId: chapter.id)
             refreshSelectedItem()
@@ -1692,7 +1766,8 @@ final class Gate1AppModel: ObservableObject {
         clearPendingAutoPlayTurns()
         run { engine in
             if !hasActiveSession {
-                snapshot = try engine.startSession(itemId: activeItemId)
+                let started = try engine.startSession(itemId: activeItemId)
+                snapshot = try applyPreferredPlaybackRate(to: started, engine: engine)
             } else {
                 snapshot = try engine.playSourceFromBeginning()
             }
@@ -1905,8 +1980,10 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func skipBack() {
+        synchronizeStreamingSpeechAnchorIfNeeded()
         run { engine in
             snapshot = try engine.skipBack(unit: skipUnitForCurrentTarget())
+            streamingSpeechQueue.relinquishToCanonicalPlayback()
             refreshSelectedItem()
             reportSuccess("Skipped back.")
         }
@@ -1920,6 +1997,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func skipForward() {
+        synchronizeStreamingSpeechAnchorIfNeeded()
         run { engine in
             let unit = skipUnitForCurrentTarget()
             if ttsMode == "kokoro" {
@@ -1927,6 +2005,7 @@ final class Gate1AppModel: ObservableObject {
             } else {
                 snapshot = try engine.skipForward(unit: unit)
             }
+            streamingSpeechQueue.relinquishToCanonicalPlayback()
             refreshSelectedItem()
             reportSuccess("Skipped forward.")
         }
@@ -1971,8 +2050,10 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func seekText(toCharOffset charOffset: Int) {
+        synchronizeStreamingSpeechAnchorIfNeeded()
         run { engine in
             snapshot = try engine.seekText(toCharOffset: charOffset)
+            streamingSpeechQueue.relinquishToCanonicalPlayback()
             refreshSelectedItem()
         }
     }
@@ -1982,6 +2063,10 @@ final class Gate1AppModel: ObservableObject {
         guard !isMediaPlaybackSnapshot else {
             return
         }
+        if ttsVoiceSelection.supertonicVoice != nil, audioPlaybackClientOverride == nil {
+            applySupertonicPlaybackRate()
+            return
+        }
         run { engine in
             snapshot = try engine.updateSpeechPlaybackSettings(
                 voiceIdentifier: speechVoiceIdentifier.isEmpty ? nil : speechVoiceIdentifier,
@@ -1989,6 +2074,44 @@ final class Gate1AppModel: ObservableObject {
             )
             refreshSelectedItem()
             diagnostics["speechRateApplied"] = String(format: "%.2f", speechRate)
+        }
+    }
+
+    private func applySupertonicPlaybackRate() {
+        let transportRate = max(0.7, min(2.0, speechRate / 0.5))
+        do {
+            try speechPlaybackClient?.configureSpeechSettings(
+                voiceIdentifier: speechVoiceIdentifier.isEmpty ? nil : speechVoiceIdentifier,
+                rate: Float(speechRate)
+            )
+            if let engine, hasActiveSession {
+                snapshot = try engine.setPlaybackRate(transportRate)
+                refreshSelectedItem()
+            }
+            diagnostics["speechRateApplied"] = String(format: "%.2f", transportRate)
+        } catch {
+            reportFailure(error, context: "Speaking rate update failed")
+        }
+    }
+
+    private func applyPreferredPlaybackRate(
+        to started: SessionSnapshot,
+        engine: SessionEngine
+    ) throws -> SessionSnapshot {
+        switch started.targetType {
+        case TargetType.transcriptBackedMedia.rawValue, TargetType.browserOwnedMedia.rawValue:
+            return started.playbackRate == mediaPlaybackRate
+                ? started
+                : try engine.setPlaybackRate(mediaPlaybackRate)
+        case TargetType.itemTextTTS.rawValue,
+             TargetType.assistantTurnTTS.rawValue,
+             TargetType.summaryTurnTTS.rawValue where ttsVoiceSelection.supertonicVoice != nil:
+            let transportRate = max(0.7, min(2.0, speechRate / 0.5))
+            return started.playbackRate == transportRate
+                ? started
+                : try engine.setPlaybackRate(transportRate)
+        default:
+            return started
         }
     }
 
@@ -2098,6 +2221,10 @@ final class Gate1AppModel: ObservableObject {
             refreshSelectedItem()
             reportSuccess("Ended session.")
         }
+        streamingSpeechQueue.stopAndClear()
+        if let renderer = supertonicRenderer {
+            Task { await renderer.unload() }
+        }
     }
 
     #if SPOKEN_MARGINS_WATCH
@@ -2160,6 +2287,7 @@ final class Gate1AppModel: ObservableObject {
 
     private func playTurn(_ turnId: String, engine: SessionEngine, clearsPendingQueue: Bool) throws {
         stopSpeechPreviews()
+        streamingSpeechQueue.stopAndClear()
         if clearsPendingQueue {
             clearPendingAutoPlayTurns()
         }
@@ -2362,7 +2490,8 @@ final class Gate1AppModel: ObservableObject {
         stopSpeechPreviews()
         run { engine in
             if !hasActiveSession {
-                snapshot = try engine.startSession(itemId: activeItemId)
+                let started = try engine.startSession(itemId: activeItemId)
+                snapshot = try applyPreferredPlaybackRate(to: started, engine: engine)
             }
             snapshot = try engine.importAssistantResponse(text: text, autoPlay: autoPlay)
             pastedAssistantResponse = ""
@@ -2693,6 +2822,7 @@ final class Gate1AppModel: ObservableObject {
         UserDefaults.standard.set(mediaSkipForwardSeconds, forKey: "mediaSkipForwardSeconds")
         UserDefaults.standard.set(speechRate, forKey: "speechRate")
         UserDefaults.standard.set(speechVoiceIdentifier, forKey: "speechVoiceIdentifier")
+        UserDefaults.standard.set(ttsVoiceSelection.rawValue, forKey: "ttsVoiceSelection")
         UserDefaults.standard.set(ttsMode, forKey: "ttsMode")
         UserDefaults.standard.set(kokoroVoiceName, forKey: "kokoroVoiceName")
         UserDefaults.standard.set(piperVoiceId, forKey: "piperVoiceId")
@@ -2715,6 +2845,7 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["mediaSkipForwardSeconds"] = "\(mediaSkipForwardSeconds)"
         diagnostics["speechRate"] = String(format: "%.2f", speechRate)
         diagnostics["speechVoice"] = speechVoiceDescription
+        diagnostics["ttsVoiceSelection"] = ttsVoiceSelection.rawValue
         diagnostics["ttsMode"] = ttsMode
         diagnostics["kokoroVoice"] = kokoroVoiceName
         diagnostics["piperVoice"] = piperVoiceId.isEmpty ? "none" : piperVoiceId
@@ -2732,6 +2863,7 @@ final class Gate1AppModel: ObservableObject {
         sanitizeTTSMode()
         UserDefaults.standard.set(speechRate, forKey: "speechRate")
         UserDefaults.standard.set(speechVoiceIdentifier, forKey: "speechVoiceIdentifier")
+        UserDefaults.standard.set(ttsVoiceSelection.rawValue, forKey: "ttsVoiceSelection")
         UserDefaults.standard.set(ttsMode, forKey: "ttsMode")
         UserDefaults.standard.set(kokoroVoiceName, forKey: "kokoroVoiceName")
         UserDefaults.standard.set(piperVoiceId, forKey: "piperVoiceId")
@@ -2739,6 +2871,7 @@ final class Gate1AppModel: ObservableObject {
         cancelTextAudioPrewarmTasks()
         diagnostics["speechRate"] = String(format: "%.2f", speechRate)
         diagnostics["speechVoice"] = speechVoiceDescription
+        diagnostics["ttsVoiceSelection"] = ttsVoiceSelection.rawValue
         diagnostics["ttsMode"] = ttsMode
         diagnostics["kokoroVoice"] = kokoroVoiceName
         diagnostics["piperVoice"] = piperVoiceId.isEmpty ? "none" : piperVoiceId
@@ -2763,6 +2896,8 @@ final class Gate1AppModel: ObservableObject {
         saveSpeechSettings()
         if changed {
             _ = rebuildEngineForCurrentSettings()
+        } else if ttsVoiceSelection.supertonicVoice != nil, audioPlaybackClientOverride == nil {
+            applySupertonicPlaybackRate()
         } else if !isMediaPlaybackSnapshot {
             run { engine in
                 snapshot = try engine.updateSpeechPlaybackSettings(
@@ -2774,9 +2909,22 @@ final class Gate1AppModel: ObservableObject {
                 reportSuccess("Speech settings saved.")
             }
         }
-        if changed {
-            reportFailure("Kokoro requires the SpokenMarginsAppDevice scheme on a physical device.")
+    }
+
+    func ttsVoiceSelectionChanged() {
+        sanitizeTTSMode()
+        settingsValueChanged()
+        saveSpeechSettings()
+        if let engine {
+            snapshot = (try? engine.stopPlayback()) ?? snapshot
+            refreshSelectedItem()
         }
+        _ = rebuildEngineForCurrentSettings()
+        if ttsVoiceSelection == .system, let renderer = supertonicRenderer {
+            supertonicRenderer = nil
+            Task { await renderer.unload() }
+        }
+        reportSuccess("Voice changed to \(ttsVoiceSelection.displayName). Press play when you are ready.")
     }
 
     func previewSpokenContentVoice() {
@@ -2785,6 +2933,10 @@ final class Gate1AppModel: ObservableObject {
 
     func previewAppVoice() {
         saveSpeechSettings()
+        if let voice = ttsVoiceSelection.supertonicVoice {
+            previewSupertonicVoice(voice)
+            return
+        }
         previewSpeech(
             label: "app voice and rate",
             mode: .appVoice(
@@ -2792,6 +2944,34 @@ final class Gate1AppModel: ObservableObject {
                 rate: Float(speechRate)
             )
         )
+    }
+
+    private func previewSupertonicVoice(_ voice: SupertonicVoiceID) {
+        guard !isRenderingSupertonicPreview else { return }
+        isRenderingSupertonicPreview = true
+        statusMessage = "Preparing \(ttsVoiceSelection.displayName)…"
+        let speed = Float(speechRate / 0.5)
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let renderer = try self.makeSupertonicRenderer()
+                let result = try await renderer.render(
+                    text: "Spoken Margins is ready to read with your selected on-device voice.",
+                    voice: voice,
+                    speed: speed,
+                    synthesisSteps: 8
+                )
+                try Task.checkCancellation()
+                try self.playSupertonicPreview(url: result.audioURL)
+                self.diagnostics["supertonicPreviewRenderSeconds"] = String(format: "%.3f", result.renderDuration)
+                self.diagnostics["supertonicPreviewDurationSeconds"] = String(format: "%.3f", result.duration)
+                self.diagnostics["supertonicSessionLoadCount"] = "\(result.sessionLoadCount)"
+                self.reportSuccess("Playing \(self.ttsVoiceSelection.displayName).")
+            } catch {
+                self.reportFailure(error, context: "On-device voice preview failed")
+            }
+            self.isRenderingSupertonicPreview = false
+        }
     }
 
     func previewAssistiveTechnologyVoice() {
@@ -3170,6 +3350,9 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var speechVoiceDescription: String {
+        if ttsVoiceSelection != .system {
+            return "\(ttsVoiceSelection.displayName) (Supertonic \(ttsVoiceSelection.supertonicVoice?.rawValue ?? ""))"
+        }
         guard !speechVoiceIdentifier.isEmpty else {
             return "System Spoken Content Voice (Siri falls back)"
         }
@@ -3180,6 +3363,9 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var speechRateDescription: String {
+        if ttsVoiceSelection.supertonicVoice != nil {
+            return String(format: "Supertonic %.2fx", max(0.7, min(2.0, speechRate / 0.5)))
+        }
         if ttsMode == "kokoro", isKokoroDeviceBuild {
             return String(format: "Kokoro %.2fx", max(0.65, min(1.75, speechRate / 0.5)))
         }
@@ -3560,8 +3746,13 @@ final class Gate1AppModel: ObservableObject {
         playbackRate: Double? = nil,
         origin: String = "app_ui"
     ) {
-        if command == .beginInterjection {
+        let canonicalTransportCommands: Set<CompactControlCommand> = [
+            .play, .pause, .togglePlayPause, .skipBack, .skipForward, .jumpToChapter
+        ]
+        if command == .beginInterjection || canonicalTransportCommands.contains(command) {
             synchronizeStreamingSpeechAnchorIfNeeded()
+        }
+        if command == .beginInterjection {
             streamingSpeechQueue.pauseForInterjection()
         }
         do {
@@ -3578,6 +3769,12 @@ final class Gate1AppModel: ObservableObject {
             } else {
                 updateGate2CompactState()
             }
+            if command == .setPlaybackRate,
+               !isMediaPlaybackSnapshot,
+               let playbackRate {
+                speechRate = max(0.35, min(0.85, playbackRate * 0.5))
+                UserDefaults.standard.set(speechRate, forKey: "speechRate")
+            }
             refreshSelectedItem()
             if command == .finishInterjection, let interjection = latestInterjectionNeedingTranscription() {
                 scheduleTranscription(for: interjection)
@@ -3585,6 +3782,9 @@ final class Gate1AppModel: ObservableObject {
             }
             if command == .finishInterjection || command == .cancelInterjection {
                 streamingSpeechQueue.resumeAfterInterjection()
+            }
+            if canonicalTransportCommands.contains(command) {
+                streamingSpeechQueue.relinquishToCanonicalPlayback()
             }
             reportSuccess("Compact control \(command.rawValue) \(result.delegatedToCanonicalRuntime ? "delegated" : "handled").")
         } catch {
@@ -3610,15 +3810,16 @@ final class Gate1AppModel: ObservableObject {
     private func synchronizeStreamingSpeechAnchorIfNeeded() {
         guard let engine,
               let turnId = streamingSpeechQueue.currentTurnId,
-              let sentenceStart = streamingSpeechQueue.currentSentenceStartOffset else {
+              let presentationOffset = streamingSpeechQueue.currentPresentationOffset else {
             return
         }
         do {
-            snapshot = try engine.updateStreamingTurnPosition(turnId: turnId, charOffset: sentenceStart)
+            snapshot = try engine.updateStreamingTurnPosition(turnId: turnId, charOffset: presentationOffset)
             diagnostics["streamingInterjectionTurnId"] = turnId
-            diagnostics["streamingInterjectionSentenceStart"] = "\(sentenceStart)"
+            diagnostics["streamingPresentationOffset"] = "\(presentationOffset)"
+            diagnostics["streamingRecoveryOffset"] = "\(streamingSpeechQueue.currentRecoveryOffset ?? presentationOffset)"
         } catch {
-            diagnostics["streamingInterjectionAnchorError"] = String(describing: error)
+            diagnostics["streamingAnchorSyncError"] = String(describing: error)
         }
     }
 
@@ -3681,6 +3882,24 @@ final class Gate1AppModel: ObservableObject {
             speechPreviewSynthesizer.stopSpeaking(at: .immediate)
         }
         kokoroPreviewPlayer?.stop()
+        supertonicPreviewPlayer?.stop()
+    }
+
+    private func playSupertonicPreview(url: URL) throws {
+        stopSpeechPreviews()
+        if let priorURL = supertonicPreviewURL, let renderer = supertonicRenderer {
+            Task { await renderer.discardGeneratedAudio(at: priorURL) }
+        }
+        #if os(iOS)
+        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try AVAudioSession.sharedInstance().setActive(true)
+        #endif
+        supertonicPreviewPlayer = try AVAudioPlayer(contentsOf: url)
+        supertonicPreviewPlayer?.prepareToPlay()
+        guard supertonicPreviewPlayer?.play() == true else {
+            throw SupertonicNarrationError.unsafeAudio("preview_playback_failed")
+        }
+        supertonicPreviewURL = url
     }
 
     private func playKokoroPreview(url: URL) throws {
@@ -3856,6 +4075,7 @@ final class Gate1AppModel: ObservableObject {
 
     private func makeTextAudioPreparationClient() throws -> TextAudioPreparationClient? {
         guard audioPlaybackClientOverride == nil else { return nil }
+        guard ttsVoiceSelection == .system else { return nil }
         guard ttsMode != "kokoro" else { return nil }
         guard ttsMode != "piper" else { return nil }
         #if canImport(AVFoundation)
@@ -3875,6 +4095,7 @@ final class Gate1AppModel: ObservableObject {
         // AVSpeechSynthesizer serializes or competes with live utterances on real
         // devices. Only an explicitly injected preparation job may pre-render in
         // the background; production playback must stay on the immediate path.
+        guard ttsVoiceSelection == .system else { return }
         guard let prewarmHandler = preparedTextAudioPrewarmHandler, ttsMode != "kokoro" else { return }
         guard ttsMode != "piper" else { return }
         guard textAudioPrewarmTasks[itemId] == nil else { return }
@@ -4070,6 +4291,7 @@ final class Gate1AppModel: ObservableObject {
 
     private func shouldGatePreparedTextPlayback(for item: Item) -> Bool {
         guard (audioPlaybackClientOverride == nil || forcePreparedTextGate),
+              ttsVoiceSelection == .system,
               ttsMode != "kokoro",
               !liveSpeechFallbackItemIds.contains(item.id),
               shouldPrewarmTextAudio(for: item) else {
@@ -4101,11 +4323,44 @@ final class Gate1AppModel: ObservableObject {
             return audioPlaybackClientOverride
         }
         sanitizeTTSMode()
+        let speech = try makeSpeechPlaybackClient()
+        speechPlaybackClient = speech
+        let routed = RoutedAudioPlaybackClient(
+            speech: speech,
+            media: makeMediaPlaybackClient()
+        )
+        streamingSpeechQueue.configureSpeechClient(routed)
+        return routed
+    }
+
+    private func makeSpeechPlaybackClient() throws -> AudioPlaybackClient {
         let selectedVoice = speechVoiceIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !selectedVoice.isEmpty,
-           !Self.availableSpeechVoiceOptions().contains(where: { $0.id == selectedVoice }) {
+        let appleVoiceIsAvailable = selectedVoice.isEmpty || Self.availableSpeechVoiceOptions().contains(where: { $0.id == selectedVoice })
+        if ttsVoiceSelection == .system, !appleVoiceIsAvailable {
             diagnostics["speechVoiceAvailability"] = "unavailable"
             throw SessionKitError.persistenceFailed("selected_speech_voice_unavailable")
+        }
+        if let voice = ttsVoiceSelection.supertonicVoice {
+            let renderer = try makeSupertonicRenderer()
+            diagnostics["sessionTTS"] = "Supertonic 3 INT8 \(voice.rawValue)"
+            return SupertonicSpeechPlaybackClient(
+                renderer: renderer,
+                voice: voice,
+                speed: Float(speechRate / 0.5),
+                fallbackVoiceIdentifier: appleVoiceIsAvailable && !selectedVoice.isEmpty ? selectedVoice : nil,
+                fallbackRate: Float(speechRate)
+            ) { [weak self] reason, offset in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.diagnostics["supertonicFallback"] = reason
+                    self.diagnostics["supertonicFallbackOffset"] = "\(offset)"
+                    self.statusMessage = "Using the iOS system voice for this playback."
+                    self.feedbackEvent = UserFeedbackEvent(
+                        kind: .error,
+                        message: "The on-device voice was unavailable, so playback continued with the iOS system voice."
+                    )
+                }
+            }
         }
         #if KOKORO_DEVICE && !targetEnvironment(simulator) && canImport(AVFoundation)
         if ttsMode == "kokoro" {
@@ -4125,17 +4380,36 @@ final class Gate1AppModel: ObservableObject {
                 cacheLimitBytes: kokoroCacheLimitBytes,
                 maxCharacters: kokoroChunkCharacterLimit
             )
-            return RoutedAudioPlaybackClient(speech: speech, media: makeMediaPlaybackClient())
+            return speech
         }
         #endif
         diagnostics["sessionTTS"] = "System speech"
-        return RoutedAudioPlaybackClient(
-            speech: SystemSpeechPlaybackClient(
-                voiceIdentifier: selectedVoice.isEmpty ? nil : selectedVoice,
-                speechRate: Float(speechRate)
-            ),
-            media: makeMediaPlaybackClient()
+        return SystemSpeechPlaybackClient(
+            voiceIdentifier: selectedVoice.isEmpty ? nil : selectedVoice,
+            speechRate: Float(speechRate)
         )
+    }
+
+    private func makeSupertonicRenderer() throws -> SupertonicNarrationRenderer {
+        if let supertonicRenderer { return supertonicRenderer }
+        guard let resourceRoot = Bundle.main.resourceURL?.appending(
+            path: "Supertonic",
+            directoryHint: .isDirectory
+        ) else {
+            throw SupertonicNarrationError.missingAsset("Supertonic")
+        }
+        let cachesDirectory = try FileManager.default.url(
+            for: .cachesDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let renderer = try SupertonicNarrationRenderer(
+            assets: SupertonicAssetLocation(rootURL: resourceRoot),
+            outputDirectory: cachesDirectory.appending(path: "SupertonicPlayback", directoryHint: .isDirectory)
+        )
+        supertonicRenderer = renderer
+        return renderer
     }
 
     private func makeMediaPlaybackClient() -> AudioPlaybackClient {
@@ -4159,12 +4433,11 @@ final class Gate1AppModel: ObservableObject {
 
     @discardableResult
     private func sanitizeTTSMode() -> Bool {
-        guard ttsMode != "systemImmediate" else {
-            return false
-        }
-        ttsMode = "systemImmediate"
+        let priorMode = ttsMode
+        synchronizeTTSModeFromSelection()
         UserDefaults.standard.set(ttsMode, forKey: "ttsMode")
-        return true
+        UserDefaults.standard.set(ttsVoiceSelection.rawValue, forKey: "ttsVoiceSelection")
+        return priorMode != ttsMode
     }
 
     private func loadLibraryRows(store: SQLiteSessionStore) throws -> [LibraryItemRow] {

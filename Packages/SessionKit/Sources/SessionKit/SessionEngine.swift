@@ -3039,6 +3039,7 @@ public final class SessionEngine {
         let plan = try playbackPlan(for: session)
         lastSpokenText = try audio.prepareSpeechText(plan.text)
         try audio.play(targetId: session.currentTargetId, from: plan.audioOffset)
+        try audio.setPlaybackRate(session.playbackRate)
     }
 
     private func playbackMediaContext(for session: Session) -> PlaybackMediaContext? {
