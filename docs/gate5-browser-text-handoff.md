@@ -68,6 +68,8 @@ The native app reads the payload and imports it without replacing an active sess
 - `importBrowserText` creates a normal `item.v1` record with `mediaType: text` and preserves the source URL or file reference.
 - Selected text remains plain text. Readable pages and Markdown files preserve Markdown headings, which are normalized through `ObsidianMarkdownParser` and can produce a deterministic Listening Map immediately.
 - Both the Safari Web Extension and Safari share preprocessor use the pinned local Defuddle 0.19.1 bundle with `useAsync: false`. Extraction cannot send the page to a third-party fallback.
+- The Safari popup reads the result directly from `scripting.executeScript`; it does not depend on a second `tabs.sendMessage` round trip after injection.
+- If Defuddle cannot produce readable Markdown, the extension falls back locally to semantic content from `article`, then `main`, then `body`, while preserving headings and paragraphs where possible.
 - Safari owns capture/extraction/metadata and delegates playback plus interjections to the native app.
 - Browser-owned TTS and browser recording remain follow-up work.
 - Summary and discussion continue in the app for Gate 5.
@@ -77,7 +79,7 @@ The native app reads the payload and imports it without replacing an active sess
 - If the native app is unavailable, the extension keeps the App Group payload for the next app activation.
 - A failed import is quarantined rather than retried on every app activation.
 - If microphone permission is missing, interjection commands are unavailable but text capture and handoff remain valid.
-- If readable extraction fails, selected-text capture remains valid.
+- If Defuddle extraction fails, semantic DOM fallback is attempted before the extension reports a page-capture error; selected-text capture remains independently available.
 - If no title is available, the browser should derive a title from the URL host or first text heading before handoff.
 
 ## Backend Requests

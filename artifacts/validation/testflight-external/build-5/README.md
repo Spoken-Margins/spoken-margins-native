@@ -49,6 +49,8 @@ Branch verification on July 22, 2026 is recorded below. Re-run it from the final
 - [x] `SpokenMarginsAppTests` on iPhone 17 Pro / iOS 26.5 simulator — 84 tests passed, including the exact article import fixture, speech projection, Markdown preservation through sanitation, and deterministic generation of its four header-derived Listening Map chapters.
 - [x] `SpokenMarginsAppUITests/Gate1FlowUITests` on iPhone 17 Pro / iOS 26.5 simulator — all 7 existing route tests passed.
 - [x] `SpokenMarginsAppUITests/EmojiArticlePlaybackUITests/testExactEmojiArticleCompletesAfterPauseAndResumeNearCrashPoint` on iPhone 17 Pro / iOS 26.5 simulator — the exact supplied article completed naturally at 100% using System 0.55 after pausing at or beyond 23%, proving paused progress remained fixed, resuming, and continuing beyond the reported 25% crash point (final-code rerun: 191.860 seconds).
+- [x] Browser extraction tests — 9 tests passed, including direct `scripting.executeScript` result transport, a semantic `<article>`/`<main>` fallback when Defuddle cannot return readable Markdown, and generated-bundle assertions that prevent reintroducing the fragile `tabs.sendMessage` handoff.
+- [x] Safari Web Extension end-to-end check on iPhone 16 Pro / iOS 18.6 simulator — enabled the installed extension, opened the exact Google DMA article, selected **Readable Page**, approved the app handoff, and observed a ready-to-listen native-text item with the correct title and canonical source URL. The same live page produced 1,432 characters through the repository extraction core. This is developer verification, not product-owner validation.
 - [x] Generic iOS Simulator Debug and Release app builds — passed for the app and three embedded extensions.
 - [x] Generic iOS device Debug and Release app builds — passed for the app and three embedded extensions.
 - [ ] Generic watchOS build — not runnable: the generated project contains no `SpokenMarginsWatch` target/scheme; the AGENTS.md command is stale for the current project topology.
@@ -107,6 +109,7 @@ Record device, OS, pass/fail, notes, and diagnostics for each line.
 ### #8 share sheet
 
 - [ ] Safari readable article.
+- [ ] Safari Web Extension → Readable Page for the Google DMA article; confirm the native-text item contains the article body and can start playback.
 - [ ] Safari selected text.
 - [ ] Podcast/audio URL.
 - [ ] Markdown file.
