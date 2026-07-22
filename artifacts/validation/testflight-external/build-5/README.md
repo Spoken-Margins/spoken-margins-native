@@ -15,7 +15,7 @@
 
 - `implemented`: #13 runtime/session fixes, #29 offline podcasts and local anchor enrichment, action feedback, safe permanent deletion, and idempotent link intake are present on the readiness branch.
 - `verified`: the branch evidence below supports implementation claims; re-run it from the reviewed merge commit before archiving.
-- `human_validated`: **NO — only the product owner may change this after using the exact archived candidate.**
+- `human_validated`: **PARTIAL — the product owner reports that the previously crashing emoji article now plays to completion on their phone. This validates that narrow playback regression only; the complete candidate checklist remains open.**
 - `submitted`: **NO — stop conditions remain below.**
 
 ## In scope
@@ -46,7 +46,7 @@ Branch verification on July 22, 2026 is recorded below. Re-run it from the final
 - [x] `/opt/anaconda3/bin/python3 scripts/validate-surface-contracts.py` — passed.
 - [x] `swift build --build-tests --package-path Packages/SessionKit` — passed.
 - [x] `swift test --package-path Packages/SessionKit` — 110 tests passed, including the system-speech projection invariant: unsafe grapheme clusters and markup are removed before playback, every retained character occupies exactly one UTF-16 unit, and retained characters preserve monotonic source offsets.
-- [x] `SpokenMarginsAppTests` on iPhone 17 Pro / iOS 26.5 simulator — 84 tests passed, including the exact article import fixture and speech projection.
+- [x] `SpokenMarginsAppTests` on iPhone 17 Pro / iOS 26.5 simulator — 84 tests passed, including the exact article import fixture, speech projection, Markdown preservation through sanitation, and deterministic generation of its four header-derived Listening Map chapters.
 - [x] `SpokenMarginsAppUITests/Gate1FlowUITests` on iPhone 17 Pro / iOS 26.5 simulator — all 7 existing route tests passed.
 - [x] `SpokenMarginsAppUITests/EmojiArticlePlaybackUITests/testExactEmojiArticleCompletesAfterPauseAndResumeNearCrashPoint` on iPhone 17 Pro / iOS 26.5 simulator — the exact supplied article completed naturally at 100% using System 0.55 after pausing at or beyond 23%, proving paused progress remained fixed, resuming, and continuing beyond the reported 25% crash point (final-code rerun: 191.860 seconds).
 - [x] Generic iOS Simulator Debug and Release app builds — passed for the app and three embedded extensions.
@@ -56,6 +56,10 @@ Branch verification on July 22, 2026 is recorded below. Re-run it from the final
 - [ ] App Store Connect IPA export and signing inspection
 
 The branch Release device build reports version `0.1` build `5` for all four bundles. It is development-signed with `get-task-allow=true`, as expected for a routine build, and is **not** the submission artifact. Distribution signing remains an archive/export gate after merge.
+
+## Product-owner evidence received
+
+- July 22, 2026: the product owner reported that the previously crashing Google emoji article played in full on their phone. The previously reported test device was iPhone 17 Pro on iOS 26.5.2; device/OS, connectivity state, and selected voice were not restated with this result. Treat only full playback of that article as `human_validated`; do not infer validation of offline mode, alternate voices, rate changes, or navigation/session recovery.
 
 ## Product-owner checklist
 

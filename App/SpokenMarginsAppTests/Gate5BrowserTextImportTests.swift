@@ -36,8 +36,9 @@ final class Gate5BrowserTextImportTests: XCTestCase {
     }
 
     func testExactEmojiArticleImportPreservesSourceWhileSystemSpeechProjectionRemovesUnsafeContent() throws {
-        let sourceText = try EmojiArticleRegressionFixture.text()
+        let sourceText = try EmojiArticleRegressionFixture.browserMarkdown()
         let handoff = BrowserTextHandoff(
+            itemId: "item-exact-emoji-browser-markdown",
             captureMode: .readablePage,
             source: BrowserTextSource(url: EmojiArticleRegressionFixture.sourceURL, title: EmojiArticleRegressionFixture.title),
             text: sourceText,
@@ -47,7 +48,10 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         let sanitized = Gate1AppModel.sanitizedBrowserTextHandoff(handoff)
         let speech = SpeechTextNormalizer.projectForSystemSpeech(sanitized.text)
 
-        XCTAssertEqual(sanitized.contentFormat, .plainText)
+        XCTAssertEqual(sanitized.contentFormat, .markdown)
+        for heading in EmojiArticleRegressionFixture.sectionHeadings {
+            XCTAssertTrue(sanitized.text.contains("## \(heading)"))
+        }
         XCTAssertTrue(sanitized.text.contains("💪💪🏻💪🏼💪🏽💪🏾💪🏿"))
         XCTAssertTrue(sanitized.text.contains("Language only truly lives"))
         XCTAssertFalse(sanitized.text.localizedCaseInsensitiveContains("<video"))
@@ -62,6 +66,15 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         XCTAssertEqual(speech.text.count, speech.sourceOffsets.count)
         XCTAssertTrue(zip(speech.sourceOffsets, speech.sourceOffsets.dropFirst()).allSatisfy { $0.0 <= $0.1 })
         XCTAssertTrue(speech.sourceOffsets.allSatisfy { 0...sanitized.text.count ~= $0 })
+
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        XCTAssertTrue(model.importBrowserText(handoff))
+        XCTAssertEqual(model.selectedItem.status, "ready")
+        XCTAssertEqual(
+            model.selectedItem.chapters.map(\.title),
+            EmojiArticleRegressionFixture.sectionHeadings
+        )
     }
 
     func testPlainTextAndMarkdownHandoffsAreNotHTMLStripped() {
