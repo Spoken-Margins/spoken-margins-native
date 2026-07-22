@@ -303,13 +303,20 @@ private final class SystemSpeechSegmentRenderer: NSObject, AVSpeechSynthesizerDe
 
     func render(text: String, to outputURL: URL) async throws -> Double {
         try? FileManager.default.removeItem(at: outputURL)
+        let speechText = SpeechTextNormalizer.projectForSystemSpeech(text).text
+        guard !speechText.isEmpty else {
+            throw SessionKitError.invalidCommandForState("watch_package_segment_empty_after_speech_cleaning")
+        }
+        guard SpeechTextNormalizer.isSystemSpeechSafe(speechText) else {
+            throw SessionKitError.invalidCommandForState("watch_package_segment_unsafe_for_system_speech")
+        }
         return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
             self.outputURL = outputURL
             let synthesizer = AVSpeechSynthesizer()
             synthesizer.delegate = self
             self.synthesizer = synthesizer
-            let utterance = AVSpeechUtterance(string: text)
+            let utterance = AVSpeechUtterance(string: speechText)
             utterance.rate = rate
             if let voiceIdentifier,
                let voice = AVSpeechSynthesisVoice(identifier: voiceIdentifier) {

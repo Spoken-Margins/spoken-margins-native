@@ -166,6 +166,8 @@ targets:
     platform: iOS
     sources:
       - path: App/SpokenMarginsAppUITests
+      - path: App/TestFixtures
+        buildPhase: resources
     dependencies:
       - target: SpokenMarginsApp
     settings:
@@ -180,6 +182,8 @@ targets:
       - path: App/SpokenMarginsAppTests
         excludes:
           - Gate4WatchPackageRenderTests.swift
+      - path: App/TestFixtures
+        buildPhase: resources
     dependencies:
       - target: SpokenMarginsApp
       - package: SessionKit

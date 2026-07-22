@@ -55,7 +55,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertTrue(zip(chunks, chunks.dropFirst()).allSatisfy { $0.sourceEnd <= $1.sourceStart })
     }
 
-    func testLiveSpeechChunkMapsUTF16RangesAcrossEmojiAndRemovedURLs() throws {
+    func testSystemSpeechChunkRemovesEmojiAndURLsBeforeMappingRanges() throws {
         let source = "Intro 😀 read [the reference](https://example.com/path) and finish."
         let chunk = try XCTUnwrap(SpeechPlaybackPlanner.chunks(in: source, from: 0).first)
         let spokenRange = (chunk.spokenText as NSString).range(of: "finish")
@@ -64,37 +64,47 @@ final class SessionKitCoreTests: XCTestCase {
             to: try XCTUnwrap(source.range(of: "finish")).lowerBound
         )
 
+        XCTAssertFalse(chunk.spokenText.contains("😀"))
+        XCTAssertFalse(chunk.spokenText.contains("example.com"))
+        XCTAssertTrue(SpeechTextNormalizer.isSystemSpeechSafe(chunk.spokenText))
         XCTAssertEqual(chunk.sourceOffset(atSpokenUTF16Offset: spokenRange.location), expected)
     }
 
-    func testLiveSpeechChunkMapsRangesAcrossEmojiModifiersVariationSelectorsAndZWJSequences() throws {
-        let source = "Start 💪🏿 ❤️ 👨‍👩‍👧‍👦 then [remove this URL](https://example.com/a) finish safely."
+    func testSystemSpeechProjectionRemovesMarkupAndUnsafeGraphemeClusters() throws {
+        let source = """
+        Start 💪🏿 ❤️ 👨‍👩‍👧‍👦 then [remove this URL](https://example.com/a).
+        <video controls><source src=\">broken">Do not speak this fallback.</video>
+        Finish “safely”—now. ⛲
+        """
         let chunk = try XCTUnwrap(SpeechPlaybackPlanner.chunks(in: source, from: 0).first)
-        let spokenRange = (chunk.spokenText as NSString).range(of: "finish safely")
+        let spokenRange = (chunk.spokenText as NSString).range(of: "Finish \"safely\"-now")
         let expected = source.distance(
             from: source.startIndex,
-            to: try XCTUnwrap(source.range(of: "finish safely")).lowerBound
+            to: try XCTUnwrap(source.range(of: "Finish")).lowerBound
         )
 
+        XCTAssertEqual(
+            chunk.spokenText,
+            "Start then remove this URL. Finish \"safely\"-now."
+        )
+        XCTAssertFalse(chunk.spokenText.contains("fallback"))
+        XCTAssertTrue(SpeechTextNormalizer.isSystemSpeechSafe(chunk.spokenText))
         XCTAssertEqual(chunk.sourceOffset(atSpokenUTF16Offset: spokenRange.location), expected)
         XCTAssertGreaterThanOrEqual(chunk.sourceOffset(atSpokenUTF16Offset: spokenRange.location + spokenRange.length), expected)
     }
 
-    func testLiveSpeechChunkSafelyMapsEveryUTF16MarkerInsideJoinedEmoji() throws {
-        let source = "Emoji evolve: 💅 💪💪🏻💪🏼💪🏽💪🏾💪🏿 ❤️ 👨‍👩‍👧‍👦. Language remains readable."
-        let chunk = try XCTUnwrap(SpeechPlaybackPlanner.chunks(in: source, from: 0).first)
-        var previous = chunk.sourceStart
+    func testSystemSpeechProjectionGuaranteesOneUTF16UnitPerSpokenCharacter() {
+        let source = "Emoji evolve: 💅 💪💪🏻💪🏼💪🏽💪🏾💪🏿 ❤️ 👨‍👩‍👧‍👦. Café क् ⛲ \u{200D} remains readable."
+        let projected = SpeechTextNormalizer.projectForSystemSpeech(source)
 
-        for marker in 0...chunk.spokenText.utf16.count {
-            let mapped = chunk.sourceOffset(atSpokenUTF16Offset: marker)
-            XCTAssertGreaterThanOrEqual(mapped, chunk.sourceStart, "marker \(marker)")
-            XCTAssertLessThanOrEqual(mapped, chunk.sourceEnd, "marker \(marker)")
-            XCTAssertGreaterThanOrEqual(mapped, previous, "marker \(marker)")
-            previous = mapped
-        }
-
-        XCTAssertEqual(chunk.sourceOffset(atSpokenUTF16Offset: -1), chunk.sourceStart)
-        XCTAssertEqual(chunk.sourceOffset(atSpokenUTF16Offset: Int.max), chunk.sourceEnd)
+        XCTAssertTrue(SpeechTextNormalizer.isSystemSpeechSafe(projected.text))
+        XCTAssertTrue(projected.text.allSatisfy { String($0).utf16.count == 1 })
+        XCTAssertEqual(projected.text.count, projected.sourceOffsets.count)
+        XCTAssertTrue(zip(projected.sourceOffsets, projected.sourceOffsets.dropFirst()).allSatisfy { $0.0 <= $0.1 })
+        XCTAssertTrue(projected.sourceOffsets.allSatisfy { 0...source.count ~= $0 })
+        XCTAssertFalse(projected.text.contains("💅"))
+        XCTAssertFalse(projected.text.contains("क्"))
+        XCTAssertTrue(projected.text.contains("Café"))
     }
 
     func testObsidianWebClipperImportCleansTranscriptTimestampsAndMetadata() throws {

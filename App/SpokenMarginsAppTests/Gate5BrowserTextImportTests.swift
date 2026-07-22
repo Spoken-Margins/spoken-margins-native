@@ -35,24 +35,33 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         XCTAssertEqual(parsed.requestedContinuation.preferredPlaybackOwner, "browser_or_app")
     }
 
-    func testReadablePageSanitizationPreservesCompoundEmojiAndRemovesMalformedMediaMarkup() {
+    func testExactEmojiArticleImportPreservesSourceWhileSystemSpeechProjectionRemovesUnsafeContent() throws {
+        let sourceText = try EmojiArticleRegressionFixture.text()
         let handoff = BrowserTextHandoff(
             captureMode: .readablePage,
             source: BrowserTextSource(url: EmojiArticleRegressionFixture.sourceURL, title: EmojiArticleRegressionFixture.title),
-            text: EmojiArticleRegressionFixture.malformedHTML,
+            text: sourceText,
             contentFormat: .markdown
         )
 
         let sanitized = Gate1AppModel.sanitizedBrowserTextHandoff(handoff)
+        let speech = SpeechTextNormalizer.projectForSystemSpeech(sanitized.text)
 
         XCTAssertEqual(sanitized.contentFormat, .plainText)
         XCTAssertTrue(sanitized.text.contains("💪💪🏻💪🏼💪🏽💪🏾💪🏿"))
-        XCTAssertTrue(sanitized.text.contains("👨‍👩‍👧‍👦"))
         XCTAssertTrue(sanitized.text.contains("Language only truly lives"))
         XCTAssertFalse(sanitized.text.localizedCaseInsensitiveContains("<video"))
         XCTAssertFalse(sanitized.text.localizedCaseInsensitiveContains("<source"))
         XCTAssertFalse(sanitized.text.localizedCaseInsensitiveContains("browser doesn't support"))
-        XCTAssertFalse(sanitized.text.contains("window.crashTheReader"))
+        XCTAssertFalse(speech.text.contains("💪"))
+        XCTAssertFalse(speech.text.contains("⛲"))
+        XCTAssertFalse(speech.text.localizedCaseInsensitiveContains("<video"))
+        XCTAssertTrue(speech.text.contains("Language only truly lives"))
+        XCTAssertTrue(SpeechTextNormalizer.isSystemSpeechSafe(speech.text))
+        XCTAssertTrue(speech.text.allSatisfy { String($0).utf16.count == 1 })
+        XCTAssertEqual(speech.text.count, speech.sourceOffsets.count)
+        XCTAssertTrue(zip(speech.sourceOffsets, speech.sourceOffsets.dropFirst()).allSatisfy { $0.0 <= $0.1 })
+        XCTAssertTrue(speech.sourceOffsets.allSatisfy { 0...sanitized.text.count ~= $0 })
     }
 
     func testPlainTextAndMarkdownHandoffsAreNotHTMLStripped() {

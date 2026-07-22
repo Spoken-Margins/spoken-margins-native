@@ -26,6 +26,7 @@
 		3A8C7FE2A0DBA57C69F07308 /* Gate1AppModelWorkflowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A741433D6B3E34D30387DBB /* Gate1AppModelWorkflowTests.swift */; };
 		47FC5E80C0248169596370EB /* Gate1AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 465089CBB611D338A74CAE8A /* Gate1AppModel.swift */; };
 		4830F0D7B33D919055E89D82 /* EmojiArticlePlaybackUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A453BD7286850A9FB78ECA4A /* EmojiArticlePlaybackUITests.swift */; };
+		4CF539FBC54D635647751674 /* emoji-article-crash-regression.txt in Resources */ = {isa = PBXBuildFile; fileRef = 1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */; };
 		4EB9C4988DDEA400406B44F5 /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = 9AC0CEE299A474FCA1DE58BE /* popup.js */; };
 		541E1FB141EC8A331312980A /* PodcastDownloadCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD16E224F3B90976DC86B3EF /* PodcastDownloadCoordinator.swift */; };
 		5C5B4D174DE7B2498F0E6C60 /* Gate1ProviderRequestFactoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39B769830FC9CEAAF89CF8EC /* Gate1ProviderRequestFactoryTests.swift */; };
@@ -60,6 +61,7 @@
 		C1C5CC7AD3B743C875908B96 /* browserTextCapture.js in Resources */ = {isa = PBXBuildFile; fileRef = 1DE1A620B5E212629857338F /* browserTextCapture.js */; };
 		C53A80476E4513D666A228D3 /* SpokenMarginsBrowserTextExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = F2A6CC7522887307C67D46AE /* SpokenMarginsBrowserTextExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		C5B21CB3ABC42C3F27690D22 /* Gate2CompactControlTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4306F9BA3A5512A9F518ECAD /* Gate2CompactControlTests.swift */; };
+		CC6A33EA5ED33F43E7A818A4 /* emoji-article-crash-regression.txt in Resources */ = {isa = PBXBuildFile; fileRef = 1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */; };
 		CE418CC6B4720266789D08D5 /* SourceLinkHandoff.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69050C3D4931DF4FF8E80364 /* SourceLinkHandoff.swift */; };
 		D6A8DCA36ED03426D6771AEC /* Gate1PlaybackAutoplayQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CECE96EA9D24248FFE111D5D /* Gate1PlaybackAutoplayQueueTests.swift */; };
 		D8FED511D7C45D211D991D9E /* popup.css in Resources */ = {isa = PBXBuildFile; fileRef = 1213A7465ECB99E1E9FCE12A /* popup.css */; };
@@ -137,6 +139,7 @@
 		1213A7465ECB99E1E9FCE12A /* popup.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = popup.css; sourceTree = "<group>"; };
 		12B57670922723E5B5D5098C /* PublicPodcastLinkResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PublicPodcastLinkResolver.swift; sourceTree = "<group>"; };
 		1DE1A620B5E212629857338F /* browserTextCapture.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = browserTextCapture.js; sourceTree = "<group>"; };
+		1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "emoji-article-crash-regression.txt"; sourceTree = "<group>"; };
 		2A741433D6B3E34D30387DBB /* Gate1AppModelWorkflowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1AppModelWorkflowTests.swift; sourceTree = "<group>"; };
 		2F27E8BBF188ABCD2B2A7B0F /* Gate1DiscussionContextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1DiscussionContextTests.swift; sourceTree = "<group>"; };
 		35550BC3E5F1FF166ED033B5 /* Gate5BrowserTextHandoffURL.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate5BrowserTextHandoffURL.swift; sourceTree = "<group>"; };
@@ -242,6 +245,7 @@
 				888E37F56BF50874CD1C48FD /* Sources */,
 				B5EC003462D25F198668E729 /* SpokenMarginsAppTests */,
 				98E649561F0300EDFCF26FFC /* SpokenMarginsAppUITests */,
+				CA56E872559E3D6C366F3C1B /* TestFixtures */,
 				FD1F64C96AF6992C79DA59C5 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -374,6 +378,15 @@
 			path = App/SpokenMarginsAppTests;
 			sourceTree = "<group>";
 		};
+		CA56E872559E3D6C366F3C1B /* TestFixtures */ = {
+			isa = PBXGroup;
+			children = (
+				1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */,
+			);
+			name = TestFixtures;
+			path = App/TestFixtures;
+			sourceTree = "<group>";
+		};
 		D15CBB1FE227CDEA3CB64746 /* SpokenMarginsApp */ = {
 			isa = PBXGroup;
 			children = (
@@ -428,6 +441,7 @@
 			buildConfigurationList = D0E23C85CD209A1D372F819A /* Build configuration list for PBXNativeTarget "SpokenMarginsAppTests" */;
 			buildPhases = (
 				B306228098EDB4F2FB74E5AE /* Sources */,
+				D1E9CD107481EC887F58381E /* Resources */,
 				9979BD104DB63D154D889313 /* Frameworks */,
 			);
 			buildRules = (
@@ -502,6 +516,7 @@
 			buildConfigurationList = A5E5810EA62CAF95BB825543 /* Build configuration list for PBXNativeTarget "SpokenMarginsAppUITests" */;
 			buildPhases = (
 				F81135D15A53AC24988E0084 /* Sources */,
+				BF9C3350F3702958F1C369D0 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -643,11 +658,27 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BF9C3350F3702958F1C369D0 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4CF539FBC54D635647751674 /* emoji-article-crash-regression.txt in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D135F705E79BBA69AE811E24 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				1E20763D4CA558FD8B76CD9C /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D1E9CD107481EC887F58381E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CC6A33EA5ED33F43E7A818A4 /* emoji-article-crash-regression.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

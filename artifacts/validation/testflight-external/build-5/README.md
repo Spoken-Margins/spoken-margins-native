@@ -29,7 +29,7 @@
 - On-device-only podcast anchor enrichment from stored transcripts, downloaded audio, or a bounded remote window, with persisted Pending/Ready/Unavailable states.
 - Copy/action feedback, independent destructive-row hit targets, and verified permanent deletion.
 - Return/focus-loss podcast-link submission with validation, deduplication, and visible resolving/failure state.
-- Fully offline native-text hardening for malformed browser markup and compound emoji, default-voice fallback, navigation-only mini-player behavior, and resumable early stop.
+- Fully offline native-text hardening that preserves imported source text while removing malformed media markup, emoji, joined/combining clusters, and other unsafe characters from the system-speech projection; default-voice fallback, navigation-only mini-player behavior, and resumable early stop.
 - Build/signing identity and App Store Connect metadata/submission readiness.
 
 ## Out of scope
@@ -40,14 +40,15 @@
 
 ## Automated verification
 
-Branch verification on July 21, 2026 is recorded below. Re-run it from the final reviewed commit before requesting human validation.
+Branch verification on July 22, 2026 is recorded below. Re-run it from the final reviewed commit before requesting human validation.
 
 - [x] `/opt/anaconda3/bin/python3 scripts/validate-contracts.py` — passed.
 - [x] `/opt/anaconda3/bin/python3 scripts/validate-surface-contracts.py` — passed.
 - [x] `swift build --build-tests --package-path Packages/SessionKit` — passed.
-- [x] `swift test --package-path Packages/SessionKit` — 110 tests passed, including exhaustive UTF-16 marker mapping inside modifier, variation-selector, and ZWJ emoji.
-- [x] `SpokenMarginsAppTests` on iPhone 16 Pro / iOS 18.6 simulator — 84 tests passed.
-- [x] `SpokenMarginsAppUITests` on iPhone 16 Pro / iOS 18.6 simulator — 8 tests passed: the 7 route tests plus the exact supplied emoji article spoken to natural 100% completion at System 0.55 (216.01-second test), including malformed media markup and compound/skin-tone emoji.
+- [x] `swift test --package-path Packages/SessionKit` — 110 tests passed, including the system-speech projection invariant: unsafe grapheme clusters and markup are removed before playback, every retained character occupies exactly one UTF-16 unit, and retained characters preserve monotonic source offsets.
+- [x] `SpokenMarginsAppTests` on iPhone 17 Pro / iOS 26.5 simulator — 84 tests passed, including the exact article import fixture and speech projection.
+- [x] `SpokenMarginsAppUITests/Gate1FlowUITests` on iPhone 17 Pro / iOS 26.5 simulator — all 7 existing route tests passed.
+- [x] `SpokenMarginsAppUITests/EmojiArticlePlaybackUITests/testExactEmojiArticleCompletesAfterPauseAndResumeNearCrashPoint` on iPhone 17 Pro / iOS 26.5 simulator — the exact supplied article completed naturally at 100% using System 0.55 after pausing at or beyond 23%, proving paused progress remained fixed, resuming, and continuing beyond the reported 25% crash point (final-code rerun: 191.860 seconds).
 - [x] Generic iOS Simulator Debug and Release app builds — passed for the app and three embedded extensions.
 - [x] Generic iOS device Debug and Release app builds — passed for the app and three embedded extensions.
 - [ ] Generic watchOS build — not runnable: the generated project contains no `SpokenMarginsWatch` target/scheme; the AGENTS.md command is stale for the current project topology.

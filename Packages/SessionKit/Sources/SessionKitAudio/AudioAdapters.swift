@@ -87,8 +87,11 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
 
     private func prepareTextAudio(itemId: String, title: String, text: String, scope: TextAudioRenderScope) throws -> PreparedTextAudio? {
         #if canImport(AVFoundation)
-        let normalizedText = SpeechTextNormalizer.normalize(text)
+        let normalizedText = SpeechTextNormalizer.projectForSystemSpeech(text).text
         guard !normalizedText.isEmpty else { return nil }
+        guard SpeechTextNormalizer.isSystemSpeechSafe(normalizedText) else {
+            throw SessionKitError.persistenceFailed("system_speech_projection_unsafe")
+        }
         let allSegments = Self.textSegments(in: normalizedText, maxSegmentCharacters: maxSegmentCharacters)
         let segments = scope.segments(from: allSegments, speechRate: speechRate)
         guard !segments.isEmpty else { return nil }
@@ -203,6 +206,9 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
         synthesizer: AVSpeechSynthesizer,
         accumulator: AudioFileAccumulator
     ) throws {
+        guard SpeechTextNormalizer.isSystemSpeechSafe(text) else {
+            throw SessionKitError.persistenceFailed("system_speech_utterance_unsafe")
+        }
         let utterance = AVSpeechUtterance(string: text)
         utterance.rate = speechRate
         utterance.preUtteranceDelay = 0
@@ -322,7 +328,7 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
 
     private static func cacheSignature(itemId: String, text: String, voiceIdentifier: String?, speechRate: Float, scope: String = "complete") -> String {
         var components = [
-            "system-text-audio-v1",
+            "system-text-audio-v2-safe-speech",
             itemId,
             voiceIdentifier ?? "default",
             String(format: "%.4f", speechRate),
@@ -457,24 +463,14 @@ struct SpeechPlaybackChunk: Equatable, Sendable {
 
     func sourceOffset(atSpokenUTF16Offset utf16Offset: Int) -> Int {
         guard !spokenSourceOffsets.isEmpty else { return sourceEnd }
-        let requestedOffset = max(0, min(utf16Offset, spokenText.utf16.count))
-        var consumedUTF16 = 0
-        for (characterOffset, character) in spokenText.enumerated() {
-            guard characterOffset < spokenSourceOffsets.count else { return sourceEnd }
-            if requestedOffset <= consumedUTF16 {
-                return spokenSourceOffsets[characterOffset]
-            }
-            let nextBoundary = consumedUTF16 + String(character).utf16.count
-            if requestedOffset < nextBoundary {
-                // AVSpeechSynthesizer may report a UTF-16 marker inside a
-                // surrogate pair or joined emoji. Keep progress at the
-                // containing source character instead of constructing an
-                // invalid Swift String.Index.
-                return spokenSourceOffsets[characterOffset]
-            }
-            consumedUTF16 = nextBoundary
-        }
-        return sourceEnd
+        // System-speech projection guarantees that every Character occupies
+        // exactly one UTF-16 code unit, so every clamped AVSpeech marker is a
+        // valid Swift String boundary.
+        let clamped = max(0, min(utf16Offset, spokenText.utf16.count))
+        let index = String.Index(utf16Offset: clamped, in: spokenText)
+        let characterOffset = spokenText.distance(from: spokenText.startIndex, to: index)
+        guard characterOffset < spokenSourceOffsets.count else { return sourceEnd }
+        return spokenSourceOffsets[characterOffset]
     }
 }
 
@@ -506,7 +502,7 @@ enum SpeechPlaybackPlanner {
             let sourceStart = fragmentStart + lower
             let sourceEnd = fragmentStart + fragment.count
             let trimmed = String(fragment[lower..<upper])
-            let normalized = SpeechTextNormalizer.normalizeWithSourceOffsets(trimmed)
+            let normalized = SpeechTextNormalizer.projectForSystemSpeech(trimmed)
             guard !normalized.text.isEmpty else {
                 fragment.removeAll(keepingCapacity: true)
                 return
@@ -609,7 +605,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
 
     public func prepareSpeechText(_ text: String) throws -> String {
         preparedSourceText = text
-        let normalized = SpeechTextNormalizer.normalize(text)
+        let normalized = SpeechTextNormalizer.projectForSystemSpeech(text).text
         preparedSpeechText = normalized
         return normalized
     }
@@ -629,6 +625,9 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         let chunks = SpeechPlaybackPlanner.chunks(in: source, from: charOffset)
         guard !chunks.isEmpty else {
             throw SessionKitError.invalidCommandForState("playback_text_empty")
+        }
+        guard chunks.allSatisfy({ SpeechTextNormalizer.isSystemSpeechSafe($0.spokenText) }) else {
+            throw SessionKitError.invalidCommandForState("system_speech_projection_unsafe")
         }
         if synthesizer.isSpeaking || paused || !chunksByUtteranceId.isEmpty {
             replaceSynthesizer()
@@ -683,7 +682,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
 
     public func preview(_ text: String, mode: SpeechPreviewMode) throws {
         #if canImport(AVFoundation)
-        let textToSpeak = SpeechTextNormalizer.normalize(text)
+        let textToSpeak = SpeechTextNormalizer.projectForSystemSpeech(text).text
         guard !textToSpeak.isEmpty else {
             throw SessionKitError.invalidCommandForState("preview_text_empty")
         }
@@ -862,10 +861,11 @@ extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
         utterance: AVSpeechUtterance
     ) {
         guard let chunk = chunksByUtteranceId[ObjectIdentifier(utterance)] else { return }
-        guard characterRange.location != NSNotFound else { return }
-        let (reportedEnd, overflowed) = characterRange.location.addingReportingOverflow(characterRange.length)
-        let start = chunk.sourceOffset(atSpokenUTF16Offset: characterRange.location)
-        let end = chunk.sourceOffset(atSpokenUTF16Offset: overflowed ? Int.max : reportedEnd)
+        let spokenLength = chunk.spokenText.utf16.count
+        let markerStart = min(characterRange.location, spokenLength)
+        let markerLength = min(characterRange.length, spokenLength - markerStart)
+        let start = chunk.sourceOffset(atSpokenUTF16Offset: markerStart)
+        let end = chunk.sourceOffset(atSpokenUTF16Offset: markerStart + markerLength)
         currentOffset = start
         currentRangeLength = max(0, end - start)
     }

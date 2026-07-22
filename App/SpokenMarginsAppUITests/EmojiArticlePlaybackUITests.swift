@@ -3,12 +3,13 @@ import XCTest
 final class EmojiArticlePlaybackUITests: XCTestCase {
     private let title = "Designing emoji for the way we communicate today"
 
-    func testSuppliedEmojiArticleCompletesSystemSpeechAtReportedRate() throws {
+    func testExactEmojiArticleCompletesAfterPauseAndResumeNearCrashPoint() throws {
+        let article = try Self.fixtureText()
         let app = XCUIApplication()
         app.launchArguments = ["--ui-testing"]
         app.launchEnvironment["SPOKEN_MARGINS_UI_TESTING"] = "1"
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE"] = title
-        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"] = Self.article
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"] = article
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_URL"] = Self.sourceURL
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SPEECH_RATE"] = "0.55"
         app.launch()
@@ -21,20 +22,44 @@ final class EmojiArticlePlaybackUITests: XCTestCase {
 
         let progress = app.descendants(matching: .any)["playback.progress.label"]
         XCTAssertTrue(progress.waitForExistence(timeout: 5))
+        let playPause = app.buttons["playback.play.button"]
+        XCTAssertTrue(playPause.waitForExistence(timeout: 5))
         let deadline = Date().addingTimeInterval(720)
         var highestProgress = 0
+        var didExerciseCrashPointResume = false
         while Date() < deadline {
-            XCTAssertNotEqual(app.state, .notRunning, "The app terminated while speaking the supplied emoji article.")
+            XCTAssertNotEqual(app.state, .notRunning, "The app terminated while speaking the exact emoji article.")
             if let percent = Self.progressPercent(from: progress.label) {
                 highestProgress = max(highestProgress, percent)
+                if !didExerciseCrashPointResume, percent >= 23 {
+                    playPause.tap()
+                    XCTAssertTrue(Self.wait(forLabel: "Play", on: playPause, timeout: 5))
+                    let pausedProgress = try XCTUnwrap(Self.progressPercent(from: progress.label))
+                    Thread.sleep(forTimeInterval: 2)
+                    XCTAssertEqual(
+                        Self.progressPercent(from: progress.label),
+                        pausedProgress,
+                        "Source progress advanced while speech was paused near the prior crash point."
+                    )
+                    playPause.tap()
+                    XCTAssertTrue(Self.wait(forLabel: "Pause", on: playPause, timeout: 5))
+                    didExerciseCrashPointResume = true
+                }
                 if percent == 100 {
+                    XCTAssertTrue(didExerciseCrashPointResume)
                     XCTAssertTrue(app.descendants(matching: .any)["playback.screen"].exists)
                     return
                 }
             }
             Thread.sleep(forTimeInterval: 1)
         }
-        XCTFail("The supplied emoji article did not complete in the simulator; highest progress was \(highestProgress)%.")
+        XCTFail("The exact emoji article did not complete; highest progress was \(highestProgress)%.")
+    }
+
+    private static func fixtureText() throws -> String {
+        let bundle = Bundle(for: EmojiArticlePlaybackUITests.self)
+        let url = try XCTUnwrap(bundle.url(forResource: "emoji-article-crash-regression", withExtension: "txt"))
+        return try String(contentsOf: url, encoding: .utf8)
     }
 
     private static func progressPercent(from label: String) -> Int? {
@@ -42,45 +67,12 @@ final class EmojiArticlePlaybackUITests: XCTestCase {
         return Int(token.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
+    private static func wait(forLabel label: String, on element: XCUIElement, timeout: TimeInterval) -> Bool {
+        XCTWaiter.wait(
+            for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", label), object: element)],
+            timeout: timeout
+        ) == .completed
+    }
+
     private static let sourceURL = "https://blog.google/products-and-platforms/platforms/android/world-emoji-day-noto-3d/"
-
-    private static let article = """
-    The way we use emoji has changed. In the early days, we were literal: You sent a nail polish emoji (💅) because you were, in fact, getting your nails polished.
-
-    Today we lean on emoji to break down the barrier of our screens and inject a shrug, a wink or that highly specific “it’s fine but it’s actually not fine” subtext. They’re the language within the language that keeps a blunt message from accidentally killing the vibe.
-
-    On World Emoji Day, here's a closer look at the evolution of our emoji (all 3,977 characters) and how they can add physical and emotional depth to how we communicate in the modern era.
-
-    Expression keeps evolving
-
-    We don't just "laugh" anymore. We collapse, or internally scream. Modern internet culture has steadily moved from mild expressions to drama, hyperbole and overwhelm.
-
-    For years, "face with tears of joy" (😂) was the undisputed emoji king, according to Gboard Federated Analytics. But following a multi-year decline, it slipped down the charts by 2025.
-
-    Why? Because 😭 is a masterclass in modern vocabulary: It’s hilarious, it’s devastating and it captures absolute overwhelm. When we do laugh, our inclination for hyperbole demands it be unhinged, pushing “rolling on the floor laughing” (🤣) to the top of the chart. Even our expressions for heartbreak are shifting; data show a poetic migration in popularity from the broken heart (💔) toward the wilted flower (🥀).
-
-    Art informs innovation
-
-    This update brings our favorite emoji into a 3D future rather than leaving them behind. The brain processes emoji faster than text, so you can’t just slap on a design and call it a day. Touching something that billions of people use trillions of times a day requires more nuance.
-
-    Our emoji have always favored expression over hyper-realism and in this new 3D world it means our designs can have dimension without being photorealistic. They need a pulse and a soul — not the cold precision of industrial CAD models. Have you looked closely at a real kangaroo? They’re terrifying 🙀. We don’t need anatomical perfection. With the power of illustration, we can capture the true, playful vibe of a kangaroo.
-
-    We also ran large-scale user studies to evaluate how changing emoji could potentially mess with human connection. The research unmasked universal truths: Users overwhelmingly prefer full-body animals over floating heads; adding props hurts comprehension; and tiny tweaks (like swapping the direction of a wink) can turn mild confusion into accidental outrage.
-
-    While our design process still begins with 2D drawings, it no longer ends there. In an industry first, Noto Emoji 3D is entirely available as true 3D models.
-
-    Moving from flat pixels to a three-dimensional world forced us to resolve architectural questions we’d never considered. What does the back of a smiley face look like? Is it a concave mask, a solid bouncy ball or a flat piece of paper?
-
-    <video aria-label="A static thumbs up emoji, next to two spinning thumbs ups on the right. The middle thumbs up is in a 3-D grid style." title="Emoji Blog Inline" controls=""><source type="video/mp4" src="> Sorry, your browser doesn't support embedded videos, but don't worry, you can <a href=">download it</a> and watch it with your favorite video player!</video>
-
-    Because language is meant to be shared, our entire Noto portfolio is completely open source. We’re handing over files to the community so they can use them to build immersive VR worlds, indie apps or weird memes.
-
-    Color meets contrast
-
-    Emoji with the darkest skin tones can be difficult to see in dark mode — a problem for anyone who sends or receives them. That’s why we built an AI-powered contrast tool that analyzes each emoji at the pixel level, flags when the contrast ratio is too low and suggests high-contrast solutions that are implemented by designers 💪💪🏻💪🏼💪🏽💪🏾💪🏿.
-
-    Language is for the people
-
-    Now, Noto 3D emoji are yours. Remix them, break them and stretch them into shapes we never could have anticipated. Language only truly lives when we find new ways to use it. ⛲
-    """
 }
