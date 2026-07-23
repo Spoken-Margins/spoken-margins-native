@@ -18,6 +18,21 @@ import UIKit
 #endif
 
 #if canImport(Speech)
+struct SpeechRecognitionTextAccumulator {
+    private(set) var longestTranscript = ""
+
+    mutating func record(_ candidate: String) {
+        let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.count > longestTranscript.count {
+            longestTranscript = trimmed
+        }
+    }
+
+    var transcript: String? {
+        longestTranscript.isEmpty ? nil : longestTranscript
+    }
+}
+
 func makeOnDeviceSpeechRecognitionRequest(url: URL) -> SFSpeechURLRecognitionRequest {
     let request = SFSpeechURLRecognitionRequest(url: url)
     request.shouldReportPartialResults = true
@@ -1946,26 +1961,23 @@ public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
         let request = makeOnDeviceSpeechRecognitionRequest(url: url)
         return try await withCheckedThrowingContinuation { continuation in
             var didFinish = false
-            var latestTranscript = ""
+            var accumulator = SpeechRecognitionTextAccumulator()
             recognizer.recognitionTask(with: request) { result, error in
                 guard !didFinish else { return }
                 if let result {
-                    let candidate = result.bestTranscription.formattedString.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !candidate.isEmpty {
-                        latestTranscript = candidate
-                    }
+                    accumulator.record(result.bestTranscription.formattedString)
                     if result.isFinal {
                         didFinish = true
-                        continuation.resume(returning: latestTranscript.isEmpty ? nil : latestTranscript)
+                        continuation.resume(returning: accumulator.transcript)
                         return
                     }
                 }
                 if let error {
                     didFinish = true
-                    if latestTranscript.isEmpty {
-                        continuation.resume(throwing: error)
+                    if let transcript = accumulator.transcript {
+                        continuation.resume(returning: transcript)
                     } else {
-                        continuation.resume(returning: latestTranscript)
+                        continuation.resume(throwing: error)
                     }
                 }
             }
@@ -2128,11 +2140,14 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<TranscriptTimeline, Error>) in
             var didFinish = false
             var latestTranscription: SFTranscription?
+            var longestTranscriptLength = 0
             recognizer.recognitionTask(with: request) { result, error in
                 guard !didFinish else { return }
                 if let result {
                     let candidate = result.bestTranscription
-                    if !candidate.formattedString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    let candidateLength = candidate.formattedString.trimmingCharacters(in: .whitespacesAndNewlines).count
+                    if candidateLength > longestTranscriptLength {
+                        longestTranscriptLength = candidateLength
                         latestTranscription = candidate
                     }
                     if result.isFinal {

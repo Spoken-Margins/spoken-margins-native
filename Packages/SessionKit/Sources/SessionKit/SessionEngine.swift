@@ -1,6 +1,7 @@
 import Foundation
 
 public final class SessionEngine {
+    private static let textAnchorShoulderSentenceCount = 4
     public private(set) var profile: RuntimeCapabilityProfile
     public private(set) var snapshot = SessionSnapshot()
     public private(set) var currentSession: Session?
@@ -2595,13 +2596,49 @@ public final class SessionEngine {
         let text = currentItem?.text ?? ""
         let start = max(0, min(playbackPosition.textStart ?? session.position.charOffset, text.count))
         let end = min(text.count, max(start + 1, nextBoundary(after: start, unit: "sentence", text: text)))
+        let context = textAnchorShoulder(in: text, at: start)
         return Anchor(
             anchorType: .text,
             startChar: start,
             endChar: end,
-            anchorBefore: slice(text, start: start, end: end),
-            anchorAfter: slice(text, start: end, end: min(text.count, nextBoundary(after: end, unit: "sentence", text: text)))
+            anchorBefore: context.before,
+            anchorAfter: context.after
         )
+    }
+
+    private func textAnchorShoulder(in text: String, at rawOffset: Int) -> (before: String, after: String) {
+        guard !text.isEmpty else { return ("", "") }
+        let split = completedWordBoundary(in: text, at: rawOffset)
+        var beforeStart = split
+        var afterEnd = split
+        for _ in 0..<Self.textAnchorShoulderSentenceCount {
+            let previous = previousBoundary(before: beforeStart, unit: "sentence", text: text)
+            if previous == beforeStart { break }
+            beforeStart = previous
+        }
+        for _ in 0..<Self.textAnchorShoulderSentenceCount {
+            let next = nextBoundary(after: afterEnd, unit: "sentence", text: text)
+            if next == afterEnd { break }
+            afterEnd = next
+        }
+        return (
+            slice(text, start: beforeStart, end: split),
+            slice(text, start: split, end: afterEnd)
+        )
+    }
+
+    private func completedWordBoundary(in text: String, at rawOffset: Int) -> Int {
+        let characters = Array(text)
+        let offset = max(0, min(rawOffset, characters.count))
+        guard offset > 0, offset < characters.count else { return offset }
+        if characters[offset].isWhitespace || characters[offset - 1].isWhitespace {
+            return offset
+        }
+        var boundary = offset
+        while boundary < characters.count, !characters[boundary].isWhitespace {
+            boundary += 1
+        }
+        return boundary
     }
 
     private func aiJob(id: String, kind: String, session: Session, turnId: String?, status: String, messages: [String] = []) -> AIJob {

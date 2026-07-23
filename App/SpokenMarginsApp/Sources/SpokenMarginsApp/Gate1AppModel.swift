@@ -2250,17 +2250,33 @@ final class Gate1AppModel: ObservableObject {
         statusMessage = "Starting interjection..."
         lastError = nil
         diagnostics["lastInterjectionTap"] = "begin"
+        let requestedAt = Date()
+        #if canImport(AVFoundation) && os(iOS)
+        if AVAudioApplication.shared.recordPermission == .granted {
+            diagnostics["lastMicrophonePermissionResult"] = "granted"
+            startInterjectionRecording(requestedAt: requestedAt)
+            return
+        }
+        #endif
         Task {
             let granted = await requestMicrophonePermission()
             guard granted else {
                 reportFailure("Microphone access is required to record interjections. Enable microphone access in Settings and try again.")
                 return
             }
-            synchronizeStreamingSpeechAnchorIfNeeded()
-            streamingSpeechQueue.pauseForInterjection()
-            run { engine in
-                snapshot = try engine.beginInterjection()
-                refreshSelectedItem()
+            startInterjectionRecording(requestedAt: requestedAt)
+        }
+    }
+
+    private func startInterjectionRecording(requestedAt: Date) {
+        synchronizeStreamingSpeechAnchorIfNeeded()
+        streamingSpeechQueue.pauseForInterjection()
+        run { engine in
+            snapshot = try engine.beginInterjection()
+            refreshSelectedItem()
+            if snapshot.isRecording {
+                let latencyMs = max(0, Int(Date().timeIntervalSince(requestedAt) * 1000))
+                diagnostics["lastInterjectionRecordingStartLatencyMs"] = "\(latencyMs)"
                 reportSuccess("Recording interjection.")
             }
         }
@@ -5606,6 +5622,7 @@ final class Gate1AppModel: ObservableObject {
     private func scheduleTranscription(for interjection: Interjection) {
         guard let audioPath = interjection.audioPath else { return }
         recordAnchorCaptureDiagnostics(for: interjection)
+        diagnostics["interjectionAudioAtCapture:\(interjection.id)"] = interjectionAudioEvidence(for: audioPath)
         diagnostics["interjectionTranscription:\(interjection.id)"] = "scheduled"
         Task {
             do {
@@ -5633,6 +5650,38 @@ final class Gate1AppModel: ObservableObject {
                 }
             }
         }
+    }
+
+    private func interjectionAudioEvidence(for path: String) -> String {
+        let fileManager = FileManager.default
+        let directURL = URL(fileURLWithPath: path)
+        let url: URL
+        if directURL.isFileURL, fileManager.fileExists(atPath: directURL.path) {
+            url = directURL
+        } else if let support = try? fileManager.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: false
+        ) {
+            if path.hasPrefix("SpokenMargins/") {
+                url = support.appending(path: path)
+            } else if path.hasPrefix("interjections/") {
+                url = support.appending(path: "SpokenMargins").appending(path: path)
+            } else {
+                url = support.appending(path: path)
+            }
+        } else {
+            return "duration_ms=unknown;bytes=unknown"
+        }
+        let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
+        #if canImport(AVFoundation)
+        if let audioFile = try? AVAudioFile(forReading: url), audioFile.processingFormat.sampleRate > 0 {
+            let durationMs = Int((Double(audioFile.length) / audioFile.processingFormat.sampleRate * 1000).rounded())
+            return "duration_ms=\(durationMs);bytes=\(bytes)"
+        }
+        #endif
+        return "duration_ms=unknown;bytes=\(bytes)"
     }
 
     private func recordAnchorCaptureDiagnostics(for interjection: Interjection) {

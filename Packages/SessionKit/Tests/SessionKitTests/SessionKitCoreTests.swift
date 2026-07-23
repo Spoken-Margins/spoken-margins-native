@@ -39,6 +39,15 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertTrue(request.requiresOnDeviceRecognition)
         XCTAssertTrue(request.shouldReportPartialResults)
     }
+
+    func testSpeechRecognitionKeepsLongestPartialWhenLaterHypothesisShrinks() {
+        var accumulator = SpeechRecognitionTextAccumulator()
+        accumulator.record("This is the complete thought I wanted to preserve.")
+        accumulator.record("wanted to preserve")
+        accumulator.record("")
+
+        XCTAssertEqual(accumulator.transcript, "This is the complete thought I wanted to preserve.")
+    }
     #endif
 
     func testSpeechNormalizationPreservesSource() {
@@ -881,8 +890,43 @@ final class SessionKitCoreTests: XCTestCase {
         let interjection = try XCTUnwrap(try repo.loadInterjections(sessionId: engine.currentSession?.id ?? "").first)
         XCTAssertEqual(interjection.anchor.anchorType, .text)
         XCTAssertEqual(interjection.anchor.startChar, "First ".count)
-        XCTAssertTrue(interjection.anchor.anchorBefore.contains("sentence"))
+        XCTAssertEqual(interjection.anchor.anchorBefore, "First")
+        XCTAssertEqual(interjection.anchor.anchorAfter, "sentence. Second sentence.")
         XCTAssertEqual(transcriber.scheduledInterjectionIds, [interjection.id])
+    }
+
+    func testTextInterjectionAnchorUsesFullWordsAndFourSentenceShoulders() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "interjection": ["record_audio", "capture_text_anchor"]
+            ]
+        )
+        let text = "One introduces the subject. Two supplies history. Three adds evidence. Four discusses music and its role. Five tests the consequence. Six offers a counterpoint. Seven closes the argument."
+        let item = Item(id: "item-mid-word", title: "Text", mediaType: "text", text: text, externalReference: nil, status: "ready")
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        let musicStart = try XCTUnwrap(text.range(of: "music")).lowerBound
+        audio.currentOffset = text.distance(from: text.startIndex, to: musicStart) + 1
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: "interjections/text.m4a")
+
+        let interjection = try XCTUnwrap(try repo.loadInterjections(sessionId: engine.currentSession?.id ?? "").first)
+        XCTAssertEqual(
+            interjection.anchor.anchorBefore,
+            "One introduces the subject. Two supplies history. Three adds evidence. Four discusses music"
+        )
+        XCTAssertEqual(
+            interjection.anchor.anchorAfter,
+            "and its role. Five tests the consequence. Six offers a counterpoint. Seven closes the argument."
+        )
+        XCTAssertFalse(interjection.anchor.anchorBefore.hasPrefix("usic"))
     }
 
     func testMediaPlaybackPositionPublishesTimelineAnchorAndDuration() throws {
