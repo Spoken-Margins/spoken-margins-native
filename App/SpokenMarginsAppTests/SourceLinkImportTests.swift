@@ -227,6 +227,61 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.interjections.first?.transcript, "My recorded note.")
     }
 
+    func testSavedInterjectionAudioCanReplaceATruncatedTranscript() async throws {
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "audio_file"),
+                title: "Recoverable Interjection",
+                durationMs: 300_000,
+                audioURL: "https://cdn.example.com/recoverable.mp3",
+                confidence: 1
+            )
+        ))
+        let transcriber = SequencedInterjectionTranscriber(transcripts: [
+            "Only the ending survived.",
+            "The complete saved interjection is restored from its original audio."
+        ])
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: WindowContextAudioClient(),
+            recordingClient: NoopRecordingClient(),
+            sourceTranscriptionClient: ThrowingSourceTranscriptionClient(),
+            interjectionTranscriptionHandler: { audioPath in
+                try await transcriber.transcribe(audioPath: audioPath)
+            }
+        )
+        model.resetAndSeed()
+        XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/episode", sourceSurface: "paste"))
+
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        model.dispatchGate2CompactCommand(.finishInterjection)
+        try await waitFor("initial transcript") {
+            model.selectedItem.interjections.first?.transcript == "Only the ending survived."
+        }
+        let interjection = try XCTUnwrap(model.selectedItem.interjections.first)
+
+        model.retryInterjectionTranscription(interjection)
+        try await waitFor("replacement transcript") {
+            model.selectedItem.interjections.first?.transcript == "The complete saved interjection is restored from its original audio."
+        }
+
+        XCTAssertFalse(model.retryingInterjectionTranscriptionIds.contains(interjection.id))
+        XCTAssertEqual(model.diagnostics["interjectionTranscription:\(interjection.id)"], "complete")
+
+        let recovered = try XCTUnwrap(model.selectedItem.interjections.first)
+        model.retryInterjectionTranscription(recovered)
+        try await waitFor("failed retry evidence") {
+            model.diagnostics["interjectionTranscription:\(interjection.id)"]?.hasPrefix("retry_failed:") == true
+        }
+
+        XCTAssertEqual(model.selectedItem.interjections.first?.transcript, "The complete saved interjection is restored from its original audio.")
+        XCTAssertEqual(model.selectedItem.interjections.first?.displayText, "The complete saved interjection is restored from its original audio.")
+        XCTAssertFalse(model.retryingInterjectionTranscriptionIds.contains(interjection.id))
+    }
+
     func testUnavailablePodcastContextKeepsTimestampAndPersistedRetryState() async throws {
         let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
             requestId: "ignored",
@@ -1170,5 +1225,20 @@ private actor ControlledInterjectionTranscriber {
     func complete(with transcript: String) {
         transcriptContinuation?.resume(returning: transcript)
         transcriptContinuation = nil
+    }
+}
+
+private actor SequencedInterjectionTranscriber {
+    private var transcripts: [String]
+
+    init(transcripts: [String]) {
+        self.transcripts = transcripts
+    }
+
+    func transcribe(audioPath: String) throws -> String {
+        guard !transcripts.isEmpty else {
+            throw SessionKitError.persistenceFailed("no_scripted_transcript")
+        }
+        return transcripts.removeFirst()
     }
 }

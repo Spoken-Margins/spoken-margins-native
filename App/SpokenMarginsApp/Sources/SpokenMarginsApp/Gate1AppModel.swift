@@ -271,6 +271,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var exportIncludesListeningMap = UserDefaults.standard.object(forKey: "exportIncludesListeningMap") as? Bool ?? true
     @Published var exportIncludesInterjections = UserDefaults.standard.object(forKey: "exportIncludesInterjections") as? Bool ?? true
     @Published var exportIncludesTurns = UserDefaults.standard.object(forKey: "exportIncludesTurns") as? Bool ?? true
+    @Published private(set) var retryingInterjectionTranscriptionIds: Set<String> = []
     @Published var libraryItems: [LibraryItemRow] = []
     @Published var recentlyDeletedItems: [LibraryItemRow] = []
     @Published var trashUndo: TrashUndoState?
@@ -2624,6 +2625,16 @@ final class Gate1AppModel: ObservableObject {
         guard !pendingSourceContextInterjectionIds.contains(interjection.id) else { return }
         scheduleSourceWindowContextIfNeeded(for: interjection)
         reportSuccess("Retrying source context.")
+    }
+
+    func retryInterjectionTranscription(_ interjection: Interjection) {
+        guard interjection.audioPath != nil else {
+            reportFailure("The saved interjection audio is unavailable.")
+            return
+        }
+        guard retryingInterjectionTranscriptionIds.insert(interjection.id).inserted else { return }
+        scheduleTranscription(for: interjection)
+        reportSuccess("Retranscribing the saved interjection audio.")
     }
 
     func importPastedAssistantResponse(autoPlay: Bool = true) {
@@ -5634,18 +5645,27 @@ final class Gate1AppModel: ObservableObject {
                         diagnostics["interjectionTranscription:\(interjection.id)"] = "complete"
                         reportSuccess("Transcribed interjection.")
                     }
+                    retryingInterjectionTranscriptionIds.remove(interjection.id)
                     scheduleSourceWindowContextIfNeeded(for: interjection)
                 }
             } catch {
                 await MainActor.run {
                     let failure = String(describing: error)
-                    run { engine in
-                        snapshot = try engine.transcriptionFailed(interjectionId: interjection.id, error: failure)
-                        refreshSelectedItem()
-                        diagnostics["interjectionTranscription:\(interjection.id)"] = "failed:\(failure)"
+                    let wasRetry = retryingInterjectionTranscriptionIds.contains(interjection.id)
+                    if wasRetry {
+                        diagnostics["interjectionTranscription:\(interjection.id)"] = "retry_failed:\(failure)"
                         diagnostics["lastInterjectionTranscriptionFailure"] = "\(interjection.id):\(failure)"
-                        reportFailure("Audio saved. Transcript failed.")
+                        reportFailure("Saved audio and current transcript kept. Retranscription failed.")
+                    } else {
+                        run { engine in
+                            snapshot = try engine.transcriptionFailed(interjectionId: interjection.id, error: failure)
+                            refreshSelectedItem()
+                            diagnostics["interjectionTranscription:\(interjection.id)"] = "failed:\(failure)"
+                            diagnostics["lastInterjectionTranscriptionFailure"] = "\(interjection.id):\(failure)"
+                            reportFailure("Audio saved. Transcript failed.")
+                        }
                     }
+                    retryingInterjectionTranscriptionIds.remove(interjection.id)
                     scheduleSourceWindowContextIfNeeded(for: interjection)
                 }
             }

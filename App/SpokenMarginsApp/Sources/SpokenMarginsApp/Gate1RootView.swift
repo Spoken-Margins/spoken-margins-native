@@ -2406,6 +2406,17 @@ private struct InterjectionDetailView: View {
                         Label(copied ? "Copied" : "Copy Transcript and Anchors", systemImage: copied ? "checkmark" : "doc.on.doc")
                     }
                     .accessibilityIdentifier("interjection.detail.copy")
+                    Button {
+                        model.retryInterjectionTranscription(current)
+                    } label: {
+                        if model.retryingInterjectionTranscriptionIds.contains(current.id) {
+                            Label("Retranscribing Saved Audio", systemImage: "waveform.badge.magnifyingglass")
+                        } else {
+                            Label("Retranscribe Saved Audio", systemImage: "waveform")
+                        }
+                    }
+                    .disabled(current.audioPath == nil || model.retryingInterjectionTranscriptionIds.contains(current.id))
+                    .accessibilityIdentifier("interjection.detail.retryTranscription")
                     Button("Delete Transcript") {
                         pendingDeletion = .transcript
                     }

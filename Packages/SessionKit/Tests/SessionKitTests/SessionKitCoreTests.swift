@@ -48,6 +48,25 @@ final class SessionKitCoreTests: XCTestCase {
 
         XCTAssertEqual(accumulator.transcript, "This is the complete thought I wanted to preserve.")
     }
+
+    func testLongInterjectionAudioIsSplitIntoBoundedOverlappingChunks() {
+        let ranges = speechAudioChunkRanges(durationMs: 207_794)
+
+        XCTAssertEqual(ranges.map(\.startMs), [0, 44_000, 88_000, 132_000, 176_000])
+        XCTAssertEqual(ranges.map(\.lengthMs), [45_000, 45_000, 45_000, 45_000, 31_794])
+        XCTAssertTrue(ranges.allSatisfy { $0.lengthMs <= 45_000 })
+        XCTAssertEqual(ranges.last.map { $0.startMs + $0.lengthMs }, 207_794)
+    }
+
+    func testChunkedSpeechTranscriptsRemoveRecognizedOverlapWhenStitched() {
+        let first = "The idea preserves rendered audio until the storage limit is reached"
+        let second = "storage limit is reached and then evicts the oldest cached files"
+
+        XCTAssertEqual(
+            mergeSpeechTranscripts(first, second),
+            "The idea preserves rendered audio until the storage limit is reached and then evicts the oldest cached files"
+        )
+    }
     #endif
 
     func testSpeechNormalizationPreservesSource() {

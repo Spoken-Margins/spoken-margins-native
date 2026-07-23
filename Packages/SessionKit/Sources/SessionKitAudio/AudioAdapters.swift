@@ -33,6 +33,59 @@ struct SpeechRecognitionTextAccumulator {
     }
 }
 
+struct SpeechAudioChunkRange: Equatable {
+    var startMs: Int
+    var lengthMs: Int
+}
+
+func speechAudioChunkRanges(
+    durationMs: Int,
+    maximumChunkMs: Int = 45_000,
+    overlapMs: Int = 1_000
+) -> [SpeechAudioChunkRange] {
+    guard durationMs > 0 else { return [] }
+    guard durationMs > maximumChunkMs else {
+        return [SpeechAudioChunkRange(startMs: 0, lengthMs: durationMs)]
+    }
+    let stepMs = max(1, maximumChunkMs - max(0, min(overlapMs, maximumChunkMs - 1)))
+    var ranges: [SpeechAudioChunkRange] = []
+    var startMs = 0
+    while startMs < durationMs {
+        let lengthMs = min(maximumChunkMs, durationMs - startMs)
+        ranges.append(SpeechAudioChunkRange(startMs: startMs, lengthMs: lengthMs))
+        if startMs + lengthMs >= durationMs { break }
+        startMs += stepMs
+    }
+    return ranges
+}
+
+func mergeSpeechTranscripts(_ accumulated: String, _ next: String, maximumOverlapWords: Int = 12) -> String {
+    let existing = accumulated.trimmingCharacters(in: .whitespacesAndNewlines)
+    let incoming = next.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !existing.isEmpty else { return incoming }
+    guard !incoming.isEmpty else { return existing }
+    let existingWords = existing.split(whereSeparator: \Character.isWhitespace)
+    let incomingWords = incoming.split(whereSeparator: \Character.isWhitespace)
+    let limit = min(maximumOverlapWords, existingWords.count, incomingWords.count)
+    let punctuation = CharacterSet.punctuationCharacters.union(.symbols)
+    func normalized(_ word: Substring) -> String {
+        String(word).trimmingCharacters(in: punctuation).lowercased()
+    }
+    var overlap = 0
+    if limit > 0 {
+        for count in stride(from: limit, through: 1, by: -1) {
+            let suffix = existingWords.suffix(count).map(normalized)
+            let prefix = incomingWords.prefix(count).map(normalized)
+            if suffix == prefix {
+                overlap = count
+                break
+            }
+        }
+    }
+    let remainder = incomingWords.dropFirst(overlap).joined(separator: " ")
+    return remainder.isEmpty ? existing : "\(existing) \(remainder)"
+}
+
 func makeOnDeviceSpeechRecognitionRequest(url: URL) -> SFSpeechURLRecognitionRequest {
     let request = SFSpeechURLRecognitionRequest(url: url)
     request.shouldReportPartialResults = true
@@ -1918,6 +1971,11 @@ public final class SystemRecordingClient: RecordingClient {
 }
 
 public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
+    private struct PreparedAudioChunks {
+        var urls: [URL]
+        var cleanupDirectory: URL?
+    }
+
     private let fileManager: FileManager
     private let baseDirectory: URL?
 
@@ -1942,14 +2000,36 @@ public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
         guard recognizer.supportsOnDeviceRecognition else {
             throw SessionKitError.persistenceFailed("on_device_speech_recognition_unavailable")
         }
-        for attempt in 0..<2 {
-            if let transcript = try await recognizeAudio(at: url, recognizer: recognizer), !transcript.isEmpty {
-                return transcript
-            }
-            if attempt == 0 {
-                try? await Task.sleep(nanoseconds: 200_000_000)
+        let prepared = try await prepareAudioChunks(for: url)
+        defer {
+            if let cleanupDirectory = prepared.cleanupDirectory {
+                try? fileManager.removeItem(at: cleanupDirectory)
             }
         }
+        var stitchedTranscript = ""
+        for (chunkIndex, chunkURL) in prepared.urls.enumerated() {
+            var chunkTranscript: String?
+            var lastRecognitionError: Error?
+            for attempt in 0..<2 {
+                do {
+                    chunkTranscript = try await recognizeAudio(at: chunkURL, recognizer: recognizer)
+                } catch {
+                    lastRecognitionError = error
+                }
+                if chunkTranscript?.isEmpty == false { break }
+                if attempt == 0 {
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                }
+            }
+            guard let chunkTranscript, !chunkTranscript.isEmpty else {
+                if let lastRecognitionError { throw lastRecognitionError }
+                throw SessionKitError.persistenceFailed(
+                    "interjection_audio_chunk_empty(index=\(chunkIndex + 1),count=\(prepared.urls.count))"
+                )
+            }
+            stitchedTranscript = mergeSpeechTranscripts(stitchedTranscript, chunkTranscript)
+        }
+        if !stitchedTranscript.isEmpty { return stitchedTranscript }
         throw SessionKitError.persistenceFailed(Self.emptyTranscriptEvidence(for: url))
         #else
         throw SessionKitError.persistenceFailed("speech_recognition_unavailable")
@@ -1993,6 +2073,59 @@ public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
             }
         }
     }
+
+    private func prepareAudioChunks(for url: URL) async throws -> PreparedAudioChunks {
+        #if canImport(AVFoundation)
+        let asset = AVURLAsset(url: url)
+        let duration = try await asset.load(.duration)
+        let durationSeconds = CMTimeGetSeconds(duration)
+        guard durationSeconds.isFinite, durationSeconds > 0 else {
+            throw SessionKitError.persistenceFailed("interjection_audio_duration_invalid")
+        }
+        let durationMs = max(1, Int((durationSeconds * 1000).rounded()))
+        let ranges = speechAudioChunkRanges(durationMs: durationMs)
+        guard ranges.count > 1 else {
+            return PreparedAudioChunks(urls: [url], cleanupDirectory: nil)
+        }
+        let directory = fileManager.temporaryDirectory
+            .appending(path: "SpokenMarginsInterjectionTranscription/\(UUID().uuidString)", directoryHint: .isDirectory)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        do {
+            var urls: [URL] = []
+            for (index, range) in ranges.enumerated() {
+                let chunkURL = directory.appending(path: "chunk-\(String(format: "%04d", index)).m4a")
+                try await exportAudioChunk(
+                    asset: asset,
+                    startMs: range.startMs,
+                    lengthMs: range.lengthMs,
+                    outputURL: chunkURL
+                )
+                urls.append(chunkURL)
+            }
+            return PreparedAudioChunks(urls: urls, cleanupDirectory: directory)
+        } catch {
+            try? fileManager.removeItem(at: directory)
+            throw error
+        }
+        #else
+        return PreparedAudioChunks(urls: [url], cleanupDirectory: nil)
+        #endif
+    }
+
+    #if canImport(AVFoundation)
+    private func exportAudioChunk(asset: AVURLAsset, startMs: Int, lengthMs: Int, outputURL: URL) async throws {
+        guard let exporter = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else {
+            throw SessionKitError.persistenceFailed("interjection_audio_chunk_exporter_unavailable")
+        }
+        exporter.outputURL = outputURL
+        exporter.outputFileType = .m4a
+        exporter.timeRange = CMTimeRange(
+            start: CMTime(seconds: Double(startMs) / 1000, preferredTimescale: 600),
+            duration: CMTime(seconds: Double(lengthMs) / 1000, preferredTimescale: 600)
+        )
+        try await exporter.export(to: outputURL, as: .m4a)
+    }
+    #endif
     #endif
 
     private static func emptyTranscriptEvidence(for url: URL) -> String {
