@@ -88,6 +88,7 @@ struct ItemDetailState {
     var externalReference = ""
     var overview = ""
     var chapters: [Chapter] = []
+    var mediaChapters: [MediaTimelineChapter] = []
     var sessions: [Session] = []
     var sessionRows: [SessionPresentation] = []
     var interjections: [Interjection] = []
@@ -3512,6 +3513,53 @@ final class Gate1AppModel: ObservableObject {
         String(format: "%.2fx", mediaPlaybackRate)
     }
 
+    var compactPlaybackRateDescription: String {
+        if isMediaPlaybackSnapshot {
+            return String(format: "%.2f×", mediaPlaybackRate)
+        }
+        let effectiveRate = max(0.5, speechRate / 0.5)
+        return String(format: "%.2f×", effectiveRate)
+    }
+
+    var playbackHeaderTitle: String {
+        let itemTitle = selectedItem.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let snapshotTitle = (snapshot.chapterTitle ?? snapshot.title ?? itemTitle)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !snapshotTitle.isEmpty else { return itemTitle }
+        guard snapshotTitle.caseInsensitiveCompare(itemTitle) != .orderedSame else { return itemTitle }
+
+        let chapterTitles = playbackChapterTitles
+        guard let chapterIndex = chapterTitles.firstIndex(where: {
+            $0.caseInsensitiveCompare(snapshotTitle) == .orderedSame
+        }) else {
+            return snapshotTitle
+        }
+        return "CH \(chapterIndex + 1): \(snapshotTitle)"
+    }
+
+    var hasConfiguredProviderAPIKey: Bool {
+        !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var playbackChapterTitles: [String] {
+        switch snapshot.targetType {
+        case TargetType.itemTextTTS.rawValue:
+            return selectedItem.chapters.map(\.title)
+        case TargetType.summaryTurnTTS.rawValue, TargetType.assistantTurnTTS.rawValue:
+            return selectedItem.turns
+                .first(where: { $0.id == snapshot.targetId })?
+                .chapters?
+                .map(\.title) ?? []
+        case TargetType.transcriptBackedMedia.rawValue, TargetType.browserOwnedMedia.rawValue:
+            return selectedItem.mediaChapters
+                .filter { !$0.id.hasPrefix("ch-transcript-") && !$0.id.contains("-ch-transcript-") }
+                .sorted { $0.startMs < $1.startMs }
+                .map(\.title)
+        default:
+            return []
+        }
+    }
+
     var preparedTextAudioStatusDescription: String {
         humanReadableStatus(preparedTextAudioStatus)
     }
@@ -6162,6 +6210,7 @@ final class Gate1AppModel: ObservableObject {
     private func loadItemDetail(id: String, store: SQLiteSessionStore) throws -> ItemDetailState {
         let item = try store.loadItem(id: id)
         let map = try store.loadListeningMap(itemId: id)
+        let mediaChapters = try store.loadTranscriptTimeline(itemId: id)?.timeline.chapters ?? []
         let sessions = try store.loadSessions(itemId: id)
         let activeSessionId = snapshot.sessionId ?? sessions.first?.id
         let interjections = activeSessionId.flatMap { try? store.loadInterjections(sessionId: $0).filter { $0.status == "active" } } ?? []
@@ -6187,6 +6236,7 @@ final class Gate1AppModel: ObservableObject {
             externalReference: item.externalReference ?? "",
             overview: map?.overview ?? "",
             chapters: map?.chapters ?? [],
+            mediaChapters: mediaChapters,
             sessions: sessions,
             sessionRows: sessionRows,
             interjections: interjections,

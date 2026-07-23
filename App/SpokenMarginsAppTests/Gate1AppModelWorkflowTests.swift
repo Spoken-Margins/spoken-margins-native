@@ -7,6 +7,56 @@ import UIKit
 
 @MainActor
 final class Gate1AppModelWorkflowTests: XCTestCase {
+    func testPlaybackHeaderKeepsTheItemTitleUnprefixedWhenItIsNotAChapter() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.selectedItem = ItemDetailState(title: "Why Apple Is Heading Into a Pivotal Moment")
+        model.snapshot.targetType = TargetType.transcriptBackedMedia.rawValue
+        model.snapshot.chapterTitle = "Why Apple Is Heading Into a Pivotal Moment"
+
+        XCTAssertEqual(model.playbackHeaderTitle, "Why Apple Is Heading Into a Pivotal Moment")
+    }
+
+    func testPlaybackHeaderPrefixesARealChapterWithItsNumber() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.selectedItem = ItemDetailState(
+            id: "item-1",
+            title: "A Long Article",
+            chapters: [
+                Chapter(id: "chapter-1", title: "Opening", startChar: 0, endChar: 100, percent: 0),
+                Chapter(id: "chapter-2", title: "The Pivot", startChar: 100, endChar: 200, percent: 50)
+            ]
+        )
+        model.snapshot.targetType = TargetType.itemTextTTS.rawValue
+        model.snapshot.chapterTitle = "The Pivot"
+
+        XCTAssertEqual(model.playbackHeaderTitle, "CH 2: The Pivot")
+    }
+
+    func testPlaybackHeaderNumbersARealPodcastChapter() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.selectedItem = ItemDetailState(
+            id: "episode-1",
+            title: "A Podcast Episode",
+            mediaChapters: [
+                MediaTimelineChapter(id: "intro", title: "Introduction", startMs: 0, transcriptSegmentId: "segment-1"),
+                MediaTimelineChapter(id: "analysis", title: "The Analysis", startMs: 60_000, transcriptSegmentId: "segment-2")
+            ]
+        )
+        model.snapshot.targetType = TargetType.transcriptBackedMedia.rawValue
+        model.snapshot.chapterTitle = "The Analysis"
+
+        XCTAssertEqual(model.playbackHeaderTitle, "CH 2: The Analysis")
+    }
+
+    func testConfiguredProviderKeyIgnoresWhitespaceOnlyValues() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.providerAPIKey = "   \n"
+        XCTAssertFalse(model.hasConfiguredProviderAPIKey)
+
+        model.providerAPIKey = "configured-key"
+        XCTAssertTrue(model.hasConfiguredProviderAPIKey)
+    }
+
     func testWelcomeSampleSeedsOnlyForANewEmptyNonUITestLibrary() {
         XCTAssertTrue(Gate1AppModel.shouldSeedWelcomeSample(
             libraryIsEmpty: true,

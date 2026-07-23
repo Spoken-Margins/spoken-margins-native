@@ -80,7 +80,7 @@ final class Gate1FlowUITests: XCTestCase {
 
         let aiResponse = scrollToButton(containingLabel: "Here is a quick response to your interjection.")
         aiResponse.tap()
-        XCTAssertTrue(app.staticTexts["CURRENT CHAPTER"].waitForExistence(timeout: 4))
+        XCTAssertTrue(element("playback.title").waitForExistence(timeout: 4))
 
         let aiChapter = scrollToButton(containingLabel: "Timeline Navigation")
         aiChapter.tap()

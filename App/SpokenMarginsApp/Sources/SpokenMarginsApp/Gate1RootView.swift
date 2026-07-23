@@ -1144,6 +1144,8 @@ private struct PlaybackScreen: View {
     @State private var scrubberSeconds = 0.0
     @State private var scrubberTextOffset = 0.0
     @State private var isScrubbing = false
+    @State private var isPlaybackRatePresented = false
+    @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = false
     @FocusState private var followUpFocused: Bool
 
     var body: some View {
@@ -1246,7 +1248,7 @@ private struct PlaybackScreen: View {
     }
 
     private var playbackControls: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: 14) {
             playbackHeader
             if isUITesting {
                 gate2CompactValidation
@@ -1256,7 +1258,7 @@ private struct PlaybackScreen: View {
             playbackRateControl
             interjectionControls
         }
-        .padding(24)
+        .padding(18)
         .frame(maxWidth: 430)
         .background(AppColors.watchBackground)
         .clipShape(RoundedRectangle(cornerRadius: 34))
@@ -1264,45 +1266,21 @@ private struct PlaybackScreen: View {
     }
 
     private var playbackHeader: some View {
-        VStack(spacing: 8) {
-            Text(model.snapshot.targetType == "summary_turn_tts" ? "CURRENT SUMMARY" : "CURRENT CHAPTER")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(AppColors.watchSecondary)
-            Text(model.snapshot.chapterTitle ?? model.selectedItem.title)
+        VStack(spacing: 6) {
+            Text(model.playbackHeaderTitle)
                 .font(.title2.weight(.bold))
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.white)
-            Text(playbackProgressLabel)
-                .font(.subheadline)
-                .foregroundStyle(AppColors.watchSecondary)
-                .accessibilityIdentifier("playback.progress.label")
-            if let sessionID = model.snapshot.sessionId,
-               let row = model.selectedItem.sessionRows.first(where: { $0.id == sessionID }) {
-                Text("Session \(sessionDateDescription(row.session)) · \(row.interjectionCount) \(row.interjectionCount == 1 ? "interjection" : "interjections")")
-                    .font(.caption)
-                    .foregroundStyle(AppColors.watchSecondary)
-                    .accessibilityIdentifier("playback.session.identity")
-            }
-            if let downloadStatus = model.selectedPodcastDownloadDescription {
-                HStack(spacing: 8) {
-                    Image(systemName: model.selectedPodcastDownloadState == .availableOffline ? "arrow.down.circle.fill" : "antenna.radiowaves.left.and.right")
-                    Text(downloadStatus)
-                    if model.selectedPodcastDownloadState == .failed || model.selectedPodcastDownloadState == .evicted {
-                        Button("Retry", action: model.retrySelectedPodcastDownload)
-                            .buttonStyle(.borderless)
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(AppColors.watchSecondary)
-                .accessibilityIdentifier("playback.podcastDownload.status")
-            }
+                .accessibilityIdentifier("playback.title")
         }
     }
 
     @ViewBuilder
     private var playbackPosition: some View {
         if model.isMediaPlaybackSnapshot, mediaDurationMs > 0 {
-            VStack(spacing: 6) {
+            HStack(spacing: 8) {
+                Text(formatPlaybackTime(Int(scrubberDisplaySeconds * 1_000)))
+                    .frame(minWidth: 36, alignment: .trailing)
                 Slider(
                     value: Binding(
                         get: { isScrubbing ? scrubberSeconds : Double(model.snapshot.currentMediaTimeMs ?? 0) / 1_000 },
@@ -1318,16 +1296,16 @@ private struct PlaybackScreen: View {
                 .accessibilityLabel("Playback position")
                 .accessibilityValue("\(formatPlaybackTime(Int(scrubberSeconds * 1_000))) of \(formatPlaybackTime(mediaDurationMs))")
                 .accessibilityIdentifier("playback.scrubber")
-                HStack {
-                    Text(formatPlaybackTime(Int(scrubberDisplaySeconds * 1_000)))
-                    Spacer()
-                    Text("−\(formatPlaybackTime(max(0, mediaDurationMs - Int(scrubberDisplaySeconds * 1_000))))")
-                }
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(AppColors.watchSecondary)
+                Text("−\(formatPlaybackTime(max(0, mediaDurationMs - Int(scrubberDisplaySeconds * 1_000))))")
+                    .frame(minWidth: 42, alignment: .leading)
             }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(AppColors.watchSecondary)
+            .accessibilityIdentifier("playback.progress.label")
         } else if model.snapshot.targetType == TargetType.itemTextTTS.rawValue, textLength > 0 {
-            VStack(spacing: 6) {
+            HStack(spacing: 8) {
+                Text("\(textScrubberPercent)%")
+                    .frame(minWidth: 34, alignment: .trailing)
                 Slider(
                     value: Binding(
                         get: { isScrubbing ? scrubberTextOffset : Double(model.snapshot.currentTextStart ?? 0) },
@@ -1343,19 +1321,26 @@ private struct PlaybackScreen: View {
                 .accessibilityLabel("Playback position")
                 .accessibilityValue("\(textScrubberPercent) percent")
                 .accessibilityIdentifier("playback.scrubber")
-                HStack {
-                    Text("\(textScrubberPercent)%")
-                    Spacer()
-                    Text("100%")
-                }
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(AppColors.watchSecondary)
+                Text("100%")
+                    .frame(minWidth: 34, alignment: .leading)
             }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(AppColors.watchSecondary)
+            .accessibilityIdentifier("playback.progress.label")
         } else {
-            ProgressView(value: Double(model.displayPlaybackProgressPercent), total: 100)
-                .tint(AppColors.accent)
-                .accessibilityLabel("Playback progress")
-                .accessibilityValue("\(model.displayPlaybackProgressPercent) percent")
+            HStack(spacing: 8) {
+                Text("\(model.displayPlaybackProgressPercent)%")
+                    .frame(minWidth: 34, alignment: .trailing)
+                ProgressView(value: Double(model.displayPlaybackProgressPercent), total: 100)
+                    .tint(AppColors.accent)
+                    .accessibilityLabel("Playback progress")
+                    .accessibilityValue("\(model.displayPlaybackProgressPercent) percent")
+                Text("100%")
+                    .frame(minWidth: 34, alignment: .leading)
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(AppColors.watchSecondary)
+            .accessibilityIdentifier("playback.progress.label")
         }
     }
 
@@ -1406,23 +1391,54 @@ private struct PlaybackScreen: View {
     }
 
     private var playbackRateControl: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(model.isMediaPlaybackSnapshot ? "Playback Speed" : "Speech Rate")
-                    .font(.caption.weight(.semibold))
-                Spacer()
-                Text(model.isMediaPlaybackSnapshot ? model.mediaPlaybackRateDescription : model.speechRateDescription)
-                    .font(.caption.monospacedDigit())
+        HStack(spacing: 10) {
+            Button {
+                usesVerbosePlaybackActions.toggle()
+            } label: {
+                Label(
+                    usesVerbosePlaybackActions ? "Compact" : "Labels",
+                    systemImage: usesVerbosePlaybackActions ? "rectangle.compress.vertical" : "textformat"
+                )
             }
-            .foregroundStyle(AppColors.watchSecondary)
+            .accessibilityLabel(usesVerbosePlaybackActions ? "Use compact action buttons" : "Show action labels")
+            .accessibilityIdentifier("playback.actionVerbosity.button")
+
+            Spacer()
+
+            Button {
+                isPlaybackRatePresented = true
+            } label: {
+                Label(model.compactPlaybackRateDescription, systemImage: "speedometer")
+                    .font(.subheadline.weight(.semibold).monospacedDigit())
+            }
+            .accessibilityLabel("Playback speed, \(model.compactPlaybackRateDescription)")
+            .accessibilityHint("Opens playback speed controls")
+            .accessibilityIdentifier("playback.rate.button")
+            .popover(isPresented: $isPlaybackRatePresented, arrowEdge: .top) {
+                playbackRatePopover
+                    .presentationCompactAdaptation(.popover)
+            }
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.white)
+        .buttonStyle(.bordered)
+        .tint(AppColors.watchControl)
+    }
+
+    private var playbackRatePopover: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(model.isMediaPlaybackSnapshot ? "Playback Speed" : "Speaking Rate")
+                .font(.headline)
+            Text(model.compactPlaybackRateDescription)
+                .font(.title2.weight(.bold).monospacedDigit())
             if model.isMediaPlaybackSnapshot {
                 Slider(value: Binding(get: { model.mediaPlaybackRate }, set: { model.setMediaPlaybackRate($0) }), in: 0.75...2.0, step: 0.25)
                     .accessibilityLabel("Playback speed")
                     .accessibilityValue(String(format: "%.2f times", model.mediaPlaybackRate))
                     .accessibilityIdentifier("playback.mediaRate.slider")
                 Text("Transcript: \(model.sourceTranscriptStatusDescription)")
-                    .font(.caption2)
-                    .foregroundStyle(AppColors.watchSecondary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                     .accessibilityIdentifier("playback.sourceTranscript.status")
             } else {
                 Slider(value: $model.speechRate, in: 0.35...0.85, step: 0.01)
@@ -1431,16 +1447,20 @@ private struct PlaybackScreen: View {
                     .accessibilityIdentifier("playback.speechRate.slider")
                     .onChange(of: model.speechRate) { _, _ in model.playbackSpeechRateChanged() }
                 Text("Prepared audio: \(model.preparedTextAudioStatusDescription)")
-                    .font(.caption2)
-                    .foregroundStyle(AppColors.watchSecondary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                     .accessibilityIdentifier("playback.preparedAudio.status")
                 if model.canPlayLiveSpeechInstead {
-                    Button(action: model.playLiveSpeechInstead) { Label("Play Live Speech Instead", systemImage: "speaker.wave.2") }
-                        .buttonStyle(SecondaryButtonStyle())
-                        .accessibilityIdentifier("playback.liveSpeechFallback.button")
+                    Button(action: model.playLiveSpeechInstead) {
+                        Label("Play Live Speech Instead", systemImage: "speaker.wave.2")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .accessibilityIdentifier("playback.liveSpeechFallback.button")
                 }
             }
         }
+        .padding(20)
+        .frame(minWidth: 280, idealWidth: 320)
     }
 
     @ViewBuilder
@@ -1459,43 +1479,85 @@ private struct PlaybackScreen: View {
             }
         } else {
             VStack(spacing: 10) {
-                HStack(spacing: 10) {
-                    Button(action: model.summarize) {
-                        HStack(spacing: 6) {
-                            if model.isSummarizingInterjections {
-                                ProgressView()
-                            } else {
-                                Image(systemName: "sparkles")
+                if usesVerbosePlaybackActions {
+                    HStack(spacing: 10) {
+                        Button(action: model.summarize) {
+                            HStack(spacing: 6) {
+                                if model.isSummarizingInterjections {
+                                    ProgressView()
+                                } else {
+                                    Image(systemName: "sparkles")
+                                }
+                                Text(model.isSummarizingInterjections ? "Summarizing" : "Summarize Notes")
                             }
-                            Text(model.isSummarizingInterjections ? "Summarizing" : "Summarize Notes")
+                            .frame(maxWidth: .infinity, minHeight: 52)
                         }
-                        .frame(maxWidth: .infinity, minHeight: 52)
+                        .buttonStyle(WatchSecondaryButtonStyle())
+                        .disabled(!model.canSummarizeInterjections || model.isSummarizingInterjections)
+                        .accessibilityLabel(model.isSummarizingInterjections ? "Summarizing interjections" : "Summarize interjections")
+                        .accessibilityIdentifier("playback.summary.button")
+                        Button(action: model.beginInterjection) {
+                            Label(model.interjectionButtonTitle, systemImage: "mic").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(InterjectButtonStyle())
+                        .disabled(!model.hasActiveSession)
+                        .accessibilityIdentifier("playback.interject.button")
                     }
-                    .buttonStyle(WatchSecondaryButtonStyle())
-                    .disabled(!model.canSummarizeInterjections || model.isSummarizingInterjections)
-                    .accessibilityLabel(model.isSummarizingInterjections ? "Summarizing interjections" : "Summarize interjections")
-                    .accessibilityIdentifier("playback.summary.button")
-                    Button(action: model.beginInterjection) {
-                        Label(model.interjectionButtonTitle, systemImage: "mic").frame(maxWidth: .infinity)
+                    if !model.hasConfiguredProviderAPIKey {
+                        Text("Add an OpenAI API key in Settings to summarize notes or discuss them.")
+                            .font(.caption)
+                            .foregroundStyle(AppColors.watchSecondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityIdentifier("playback.summary.description")
                     }
-                    .buttonStyle(InterjectButtonStyle())
-                    .disabled(!model.hasActiveSession)
-                    .accessibilityIdentifier("playback.interject.button")
+                    Button {
+                        followUpFocused = false
+                        model.discuss(followUp: followUp)
+                    } label: {
+                        Label("Discuss", systemImage: "play")
+                    }
+                    .buttonStyle(LightButtonStyle())
+                    .disabled(!model.hasActiveSession || followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityIdentifier("playback.discuss.button")
+                } else {
+                    HStack(spacing: 12) {
+                        Button(action: model.summarize) {
+                            Group {
+                                if model.isSummarizingInterjections {
+                                    ProgressView()
+                                } else {
+                                    Image(systemName: "sparkles")
+                                }
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 52)
+                        }
+                        .buttonStyle(WatchSecondaryButtonStyle())
+                        .disabled(!model.canSummarizeInterjections || model.isSummarizingInterjections)
+                        .accessibilityLabel(model.isSummarizingInterjections ? "Summarizing interjections" : "Summarize interjections")
+                        .accessibilityIdentifier("playback.summary.button")
+
+                        Button(action: model.beginInterjection) {
+                            Image(systemName: "mic")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(InterjectButtonStyle())
+                        .disabled(!model.hasActiveSession)
+                        .accessibilityLabel(model.interjectionButtonTitle)
+                        .accessibilityIdentifier("playback.interject.button")
+
+                        Button {
+                            followUpFocused = false
+                            model.discuss(followUp: followUp)
+                        } label: {
+                            Image(systemName: "play")
+                                .frame(maxWidth: .infinity, minHeight: 52)
+                        }
+                        .buttonStyle(WatchSecondaryButtonStyle())
+                        .disabled(!model.hasActiveSession || followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityLabel("Discuss")
+                        .accessibilityIdentifier("playback.discuss.button")
+                    }
                 }
-                Text("Uses AI to turn this session’s interjections into a spoken debrief. Playback and recording do not require an API key.")
-                    .font(.caption)
-                    .foregroundStyle(AppColors.watchSecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityIdentifier("playback.summary.description")
-                Button {
-                    followUpFocused = false
-                    model.discuss(followUp: followUp)
-                } label: {
-                    Label("Discuss", systemImage: "play")
-                }
-                .buttonStyle(LightButtonStyle())
-                .disabled(!model.hasActiveSession || followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .accessibilityIdentifier("playback.discuss.button")
             }
         }
     }
@@ -1539,14 +1601,6 @@ private struct PlaybackScreen: View {
             }
         }
         .padding(.top, 8)
-    }
-
-    private var playbackProgressLabel: String {
-        let current = "\(model.snapshot.currentPlaybackProgressPercent)% current"
-        if model.snapshot.targetType == "item_text_tts" {
-            return model.currentChapter.map { "\(current) · \($0.title)" } ?? current
-        }
-        return "\(current) · Source \(model.snapshot.sourceProgressPercent)%"
     }
 
     private var mediaDurationMs: Int {
