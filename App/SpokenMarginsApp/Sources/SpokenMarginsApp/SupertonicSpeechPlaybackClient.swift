@@ -1,4 +1,5 @@
 import AVFoundation
+import CryptoKit
 import Foundation
 import SessionKit
 import SessionKitAudio
@@ -117,6 +118,150 @@ enum RenderedSpeechChunker {
     }
 }
 
+final class RenderedSpeechDiskCache: @unchecked Sendable {
+    private let directory: URL
+    private var limitBytes: Int
+    private let fileManager: FileManager
+    private let lock = NSLock()
+
+    init(directory: URL, limitBytes: Int, fileManager: FileManager = .default) throws {
+        self.directory = directory.standardizedFileURL
+        self.limitBytes = max(1, limitBytes)
+        self.fileManager = fileManager
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        var resourceValues = URLResourceValues()
+        resourceValues.isExcludedFromBackup = true
+        var mutableDirectory = directory
+        try? mutableDirectory.setResourceValues(resourceValues)
+        enforceLimit(protecting: nil)
+    }
+
+    func cachedAudio(
+        text: String,
+        voice: SupertonicVoiceID,
+        language: String,
+        speed: Float,
+        synthesisSteps: Int
+    ) -> SupertonicNarrationResult? {
+        lock.withLock {
+            let url = cacheURL(
+                text: text,
+                voice: voice,
+                language: language,
+                speed: speed,
+                synthesisSteps: synthesisSteps
+            )
+            guard fileManager.fileExists(atPath: url.path),
+                  let audio = try? AVAudioFile(forReading: url),
+                  audio.processingFormat.sampleRate > 0,
+                  audio.length > 0 else {
+                try? fileManager.removeItem(at: url)
+                return nil
+            }
+            try? fileManager.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
+            return SupertonicNarrationResult(
+                audioURL: url,
+                duration: Double(audio.length) / audio.processingFormat.sampleRate,
+                sampleRate: Int(audio.processingFormat.sampleRate.rounded()),
+                renderDuration: 0,
+                sessionLoadCount: 0
+            )
+        }
+    }
+
+    func store(
+        _ result: SupertonicNarrationResult,
+        text: String,
+        voice: SupertonicVoiceID,
+        language: String,
+        speed: Float,
+        synthesisSteps: Int
+    ) throws -> SupertonicNarrationResult {
+        try lock.withLock {
+            let destination = cacheURL(
+                text: text,
+                voice: voice,
+                language: language,
+                speed: speed,
+                synthesisSteps: synthesisSteps
+            )
+            if !fileManager.fileExists(atPath: destination.path) {
+                try fileManager.copyItem(at: result.audioURL, to: destination)
+            }
+            try? fileManager.setAttributes([.modificationDate: Date()], ofItemAtPath: destination.path)
+            enforceLimit(protecting: destination)
+            return SupertonicNarrationResult(
+                audioURL: destination,
+                duration: result.duration,
+                sampleRate: result.sampleRate,
+                renderDuration: result.renderDuration,
+                sessionLoadCount: result.sessionLoadCount
+            )
+        }
+    }
+
+    func owns(_ url: URL) -> Bool {
+        url.standardizedFileURL.deletingLastPathComponent() == directory
+    }
+
+    func invalidate(_ url: URL) {
+        guard owns(url) else { return }
+        lock.withLock {
+            try? fileManager.removeItem(at: url)
+        }
+    }
+
+    func setLimitBytes(_ limitBytes: Int) {
+        lock.withLock {
+            self.limitBytes = max(1, limitBytes)
+            enforceLimit(protecting: nil)
+        }
+    }
+
+    var sizeBytes: Int {
+        lock.withLock { cacheEntries().reduce(0) { $0 + $1.size } }
+    }
+
+    private func cacheURL(
+        text: String,
+        voice: SupertonicVoiceID,
+        language: String,
+        speed: Float,
+        synthesisSteps: Int
+    ) -> URL {
+        let payload = "supertonic-v1\u{1f}\(voice.rawValue)\u{1f}\(language)\u{1f}\(speed)\u{1f}\(synthesisSteps)\u{1f}\(text)"
+        let digest = SHA256.hash(data: Data(payload.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return directory.appending(path: "\(digest).wav")
+    }
+
+    private func enforceLimit(protecting protectedURL: URL?) {
+        var entries = cacheEntries().sorted { $0.modifiedAt < $1.modifiedAt }
+        var total = entries.reduce(0) { $0 + $1.size }
+        while total > limitBytes, let index = entries.firstIndex(where: { $0.url != protectedURL }) {
+            let entry = entries.remove(at: index)
+            try? fileManager.removeItem(at: entry.url)
+            total -= entry.size
+        }
+    }
+
+    private func cacheEntries() -> [(url: URL, size: Int, modifiedAt: Date)] {
+        let keys: Set<URLResourceKey> = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
+        let urls = (try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: Array(keys),
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        return urls.compactMap { url in
+            guard url.pathExtension.lowercased() == "wav",
+                  let values = try? url.resourceValues(forKeys: keys),
+                  values.isRegularFile == true else { return nil }
+            return (url, values.fileSize ?? 0, values.contentModificationDate ?? .distantPast)
+        }
+    }
+}
+
 private extension RenderedSpeechSourceSlice {
     func withBoundary(_ boundary: RenderedSpeechChunkBoundary) -> Self {
         .init(text: text, sourceLength: sourceLength, boundary: boundary)
@@ -157,6 +302,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let renderer: any SupertonicRendering
     private let voice: SupertonicVoiceID
     private let fallback: AudioPlaybackClient
+    private let diskCache: RenderedSpeechDiskCache?
     private let onFallback: FallbackHandler?
     private let lock = NSLock()
     private let maxCharacters: Int
@@ -192,6 +338,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         fallbackVoiceIdentifier: String?,
         fallbackRate: Float,
         maxCharacters: Int = 240,
+        diskCache: RenderedSpeechDiskCache? = nil,
         fallbackClient: AudioPlaybackClient? = nil,
         onFallback: FallbackHandler? = nil
     ) {
@@ -202,6 +349,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             voiceIdentifier: fallbackVoiceIdentifier,
             speechRate: fallbackRate
         )
+        self.diskCache = diskCache
         self.maxCharacters = maxCharacters
         self.onFallback = onFallback
         super.init()
@@ -496,13 +644,38 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         guard shouldStart else { return }
         Task { [weak self, renderer, voice] in
             do {
-                let result = try await renderer.render(
+                let result: SupertonicNarrationResult
+                if let cached = self?.diskCache?.cachedAudio(
                     text: request.text,
                     voice: voice,
                     language: "en",
                     speed: 1.0,
                     synthesisSteps: 8
-                )
+                ) {
+                    result = cached
+                } else {
+                    let rendered = try await renderer.render(
+                        text: request.text,
+                        voice: voice,
+                        language: "en",
+                        speed: 1.0,
+                        synthesisSteps: 8
+                    )
+                    if let cache = self?.diskCache,
+                       let retained = try? cache.store(
+                            rendered,
+                            text: request.text,
+                            voice: voice,
+                            language: "en",
+                            speed: 1.0,
+                            synthesisSteps: 8
+                       ) {
+                        await renderer.discardGeneratedAudio(at: rendered.audioURL)
+                        result = retained
+                    } else {
+                        result = rendered
+                    }
+                }
                 await MainActor.run {
                     self?.renderCompleted(
                         result: result,
@@ -644,6 +817,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 startPlayer(nextPlayer, item: item, request: request)
             }
         } catch {
+            diskCache?.invalidate(audioURL)
             discardAudio(audioURL)
             activateSystemFallback(request: request, reason: "supertonic_playback_failed")
         }
@@ -680,6 +854,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     private func discardAudio(_ url: URL) {
+        if diskCache?.owns(url) == true { return }
         Task { [renderer] in
             await renderer.discardGeneratedAudio(at: url)
         }

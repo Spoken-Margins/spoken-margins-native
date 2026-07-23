@@ -2165,6 +2165,8 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         var url: URL
         var offsetMs: Int
         var index: Int
+        var lengthMs: Int
+        var trimLeadingMs: Int
     }
 
     public init() {}
@@ -2189,7 +2191,12 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         var stitchedChapters: [MediaTimelineChapter] = []
         var stitchedDurationMs = durationMs
         for chunk in chunks {
-            let timeline = try await transcribeChunk(chunk, itemId: itemId, recognizer: recognizer, sourceDurationMs: durationMs)
+            let timeline = try await transcribeChunk(
+                chunk,
+                itemId: itemId,
+                recognizer: recognizer,
+                sourceDurationMs: chunk.lengthMs
+            )
             let offset = offsetTimeline(timeline, chunk: chunk)
             stitchedSegments.append(contentsOf: offset.segments)
             stitchedChapters.append(contentsOf: offset.chapters)
@@ -2245,17 +2252,42 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         )
         let directory = caches.appending(path: "SourceAudioTranscriptionWindows/\(itemId)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let chunkURL = directory.appending(path: "window-\(anchorMediaTimeMs).m4a")
-        if !FileManager.default.fileExists(atPath: chunkURL.path) {
-            try await exportChunk(asset: asset, offsetMs: startMs, lengthMs: lengthMs, outputURL: chunkURL)
+        let windowDirectory = directory.appending(path: "window-\(anchorMediaTimeMs)-v2", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: windowDirectory, withIntermediateDirectories: true)
+        let ranges = speechAudioChunkRanges(durationMs: lengthMs)
+        var stitchedSegments: [MediaTimelineSegment] = []
+        var stitchedChapters: [MediaTimelineChapter] = []
+        for (index, range) in ranges.enumerated() {
+            let chunkURL = windowDirectory.appending(path: "chunk-\(String(format: "%04d", index)).m4a")
+            if !FileManager.default.fileExists(atPath: chunkURL.path) {
+                try await exportChunk(
+                    asset: asset,
+                    offsetMs: startMs + range.startMs,
+                    lengthMs: range.lengthMs,
+                    outputURL: chunkURL
+                )
+            }
+            let chunk = SourceAudioChunk(
+                url: chunkURL,
+                offsetMs: startMs + range.startMs,
+                index: index,
+                lengthMs: range.lengthMs,
+                trimLeadingMs: index == 0 ? 0 : 1_000
+            )
+            let timeline = try await transcribeChunk(
+                chunk,
+                itemId: itemId,
+                recognizer: recognizer,
+                sourceDurationMs: range.lengthMs
+            )
+            let offset = offsetTimeline(timeline, chunk: chunk)
+            stitchedSegments.append(contentsOf: offset.segments)
+            stitchedChapters.append(contentsOf: offset.chapters)
         }
-        let chunk = SourceAudioChunk(url: chunkURL, offsetMs: startMs, index: 0)
-        let timeline = try await transcribeChunk(chunk, itemId: itemId, recognizer: recognizer, sourceDurationMs: lengthMs)
-        let offset = offsetTimeline(timeline, chunk: chunk)
         return TranscriptTimeline(
-            segments: offset.segments.sorted { $0.startMs < $1.startMs },
-            chapters: offset.chapters.sorted { $0.startMs < $1.startMs },
-            durationMs: durationMs ?? max(effectiveDurationMs, offset.durationMs ?? 0)
+            segments: stitchedSegments.sorted { $0.startMs < $1.startMs },
+            chapters: stitchedChapters.sorted { $0.startMs < $1.startMs },
+            durationMs: durationMs ?? effectiveDurationMs
         )
         #else
         throw SessionKitError.persistenceFailed("speech_recognition_unavailable")
@@ -2317,9 +2349,15 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         let duration = try await asset.load(.duration)
         let loadedDurationMs = Int((max(0, CMTimeGetSeconds(duration)) * 1000).rounded())
         let effectiveDurationMs = durationMs ?? loadedDurationMs
-        let chunkLengthMs = 10 * 60 * 1000
-        guard effectiveDurationMs > chunkLengthMs else {
-            return [SourceAudioChunk(url: localURL, offsetMs: 0, index: 0)]
+        let ranges = speechAudioChunkRanges(durationMs: effectiveDurationMs)
+        guard ranges.count > 1 else {
+            return [SourceAudioChunk(
+                url: localURL,
+                offsetMs: 0,
+                index: 0,
+                lengthMs: effectiveDurationMs,
+                trimLeadingMs: 0
+            )]
         }
         let caches = try FileManager.default.url(
             for: .cachesDirectory,
@@ -2327,20 +2365,26 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
             appropriateFor: nil,
             create: true
         )
-        let directory = caches.appending(path: "SourceAudioTranscriptionChunks/\(itemId)", directoryHint: .isDirectory)
+        let directory = caches.appending(path: "SourceAudioTranscriptionChunksV2/\(itemId)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var chunks: [SourceAudioChunk] = []
-        var offsetMs = 0
-        var index = 0
-        while offsetMs < effectiveDurationMs {
-            let lengthMs = min(chunkLengthMs, effectiveDurationMs - offsetMs)
+        for (index, range) in ranges.enumerated() {
             let chunkURL = directory.appending(path: "chunk-\(String(format: "%04d", index)).m4a")
             if !FileManager.default.fileExists(atPath: chunkURL.path) {
-                try await exportChunk(asset: asset, offsetMs: offsetMs, lengthMs: lengthMs, outputURL: chunkURL)
+                try await exportChunk(
+                    asset: asset,
+                    offsetMs: range.startMs,
+                    lengthMs: range.lengthMs,
+                    outputURL: chunkURL
+                )
             }
-            chunks.append(SourceAudioChunk(url: chunkURL, offsetMs: offsetMs, index: index))
-            offsetMs += lengthMs
-            index += 1
+            chunks.append(SourceAudioChunk(
+                url: chunkURL,
+                offsetMs: range.startMs,
+                index: index,
+                lengthMs: range.lengthMs,
+                trimLeadingMs: index == 0 ? 0 : 1_000
+            ))
         }
         return chunks
     }
@@ -2363,8 +2407,9 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
 
     private func offsetTimeline(_ timeline: TranscriptTimeline, chunk: SourceAudioChunk) -> TranscriptTimeline {
         let prefix = "chunk-\(String(format: "%04d", chunk.index))"
-        let segments = timeline.segments.map { segment in
-            MediaTimelineSegment(
+        let segments = timeline.segments.compactMap { segment -> MediaTimelineSegment? in
+            guard segment.startMs >= chunk.trimLeadingMs else { return nil }
+            return MediaTimelineSegment(
                 id: "\(prefix)-\(segment.id)",
                 startMs: chunk.offsetMs + segment.startMs,
                 endMs: chunk.offsetMs + segment.endMs,
@@ -2373,8 +2418,9 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
                 text: segment.text
             )
         }
-        let chapters = timeline.chapters.map { chapter in
-            MediaTimelineChapter(
+        let chapters = timeline.chapters.compactMap { chapter -> MediaTimelineChapter? in
+            guard chapter.startMs >= chunk.trimLeadingMs else { return nil }
+            return MediaTimelineChapter(
                 id: "\(prefix)-\(chapter.id)",
                 title: chapter.title,
                 description: chapter.description,

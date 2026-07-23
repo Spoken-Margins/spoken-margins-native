@@ -239,6 +239,55 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    func testRenderedSpeechDiskCacheReusesAudioAcrossPlaybackClients() async throws {
+        let template = try makeTestWAV(duration: 0.5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "rendered-speech-cache-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = "This rendered sentence should survive stopping playback and constructing a new client."
+
+        let firstRenderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let firstCache = try RenderedSpeechDiskCache(directory: root, limitBytes: 10 * 1024 * 1024)
+        let firstClient = SupertonicSpeechPlaybackClient(
+            renderer: firstRenderer,
+            voice: .m2,
+            speed: 1,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            diskCache: firstCache,
+            fallbackClient: RecordingFallbackAudioClient()
+        )
+        _ = try firstClient.prepareSpeechText(source)
+        try firstClient.play(targetId: "first")
+        let firstRenderCount = await waitForRenderCount(firstRenderer, minimum: 1)
+        XCTAssertEqual(firstRenderCount, 1)
+        try firstClient.stop()
+        XCTAssertGreaterThan(firstCache.sizeBytes, 0)
+
+        let secondRenderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let secondCache = try RenderedSpeechDiskCache(directory: root, limitBytes: 10 * 1024 * 1024)
+        let secondClient = SupertonicSpeechPlaybackClient(
+            renderer: secondRenderer,
+            voice: .m2,
+            speed: 1,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            diskCache: secondCache,
+            fallbackClient: RecordingFallbackAudioClient()
+        )
+        _ = try secondClient.prepareSpeechText(source)
+        try secondClient.play(targetId: "second")
+        for _ in 0..<50 where secondClient.playbackStartStatus(targetId: "second") != .confirmed {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+
+        let secondRenderCount = await secondRenderer.renderCount
+        XCTAssertEqual(secondRenderCount, 0)
+        XCTAssertEqual(secondClient.playbackStartStatus(targetId: "second"), .confirmed)
+        try secondClient.stop()
+    }
+
     func testBundledRendererSynthesizesJamesAndLilyAndReusesSessions() async throws {
         guard let resourceURL = Bundle.main.resourceURL else {
             throw XCTSkip("Hosted app resources unavailable")

@@ -1145,6 +1145,7 @@ private struct PlaybackScreen: View {
     @State private var scrubberTextOffset = 0.0
     @State private var isScrubbing = false
     @State private var isPlaybackRatePresented = false
+    @State private var isSourceTextPresented = false
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @FocusState private var followUpFocused: Bool
 
@@ -1200,12 +1201,6 @@ private struct PlaybackScreen: View {
                             .accessibilityLabel("Cancel Recording")
                             .accessibilityIdentifier("interjection.toolbar.cancel")
                         }
-                        Button(action: model.endSession) {
-                            Image(systemName: "stop.fill")
-                        }
-                        .disabled(!model.hasActiveSession)
-                        .accessibilityLabel("Stop Listening and Keep Session Resumable")
-                        .accessibilityIdentifier("playback.end.button")
                         Button(action: model.openExport) {
                             Image(systemName: "square.and.arrow.up")
                         }
@@ -1226,6 +1221,13 @@ private struct PlaybackScreen: View {
             .sheet(isPresented: $isPastingAssistantResponse) {
                 PastedAssistantResponseView(isPresented: $isPastingAssistantResponse)
                     .environmentObject(model)
+            }
+            .sheet(isPresented: $isSourceTextPresented) {
+                NativeTextPeekView(
+                    title: model.selectedItem.title,
+                    text: model.selectedItem.text,
+                    currentOffset: model.snapshot.currentTextStart ?? 0
+                )
             }
             .onAppear {
                 scrubberSeconds = Double(model.snapshot.currentMediaTimeMs ?? 0) / 1_000
@@ -1402,6 +1404,16 @@ private struct PlaybackScreen: View {
             }
             .accessibilityLabel(usesVerbosePlaybackActions ? "Use compact action buttons" : "Show action labels")
             .accessibilityIdentifier("playback.actionVerbosity.button")
+
+            if model.snapshot.targetType == TargetType.itemTextTTS.rawValue {
+                Button {
+                    isSourceTextPresented = true
+                } label: {
+                    Label("Text", systemImage: "doc.plaintext")
+                }
+                .accessibilityLabel("View native source text")
+                .accessibilityIdentifier("playback.sourceText.button")
+            }
 
             Spacer()
 
@@ -1924,6 +1936,19 @@ private struct SettingsScreen: View {
                     .onChange(of: model.speechRate) { _, _ in
                         model.speechSettingsChanged()
                     }
+                    Picker("Rendered Speech Cache", selection: $model.renderedSpeechCacheLimitMB) {
+                        ForEach(Gate1AppModel.supportedRenderedSpeechCacheLimitsMB, id: \.self) { megabytes in
+                            Text(megabytes >= 1_024 ? "\(megabytes / 1_024) GB" : "\(megabytes) MB")
+                                .tag(megabytes)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.renderedSpeechCache.picker")
+                    .onChange(of: model.renderedSpeechCacheLimitMB) { _, _ in
+                        model.renderedSpeechCacheLimitChanged()
+                    }
+                    Text("Rendered native-text speech is reused until this least-recently-used cache exceeds the selected limit.")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
                     VStack(alignment: .leading, spacing: 10) {
                         Button {
                             model.previewSpokenContentVoice()
@@ -2319,6 +2344,61 @@ private struct PastedAssistantResponseView: View {
     }
 }
 
+private struct NativeTextPeekView: View {
+    @Environment(\.dismiss) private var dismiss
+    let title: String
+    let text: String
+    let currentOffset: Int
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Current Passage")
+                            .font(.headline)
+                        Text(currentPassage)
+                            .font(.body)
+                            .textSelection(.enabled)
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(AppColors.inputBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                    DisclosureGroup("Full Native Text") {
+                        Text(text)
+                            .font(.body)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 10)
+                    }
+                }
+                .padding(20)
+            }
+            .navigationTitle(title.isEmpty ? "Source Text" : title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Close") { dismiss() }
+                }
+            }
+            .accessibilityIdentifier("nativeText.peek.sheet")
+        }
+    }
+
+    private var currentPassage: String {
+        guard !text.isEmpty else { return "No native text is available." }
+        let characters = Array(text)
+        let offset = max(0, min(currentOffset, characters.count))
+        var start = max(0, offset - 500)
+        var end = min(characters.count, offset + 700)
+        while start > 0, !characters[start].isWhitespace { start -= 1 }
+        while end < characters.count, !characters[end - 1].isWhitespace { end += 1 }
+        return String(characters[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 private enum PlaybackTimelineEntry: Identifiable {
     case sourceItem
     case overview
@@ -2396,6 +2476,16 @@ private struct InterjectionDetailView: View {
                     Text(current.cleanedTranscript ?? current.transcript ?? "No transcript yet.")
                         .textSelection(.enabled)
                     Button {
+                        model.toggleInterjectionAudioPlayback(current)
+                    } label: {
+                        Label(
+                            model.playingInterjectionAudioId == current.id ? "Stop Recording" : "Play Original Recording",
+                            systemImage: model.playingInterjectionAudioId == current.id ? "stop.fill" : "play.fill"
+                        )
+                    }
+                    .disabled(current.audioPath == nil)
+                    .accessibilityIdentifier("interjection.detail.playRecording")
+                    Button {
                         model.copyInterjectionWithContext(current)
                         copied = true
                         Task {
@@ -2450,6 +2540,9 @@ private struct InterjectionDetailView: View {
                 }
             }
             .navigationTitle("Interjection")
+            .onDisappear {
+                model.stopInterjectionAudioPlayback()
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Close") { dismiss() }

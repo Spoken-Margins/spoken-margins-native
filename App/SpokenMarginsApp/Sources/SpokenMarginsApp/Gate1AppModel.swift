@@ -272,6 +272,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var exportIncludesInterjections = UserDefaults.standard.object(forKey: "exportIncludesInterjections") as? Bool ?? true
     @Published var exportIncludesTurns = UserDefaults.standard.object(forKey: "exportIncludesTurns") as? Bool ?? true
     @Published private(set) var retryingInterjectionTranscriptionIds: Set<String> = []
+    @Published private(set) var playingInterjectionAudioId: String?
     @Published var libraryItems: [LibraryItemRow] = []
     @Published var recentlyDeletedItems: [LibraryItemRow] = []
     @Published var trashUndo: TrashUndoState?
@@ -303,6 +304,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var podcastCacheLimitGB = PodcastCacheLimitGB(
         rawValue: UserDefaults.standard.integer(forKey: "podcastCacheLimitGB")
     )?.rawValue ?? PodcastCacheLimitGB.defaultValue.rawValue
+    @Published var renderedSpeechCacheLimitMB = Gate1AppModel.storedRenderedSpeechCacheLimitMB()
     @Published private(set) var podcastDownloadRecords: [String: PodcastDownloadRecord] = [:]
     @Published var preparedTextAudioStatus = "Not started"
     @Published var sourceTranscriptStatus = "Not started"
@@ -351,6 +353,7 @@ final class Gate1AppModel: ObservableObject {
     private let streamingSpeechQueue = StreamingSpeechQueue()
     private var speechPlaybackClient: AudioPlaybackClient?
     private var supertonicRenderer: SupertonicNarrationRenderer?
+    private var renderedSpeechDiskCache: RenderedSpeechDiskCache?
     private let sourceLinkResolver: LinkResolutionClient?
     private let sourceLinkHandoffStore: SourceLinkHandoffStore?
     private let browserTextHandoffStore: Gate5BrowserTextHandoffStore?
@@ -368,6 +371,10 @@ final class Gate1AppModel: ObservableObject {
     private var activeItemId = "item-pill"
     private var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-5.6"
     private var playbackProgressTask: Task<Void, Never>?
+    #if canImport(AVFoundation)
+    private var interjectionAudioPlayer: AVPlayer?
+    private var interjectionAudioCompletionTask: Task<Void, Never>?
+    #endif
     private var textAudioPrewarmTasks: [String: Task<Void, Never>] = [:]
     private var sourceImportTask: Task<Void, Never>?
     private var quickAccessRefreshTask: Task<Void, Never>?
@@ -500,6 +507,7 @@ final class Gate1AppModel: ObservableObject {
 
     static let supportedMediaSkipSeconds = [10, 15, 30, 45, 60]
     static let supportedPodcastCacheLimitsGB = PodcastCacheLimitGB.allCases.map(\.rawValue)
+    static let supportedRenderedSpeechCacheLimitsMB = [128, 256, 512, 1_024]
 
     var selectedPodcastDownloadState: PodcastDownloadState? {
         podcastDownloadRecords[selectedItem.id]?.state
@@ -519,6 +527,11 @@ final class Gate1AppModel: ObservableObject {
     private static func storedMediaSkipSeconds(forKey key: String) -> Int {
         let value = UserDefaults.standard.integer(forKey: key)
         return supportedMediaSkipSeconds.contains(value) ? value : 15
+    }
+
+    private static func storedRenderedSpeechCacheLimitMB() -> Int {
+        let value = UserDefaults.standard.integer(forKey: "renderedSpeechCacheLimitMB")
+        return supportedRenderedSpeechCacheLimitsMB.contains(value) ? value : 256
     }
 
     func grantAIDataSharingConsent() {
@@ -587,6 +600,7 @@ final class Gate1AppModel: ObservableObject {
         textAudioPrewarmTasks.values.forEach { $0.cancel() }
         sourceImportTask?.cancel()
         quickAccessRefreshTask?.cancel()
+        interjectionAudioCompletionTask?.cancel()
     }
 
     private func reconcilePlaybackProgressTicker() {
@@ -2216,6 +2230,17 @@ final class Gate1AppModel: ObservableObject {
         reportSuccess("Podcast cache limit set to \(limit.rawValue) GB.")
     }
 
+    func renderedSpeechCacheLimitChanged() {
+        guard Self.supportedRenderedSpeechCacheLimitsMB.contains(renderedSpeechCacheLimitMB) else {
+            renderedSpeechCacheLimitMB = 256
+            return
+        }
+        UserDefaults.standard.set(renderedSpeechCacheLimitMB, forKey: "renderedSpeechCacheLimitMB")
+        renderedSpeechDiskCache?.setLimitBytes(renderedSpeechCacheLimitMB * 1024 * 1024)
+        diagnostics["renderedSpeechCacheLimitMB"] = "\(renderedSpeechCacheLimitMB)"
+        reportSuccess("Rendered speech cache limit set to \(renderedSpeechCacheLimitMB) MB.")
+    }
+
     func retrySelectedPodcastDownload() {
         guard !selectedItem.id.isEmpty, podcastDownloadCoordinator != nil else {
             reportFailure("Podcast download retry is unavailable.")
@@ -2637,6 +2662,64 @@ final class Gate1AppModel: ObservableObject {
         reportSuccess("Retranscribing the saved interjection audio.")
     }
 
+    func toggleInterjectionAudioPlayback(_ interjection: Interjection) {
+        #if canImport(AVFoundation)
+        if playingInterjectionAudioId == interjection.id {
+            stopInterjectionAudioPlayback()
+            return
+        }
+        guard let audioPath = interjection.audioPath,
+              let url = resolvedInterjectionAudioURL(for: audioPath),
+              FileManager.default.fileExists(atPath: url.path) else {
+            reportFailure("The saved interjection recording is unavailable.")
+            return
+        }
+        if snapshot.status.isPlaybackActive {
+            pause()
+        }
+        stopInterjectionAudioPlayback()
+        do {
+            #if os(iOS)
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+            try AVAudioSession.sharedInstance().setActive(true)
+            #endif
+            let item = AVPlayerItem(url: url)
+            let player = AVPlayer(playerItem: item)
+            interjectionAudioPlayer = player
+            playingInterjectionAudioId = interjection.id
+            interjectionAudioCompletionTask = Task { @MainActor [weak self, weak item] in
+                while !Task.isCancelled, let item {
+                    try? await Task.sleep(for: .milliseconds(250))
+                    guard !Task.isCancelled else { return }
+                    let duration = item.duration.seconds
+                    let current = item.currentTime().seconds
+                    if duration.isFinite, duration > 0, current.isFinite, current >= duration - 0.05 {
+                        self?.stopInterjectionAudioPlayback()
+                        return
+                    }
+                }
+            }
+            player.play()
+        } catch {
+            stopInterjectionAudioPlayback()
+            reportFailure(error, context: "Interjection playback failed")
+        }
+        #else
+        reportFailure("Interjection playback is unavailable on this device.")
+        #endif
+    }
+
+    func stopInterjectionAudioPlayback() {
+        #if canImport(AVFoundation)
+        interjectionAudioPlayer?.pause()
+        interjectionAudioPlayer?.replaceCurrentItem(with: nil)
+        interjectionAudioPlayer = nil
+        interjectionAudioCompletionTask?.cancel()
+        interjectionAudioCompletionTask = nil
+        #endif
+        playingInterjectionAudioId = nil
+    }
+
     func importPastedAssistantResponse(autoPlay: Bool = true) {
         let text = pastedAssistantResponse.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
@@ -2983,6 +3066,7 @@ final class Gate1AppModel: ObservableObject {
         UserDefaults.standard.set(kokoroVoiceName, forKey: "kokoroVoiceName")
         UserDefaults.standard.set(piperVoiceId, forKey: "piperVoiceId")
         UserDefaults.standard.set(kokoroChunkCharacters, forKey: "kokoroChunkCharacters")
+        UserDefaults.standard.set(renderedSpeechCacheLimitMB, forKey: "renderedSpeechCacheLimitMB")
         let keychainStatus = KeychainStore.save(providerAPIKey, service: "SpokenMargins", account: "OpenAICompatibleAPIKey")
         guard keychainStatus == errSecSuccess else {
             diagnostics["keychainStatus"] = "save_failed:\(keychainStatus)"
@@ -3007,6 +3091,7 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["piperVoice"] = piperVoiceId.isEmpty ? "none" : piperVoiceId
         diagnostics["piperStatus"] = piperStatus
         diagnostics["kokoroCacheLimitMB"] = String(kokoroCacheLimitMB)
+        diagnostics["renderedSpeechCacheLimitMB"] = String(renderedSpeechCacheLimitMB)
         diagnostics["kokoroChunkCharacters"] = String(format: "%.0f", kokoroChunkCharacters)
         diagnostics["apiKeyConfigured"] = providerAPIKey.isEmpty ? "false" : "true"
         if rebuildEngineForCurrentSettings() {
@@ -3024,6 +3109,7 @@ final class Gate1AppModel: ObservableObject {
         UserDefaults.standard.set(kokoroVoiceName, forKey: "kokoroVoiceName")
         UserDefaults.standard.set(piperVoiceId, forKey: "piperVoiceId")
         UserDefaults.standard.set(kokoroChunkCharacters, forKey: "kokoroChunkCharacters")
+        UserDefaults.standard.set(renderedSpeechCacheLimitMB, forKey: "renderedSpeechCacheLimitMB")
         cancelTextAudioPrewarmTasks()
         diagnostics["speechRate"] = String(format: "%.2f", speechRate)
         diagnostics["speechVoice"] = speechVoiceDescription
@@ -3033,6 +3119,7 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["piperVoice"] = piperVoiceId.isEmpty ? "none" : piperVoiceId
         diagnostics["piperStatus"] = piperStatus
         diagnostics["kokoroCacheLimitMB"] = String(kokoroCacheLimitMB)
+        diagnostics["renderedSpeechCacheLimitMB"] = String(renderedSpeechCacheLimitMB)
         diagnostics["kokoroChunkCharacters"] = String(format: "%.0f", kokoroChunkCharacters)
     }
 
@@ -3426,6 +3513,7 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["piperVoice"] = piperVoiceId.isEmpty ? "none" : piperVoiceId
         diagnostics["piperStatus"] = piperStatus
         diagnostics["kokoroCacheLimitMB"] = String(kokoroCacheLimitMB)
+        diagnostics["renderedSpeechCacheLimitMB"] = String(renderedSpeechCacheLimitMB)
         diagnostics["kokoroChunkCharacters"] = String(format: "%.0f", kokoroChunkCharacters)
     }
 
@@ -4551,13 +4639,29 @@ final class Gate1AppModel: ObservableObject {
         }
         if let voice = ttsVoiceSelection.supertonicVoice {
             let renderer = try makeSupertonicRenderer()
+            let supportDirectory = try applicationSupportDirectory()
+            let diskCache: RenderedSpeechDiskCache
+            if let renderedSpeechDiskCache {
+                renderedSpeechDiskCache.setLimitBytes(renderedSpeechCacheLimitMB * 1024 * 1024)
+                diskCache = renderedSpeechDiskCache
+            } else {
+                let created = try RenderedSpeechDiskCache(
+                    directory: supportDirectory.appending(path: "RenderedSpeechCache", directoryHint: .isDirectory),
+                    limitBytes: renderedSpeechCacheLimitMB * 1024 * 1024
+                )
+                renderedSpeechDiskCache = created
+                diskCache = created
+            }
             diagnostics["sessionTTS"] = "Supertonic 3 INT8 \(voice.rawValue)"
+            diagnostics["renderedSpeechCacheLimitMB"] = "\(renderedSpeechCacheLimitMB)"
+            diagnostics["renderedSpeechCacheBytes"] = "\(diskCache.sizeBytes)"
             return SupertonicSpeechPlaybackClient(
                 renderer: renderer,
                 voice: voice,
                 speed: Float(speechRate / 0.5),
                 fallbackVoiceIdentifier: appleVoiceIsAvailable && !selectedVoice.isEmpty ? selectedVoice : nil,
-                fallbackRate: Float(speechRate)
+                fallbackRate: Float(speechRate),
+                diskCache: diskCache
             ) { [weak self] reason, offset in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
@@ -5673,25 +5777,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func interjectionAudioEvidence(for path: String) -> String {
-        let fileManager = FileManager.default
-        let directURL = URL(fileURLWithPath: path)
-        let url: URL
-        if directURL.isFileURL, fileManager.fileExists(atPath: directURL.path) {
-            url = directURL
-        } else if let support = try? fileManager.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: false
-        ) {
-            if path.hasPrefix("SpokenMargins/") {
-                url = support.appending(path: path)
-            } else if path.hasPrefix("interjections/") {
-                url = support.appending(path: "SpokenMargins").appending(path: path)
-            } else {
-                url = support.appending(path: path)
-            }
-        } else {
+        guard let url = resolvedInterjectionAudioURL(for: path) else {
             return "duration_ms=unknown;bytes=unknown"
         }
         let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
@@ -5702,6 +5788,27 @@ final class Gate1AppModel: ObservableObject {
         }
         #endif
         return "duration_ms=unknown;bytes=\(bytes)"
+    }
+
+    private func resolvedInterjectionAudioURL(for path: String) -> URL? {
+        let fileManager = FileManager.default
+        let directURL = URL(fileURLWithPath: path)
+        if directURL.isFileURL, fileManager.fileExists(atPath: directURL.path) {
+            return directURL
+        }
+        guard let support = try? fileManager.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: false
+        ) else { return nil }
+        if path.hasPrefix("SpokenMargins/") {
+            return support.appending(path: path)
+        }
+        if path.hasPrefix("interjections/") {
+            return support.appending(path: "SpokenMargins").appending(path: path)
+        }
+        return support.appending(path: path)
     }
 
     private func recordAnchorCaptureDiagnostics(for interjection: Interjection) {
