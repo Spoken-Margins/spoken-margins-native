@@ -10,7 +10,7 @@ ssh_key="${SPOKEN_MARGINS_VPS_SSH_KEY:-}"
 site_host="spokenmargins.proximitytoprogress.com"
 web_root="/srv/www/spokenmargins"
 
-if [[ ! -f "${site_directory}/index.html" || ! -f "${site_directory}/privacy/index.html" || ! -f "${site_directory}/support/index.html" ]]; then
+if [[ ! -f "${site_directory}/index.html" || ! -f "${site_directory}/privacy/index.html" || ! -f "${site_directory}/support/index.html" || ! -f "${site_directory}/terms/index.html" ]]; then
   echo "The Site directory is incomplete: ${site_directory}" >&2
   exit 1
 fi
@@ -71,6 +71,7 @@ caddy_config="/etc/caddy/Caddyfile"
 test -f "${web_root}/index.html"
 test -f "${web_root}/privacy/index.html"
 test -f "${web_root}/support/index.html"
+test -f "${web_root}/terms/index.html"
 
 if ! grep -Fqx "${site_host} {" "${caddy_config}"; then
   caddy_backup="${caddy_config}.before-spoken-margins.$(date -u +%Y%m%dT%H%M%SZ)"
@@ -97,7 +98,7 @@ systemctl is-active --quiet caddy
 REMOTE_SCRIPT
 
 echo "Verifying public HTTPS pages."
-for route in / /privacy/ /support/; do
+for route in / /privacy/ /support/ /terms/; do
   if ! status_code="$(curl --silent --location --output /dev/null --write-out '%{http_code}' --max-time 30 --retry 5 --retry-delay 2 --retry-all-errors "https://${site_host}${route}")"; then
     echo "Verification failed: could not reach https://${site_host}${route}." >&2
     exit 1

@@ -435,6 +435,13 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     }
 
     func testLegacyEmbeddedPiperModeSanitizesToBundledJamesPath() {
+        let priorTermsVersion = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceVersionKey)
+        let priorTermsDate = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceDateKey)
+        defer {
+            restoreUserDefault(priorTermsVersion, forKey: SpokenMarginsTerms.acceptanceVersionKey)
+            restoreUserDefault(priorTermsDate, forKey: SpokenMarginsTerms.acceptanceDateKey)
+        }
+        SpokenMarginsTerms.recordAcceptance()
         let model = Gate1AppModel(audioPlaybackClient: WorkflowRecordingAudioClient())
         model.resetAndSeed()
         model.ttsVoiceSelection = .james
@@ -449,7 +456,14 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
     func testPreOnePointZeroTTSMigrationDefaultsToJamesAndRetainsAppleFallbackVoice() {
         let defaults = UserDefaults.standard
-        let keys = ["supertonicTTSMigrationV1", "ttsMode", "ttsVoiceSelection", "speechVoiceIdentifier"]
+        let keys = [
+            "supertonicTTSMigrationV1",
+            "ttsMode",
+            "ttsVoiceSelection",
+            "speechVoiceIdentifier",
+            SpokenMarginsTerms.acceptanceVersionKey,
+            SpokenMarginsTerms.acceptanceDateKey
+        ]
         let prior = keys.reduce(into: [String: Any]()) { values, key in
             values[key] = defaults.object(forKey: key)
         }
@@ -466,6 +480,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         defaults.removeObject(forKey: "ttsVoiceSelection")
         defaults.set("piper", forKey: "ttsMode")
         defaults.set("com.apple.ttsbundle.Samantha-compact", forKey: "speechVoiceIdentifier")
+        SpokenMarginsTerms.recordAcceptance(in: defaults)
 
         let model = Gate1AppModel(audioPlaybackClient: WorkflowRecordingAudioClient())
 
@@ -504,6 +519,13 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     }
 
     func testSupertonicVoiceChangeStopsPlaybackAndWaitsForExplicitPlay() throws {
+        let priorTermsVersion = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceVersionKey)
+        let priorTermsDate = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceDateKey)
+        defer {
+            restoreUserDefault(priorTermsVersion, forKey: SpokenMarginsTerms.acceptanceVersionKey)
+            restoreUserDefault(priorTermsDate, forKey: SpokenMarginsTerms.acceptanceDateKey)
+        }
+        SpokenMarginsTerms.recordAcceptance()
         let audio = WorkflowRecordingAudioClient()
         let model = Gate1AppModel(audioPlaybackClient: audio)
         model.resetAndSeed()
@@ -521,6 +543,14 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(audio.playedOffsets.count, playCount)
         XCTAssertEqual(UserDefaults.standard.string(forKey: "ttsVoiceSelection"), "supertonic:F2")
         XCTAssertEqual(UserDefaults.standard.string(forKey: "ttsMode"), "supertonic")
+    }
+
+    private func restoreUserDefault(_ value: Any?, forKey key: String) {
+        if let value {
+            UserDefaults.standard.set(value, forKey: key)
+        } else {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
     }
 
     func testObsidianImportRunsInBackgroundAndLoadsHeadingBasedListeningMap() async throws {

@@ -1,0 +1,157 @@
+import XCTest
+import SessionKit
+@testable import SpokenMarginsApp
+
+final class SpokenMarginsTermsStorageTests: XCTestCase {
+    func testAcceptanceIsVersionedAndExpiresWhenTheVersionChanges() throws {
+        let suiteName = "SpokenMarginsTermsStorageTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        XCTAssertFalse(SpokenMarginsTerms.hasAcceptedCurrentVersion(in: defaults))
+
+        let acceptedAt = Date(timeIntervalSince1970: 1_790_000_000)
+        SpokenMarginsTerms.recordAcceptance(at: acceptedAt, in: defaults)
+
+        XCTAssertTrue(SpokenMarginsTerms.hasAcceptedCurrentVersion(in: defaults))
+        XCTAssertEqual(SpokenMarginsTerms.acceptedVersion(in: defaults), SpokenMarginsTerms.currentVersion)
+        XCTAssertEqual(SpokenMarginsTerms.acceptedAt(in: defaults), acceptedAt)
+
+        defaults.set("older-version", forKey: SpokenMarginsTerms.acceptanceVersionKey)
+        XCTAssertFalse(SpokenMarginsTerms.hasAcceptedCurrentVersion(in: defaults))
+    }
+
+    func testBundledTermsContainTheOpenRAILAgreementAndMaterialChangeRule() {
+        XCTAssertTrue(SpokenMarginsTerms.hasBundledText())
+        let text = SpokenMarginsTerms.bundledText()
+
+        XCTAssertTrue(text.contains("Agree and Enable On-Device Voice"))
+        XCTAssertTrue(text.contains("paragraph 5 and Attachment A"))
+        XCTAssertTrue(text.contains("material change"))
+        XCTAssertTrue(text.contains("Apple Standard EULA"))
+    }
+}
+
+@MainActor
+final class SupertonicTermsGateTests: XCTestCase {
+    func testStoredSupertonicVoiceFallsBackToSystemUntilTermsAreAccepted() throws {
+        let snapshot = StandardDefaultsSnapshot(keys: termsAndVoiceDefaultsKeys)
+        defer { snapshot.restore() }
+        let defaults = UserDefaults.standard
+        SpokenMarginsTerms.clearAcceptance(in: defaults)
+        defaults.set(true, forKey: "supertonicTTSMigrationV1")
+        defaults.set(AppTTSVoiceSelection.james.rawValue, forKey: "ttsVoiceSelection")
+        defaults.set("supertonic", forKey: "ttsMode")
+
+        let model = Gate1AppModel(audioPlaybackClient: TermsNoopAudioPlaybackClient())
+
+        XCTAssertFalse(model.hasAcceptedCurrentTerms)
+        XCTAssertEqual(model.ttsVoiceSelection, .system)
+        XCTAssertEqual(model.ttsMode, "systemImmediate")
+        XCTAssertEqual(defaults.string(forKey: "ttsVoiceSelection"), AppTTSVoiceSelection.system.rawValue)
+        XCTAssertThrowsError(try model.verifyCurrentTermsForOnDeviceVoice()) { error in
+            XCTAssertEqual(error as? SpokenMarginsTermsError, .acceptanceRequired)
+        }
+    }
+
+    func testSelectingSupertonicPresentsTermsAndAcceptanceEnablesPendingVoice() {
+        let snapshot = StandardDefaultsSnapshot(keys: termsAndVoiceDefaultsKeys)
+        defer { snapshot.restore() }
+        let defaults = UserDefaults.standard
+        SpokenMarginsTerms.clearAcceptance(in: defaults)
+        defaults.set(true, forKey: "supertonicTTSMigrationV1")
+        defaults.set(AppTTSVoiceSelection.system.rawValue, forKey: "ttsVoiceSelection")
+        defaults.set("systemImmediate", forKey: "ttsMode")
+        let model = Gate1AppModel(audioPlaybackClient: TermsNoopAudioPlaybackClient())
+
+        model.ttsVoiceSelection = .lily
+        model.ttsVoiceSelectionChanged()
+
+        XCTAssertTrue(model.isTermsOfUsePresented)
+        XCTAssertEqual(model.ttsVoiceSelection, .system)
+        XCTAssertFalse(model.hasAcceptedCurrentTerms)
+
+        model.acceptCurrentTermsAndEnableOnDeviceVoice()
+
+        XCTAssertFalse(model.isTermsOfUsePresented)
+        XCTAssertTrue(model.hasAcceptedCurrentTerms)
+        XCTAssertEqual(model.ttsVoiceSelection, .lily)
+        XCTAssertEqual(defaults.string(forKey: SpokenMarginsTerms.acceptanceVersionKey), SpokenMarginsTerms.currentVersion)
+        XCTAssertEqual(defaults.string(forKey: "ttsVoiceSelection"), AppTTSVoiceSelection.lily.rawValue)
+        XCTAssertNoThrow(try model.verifyCurrentTermsForOnDeviceVoice())
+    }
+
+    func testDecliningTermsKeepsSystemVoiceAndDoesNotRecordAcceptance() {
+        let snapshot = StandardDefaultsSnapshot(keys: termsAndVoiceDefaultsKeys)
+        defer { snapshot.restore() }
+        let defaults = UserDefaults.standard
+        SpokenMarginsTerms.clearAcceptance(in: defaults)
+        defaults.set(true, forKey: "supertonicTTSMigrationV1")
+        defaults.set(AppTTSVoiceSelection.system.rawValue, forKey: "ttsVoiceSelection")
+        let model = Gate1AppModel(audioPlaybackClient: TermsNoopAudioPlaybackClient())
+
+        model.ttsVoiceSelection = .james
+        model.ttsVoiceSelectionChanged()
+        model.declineCurrentTerms()
+
+        XCTAssertFalse(model.isTermsOfUsePresented)
+        XCTAssertFalse(model.hasAcceptedCurrentTerms)
+        XCTAssertEqual(model.ttsVoiceSelection, .system)
+        XCTAssertNil(defaults.string(forKey: SpokenMarginsTerms.acceptanceVersionKey))
+    }
+
+    func testCurrentAcceptancePreservesStoredSupertonicVoice() throws {
+        let snapshot = StandardDefaultsSnapshot(keys: termsAndVoiceDefaultsKeys)
+        defer { snapshot.restore() }
+        let defaults = UserDefaults.standard
+        SpokenMarginsTerms.recordAcceptance(in: defaults)
+        defaults.set(true, forKey: "supertonicTTSMigrationV1")
+        defaults.set(AppTTSVoiceSelection.james.rawValue, forKey: "ttsVoiceSelection")
+        defaults.set("supertonic", forKey: "ttsMode")
+
+        let model = Gate1AppModel(audioPlaybackClient: TermsNoopAudioPlaybackClient())
+
+        XCTAssertTrue(model.hasAcceptedCurrentTerms)
+        XCTAssertEqual(model.ttsVoiceSelection, .james)
+        XCTAssertEqual(model.ttsMode, "supertonic")
+        XCTAssertNoThrow(try model.verifyCurrentTermsForOnDeviceVoice())
+    }
+
+    private var termsAndVoiceDefaultsKeys: [String] {
+        [
+            SpokenMarginsTerms.acceptanceVersionKey,
+            SpokenMarginsTerms.acceptanceDateKey,
+            "supertonicTTSMigrationV1",
+            "ttsVoiceSelection",
+            "ttsMode"
+        ]
+    }
+}
+
+private struct StandardDefaultsSnapshot {
+    private let values: [String: Any]
+    private let keys: [String]
+
+    init(keys: [String]) {
+        self.keys = keys
+        self.values = keys.reduce(into: [:]) { values, key in
+            values[key] = UserDefaults.standard.object(forKey: key)
+        }
+    }
+
+    func restore() {
+        for key in keys {
+            if let value = values[key] {
+                UserDefaults.standard.set(value, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
+    }
+}
+
+private final class TermsNoopAudioPlaybackClient: AudioPlaybackClient {
+    func prepareSpeechText(_ text: String) throws -> String { text }
+    func play(targetId: String) throws {}
+    func pause() throws {}
+}

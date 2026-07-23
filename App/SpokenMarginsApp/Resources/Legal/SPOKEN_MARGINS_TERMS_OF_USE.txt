@@ -1,0 +1,45 @@
+SPOKEN MARGINS TERMS OF USE
+
+Version 1.0
+Effective July 23, 2026
+
+These Terms of Use ("Terms") are between you and the developer of Spoken Margins ("Developer"). They supplement, and do not replace, Apple's Standard Licensed Application End User License Agreement ("Apple Standard EULA"). If these Terms conflict with the Apple Standard EULA, the Apple Media Services Terms and Conditions, applicable App Store Usage Rules, or law that cannot be waived, those controlling terms or laws apply.
+
+1. Acceptance and scope
+
+By tapping "Agree and Enable On-Device Voice," you accept this version of the Terms. Spoken Margins records the accepted version and acceptance date locally on your device. You may continue using the iOS system voice without accepting these Terms. If a future material change affects your obligations, Spoken Margins will require acceptance of the new version before enabling the affected feature.
+
+2. User-selected content
+
+Spoken Margins is a private reading and listening tool. You are responsible for ensuring that you have the rights and permissions necessary to access, copy, download, process, synthesize, annotate, or export the source material you select. You may not use Spoken Margins to bypass authentication, paywalls, digital rights management, or other technical access controls, or to infringe another person's intellectual-property, privacy, publicity, or other rights.
+
+3. On-device synthesized voice
+
+Spoken Margins includes the Supertonic 3 machine-learning model under the BigScience Open RAIL-M License. The complete license is included in Spoken Margins at Settings > Support & Privacy > Legal > On-Device Voice and is incorporated into these Terms by reference.
+
+You agree to comply with paragraph 5 and Attachment A of the Open RAIL-M License. You must not use the model, a derivative of the model, or its output for an unlawful purpose; to exploit or harm minors; intentionally to create or spread harmful falsehoods or harmful personally identifiable information; to defame, harass, discriminate against, or impersonate another person without consent; to make fully automated decisions that adversely affect legal rights; to provide medical advice or interpret medical results; or for the prohibited justice, law-enforcement, immigration, or asylum uses described in Attachment A. You must provide an intelligible disclosure when distributing machine-generated content.
+
+Voice synthesis runs locally. Spoken Margins reads text selected by you and does not author, endorse, interpret, or verify that text. You remain responsible for the selected text and for any use or distribution of synthesized output.
+
+4. External services and optional AI
+
+Spoken Margins may provide access to third-party services and websites, including public source websites, podcast feeds, Apple services, and the OpenAI API. Those services may be governed by separate terms, and you must comply with applicable third-party terms.
+
+Live AI features are optional and require a compatible API key supplied by you. Spoken Margins requests separate permission before sending source or conversation text to OpenAI. You are responsible for your API account, charges, usage limits, and compliance with the API provider's terms. AI-generated content may be inaccurate or inappropriate and must not be treated as professional, medical, legal, financial, or safety advice.
+
+5. Privacy
+
+Spoken Margins' data practices are described in the Privacy Policy at https://spokenmargins.proximitytoprogress.com/privacy/. Local library data, recordings, transcripts, and settings remain on your device unless you deliberately use a feature that sends selected text to an external service or share or export content using a destination you choose.
+
+6. Third-party software and model licenses
+
+Open-source software and model components remain subject to their applicable licenses and notices, which are included in Spoken Margins. If these Terms conflict with an applicable open-source or model license regarding that component, the component's license controls for that component.
+
+7. Changes
+
+The Developer may revise these Terms prospectively as Spoken Margins evolves. The version and effective date will identify each revision. A material revision that changes your obligations will not enable an affected feature until Spoken Margins presents the new version and you affirmatively accept it.
+
+8. Support
+
+Questions about these Terms or Spoken Margins may be sent to resists.fabric-0o@icloud.com.
+

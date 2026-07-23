@@ -62,6 +62,12 @@ struct Gate1RootView: View {
                 .environmentObject(model)
                 .interactiveDismissDisabled()
         }
+        .sheet(isPresented: $model.isTermsOfUsePresented) {
+            NavigationStack {
+                SpokenMarginsTermsView(allowsAcceptance: true)
+                    .environmentObject(model)
+            }
+        }
         .sheet(isPresented: $model.isHelpPresented) {
             HelpScreen()
                 .environmentObject(model)
@@ -2123,6 +2129,12 @@ private struct SettingsScreen: View {
                     .accessibilityIdentifier("settings.help.button")
                     Link("Privacy Policy", destination: AppLinks.privacy)
                     Link("Support", destination: AppLinks.support)
+                    NavigationLink("Terms of Use") {
+                        SpokenMarginsTermsView(allowsAcceptance: !model.hasAcceptedCurrentTerms)
+                    }
+                    .accessibilityIdentifier("settings.terms.link")
+                    LabeledContent("Terms Status", value: model.termsAcceptanceDescription)
+                        .accessibilityIdentifier("settings.terms.status")
                     NavigationLink("Legal · On-Device Voice") {
                         SupertonicLegalView()
                     }

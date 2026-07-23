@@ -364,6 +364,10 @@ final class Gate1AppModel: ObservableObject {
     ) ?? .unknown
     @Published var isAIDataSharingConsentPresented = false
     @Published var isAISetupNeededPresented = false
+    @Published private(set) var hasAcceptedCurrentTerms = SpokenMarginsTerms.hasAcceptedCurrentVersion()
+        && SpokenMarginsTerms.hasBundledText()
+    @Published private(set) var acceptedTermsVersion = SpokenMarginsTerms.acceptedVersion()
+    @Published var isTermsOfUsePresented = false
     @Published var isHelpPresented = false
     @Published private(set) var legacyLibraryResetNotice: String?
     @Published var knownIssues = [
@@ -417,6 +421,7 @@ final class Gate1AppModel: ObservableObject {
     private var pendingMapGenerationItemId: String?
     private var pendingProviderJobForConsent: PendingProviderJob?
     private var pendingMapGenerationAfterConsent = false
+    private var pendingTermsVoiceSelection: AppTTSVoiceSelection?
     #if SPOKEN_MARGINS_WATCH
     private var activeWatchPackageRenderItemIds: Set<String> = []
     private var failedWatchPackageRenderItemIds: Set<String> = []
@@ -496,6 +501,7 @@ final class Gate1AppModel: ObservableObject {
             }
         }
         migrateTTSSettingsIfNeeded()
+        enforceTermsGateForStoredVoice()
         UserDefaults.standard.removeObject(forKey: "aiExecutionMode")
         refreshSpeechVoiceOptions()
         sanitizeTTSMode()
@@ -525,6 +531,60 @@ final class Gate1AppModel: ObservableObject {
 
     private func synchronizeTTSModeFromSelection() {
         ttsMode = ttsVoiceSelection == .system ? "systemImmediate" : "supertonic"
+    }
+
+    private func enforceTermsGateForStoredVoice() {
+        hasAcceptedCurrentTerms = SpokenMarginsTerms.hasAcceptedCurrentVersion()
+            && SpokenMarginsTerms.hasBundledText()
+        acceptedTermsVersion = SpokenMarginsTerms.acceptedVersion()
+        guard !hasAcceptedCurrentTerms, ttsVoiceSelection.supertonicVoice != nil else { return }
+        ttsVoiceSelection = .system
+        synchronizeTTSModeFromSelection()
+        UserDefaults.standard.set(ttsVoiceSelection.rawValue, forKey: "ttsVoiceSelection")
+        UserDefaults.standard.set(ttsMode, forKey: "ttsMode")
+    }
+
+    var termsAcceptanceDescription: String {
+        if hasAcceptedCurrentTerms {
+            return "Accepted version \(SpokenMarginsTerms.currentVersion)"
+        }
+        if let acceptedTermsVersion {
+            return "Version \(acceptedTermsVersion) expired"
+        }
+        return "Not accepted · iOS voice only"
+    }
+
+    func acceptCurrentTermsAndEnableOnDeviceVoice() {
+        guard SpokenMarginsTerms.hasBundledText() else {
+            pendingTermsVoiceSelection = nil
+            isTermsOfUsePresented = false
+            ttsVoiceSelection = .system
+            saveSpeechSettings()
+            reportFailure(SpokenMarginsTermsError.bundledTermsUnavailable, context: "Terms acceptance failed")
+            return
+        }
+        SpokenMarginsTerms.recordAcceptance()
+        hasAcceptedCurrentTerms = true
+        acceptedTermsVersion = SpokenMarginsTerms.currentVersion
+        isTermsOfUsePresented = false
+        ttsVoiceSelection = pendingTermsVoiceSelection ?? .james
+        pendingTermsVoiceSelection = nil
+        saveSpeechSettings()
+        if let engine {
+            snapshot = (try? engine.stopPlayback()) ?? snapshot
+            refreshSelectedItem()
+        }
+        _ = rebuildEngineForCurrentSettings()
+        diagnostics["termsAcceptedVersion"] = SpokenMarginsTerms.currentVersion
+        reportSuccess("Terms accepted. \(ttsVoiceSelection.displayName) is enabled.")
+    }
+
+    func declineCurrentTerms() {
+        pendingTermsVoiceSelection = nil
+        isTermsOfUsePresented = false
+        ttsVoiceSelection = .system
+        saveSpeechSettings()
+        reportSuccess("The iOS system voice remains enabled.")
     }
 
     var aiDataSharingConsentDescription: String {
@@ -3343,6 +3403,15 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func ttsVoiceSelectionChanged() {
+        if ttsVoiceSelection.supertonicVoice != nil, !hasAcceptedCurrentTerms {
+            pendingTermsVoiceSelection = ttsVoiceSelection
+            ttsVoiceSelection = .system
+            saveSpeechSettings()
+            isTermsOfUsePresented = true
+            diagnostics["termsGate"] = "presented_for_on_device_voice"
+            statusMessage = "Review the Terms of Use to enable an on-device voice."
+            return
+        }
         sanitizeTTSMode()
         settingsValueChanged()
         saveSpeechSettings()
@@ -3378,6 +3447,13 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func previewSupertonicVoice(_ voice: SupertonicVoiceID) {
+        guard hasAcceptedCurrentTerms else {
+            pendingTermsVoiceSelection = ttsVoiceSelection.supertonicVoice == nil ? .james : ttsVoiceSelection
+            ttsVoiceSelection = .system
+            saveSpeechSettings()
+            isTermsOfUsePresented = true
+            return
+        }
         guard !isRenderingSupertonicPreview else { return }
         isRenderingSupertonicPreview = true
         statusMessage = "Preparing \(ttsVoiceSelection.displayName)…"
@@ -3402,6 +3478,15 @@ final class Gate1AppModel: ObservableObject {
                 self.reportFailure(error, context: "On-device voice preview failed")
             }
             self.isRenderingSupertonicPreview = false
+        }
+    }
+
+    func verifyCurrentTermsForOnDeviceVoice() throws {
+        guard SpokenMarginsTerms.hasBundledText() else {
+            throw SpokenMarginsTermsError.bundledTermsUnavailable
+        }
+        guard hasAcceptedCurrentTerms else {
+            throw SpokenMarginsTermsError.acceptanceRequired
         }
     }
 
@@ -4930,6 +5015,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func makeSupertonicRenderer() throws -> SupertonicNarrationRenderer {
+        try verifyCurrentTermsForOnDeviceVoice()
         if let supertonicRenderer { return supertonicRenderer }
         guard let resourceRoot = Bundle.main.resourceURL?.appending(
             path: "Supertonic",
@@ -4973,6 +5059,9 @@ final class Gate1AppModel: ObservableObject {
     @discardableResult
     private func sanitizeTTSMode() -> Bool {
         let priorMode = ttsMode
+        if ttsVoiceSelection.supertonicVoice != nil, !hasAcceptedCurrentTerms {
+            ttsVoiceSelection = .system
+        }
         synchronizeTTSModeFromSelection()
         UserDefaults.standard.set(ttsMode, forKey: "ttsMode")
         UserDefaults.standard.set(ttsVoiceSelection.rawValue, forKey: "ttsVoiceSelection")

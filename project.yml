@@ -20,6 +20,9 @@ targets:
       - path: App/SpokenMarginsApp/Resources/Supertonic
         type: folder
         buildPhase: resources
+      - path: App/SpokenMarginsApp/Resources/Legal
+        type: folder
+        buildPhase: resources
       - path: Contracts/fixtures
         type: folder
       - path: Contracts/traces

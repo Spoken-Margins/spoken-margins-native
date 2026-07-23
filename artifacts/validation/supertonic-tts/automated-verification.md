@@ -49,5 +49,7 @@ commit `61b4f0c` plus the feature working tree.
 - Memory trend across 100 chunks, 30-minute foreground/background narration,
   thermal behavior, interruptions, lock-screen controls, and AirPods routing.
 - James and Lily voice quality and the complete listening flow.
-- App Store release is blocked until the reviewed custom EULA is installed in
-  every distribution territory.
+- App Store release is blocked until legal/product-owner review confirms the
+  versioned Spoken Margins Terms and affirmative acceptance flow satisfy the
+  OpenRAIL-M downstream-agreement requirement, and focused automated evidence
+  verifies that Supertonic cannot initialize before acceptance.
