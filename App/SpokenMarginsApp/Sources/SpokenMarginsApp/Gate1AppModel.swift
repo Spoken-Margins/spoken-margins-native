@@ -44,6 +44,24 @@ struct LibraryItemRow: Identifiable, Hashable {
     let title: String
     let status: String
     let canDelete: Bool
+    let hasResumableSession: Bool
+    let resumeProgressPercent: Int?
+
+    init(
+        id: String,
+        title: String,
+        status: String,
+        canDelete: Bool,
+        hasResumableSession: Bool = false,
+        resumeProgressPercent: Int? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.status = status
+        self.canDelete = canDelete
+        self.hasResumableSession = hasResumableSession
+        self.resumeProgressPercent = resumeProgressPercent
+    }
 }
 
 struct TrashUndoState: Equatable {
@@ -71,8 +89,17 @@ struct ItemDetailState {
     var overview = ""
     var chapters: [Chapter] = []
     var sessions: [Session] = []
+    var sessionRows: [SessionPresentation] = []
     var interjections: [Interjection] = []
     var turns: [ConversationTurn] = []
+}
+
+struct SessionPresentation: Identifiable {
+    let session: Session
+    let interjectionCount: Int
+    let interjectionPreview: String?
+
+    var id: String { session.id }
 }
 
 struct SpeechVoiceChoice: Identifiable, Hashable {
@@ -233,6 +260,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var lastError: String?
     @Published private(set) var feedbackEvent: UserFeedbackEvent?
     @Published var exportPreview = ""
+    @Published var exportSessionId: String?
     @Published var exportFormat = UserDefaults.standard.string(forKey: "exportFormat") ?? "markdown"
     @Published var exportScope = UserDefaults.standard.string(forKey: "exportScope") ?? "full_session"
     @Published var exportIncludesSourceText = UserDefaults.standard.object(forKey: "exportIncludesSourceText") as? Bool ?? true
@@ -300,6 +328,8 @@ final class Gate1AppModel: ObservableObject {
         rawValue: UserDefaults.standard.string(forKey: "aiDataSharingConsent") ?? ""
     ) ?? .unknown
     @Published var isAIDataSharingConsentPresented = false
+    @Published var isAISetupNeededPresented = false
+    @Published var isHelpPresented = false
     @Published private(set) var legacyLibraryResetNotice: String?
     @Published var knownIssues = [
         "Physical-device product validation remains pending.",
@@ -697,7 +727,16 @@ final class Gate1AppModel: ObservableObject {
             try recoverInterruptedAIJobs(store: store, rows: rows)
             libraryItems = rows
             recentlyDeletedItems = try loadDeletedLibraryRows(store: store)
-            if let first = rows.first {
+            let availableItemIDs = Set(rows.map(\.id))
+            if let restoredSession = try store.loadSessions().first(where: {
+                Self.isResumableSession($0) && availableItemIDs.contains($0.itemId)
+            }), let engine {
+                activeItemId = restoredSession.itemId
+                snapshot = try engine.inspectSession(sessionId: restoredSession.id)
+                selectedItem = try loadItemDetail(id: restoredSession.itemId, store: store)
+                diagnostics["restoredSession"] = restoredSession.id
+                diagnostics["restoredSessionMode"] = "paused_without_autoplay"
+            } else if let first = rows.first {
                 activeItemId = first.id
                 selectedItem = try loadItemDetail(id: first.id, store: store)
             } else {
@@ -1284,6 +1323,8 @@ final class Gate1AppModel: ObservableObject {
         }
         guard result.status == .playable else {
             let provider = result.originalLink.provider ?? result.candidates.first?.sourceLink.provider
+            diagnostics["lastSourceLinkFailureCategory"] = result.failureReason
+                ?? result.status.rawValue
             throw SessionKitError.persistenceFailed(sourceLinkFailureMessage(
                 status: result.status.rawValue,
                 reason: result.failureReason,
@@ -1579,6 +1620,7 @@ final class Gate1AppModel: ObservableObject {
             }
             if let store {
                 selectedItem = try loadItemDetail(id: activeItemId, store: store)
+                try refreshLibraryRows(store: store)
             }
             reflectTextAudioPrewarmStatusIfActive(itemId: activeItemId)
             screen = .playback
@@ -1785,6 +1827,15 @@ final class Gate1AppModel: ObservableObject {
         screen = .settings
     }
 
+    func openHelp() {
+        isHelpPresented = true
+    }
+
+    func openAISettingsFromSummaryPrompt() {
+        isAISetupNeededPresented = false
+        screen = .settings
+    }
+
     func openPlayback() {
         guard hasActiveSession else { return }
         if let itemId = snapshot.itemId, let store {
@@ -1797,10 +1848,15 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func openExport() {
-        if hasActiveSession {
-            buildExport()
-        }
+        openExport(sessionId: nil)
+    }
+
+    func openExport(sessionId: String?) {
+        exportSessionId = sessionId
+            ?? snapshot.sessionId
+            ?? selectedItem.sessions.first?.id
         screen = .export
+        refreshExportPreview(reportStatus: false)
     }
 
     func openItem(id: String) {
@@ -1818,6 +1874,25 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func startItem(id: String) {
+        do {
+            let store = try requireStore()
+            if let resumable = try store.loadSessions(itemId: id).first(where: Self.isResumableSession) {
+                resumeSession(resumable)
+            } else {
+                startNewSession(id: id)
+            }
+        } catch {
+            reportFailure(error, context: "Continue listening failed")
+        }
+    }
+
+    func startNewSession(id: String) {
+        stopSpeechPreviews()
+        streamingSpeechQueue.stopAndClear()
+        if hasActiveSession, let engine {
+            _ = try? engine.endSession()
+            snapshot = engine.snapshot
+        }
         activeItemId = id
         start()
     }
@@ -1846,6 +1921,7 @@ final class Gate1AppModel: ObservableObject {
             }
             snapshot = try engine.inspectSession(sessionId: session.id)
             selectedItem = try loadItemDetail(id: session.itemId, store: store)
+            try refreshLibraryRows(store: store)
             screen = .playback
             reportSuccess("Opened session at \(session.completionPercent)% complete.")
         } catch {
@@ -1876,6 +1952,7 @@ final class Gate1AppModel: ObservableObject {
                 snapshot = try engine.playSourceFromBeginning()
             }
             selectedItem = try loadItemDetail(id: session.itemId, store: store)
+            try refreshLibraryRows(store: store)
             screen = .playback
             reportSuccess(session.completionPercent >= 100
                 ? "Opened completed session. Use Play from Beginning to restart."
@@ -2216,14 +2293,30 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func endSession() {
+        closeCurrentSession(navigateHome: true)
+    }
+
+    func dismissMiniPlayer() {
+        closeCurrentSession(navigateHome: false)
+    }
+
+    private func closeCurrentSession(navigateHome: Bool) {
+        let closedItemId = snapshot.itemId ?? activeItemId
         run { engine in
             snapshot = try engine.endSession()
+            activeItemId = closedItemId
             refreshSelectedItem()
-            reportSuccess("Ended session.")
+            if let store {
+                try refreshLibraryRows(store: store)
+            }
+            reportSuccess("Saved your place. The session is ready to resume.")
         }
         streamingSpeechQueue.stopAndClear()
         if let renderer = supertonicRenderer {
             Task { await renderer.unload() }
+        }
+        if navigateHome {
+            screen = .home
         }
     }
 
@@ -2234,6 +2327,11 @@ final class Gate1AppModel: ObservableObject {
     #endif
 
     func summarize() {
+        guard !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            isAISetupNeededPresented = true
+            diagnostics["summaryPreflight"] = "api_key_missing"
+            return
+        }
         guard pendingSourceContextInterjectionIds.isEmpty else {
             reportFailure("Source context is still being prepared. Try again when the podcast context is ready.")
             return
@@ -2242,6 +2340,7 @@ final class Gate1AppModel: ObservableObject {
             reportFailure("An interjection summary already exists for this session.")
             return
         }
+        syncPlaybackProgressForLifecycle()
         run { engine in
             snapshot = try engine.generateInterjectionSummary(scope: summaryScopeForCurrentTarget())
             let turnId = latestPendingSummaryTurnId() ?? "turn-summary-001"
@@ -2385,6 +2484,11 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func retryPendingAI() {
+        guard !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            isAISetupNeededPresented = true
+            diagnostics["aiRetryPreflight"] = "api_key_missing"
+            return
+        }
         run { engine in
             guard let sessionId = snapshot.sessionId,
                   let job = try store?.loadAIJobs(sessionId: sessionId)
@@ -2402,12 +2506,26 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func buildExport() {
+        refreshExportPreview(reportStatus: true)
+    }
+
+    func exportOptionsChanged() {
+        refreshExportPreview(reportStatus: false)
+    }
+
+    private func refreshExportPreview(reportStatus: Bool) {
+        guard exportSessionId != nil else {
+            exportPreview = ""
+            return
+        }
         run { engine in
             persistExportSettings()
             let export = try engine.buildExport(options: currentExportOptions())
             exportPreview = try renderExport(export)
             screen = .export
-            reportSuccess("Built session export.")
+            if reportStatus {
+                reportSuccess("Built session export.")
+            }
         }
     }
 
@@ -3305,6 +3423,14 @@ final class Gate1AppModel: ObservableObject {
 
     var hasActiveSession: Bool {
         snapshot.sessionId != nil
+    }
+
+    static func isResumableSession(_ session: Session) -> Bool {
+        session.status == "in_progress" && session.phase != .abandoned
+    }
+
+    var selectedItemLatestResumableSession: Session? {
+        selectedItem.sessions.first(where: Self.isResumableSession)
     }
 
     var shouldShowMiniPlayer: Bool {
@@ -4442,11 +4568,14 @@ final class Gate1AppModel: ObservableObject {
 
     private func loadLibraryRows(store: SQLiteSessionStore) throws -> [LibraryItemRow] {
         try store.listItems().map { item in
-            LibraryItemRow(
+            let resumable = try store.loadSessions(itemId: item.id).first(where: Self.isResumableSession)
+            return LibraryItemRow(
                 id: item.id,
                 title: item.title,
                 status: libraryStatusLabel(for: item),
-                canDelete: true
+                canDelete: true,
+                hasResumableSession: resumable != nil,
+                resumeProgressPercent: resumable?.completionPercent
             )
         }
     }
@@ -4521,10 +4650,12 @@ final class Gate1AppModel: ObservableObject {
             return "This provider did not expose a public audio file that Spoken Margins can play yet."
         case "spotify_metadata_unavailable":
             return "Spotify did not return enough episode metadata to search for a public copy."
+        case "spotify_specific_episode_required":
+            return "Open the specific episode in Spotify, tap Share, and send its episode link. Show or podcast-page links do not identify one episode."
         case "spotify_episode_not_found_on_apple":
             return "I could not find a confident Apple Podcasts match for this Spotify episode. It may be Spotify-only."
         case "spotify_episode_match_ambiguous":
-            return "I found more than one Apple Podcasts episode with this title, so I did not risk importing the wrong one."
+            return "I found more than one Apple Podcasts episode with this title, so I did not risk importing the wrong one. Try sharing the specific Apple Podcasts episode or its RSS link."
         case "apple_episode_id_missing":
             return "That Apple Podcasts link did not identify a specific episode."
         case "apple_lookup_empty":
@@ -5584,7 +5715,7 @@ final class Gate1AppModel: ObservableObject {
 
     private func currentExportOptions() -> ExportOptions {
         ExportOptions(
-            sessionId: snapshot.sessionId,
+            sessionId: exportSessionId,
             includeFullText: exportIncludesSourceText,
             includeReference: exportIncludesReference,
             includeListeningMap: exportIncludesListeningMap,
@@ -6012,6 +6143,19 @@ final class Gate1AppModel: ObservableObject {
         let activeSessionId = snapshot.sessionId ?? sessions.first?.id
         let interjections = activeSessionId.flatMap { try? store.loadInterjections(sessionId: $0).filter { $0.status == "active" } } ?? []
         let turns = activeSessionId.flatMap { try? store.loadTurns(sessionId: $0) } ?? []
+        let sessionRows = sessions.map { session in
+            let notes = ((try? store.loadInterjections(sessionId: session.id)) ?? [])
+                .filter { $0.status == "active" }
+            return SessionPresentation(
+                session: session,
+                interjectionCount: notes.count,
+                interjectionPreview: notes.reversed().compactMap { note in
+                    let text = note.cleanedTranscript ?? note.transcript ?? note.displayText
+                    let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    return trimmed.isEmpty ? nil : String(trimmed.prefix(120))
+                }.first
+            )
+        }
         return ItemDetailState(
             id: item.id,
             title: item.title,
@@ -6021,6 +6165,7 @@ final class Gate1AppModel: ObservableObject {
             overview: map?.overview ?? "",
             chapters: map?.chapters ?? [],
             sessions: sessions,
+            sessionRows: sessionRows,
             interjections: interjections,
             turns: turns
         )

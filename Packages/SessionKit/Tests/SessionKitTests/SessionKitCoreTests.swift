@@ -369,7 +369,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.timeline.filter { $0.kind == "source_chapter" }.map(\.title), ["Opening", "Middle"])
     }
 
-    func testStopKeepsCompactSessionResumable() throws {
+    func testEndDetachesCompactSessionAndKeepsItResumable() throws {
         let surfaceProfile = RuntimeCapabilityProfile(
             id: "lock-screen-widget",
             displayName: "Lock Screen / Widget",
@@ -381,15 +381,20 @@ final class SessionKitCoreTests: XCTestCase {
             forbiddenCapabilities: ["record_audio", "summarize_interjections", "continue_discussion"]
         )
         let engine = try compactControlEngine()
-        _ = try engine.startSession(itemId: "item-pill")
+        let started = try engine.startSession(itemId: "item-pill")
+        let sessionID = try XCTUnwrap(started.sessionId)
         _ = try engine.endSession()
 
         let snapshot = CompactControlDispatcher(surfaceProfile: surfaceProfile, canonicalRuntime: engine).snapshot()
 
-        XCTAssertEqual(snapshot.phase, .itemPlayback)
-        XCTAssertEqual(snapshot.status, .paused)
-        XCTAssertTrue(snapshot.compactSurfaceReady)
-        XCTAssertTrue(snapshot.availableCommands.contains(.play))
+        XCTAssertEqual(snapshot.phase, .idle)
+        XCTAssertEqual(snapshot.status, .idle)
+        XCTAssertFalse(snapshot.compactSurfaceReady)
+        XCTAssertTrue(snapshot.availableCommands.isEmpty)
+
+        let restored = try engine.inspectSession(sessionId: sessionID)
+        XCTAssertEqual(restored.phase, .itemPlayback)
+        XCTAssertEqual(restored.status, .paused)
     }
 
     func testInspectNormalizesLegacyPrematureFinishedSession() throws {
@@ -1144,6 +1149,60 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(export.interjections.first?.mediaTimeMs, 123_000)
         XCTAssertTrue(markdown.contains("Media time: 2:03"))
         XCTAssertTrue(markdown.contains("Source Type: remote_stream"))
+    }
+
+    func testTwentyFiveMinuteMediaPositionSurvivesInterjectionDismissAndResume() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["native_media"],
+                "interjection": ["record_audio", "capture_media_anchor"]
+            ]
+        )
+        let item = Item(
+            id: "item-long-audio",
+            title: "Long Audio",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/long-episode",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(
+                sourceType: .remoteStream,
+                url: "https://cdn.example.com/long-episode.mp3",
+                durationMs: 3_600_000
+            )
+        )
+        let audio = RecordingAudioClient()
+        let repository = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repository, audio: audio)
+
+        let started = try engine.startSession(itemId: item.id)
+        let sessionID = try XCTUnwrap(started.sessionId)
+        audio.currentMediaTimeValue = 1_500_000
+        _ = try engine.pause()
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: "interjections/at-25-minutes.m4a")
+
+        let detached = try engine.endSession()
+        let persisted = try XCTUnwrap(try repository.loadSession(id: sessionID))
+        let interjection = try XCTUnwrap(try repository.loadInterjections(sessionId: sessionID).first)
+
+        XCTAssertEqual(detached.status, .idle)
+        XCTAssertNil(detached.sessionId)
+        XCTAssertEqual(persisted.position.mediaTimeMs, 1_500_000)
+        XCTAssertEqual(persisted.status, "in_progress")
+        XCTAssertEqual(interjection.anchor.mediaTimeMs, 1_500_000)
+
+        let restored = try engine.inspectSession(sessionId: sessionID)
+        XCTAssertEqual(restored.status, .paused)
+        XCTAssertEqual(restored.currentMediaTimeMs, 1_500_000)
+
+        let resumed = try engine.resumePlayback()
+        XCTAssertEqual(resumed.status, .playing)
+        XCTAssertEqual(audio.playedOffsets.last, 1_500_000)
     }
 
     func testSourceWindowContextUpdatesMediaInterjectionAnchorWithoutChangingNoteTranscript() throws {

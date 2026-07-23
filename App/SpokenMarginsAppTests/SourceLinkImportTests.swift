@@ -381,9 +381,13 @@ final class SourceLinkImportTests: XCTestCase {
 
         XCTAssertEqual(model.diagnostics["lastSourceLinkPayloadCleanup"], "queued:\(handoff.id)")
         XCTAssertTrue(model.diagnostics["pendingSourceLinkPayload:\(handoff.id)"]?.hasPrefix("quarantined:") == true)
+        XCTAssertEqual(model.diagnostics["lastSourceLinkFailureCategory"], "spotify_audio_requires_provider_playback")
         XCTAssertNil(model.lastError)
         XCTAssertThrowsError(try store.handoff(payloadID: handoff.id))
-        XCTAssertEqual(try store.failedHandoffs().first?.handoff, handoff)
+        let failed = try XCTUnwrap(store.failedHandoffs().first)
+        XCTAssertEqual(failed.handoff, handoff)
+        XCTAssertTrue(failed.reason.contains("could not find a public audio file"))
+        XCTAssertFalse(failed.reason.contains("open.spotify.com"))
         XCTAssertEqual(model.importInbox.first?.payloadID, handoff.id)
     }
 
@@ -810,6 +814,24 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(result.status, .needsReview)
         XCTAssertEqual(result.candidates.first?.title, "Spotify Episode")
         XCTAssertEqual(result.failureReason, "spotify_episode_not_found_on_apple")
+    }
+
+    func testPublicResolverRequiresASpecificSpotifyEpisodeLink() throws {
+        let request = LinkResolutionRequest(
+            id: "request-spotify-show",
+            inputURL: "https://open.spotify.com/show/show123",
+            sourceSurface: "share_extension",
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+
+        let result = try PublicPodcastLinkResolver(fetch: { _ in
+            XCTFail("A Spotify show link should be rejected before network resolution")
+            return Data()
+        }).resolve(request)
+
+        XCTAssertEqual(result.status, .needsReview)
+        XCTAssertEqual(result.originalLink.provider, "spotify")
+        XCTAssertEqual(result.failureReason, "spotify_specific_episode_required")
     }
 
     func testPublicResolverNormalizesSpotifyEpisodeToExactAppleMatch() throws {

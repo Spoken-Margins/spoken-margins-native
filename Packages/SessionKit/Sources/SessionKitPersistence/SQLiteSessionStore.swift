@@ -3,7 +3,7 @@ import SessionKit
 import SQLite3
 
 public final class SQLiteSessionStore: SessionRepository {
-    public static let currentSchemaVersion = 2
+    public static let currentSchemaVersion = 3
     private var db: OpaquePointer?
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
@@ -31,7 +31,7 @@ public final class SQLiteSessionStore: SessionRepository {
         );
         """)
         let existingVersion = try metadataValue(forKey: "schema_version").flatMap(Int.init)
-        guard existingVersion == nil || existingVersion == 1 || existingVersion == Self.currentSchemaVersion else {
+        guard existingVersion.map({ [1, 2, Self.currentSchemaVersion].contains($0) }) ?? true else {
             throw SessionKitError.persistenceFailed("unsupported_schema_version:\(existingVersion ?? -1)")
         }
         try execute("""
@@ -57,6 +57,9 @@ public final class SQLiteSessionStore: SessionRepository {
         """)
         try execute("CREATE INDEX IF NOT EXISTS records_session_idx ON records(kind, session_id);")
         try execute("CREATE INDEX IF NOT EXISTS records_item_idx ON records(kind, item_id);")
+        if existingVersion == 1 || existingVersion == 2 {
+            try migrateSessionTimestamps()
+        }
         try setMetadataValue("\(Self.currentSchemaVersion)", forKey: "schema_version")
     }
 
@@ -108,7 +111,16 @@ public final class SQLiteSessionStore: SessionRepository {
     }
 
     public func loadSessions(itemId: String) throws -> [Session] {
-        try loadByItem(kind: "session", itemId: itemId)
+        let sessions: [Session] = try loadByItem(kind: "session", itemId: itemId)
+        return sessions.sorted(by: Self.isNewerSession)
+    }
+
+    public func loadSessions() throws -> [Session] {
+        let sessions: [Session] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at DESC, id DESC;",
+            ["session"]
+        )
+        return sessions.sorted(by: Self.isNewerSession)
     }
 
     public func saveInterjection(_ interjection: Interjection) throws {
@@ -388,6 +400,78 @@ public final class SQLiteSessionStore: SessionRepository {
             }
         }
         return decoded
+    }
+
+    private static func isNewerSession(_ lhs: Session, _ rhs: Session) -> Bool {
+        let lhsDate = lhs.updatedAt ?? lhs.createdAt ?? .distantPast
+        let rhsDate = rhs.updatedAt ?? rhs.createdAt ?? .distantPast
+        return lhsDate == rhsDate ? lhs.id > rhs.id : lhsDate > rhsDate
+    }
+
+    private func migrateSessionTimestamps() throws {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(
+            db,
+            "SELECT id, payload, updated_at FROM records WHERE kind = 'session';",
+            -1,
+            &statement,
+            nil
+        ) == SQLITE_OK else {
+            throw SessionKitError.persistenceFailed("prepare_session_timestamp_migration")
+        }
+        var updates: [(id: String, payload: String)] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let rawID = sqlite3_column_text(statement, 0),
+                  let rawPayload = sqlite3_column_text(statement, 1),
+                  let rawUpdatedAt = sqlite3_column_text(statement, 2),
+                  let data = String(cString: rawPayload).data(using: .utf8),
+                  var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                continue
+            }
+            let id = String(cString: rawID)
+            let timestamp = Self.iso8601Timestamp(fromSQLite: String(cString: rawUpdatedAt))
+            if object["createdAt"] == nil { object["createdAt"] = timestamp }
+            if object["updatedAt"] == nil { object["updatedAt"] = timestamp }
+            if object["completedAt"] == nil {
+                object["completedAt"] = object["status"] as? String == "finished" ? timestamp : NSNull()
+            }
+            guard let migrated = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+                  let payload = String(data: migrated, encoding: .utf8) else { continue }
+            updates.append((id, payload))
+        }
+        sqlite3_finalize(statement)
+        statement = nil
+
+        try withTransaction {
+            for update in updates {
+                var updateStatement: OpaquePointer?
+                guard sqlite3_prepare_v2(
+                    db,
+                    "UPDATE records SET payload = ? WHERE kind = 'session' AND id = ?;",
+                    -1,
+                    &updateStatement,
+                    nil
+                ) == SQLITE_OK else {
+                    throw SessionKitError.persistenceFailed("prepare_session_timestamp_update")
+                }
+                bind(updateStatement, index: 1, value: update.payload)
+                bind(updateStatement, index: 2, value: update.id)
+                let result = sqlite3_step(updateStatement)
+                sqlite3_finalize(updateStatement)
+                guard result == SQLITE_DONE else {
+                    throw SessionKitError.persistenceFailed("step_session_timestamp_update")
+                }
+            }
+        }
+    }
+
+    private static func iso8601Timestamp(fromSQLite value: String) -> String {
+        let parser = DateFormatter()
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        parser.timeZone = TimeZone(secondsFromGMT: 0)
+        parser.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        guard let date = parser.date(from: value) else { return value }
+        return ISO8601DateFormatter().string(from: date)
     }
 
     public static func schemaVersion(atPath path: String) -> Int? {

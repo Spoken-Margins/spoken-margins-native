@@ -197,6 +197,7 @@ A session is one listening pass over an item.
   "id": "session-001",
   "itemId": "item-001",
   "createdAt": "2026-06-11T12:15:00Z",
+  "updatedAt": "2026-06-11T12:45:00Z",
   "completedAt": null,
   "currentChunkIndex": 18,
   "completionPercent": 27,

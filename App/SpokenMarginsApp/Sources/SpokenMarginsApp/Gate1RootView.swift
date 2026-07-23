@@ -60,6 +60,16 @@ struct Gate1RootView: View {
                 .environmentObject(model)
                 .interactiveDismissDisabled()
         }
+        .sheet(isPresented: $model.isHelpPresented) {
+            HelpScreen()
+                .environmentObject(model)
+        }
+        .alert("AI Setup Needed", isPresented: $model.isAISetupNeededPresented) {
+            Button("Open AI Settings", action: model.openAISettingsFromSummaryPrompt)
+            Button("Not Now", role: .cancel) {}
+        } message: {
+            Text("Summarize Notes uses your OpenAI API key to turn this session’s interjections into a spoken debrief. Your session and saved position have not changed.")
+        }
     }
 }
 
@@ -164,6 +174,42 @@ private struct AIDataSharingConsentView: View {
     }
 }
 
+private struct HelpScreen: View {
+    @EnvironmentObject private var model: Gate1AppModel
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Listening Sessions") {
+                    Text("Continue Listening resumes your most recent unfinished session. Start New Session creates a separate listening pass with its own notes.")
+                    Text("The X in the mini-player saves your place, stops playback, and hides the mini-player. It does not delete the session.")
+                }
+                Section("Interjections") {
+                    Text("Tap Interject, speak your note, then tap Done. The note stays attached to the session and the point you were hearing.")
+                }
+                Section("Summarize Notes") {
+                    Text("Summarize Notes uses your configured OpenAI API key to turn the current session’s interjections into a spoken debrief. Playback and recording work without an API key.")
+                }
+                Section("Podcast Links") {
+                    Text("For Spotify, open the specific episode, tap Share, and send the episode link. A show or podcast-page link does not identify one episode.")
+                }
+                Section("Share and Export") {
+                    Text("Choose the listening session, format, and included material. Share Session opens the iOS share sheet; Copy puts the generated Markdown or JSON on the clipboard.")
+                }
+            }
+            .navigationTitle("Help")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { model.isHelpPresented = false }
+                        .accessibilityIdentifier("help.done.button")
+                }
+            }
+            .accessibilityIdentifier("help.screen")
+        }
+    }
+}
+
 private struct MiniPlayerBar: View {
     @EnvironmentObject private var model: Gate1AppModel
 
@@ -195,11 +241,33 @@ private struct MiniPlayerBar: View {
             if model.snapshot.isRecording {
                 Button(action: model.finishInterjection) {
                     Image(systemName: "checkmark")
-                        .frame(width: 42, height: 42)
+                        .frame(width: 44, height: 44)
                 }
                 .buttonStyle(IconButtonStyle())
                 .accessibilityLabel("Finish interjection")
+                .accessibilityIdentifier("miniPlayer.interjection.done")
+                Button(action: model.cancelInterjection) {
+                    Image(systemName: "xmark")
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(IconButtonStyle())
+                .accessibilityLabel("Cancel interjection")
+                .accessibilityIdentifier("miniPlayer.interjection.cancel")
             } else {
+                Button(action: model.dismissMiniPlayer) {
+                    Image(systemName: "xmark")
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(IconButtonStyle())
+                .accessibilityLabel("Close and save listening session")
+                .accessibilityIdentifier("miniPlayer.close.button")
+                Button(action: model.beginInterjection) {
+                    Image(systemName: "mic.fill")
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(IconButtonStyle())
+                .accessibilityLabel("Record an interjection")
+                .accessibilityIdentifier("miniPlayer.interject.button")
                 Button(action: model.playPause) {
                     Group {
                         if model.snapshot.status == .starting {
@@ -208,7 +276,7 @@ private struct MiniPlayerBar: View {
                             Image(systemName: model.snapshot.status.isPlaybackActive ? "pause.fill" : "play.fill")
                         }
                     }
-                    .frame(width: 42, height: 42)
+                    .frame(width: 44, height: 44)
                 }
                 .buttonStyle(IconButtonStyle())
                 .accessibilityLabel(model.snapshot.status.isPlaybackActive ? "Pause" : "Play")
@@ -223,6 +291,7 @@ private struct MiniPlayerBar: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AppColors.border))
         .shadow(color: .black.opacity(0.12), radius: 12, y: 5)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("miniPlayer.bar")
     }
 }
@@ -321,11 +390,18 @@ private struct HomeScreen: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button(action: model.openSettings) {
-                        Image(systemName: "gearshape")
+                    HStack {
+                        Button(action: model.openSettings) {
+                            Image(systemName: "gearshape")
+                        }
+                        .accessibilityLabel("Settings")
+                        .accessibilityIdentifier("home.settings.button")
+                        Button(action: model.openHelp) {
+                            Image(systemName: "questionmark.circle")
+                        }
+                        .accessibilityLabel("Help")
+                        .accessibilityIdentifier("home.help.button")
                     }
-                    .accessibilityLabel("Settings")
-                    .accessibilityIdentifier("home.settings.button")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -685,6 +761,11 @@ private struct HomeScreen: View {
                                     Text(item.status)
                                         .font(.subheadline)
                                         .foregroundStyle(AppColors.secondaryText)
+                                    if item.hasResumableSession, let progress = item.resumeProgressPercent {
+                                        Text("Continue at \(progress)%")
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(AppColors.green)
+                                    }
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             }
@@ -698,7 +779,7 @@ private struct HomeScreen: View {
                                     .frame(width: 42, height: 42)
                             }
                             .buttonStyle(IconButtonStyle())
-                            .accessibilityLabel("Start \(item.title)")
+                            .accessibilityLabel(item.hasResumableSession ? "Continue \(item.title)" : "Start \(item.title)")
                             .accessibilityIdentifier("queue.start.\(item.id)")
 
                             if item.canDelete {
@@ -724,6 +805,7 @@ private struct ItemScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @State private var showsManualListeningMapEditor = false
     @State private var isTrashConfirmationPresented = false
+    @State private var isStartNewConfirmationPresented = false
 
     var body: some View {
         NavigationStack {
@@ -936,36 +1018,68 @@ private struct ItemScreen: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Sessions")
                 .font(.headline)
-            if model.selectedItem.sessions.isEmpty {
+            if model.selectedItem.sessionRows.isEmpty {
                 ProductPanel {
                     Text("No sessions yet.")
                         .foregroundStyle(AppColors.secondaryText)
                 }
             } else {
-                ForEach(model.selectedItem.sessions, id: \.id) { session in
+                ForEach(Array(model.selectedItem.sessionRows.enumerated()), id: \.element.id) { index, row in
+                    let session = row.session
                     ProductPanel {
-                        HStack {
+                        HStack(alignment: .top, spacing: 12) {
                             Button {
                                 model.openSession(session)
                             } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(humanizedItemStatus(session.status))
-                                        .font(.headline)
-                                    Text("\(session.completionPercent)% complete")
+                                VStack(alignment: .leading, spacing: 5) {
+                                    HStack(spacing: 6) {
+                                        Text(sessionDateDescription(session))
+                                            .font(.headline)
+                                        if model.snapshot.sessionId == session.id {
+                                            Text("CURRENT")
+                                                .font(.caption2.bold())
+                                                .foregroundStyle(AppColors.green)
+                                        } else if index == 0 {
+                                            Text("MOST RECENT")
+                                                .font(.caption2.bold())
+                                                .foregroundStyle(AppColors.secondaryText)
+                                        }
+                                    }
+                                    Text(sessionProgressDescription(session))
                                         .font(.subheadline)
                                         .foregroundStyle(AppColors.secondaryText)
+                                    Text("\(row.interjectionCount) \(row.interjectionCount == 1 ? "interjection" : "interjections") · \(humanizedItemStatus(session.status))")
+                                        .font(.caption)
+                                        .foregroundStyle(AppColors.secondaryText)
+                                    if let preview = row.interjectionPreview {
+                                        Text(preview)
+                                            .font(.caption)
+                                            .foregroundStyle(AppColors.secondaryText)
+                                            .lineLimit(2)
+                                    }
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .buttonStyle(.plain)
                             .accessibilityIdentifier("session.inspect.\(session.id)")
 
-                            Button {
-                                model.resumeSession(session)
-                            } label: {
-                                Label("Resume", systemImage: "play")
+                            VStack(spacing: 8) {
+                                Button {
+                                    model.resumeSession(session)
+                                } label: {
+                                    Label(session.completionPercent >= 100 ? "Open" : "Resume", systemImage: "play")
+                                }
+                                .buttonStyle(SecondaryButtonStyle())
+                                Button {
+                                    model.openExport(sessionId: session.id)
+                                } label: {
+                                    Image(systemName: "square.and.arrow.up")
+                                        .frame(width: 42, height: 42)
+                                }
+                                .buttonStyle(IconButtonStyle())
+                                .accessibilityLabel("Share this session")
+                                .accessibilityIdentifier("session.export.\(session.id)")
                             }
-                            .buttonStyle(SecondaryButtonStyle())
                         }
                     }
                     .accessibilityIdentifier("session.row.\(session.id)")
@@ -979,10 +1093,31 @@ private struct ItemScreen: View {
             Button {
                 model.startItem(id: model.selectedItem.id)
             } label: {
-                Label("Start Listening", systemImage: "play.fill")
+                Label(model.selectedItemLatestResumableSession == nil ? "Start Listening" : "Continue Listening", systemImage: "play.fill")
             }
             .buttonStyle(PrimaryButtonStyle())
             .accessibilityIdentifier("item.start.button")
+            if model.selectedItemLatestResumableSession != nil {
+                Button {
+                    isStartNewConfirmationPresented = true
+                } label: {
+                    Label("Start New Session", systemImage: "plus.circle")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .accessibilityIdentifier("item.startNew.button")
+                .confirmationDialog(
+                    "Start a separate listening session?",
+                    isPresented: $isStartNewConfirmationPresented,
+                    titleVisibility: .visible
+                ) {
+                    Button("Start New Session") {
+                        model.startNewSession(id: model.selectedItem.id)
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Your unfinished session and its interjections will remain available to resume.")
+                }
+            }
             Button(action: model.openExport) {
                 Label("Export", systemImage: "square.and.arrow.up")
             }
@@ -1046,6 +1181,11 @@ private struct PlaybackScreen: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack {
+                        Button(action: model.openHelp) {
+                            Image(systemName: "questionmark.circle")
+                        }
+                        .accessibilityLabel("Help")
+                        .accessibilityIdentifier("playback.help.button")
                         if model.snapshot.isRecording {
                             Button(action: model.finishInterjection) {
                                 Image(systemName: "checkmark")
@@ -1136,6 +1276,13 @@ private struct PlaybackScreen: View {
                 .font(.subheadline)
                 .foregroundStyle(AppColors.watchSecondary)
                 .accessibilityIdentifier("playback.progress.label")
+            if let sessionID = model.snapshot.sessionId,
+               let row = model.selectedItem.sessionRows.first(where: { $0.id == sessionID }) {
+                Text("Session \(sessionDateDescription(row.session)) · \(row.interjectionCount) \(row.interjectionCount == 1 ? "interjection" : "interjections")")
+                    .font(.caption)
+                    .foregroundStyle(AppColors.watchSecondary)
+                    .accessibilityIdentifier("playback.session.identity")
+            }
             if let downloadStatus = model.selectedPodcastDownloadDescription {
                 HStack(spacing: 8) {
                     Image(systemName: model.selectedPodcastDownloadState == .availableOffline ? "arrow.down.circle.fill" : "antenna.radiowaves.left.and.right")
@@ -1314,10 +1461,15 @@ private struct PlaybackScreen: View {
             VStack(spacing: 10) {
                 HStack(spacing: 10) {
                     Button(action: model.summarize) {
-                        Group {
-                            if model.isSummarizingInterjections { ProgressView() } else { Image(systemName: "sparkles") }
+                        HStack(spacing: 6) {
+                            if model.isSummarizingInterjections {
+                                ProgressView()
+                            } else {
+                                Image(systemName: "sparkles")
+                            }
+                            Text(model.isSummarizingInterjections ? "Summarizing" : "Summarize Notes")
                         }
-                        .frame(width: 44, height: 52)
+                        .frame(maxWidth: .infinity, minHeight: 52)
                     }
                     .buttonStyle(WatchSecondaryButtonStyle())
                     .disabled(!model.canSummarizeInterjections || model.isSummarizingInterjections)
@@ -1330,6 +1482,11 @@ private struct PlaybackScreen: View {
                     .disabled(!model.hasActiveSession)
                     .accessibilityIdentifier("playback.interject.button")
                 }
+                Text("Uses AI to turn this session’s interjections into a spoken debrief. Playback and recording do not require an API key.")
+                    .font(.caption)
+                    .foregroundStyle(AppColors.watchSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("playback.summary.description")
                 Button {
                     followUpFocused = false
                     model.discuss(followUp: followUp)
@@ -1842,6 +1999,10 @@ private struct SettingsScreen: View {
                     }
                 }
                 Section("Support & Privacy") {
+                    Button(action: model.openHelp) {
+                        Label("How Spoken Margins Works", systemImage: "questionmark.circle")
+                    }
+                    .accessibilityIdentifier("settings.help.button")
                     Link("Privacy Policy", destination: AppLinks.privacy)
                     Link("Support", destination: AppLinks.support)
                     NavigationLink("Legal · On-Device Voice") {
@@ -1946,16 +2107,36 @@ private struct ExportScreen: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("Export")
+                    Text("Share Session")
                         .font(.largeTitle.bold())
+                    Text("Choose one listening session, then share or copy a session-isolated handoff. Changes below update the preview automatically.")
+                        .foregroundStyle(AppColors.secondaryText)
                     ProductPanel {
                         VStack(alignment: .leading, spacing: 14) {
+                            Picker(
+                                "Listening Session",
+                                selection: Binding(
+                                    get: { model.exportSessionId ?? "" },
+                                    set: {
+                                        model.exportSessionId = $0.isEmpty ? nil : $0
+                                        model.exportOptionsChanged()
+                                    }
+                                )
+                            ) {
+                                ForEach(model.selectedItem.sessionRows) { row in
+                                    Text("\(sessionDateDescription(row.session)) · \(sessionProgressDescription(row.session)) · \(row.interjectionCount) notes")
+                                        .tag(row.id)
+                                }
+                            }
+                            .accessibilityIdentifier("export.session.picker")
+
                             Picker("Format", selection: $model.exportFormat) {
                                 Text("AI Handoff Markdown").tag("markdown")
                                 Text("Full JSON Archive").tag("json")
                             }
                             .pickerStyle(.segmented)
                             .accessibilityIdentifier("export.format.picker")
+                            .onChange(of: model.exportFormat) { _, _ in model.exportOptionsChanged() }
 
                             Picker("Scope", selection: $model.exportScope) {
                                 Text("Original").tag("original")
@@ -1964,28 +2145,33 @@ private struct ExportScreen: View {
                             }
                             .pickerStyle(.segmented)
                             .accessibilityIdentifier("export.scope.picker")
+                            .onChange(of: model.exportScope) { _, _ in model.exportOptionsChanged() }
 
                             Toggle("Source Text", isOn: $model.exportIncludesSourceText)
                                 .accessibilityIdentifier("export.includeSourceText.toggle")
+                                .onChange(of: model.exportIncludesSourceText) { _, _ in model.exportOptionsChanged() }
                             Toggle("Reference", isOn: $model.exportIncludesReference)
                                 .accessibilityIdentifier("export.includeReference.toggle")
+                                .onChange(of: model.exportIncludesReference) { _, _ in model.exportOptionsChanged() }
                             Toggle("Listening Map", isOn: $model.exportIncludesListeningMap)
                                 .accessibilityIdentifier("export.includeListeningMap.toggle")
+                                .onChange(of: model.exportIncludesListeningMap) { _, _ in model.exportOptionsChanged() }
                             Toggle("Interjections", isOn: $model.exportIncludesInterjections)
                                 .accessibilityIdentifier("export.includeInterjections.toggle")
+                                .onChange(of: model.exportIncludesInterjections) { _, _ in model.exportOptionsChanged() }
                             Toggle("AI Turns", isOn: $model.exportIncludesTurns)
                                 .accessibilityIdentifier("export.includeTurns.toggle")
+                                .onChange(of: model.exportIncludesTurns) { _, _ in model.exportOptionsChanged() }
                         }
                     }
                     VStack(alignment: .leading, spacing: 12) {
-                        Button {
-                            model.buildExport()
-                        } label: {
-                            Label("Build Export", systemImage: "doc.text")
-                        }
+                        if !model.exportPreview.isEmpty {
+                            ShareLink(item: model.exportPreview) {
+                                Label("Share Session", systemImage: "square.and.arrow.up")
+                            }
                             .buttonStyle(PrimaryButtonStyle())
-                            .disabled(!model.hasActiveSession)
-                            .accessibilityIdentifier("export.build.button")
+                            .accessibilityIdentifier("export.share.button")
+                        }
                         Button {
                             model.copyPlainTextExport()
                         } label: {
@@ -1994,13 +2180,6 @@ private struct ExportScreen: View {
                             .buttonStyle(SecondaryButtonStyle())
                             .disabled(model.exportPreview.isEmpty)
                             .accessibilityIdentifier("export.copyPlainText.button")
-                        if !model.exportPreview.isEmpty {
-                            ShareLink(item: model.exportPreview) {
-                                Label("Share", systemImage: "square.and.arrow.up")
-                            }
-                            .buttonStyle(SecondaryButtonStyle())
-                            .accessibilityIdentifier("export.share.button")
-                        }
                         Button("Item", action: { model.openItem(id: model.selectedItem.id) })
                             .buttonStyle(SecondaryButtonStyle())
                             .accessibilityIdentifier("export.item.button")
@@ -2149,6 +2328,10 @@ private struct InterjectionDetailView: View {
         NavigationStack {
             List {
                 Section("Context") {
+                    if let session = model.selectedItem.sessions.first(where: { $0.id == current.sessionId }) {
+                        LabeledContent("Listening session", value: sessionDateDescription(session))
+                        LabeledContent("Session position", value: sessionProgressDescription(session))
+                    }
                     LabeledContent("Attached to", value: interjectionTargetLabel(current))
                     LabeledContent("Position", value: "Around \(current.roughPercent)%")
                     if current.transcriptionStatus != "complete" {
@@ -2467,6 +2650,18 @@ private func formatPlaybackTime(_ milliseconds: Int) -> String {
         return String(format: "%d:%02d:%02d", hours, minutes, seconds)
     }
     return String(format: "%d:%02d", minutes, seconds)
+}
+
+private func sessionDateDescription(_ session: Session) -> String {
+    guard let date = session.createdAt ?? session.updatedAt else { return "Older session" }
+    return date.formatted(date: .abbreviated, time: .shortened)
+}
+
+private func sessionProgressDescription(_ session: Session) -> String {
+    if let mediaTimeMs = session.position.mediaTimeMs, mediaTimeMs > 0 {
+        return "\(formatPlaybackTime(mediaTimeMs)) · \(session.completionPercent)% complete"
+    }
+    return "\(session.completionPercent)% complete"
 }
 
 private enum AppLinks {

@@ -33,6 +33,9 @@ final class Gate1FlowUITests: XCTestCase {
         app.buttons["export.home.button"].tap()
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 4))
         XCTAssertTrue(element("miniPlayer.bar").waitForExistence(timeout: 4))
+        XCTAssertTrue(element("miniPlayer.close.button").exists)
+        XCTAssertTrue(element("miniPlayer.interject.button").exists)
+        XCTAssertTrue(element("miniPlayer.playPause.button").exists)
         app.buttons["home.settings.button"].tap()
 
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 4))
@@ -97,8 +100,15 @@ final class Gate1FlowUITests: XCTestCase {
 
         app.buttons["export.home.button"].tap()
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 4))
-        XCTAssertTrue(seededStart.waitForExistence(timeout: 4))
-        seededStart.tap()
+        let seededItem = app.buttons["queue.row.item-pill"]
+        XCTAssertTrue(seededItem.waitForExistence(timeout: 4))
+        seededItem.tap()
+        XCTAssertTrue(element("item.screen").waitForExistence(timeout: 4))
+        let startNew = scrollToElement("item.startNew.button")
+        startNew.tap()
+        let confirmStartNew = app.sheets.buttons["Start New Session"].firstMatch
+        XCTAssertTrue(confirmStartNew.waitForExistence(timeout: 4))
+        confirmStartNew.tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 4))
         app.buttons["playback.export.button"].tap()
         XCTAssertTrue(element("export.screen").waitForExistence(timeout: 4))

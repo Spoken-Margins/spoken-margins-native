@@ -111,7 +111,7 @@
     },
     {
       "id": "endSession",
-      "description": "End the active session.",
+      "description": "Checkpoint, stop, and detach the active session while preserving unfinished work for resume.",
       "status": "implemented",
       "backendCommand": "SessionEngine.endSession"
     },

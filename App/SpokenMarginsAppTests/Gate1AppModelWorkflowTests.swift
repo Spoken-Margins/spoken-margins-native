@@ -124,9 +124,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         model.endSession()
 
-        XCTAssertEqual(model.snapshot.sessionId, sessionId)
-        XCTAssertEqual(model.snapshot.phase, .itemPlayback)
-        XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertNil(model.snapshot.sessionId)
+        XCTAssertEqual(model.snapshot.phase, .idle)
+        XCTAssertEqual(model.snapshot.status, .idle)
+        XCTAssertFalse(model.shouldShowMiniPlayer)
         let saved = model.selectedItem.sessions.first(where: { $0.id == sessionId })
         XCTAssertEqual(saved?.status, "in_progress")
         XCTAssertLessThan(saved?.completionPercent ?? 100, 100)
@@ -135,6 +136,67 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         }
         XCTAssertEqual(model.snapshot.sessionId, sessionId)
         XCTAssertEqual(model.snapshot.status, .playing)
+    }
+
+    func testHomePlayResumesLatestSessionWithoutCreatingAnother() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.pause()
+        let sessionID = try XCTUnwrap(model.snapshot.sessionId)
+        let countBefore = model.selectedItem.sessions.count
+
+        model.openHome()
+        model.startItem(id: "item-pill")
+
+        XCTAssertEqual(model.snapshot.sessionId, sessionID)
+        XCTAssertEqual(model.selectedItem.sessions.count, countBefore)
+        XCTAssertEqual(model.snapshot.status, .playing)
+    }
+
+    func testExplicitStartNewSessionCreatesOneAdditionalSession() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let firstSessionID = try XCTUnwrap(model.snapshot.sessionId)
+
+        model.startNewSession(id: "item-pill")
+
+        XCTAssertNotEqual(model.snapshot.sessionId, firstSessionID)
+        XCTAssertEqual(model.selectedItem.sessions.count, 2)
+    }
+
+    func testMissingAPIKeySummaryPreflightDoesNotMutateSession() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.pause()
+        model.providerAPIKey = ""
+        let snapshotBefore = model.snapshot
+        let turnsBefore = model.selectedItem.turns
+
+        model.summarize()
+
+        XCTAssertTrue(model.isAISetupNeededPresented)
+        XCTAssertEqual(model.snapshot, snapshotBefore)
+        XCTAssertEqual(model.selectedItem.turns, turnsBefore)
+        XCTAssertEqual(model.diagnostics["summaryPreflight"], "api_key_missing")
+    }
+
+    func testBootstrapRestoresNewestUnfinishedSessionPausedWithoutAutoplay() throws {
+        let firstModel = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        firstModel.resetAndSeed()
+        firstModel.startItem(id: "item-pill")
+        firstModel.pause()
+        let sessionID = try XCTUnwrap(firstModel.snapshot.sessionId)
+
+        let relaunchedModel = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        relaunchedModel.bootstrapLibraryIfNeeded()
+
+        XCTAssertEqual(relaunchedModel.snapshot.sessionId, sessionID)
+        XCTAssertEqual(relaunchedModel.snapshot.status, .paused)
+        XCTAssertTrue(relaunchedModel.shouldShowMiniPlayer)
+        XCTAssertEqual(relaunchedModel.diagnostics["restoredSessionMode"], "paused_without_autoplay")
     }
 
     func testTextImportStartsLiveSpeechWhenPreparedRenderingIsUnavailable() {

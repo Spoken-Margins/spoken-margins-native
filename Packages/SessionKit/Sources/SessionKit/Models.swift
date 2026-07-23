@@ -981,6 +981,10 @@ public struct AIJob: Codable, Equatable, Sendable {
 public struct Session: Codable, Equatable, Sendable {
     public var id: String
     public var itemId: String
+    /// Optional only so session payloads written by pre-timestamp builds remain decodable.
+    public var createdAt: Date? = nil
+    public var updatedAt: Date? = nil
+    public var completedAt: Date? = nil
     public var status: String
     public var phase: SessionPhase
     public var currentTargetType: TargetType

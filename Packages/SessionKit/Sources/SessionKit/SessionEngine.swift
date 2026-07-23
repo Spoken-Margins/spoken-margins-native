@@ -85,9 +85,13 @@ public final class SessionEngine {
         item = try prepareGeneratedTextAudioIfAvailable(for: item)
         currentItem = item
         let targetType = playbackTargetType(for: item)
+        let startedAt = now()
         let session = Session(
             id: nextSessionId(itemId: itemId),
             itemId: itemId,
+            createdAt: startedAt,
+            updatedAt: startedAt,
+            completedAt: nil,
             status: "in_progress",
             phase: .itemPlayback,
             currentTargetType: targetType,
@@ -97,7 +101,7 @@ public final class SessionEngine {
             playbackRate: 1
         )
         currentSession = session
-        try repository.saveSession(session)
+        try persistSession(session)
         try playCurrentTarget(session)
         publishPlaybackStart(for: session, phase: .itemPlayback)
         return snapshot
@@ -201,7 +205,7 @@ public final class SessionEngine {
             session = syncMediaPositionFromAudio(session)
         }
         currentSession = session
-        try repository.saveSession(session)
+        try persistSession(session)
         try audio.pause()
         publish(status: .paused, phase: session.phase)
         return snapshot
@@ -226,7 +230,7 @@ public final class SessionEngine {
         }
         session = try syncCurrentPositionFromAudio(session)
         currentSession = session
-        try repository.saveSession(session)
+        try persistSession(session)
         if snapshot.status.isPlaybackActive {
             try playCurrentTarget(session)
         }
@@ -266,7 +270,7 @@ public final class SessionEngine {
         }
         session = try syncCurrentPositionFromAudio(session)
         currentSession = session
-        try repository.saveSession(session)
+        try persistSession(session)
         if snapshot.status.isPlaybackActive {
             try playCurrentTarget(session)
             publishPlaybackContinuation(for: session)
@@ -283,7 +287,7 @@ public final class SessionEngine {
         }
         session = try syncCurrentPositionFromAudio(session)
         currentSession = session
-        try repository.saveSession(session)
+        try persistSession(session)
         try audio.stop()
         publish(status: .paused, phase: session.phase)
         return snapshot
@@ -314,7 +318,7 @@ public final class SessionEngine {
                     || updated.status != session.status {
                     session = updated
                     currentSession = session
-                    try repository.saveSession(session)
+                    try persistSession(session)
                 }
                 snapshot.lastFailure = "playback_start_failed:\(message)"
                 publish(status: .failed, phase: session.phase)
@@ -328,7 +332,7 @@ public final class SessionEngine {
                     || updated.status != session.status {
                     session = updated
                     currentSession = session
-                    try repository.saveSession(session)
+                    try persistSession(session)
                 }
                 snapshot.lastFailure = "playback_failed:\(message)"
                 publish(status: .failed, phase: session.phase)
@@ -344,7 +348,7 @@ public final class SessionEngine {
             || updated.status != session.status {
             session = updated
             currentSession = session
-            try repository.saveSession(session)
+            try persistSession(session)
         }
         let reconciledStatus: PlaybackStatus
         if playbackCompleted || (snapshot.status == .playing && transportState == .paused) {
@@ -380,7 +384,7 @@ public final class SessionEngine {
             if let session = currentSession, session.itemId == item.id {
                 currentSession = syncMediaPositionFromAudio(session)
                 if let currentSession {
-                    try repository.saveSession(currentSession)
+                    try persistSession(currentSession)
                 }
                 publish(status: snapshot.status, phase: currentSession?.phase ?? snapshot.phase)
             } else {
@@ -410,7 +414,7 @@ public final class SessionEngine {
                     // the user's current narration cadence.
                     let synchronized = syncSessionPositionFromAudio(session, item: updated)
                     currentSession = synchronized
-                    try repository.saveSession(synchronized)
+                    try persistSession(synchronized)
                     publish(status: snapshot.status, phase: synchronized.phase)
                 } else if session.currentTargetType == .transcriptBackedMedia,
                           item.media?.sourceType == .generatedTTSPrerendered,
@@ -426,7 +430,7 @@ public final class SessionEngine {
                     migrated.currentTargetId = replacementTargetId
                     migrated = mediaSession(migrated, movedTo: mediaTimeMs)
                     currentSession = migrated
-                    try repository.saveSession(migrated)
+                    try persistSession(migrated)
                     if snapshot.status.isPlaybackActive {
                         try playCurrentTarget(migrated)
                     }
@@ -453,7 +457,7 @@ public final class SessionEngine {
         }
         let updated = mediaSession(session, movedTo: mediaTimeMs)
         currentSession = updated
-        try repository.saveSession(updated)
+        try persistSession(updated)
         if snapshot.status.isPlaybackActive {
             try playCurrentTarget(updated)
             publishPlaybackContinuation(for: updated)
@@ -482,7 +486,7 @@ public final class SessionEngine {
         session.phase = .itemPlayback
         session.status = "in_progress"
         currentSession = session
-        try repository.saveSession(session)
+        try persistSession(session)
         if session.position.charOffset >= text.count {
             try audio.stop()
             publish(status: .paused, phase: .itemPlayback)
@@ -504,7 +508,7 @@ public final class SessionEngine {
         let clamped = max(0.5, min(3.0, rate))
         session.playbackRate = clamped
         currentSession = session
-        try repository.saveSession(session)
+        try persistSession(session)
         try audio.setPlaybackRate(clamped)
         publish(status: snapshot.status, phase: session.phase)
         return snapshot
@@ -586,7 +590,7 @@ public final class SessionEngine {
             playbackRate: package.settings.defaultPlaybackRate
         )
         currentSession = session
-        try repository.saveSession(session)
+        try persistSession(session)
         lastResolvedMediaAnchor = resolveMediaAnchor(for: session)
         publish(status: .paused, phase: session.phase)
         return snapshot
@@ -619,7 +623,7 @@ public final class SessionEngine {
                 session.status = "finished"
                 session.phase = .finished
                 currentSession = session
-                try repository.saveSession(session)
+                try persistSession(session)
             }
         default:
             break
@@ -647,7 +651,7 @@ public final class SessionEngine {
             if var session = currentSession, session.itemId == itemId {
                 session.position.chapterId = chapterId(for: session.position.charOffset)
                 currentSession = session
-                try repository.saveSession(session)
+                try persistSession(session)
                 publish(status: snapshot.status, phase: session.phase)
             } else {
                 snapshot.title = item.title
@@ -674,7 +678,7 @@ public final class SessionEngine {
             if session.currentTargetType == .itemTextTTS {
                 session.position.chapterId = chapterId(for: session.position.charOffset)
                 currentSession = session
-                try repository.saveSession(session)
+                try persistSession(session)
             }
             publish(status: snapshot.status, phase: session.phase)
         } else {
@@ -722,7 +726,7 @@ public final class SessionEngine {
         session.phase = .itemPlayback
         session.status = "in_progress"
         currentSession = session
-        try repository.saveSession(session)
+        try persistSession(session)
         if snapshot.status.isPlaybackActive, session.position.charOffset < text.count {
             try playCurrentTarget(session)
             publishPlaybackContinuation(for: session)
@@ -762,7 +766,7 @@ public final class SessionEngine {
             session.phase = .itemPlayback
         }
         currentSession = session
-        try repository.saveSession(session)
+        try persistSession(session)
         if snapshot.status.isPlaybackActive {
             try playCurrentTarget(session)
             publishPlaybackContinuation(for: session)
@@ -785,7 +789,7 @@ public final class SessionEngine {
         updated.position.charOffset = max(0, min(updated.position.charOffset, text.count))
         updated.position.chapterId = turn.chapters?.last(where: { $0.startChar <= updated.position.charOffset })?.id
         currentSession = updated
-        try repository.saveSession(updated)
+        try persistSession(updated)
         if snapshot.status.isPlaybackActive, updated.position.charOffset < text.count {
             try playCurrentTarget(updated)
             publishPlaybackContinuation(for: updated)
@@ -810,7 +814,7 @@ public final class SessionEngine {
         updated.position.charOffset = max(0, min(updated.position.charOffset, text.count))
         updated.position.chapterId = turn.chapters?.last(where: { $0.startChar <= updated.position.charOffset })?.id
         currentSession = updated
-        try repository.saveSession(updated)
+        try persistSession(updated)
         if snapshot.status.isPlaybackActive {
             try playCurrentTarget(updated)
             publishPlaybackContinuation(for: updated)
@@ -838,7 +842,7 @@ public final class SessionEngine {
         session.position.chapterId = chapter.id
         session.completionPercent = chapter.percent
         currentSession = session
-        try repository.saveSession(session)
+        try persistSession(session)
         try playCurrentTarget(session)
         publishPlaybackStart(for: session, phase: session.phase)
         return snapshot
@@ -864,7 +868,7 @@ public final class SessionEngine {
         session.position = targetType == .itemTextTTS ? Position(charOffset: 0, chapterId: nil) : Position(charOffset: 0, mediaTimeMs: 0, chapterId: nil)
         session.completionPercent = 0
         currentSession = session
-        try repository.saveSession(session)
+        try persistSession(session)
         try playCurrentTarget(session)
         publishPlaybackStart(for: session, phase: .itemPlayback)
         return snapshot
@@ -880,7 +884,7 @@ public final class SessionEngine {
                 session.phase = .itemPlayback
             }
             session.status = "in_progress"
-            try repository.saveSession(session)
+            try persistSession(session)
         }
         currentSession = session
         currentItem = try repository.loadItem(id: session.itemId)
@@ -895,7 +899,7 @@ public final class SessionEngine {
         guard var session = currentSession else { throw SessionKitError.invalidCommandForState("beginInterjection") }
         session = try syncCurrentPositionFromAudio(session)
         currentSession = session
-        try repository.saveSession(session)
+        try persistSession(session)
         priorPhase = session.phase
         let target = currentInterjectionTarget(for: session)
         recordingTargetType = target.type
@@ -927,7 +931,7 @@ public final class SessionEngine {
             session.phase = priorPhaseForResume(targetType: targetType)
             session = applyMediaRollback(session, package: package)
             currentSession = session
-            try repository.saveSession(session)
+            try persistSession(session)
             try playCurrentTarget(session)
             publishPlaybackStart(for: session, phase: session.phase)
             return snapshot
@@ -968,7 +972,7 @@ public final class SessionEngine {
             session.position.chapterId = turn.chapters?.last(where: { $0.startChar <= session.position.charOffset })?.id
         }
         currentSession = session
-        try repository.saveSession(session)
+        try persistSession(session)
         if externallyStreamedTurnId == session.currentTargetId {
             publish(status: .playing, phase: session.phase)
         } else {
@@ -1000,7 +1004,7 @@ public final class SessionEngine {
         recordingTargetType = nil
         recordingTargetId = nil
         currentSession = session
-        try repository.saveSession(session)
+        try persistSession(session)
         if externallyStreamedTurnId == session.currentTargetId {
             publish(status: .playing, phase: session.phase)
         } else {
@@ -1101,7 +1105,7 @@ public final class SessionEngine {
         session.phase = phase
         session.position = Position(charOffset: 0)
         currentSession = session
-        try repository.saveSession(session)
+        try persistSession(session)
         try playCurrentTarget(session)
         publishPlaybackStart(for: session, phase: phase)
         return snapshot
@@ -1128,7 +1132,7 @@ public final class SessionEngine {
         }
         session.phase = phase
         currentSession = session
-        try repository.saveSession(session)
+        try persistSession(session)
         publish(status: .playing, phase: phase)
         return snapshot
     }
@@ -1147,7 +1151,7 @@ public final class SessionEngine {
         session.position.chapterId = turn?.chapters?.last?.id
         externallyStreamedTurnId = nil
         currentSession = session
-        try repository.saveSession(session)
+        try persistSession(session)
         publish(status: .paused, phase: session.phase)
         return snapshot
     }
@@ -1170,7 +1174,7 @@ public final class SessionEngine {
             .last(where: { $0.startChar <= session.position.charOffset })?
             .id
         currentSession = session
-        try repository.saveSession(session)
+        try persistSession(session)
         publish(status: snapshot.status, phase: session.phase)
         return snapshot
     }
@@ -1195,7 +1199,7 @@ public final class SessionEngine {
         session.currentTargetId = turnId
         session.position = Position(charOffset: chapter.startChar, chapterId: chapter.id)
         currentSession = session
-        try repository.saveSession(session)
+        try persistSession(session)
         try playCurrentTarget(session)
         publishPlaybackStart(for: session, phase: session.phase)
         return snapshot
@@ -1273,7 +1277,7 @@ public final class SessionEngine {
         try repository.saveTurn(turn)
         session.phase = .conversation
         currentSession = session
-        try repository.saveSession(session)
+        try persistSession(session)
         snapshot.turnStatus = "complete"
         if autoPlay {
             return try playTurn(turnId: turn.id)
@@ -1573,8 +1577,19 @@ public final class SessionEngine {
             session.phase = .itemPlayback
         }
         currentSession = session
-        try repository.saveSession(session)
-        publish(status: .paused, phase: session.phase)
+        try persistSession(session)
+        currentSession = nil
+        currentItem = nil
+        currentMap = nil
+        recordingAnchor = nil
+        recordingTargetType = nil
+        recordingTargetId = nil
+        priorPhase = nil
+        externallyStreamedTurnId = nil
+        streamingBuffers.removeAll()
+        spokenPrefixes.removeAll()
+        clearPlaybackStartPending()
+        snapshot = SessionSnapshot()
         return snapshot
     }
 
@@ -2507,7 +2522,7 @@ public final class SessionEngine {
                 playbackRate: 1
             )
             currentSession = session
-            try repository.saveSession(session)
+            try persistSession(session)
             publish(status: .paused, phase: session.phase)
             return session
         }
@@ -2640,7 +2655,7 @@ public final class SessionEngine {
         }
         if try repository.loadSession(id: package.sessionId) == nil {
             let firstChapter = package.chapters.sorted { $0.startMs < $1.startMs }.first
-            try repository.saveSession(
+            try persistSession(
                 Session(
                     id: package.sessionId,
                     itemId: package.itemId,
@@ -2738,7 +2753,7 @@ public final class SessionEngine {
         session.playbackRate = event.payload.playbackRate ?? session.playbackRate
         currentSession = session
         lastResolvedMediaAnchor = resolved
-        try repository.saveSession(session)
+        try persistSession(session)
     }
 
     private func unimportedWatchEventCount(sessionId: String) throws -> Int {
@@ -2835,7 +2850,7 @@ public final class SessionEngine {
             updated.currentTargetType = .transcriptBackedMedia
             updated.phase = .itemPlayback
             currentSession = updated
-            try repository.saveSession(updated)
+            try persistSession(updated)
             try playCurrentTarget(updated)
             publishPlaybackStart(for: updated, phase: updated.phase)
             return snapshot
@@ -2862,7 +2877,7 @@ public final class SessionEngine {
         updated.completionPercent = mediaPercent(chapter.startMs, package: package)
         currentSession = updated
         lastResolvedMediaAnchor = resolved
-        try repository.saveSession(updated)
+        try persistSession(updated)
         try playCurrentTarget(updated)
         publishPlaybackStart(for: updated, phase: updated.phase)
         return snapshot
@@ -2887,7 +2902,7 @@ public final class SessionEngine {
         }
         updated = mediaSession(updated, movedTo: next)
         currentSession = updated
-        try repository.saveSession(updated)
+        try persistSession(updated)
         if snapshot.status.isPlaybackActive {
             try playCurrentTarget(updated)
             publishPlaybackContinuation(for: updated)
@@ -2916,7 +2931,7 @@ public final class SessionEngine {
         }
         updated = mediaSession(updated, movedTo: previous)
         currentSession = updated
-        try repository.saveSession(updated)
+        try persistSession(updated)
         if snapshot.status.isPlaybackActive {
             try playCurrentTarget(updated)
             publishPlaybackContinuation(for: updated)
@@ -3609,6 +3624,22 @@ public final class SessionEngine {
 
     private func completeSentenceUnits(in text: String) -> [String] {
         sentenceUnits(in: text, includeTrailingFragment: false)
+    }
+
+    private func persistSession(_ session: Session) throws {
+        var stamped = session
+        let timestamp = now()
+        if stamped.createdAt == nil {
+            stamped.createdAt = timestamp
+        }
+        stamped.updatedAt = timestamp
+        if stamped.status == "finished", stamped.completedAt == nil {
+            stamped.completedAt = timestamp
+        }
+        try repository.saveSession(stamped)
+        if currentSession?.id == stamped.id {
+            currentSession = stamped
+        }
     }
 
     private func sentenceUnits(in text: String, includeTrailingFragment: Bool) -> [String] {
