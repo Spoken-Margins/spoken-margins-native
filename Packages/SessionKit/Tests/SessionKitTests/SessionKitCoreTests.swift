@@ -49,6 +49,31 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(accumulator.transcript, "This is the complete thought I wanted to preserve.")
     }
 
+    func testLongFormSpeechAccumulatorPreservesEveryFinalizedPassage() {
+        var accumulator = SpeechAnalyzerFinalResultAccumulator()
+        accumulator.record("The opening idea explains why the rendered audio should remain cached. ")
+        accumulator.record("The middle passage contains the minute that the legacy strategy lost. ")
+        accumulator.record("The closing passage describes the storage limit and eviction policy.")
+
+        XCTAssertEqual(accumulator.resultCount, 3)
+        XCTAssertEqual(
+            accumulator.normalizedTranscript,
+            "The opening idea explains why the rendered audio should remain cached. "
+                + "The middle passage contains the minute that the legacy strategy lost. "
+                + "The closing passage describes the storage limit and eviction policy."
+        )
+    }
+
+    func testLongFormSpeechAccumulatorIgnoresEmptyResultsWithoutReplacingPriorPassages() {
+        var accumulator = SpeechAnalyzerFinalResultAccumulator()
+        accumulator.record("First finalized passage. ")
+        accumulator.record("")
+        accumulator.record("Second finalized passage.")
+
+        XCTAssertEqual(accumulator.resultCount, 2)
+        XCTAssertEqual(accumulator.normalizedTranscript, "First finalized passage. Second finalized passage.")
+    }
+
     func testLongInterjectionAudioIsSplitIntoBoundedOverlappingChunks() {
         let ranges = speechAudioChunkRanges(durationMs: 207_794)
 

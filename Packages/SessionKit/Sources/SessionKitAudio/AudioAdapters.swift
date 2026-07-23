@@ -33,6 +33,27 @@ struct SpeechRecognitionTextAccumulator {
     }
 }
 
+/// Collects the ordered, finalized passages emitted by SpeechAnalyzer.
+///
+/// SpeechTranscriber final results are additive passages. They are not competing
+/// hypotheses, so choosing the longest result (the legacy recognizer behavior)
+/// would silently discard everything except one passage from a long recording.
+struct SpeechAnalyzerFinalResultAccumulator {
+    private(set) var transcript = ""
+    private(set) var resultCount = 0
+
+    mutating func record(_ passage: String) {
+        guard !passage.isEmpty else { return }
+        transcript.append(passage)
+        resultCount += 1
+    }
+
+    var normalizedTranscript: String? {
+        let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
 struct SpeechAudioChunkRange: Equatable {
     var startMs: Int
     var lengthMs: Int
@@ -1994,6 +2015,11 @@ public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
         guard fileManager.fileExists(atPath: url.path) else {
             throw SessionKitError.persistenceFailed("audio_file_missing")
         }
+        #if canImport(AVFoundation)
+        if #available(iOS 26.0, macOS 26.0, *) {
+            return try await transcribeLongFormAudio(at: url)
+        }
+        #endif
         guard let recognizer = SFSpeechRecognizer(), recognizer.isAvailable else {
             throw SessionKitError.persistenceFailed("speech_recognizer_unavailable")
         }
@@ -2037,6 +2063,65 @@ public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
     }
 
     #if canImport(Speech)
+    #if canImport(AVFoundation)
+    @available(iOS 26.0, macOS 26.0, *)
+    private func transcribeLongFormAudio(at url: URL) async throws -> String {
+        guard SpeechTranscriber.isAvailable else {
+            throw SessionKitError.persistenceFailed("long_form_speech_transcriber_unavailable")
+        }
+        guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale.current) else {
+            throw SessionKitError.persistenceFailed(
+                "long_form_speech_locale_unsupported(locale=\(Locale.current.identifier))"
+            )
+        }
+
+        let transcriber = SpeechTranscriber(locale: locale, preset: .transcription)
+        if let installationRequest = try await AssetInventory.assetInstallationRequest(
+            supporting: [transcriber]
+        ) {
+            try await installationRequest.downloadAndInstall()
+        }
+
+        let audioFile: AVAudioFile
+        do {
+            audioFile = try AVAudioFile(forReading: url)
+        } catch {
+            throw SessionKitError.persistenceFailed("long_form_audio_file_unreadable")
+        }
+
+        async let transcription = collectFinalTranscription(from: transcriber)
+        let analyzer = SpeechAnalyzer(modules: [transcriber])
+        do {
+            if let lastSample = try await analyzer.analyzeSequence(from: audioFile) {
+                try await analyzer.finalizeAndFinish(through: lastSample)
+            } else {
+                await analyzer.cancelAndFinishNow()
+            }
+            guard let completed = try await transcription else {
+                throw SessionKitError.persistenceFailed("long_form_speech_transcript_empty")
+            }
+            return completed
+        } catch {
+            await analyzer.cancelAndFinishNow()
+            _ = try? await transcription
+            throw error
+        }
+    }
+
+    @available(iOS 26.0, macOS 26.0, *)
+    private func collectFinalTranscription(from transcriber: SpeechTranscriber) async throws -> String? {
+        var accumulator = SpeechAnalyzerFinalResultAccumulator()
+        for try await result in transcriber.results {
+            // The .transcription preset emits finalized, ordered passages only.
+            // Keeping this guard makes the persistence boundary explicit if that
+            // preset's reporting behavior changes in a future SDK.
+            guard result.isFinal else { continue }
+            accumulator.record(String(result.text.characters))
+        }
+        return accumulator.normalizedTranscript
+    }
+    #endif
+
     private func recognizeAudio(at url: URL, recognizer: SFSpeechRecognizer) async throws -> String? {
         let request = makeOnDeviceSpeechRecognitionRequest(url: url)
         return try await withCheckedThrowingContinuation { continuation in
