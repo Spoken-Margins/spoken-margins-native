@@ -166,6 +166,17 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts[itemTitle].exists)
     }
 
+    func testAddSourcePresentsPodcastBeforePlainText() throws {
+        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
+        app.buttons["home.addSource.button"].tap()
+
+        let podcast = element("addSource.podcast.heading")
+        let plainText = element("addSource.plainText.heading")
+        XCTAssertTrue(podcast.waitForExistence(timeout: 4))
+        XCTAssertTrue(plainText.waitForExistence(timeout: 4))
+        XCTAssertLessThan(podcast.frame.midY, plainText.frame.midY)
+    }
+
     func testDiagnosticsCopyShowsLocalConfirmation() throws {
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
         app.buttons["home.settings.button"].tap()

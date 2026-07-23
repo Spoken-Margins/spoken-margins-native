@@ -29,7 +29,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.snapshot.targetType = TargetType.itemTextTTS.rawValue
         model.snapshot.chapterTitle = "The Pivot"
 
-        XCTAssertEqual(model.playbackHeaderTitle, "CH 2: The Pivot")
+        XCTAssertEqual(model.playbackHeaderTitle, "Ch. 2: The Pivot")
     }
 
     func testPlaybackHeaderNumbersARealPodcastChapter() {
@@ -45,7 +45,29 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.snapshot.targetType = TargetType.transcriptBackedMedia.rawValue
         model.snapshot.chapterTitle = "The Analysis"
 
-        XCTAssertEqual(model.playbackHeaderTitle, "CH 2: The Analysis")
+        XCTAssertEqual(model.playbackHeaderTitle, "Ch. 2: The Analysis")
+    }
+
+    func testTimelineMarksTheCurrentSourceChapter() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        let opening = Chapter(id: "chapter-1", title: "Opening", startChar: 0, endChar: 100, percent: 0)
+        let pivot = Chapter(id: "chapter-2", title: "The Pivot", startChar: 100, endChar: 200, percent: 50)
+        model.selectedItem = ItemDetailState(id: "item-1", title: "A Long Article", chapters: [opening, pivot])
+        model.snapshot.targetType = TargetType.itemTextTTS.rawValue
+        model.snapshot.chapterTitle = pivot.title
+
+        XCTAssertFalse(model.isCurrentTimelineChapter(opening))
+        XCTAssertTrue(model.isCurrentTimelineChapter(pivot))
+    }
+
+    func testTimelineDoesNotMarkASourceChapterDuringAssistantPlayback() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        let opening = Chapter(id: "chapter-1", title: "Opening", startChar: 0, endChar: 100, percent: 0)
+        model.selectedItem = ItemDetailState(id: "item-1", title: "A Long Article", chapters: [opening])
+        model.snapshot.targetType = TargetType.assistantTurnTTS.rawValue
+        model.snapshot.chapterTitle = opening.title
+
+        XCTAssertFalse(model.isCurrentTimelineChapter(opening))
     }
 
     func testConfiguredProviderKeyIgnoresWhitespaceOnlyValues() {
@@ -202,6 +224,46 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.sessionId, sessionID)
         XCTAssertEqual(model.selectedItem.sessions.count, countBefore)
         XCTAssertEqual(model.snapshot.status, .playing)
+    }
+
+    func testHomeRefreshesAndOpensNewestSessionAtOneHundredPercent() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let olderSessionID = try XCTUnwrap(model.snapshot.sessionId)
+
+        model.startNewSession(id: "item-pill")
+        let completedSessionID = try XCTUnwrap(model.snapshot.sessionId)
+        XCTAssertNotEqual(completedSessionID, olderSessionID)
+
+        model.skipUnit = "section"
+        model.skipForward()
+        XCTAssertEqual(model.snapshot.sourceProgressPercent, 100)
+        model.openHome()
+
+        let row = try XCTUnwrap(model.libraryItems.first(where: { $0.id == "item-pill" }))
+        XCTAssertTrue(row.hasContinuationSession)
+        XCTAssertEqual(row.continuationProgressPercent, 100)
+
+        let sessionCount = model.selectedItem.sessions.count
+        model.startItem(id: "item-pill")
+
+        XCTAssertEqual(model.snapshot.sessionId, completedSessionID)
+        XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertEqual(model.snapshot.sourceProgressPercent, 100)
+        XCTAssertEqual(model.selectedItem.sessions.count, sessionCount)
+    }
+
+    func testFinishedSessionAtOneHundredPercentIsPreferredOverOlderInProgressSession() throws {
+        let decoder = JSONDecoder()
+        let older = try decoder.decode(Session.self, from: Data("""
+        {"id":"older","itemId":"item-pill","status":"in_progress","phase":"item_playback","currentTargetType":"item_text_tts","currentTargetId":"item-pill","position":{"charOffset":0},"completionPercent":0,"playbackRate":1}
+        """.utf8))
+        let completed = try decoder.decode(Session.self, from: Data("""
+        {"id":"completed","itemId":"item-pill","status":"finished","phase":"finished","currentTargetType":"item_text_tts","currentTargetId":"item-pill","position":{"charOffset":100},"completionPercent":100,"playbackRate":1}
+        """.utf8))
+
+        XCTAssertEqual(Gate1AppModel.preferredContinuationSession(in: [completed, older])?.id, completed.id)
     }
 
     func testExplicitStartNewSessionCreatesOneAdditionalSession() throws {

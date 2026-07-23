@@ -44,23 +44,23 @@ struct LibraryItemRow: Identifiable, Hashable {
     let title: String
     let status: String
     let canDelete: Bool
-    let hasResumableSession: Bool
-    let resumeProgressPercent: Int?
+    let hasContinuationSession: Bool
+    let continuationProgressPercent: Int?
 
     init(
         id: String,
         title: String,
         status: String,
         canDelete: Bool,
-        hasResumableSession: Bool = false,
-        resumeProgressPercent: Int? = nil
+        hasContinuationSession: Bool = false,
+        continuationProgressPercent: Int? = nil
     ) {
         self.id = id
         self.title = title
         self.status = status
         self.canDelete = canDelete
-        self.hasResumableSession = hasResumableSession
-        self.resumeProgressPercent = resumeProgressPercent
+        self.hasContinuationSession = hasContinuationSession
+        self.continuationProgressPercent = continuationProgressPercent
     }
 }
 
@@ -1847,6 +1847,14 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func openHome() {
+        syncPlaybackProgressForLifecycle()
+        if let store {
+            do {
+                try refreshLibraryRows(store: store)
+            } catch {
+                diagnostics["homeLibraryRefreshError"] = String(describing: error)
+            }
+        }
         screen = .home
     }
 
@@ -1903,8 +1911,8 @@ final class Gate1AppModel: ObservableObject {
     func startItem(id: String) {
         do {
             let store = try requireStore()
-            if let resumable = try store.loadSessions(itemId: id).first(where: Self.isResumableSession) {
-                resumeSession(resumable)
+            if let continuation = Self.preferredContinuationSession(in: try store.loadSessions(itemId: id)) {
+                resumeSession(continuation)
             } else {
                 startNewSession(id: id)
             }
@@ -2331,7 +2339,7 @@ final class Gate1AppModel: ObservableObject {
             if let interjection = latestInterjectionNeedingTranscription() {
                 scheduleTranscription(for: interjection)
             }
-            reportSuccess("Saved interjection. Transcribing.")
+            reportSuccess("Saved interjection. Playback resumed; transcribing in the background.")
         }
         streamingSpeechQueue.resumeAfterInterjection()
     }
@@ -3556,8 +3564,15 @@ final class Gate1AppModel: ObservableObject {
         session.status == "in_progress" && session.phase != .abandoned
     }
 
-    var selectedItemLatestResumableSession: Session? {
-        selectedItem.sessions.first(where: Self.isResumableSession)
+    static func preferredContinuationSession(in sessions: [Session]) -> Session? {
+        sessions.first { session in
+            isResumableSession(session)
+                || (session.status == "finished" && session.completionPercent >= 100)
+        }
+    }
+
+    var selectedItemPreferredContinuationSession: Session? {
+        Self.preferredContinuationSession(in: selectedItem.sessions)
     }
 
     var shouldShowMiniPlayer: Bool {
@@ -3650,7 +3665,37 @@ final class Gate1AppModel: ObservableObject {
         }) else {
             return snapshotTitle
         }
-        return "CH \(chapterIndex + 1): \(snapshotTitle)"
+        return "Ch. \(chapterIndex + 1): \(snapshotTitle)"
+    }
+
+    func isCurrentTimelineChapter(_ chapter: Chapter, turnId: String? = nil) -> Bool {
+        if turnId == nil {
+            let sourceTargetTypes = [
+                TargetType.itemTextTTS.rawValue,
+                TargetType.transcriptBackedMedia.rawValue,
+                TargetType.browserOwnedMedia.rawValue
+            ]
+            guard let targetType = snapshot.targetType, sourceTargetTypes.contains(targetType) else { return false }
+            if let currentChapterId = engine?.currentSession?.position.chapterId,
+               selectedItem.chapters.contains(where: { $0.id == currentChapterId }) {
+                return currentChapterId == chapter.id
+            }
+            if let currentTitle = snapshot.chapterTitle,
+               selectedItem.chapters.contains(where: { $0.title.caseInsensitiveCompare(currentTitle) == .orderedSame }) {
+                return currentTitle.caseInsensitiveCompare(chapter.title) == .orderedSame
+            }
+            return currentChapter?.id == chapter.id
+        }
+
+        let expectedTargetType = selectedItem.turns.first(where: { $0.id == turnId })?.turnType == "interjection_summary"
+            ? TargetType.summaryTurnTTS.rawValue
+            : TargetType.assistantTurnTTS.rawValue
+        guard snapshot.targetType == expectedTargetType else { return false }
+        if let turnId, snapshot.targetId != turnId { return false }
+        if let currentChapterId = engine?.currentSession?.position.chapterId {
+            return currentChapterId == chapter.id
+        }
+        return snapshot.chapterTitle?.caseInsensitiveCompare(chapter.title) == .orderedSame
     }
 
     var hasConfiguredProviderAPIKey: Bool {
@@ -4756,14 +4801,14 @@ final class Gate1AppModel: ObservableObject {
 
     private func loadLibraryRows(store: SQLiteSessionStore) throws -> [LibraryItemRow] {
         try store.listItems().map { item in
-            let resumable = try store.loadSessions(itemId: item.id).first(where: Self.isResumableSession)
+            let continuation = Self.preferredContinuationSession(in: try store.loadSessions(itemId: item.id))
             return LibraryItemRow(
                 id: item.id,
                 title: item.title,
                 status: libraryStatusLabel(for: item),
                 canDelete: true,
-                hasResumableSession: resumable != nil,
-                resumeProgressPercent: resumable?.completionPercent
+                hasContinuationSession: continuation != nil,
+                continuationProgressPercent: continuation?.completionPercent
             )
         }
     }

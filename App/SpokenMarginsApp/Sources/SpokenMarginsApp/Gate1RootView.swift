@@ -186,9 +186,13 @@ private struct HelpScreen: View {
                 }
                 Section("Interjections") {
                     Text("Tap Interject, speak your note, then tap Done. The note stays attached to the session and the point you were hearing.")
+                    Text("Playback restarts before transcription runs in the background. A short pause can still occur while the app saves the recording and switches the audio session back to playback.")
                 }
                 Section("Summarize Notes") {
                     Text("Summarize Notes uses your configured OpenAI API key to turn the current session’s interjections into a spoken debrief. Playback and recording work without an API key.")
+                }
+                Section("Discuss") {
+                    Text("Type a question in Ask a follow-up, then tap Discuss. Spoken Margins sends the question with the relevant source context and interjection transcripts to the configured AI provider, then adds and reads the response in the session.")
                 }
                 Section("Podcast Links") {
                     Text("For Spotify, open the specific episode, tap Share, and send the episode link. A show or podcast-page link does not identify one episode.")
@@ -521,119 +525,133 @@ private struct HomeScreen: View {
     private var createItem: some View {
         ProductPanel {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Paste Text")
-                    .font(.headline)
-                TextField("Title", text: $model.importTitle)
-                    .textFieldStyle(.roundedBorder)
-                    .focused($focusedField, equals: .title)
-                    .accessibilityIdentifier("create.title.field")
-                HStack(alignment: .top, spacing: 8) {
-                    TextEditor(text: $model.importText)
-                        .frame(height: model.importText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 44 : 120)
-                        .padding(.horizontal, 4)
-                        .background(AppColors.inputBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppColors.border))
-                        .focused($focusedField, equals: .text)
-                        .accessibilityLabel("Source text")
-                        .accessibilityIdentifier("create.text.editor")
-                    Button {
-                        suppressSourceLinkBlurSubmission = focusedField == .sourceLink
-                        focusedField = nil
-                        model.pasteImportTextFromClipboard()
-                    } label: {
-                        Image(systemName: "doc.on.clipboard")
-                            .frame(width: 34, height: 34)
-                    }
-                    .buttonStyle(IconButtonStyle())
-                    .accessibilityLabel("Paste Text From Clipboard")
-                    .accessibilityIdentifier("create.text.clipboard.button")
-                }
-                Button(action: {
-                    suppressSourceLinkBlurSubmission = focusedField == .sourceLink
-                    focusedField = nil
-                    isAddSourcePresented = false
-                    model.importTextItem()
-                }) {
-                    Label("Add and Listen", systemImage: "plus")
-                }
-                .buttonStyle(PrimaryButtonStyle())
-                .disabled(model.importText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .accessibilityIdentifier("create.start.button")
-                Button {
-                    suppressSourceLinkBlurSubmission = focusedField == .sourceLink
-                    focusedField = nil
-                    presentFileImporter(.obsidianFiles)
-                } label: {
-                    Label("Import Text or PDF Files", systemImage: "doc.badge.plus")
-                }
-                .buttonStyle(SecondaryButtonStyle())
-                .accessibilityIdentifier("obsidian.import.button")
+                podcastLinkSource
                 Divider()
                     .padding(.vertical, 4)
-                HStack(spacing: 8) {
-                    TextField("Podcast, RSS, or audio URL", text: $model.sourceLinkURL)
-                        .textFieldStyle(.roundedBorder)
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.URL)
-                        .focused($focusedField, equals: .sourceLink)
-                        .submitLabel(.go)
-                        .onSubmit {
-                            suppressSourceLinkBlurSubmission = focusedField == .sourceLink
-                            focusedField = nil
-                            _ = model.beginSourceLinkImportFromForm()
-                        }
-                        .accessibilityIdentifier("sourceLink.url.field")
-                    Button {
-                        suppressSourceLinkBlurSubmission = focusedField == .sourceLink
-                        focusedField = nil
-                        model.pasteSourceLinkFromClipboard()
-                    } label: {
-                        Image(systemName: "doc.on.clipboard")
-                            .frame(width: 34, height: 34)
-                    }
-                    .buttonStyle(IconButtonStyle())
-                    .accessibilityLabel("Paste Link From Clipboard")
-                    .accessibilityIdentifier("sourceLink.clipboard.button")
-                }
-                .onChange(of: focusedField) { oldValue, newValue in
-                    guard oldValue == .sourceLink, newValue != .sourceLink else { return }
-                    if suppressSourceLinkBlurSubmission {
-                        suppressSourceLinkBlurSubmission = false
-                    } else if isValidSourceLink(model.sourceLinkURL) {
-                        _ = model.beginSourceLinkImportFromForm()
-                    }
-                }
-                if let message = model.sourceLinkImportMessage {
-                    HStack(spacing: 8) {
-                        if model.sourceLinkImportState == "resolving" {
-                            ProgressView()
-                        }
-                        Text(message)
-                            .font(.caption)
-                            .foregroundStyle(model.sourceLinkImportState == "failure" ? .red : AppColors.secondaryText)
-                    }
-                    .accessibilityIdentifier("sourceLink.import.status")
-                }
-                Button {
+                plainTextSource
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var podcastLinkSource: some View {
+        Text("Podcast Link")
+            .font(.headline)
+            .accessibilityIdentifier("addSource.podcast.heading")
+        HStack(spacing: 8) {
+            TextField("Podcast, RSS, or audio URL", text: $model.sourceLinkURL)
+                .textFieldStyle(.roundedBorder)
+                .textInputAutocapitalization(.never)
+                .keyboardType(.URL)
+                .focused($focusedField, equals: .sourceLink)
+                .submitLabel(.go)
+                .onSubmit {
                     suppressSourceLinkBlurSubmission = focusedField == .sourceLink
                     focusedField = nil
                     _ = model.beginSourceLinkImportFromForm()
-                } label: {
-                    if model.isResolvingSourceLink {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                            Text("Resolving Link")
-                        }
-                    } else {
-                        Label("Add Link and Listen", systemImage: "link.badge.plus")
-                    }
                 }
-                .buttonStyle(SecondaryButtonStyle())
-                .disabled(model.sourceLinkURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isResolvingSourceLink)
-                .accessibilityIdentifier("sourceLink.import.button")
+                .accessibilityIdentifier("sourceLink.url.field")
+            Button {
+                suppressSourceLinkBlurSubmission = focusedField == .sourceLink
+                focusedField = nil
+                model.pasteSourceLinkFromClipboard()
+            } label: {
+                Image(systemName: "doc.on.clipboard")
+                    .frame(width: 34, height: 34)
+            }
+            .buttonStyle(IconButtonStyle())
+            .accessibilityLabel("Paste Link From Clipboard")
+            .accessibilityIdentifier("sourceLink.clipboard.button")
+        }
+        .onChange(of: focusedField) { oldValue, newValue in
+            guard oldValue == .sourceLink, newValue != .sourceLink else { return }
+            if suppressSourceLinkBlurSubmission {
+                suppressSourceLinkBlurSubmission = false
+            } else if isValidSourceLink(model.sourceLinkURL) {
+                _ = model.beginSourceLinkImportFromForm()
             }
         }
+        if let message = model.sourceLinkImportMessage {
+            HStack(spacing: 8) {
+                if model.sourceLinkImportState == "resolving" {
+                    ProgressView()
+                }
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(model.sourceLinkImportState == "failure" ? .red : AppColors.secondaryText)
+            }
+            .accessibilityIdentifier("sourceLink.import.status")
+        }
+        Button {
+            suppressSourceLinkBlurSubmission = focusedField == .sourceLink
+            focusedField = nil
+            _ = model.beginSourceLinkImportFromForm()
+        } label: {
+            if model.isResolvingSourceLink {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Resolving Link")
+                }
+            } else {
+                Label("Add Link and Listen", systemImage: "link.badge.plus")
+            }
+        }
+        .buttonStyle(PrimaryButtonStyle())
+        .disabled(model.sourceLinkURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isResolvingSourceLink)
+        .accessibilityIdentifier("sourceLink.import.button")
+    }
+
+    @ViewBuilder
+    private var plainTextSource: some View {
+        Text("Plain Text")
+            .font(.headline)
+            .accessibilityIdentifier("addSource.plainText.heading")
+        TextField("Title", text: $model.importTitle)
+            .textFieldStyle(.roundedBorder)
+            .focused($focusedField, equals: .title)
+            .accessibilityIdentifier("create.title.field")
+        HStack(alignment: .top, spacing: 8) {
+            TextEditor(text: $model.importText)
+                .frame(height: model.importText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 44 : 120)
+                .padding(.horizontal, 4)
+                .background(AppColors.inputBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppColors.border))
+                .focused($focusedField, equals: .text)
+                .accessibilityLabel("Source text")
+                .accessibilityIdentifier("create.text.editor")
+            Button {
+                suppressSourceLinkBlurSubmission = focusedField == .sourceLink
+                focusedField = nil
+                model.pasteImportTextFromClipboard()
+            } label: {
+                Image(systemName: "doc.on.clipboard")
+                    .frame(width: 34, height: 34)
+            }
+            .buttonStyle(IconButtonStyle())
+            .accessibilityLabel("Paste Text From Clipboard")
+            .accessibilityIdentifier("create.text.clipboard.button")
+        }
+        Button(action: {
+            suppressSourceLinkBlurSubmission = focusedField == .sourceLink
+            focusedField = nil
+            isAddSourcePresented = false
+            model.importTextItem()
+        }) {
+            Label("Add and Listen", systemImage: "plus")
+        }
+        .buttonStyle(PrimaryButtonStyle())
+        .disabled(model.importText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .accessibilityIdentifier("create.start.button")
+        Button {
+            suppressSourceLinkBlurSubmission = focusedField == .sourceLink
+            focusedField = nil
+            presentFileImporter(.obsidianFiles)
+        } label: {
+            Label("Import Text or PDF Files", systemImage: "doc.badge.plus")
+        }
+        .buttonStyle(SecondaryButtonStyle())
+        .accessibilityIdentifier("obsidian.import.button")
     }
 
     private func isValidSourceLink(_ value: String) -> Bool {
@@ -761,7 +779,7 @@ private struct HomeScreen: View {
                                     Text(item.status)
                                         .font(.subheadline)
                                         .foregroundStyle(AppColors.secondaryText)
-                                    if item.hasResumableSession, let progress = item.resumeProgressPercent {
+                                    if item.hasContinuationSession, let progress = item.continuationProgressPercent {
                                         Text("Continue at \(progress)%")
                                             .font(.caption.weight(.semibold))
                                             .foregroundStyle(AppColors.green)
@@ -779,7 +797,7 @@ private struct HomeScreen: View {
                                     .frame(width: 42, height: 42)
                             }
                             .buttonStyle(IconButtonStyle())
-                            .accessibilityLabel(item.hasResumableSession ? "Continue \(item.title)" : "Start \(item.title)")
+                            .accessibilityLabel(item.hasContinuationSession ? "Continue \(item.title)" : "Start \(item.title)")
                             .accessibilityIdentifier("queue.start.\(item.id)")
 
                             if item.canDelete {
@@ -1093,11 +1111,11 @@ private struct ItemScreen: View {
             Button {
                 model.startItem(id: model.selectedItem.id)
             } label: {
-                Label(model.selectedItemLatestResumableSession == nil ? "Start Listening" : "Continue Listening", systemImage: "play.fill")
+                Label(model.selectedItemPreferredContinuationSession == nil ? "Start Listening" : "Continue Listening", systemImage: "play.fill")
             }
             .buttonStyle(PrimaryButtonStyle())
             .accessibilityIdentifier("item.start.button")
-            if model.selectedItemLatestResumableSession != nil {
+            if model.selectedItemPreferredContinuationSession != nil {
                 Button {
                     isStartNewConfirmationPresented = true
                 } label: {
@@ -1146,6 +1164,7 @@ private struct PlaybackScreen: View {
     @State private var isScrubbing = false
     @State private var isPlaybackRatePresented = false
     @State private var isSourceTextPresented = false
+    @State private var sourceTextOffsetAtPresentation = 0
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @FocusState private var followUpFocused: Bool
 
@@ -1226,7 +1245,8 @@ private struct PlaybackScreen: View {
                 NativeTextPeekView(
                     title: model.selectedItem.title,
                     text: model.selectedItem.text,
-                    currentOffset: model.snapshot.currentTextStart ?? 0
+                    chapters: model.selectedItem.chapters,
+                    currentOffset: sourceTextOffsetAtPresentation
                 )
             }
             .onAppear {
@@ -1407,6 +1427,7 @@ private struct PlaybackScreen: View {
 
             if model.snapshot.targetType == TargetType.itemTextTTS.rawValue {
                 Button {
+                    sourceTextOffsetAtPresentation = model.snapshot.currentTextStart ?? 0
                     isSourceTextPresented = true
                 } label: {
                     Label("Text", systemImage: "doc.plaintext")
@@ -1526,7 +1547,7 @@ private struct PlaybackScreen: View {
                         followUpFocused = false
                         model.discuss(followUp: followUp)
                     } label: {
-                        Label("Discuss", systemImage: "play")
+                        Label("Discuss", systemImage: "bubble.left.and.bubble.right.fill")
                     }
                     .buttonStyle(LightButtonStyle())
                     .disabled(!model.hasActiveSession || followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -1561,7 +1582,7 @@ private struct PlaybackScreen: View {
                             followUpFocused = false
                             model.discuss(followUp: followUp)
                         } label: {
-                            Image(systemName: "play")
+                            Image(systemName: "bubble.left.and.bubble.right.fill")
                                 .frame(maxWidth: .infinity, minHeight: 52)
                         }
                         .buttonStyle(WatchSecondaryButtonStyle())
@@ -1663,7 +1684,12 @@ private struct PlaybackScreen: View {
                         Button {
                             model.jumpToChapter(chapter)
                         } label: {
-                            TimelineRow(percent: "\(chapter.percent)%", title: chapter.title, subtitle: "Starts around \(chapter.percent)%")
+                            TimelineRow(
+                                percent: "\(chapter.percent)%",
+                                title: chapter.title,
+                                subtitle: "Starts around \(chapter.percent)%",
+                                isCurrent: model.isCurrentTimelineChapter(chapter)
+                            )
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("timeline.chapter.jump.\(chapter.id)")
@@ -1691,7 +1717,12 @@ private struct PlaybackScreen: View {
                         Button {
                             model.jumpToTurnChapter(turn: turn, chapter: chapter)
                         } label: {
-                            TimelineRow(percent: "AI \(chapter.percent)%", title: chapter.title, subtitle: turnTitle(turn))
+                            TimelineRow(
+                                percent: "AI \(chapter.percent)%",
+                                title: chapter.title,
+                                subtitle: turnTitle(turn),
+                                isCurrent: model.isCurrentTimelineChapter(chapter, turnId: turn.id)
+                            )
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("timeline.turnChapter.jump.\(turn.id).\(chapter.id)")
@@ -2348,6 +2379,7 @@ private struct NativeTextPeekView: View {
     @Environment(\.dismiss) private var dismiss
     let title: String
     let text: String
+    let chapters: [Chapter]
     let currentOffset: Int
 
     var body: some View {
@@ -2355,9 +2387,9 @@ private struct NativeTextPeekView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Current Passage")
+                        Text(chapterTitle)
                             .font(.headline)
-                        Text(currentPassage)
+                        Text(chapterText)
                             .font(.body)
                             .textSelection(.enabled)
                     }
@@ -2366,13 +2398,6 @@ private struct NativeTextPeekView: View {
                     .background(AppColors.inputBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
 
-                    DisclosureGroup("Full Native Text") {
-                        Text(text)
-                            .font(.body)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.top, 10)
-                    }
                 }
                 .padding(20)
             }
@@ -2387,14 +2412,24 @@ private struct NativeTextPeekView: View {
         }
     }
 
-    private var currentPassage: String {
+    private var selectedChapter: Chapter? {
+        guard !chapters.isEmpty else { return nil }
+        let offset = max(0, min(currentOffset, text.count))
+        return chapters.first(where: { offset >= $0.startChar && offset < $0.endChar })
+            ?? chapters.last(where: { $0.startChar <= offset })
+            ?? chapters.first
+    }
+
+    private var chapterTitle: String {
+        selectedChapter?.title ?? "Full Text"
+    }
+
+    private var chapterText: String {
         guard !text.isEmpty else { return "No native text is available." }
+        guard let chapter = selectedChapter else { return text }
         let characters = Array(text)
-        let offset = max(0, min(currentOffset, characters.count))
-        var start = max(0, offset - 500)
-        var end = min(characters.count, offset + 700)
-        while start > 0, !characters[start].isWhitespace { start -= 1 }
-        while end < characters.count, !characters[end - 1].isWhitespace { end += 1 }
+        let start = max(0, min(chapter.startChar, characters.count))
+        let end = max(start, min(chapter.endChar, characters.count))
         return String(characters[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
@@ -2597,16 +2632,22 @@ private func anchorContextText(_ value: String, status: AnchorContextStatus?) ->
 }
 
 private struct ProductPanel<Content: View>: View {
+    let isHighlighted: Bool
     @ViewBuilder let content: Content
+
+    init(isHighlighted: Bool = false, @ViewBuilder content: () -> Content) {
+        self.isHighlighted = isHighlighted
+        self.content = content()
+    }
 
     var body: some View {
         content
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
             .foregroundStyle(AppColors.text)
-            .background(AppColors.panel)
+            .background(isHighlighted ? AppColors.softGreen : AppColors.panel)
             .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppColors.border))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(isHighlighted ? AppColors.green : AppColors.border, lineWidth: isHighlighted ? 2 : 1))
     }
 }
 
@@ -2684,17 +2725,29 @@ private struct TimelineRow: View {
     let percent: String
     let title: String
     let subtitle: String
+    var isCurrent = false
 
     var body: some View {
-        ProductPanel {
+        ProductPanel(isHighlighted: isCurrent) {
             HStack(alignment: .top, spacing: 14) {
                 Text(percent)
                     .font(.headline)
                     .foregroundStyle(AppColors.green)
                     .frame(width: 64, alignment: .leading)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
-                        .font(.headline)
+                    HStack(spacing: 8) {
+                        Text(title)
+                            .font(.headline)
+                        if isCurrent {
+                            Text("NOW")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(AppColors.primaryAction)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(AppColors.accentSoft)
+                                .clipShape(Capsule())
+                        }
+                    }
                     Text(subtitle)
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
@@ -2702,6 +2755,7 @@ private struct TimelineRow: View {
                 }
             }
         }
+        .accessibilityValue(isCurrent ? "Current chapter" : "")
     }
 }
 
