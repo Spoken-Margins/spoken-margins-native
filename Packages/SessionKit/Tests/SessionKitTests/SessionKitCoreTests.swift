@@ -6,6 +6,9 @@ import SessionKitPersistence
 #if canImport(Speech)
 import Speech
 #endif
+#if canImport(AVFoundation)
+import AVFoundation
+#endif
 
 final class SessionKitCoreTests: XCTestCase {
     func testRoutedPlaybackGivesRemoteCommandOwnershipOnlyToActiveMediaRoute() throws {
@@ -37,16 +40,7 @@ final class SessionKitCoreTests: XCTestCase {
     func testSpeechRecognitionRequestsAreAlwaysOnDeviceOnly() {
         let request = makeOnDeviceSpeechRecognitionRequest(url: URL(fileURLWithPath: "/tmp/context.m4a"))
         XCTAssertTrue(request.requiresOnDeviceRecognition)
-        XCTAssertTrue(request.shouldReportPartialResults)
-    }
-
-    func testSpeechRecognitionKeepsLongestPartialWhenLaterHypothesisShrinks() {
-        var accumulator = SpeechRecognitionTextAccumulator()
-        accumulator.record("This is the complete thought I wanted to preserve.")
-        accumulator.record("wanted to preserve")
-        accumulator.record("")
-
-        XCTAssertEqual(accumulator.transcript, "This is the complete thought I wanted to preserve.")
+        XCTAssertFalse(request.shouldReportPartialResults)
     }
 
     func testLongFormSpeechAccumulatorPreservesEveryFinalizedPassage() {
@@ -74,24 +68,65 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(accumulator.normalizedTranscript, "First finalized passage. Second finalized passage.")
     }
 
-    func testLongInterjectionAudioIsSplitIntoBoundedOverlappingChunks() {
-        let ranges = speechAudioChunkRanges(durationMs: 207_794)
+    func testLegacySpeechChunksUseNearbySustainedSilenceWithoutOverlapOrGaps() {
+        let ranges = silenceAwareSpeechAudioChunkRanges(
+            durationMs: 100_000,
+            silenceRanges: [
+                SpeechAudioSilenceRange(startMs: 28_000, endMs: 29_000),
+                SpeechAudioSilenceRange(startMs: 59_000, endMs: 60_000)
+            ]
+        )
 
-        XCTAssertEqual(ranges.map(\.startMs), [0, 44_000, 88_000, 132_000, 176_000])
-        XCTAssertEqual(ranges.map(\.lengthMs), [45_000, 45_000, 45_000, 45_000, 31_794])
-        XCTAssertTrue(ranges.allSatisfy { $0.lengthMs <= 45_000 })
-        XCTAssertEqual(ranges.last.map { $0.startMs + $0.lengthMs }, 207_794)
-    }
-
-    func testChunkedSpeechTranscriptsRemoveRecognizedOverlapWhenStitched() {
-        let first = "The idea preserves rendered audio until the storage limit is reached"
-        let second = "storage limit is reached and then evicts the oldest cached files"
-
+        XCTAssertEqual(ranges.map(\.startMs), [0, 28_500, 59_500])
+        XCTAssertEqual(ranges.map(\.lengthMs), [28_500, 31_000, 40_500])
+        XCTAssertTrue(ranges.allSatisfy { $0.lengthMs < 45_000 })
+        XCTAssertEqual(ranges.last.map { $0.startMs + $0.lengthMs }, 100_000)
         XCTAssertEqual(
-            mergeSpeechTranscripts(first, second),
-            "The idea preserves rendered audio until the storage limit is reached and then evicts the oldest cached files"
+            zip(ranges, ranges.dropFirst()).map { $0.startMs + $0.lengthMs == $1.startMs },
+            [true, true]
         )
     }
+
+    func testLegacySpeechChunksFallBackToThirtySecondsWhenNoSilenceExists() {
+        let ranges = silenceAwareSpeechAudioChunkRanges(
+            durationMs: 100_000,
+            silenceRanges: []
+        )
+
+        XCTAssertEqual(ranges.map(\.startMs), [0, 30_000, 60_000])
+        XCTAssertEqual(ranges.map(\.lengthMs), [30_000, 30_000, 40_000])
+        XCTAssertTrue(ranges.allSatisfy { $0.lengthMs < 45_000 })
+    }
+
+    #if canImport(AVFoundation)
+    func testSustainedSilenceDetectorFindsPauseBetweenSpokenAudio() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appending(path: "speech-silence-\(UUID().uuidString).caf")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let sampleRate = 16_000.0
+        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
+        let frameCount = AVAudioFrameCount(sampleRate * 3)
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)!
+        buffer.frameLength = frameCount
+        let samples = buffer.floatChannelData![0]
+        for frame in 0..<Int(frameCount) {
+            let second = Double(frame) / sampleRate
+            samples[frame] = second >= 1 && second < 2
+                ? 0
+                : Float(sin(2 * Double.pi * 220 * second) * 0.2)
+        }
+        do {
+            let file = try AVAudioFile(forWriting: url, settings: format.settings)
+            try file.write(from: buffer)
+        }
+
+        let ranges = try sustainedSilenceRanges(in: url)
+
+        let pause = try XCTUnwrap(ranges.first)
+        XCTAssertLessThanOrEqual(abs(pause.startMs - 1_000), 100)
+        XCTAssertLessThanOrEqual(abs(pause.endMs - 2_000), 100)
+    }
+    #endif
     #endif
 
     func testSpeechNormalizationPreservesSource() {

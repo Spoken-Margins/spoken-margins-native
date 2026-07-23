@@ -3121,6 +3121,7 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["kokoroCacheLimitMB"] = String(kokoroCacheLimitMB)
         diagnostics["renderedSpeechCacheLimitMB"] = String(renderedSpeechCacheLimitMB)
         diagnostics["kokoroChunkCharacters"] = String(format: "%.0f", kokoroChunkCharacters)
+        diagnostics["speechTranscriptionEngine"] = systemSpeechTranscriptionEngineDescription()
     }
 
     func refreshSpeechVoiceOptions() {
