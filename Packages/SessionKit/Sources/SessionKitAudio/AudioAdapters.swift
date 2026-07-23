@@ -2212,7 +2212,7 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         if !segments.isEmpty {
             return TranscriptTimeline(
                 segments: segments,
-                chapters: generatedChapters(from: segments),
+                chapters: [],
                 durationMs: durationMs ?? segments.map(\.endMs).max()
             )
         }
@@ -2228,28 +2228,9 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         )
         return TranscriptTimeline(
             segments: [segment],
-            chapters: [MediaTimelineChapter(id: "ch-transcript-01", title: "Transcript", startMs: 0, transcriptSegmentId: segment.id)],
+            chapters: [],
             durationMs: durationMs
         )
-    }
-
-    private static func generatedChapters(from segments: [MediaTimelineSegment]) -> [MediaTimelineChapter] {
-        guard !segments.isEmpty else { return [] }
-        let stride = max(1, Int((Double(segments.count) / 8.0).rounded(.up)))
-        return segments.enumerated().compactMap { index, segment in
-            guard index % stride == 0 else { return nil }
-            let title = segment.text
-                .split(separator: " ")
-                .prefix(6)
-                .joined(separator: " ")
-                .trimmingCharacters(in: CharacterSet(charactersIn: ".!?;:,"))
-            return MediaTimelineChapter(
-                id: "ch-transcript-\(String(format: "%02d", (index / stride) + 1))",
-                title: title.isEmpty ? "Chapter \((index / stride) + 1)" : title,
-                startMs: segment.startMs,
-                transcriptSegmentId: segment.id
-            )
-        }
     }
     #endif
 }

@@ -1786,6 +1786,63 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(handoff.schemaVersion, "spoken-margins.export.v1")
     }
 
+    func testTechnicalTranscriptSegmentsDoNotBecomePlaybackChapterTitles() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["native_media"],
+                "timeline": ["transcript_segments", "media_time", "chapter_timing"]
+            ]
+        )
+        let item = Item(
+            id: "item-word-segments",
+            title: "Why Apple Is Heading Into a Pivotal Moment",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/episode",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://cdn.example.com/episode.mp3", durationMs: 30_000)
+        )
+        let segments = [
+            MediaTimelineSegment(id: "seg-1", startMs: 0, endMs: 10_000, text: "we"),
+            MediaTimelineSegment(id: "seg-2", startMs: 10_000, endMs: 20_000, text: "have"),
+            MediaTimelineSegment(id: "seg-3", startMs: 20_000, endMs: 30_000, text: "questions")
+        ]
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.attachTranscriptTimeline(
+            itemId: item.id,
+            timeline: TranscriptTimeline(segments: segments, chapters: [], durationMs: 30_000)
+        )
+        XCTAssertTrue(try XCTUnwrap(repo.loadTranscriptTimeline(itemId: item.id)).timeline.chapters.isEmpty)
+
+        try repo.saveTranscriptTimeline(SourceTranscriptTimeline(
+            id: "legacy-word-transcript",
+            itemId: item.id,
+            createdAt: Date(),
+            timeline: TranscriptTimeline(
+                segments: segments,
+                chapters: [
+                    MediaTimelineChapter(id: "ch-transcript-01", title: "we", startMs: 0, transcriptSegmentId: "seg-1"),
+                    MediaTimelineChapter(id: "chunk-0000-ch-transcript-02", title: "have", startMs: 10_000, transcriptSegmentId: "seg-2")
+                ],
+                durationMs: 30_000
+            )
+        ))
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentMediaTimeValue = 12_000
+        let progress = try engine.syncPlaybackProgress()
+
+        XCTAssertEqual(progress.currentTranscriptSegmentId, "seg-2")
+        XCTAssertEqual(progress.chapterTitle, item.title)
+    }
+
     func testInMemoryRepositoryListsWatchPackagesByItem() throws {
         let first = WatchAudioPackage(
             id: "package-1",

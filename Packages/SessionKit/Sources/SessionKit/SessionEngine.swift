@@ -2304,7 +2304,9 @@ public final class SessionEngine {
                     playbackRateObserved: session.playbackRate
                 )
                 let title = resolved.chapterId.flatMap { chapterId in
-                    timeline.chapters.first(where: { $0.id == chapterId })?.title
+                    timeline.chapters.first(where: {
+                        $0.id == chapterId && !isSyntheticTranscriptChapter($0)
+                    })?.title
                 } ?? currentItem?.title
                 let percent = isGeneratedTextMedia(item(for: session)?.media)
                     ? generatedTextSourcePercent(for: session, textStart: position.textStart)
@@ -3387,8 +3389,9 @@ public final class SessionEngine {
         segments: [MediaTimelineSegment]
     ) -> [MediaTimelineChapter] {
         guard !segments.isEmpty else { return [] }
-        if !existing.isEmpty {
-            return existing.compactMap { chapter in
+        let semanticChapters = existing.filter { !isSyntheticTranscriptChapter($0) }
+        if !semanticChapters.isEmpty {
+            return semanticChapters.compactMap { chapter in
                 let segment = segments.last(where: { $0.startMs <= chapter.startMs }) ?? segments.first
                 guard let segment else { return nil }
                 return MediaTimelineChapter(
@@ -3400,22 +3403,11 @@ public final class SessionEngine {
                 )
             }
         }
-        let targetCount = min(12, max(1, Int((Double(segments.count) / 6.0).rounded(.up))))
-        let stride = max(1, Int((Double(segments.count) / Double(targetCount)).rounded(.up)))
-        return segments.enumerated().compactMap { index, segment in
-            guard index % stride == 0 else { return nil }
-            let rawTitle = segment.text
-                .split(separator: " ")
-                .prefix(6)
-                .joined(separator: " ")
-                .trimmingCharacters(in: CharacterSet(charactersIn: ".!?;:,"))
-            return MediaTimelineChapter(
-                id: "ch-transcript-\(String(format: "%02d", (index / stride) + 1))",
-                title: rawTitle.isEmpty ? "Chapter \((index / stride) + 1)" : rawTitle,
-                startMs: segment.startMs,
-                transcriptSegmentId: segment.id
-            )
-        }
+        return []
+    }
+
+    private func isSyntheticTranscriptChapter(_ chapter: MediaTimelineChapter) -> Bool {
+        chapter.id.hasPrefix("ch-transcript-") || chapter.id.contains("-ch-transcript-")
     }
 
     private func generatedChapterStarts(for text: String) -> [Int] {

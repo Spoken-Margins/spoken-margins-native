@@ -230,6 +230,8 @@ typealias PreparedTextAudioPrewarmHandler = @Sendable (
     _ speechRate: Float
 ) async -> Result<PreparedTextAudio?, Error>
 
+typealias InterjectionTranscriptionHandler = @Sendable (_ audioPath: String) async throws -> String
+
 @MainActor
 final class Gate1AppModel: ObservableObject {
     private static let welcomeSampleSeedVersion = 1
@@ -356,6 +358,7 @@ final class Gate1AppModel: ObservableObject {
     private let recordingClientOverride: RecordingClient?
     private let forcePreparedTextGate: Bool
     private let sourceTranscriptionClient: SourceTranscriptionClient
+    private let interjectionTranscriptionHandler: InterjectionTranscriptionHandler
     private let preparedTextAudioPrewarmHandler: PreparedTextAudioPrewarmHandler?
     #if SPOKEN_MARGINS_WATCH
     private var gate3WatchDispatcher: CompactControlDispatcher?
@@ -383,7 +386,6 @@ final class Gate1AppModel: ObservableObject {
     private let preparedTextAudioStarterDurationMs = 30_000
     private let sourceWindowContextBeforeMs = 60_000
     private let sourceWindowContextAfterMs = 60_000
-    private let transcriptionClient = SystemSpeechTranscriptionClient()
     private let quickAccessFolderBookmarkKey = "quickAccessFolderBookmark"
     #if canImport(AVFoundation)
     private let speechPreviewSynthesizer = AVSpeechSynthesizer()
@@ -426,6 +428,7 @@ final class Gate1AppModel: ObservableObject {
         recordingClient: RecordingClient? = nil,
         forcePreparedTextGate: Bool = false,
         sourceTranscriptionClient: SourceTranscriptionClient = SystemSourceTranscriptionClient(),
+        interjectionTranscriptionHandler: InterjectionTranscriptionHandler? = nil,
         preparedTextAudioPrewarmHandler: PreparedTextAudioPrewarmHandler? = nil
     ) {
         self.sourceLinkResolver = sourceLinkResolver
@@ -435,6 +438,14 @@ final class Gate1AppModel: ObservableObject {
         self.recordingClientOverride = recordingClient
         self.forcePreparedTextGate = forcePreparedTextGate
         self.sourceTranscriptionClient = sourceTranscriptionClient
+        if let interjectionTranscriptionHandler {
+            self.interjectionTranscriptionHandler = interjectionTranscriptionHandler
+        } else {
+            let transcriptionClient = SystemSpeechTranscriptionClient()
+            self.interjectionTranscriptionHandler = { audioPath in
+                try await transcriptionClient.transcribe(audioPath: audioPath)
+            }
+        }
         self.preparedTextAudioPrewarmHandler = preparedTextAudioPrewarmHandler
         if CommandLine.arguments.contains("--ui-testing") {
             speechVoiceIdentifier = ""
@@ -2276,7 +2287,6 @@ final class Gate1AppModel: ObservableObject {
             refreshSelectedItem()
             if let interjection = latestInterjectionNeedingTranscription() {
                 scheduleTranscription(for: interjection)
-                scheduleSourceWindowContextIfNeeded(for: interjection)
             }
             reportSuccess("Saved interjection. Transcribing.")
         }
@@ -3850,7 +3860,6 @@ final class Gate1AppModel: ObservableObject {
             refreshSelectedItem()
             if request.command == .finishInterjection, let interjection = latestInterjectionNeedingTranscription() {
                 scheduleTranscription(for: interjection)
-                scheduleSourceWindowContextIfNeeded(for: interjection)
             }
             diagnostics["gate3WatchLastCommand"] = request.command.rawValue
             diagnostics["gate3WatchLastResult"] = result.delegatedToCanonicalRuntime ? "delegated" : (result.rejectedReason ?? "rejected")
@@ -3904,7 +3913,6 @@ final class Gate1AppModel: ObservableObject {
             refreshSelectedItem()
             if command == .finishInterjection, let interjection = latestInterjectionNeedingTranscription() {
                 scheduleTranscription(for: interjection)
-                scheduleSourceWindowContextIfNeeded(for: interjection)
             }
             if command == .finishInterjection || command == .cancelInterjection {
                 streamingSpeechQueue.resumeAfterInterjection()
@@ -5536,10 +5544,6 @@ final class Gate1AppModel: ObservableObject {
     ) -> TranscriptTimeline? {
         let startMs = max(0, anchorMediaTimeMs - windowBeforeMs)
         let endMs = min(timeline.durationMs ?? Int.max, anchorMediaTimeMs + windowAfterMs)
-        let anchorCovered = timeline.segments.contains { segment in
-            segment.startMs <= anchorMediaTimeMs && segment.endMs >= anchorMediaTimeMs
-        }
-        guard anchorCovered else { return nil }
         let segments = timeline.segments.filter { segment in
             segment.endMs >= startMs && segment.startMs <= endMs
         }
@@ -5553,26 +5557,45 @@ final class Gate1AppModel: ObservableObject {
 
     private func scheduleTranscription(for interjection: Interjection) {
         guard let audioPath = interjection.audioPath else { return }
+        recordAnchorCaptureDiagnostics(for: interjection)
+        diagnostics["interjectionTranscription:\(interjection.id)"] = "scheduled"
         Task {
             do {
-                let transcript = try await transcriptionClient.transcribe(audioPath: audioPath)
+                let transcript = try await interjectionTranscriptionHandler(audioPath)
                 await MainActor.run {
                     run { engine in
                         snapshot = try engine.transcriptionCompleted(interjectionId: interjection.id, transcript: transcript)
                         refreshSelectedItem()
+                        diagnostics["interjectionTranscription:\(interjection.id)"] = "complete"
                         reportSuccess("Transcribed interjection.")
                     }
+                    scheduleSourceWindowContextIfNeeded(for: interjection)
                 }
             } catch {
                 await MainActor.run {
+                    let failure = String(describing: error)
                     run { engine in
-                        snapshot = try engine.transcriptionFailed(interjectionId: interjection.id, error: String(describing: error))
+                        snapshot = try engine.transcriptionFailed(interjectionId: interjection.id, error: failure)
                         refreshSelectedItem()
+                        diagnostics["interjectionTranscription:\(interjection.id)"] = "failed:\(failure)"
+                        diagnostics["lastInterjectionTranscriptionFailure"] = "\(interjection.id):\(failure)"
                         reportFailure("Audio saved. Transcript failed.")
                     }
+                    scheduleSourceWindowContextIfNeeded(for: interjection)
                 }
             }
         }
+    }
+
+    private func recordAnchorCaptureDiagnostics(for interjection: Interjection) {
+        diagnostics["interjectionAnchorAtCapture:\(interjection.id)"] = [
+            "type=\(interjection.anchor.anchorType.rawValue)",
+            "media_time=\(interjection.anchor.mediaTimeMs == nil ? "missing" : "present")",
+            "segment=\(interjection.anchor.transcriptSegmentId == nil ? "missing" : "present")",
+            "before=\(interjection.anchor.anchorBefore.isEmpty ? "missing" : "present")",
+            "after=\(interjection.anchor.anchorAfter.isEmpty ? "missing" : "present")",
+            "context=\(interjection.anchorContextStatus?.rawValue ?? "legacy")"
+        ].joined(separator: ";")
     }
 
     private func summaryPrompt(interjections: [Interjection]) -> String {

@@ -147,7 +147,8 @@ final class SourceLinkImportTests: XCTestCase {
             sourceLinkResolver: resolver,
             audioPlaybackClient: audio,
             recordingClient: NoopRecordingClient(),
-            sourceTranscriptionClient: transcriber
+            sourceTranscriptionClient: transcriber,
+            interjectionTranscriptionHandler: { _ in "Recorded note." }
         )
         model.resetAndSeed()
 
@@ -170,6 +171,60 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.diagnostics["sourceWindowContextProvenance:ij-001"], "bounded_remote_window")
     }
 
+    func testInterjectionTranscriptionFinishesBeforeSourceWindowTranscriptionStarts() async throws {
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "audio_file"),
+                title: "Serialized Transcription Episode",
+                durationMs: 300_000,
+                audioURL: "https://cdn.example.com/serialized.mp3",
+                confidence: 1
+            )
+        ))
+        let audio = WindowContextAudioClient()
+        let sourceTranscriber = RecordingSourceWindowTranscriptionClient(timeline: TranscriptTimeline(
+            segments: [MediaTimelineSegment(id: "context", startMs: 120_000, endMs: 125_000, text: "Source context.")],
+            chapters: [],
+            durationMs: 300_000
+        ))
+        let interjectionTranscriber = ControlledInterjectionTranscriber()
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: audio,
+            recordingClient: NoopRecordingClient(),
+            sourceTranscriptionClient: sourceTranscriber,
+            interjectionTranscriptionHandler: { audioPath in
+                try await interjectionTranscriber.transcribe(audioPath: audioPath)
+            }
+        )
+        model.resetAndSeed()
+        XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/episode", sourceSurface: "paste"))
+        audio.currentMediaTimeValue = 123_000
+
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        model.dispatchGate2CompactCommand(.finishInterjection)
+        await interjectionTranscriber.waitForRequest()
+
+        let sourceRequestsBeforeNoteFinished = await sourceTranscriber.windowRequestCount()
+        XCTAssertEqual(sourceRequestsBeforeNoteFinished, 0)
+
+        await interjectionTranscriber.complete(with: "My recorded note.")
+        _ = await sourceTranscriber.waitForWindowRequest()
+        try await waitFor("both transcription stages to finish") {
+            model.diagnostics["sourceWindowTranscription:ij-001"] == "complete:speech_window"
+        }
+
+        XCTAssertEqual(model.diagnostics["interjectionTranscription:ij-001"], "complete")
+        XCTAssertEqual(
+            model.diagnostics["interjectionAnchorAtCapture:ij-001"],
+            "type=media;media_time=present;segment=missing;before=missing;after=missing;context=pending"
+        )
+        XCTAssertEqual(model.selectedItem.interjections.first?.transcript, "My recorded note.")
+    }
+
     func testUnavailablePodcastContextKeepsTimestampAndPersistedRetryState() async throws {
         let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
             requestId: "ignored",
@@ -188,7 +243,8 @@ final class SourceLinkImportTests: XCTestCase {
             sourceLinkResolver: resolver,
             audioPlaybackClient: audio,
             recordingClient: NoopRecordingClient(),
-            sourceTranscriptionClient: ThrowingSourceTranscriptionClient()
+            sourceTranscriptionClient: ThrowingSourceTranscriptionClient(),
+            interjectionTranscriptionHandler: { _ in "Recorded note." }
         )
         model.resetAndSeed()
 
@@ -246,12 +302,11 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(UserDefaults.standard.integer(forKey: "mediaSkipForwardSeconds"), 45)
     }
 
-    func testStoredTranscriptWindowIsUsedOnlyWhenItCoversPodcastAnchor() throws {
+    func testStoredTranscriptWindowAllowsNormalGapsBetweenWordTimestamps() throws {
         let timeline = TranscriptTimeline(
             segments: [
-                MediaTimelineSegment(id: "before", startMs: 50_000, endMs: 100_000, text: "Before."),
-                MediaTimelineSegment(id: "anchor", startMs: 100_000, endMs: 140_000, text: "At anchor."),
-                MediaTimelineSegment(id: "after", startMs: 140_000, endMs: 200_000, text: "After."),
+                MediaTimelineSegment(id: "before", startMs: 50_000, endMs: 120_000, text: "Before."),
+                MediaTimelineSegment(id: "after", startMs: 125_000, endMs: 200_000, text: "After."),
                 MediaTimelineSegment(id: "far", startMs: 400_000, endMs: 450_000, text: "Far away.")
             ],
             chapters: [],
@@ -260,7 +315,7 @@ final class SourceLinkImportTests: XCTestCase {
 
         let window = try XCTUnwrap(Gate1AppModel.sourceContextWindow(from: timeline, anchorMediaTimeMs: 123_000))
 
-        XCTAssertEqual(window.segments.map(\.id), ["before", "anchor", "after"])
+        XCTAssertEqual(window.segments.map(\.id), ["before", "after"], "A normal gap between word timestamps must still use stored context")
         XCTAssertNil(Gate1AppModel.sourceContextWindow(from: timeline, anchorMediaTimeMs: 300_000))
     }
 
@@ -1074,5 +1129,38 @@ private actor RecordingSourceWindowTranscriptionClient: SourceTranscriptionClien
         return await withCheckedContinuation { continuation in
             continuations.append(continuation)
         }
+    }
+
+    func windowRequestCount() -> Int {
+        windowRequest == nil ? 0 : 1
+    }
+}
+
+private actor ControlledInterjectionTranscriber {
+    private var requested = false
+    private var requestContinuations: [CheckedContinuation<Void, Never>] = []
+    private var transcriptContinuation: CheckedContinuation<String, Error>?
+
+    func transcribe(audioPath: String) async throws -> String {
+        requested = true
+        for continuation in requestContinuations {
+            continuation.resume()
+        }
+        requestContinuations.removeAll()
+        return try await withCheckedThrowingContinuation { continuation in
+            transcriptContinuation = continuation
+        }
+    }
+
+    func waitForRequest() async {
+        if requested { return }
+        await withCheckedContinuation { continuation in
+            requestContinuations.append(continuation)
+        }
+    }
+
+    func complete(with transcript: String) {
+        transcriptContinuation?.resume(returning: transcript)
+        transcriptContinuation = nil
     }
 }
