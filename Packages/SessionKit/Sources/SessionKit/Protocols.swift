@@ -27,10 +27,18 @@ public protocol SessionRepository {
     func saveTranscriptTimeline(_ transcript: SourceTranscriptTimeline) throws
     func loadTranscriptTimeline(id: String) throws -> SourceTranscriptTimeline?
     func loadTranscriptTimeline(itemId: String) throws -> SourceTranscriptTimeline?
+    func saveAudioAsset(_ asset: AudioAsset) throws
+    func loadAudioAssets(itemId: String) throws -> [AudioAsset]
+    func deleteAudioAsset(id: String) throws
+    func savePodcastDownload(_ record: PodcastDownloadRecord) throws
+    func loadPodcastDownload(itemId: String) throws -> PodcastDownloadRecord?
+    func loadPodcastDownloads() throws -> [PodcastDownloadRecord]
+    func deletePodcastDownload(id: String) throws
 }
 
 public protocol AudioPlaybackClient {
     func configureMediaContext(_ context: PlaybackMediaContext?) throws
+    func configureSpeechSettings(voiceIdentifier: String?, rate: Float) throws
     func prepareSpeechText(_ text: String) throws -> String
     func play(targetId: String) throws
     func play(targetId: String, from charOffset: Int) throws
@@ -39,11 +47,13 @@ public protocol AudioPlaybackClient {
     func setPlaybackRate(_ rate: Double) throws
     func currentPlaybackPosition() -> PlaybackPosition?
     func currentCharOffset() -> Int?
+    func currentRecoveryCharOffset() -> Int?
     func currentMediaTimeMs() -> Int?
     func currentPlaybackDurationMs() -> Int?
     func isPlaybackComplete(targetId: String) -> Bool
     func playbackStartStatus(targetId: String) -> PlaybackStartStatus
     func playbackTransportState(targetId: String) -> PlaybackTransportState?
+    func setRemoteCommandHandlingEnabled(_ enabled: Bool)
     func pause() throws
     func stop() throws
 }
@@ -84,6 +94,8 @@ public protocol TextAudioPreparationClient: Sendable {
 public extension AudioPlaybackClient {
     func configureMediaContext(_ context: PlaybackMediaContext?) throws {}
 
+    func configureSpeechSettings(voiceIdentifier: String?, rate: Float) throws {}
+
     func play(targetId: String, from charOffset: Int) throws {
         try play(targetId: targetId)
     }
@@ -102,6 +114,14 @@ public extension AudioPlaybackClient {
 
     func currentCharOffset() -> Int? {
         currentPlaybackPosition()?.textStart
+    }
+
+    /// A conservative source offset that is safe to use after the active audio
+    /// asset is lost. Rendered speech may return the beginning of the current
+    /// chunk here while exposing a more precise interpolated presentation offset
+    /// through `currentCharOffset()`.
+    func currentRecoveryCharOffset() -> Int? {
+        currentCharOffset()
     }
 
     func currentMediaTimeMs() -> Int? {
@@ -127,6 +147,8 @@ public extension AudioPlaybackClient {
     func playbackTransportState(targetId: String) -> PlaybackTransportState? {
         nil
     }
+
+    func setRemoteCommandHandlingEnabled(_ enabled: Bool) {}
 }
 
 public protocol RecordingClient {

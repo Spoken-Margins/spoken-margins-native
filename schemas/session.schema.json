@@ -10,6 +10,7 @@
     "id": { "type": "string", "minLength": 1 },
     "itemId": { "type": "string", "minLength": 1 },
     "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" },
     "completedAt": { "type": ["string", "null"], "format": "date-time" },
     "status": { "enum": ["in_progress", "finished", "abandoned"] },
     "phase": {

@@ -158,6 +158,8 @@ If a Listening Map exists, the initial snapshot includes current chapter data. I
 
 `togglePlayPause()` is a convenience command for compact control surfaces.
 
+`endSession()` synchronizes the last confirmed playback position, stops audio, and detaches the active runtime snapshot. An unfinished session remains `in_progress` and resumable; only a session that genuinely reached completion is `finished`. Relaunch may inspect the most recently updated unfinished session as paused, but must never autoplay it.
+
 ### TTS Text Normalization
 
 Before any text is sent to a speech engine, SessionKit must produce a speech-safe rendering of the source text.

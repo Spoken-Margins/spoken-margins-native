@@ -100,6 +100,7 @@ The JSON Schemas define the portable contract. SQLite tables should be shaped to
 - playback_rate
 - pending_profile_transition nullable
 - created_at
+- updated_at
 - completed_at nullable
 
 ### runtime_profile_events

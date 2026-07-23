@@ -34,6 +34,15 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             return result
         }
 
+        if isSpotifyHostURL(url), !isSpotifyURL(url) {
+            return needsReview(
+                request: request,
+                provider: "spotify",
+                title: "Spotify podcast",
+                reason: "spotify_specific_episode_required"
+            )
+        }
+
         if isSpotifyURL(url) {
             return try resolveSpotifyURL(url, request: request)
         }
@@ -91,6 +100,15 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
 
         if looksLikeRSSURL(url), let result = try await resolveRSSFeedAsync(url, request: request, expectedTitle: nil, expectedURL: nil, requestTimeoutSeconds: requestTimeoutSeconds) {
             return result
+        }
+
+        if isSpotifyHostURL(url), !isSpotifyURL(url) {
+            return needsReview(
+                request: request,
+                provider: "spotify",
+                title: "Spotify podcast",
+                reason: "spotify_specific_episode_required"
+            )
         }
 
         if isSpotifyURL(url) {
@@ -605,8 +623,12 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
     }
 
     private func isSpotifyURL(_ url: URL) -> Bool {
+        isSpotifyHostURL(url) && url.path.lowercased().contains("/episode/")
+    }
+
+    private func isSpotifyHostURL(_ url: URL) -> Bool {
         let host = (url.host ?? "").lowercased()
-        return host.contains("spotify.com") && url.path.lowercased().contains("/episode/")
+        return host == "spotify.com" || host.hasSuffix(".spotify.com")
     }
 
     private func queryValue(_ name: String, in url: URL) -> String? {

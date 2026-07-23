@@ -120,7 +120,7 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertNil(model.lastError)
     }
 
-    func testNativeAudioInterjectionRequestsOneMinuteSourceWindowContext() async throws {
+    func testNativeAudioInterjectionRequestsFullShoulderContext() async throws {
         let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
             requestId: "ignored",
             status: .playable,
@@ -136,9 +136,11 @@ final class SourceLinkImportTests: XCTestCase {
         let audio = WindowContextAudioClient()
         let transcriber = RecordingSourceWindowTranscriptionClient(timeline: TranscriptTimeline(
             segments: [
+                MediaTimelineSegment(id: "window-early", startMs: 33_000, endMs: 62_000, text: "Earlier context."),
                 MediaTimelineSegment(id: "window-before", startMs: 63_000, endMs: 122_000, text: "Minute before."),
                 MediaTimelineSegment(id: "window-current", startMs: 122_000, endMs: 124_000, text: "Interjection context."),
-                MediaTimelineSegment(id: "window-after", startMs: 124_000, endMs: 183_000, text: "Minute after.")
+                MediaTimelineSegment(id: "window-after", startMs: 124_000, endMs: 183_000, text: "Minute after."),
+                MediaTimelineSegment(id: "window-late", startMs: 184_000, endMs: 243_000, text: "Later context.")
             ],
             chapters: [],
             durationMs: 300_000
@@ -147,7 +149,8 @@ final class SourceLinkImportTests: XCTestCase {
             sourceLinkResolver: resolver,
             audioPlaybackClient: audio,
             recordingClient: NoopRecordingClient(),
-            sourceTranscriptionClient: transcriber
+            sourceTranscriptionClient: transcriber,
+            interjectionTranscriptionHandler: { _ in "Recorded note." }
         )
         model.resetAndSeed()
 
@@ -161,12 +164,160 @@ final class SourceLinkImportTests: XCTestCase {
         }
 
         XCTAssertEqual(request.anchorMediaTimeMs, 123_000)
-        XCTAssertEqual(request.windowBeforeMs, 60_000)
-        XCTAssertEqual(request.windowAfterMs, 60_000)
+        XCTAssertEqual(request.windowBeforeMs, 90_000)
+        XCTAssertEqual(request.windowAfterMs, 120_000)
         XCTAssertEqual(request.durationMs, 300_000)
-        XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorBefore, "Minute before. Interjection context.")
-        XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorAfter, "Minute after.")
-        XCTAssertEqual(model.diagnostics["sourceWindowContextProvenance:ij-001"], "speech_window")
+        XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorBefore, "Earlier context. Minute before. Interjection context.")
+        XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorAfter, "Minute after. Later context.")
+        XCTAssertEqual(model.selectedItem.interjections.first?.anchorContextStatus, .ready)
+        XCTAssertEqual(model.diagnostics["sourceWindowContextProvenance:ij-001"], "bounded_remote_window")
+    }
+
+    func testInterjectionTranscriptionFinishesBeforeSourceWindowTranscriptionStarts() async throws {
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "audio_file"),
+                title: "Serialized Transcription Episode",
+                durationMs: 300_000,
+                audioURL: "https://cdn.example.com/serialized.mp3",
+                confidence: 1
+            )
+        ))
+        let audio = WindowContextAudioClient()
+        let sourceTranscriber = RecordingSourceWindowTranscriptionClient(timeline: TranscriptTimeline(
+            segments: [MediaTimelineSegment(id: "context", startMs: 120_000, endMs: 125_000, text: "Source context.")],
+            chapters: [],
+            durationMs: 300_000
+        ))
+        let interjectionTranscriber = ControlledInterjectionTranscriber()
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: audio,
+            recordingClient: NoopRecordingClient(),
+            sourceTranscriptionClient: sourceTranscriber,
+            interjectionTranscriptionHandler: { audioPath in
+                try await interjectionTranscriber.transcribe(audioPath: audioPath)
+            }
+        )
+        model.resetAndSeed()
+        XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/episode", sourceSurface: "paste"))
+        audio.currentMediaTimeValue = 123_000
+
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        model.dispatchGate2CompactCommand(.finishInterjection)
+        await interjectionTranscriber.waitForRequest()
+
+        let sourceRequestsBeforeNoteFinished = await sourceTranscriber.windowRequestCount()
+        XCTAssertEqual(sourceRequestsBeforeNoteFinished, 0)
+
+        await interjectionTranscriber.complete(with: "My recorded note.")
+        _ = await sourceTranscriber.waitForWindowRequest()
+        try await waitFor("both transcription stages to finish") {
+            model.diagnostics["sourceWindowTranscription:ij-001"] == "complete:speech_window"
+        }
+
+        XCTAssertEqual(model.diagnostics["interjectionTranscription:ij-001"], "complete")
+        XCTAssertEqual(
+            model.diagnostics["interjectionAnchorAtCapture:ij-001"],
+            "type=media;media_time=present;segment=missing;before=missing;after=missing;context=pending"
+        )
+        XCTAssertEqual(model.selectedItem.interjections.first?.transcript, "My recorded note.")
+    }
+
+    func testSavedInterjectionAudioCanReplaceATruncatedTranscript() async throws {
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "audio_file"),
+                title: "Recoverable Interjection",
+                durationMs: 300_000,
+                audioURL: "https://cdn.example.com/recoverable.mp3",
+                confidence: 1
+            )
+        ))
+        let transcriber = SequencedInterjectionTranscriber(transcripts: [
+            "Only the ending survived.",
+            "The complete saved interjection is restored from its original audio."
+        ])
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: WindowContextAudioClient(),
+            recordingClient: NoopRecordingClient(),
+            sourceTranscriptionClient: ThrowingSourceTranscriptionClient(),
+            interjectionTranscriptionHandler: { audioPath in
+                try await transcriber.transcribe(audioPath: audioPath)
+            }
+        )
+        model.resetAndSeed()
+        XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/episode", sourceSurface: "paste"))
+
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        model.dispatchGate2CompactCommand(.finishInterjection)
+        try await waitFor("initial transcript") {
+            model.selectedItem.interjections.first?.transcript == "Only the ending survived."
+        }
+        let interjection = try XCTUnwrap(model.selectedItem.interjections.first)
+
+        model.retryInterjectionTranscription(interjection)
+        try await waitFor("replacement transcript") {
+            model.selectedItem.interjections.first?.transcript == "The complete saved interjection is restored from its original audio."
+        }
+
+        XCTAssertFalse(model.retryingInterjectionTranscriptionIds.contains(interjection.id))
+        XCTAssertEqual(model.diagnostics["interjectionTranscription:\(interjection.id)"], "complete")
+
+        let recovered = try XCTUnwrap(model.selectedItem.interjections.first)
+        model.retryInterjectionTranscription(recovered)
+        try await waitFor("failed retry evidence") {
+            model.diagnostics["interjectionTranscription:\(interjection.id)"]?.hasPrefix("retry_failed:") == true
+        }
+
+        XCTAssertEqual(model.selectedItem.interjections.first?.transcript, "The complete saved interjection is restored from its original audio.")
+        XCTAssertEqual(model.selectedItem.interjections.first?.displayText, "The complete saved interjection is restored from its original audio.")
+        XCTAssertFalse(model.retryingInterjectionTranscriptionIds.contains(interjection.id))
+    }
+
+    func testUnavailablePodcastContextKeepsTimestampAndPersistedRetryState() async throws {
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "audio_file"),
+                title: "Offline Context Episode",
+                durationMs: 300_000,
+                audioURL: "https://cdn.example.com/offline-context.mp3",
+                confidence: 1
+            )
+        ))
+        let audio = WindowContextAudioClient()
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: audio,
+            recordingClient: NoopRecordingClient(),
+            sourceTranscriptionClient: ThrowingSourceTranscriptionClient(),
+            interjectionTranscriptionHandler: { _ in "Recorded note." }
+        )
+        model.resetAndSeed()
+
+        XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/episode", sourceSurface: "paste"))
+        audio.currentMediaTimeValue = 123_000
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        model.dispatchGate2CompactCommand(.finishInterjection)
+        try await waitFor("source window failure to persist") {
+            model.selectedItem.interjections.first?.anchorContextStatus == .unavailable
+        }
+
+        let interjection = try XCTUnwrap(model.selectedItem.interjections.first)
+        XCTAssertEqual(interjection.anchor.mediaTimeMs, 123_000)
+        XCTAssertEqual(interjection.anchorContextStatus, .unavailable)
+        XCTAssertEqual(interjection.anchor.anchorBefore, "")
+        XCTAssertEqual(interjection.anchor.anchorAfter, "")
     }
 
     func testConfiguredNativeAudioSkipIntervalsAreAppliedAndPersisted() {
@@ -208,13 +359,14 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(UserDefaults.standard.integer(forKey: "mediaSkipForwardSeconds"), 45)
     }
 
-    func testStoredTranscriptWindowIsUsedOnlyWhenItCoversPodcastAnchor() throws {
+    func testStoredTranscriptWindowUsesFullShoulderAndAllowsTimestampGaps() throws {
         let timeline = TranscriptTimeline(
             segments: [
-                MediaTimelineSegment(id: "before", startMs: 50_000, endMs: 100_000, text: "Before."),
-                MediaTimelineSegment(id: "anchor", startMs: 100_000, endMs: 140_000, text: "At anchor."),
-                MediaTimelineSegment(id: "after", startMs: 140_000, endMs: 200_000, text: "After."),
-                MediaTimelineSegment(id: "far", startMs: 400_000, endMs: 450_000, text: "Far away.")
+                MediaTimelineSegment(id: "early", startMs: 35_000, endMs: 55_000, text: "Earlier context."),
+                MediaTimelineSegment(id: "before", startMs: 70_000, endMs: 120_000, text: "Before."),
+                MediaTimelineSegment(id: "after", startMs: 125_000, endMs: 175_000, text: "After."),
+                MediaTimelineSegment(id: "late", startMs: 200_000, endMs: 240_000, text: "Later context."),
+                MediaTimelineSegment(id: "far", startMs: 500_000, endMs: 550_000, text: "Far away.")
             ],
             chapters: [],
             durationMs: 600_000
@@ -222,8 +374,12 @@ final class SourceLinkImportTests: XCTestCase {
 
         let window = try XCTUnwrap(Gate1AppModel.sourceContextWindow(from: timeline, anchorMediaTimeMs: 123_000))
 
-        XCTAssertEqual(window.segments.map(\.id), ["before", "anchor", "after"])
-        XCTAssertNil(Gate1AppModel.sourceContextWindow(from: timeline, anchorMediaTimeMs: 300_000))
+        XCTAssertEqual(
+            window.segments.map(\.id),
+            ["early", "before", "after", "late"],
+            "The stored transcript should preserve the full 90-second/120-second shoulder despite normal word-timestamp gaps"
+        )
+        XCTAssertNil(Gate1AppModel.sourceContextWindow(from: timeline, anchorMediaTimeMs: 350_000))
     }
 
     func testClipboardButtonExtractsSourceLinkURL() throws {
@@ -282,6 +438,37 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.title, "Form Episode")
     }
 
+    func testSourceLinkFormRejectsMalformedURLWithoutClearingAndDeduplicatesActiveResolution() async throws {
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: "https://example.com/form-episode", provider: "direct_audio", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://example.com/form-episode", provider: "direct_audio", role: "audio_file"),
+                title: "Form Episode",
+                audioURL: "https://cdn.example.com/form-episode.mp3",
+                confidence: 1
+            )
+        ))
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            sourceTranscriptionClient: ThrowingSourceTranscriptionClient()
+        )
+        model.resetAndSeed()
+        model.sourceLinkURL = "not a URL"
+
+        XCTAssertFalse(model.beginSourceLinkImportFromForm())
+        XCTAssertEqual(model.sourceLinkURL, "not a URL")
+        XCTAssertEqual(model.sourceLinkImportState, "failure")
+
+        model.sourceLinkURL = "https://example.com/form-episode"
+        XCTAssertTrue(model.beginSourceLinkImportFromForm())
+        XCTAssertFalse(model.beginSourceLinkImportFromForm())
+        try await waitFor("source resolution to finish") { model.sourceLinkImportState == "success" }
+        XCTAssertEqual(model.selectedItem.title, "Form Episode")
+    }
+
     func testIncomingPayloadIsQuarantinedAfterUnsupportedImport() async throws {
         let store = makePayloadStore()
         let handoff = SourceLinkHandoff(
@@ -312,9 +499,16 @@ final class SourceLinkImportTests: XCTestCase {
 
         XCTAssertEqual(model.diagnostics["lastSourceLinkPayloadCleanup"], "queued:\(handoff.id)")
         XCTAssertTrue(model.diagnostics["pendingSourceLinkPayload:\(handoff.id)"]?.hasPrefix("quarantined:") == true)
+        XCTAssertEqual(model.diagnostics["lastSourceLinkFailureCategory"], "spotify_audio_requires_provider_playback")
         XCTAssertNil(model.lastError)
         XCTAssertThrowsError(try store.handoff(payloadID: handoff.id))
-        XCTAssertEqual(try store.failedHandoffs().first?.handoff, handoff)
+        let failed = try XCTUnwrap(store.failedHandoffs().first)
+        XCTAssertEqual(failed.handoff, handoff)
+        XCTAssertTrue(
+            failed.reason.contains("could not find a public audio file"),
+            "Unexpected quarantine reason: \(failed.reason)"
+        )
+        XCTAssertFalse(failed.reason.contains("open.spotify.com"))
         XCTAssertEqual(model.importInbox.first?.payloadID, handoff.id)
     }
 
@@ -743,6 +937,24 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(result.failureReason, "spotify_episode_not_found_on_apple")
     }
 
+    func testPublicResolverRequiresASpecificSpotifyEpisodeLink() throws {
+        let request = LinkResolutionRequest(
+            id: "request-spotify-show",
+            inputURL: "https://open.spotify.com/show/show123",
+            sourceSurface: "share_extension",
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+
+        let result = try PublicPodcastLinkResolver(fetch: { _ in
+            XCTFail("A Spotify show link should be rejected before network resolution")
+            return Data()
+        }).resolve(request)
+
+        XCTAssertEqual(result.status, .needsReview)
+        XCTAssertEqual(result.originalLink.provider, "spotify")
+        XCTAssertEqual(result.failureReason, "spotify_specific_episode_required")
+    }
+
     func testPublicResolverNormalizesSpotifyEpisodeToExactAppleMatch() throws {
         let oEmbed = #"{"title":"The Shared Episode!"}"#
         let appleSearch = """
@@ -983,5 +1195,53 @@ private actor RecordingSourceWindowTranscriptionClient: SourceTranscriptionClien
         return await withCheckedContinuation { continuation in
             continuations.append(continuation)
         }
+    }
+
+    func windowRequestCount() -> Int {
+        windowRequest == nil ? 0 : 1
+    }
+}
+
+private actor ControlledInterjectionTranscriber {
+    private var requested = false
+    private var requestContinuations: [CheckedContinuation<Void, Never>] = []
+    private var transcriptContinuation: CheckedContinuation<String, Error>?
+
+    func transcribe(audioPath: String) async throws -> String {
+        requested = true
+        for continuation in requestContinuations {
+            continuation.resume()
+        }
+        requestContinuations.removeAll()
+        return try await withCheckedThrowingContinuation { continuation in
+            transcriptContinuation = continuation
+        }
+    }
+
+    func waitForRequest() async {
+        if requested { return }
+        await withCheckedContinuation { continuation in
+            requestContinuations.append(continuation)
+        }
+    }
+
+    func complete(with transcript: String) {
+        transcriptContinuation?.resume(returning: transcript)
+        transcriptContinuation = nil
+    }
+}
+
+private actor SequencedInterjectionTranscriber {
+    private var transcripts: [String]
+
+    init(transcripts: [String]) {
+        self.transcripts = transcripts
+    }
+
+    func transcribe(audioPath: String) throws -> String {
+        guard !transcripts.isEmpty else {
+            throw SessionKitError.persistenceFailed("no_scripted_transcript")
+        }
+        return transcripts.removeFirst()
     }
 }

@@ -9,6 +9,11 @@ const builds = [
   {
     entryPoints: ["Tools/BrowserExtraction/sourceLinkPreprocessor.entry.mjs"],
     outfile: "App/SpokenMarginsShareExtension/Resources/SourceLinkPreprocessor.js"
+  },
+  {
+    entryPoints: ["Tools/BrowserExtraction/popup.entry.mjs"],
+    outfile: "App/SpokenMarginsBrowserTextExtension/Resources/Scripts/popup.js",
+    banner: "/* Spoken Margins Safari capture transport */"
   }
 ];
 
@@ -22,7 +27,7 @@ for (const configuration of builds) {
     minify: true,
     sourcemap: false,
     legalComments: "none",
-    banner: { js: "/* Bundled Defuddle 0.19.1; see Defuddle-LICENSE.txt */" }
+    banner: { js: configuration.banner || "/* Bundled Defuddle 0.19.1; see Defuddle-LICENSE.txt */" }
   });
   const bundledSource = await readFile(configuration.outfile, "utf8");
   const cleanSource = bundledSource

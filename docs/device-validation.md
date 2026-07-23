@@ -22,7 +22,9 @@ Use this when installing the iOS build on a real phone and testing against the l
 - Allow microphone and local-network permissions when prompted.
 - Create or import an item.
 - Start playback.
-- Confirm speech uses iOS speech output and routes to AirPods.
+- Confirm James and Lily use bundled Supertonic output, system fallback uses the selected iOS voice, and both routes work through the speaker and AirPods.
+- Measure Supertonic cold first audio (target ≤3 s), warm first audio (target ≤1 s), and sustained real-time factor (target ≤0.5).
+- Run 100 chunks and 30 minutes of foreground/background narration; record resident-memory trend, memory warnings/jetsam, render gaps, and thermal state.
 - From the phone, test play/pause, back, forward, interject, done, cancel, summarize, discuss, and addendum.
 - Confirm source interjections keep nearby anchors and item percent.
 - Confirm AI-response interjections keep AI-local percent labels.
@@ -32,34 +34,27 @@ Use this when installing the iOS build on a real phone and testing against the l
 
 Current device-ready control paths:
 
-- The web app exposes `window.SpokenMarginsRemote.snapshot`.
-- The web app exposes `window.SpokenMarginsRemote.dispatch({ type })`.
-- Supported command types are:
-  - `queue.open`
-  - `playback.playPause`
-  - `playback.seekBack`
-  - `playback.seekForward`
-  - `playback.done`
-  - `interjection.start`
-  - `interjection.finish`
-  - `interjection.cancel`
-  - `interjection.summarize`
-  - `discussion.start`
-  - `discussion.addendum`
-- The app registers Media Session handlers for play, pause, seek backward, seek forward, previous, next, and stop.
+- Native media and native live speech share the canonical compact-control command contract.
+- The active audio route owns `MPRemoteCommandCenter`; inactive media handlers are removed while live speech is active.
+- Live speech publishes `MPNowPlayingInfoCenter` state and handlers for play, pause, toggle, back, forward, previous, next, stop, and playback rate.
+- Media playback retains position seeking and playback-rate commands through its native player route.
+- Live speech maintains an interpolated presentation offset for UI/progress and a conservative chunk-start recovery offset for fallback and route loss.
 
 Device checks:
 
 - Start playback on iPhone.
-- Lock the phone and check whether iOS exposes the Media Session controls.
-- Test play/pause, back, forward, and stop/done from the Lock Screen or Apple Watch Now Playing surface.
-- Confirm the app updates playback state and progress after each command.
+- Change native-text speed repeatedly while speaking. Confirm audio changes rate immediately, pitch remains acceptable, the buffering indicator does not restart, and diagnostics do not record new renders for the active chunk.
+- Lock the phone and confirm iOS exposes the native Now Playing controls for Supertonic speech.
+- Test play/pause, back, forward, stop, and each advertised playback rate from the Lock Screen or Apple Watch Now Playing surface.
+- Confirm exactly one command is applied per gesture and media playback does not start underneath live speech.
+- After each command, unlock and confirm the app's play state, displayed progress, and resumed spoken text agree. Repeating pause/resume must not drift backward beyond the current sentence.
+- While speech is playing, unplug headphones and reconnect them. Confirm playback pauses safely and an explicit resume continues from a valid text anchor.
+- Repeat after backgrounding, locking, an incoming audio interruption, and a simulated or natural audio-route reset. Capture diagnostics for both `streamingPresentationOffset` and `streamingRecoveryOffset` when testing streamed assistant speech.
 
 Remaining native extension work:
 
-- A true ActivityKit Live Activity.
-- A WidgetKit/App Intents action surface for custom interject, summarize, addendum, and discuss buttons.
-- A Watch app or Smart Stack widget using the same command contract.
+- Product-owner physical-device acceptance of the native Lock Screen path above.
+- Watch package rendering remains out of scope; a future Watch app or Smart Stack surface should dispatch the same compact-control commands instead of creating a second transport.
 
 ## Goal 4: Offline AI Deferral
 

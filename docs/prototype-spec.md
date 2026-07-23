@@ -197,6 +197,7 @@ A session is one listening pass over an item.
   "id": "session-001",
   "itemId": "item-001",
   "createdAt": "2026-06-11T12:15:00Z",
+  "updatedAt": "2026-06-11T12:45:00Z",
   "completedAt": null,
   "currentChunkIndex": 18,
   "completionPercent": 27,
@@ -491,6 +492,22 @@ Export options:
 - include Listening Map
 - include interjections
 
+Library-wide export keeps the same session boundary. From Home, the user can select
+multiple sessions across items and write one Markdown file per session to a chosen
+folder. The default list includes only sessions with active interjections; the user
+can switch to all sessions. Rows identify the parent item, session date, progress,
+status, and active interjection count.
+
+Batch export applies one set of export options to the selected sessions. The app
+remembers the chosen export folder separately from import folders, derives each
+filename from the item title and session date, never silently overwrites an existing
+file, and reports per-file failures without discarding successful exports.
+
+Sharing an individual Markdown export uses a named `.md` file so receiving tools can
+derive a useful note title. Destination-specific transforms such as configurable
+Obsidian YAML front matter and direct Apple Notes or Evernote integrations remain
+future work; generic Markdown folder export must not depend on a notes provider.
+
 If an item has an external reference, default to using it instead of full text.
 
 Markdown export should remain useful without chapters:
@@ -701,6 +718,10 @@ Build:
 - include/exclude interjections
 - mapless interjection export
 - session identity in export
+- named Markdown file sharing for individual sessions
+- Home-level multi-session selection, defaulting to sessions with interjections
+- one collision-safe Markdown file per selected session
+- remembered export folder and partial-failure reporting
 
 Exit criteria:
 

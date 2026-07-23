@@ -1,6 +1,6 @@
 import Foundation
 
-public enum SessionKitError: Error, Equatable, CustomStringConvertible {
+public enum SessionKitError: Error, Equatable, CustomStringConvertible, LocalizedError {
     case invalidCommandForCapability(String)
     case invalidCommandForState(String)
     case missingFixture(String)
@@ -17,6 +17,10 @@ public enum SessionKitError: Error, Equatable, CustomStringConvertible {
         case .persistenceFailed(let message):
             return "persistence_failed:\(message)"
         }
+    }
+
+    public var errorDescription: String? {
+        description
     }
 }
 
@@ -309,6 +313,8 @@ public struct PlaybackMediaContext: Codable, Equatable, Sendable {
     public var title: String
     public var subtitle: String?
     public var sourceURL: String?
+    /// Concrete transport URL selected for this playback. The target and source URL remain canonical.
+    public var playbackURL: String?
     public var artworkURL: String?
     public var durationMs: Int?
     public var sourceType: AudioSourceType?
@@ -321,6 +327,7 @@ public struct PlaybackMediaContext: Codable, Equatable, Sendable {
         title: String,
         subtitle: String? = nil,
         sourceURL: String? = nil,
+        playbackURL: String? = nil,
         artworkURL: String? = nil,
         durationMs: Int? = nil,
         sourceType: AudioSourceType? = nil,
@@ -332,6 +339,7 @@ public struct PlaybackMediaContext: Codable, Equatable, Sendable {
         self.title = title
         self.subtitle = subtitle
         self.sourceURL = sourceURL
+        self.playbackURL = playbackURL
         self.artworkURL = artworkURL
         self.durationMs = durationMs
         self.sourceType = sourceType
@@ -921,6 +929,12 @@ public struct Anchor: Codable, Equatable, Sendable {
     }
 }
 
+public enum AnchorContextStatus: String, Codable, Equatable, Sendable {
+    case pending
+    case ready
+    case unavailable
+}
+
 public struct Interjection: Codable, Equatable, Sendable {
     public var id: String
     public var itemId: String
@@ -937,6 +951,7 @@ public struct Interjection: Codable, Equatable, Sendable {
     public var cleanedTranscript: String?
     public var displayText: String?
     public var status: String
+    public var anchorContextStatus: AnchorContextStatus? = nil
 }
 
 public struct ConversationTurn: Codable, Equatable, Sendable {
@@ -970,6 +985,10 @@ public struct AIJob: Codable, Equatable, Sendable {
 public struct Session: Codable, Equatable, Sendable {
     public var id: String
     public var itemId: String
+    /// Optional only so session payloads written by pre-timestamp builds remain decodable.
+    public var createdAt: Date? = nil
+    public var updatedAt: Date? = nil
+    public var completedAt: Date? = nil
     public var status: String
     public var phase: SessionPhase
     public var currentTargetType: TargetType

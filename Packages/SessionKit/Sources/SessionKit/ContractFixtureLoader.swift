@@ -56,6 +56,9 @@ public enum ContractFixtureLoader {
         return Session(
             id: object["id"] as? String ?? "",
             itemId: object["itemId"] as? String ?? "",
+            createdAt: ISO8601DateFormatter().date(from: object["createdAt"] as? String ?? ""),
+            updatedAt: ISO8601DateFormatter().date(from: object["updatedAt"] as? String ?? object["createdAt"] as? String ?? ""),
+            completedAt: ISO8601DateFormatter().date(from: object["completedAt"] as? String ?? ""),
             status: object["status"] as? String ?? "in_progress",
             phase: SessionPhase(rawValue: object["phase"] as? String ?? "item_playback") ?? .itemPlayback,
             currentTargetType: TargetType(rawValue: target["targetType"] as? String ?? "item_text_tts") ?? .itemTextTTS,

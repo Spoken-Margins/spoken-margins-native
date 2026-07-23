@@ -35,6 +35,61 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         XCTAssertEqual(parsed.requestedContinuation.preferredPlaybackOwner, "browser_or_app")
     }
 
+    func testExactEmojiArticleImportPreservesSourceWhileSystemSpeechProjectionRemovesUnsafeContent() throws {
+        let sourceText = try EmojiArticleRegressionFixture.browserMarkdown()
+        let handoff = BrowserTextHandoff(
+            itemId: "item-exact-emoji-browser-markdown",
+            captureMode: .readablePage,
+            source: BrowserTextSource(url: EmojiArticleRegressionFixture.sourceURL, title: EmojiArticleRegressionFixture.title),
+            text: sourceText,
+            contentFormat: .markdown
+        )
+
+        let sanitized = Gate1AppModel.sanitizedBrowserTextHandoff(handoff)
+        let speech = SpeechTextNormalizer.projectForSystemSpeech(sanitized.text)
+
+        XCTAssertEqual(sanitized.contentFormat, .markdown)
+        for heading in EmojiArticleRegressionFixture.sectionHeadings {
+            XCTAssertTrue(sanitized.text.contains("## \(heading)"))
+        }
+        XCTAssertTrue(sanitized.text.contains("💪💪🏻💪🏼💪🏽💪🏾💪🏿"))
+        XCTAssertTrue(sanitized.text.contains("Language only truly lives"))
+        XCTAssertFalse(sanitized.text.localizedCaseInsensitiveContains("<video"))
+        XCTAssertFalse(sanitized.text.localizedCaseInsensitiveContains("<source"))
+        XCTAssertFalse(sanitized.text.localizedCaseInsensitiveContains("browser doesn't support"))
+        XCTAssertFalse(speech.text.contains("💪"))
+        XCTAssertFalse(speech.text.contains("⛲"))
+        XCTAssertFalse(speech.text.localizedCaseInsensitiveContains("<video"))
+        XCTAssertTrue(speech.text.contains("Language only truly lives"))
+        XCTAssertTrue(SpeechTextNormalizer.isSystemSpeechSafe(speech.text))
+        XCTAssertTrue(speech.text.allSatisfy { String($0).utf16.count == 1 })
+        XCTAssertEqual(speech.text.count, speech.sourceOffsets.count)
+        XCTAssertTrue(zip(speech.sourceOffsets, speech.sourceOffsets.dropFirst()).allSatisfy { $0.0 <= $0.1 })
+        XCTAssertTrue(speech.sourceOffsets.allSatisfy { 0...sanitized.text.count ~= $0 })
+
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        XCTAssertTrue(model.importBrowserText(handoff))
+        XCTAssertEqual(model.selectedItem.status, "ready")
+        XCTAssertEqual(
+            model.selectedItem.chapters.map(\.title),
+            EmojiArticleRegressionFixture.sectionHeadings
+        )
+    }
+
+    func testPlainTextAndMarkdownHandoffsAreNotHTMLStripped() {
+        for captureMode in [BrowserTextCaptureMode.selectedText, .markdownFile, .plainTextFile] {
+            let handoff = BrowserTextHandoff(
+                captureMode: captureMode,
+                source: BrowserTextSource(url: "file:///fixture.md", title: "Deliberate Markup"),
+                text: "Keep <video> as deliberate text 💪🏿.",
+                contentFormat: captureMode == .markdownFile ? .markdown : .plainText
+            )
+
+            XCTAssertEqual(Gate1AppModel.sanitizedBrowserTextHandoff(handoff), handoff)
+        }
+    }
+
     func testBrowserTextPayloadURLParsesHandoffFromStore() throws {
         let payloadID = "payload-readable"
         let store = try makePayloadStore(payloadID: payloadID, payload: [

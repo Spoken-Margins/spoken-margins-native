@@ -2,6 +2,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import { parseHTML } from "linkedom";
+import {
+  captureReadablePage,
+  fallbackReadableMarkdown
+} from "./browserExtractionCore.mjs";
+import {
+  capturePageText,
+  invokeInjectedCapture
+} from "./popupCore.mjs";
 
 function articleDocument() {
   const body = "<p>" + "Useful article prose. ".repeat(80) + "</p>";
@@ -17,24 +25,119 @@ function articleDocument() {
   return document;
 }
 
-test("Defuddle capture emits local Markdown with headings", async () => {
+test("readable capture falls back to local semantic Markdown when the test DOM cannot run Defuddle", () => {
   const document = articleDocument();
-  const { captureReadablePage } = await import("./browserExtractionCore.mjs");
-  const payload = captureReadablePage({ crypto: { randomUUID: () => "test-id" }, navigator: {} }, document);
+  const originalError = console.error;
+  const originalLog = console.log;
+  console.error = () => {};
+  console.log = () => {};
+  let payload;
+  try {
+    payload = captureReadablePage({ crypto: { randomUUID: () => "test-id" }, navigator: {} }, document);
+  } finally {
+    console.error = originalError;
+    console.log = originalLog;
+  }
 
   assert.equal(payload.captureMode, "readable_page");
   assert.equal(payload.contentFormat, "markdown");
-  assert.equal(payload.metadata.extractorVersion, "0.19.1");
+  assert.equal(payload.metadata.extractor, "semantic_dom_fallback");
+  assert.equal(payload.metadata.extractorVersion, "1");
+  assert.match(payload.metadata.extractionError, /No readable page text was found/);
   assert.equal(payload.metadata.networkFallback, false);
   assert.match(payload.text, /## First section/i);
   assert.match(payload.text, /### Second section/i);
   assert.doesNotMatch(payload.text, /Navigation noise|Footer noise/);
 });
 
+test("semantic DOM fallback preserves article headings and excludes surrounding navigation", () => {
+  const document = articleDocument();
+  const markdown = fallbackReadableMarkdown(document);
+
+  assert.match(markdown, /## First section/i);
+  assert.match(markdown, /### Second section/i);
+  assert.doesNotMatch(markdown, /Navigation noise|Footer noise/);
+});
+
+test("popup capture returns the injected result without tabs messaging", async () => {
+  const payload = {
+    captureMode: "readable_page",
+    contentFormat: "markdown",
+    source: { url: "https://example.com/guide", title: "Guide" },
+    text: "Readable page text."
+  };
+  const calls = [];
+  const extensionAPI = {
+    tabs: {
+      query: async () => [{ id: 42 }]
+    },
+    scripting: {
+      executeScript: async (request) => {
+        calls.push(request);
+        if (request.files) {
+          return [{ frameId: 0 }];
+        }
+        return [{ frameId: 0, result: { ok: true, payload } }];
+      }
+    }
+  };
+
+  assert.equal(await capturePageText(extensionAPI, "captureReadablePage"), payload);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0], {
+    target: { tabId: 42 },
+    files: ["browserTextCapture.js"]
+  });
+  assert.equal(calls[1].func, invokeInjectedCapture);
+  assert.deepEqual(calls[1].args, ["captureReadablePage"]);
+  assert.equal(extensionAPI.tabs.sendMessage, undefined);
+});
+
+test("popup capture reports the injected failure instead of a generic missing response", async () => {
+  const extensionAPI = {
+    tabs: {
+      query: async () => [{ id: 9 }]
+    },
+    scripting: {
+      executeScript: async (request) => request.files
+        ? [{ frameId: 0 }]
+        : [{ frameId: 0, result: { ok: false, error: "No readable article was found." } }]
+    }
+  };
+
+  await assert.rejects(
+    capturePageText(extensionAPI, "captureReadablePage"),
+    /No readable article was found\./
+  );
+});
+
+test("injected dispatcher invokes the initialized page capture directly", () => {
+  const previousCapture = globalThis.SpokenMarginsBrowserTextCapture;
+  const previousDocument = globalThis.document;
+  const documentRef = { title: "Direct Capture" };
+  globalThis.document = documentRef;
+  globalThis.SpokenMarginsBrowserTextCapture = {
+    captureReadablePage: (document) => ({ title: document.title })
+  };
+  try {
+    assert.deepEqual(invokeInjectedCapture("captureReadablePage"), {
+      ok: true,
+      payload: { title: "Direct Capture" }
+    });
+  } finally {
+    globalThis.SpokenMarginsBrowserTextCapture = previousCapture;
+    globalThis.document = previousDocument;
+  }
+});
+
 test("built resources contain the pinned extractor and Safari preprocessor", () => {
   const capture = fs.readFileSync("App/SpokenMarginsBrowserTextExtension/Resources/Scripts/browserTextCapture.js", "utf8");
+  const popup = fs.readFileSync("App/SpokenMarginsBrowserTextExtension/Resources/Scripts/popup.js", "utf8");
   const preprocessor = fs.readFileSync("App/SpokenMarginsShareExtension/Resources/SourceLinkPreprocessor.js", "utf8");
   assert.match(capture, /Bundled Defuddle 0\.19\.1/);
+  assert.doesNotMatch(capture, /onMessage\.addListener/);
+  assert.doesNotMatch(popup, /tabs\.sendMessage/);
+  assert.match(popup, /scripting\.executeScript/);
   assert.match(preprocessor, /Bundled Defuddle 0\.19\.1/);
   assert.match(preprocessor, /SourceLinkPreprocessor/);
   assert.match(preprocessor, /plain_text/);

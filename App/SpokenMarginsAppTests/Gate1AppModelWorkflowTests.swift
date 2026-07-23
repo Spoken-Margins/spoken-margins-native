@@ -7,6 +7,78 @@ import UIKit
 
 @MainActor
 final class Gate1AppModelWorkflowTests: XCTestCase {
+    func testPlaybackHeaderKeepsTheItemTitleUnprefixedWhenItIsNotAChapter() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.selectedItem = ItemDetailState(title: "Why Apple Is Heading Into a Pivotal Moment")
+        model.snapshot.targetType = TargetType.transcriptBackedMedia.rawValue
+        model.snapshot.chapterTitle = "Why Apple Is Heading Into a Pivotal Moment"
+
+        XCTAssertEqual(model.playbackHeaderTitle, "Why Apple Is Heading Into a Pivotal Moment")
+    }
+
+    func testPlaybackHeaderPrefixesARealChapterWithItsNumber() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.selectedItem = ItemDetailState(
+            id: "item-1",
+            title: "A Long Article",
+            chapters: [
+                Chapter(id: "chapter-1", title: "Opening", startChar: 0, endChar: 100, percent: 0),
+                Chapter(id: "chapter-2", title: "The Pivot", startChar: 100, endChar: 200, percent: 50)
+            ]
+        )
+        model.snapshot.targetType = TargetType.itemTextTTS.rawValue
+        model.snapshot.chapterTitle = "The Pivot"
+
+        XCTAssertEqual(model.playbackHeaderTitle, "Ch. 2: The Pivot")
+    }
+
+    func testPlaybackHeaderNumbersARealPodcastChapter() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.selectedItem = ItemDetailState(
+            id: "episode-1",
+            title: "A Podcast Episode",
+            mediaChapters: [
+                MediaTimelineChapter(id: "intro", title: "Introduction", startMs: 0, transcriptSegmentId: "segment-1"),
+                MediaTimelineChapter(id: "analysis", title: "The Analysis", startMs: 60_000, transcriptSegmentId: "segment-2")
+            ]
+        )
+        model.snapshot.targetType = TargetType.transcriptBackedMedia.rawValue
+        model.snapshot.chapterTitle = "The Analysis"
+
+        XCTAssertEqual(model.playbackHeaderTitle, "Ch. 2: The Analysis")
+    }
+
+    func testTimelineMarksTheCurrentSourceChapter() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        let opening = Chapter(id: "chapter-1", title: "Opening", startChar: 0, endChar: 100, percent: 0)
+        let pivot = Chapter(id: "chapter-2", title: "The Pivot", startChar: 100, endChar: 200, percent: 50)
+        model.selectedItem = ItemDetailState(id: "item-1", title: "A Long Article", chapters: [opening, pivot])
+        model.snapshot.targetType = TargetType.itemTextTTS.rawValue
+        model.snapshot.chapterTitle = pivot.title
+
+        XCTAssertFalse(model.isCurrentTimelineChapter(opening))
+        XCTAssertTrue(model.isCurrentTimelineChapter(pivot))
+    }
+
+    func testTimelineDoesNotMarkASourceChapterDuringAssistantPlayback() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        let opening = Chapter(id: "chapter-1", title: "Opening", startChar: 0, endChar: 100, percent: 0)
+        model.selectedItem = ItemDetailState(id: "item-1", title: "A Long Article", chapters: [opening])
+        model.snapshot.targetType = TargetType.assistantTurnTTS.rawValue
+        model.snapshot.chapterTitle = opening.title
+
+        XCTAssertFalse(model.isCurrentTimelineChapter(opening))
+    }
+
+    func testConfiguredProviderKeyIgnoresWhitespaceOnlyValues() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.providerAPIKey = "   \n"
+        XCTAssertFalse(model.hasConfiguredProviderAPIKey)
+
+        model.providerAPIKey = "configured-key"
+        XCTAssertTrue(model.hasConfiguredProviderAPIKey)
+    }
+
     func testWelcomeSampleSeedsOnlyForANewEmptyNonUITestLibrary() {
         XCTAssertTrue(Gate1AppModel.shouldSeedWelcomeSample(
             libraryIsEmpty: true,
@@ -102,6 +174,147 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.selectedItem.sessions.isEmpty, "Restoring an item should restore its existing sessions")
     }
 
+    func testPermanentDeletionCannotCrossFireIntoRestore() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.moveItemToTrash(id: "item-pill")
+
+        model.permanentlyDeleteItem(id: "item-pill")
+
+        XCTAssertFalse(model.libraryItems.contains(where: { $0.id == "item-pill" }))
+        XCTAssertFalse(model.recentlyDeletedItems.contains(where: { $0.id == "item-pill" }))
+        model.restoreItem(id: "item-pill")
+        XCTAssertFalse(model.libraryItems.contains(where: { $0.id == "item-pill" }))
+        XCTAssertFalse(model.recentlyDeletedItems.contains(where: { $0.id == "item-pill" }))
+    }
+
+    func testStoppingTextPlaybackKeepsSessionInProgressAndResumable() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let sessionId = model.snapshot.sessionId
+
+        model.endSession()
+
+        XCTAssertNil(model.snapshot.sessionId)
+        XCTAssertEqual(model.snapshot.phase, .idle)
+        XCTAssertEqual(model.snapshot.status, .idle)
+        XCTAssertFalse(model.shouldShowMiniPlayer)
+        let saved = model.selectedItem.sessions.first(where: { $0.id == sessionId })
+        XCTAssertEqual(saved?.status, "in_progress")
+        XCTAssertLessThan(saved?.completionPercent ?? 100, 100)
+        if let saved {
+            model.resumeSession(saved)
+        }
+        XCTAssertEqual(model.snapshot.sessionId, sessionId)
+        XCTAssertEqual(model.snapshot.status, .playing)
+    }
+
+    func testHomePlayResumesLatestSessionWithoutCreatingAnother() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.pause()
+        let sessionID = try XCTUnwrap(model.snapshot.sessionId)
+        let countBefore = model.selectedItem.sessions.count
+
+        model.openHome()
+        model.startItem(id: "item-pill")
+
+        XCTAssertEqual(model.snapshot.sessionId, sessionID)
+        XCTAssertEqual(model.selectedItem.sessions.count, countBefore)
+        XCTAssertEqual(model.snapshot.status, .playing)
+    }
+
+    func testHomeRefreshesAndOpensNewestSessionAtOneHundredPercent() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let olderSessionID = try XCTUnwrap(model.snapshot.sessionId)
+
+        model.startNewSession(id: "item-pill")
+        let completedSessionID = try XCTUnwrap(model.snapshot.sessionId)
+        XCTAssertNotEqual(completedSessionID, olderSessionID)
+
+        // Starting a new session first persists the older session immediately.
+        // Wait before updating the new session so their whole-second persisted
+        // timestamps exercise newest-session ordering without a UUID tie-break.
+        try await Task.sleep(for: .seconds(1.1))
+        model.skipUnit = "section"
+        model.skipForward()
+        XCTAssertEqual(model.snapshot.sourceProgressPercent, 100)
+        model.openHome()
+
+        let row = try XCTUnwrap(model.libraryItems.first(where: { $0.id == "item-pill" }))
+        XCTAssertTrue(row.hasContinuationSession)
+        XCTAssertEqual(row.continuationProgressPercent, 100)
+
+        let sessionCount = model.selectedItem.sessions.count
+        model.startItem(id: "item-pill")
+
+        XCTAssertEqual(model.snapshot.sessionId, completedSessionID)
+        XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertEqual(model.snapshot.sourceProgressPercent, 100)
+        XCTAssertEqual(model.selectedItem.sessions.count, sessionCount)
+    }
+
+    func testFinishedSessionAtOneHundredPercentIsPreferredOverOlderInProgressSession() throws {
+        let decoder = JSONDecoder()
+        let older = try decoder.decode(Session.self, from: Data("""
+        {"id":"older","itemId":"item-pill","status":"in_progress","phase":"item_playback","currentTargetType":"item_text_tts","currentTargetId":"item-pill","position":{"charOffset":0},"completionPercent":0,"playbackRate":1}
+        """.utf8))
+        let completed = try decoder.decode(Session.self, from: Data("""
+        {"id":"completed","itemId":"item-pill","status":"finished","phase":"finished","currentTargetType":"item_text_tts","currentTargetId":"item-pill","position":{"charOffset":100},"completionPercent":100,"playbackRate":1}
+        """.utf8))
+
+        XCTAssertEqual(Gate1AppModel.preferredContinuationSession(in: [completed, older])?.id, completed.id)
+    }
+
+    func testExplicitStartNewSessionCreatesOneAdditionalSession() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let firstSessionID = try XCTUnwrap(model.snapshot.sessionId)
+
+        model.startNewSession(id: "item-pill")
+
+        XCTAssertNotEqual(model.snapshot.sessionId, firstSessionID)
+        XCTAssertEqual(model.selectedItem.sessions.count, 2)
+    }
+
+    func testMissingAPIKeySummaryPreflightDoesNotMutateSession() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.pause()
+        model.providerAPIKey = ""
+        let snapshotBefore = model.snapshot
+        let turnsBefore = model.selectedItem.turns
+
+        model.summarize()
+
+        XCTAssertTrue(model.isAISetupNeededPresented)
+        XCTAssertEqual(model.snapshot, snapshotBefore)
+        XCTAssertEqual(model.selectedItem.turns, turnsBefore)
+        XCTAssertEqual(model.diagnostics["summaryPreflight"], "api_key_missing")
+    }
+
+    func testBootstrapRestoresNewestUnfinishedSessionPausedWithoutAutoplay() throws {
+        let firstModel = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        firstModel.resetAndSeed()
+        firstModel.startItem(id: "item-pill")
+        firstModel.pause()
+        let sessionID = try XCTUnwrap(firstModel.snapshot.sessionId)
+
+        let relaunchedModel = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        relaunchedModel.bootstrapLibraryIfNeeded()
+
+        XCTAssertEqual(relaunchedModel.snapshot.sessionId, sessionID)
+        XCTAssertEqual(relaunchedModel.snapshot.status, .paused)
+        XCTAssertTrue(relaunchedModel.shouldShowMiniPlayer)
+        XCTAssertEqual(relaunchedModel.diagnostics["restoredSessionMode"], "paused_without_autoplay")
+    }
+
     func testTextImportStartsLiveSpeechWhenPreparedRenderingIsUnavailable() {
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
@@ -131,6 +344,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
                 return .success(prepared)
             }
         )
+        model.ttsVoiceSelection = .system
         model.resetAndSeed()
         model.importTitle = "Prepared First"
         model.importText = "This text should start immediately while generated audio renders in the background."
@@ -156,7 +370,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.canPlayLiveSpeechInstead)
     }
 
-    func testResumeCompletedSessionAfterExportRestartsSourcePlayback() throws {
+    func testResumeCompletedSessionAfterExportRequiresExplicitRestart() throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         model.importTitle = "Short Item"
@@ -170,9 +384,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.resumeSession(completedSession)
 
         XCTAssertEqual(model.screen, .playback)
-        XCTAssertEqual(model.snapshot.status, .playing)
+        XCTAssertEqual(model.snapshot.status, .paused)
         XCTAssertEqual(model.snapshot.targetType, "item_text_tts")
-        XCTAssertEqual(model.snapshot.sourceProgressPercent, 0)
+        XCTAssertEqual(model.snapshot.sourceProgressPercent, 100)
+        XCTAssertTrue(model.statusMessage.contains("Play from Beginning"))
     }
 
     func testLifecycleSyncPersistsLatestTextPlaybackPosition() throws {
@@ -215,18 +430,97 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.status, .playing)
         XCTAssertEqual(model.snapshot.currentTextStart, "One. ".count)
         XCTAssertEqual(audio.playedOffsets.last, "One. ".count)
+        XCTAssertEqual(try XCTUnwrap(audio.configuredSpeechRates.last), Float(0.65), accuracy: Float(0.001))
         XCTAssertEqual(UserDefaults.standard.double(forKey: "speechRate"), 0.65, accuracy: 0.001)
     }
 
-    func testLegacyEmbeddedPiperModeMigratesToInstalledSystemVoicePath() {
+    func testLegacyEmbeddedPiperModeSanitizesToBundledJamesPath() {
         let model = Gate1AppModel(audioPlaybackClient: WorkflowRecordingAudioClient())
         model.resetAndSeed()
+        model.ttsVoiceSelection = .james
         model.ttsMode = "piper"
 
         model.speechSettingsChanged()
 
-        XCTAssertEqual(model.ttsMode, "systemImmediate")
-        XCTAssertEqual(UserDefaults.standard.string(forKey: "ttsMode"), "systemImmediate")
+        XCTAssertEqual(model.ttsMode, "supertonic")
+        XCTAssertEqual(UserDefaults.standard.string(forKey: "ttsMode"), "supertonic")
+        XCTAssertEqual(UserDefaults.standard.string(forKey: "ttsVoiceSelection"), "supertonic:M2")
+    }
+
+    func testPreOnePointZeroTTSMigrationDefaultsToJamesAndRetainsAppleFallbackVoice() {
+        let defaults = UserDefaults.standard
+        let keys = ["supertonicTTSMigrationV1", "ttsMode", "ttsVoiceSelection", "speechVoiceIdentifier"]
+        let prior = keys.reduce(into: [String: Any]()) { values, key in
+            values[key] = defaults.object(forKey: key)
+        }
+        defer {
+            for key in keys {
+                if let value = prior[key] {
+                    defaults.set(value, forKey: key)
+                } else {
+                    defaults.removeObject(forKey: key)
+                }
+            }
+        }
+        defaults.removeObject(forKey: "supertonicTTSMigrationV1")
+        defaults.removeObject(forKey: "ttsVoiceSelection")
+        defaults.set("piper", forKey: "ttsMode")
+        defaults.set("com.apple.ttsbundle.Samantha-compact", forKey: "speechVoiceIdentifier")
+
+        let model = Gate1AppModel(audioPlaybackClient: WorkflowRecordingAudioClient())
+
+        XCTAssertEqual(model.ttsVoiceSelection, .james)
+        XCTAssertEqual(model.ttsMode, "supertonic")
+        XCTAssertEqual(model.speechVoiceIdentifier, "com.apple.ttsbundle.Samantha-compact")
+        XCTAssertTrue(defaults.bool(forKey: "supertonicTTSMigrationV1"))
+    }
+
+    func testVoiceChangeWhilePausedDoesNotCreatePhantomPlaybackProgress() throws {
+        let previousVoice = UserDefaults.standard.string(forKey: "speechVoiceIdentifier")
+        defer {
+            if let previousVoice {
+                UserDefaults.standard.set(previousVoice, forKey: "speechVoiceIdentifier")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "speechVoiceIdentifier")
+            }
+        }
+        let audio = WorkflowRecordingAudioClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio)
+        model.resetAndSeed()
+        model.importTitle = "Paused Voice Change"
+        model.importText = "One. Two. Three."
+        model.importTextItem()
+        audio.currentOffset = "One. ".count
+        model.pause()
+        let playCount = audio.playedOffsets.count
+
+        model.speechVoiceIdentifier = "test.voice"
+        model.speechSettingsChanged()
+
+        XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertEqual(model.snapshot.currentTextStart, "One. ".count)
+        XCTAssertEqual(audio.playedOffsets.count, playCount)
+        XCTAssertEqual(audio.configuredSpeechVoices.last!, "test.voice")
+    }
+
+    func testSupertonicVoiceChangeStopsPlaybackAndWaitsForExplicitPlay() throws {
+        let audio = WorkflowRecordingAudioClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio)
+        model.resetAndSeed()
+        model.importTitle = "Voice switch"
+        model.importText = "One sentence. A second sentence follows."
+        model.importTextItem()
+        audio.currentOffset = "One sentence. ".count
+        let playCount = audio.playedOffsets.count
+
+        model.ttsVoiceSelection = .lily
+        model.ttsVoiceSelectionChanged()
+
+        XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertEqual(model.snapshot.currentTextStart, "One sentence. ".count)
+        XCTAssertEqual(audio.playedOffsets.count, playCount)
+        XCTAssertEqual(UserDefaults.standard.string(forKey: "ttsVoiceSelection"), "supertonic:F2")
+        XCTAssertEqual(UserDefaults.standard.string(forKey: "ttsMode"), "supertonic")
     }
 
     func testObsidianImportRunsInBackgroundAndLoadsHeadingBasedListeningMap() async throws {
@@ -436,11 +730,18 @@ private actor PreparedTextAudioPrewarmProbe {
 
 private final class WorkflowRecordingAudioClient: AudioPlaybackClient {
     var playedOffsets: [Int] = []
+    var configuredSpeechRates: [Float] = []
+    var configuredSpeechVoices: [String?] = []
     var currentOffset: Int?
     private var activeTargetId: String?
 
     func prepareSpeechText(_ text: String) throws -> String {
         SpeechTextNormalizer.normalize(text)
+    }
+
+    func configureSpeechSettings(voiceIdentifier: String?, rate: Float) throws {
+        configuredSpeechVoices.append(voiceIdentifier)
+        configuredSpeechRates.append(rate)
     }
 
     func play(targetId: String) throws {

@@ -3,8 +3,132 @@ import XCTest
 @testable import SessionKit
 import SessionKitPersistence
 @testable import SessionKitAudio
+#if canImport(Speech)
+import Speech
+#endif
+#if canImport(AVFoundation)
+import AVFoundation
+#endif
 
 final class SessionKitCoreTests: XCTestCase {
+    func testRoutedPlaybackGivesRemoteCommandOwnershipOnlyToActiveMediaRoute() throws {
+        let speech = RecordingAudioClient()
+        let media = RecordingAudioClient()
+        let routed = RoutedAudioPlaybackClient(speech: speech, media: media)
+
+        XCTAssertEqual(media.remoteCommandHandlingStates, [false])
+
+        _ = try routed.prepareSpeechText("Speech owns playback.")
+        try routed.play(targetId: "speech", from: 0)
+        XCTAssertEqual(media.remoteCommandHandlingStates.last, false)
+
+        try routed.configureMediaContext(PlaybackMediaContext(
+            itemId: "item",
+            targetType: .transcriptBackedMedia,
+            targetId: "media",
+            title: "Media"
+        ))
+        try routed.play(targetId: "media", fromMediaTimeMs: 0)
+        XCTAssertEqual(media.remoteCommandHandlingStates.last, true)
+
+        try routed.configureMediaContext(nil)
+        try routed.play(targetId: "speech", from: 0)
+        XCTAssertEqual(media.remoteCommandHandlingStates.last, false)
+    }
+
+    #if canImport(Speech)
+    func testSpeechRecognitionRequestsAreAlwaysOnDeviceOnly() {
+        let request = makeOnDeviceSpeechRecognitionRequest(url: URL(fileURLWithPath: "/tmp/context.m4a"))
+        XCTAssertTrue(request.requiresOnDeviceRecognition)
+        XCTAssertFalse(request.shouldReportPartialResults)
+    }
+
+    func testLongFormSpeechAccumulatorPreservesEveryFinalizedPassage() {
+        var accumulator = SpeechAnalyzerFinalResultAccumulator()
+        accumulator.record("The opening idea explains why the rendered audio should remain cached. ")
+        accumulator.record("The middle passage contains the minute that the legacy strategy lost. ")
+        accumulator.record("The closing passage describes the storage limit and eviction policy.")
+
+        XCTAssertEqual(accumulator.resultCount, 3)
+        XCTAssertEqual(
+            accumulator.normalizedTranscript,
+            "The opening idea explains why the rendered audio should remain cached. "
+                + "The middle passage contains the minute that the legacy strategy lost. "
+                + "The closing passage describes the storage limit and eviction policy."
+        )
+    }
+
+    func testLongFormSpeechAccumulatorIgnoresEmptyResultsWithoutReplacingPriorPassages() {
+        var accumulator = SpeechAnalyzerFinalResultAccumulator()
+        accumulator.record("First finalized passage. ")
+        accumulator.record("")
+        accumulator.record("Second finalized passage.")
+
+        XCTAssertEqual(accumulator.resultCount, 2)
+        XCTAssertEqual(accumulator.normalizedTranscript, "First finalized passage. Second finalized passage.")
+    }
+
+    func testLegacySpeechChunksUseNearbySustainedSilenceWithoutOverlapOrGaps() {
+        let ranges = silenceAwareSpeechAudioChunkRanges(
+            durationMs: 100_000,
+            silenceRanges: [
+                SpeechAudioSilenceRange(startMs: 28_000, endMs: 29_000),
+                SpeechAudioSilenceRange(startMs: 59_000, endMs: 60_000)
+            ]
+        )
+
+        XCTAssertEqual(ranges.map(\.startMs), [0, 28_500, 59_500])
+        XCTAssertEqual(ranges.map(\.lengthMs), [28_500, 31_000, 40_500])
+        XCTAssertTrue(ranges.allSatisfy { $0.lengthMs < 45_000 })
+        XCTAssertEqual(ranges.last.map { $0.startMs + $0.lengthMs }, 100_000)
+        XCTAssertEqual(
+            zip(ranges, ranges.dropFirst()).map { $0.startMs + $0.lengthMs == $1.startMs },
+            [true, true]
+        )
+    }
+
+    func testLegacySpeechChunksFallBackToThirtySecondsWhenNoSilenceExists() {
+        let ranges = silenceAwareSpeechAudioChunkRanges(
+            durationMs: 100_000,
+            silenceRanges: []
+        )
+
+        XCTAssertEqual(ranges.map(\.startMs), [0, 30_000, 60_000])
+        XCTAssertEqual(ranges.map(\.lengthMs), [30_000, 30_000, 40_000])
+        XCTAssertTrue(ranges.allSatisfy { $0.lengthMs < 45_000 })
+    }
+
+    #if canImport(AVFoundation)
+    func testSustainedSilenceDetectorFindsPauseBetweenSpokenAudio() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appending(path: "speech-silence-\(UUID().uuidString).caf")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let sampleRate = 16_000.0
+        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
+        let frameCount = AVAudioFrameCount(sampleRate * 3)
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)!
+        buffer.frameLength = frameCount
+        let samples = buffer.floatChannelData![0]
+        for frame in 0..<Int(frameCount) {
+            let second = Double(frame) / sampleRate
+            samples[frame] = second >= 1 && second < 2
+                ? 0
+                : Float(sin(2 * Double.pi * 220 * second) * 0.2)
+        }
+        do {
+            let file = try AVAudioFile(forWriting: url, settings: format.settings)
+            try file.write(from: buffer)
+        }
+
+        let ranges = try sustainedSilenceRanges(in: url)
+
+        let pause = try XCTUnwrap(ranges.first)
+        XCTAssertLessThanOrEqual(abs(pause.startMs - 1_000), 100)
+        XCTAssertLessThanOrEqual(abs(pause.endMs - 2_000), 100)
+    }
+    #endif
+    #endif
+
     func testSpeechNormalizationPreservesSource() {
         let source = "A [reference](https://example.com/x) and https://example.org/raw plus example.net/path."
         let spoken = SpeechTextNormalizer.normalize(source)
@@ -44,7 +168,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertTrue(zip(chunks, chunks.dropFirst()).allSatisfy { $0.sourceEnd <= $1.sourceStart })
     }
 
-    func testLiveSpeechChunkMapsUTF16RangesAcrossEmojiAndRemovedURLs() throws {
+    func testSystemSpeechChunkRemovesEmojiAndURLsBeforeMappingRanges() throws {
         let source = "Intro 😀 read [the reference](https://example.com/path) and finish."
         let chunk = try XCTUnwrap(SpeechPlaybackPlanner.chunks(in: source, from: 0).first)
         let spokenRange = (chunk.spokenText as NSString).range(of: "finish")
@@ -53,7 +177,47 @@ final class SessionKitCoreTests: XCTestCase {
             to: try XCTUnwrap(source.range(of: "finish")).lowerBound
         )
 
+        XCTAssertFalse(chunk.spokenText.contains("😀"))
+        XCTAssertFalse(chunk.spokenText.contains("example.com"))
+        XCTAssertTrue(SpeechTextNormalizer.isSystemSpeechSafe(chunk.spokenText))
         XCTAssertEqual(chunk.sourceOffset(atSpokenUTF16Offset: spokenRange.location), expected)
+    }
+
+    func testSystemSpeechProjectionRemovesMarkupAndUnsafeGraphemeClusters() throws {
+        let source = """
+        Start 💪🏿 ❤️ 👨‍👩‍👧‍👦 then [remove this URL](https://example.com/a).
+        <video controls><source src=\">broken">Do not speak this fallback.</video>
+        Finish “safely”—now. ⛲
+        """
+        let chunk = try XCTUnwrap(SpeechPlaybackPlanner.chunks(in: source, from: 0).first)
+        let spokenRange = (chunk.spokenText as NSString).range(of: "Finish \"safely\"-now")
+        let expected = source.distance(
+            from: source.startIndex,
+            to: try XCTUnwrap(source.range(of: "Finish")).lowerBound
+        )
+
+        XCTAssertEqual(
+            chunk.spokenText,
+            "Start then remove this URL. Finish \"safely\"-now."
+        )
+        XCTAssertFalse(chunk.spokenText.contains("fallback"))
+        XCTAssertTrue(SpeechTextNormalizer.isSystemSpeechSafe(chunk.spokenText))
+        XCTAssertEqual(chunk.sourceOffset(atSpokenUTF16Offset: spokenRange.location), expected)
+        XCTAssertGreaterThanOrEqual(chunk.sourceOffset(atSpokenUTF16Offset: spokenRange.location + spokenRange.length), expected)
+    }
+
+    func testSystemSpeechProjectionGuaranteesOneUTF16UnitPerSpokenCharacter() {
+        let source = "Emoji evolve: 💅 💪💪🏻💪🏼💪🏽💪🏾💪🏿 ❤️ 👨‍👩‍👧‍👦. Café क् ⛲ \u{200D} remains readable."
+        let projected = SpeechTextNormalizer.projectForSystemSpeech(source)
+
+        XCTAssertTrue(SpeechTextNormalizer.isSystemSpeechSafe(projected.text))
+        XCTAssertTrue(projected.text.allSatisfy { String($0).utf16.count == 1 })
+        XCTAssertEqual(projected.text.count, projected.sourceOffsets.count)
+        XCTAssertTrue(zip(projected.sourceOffsets, projected.sourceOffsets.dropFirst()).allSatisfy { $0.0 <= $0.1 })
+        XCTAssertTrue(projected.sourceOffsets.allSatisfy { 0...source.count ~= $0 })
+        XCTAssertFalse(projected.text.contains("💅"))
+        XCTAssertFalse(projected.text.contains("क्"))
+        XCTAssertTrue(projected.text.contains("Café"))
     }
 
     func testObsidianWebClipperImportCleansTranscriptTimestampsAndMetadata() throws {
@@ -293,7 +457,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.timeline.filter { $0.kind == "source_chapter" }.map(\.title), ["Opening", "Middle"])
     }
 
-    func testCompactControlSnapshotIsNotReadyAfterSessionEnds() throws {
+    func testEndDetachesCompactSessionAndKeepsItResumable() throws {
         let surfaceProfile = RuntimeCapabilityProfile(
             id: "lock-screen-widget",
             displayName: "Lock Screen / Widget",
@@ -305,17 +469,54 @@ final class SessionKitCoreTests: XCTestCase {
             forbiddenCapabilities: ["record_audio", "summarize_interjections", "continue_discussion"]
         )
         let engine = try compactControlEngine()
-        _ = try engine.startSession(itemId: "item-pill")
+        let started = try engine.startSession(itemId: "item-pill")
+        let sessionID = try XCTUnwrap(started.sessionId)
         _ = try engine.endSession()
 
         let snapshot = CompactControlDispatcher(surfaceProfile: surfaceProfile, canonicalRuntime: engine).snapshot()
 
-        XCTAssertEqual(snapshot.phase, .finished)
+        XCTAssertEqual(snapshot.phase, .idle)
+        XCTAssertEqual(snapshot.status, .idle)
         XCTAssertFalse(snapshot.compactSurfaceReady)
         XCTAssertTrue(snapshot.availableCommands.isEmpty)
+
+        let restored = try engine.inspectSession(sessionId: sessionID)
+        XCTAssertEqual(restored.phase, .itemPlayback)
+        XCTAssertEqual(restored.status, .paused)
     }
 
-    func testCompactControlKeepsDiscussionAvailableAfterNaturalPlaybackFinish() throws {
+    func testInspectNormalizesLegacyPrematureFinishedSession() throws {
+        let item = Item(id: "item-legacy", title: "Legacy", mediaType: "text", text: "One. Two. Three.", externalReference: nil, status: "ready")
+        let session = Session(
+            id: "session-legacy",
+            itemId: item.id,
+            status: "finished",
+            phase: .finished,
+            currentTargetType: .itemTextTTS,
+            currentTargetId: item.id,
+            position: Position(charOffset: 4),
+            completionPercent: 25,
+            playbackRate: 1
+        )
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session])
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-offline",
+            displayName: "Phone/Tablet Offline",
+            capabilities: ["sync": ["canonical_persistence"], "playback": ["realtime_tts"]]
+        )
+        let engine = SessionEngine(profile: profile, repository: repo, audio: RecordingAudioClient())
+
+        let snapshot = try engine.inspectSession(sessionId: session.id)
+        let saved = try XCTUnwrap(repo.sessions[session.id])
+
+        XCTAssertEqual(snapshot.phase, .itemPlayback)
+        XCTAssertEqual(snapshot.status, .paused)
+        XCTAssertEqual(saved.status, "in_progress")
+        XCTAssertEqual(saved.completionPercent, 25)
+        XCTAssertEqual(saved.position.charOffset, 4)
+    }
+
+    func testCompactControlKeepsDiscussionAvailableAfterSkippingToSourceEnd() throws {
         let surfaceProfile = RuntimeCapabilityProfile(
             id: "watch-tethered",
             displayName: "Watch Tethered",
@@ -333,7 +534,7 @@ final class SessionKitCoreTests: XCTestCase {
         let dispatcher = CompactControlDispatcher(surfaceProfile: surfaceProfile, canonicalRuntime: engine)
         let snapshot = dispatcher.snapshot()
 
-        XCTAssertEqual(snapshot.phase, .finished)
+        XCTAssertEqual(snapshot.phase, .itemPlayback)
         XCTAssertEqual(snapshot.status, .paused)
         XCTAssertTrue(snapshot.compactSurfaceReady)
         XCTAssertTrue(snapshot.availableCommands.contains(.submitFollowup))
@@ -768,8 +969,43 @@ final class SessionKitCoreTests: XCTestCase {
         let interjection = try XCTUnwrap(try repo.loadInterjections(sessionId: engine.currentSession?.id ?? "").first)
         XCTAssertEqual(interjection.anchor.anchorType, .text)
         XCTAssertEqual(interjection.anchor.startChar, "First ".count)
-        XCTAssertTrue(interjection.anchor.anchorBefore.contains("sentence"))
+        XCTAssertEqual(interjection.anchor.anchorBefore, "First")
+        XCTAssertEqual(interjection.anchor.anchorAfter, "sentence. Second sentence.")
         XCTAssertEqual(transcriber.scheduledInterjectionIds, [interjection.id])
+    }
+
+    func testTextInterjectionAnchorUsesFullWordsAndFourSentenceShoulders() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "interjection": ["record_audio", "capture_text_anchor"]
+            ]
+        )
+        let text = "One introduces the subject. Two supplies history. Three adds evidence. Four discusses music and its role. Five tests the consequence. Six offers a counterpoint. Seven closes the argument."
+        let item = Item(id: "item-mid-word", title: "Text", mediaType: "text", text: text, externalReference: nil, status: "ready")
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        let musicStart = try XCTUnwrap(text.range(of: "music")).lowerBound
+        audio.currentOffset = text.distance(from: text.startIndex, to: musicStart) + 1
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: "interjections/text.m4a")
+
+        let interjection = try XCTUnwrap(try repo.loadInterjections(sessionId: engine.currentSession?.id ?? "").first)
+        XCTAssertEqual(
+            interjection.anchor.anchorBefore,
+            "One introduces the subject. Two supplies history. Three adds evidence. Four discusses music"
+        )
+        XCTAssertEqual(
+            interjection.anchor.anchorAfter,
+            "and its role. Five tests the consequence. Six offers a counterpoint. Seven closes the argument."
+        )
+        XCTAssertFalse(interjection.anchor.anchorBefore.hasPrefix("usic"))
     }
 
     func testMediaPlaybackPositionPublishesTimelineAnchorAndDuration() throws {
@@ -1036,6 +1272,60 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(export.interjections.first?.mediaTimeMs, 123_000)
         XCTAssertTrue(markdown.contains("Media time: 2:03"))
         XCTAssertTrue(markdown.contains("Source Type: remote_stream"))
+    }
+
+    func testTwentyFiveMinuteMediaPositionSurvivesInterjectionDismissAndResume() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["native_media"],
+                "interjection": ["record_audio", "capture_media_anchor"]
+            ]
+        )
+        let item = Item(
+            id: "item-long-audio",
+            title: "Long Audio",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/long-episode",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(
+                sourceType: .remoteStream,
+                url: "https://cdn.example.com/long-episode.mp3",
+                durationMs: 3_600_000
+            )
+        )
+        let audio = RecordingAudioClient()
+        let repository = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repository, audio: audio)
+
+        let started = try engine.startSession(itemId: item.id)
+        let sessionID = try XCTUnwrap(started.sessionId)
+        audio.currentMediaTimeValue = 1_500_000
+        _ = try engine.pause()
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: "interjections/at-25-minutes.m4a")
+
+        let detached = try engine.endSession()
+        let persisted = try XCTUnwrap(try repository.loadSession(id: sessionID))
+        let interjection = try XCTUnwrap(try repository.loadInterjections(sessionId: sessionID).first)
+
+        XCTAssertEqual(detached.status, .idle)
+        XCTAssertNil(detached.sessionId)
+        XCTAssertEqual(persisted.position.mediaTimeMs, 1_500_000)
+        XCTAssertEqual(persisted.status, "in_progress")
+        XCTAssertEqual(interjection.anchor.mediaTimeMs, 1_500_000)
+
+        let restored = try engine.inspectSession(sessionId: sessionID)
+        XCTAssertEqual(restored.status, .paused)
+        XCTAssertEqual(restored.currentMediaTimeMs, 1_500_000)
+
+        let resumed = try engine.resumePlayback()
+        XCTAssertEqual(resumed.status, .playing)
+        XCTAssertEqual(audio.playedOffsets.last, 1_500_000)
     }
 
     func testSourceWindowContextUpdatesMediaInterjectionAnchorWithoutChangingNoteTranscript() throws {
@@ -1619,6 +1909,63 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(handoff.schemaVersion, "spoken-margins.export.v1")
     }
 
+    func testTechnicalTranscriptSegmentsDoNotBecomePlaybackChapterTitles() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["native_media"],
+                "timeline": ["transcript_segments", "media_time", "chapter_timing"]
+            ]
+        )
+        let item = Item(
+            id: "item-word-segments",
+            title: "Why Apple Is Heading Into a Pivotal Moment",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/episode",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://cdn.example.com/episode.mp3", durationMs: 30_000)
+        )
+        let segments = [
+            MediaTimelineSegment(id: "seg-1", startMs: 0, endMs: 10_000, text: "we"),
+            MediaTimelineSegment(id: "seg-2", startMs: 10_000, endMs: 20_000, text: "have"),
+            MediaTimelineSegment(id: "seg-3", startMs: 20_000, endMs: 30_000, text: "questions")
+        ]
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.attachTranscriptTimeline(
+            itemId: item.id,
+            timeline: TranscriptTimeline(segments: segments, chapters: [], durationMs: 30_000)
+        )
+        XCTAssertTrue(try XCTUnwrap(repo.loadTranscriptTimeline(itemId: item.id)).timeline.chapters.isEmpty)
+
+        try repo.saveTranscriptTimeline(SourceTranscriptTimeline(
+            id: "legacy-word-transcript",
+            itemId: item.id,
+            createdAt: Date(),
+            timeline: TranscriptTimeline(
+                segments: segments,
+                chapters: [
+                    MediaTimelineChapter(id: "ch-transcript-01", title: "we", startMs: 0, transcriptSegmentId: "seg-1"),
+                    MediaTimelineChapter(id: "chunk-0000-ch-transcript-02", title: "have", startMs: 10_000, transcriptSegmentId: "seg-2")
+                ],
+                durationMs: 30_000
+            )
+        ))
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentMediaTimeValue = 12_000
+        let progress = try engine.syncPlaybackProgress()
+
+        XCTAssertEqual(progress.currentTranscriptSegmentId, "seg-2")
+        XCTAssertEqual(progress.chapterTitle, item.title)
+    }
+
     func testInMemoryRepositoryListsWatchPackagesByItem() throws {
         let first = WatchAudioPackage(
             id: "package-1",
@@ -2105,6 +2452,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.status, .paused)
         XCTAssertEqual(snapshot.phase, .finished)
         XCTAssertEqual(snapshot.progressPercent, 100)
+        XCTAssertEqual(engine.currentSession?.status, "finished")
         XCTAssertEqual(try XCTUnwrap(engine.currentSession?.position.charOffset), try XCTUnwrap(item.text).count)
     }
 
@@ -2573,7 +2921,8 @@ final class SessionKitCoreTests: XCTestCase {
         let response = ConversationTurn(id: "turn-response-001", sessionId: session.id, role: "assistant", turnType: "assistant_response", status: "complete", summary: "Brief.", text: "Response text.", rawText: nil, sourceInterjectionIds: [])
         let itemInterjection = Interjection(id: "ij-item", itemId: item.id, sessionId: session.id, targetType: .item, targetId: item.id, createdAt: Date(timeIntervalSince1970: 1), roughPercent: 10, anchor: Anchor(anchorType: .text, startChar: 0, endChar: 6, anchorBefore: "Source.", anchorAfter: ""), audioPath: nil, audioStatus: "none", transcriptionStatus: "transcribed", transcript: "source note", cleanedTranscript: "clean source note", displayText: nil, status: "active")
         let turnInterjection = Interjection(id: "ij-turn", itemId: item.id, sessionId: session.id, targetType: .assistantTurn, targetId: response.id, createdAt: Date(timeIntervalSince1970: 2), roughPercent: 30, anchor: Anchor(anchorType: .turn, startChar: 0, endChar: 8, anchorBefore: "Response", anchorAfter: "text."), audioPath: nil, audioStatus: "none", transcriptionStatus: "transcribed", transcript: "turn note", cleanedTranscript: nil, displayText: nil, status: "active")
-        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session], interjections: [itemInterjection.id: itemInterjection, turnInterjection.id: turnInterjection], turns: [response.id: response])
+        let deletedInterjection = Interjection(id: "ij-deleted", itemId: item.id, sessionId: session.id, targetType: .item, targetId: item.id, createdAt: Date(timeIntervalSince1970: 3), roughPercent: 40, anchor: Anchor(anchorType: .text, startChar: 0, endChar: 6, anchorBefore: "Source.", anchorAfter: ""), audioPath: nil, audioStatus: "none", transcriptionStatus: "transcribed", transcript: "deleted note", cleanedTranscript: nil, displayText: nil, status: "deleted")
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session], interjections: [itemInterjection.id: itemInterjection, turnInterjection.id: turnInterjection, deletedInterjection.id: deletedInterjection], turns: [response.id: response])
         let engine = SessionEngine(profile: profile, repository: repo)
 
         let export = try engine.buildExport(options: ExportOptions(
@@ -2593,6 +2942,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(export.turns.map(\.id), [response.id])
         XCTAssertTrue(markdown.contains("turn note"))
         XCTAssertFalse(markdown.contains("source note"))
+        XCTAssertFalse(markdown.contains("deleted note"))
 
         let selected = try engine.buildExport(options: ExportOptions(
             sessionId: session.id,
@@ -2611,6 +2961,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertTrue(selectedMarkdown.contains("Response"))
         XCTAssertTrue(selectedMarkdown.contains("text."))
         XCTAssertFalse(selectedMarkdown.contains("source note"))
+        XCTAssertFalse(selectedMarkdown.contains("deleted note"))
     }
 
     func testMalformedAIChaptersPreserveResponseText() throws {
@@ -3121,6 +3472,70 @@ final class SessionKitCoreTests: XCTestCase {
             XCTAssertEqual(error as? SessionKitError, .invalidCommandForCapability("importBrowserText"))
         }
     }
+
+    func testPodcastDownloadPolicyNeverAutomaticallyDownloadsOnCellular() {
+        XCTAssertEqual(PodcastDownloadPolicy.action(for: .wifi, userInitiated: false), .download)
+        XCTAssertEqual(PodcastDownloadPolicy.action(for: .cellular, userInitiated: false), .streamOnly)
+        XCTAssertEqual(PodcastDownloadPolicy.action(for: .unavailable, userInitiated: false), .waitForWiFi)
+        XCTAssertEqual(PodcastDownloadPolicy.action(for: .cellular, userInitiated: true), .download)
+        XCTAssertEqual(PodcastCacheLimitGB.defaultValue, .five)
+    }
+
+    func testPodcastCacheEvictionIsLRUAndProtectsActiveAndDownloadingItems() {
+        let old = Date(timeIntervalSince1970: 100)
+        let recent = Date(timeIntervalSince1970: 300)
+        let records = [
+            PodcastDownloadRecord(id: "a", itemId: "active", remoteURL: "https://example.com/a", state: .availableOffline, bytesWritten: 3_000, lastPlayedAt: old),
+            PodcastDownloadRecord(id: "b", itemId: "old", remoteURL: "https://example.com/b", state: .availableOffline, bytesWritten: 3_000, lastPlayedAt: old),
+            PodcastDownloadRecord(id: "c", itemId: "recent", remoteURL: "https://example.com/c", state: .availableOffline, bytesWritten: 3_000, lastPlayedAt: recent),
+            PodcastDownloadRecord(id: "d", itemId: "downloading", remoteURL: "https://example.com/d", state: .downloading, bytesWritten: 8_000)
+        ]
+
+        let evictions = PodcastCacheEvictionPlanner.recordsToEvict(
+            from: records,
+            limitBytes: 6_000,
+            protectedItemIds: ["active", "downloading"]
+        )
+
+        XCTAssertEqual(evictions.map(\.itemId), ["old"])
+    }
+
+    func testLocalPodcastTransportSwitchPreservesCanonicalTargetTimeAndRate() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "podcast",
+            displayName: "Podcast",
+            capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media"]]
+        )
+        let remote = "https://example.com/episode.mp3"
+        let item = Item(
+            id: "episode",
+            title: "Episode",
+            mediaType: "audio",
+            text: nil,
+            externalReference: remote,
+            status: "ready",
+            media: ItemMedia(sourceType: .remoteStream, url: remote, durationMs: 120_000)
+        )
+        let repository = InMemorySessionRepository(items: [item.id: item])
+        let audio = RecordingAudioClient()
+        let engine = SessionEngine(profile: profile, repository: repository, audio: audio)
+        _ = try engine.startSession(itemId: item.id)
+        _ = try engine.setPlaybackRate(1.5)
+        audio.currentMediaTimeValue = 42_000
+
+        let snapshot = try engine.updatePlaybackTransport(
+            itemId: item.id,
+            playbackURL: URL(fileURLWithPath: "/tmp/episode.mp3").absoluteString
+        )
+
+        XCTAssertEqual(snapshot.targetId, remote)
+        XCTAssertEqual(snapshot.currentMediaTimeMs, 42_000)
+        XCTAssertEqual(snapshot.playbackRate, 1.5)
+        XCTAssertEqual(audio.playedTargets.last, remote)
+        XCTAssertEqual(audio.playedOffsets.last, 42_000)
+        XCTAssertEqual(audio.mediaContexts.last??.sourceURL, remote)
+        XCTAssertEqual(audio.mediaContexts.last??.playbackURL, "file:///tmp/episode.mp3")
+    }
 }
 
 private final class RecordingAudioClient: AudioPlaybackClient {
@@ -3141,9 +3556,15 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     var mediaContexts: [PlaybackMediaContext?] = []
     var startStatus: PlaybackStartStatus = .confirmed
     var transportState: PlaybackTransportState?
+    var configuredSpeechSettings: [(String?, Float)] = []
+    var remoteCommandHandlingStates: [Bool] = []
 
     func configureMediaContext(_ context: PlaybackMediaContext?) throws {
         mediaContexts.append(context)
+    }
+
+    func configureSpeechSettings(voiceIdentifier: String?, rate: Float) throws {
+        configuredSpeechSettings.append((voiceIdentifier, rate))
     }
 
     func prepareSpeechText(_ text: String) throws -> String {
@@ -3235,6 +3656,10 @@ private final class RecordingAudioClient: AudioPlaybackClient {
 
     func playbackTransportState(targetId: String) -> PlaybackTransportState? {
         transportState
+    }
+
+    func setRemoteCommandHandlingEnabled(_ enabled: Bool) {
+        remoteCommandHandlingStates.append(enabled)
     }
 }
 

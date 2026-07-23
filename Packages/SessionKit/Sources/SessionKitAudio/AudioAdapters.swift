@@ -17,6 +17,284 @@ import Speech
 import UIKit
 #endif
 
+public func systemSpeechTranscriptionEngineDescription() -> String {
+    #if canImport(Speech) && canImport(AVFoundation)
+    if #available(iOS 26.0, macOS 26.0, *) {
+        return SpeechTranscriber.isAvailable
+            ? "speech_analyzer_long_form"
+            : "legacy_on_device_silence_segmented"
+    }
+    return "legacy_on_device_silence_segmented"
+    #else
+    return "unavailable"
+    #endif
+}
+
+#if canImport(Speech)
+/// Collects the ordered, finalized passages emitted by SpeechAnalyzer.
+///
+/// SpeechTranscriber final results are additive passages. They are not competing
+/// hypotheses, so choosing the longest result (the legacy recognizer behavior)
+/// would silently discard everything except one passage from a long recording.
+struct SpeechAnalyzerFinalResultAccumulator {
+    private(set) var transcript = ""
+    private(set) var resultCount = 0
+
+    mutating func record(_ passage: String) {
+        guard !passage.isEmpty else { return }
+        transcript.append(passage)
+        resultCount += 1
+    }
+
+    var normalizedTranscript: String? {
+        let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+struct SpeechAudioChunkRange: Equatable {
+    var startMs: Int
+    var lengthMs: Int
+}
+
+struct SpeechAudioSilenceRange: Equatable {
+    var startMs: Int
+    var endMs: Int
+
+    var midpointMs: Int { startMs + ((endMs - startMs) / 2) }
+}
+
+/// Plans non-overlapping legacy-recognizer inputs. A sustained silence nearest
+/// the preferred boundary wins, while the hard limit prevents an unexpectedly
+/// quiet or continuous recording from creating an unbounded request.
+func silenceAwareSpeechAudioChunkRanges(
+    durationMs: Int,
+    silenceRanges: [SpeechAudioSilenceRange],
+    preferredChunkMs: Int = 30_000,
+    maximumChunkMs: Int = 42_000,
+    minimumChunkMs: Int = 5_000
+) -> [SpeechAudioChunkRange] {
+    guard durationMs > 0 else { return [] }
+    guard durationMs > maximumChunkMs else {
+        return [SpeechAudioChunkRange(startMs: 0, lengthMs: durationMs)]
+    }
+
+    var ranges: [SpeechAudioChunkRange] = []
+    var startMs = 0
+    while durationMs - startMs > maximumChunkMs {
+        let earliestBoundary = startMs + minimumChunkMs
+        let latestBoundary = min(durationMs, startMs + maximumChunkMs)
+        let preferredBoundary = min(latestBoundary, startMs + preferredChunkMs)
+        let silenceBoundary = silenceRanges
+            .map(\.midpointMs)
+            .filter { $0 >= earliestBoundary && $0 <= latestBoundary }
+            .min { lhs, rhs in
+                let lhsDistance = abs(lhs - preferredBoundary)
+                let rhsDistance = abs(rhs - preferredBoundary)
+                return lhsDistance == rhsDistance ? lhs < rhs : lhsDistance < rhsDistance
+            }
+        let boundary = silenceBoundary ?? preferredBoundary
+        ranges.append(SpeechAudioChunkRange(startMs: startMs, lengthMs: boundary - startMs))
+        startMs = boundary
+    }
+    ranges.append(SpeechAudioChunkRange(startMs: startMs, lengthMs: durationMs - startMs))
+    return ranges
+}
+
+#if canImport(AVFoundation)
+func sustainedSilenceRanges(
+    in url: URL,
+    analysisWindowMs: Int = 50,
+    minimumSilenceMs: Int = 650
+) throws -> [SpeechAudioSilenceRange] {
+    let file = try AVAudioFile(forReading: url)
+    let format = file.processingFormat
+    guard format.sampleRate > 0,
+          format.commonFormat == .pcmFormatFloat32,
+          !format.isInterleaved else {
+        return []
+    }
+    let windowFrameCount = max(1, Int((format.sampleRate * Double(analysisWindowMs) / 1000).rounded()))
+    let bufferFrameCount = AVAudioFrameCount(max(windowFrameCount, 8_192))
+    guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: bufferFrameCount) else {
+        return []
+    }
+
+    var windowEnergy = 0.0
+    var framesInWindow = 0
+    var decibels: [Double] = []
+    while file.framePosition < file.length {
+        let remaining = file.length - file.framePosition
+        let requestedFrames = AVAudioFrameCount(min(AVAudioFramePosition(bufferFrameCount), remaining))
+        try file.read(into: buffer, frameCount: requestedFrames)
+        let frameLength = Int(buffer.frameLength)
+        guard frameLength > 0 else { break }
+        guard let channels = buffer.floatChannelData else { return [] }
+        let channelCount = Int(format.channelCount)
+        for frame in 0..<frameLength {
+            var frameEnergy = 0.0
+            for channel in 0..<channelCount {
+                let sample = Double(channels[channel][frame])
+                frameEnergy += sample * sample
+            }
+            windowEnergy += frameEnergy / Double(max(1, channelCount))
+            framesInWindow += 1
+            if framesInWindow == windowFrameCount {
+                let rms = sqrt(windowEnergy / Double(framesInWindow))
+                decibels.append(rms > 0 ? 20 * log10(rms) : -100)
+                windowEnergy = 0
+                framesInWindow = 0
+            }
+        }
+    }
+    if framesInWindow > 0 {
+        let rms = sqrt(windowEnergy / Double(framesInWindow))
+        decibels.append(rms > 0 ? 20 * log10(rms) : -100)
+    }
+    guard decibels.count >= 2 else { return [] }
+
+    let sorted = decibels.sorted()
+    let quiet = sorted[Int(Double(sorted.count - 1) * 0.10)]
+    let loud = sorted[Int(Double(sorted.count - 1) * 0.90)]
+    // A nearly uniform recording has no defensible silence/speech separation.
+    guard loud - quiet >= 8 else { return [] }
+    let threshold = quiet + min(14, max(6, (loud - quiet) * 0.35))
+    let minimumWindows = max(1, Int(ceil(Double(minimumSilenceMs) / Double(analysisWindowMs))))
+
+    var ranges: [SpeechAudioSilenceRange] = []
+    var silenceStartIndex: Int?
+    for (index, level) in decibels.enumerated() {
+        if level <= threshold {
+            silenceStartIndex = silenceStartIndex ?? index
+        } else if let start = silenceStartIndex {
+            if index - start >= minimumWindows {
+                ranges.append(SpeechAudioSilenceRange(
+                    startMs: start * analysisWindowMs,
+                    endMs: index * analysisWindowMs
+                ))
+            }
+            silenceStartIndex = nil
+        }
+    }
+    if let start = silenceStartIndex, decibels.count - start >= minimumWindows {
+        ranges.append(SpeechAudioSilenceRange(
+            startMs: start * analysisWindowMs,
+            endMs: decibels.count * analysisWindowMs
+        ))
+    }
+    return ranges
+}
+#endif
+
+#if canImport(AVFoundation)
+@available(iOS 26.0, macOS 26.0, *)
+struct LongFormSpeechTimedText: Sendable {
+    var text: String
+    var startMs: Int
+    var endMs: Int
+}
+
+@available(iOS 26.0, macOS 26.0, *)
+struct LongFormSpeechPassage: Sendable {
+    var text: String
+    var startMs: Int
+    var endMs: Int
+    var timedText: [LongFormSpeechTimedText]
+}
+
+@available(iOS 26.0, macOS 26.0, *)
+func transcribeLongFormSpeechFile(at url: URL) async throws -> [LongFormSpeechPassage] {
+    guard SpeechTranscriber.isAvailable else {
+        throw SessionKitError.persistenceFailed("long_form_speech_transcriber_unavailable")
+    }
+    guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale.current) else {
+        throw SessionKitError.persistenceFailed(
+            "long_form_speech_locale_unsupported(locale=\(Locale.current.identifier))"
+        )
+    }
+    let transcriber = SpeechTranscriber(
+        locale: locale,
+        transcriptionOptions: [],
+        reportingOptions: [],
+        attributeOptions: [.audioTimeRange]
+    )
+    if let installationRequest = try await AssetInventory.assetInstallationRequest(
+        supporting: [transcriber]
+    ) {
+        try await installationRequest.downloadAndInstall()
+    }
+
+    let audioFile: AVAudioFile
+    do {
+        audioFile = try AVAudioFile(forReading: url)
+    } catch {
+        throw SessionKitError.persistenceFailed("long_form_audio_file_unreadable")
+    }
+
+    async let passages = collectLongFormSpeechPassages(from: transcriber)
+    let analyzer = SpeechAnalyzer(modules: [transcriber])
+    do {
+        if let lastSample = try await analyzer.analyzeSequence(from: audioFile) {
+            try await analyzer.finalizeAndFinish(through: lastSample)
+        } else {
+            await analyzer.cancelAndFinishNow()
+        }
+        let completed = try await passages
+        guard !completed.isEmpty else {
+            throw SessionKitError.persistenceFailed("long_form_speech_transcript_empty")
+        }
+        return completed
+    } catch {
+        await analyzer.cancelAndFinishNow()
+        _ = try? await passages
+        throw error
+    }
+}
+
+@available(iOS 26.0, macOS 26.0, *)
+func longFormSpeechTranscriptionIsSupported() async -> Bool {
+    guard SpeechTranscriber.isAvailable else { return false }
+    return await SpeechTranscriber.supportedLocale(equivalentTo: Locale.current) != nil
+}
+
+@available(iOS 26.0, macOS 26.0, *)
+private func collectLongFormSpeechPassages(
+    from transcriber: SpeechTranscriber
+) async throws -> [LongFormSpeechPassage] {
+    var passages: [LongFormSpeechPassage] = []
+    for try await result in transcriber.results {
+        guard result.isFinal else { continue }
+        let passageText = String(result.text.characters)
+        let passageStartMs = max(0, Int((CMTimeGetSeconds(result.range.start) * 1000).rounded()))
+        let passageDurationMs = max(1, Int((CMTimeGetSeconds(result.range.duration) * 1000).rounded()))
+        let timedText = result.text.runs.compactMap { run -> LongFormSpeechTimedText? in
+            let text = String(result.text[run.range].characters).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty, let timeRange = run.audioTimeRange else { return nil }
+            let startMs = max(0, Int((CMTimeGetSeconds(timeRange.start) * 1000).rounded()))
+            let durationMs = max(1, Int((CMTimeGetSeconds(timeRange.duration) * 1000).rounded()))
+            return LongFormSpeechTimedText(text: text, startMs: startMs, endMs: startMs + durationMs)
+        }
+        passages.append(LongFormSpeechPassage(
+            text: passageText,
+            startMs: passageStartMs,
+            endMs: passageStartMs + passageDurationMs,
+            timedText: timedText
+        ))
+    }
+    return passages
+}
+#endif
+
+func makeOnDeviceSpeechRecognitionRequest(url: URL) -> SFSpeechURLRecognitionRequest {
+    let request = SFSpeechURLRecognitionRequest(url: url)
+    request.shouldReportPartialResults = false
+    if #available(iOS 13.0, macOS 10.15, *) {
+        request.requiresOnDeviceRecognition = true
+    }
+    return request
+}
+#endif
+
 public struct SpeechVoiceOption: Identifiable, Hashable, Sendable {
     public let id: String
     public let name: String
@@ -76,8 +354,11 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
 
     private func prepareTextAudio(itemId: String, title: String, text: String, scope: TextAudioRenderScope) throws -> PreparedTextAudio? {
         #if canImport(AVFoundation)
-        let normalizedText = SpeechTextNormalizer.normalize(text)
+        let normalizedText = SpeechTextNormalizer.projectForSystemSpeech(text).text
         guard !normalizedText.isEmpty else { return nil }
+        guard SpeechTextNormalizer.isSystemSpeechSafe(normalizedText) else {
+            throw SessionKitError.persistenceFailed("system_speech_projection_unsafe")
+        }
         let allSegments = Self.textSegments(in: normalizedText, maxSegmentCharacters: maxSegmentCharacters)
         let segments = scope.segments(from: allSegments, speechRate: speechRate)
         guard !segments.isEmpty else { return nil }
@@ -192,6 +473,9 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
         synthesizer: AVSpeechSynthesizer,
         accumulator: AudioFileAccumulator
     ) throws {
+        guard SpeechTextNormalizer.isSystemSpeechSafe(text) else {
+            throw SessionKitError.persistenceFailed("system_speech_utterance_unsafe")
+        }
         let utterance = AVSpeechUtterance(string: text)
         utterance.rate = speechRate
         utterance.preUtteranceDelay = 0
@@ -311,7 +595,7 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
 
     private static func cacheSignature(itemId: String, text: String, voiceIdentifier: String?, speechRate: Float, scope: String = "complete") -> String {
         var components = [
-            "system-text-audio-v1",
+            "system-text-audio-v2-safe-speech",
             itemId,
             voiceIdentifier ?? "default",
             String(format: "%.4f", speechRate),
@@ -446,6 +730,9 @@ struct SpeechPlaybackChunk: Equatable, Sendable {
 
     func sourceOffset(atSpokenUTF16Offset utf16Offset: Int) -> Int {
         guard !spokenSourceOffsets.isEmpty else { return sourceEnd }
+        // System-speech projection guarantees that every Character occupies
+        // exactly one UTF-16 code unit, so every clamped AVSpeech marker is a
+        // valid Swift String boundary.
         let clamped = max(0, min(utf16Offset, spokenText.utf16.count))
         let index = String.Index(utf16Offset: clamped, in: spokenText)
         let characterOffset = spokenText.distance(from: spokenText.startIndex, to: index)
@@ -482,7 +769,7 @@ enum SpeechPlaybackPlanner {
             let sourceStart = fragmentStart + lower
             let sourceEnd = fragmentStart + fragment.count
             let trimmed = String(fragment[lower..<upper])
-            let normalized = SpeechTextNormalizer.normalizeWithSourceOffsets(trimmed)
+            let normalized = SpeechTextNormalizer.projectForSystemSpeech(trimmed)
             guard !normalized.text.isEmpty else {
                 fragment.removeAll(keepingCapacity: true)
                 return
@@ -532,8 +819,8 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
     private var startedTargetId: String?
     private var playbackStartFailure: String?
     private var paused = false
-    private let voiceIdentifier: String?
-    private let speechRate: Float
+    private var voiceIdentifier: String?
+    private var speechRate: Float
     private let readsSpeechSettingsAtPlayback: Bool
     #if canImport(AVFoundation)
     private weak var activeUtterance: AVSpeechUtterance?
@@ -585,9 +872,14 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
 
     public func prepareSpeechText(_ text: String) throws -> String {
         preparedSourceText = text
-        let normalized = SpeechTextNormalizer.normalize(text)
+        let normalized = SpeechTextNormalizer.projectForSystemSpeech(text).text
         preparedSpeechText = normalized
         return normalized
+    }
+
+    public func configureSpeechSettings(voiceIdentifier: String?, rate: Float) throws {
+        self.voiceIdentifier = voiceIdentifier?.isEmpty == true ? nil : voiceIdentifier
+        speechRate = max(AVSpeechUtteranceMinimumSpeechRate, min(AVSpeechUtteranceMaximumSpeechRate, rate))
     }
 
     public func play(targetId: String) throws {
@@ -600,6 +892,9 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         let chunks = SpeechPlaybackPlanner.chunks(in: source, from: charOffset)
         guard !chunks.isEmpty else {
             throw SessionKitError.invalidCommandForState("playback_text_empty")
+        }
+        guard chunks.allSatisfy({ SpeechTextNormalizer.isSystemSpeechSafe($0.spokenText) }) else {
+            throw SessionKitError.invalidCommandForState("system_speech_projection_unsafe")
         }
         if synthesizer.isSpeaking || paused || !chunksByUtteranceId.isEmpty {
             replaceSynthesizer()
@@ -654,7 +949,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
 
     public func preview(_ text: String, mode: SpeechPreviewMode) throws {
         #if canImport(AVFoundation)
-        let textToSpeak = SpeechTextNormalizer.normalize(text)
+        let textToSpeak = SpeechTextNormalizer.projectForSystemSpeech(text).text
         guard !textToSpeak.isEmpty else {
             throw SessionKitError.invalidCommandForState("preview_text_empty")
         }
@@ -833,8 +1128,11 @@ extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
         utterance: AVSpeechUtterance
     ) {
         guard let chunk = chunksByUtteranceId[ObjectIdentifier(utterance)] else { return }
-        let start = chunk.sourceOffset(atSpokenUTF16Offset: characterRange.location)
-        let end = chunk.sourceOffset(atSpokenUTF16Offset: characterRange.location + characterRange.length)
+        let spokenLength = chunk.spokenText.utf16.count
+        let markerStart = min(characterRange.location, spokenLength)
+        let markerLength = min(characterRange.length, spokenLength - markerStart)
+        let start = chunk.sourceOffset(atSpokenUTF16Offset: markerStart)
+        let end = chunk.sourceOffset(atSpokenUTF16Offset: markerStart + markerLength)
         currentOffset = start
         currentRangeLength = max(0, end - start)
     }
@@ -1083,6 +1381,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private let remoteCommandHandler: (@Sendable (CompactControlCommand, Int?, Double?) -> Void)?
     private var mediaContext: PlaybackMediaContext?
     private var activeTargetId: String?
+    private var activePlaybackURL: URL?
     private var completedTargetId: String?
     private var playbackComplete = false
     private var lastRequestedMediaTimeMs = 0
@@ -1104,6 +1403,14 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         self.preferredSkipForwardSeconds = Self.validatedSkipSeconds(preferredSkipForwardSeconds)
         self.remoteCommandHandler = remoteCommandHandler
         installRemoteCommandHandlers()
+    }
+
+    public func setRemoteCommandHandlingEnabled(_ enabled: Bool) {
+        if enabled {
+            installRemoteCommandHandlers()
+        } else {
+            removeRemoteCommandHandlers()
+        }
     }
 
     public func setPreferredSkipIntervals(backSeconds: Int, forwardSeconds: Int) {
@@ -1149,16 +1456,18 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     public func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {
         #if canImport(AVFoundation)
-        guard let url = URL(string: targetId) else {
-            throw SessionKitError.invalidCommandForState("stream_audio_invalid_url:\(targetId)")
+        let requestedURL = mediaContext?.targetId == targetId ? mediaContext?.playbackURL : nil
+        guard let url = URL(string: requestedURL ?? targetId) else {
+            throw SessionKitError.invalidCommandForState("stream_audio_invalid_url:\(requestedURL ?? targetId)")
         }
-        if activeTargetId != targetId || player == nil {
+        if activeTargetId != targetId || activePlaybackURL != url || player == nil {
             removePlayerStateObserver()
             removeCompletionObserver()
             removeTimeObserver()
             let item = AVPlayerItem(url: url)
             player = AVPlayer(playerItem: item)
             activeTargetId = targetId
+            activePlaybackURL = url
             observeCompletion(for: item)
             installPlayerStateObserver()
             installTimeObserver()
@@ -1307,6 +1616,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         removeCompletionObserver()
         removeTimeObserver()
         activeTargetId = nil
+        activePlaybackURL = nil
         completedTargetId = nil
         playbackComplete = false
         paused = true
@@ -1569,13 +1879,21 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
     public init(speech: AudioPlaybackClient, media: AudioPlaybackClient) {
         self.speech = speech
         self.media = media
+        media.setRemoteCommandHandlingEnabled(false)
     }
 
     public func configureMediaContext(_ context: PlaybackMediaContext?) throws {
         try media.configureMediaContext(context)
         if context == nil {
+            media.setRemoteCommandHandlingEnabled(false)
             try speech.configureMediaContext(nil)
+        } else {
+            media.setRemoteCommandHandlingEnabled(true)
         }
+    }
+
+    public func configureSpeechSettings(voiceIdentifier: String?, rate: Float) throws {
+        try speech.configureSpeechSettings(voiceIdentifier: voiceIdentifier, rate: rate)
     }
 
     public func prepareSpeechText(_ text: String) throws -> String {
@@ -1584,11 +1902,14 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
 
     public func play(targetId: String) throws {
         activeRoute = .speech
+        media.setRemoteCommandHandlingEnabled(false)
+        try media.stop()
         try speech.play(targetId: targetId)
     }
 
     public func play(targetId: String, from charOffset: Int) throws {
         activeRoute = .speech
+        media.setRemoteCommandHandlingEnabled(false)
         try media.stop()
         try speech.play(targetId: targetId, from: charOffset)
     }
@@ -1596,6 +1917,7 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
     public func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {
         activeRoute = .media
         try speech.stop()
+        media.setRemoteCommandHandlingEnabled(true)
         try media.play(targetId: targetId, fromMediaTimeMs: mediaTimeMs)
     }
 
@@ -1612,6 +1934,10 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
 
     public func currentCharOffset() -> Int? {
         activeRoute == .speech ? speech.currentCharOffset() : nil
+    }
+
+    public func currentRecoveryCharOffset() -> Int? {
+        activeRoute == .speech ? speech.currentRecoveryCharOffset() : nil
     }
 
     public func currentMediaTimeMs() -> Int? {
@@ -1667,6 +1993,20 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
         case nil:
             return media.playbackTransportState(targetId: targetId)
                 ?? speech.playbackTransportState(targetId: targetId)
+        }
+    }
+
+    public func setRemoteCommandHandlingEnabled(_ enabled: Bool) {
+        switch activeRoute {
+        case .speech:
+            speech.setRemoteCommandHandlingEnabled(enabled)
+            media.setRemoteCommandHandlingEnabled(false)
+        case .media:
+            speech.setRemoteCommandHandlingEnabled(false)
+            media.setRemoteCommandHandlingEnabled(enabled)
+        case nil:
+            speech.setRemoteCommandHandlingEnabled(false)
+            media.setRemoteCommandHandlingEnabled(false)
         }
     }
 
@@ -1830,6 +2170,11 @@ public final class SystemRecordingClient: RecordingClient {
 }
 
 public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
+    private struct PreparedAudioChunks {
+        var urls: [URL]
+        var cleanupDirectory: URL?
+    }
+
     private let fileManager: FileManager
     private let baseDirectory: URL?
 
@@ -1848,38 +2193,92 @@ public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
         guard fileManager.fileExists(atPath: url.path) else {
             throw SessionKitError.persistenceFailed("audio_file_missing")
         }
+        #if canImport(AVFoundation)
+        if #available(iOS 26.0, macOS 26.0, *),
+           await longFormSpeechTranscriptionIsSupported() {
+            return try await transcribeLongFormAudio(at: url)
+        }
+        #endif
         guard let recognizer = SFSpeechRecognizer(), recognizer.isAvailable else {
             throw SessionKitError.persistenceFailed("speech_recognizer_unavailable")
         }
-        let request = SFSpeechURLRecognitionRequest(url: url)
-        request.shouldReportPartialResults = false
-        if #available(iOS 13.0, macOS 10.15, *) {
-            request.requiresOnDeviceRecognition = false
+        guard recognizer.supportsOnDeviceRecognition else {
+            throw SessionKitError.persistenceFailed("on_device_speech_recognition_unavailable")
         }
-        return try await withCheckedThrowingContinuation { continuation in
-            var didFinish = false
-            recognizer.recognitionTask(with: request) { result, error in
-                if let error, !didFinish {
-                    didFinish = true
-                    continuation.resume(throwing: error)
-                    return
-                }
-                guard let result, result.isFinal, !didFinish else { return }
-                didFinish = true
-                let transcript = result.bestTranscription.formattedString.trimmingCharacters(in: .whitespacesAndNewlines)
-                if transcript.isEmpty {
-                    continuation.resume(throwing: SessionKitError.persistenceFailed("empty_transcript"))
-                } else {
-                    continuation.resume(returning: transcript)
-                }
+        let prepared = try await prepareAudioChunks(for: url)
+        defer {
+            if let cleanupDirectory = prepared.cleanupDirectory {
+                try? fileManager.removeItem(at: cleanupDirectory)
             }
         }
+        var stitchedTranscript = ""
+        for (chunkIndex, chunkURL) in prepared.urls.enumerated() {
+            var chunkTranscript: String?
+            var lastRecognitionError: Error?
+            for attempt in 0..<2 {
+                do {
+                    chunkTranscript = try await recognizeAudio(at: chunkURL, recognizer: recognizer)
+                } catch {
+                    lastRecognitionError = error
+                }
+                if chunkTranscript?.isEmpty == false { break }
+                if attempt == 0 {
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                }
+            }
+            guard let chunkTranscript, !chunkTranscript.isEmpty else {
+                if let lastRecognitionError { throw lastRecognitionError }
+                throw SessionKitError.persistenceFailed(
+                    "interjection_audio_chunk_empty(index=\(chunkIndex + 1),count=\(prepared.urls.count))"
+                )
+            }
+            stitchedTranscript = stitchedTranscript.isEmpty
+                ? chunkTranscript
+                : "\(stitchedTranscript) \(chunkTranscript)"
+        }
+        if !stitchedTranscript.isEmpty { return stitchedTranscript }
+        throw SessionKitError.persistenceFailed(Self.emptyTranscriptEvidence(for: url))
         #else
         throw SessionKitError.persistenceFailed("speech_recognition_unavailable")
         #endif
     }
 
     #if canImport(Speech)
+    #if canImport(AVFoundation)
+    @available(iOS 26.0, macOS 26.0, *)
+    private func transcribeLongFormAudio(at url: URL) async throws -> String {
+        var accumulator = SpeechAnalyzerFinalResultAccumulator()
+        for passage in try await transcribeLongFormSpeechFile(at: url) {
+            accumulator.record(passage.text)
+        }
+        guard let transcript = accumulator.normalizedTranscript else {
+            throw SessionKitError.persistenceFailed("long_form_speech_transcript_empty")
+        }
+        return transcript
+    }
+    #endif
+
+    private func recognizeAudio(at url: URL, recognizer: SFSpeechRecognizer) async throws -> String? {
+        let request = makeOnDeviceSpeechRecognitionRequest(url: url)
+        return try await withCheckedThrowingContinuation { continuation in
+            var didFinish = false
+            recognizer.recognitionTask(with: request) { result, error in
+                guard !didFinish else { return }
+                if let result, result.isFinal {
+                    didFinish = true
+                    let transcript = result.bestTranscription.formattedString
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    continuation.resume(returning: transcript.isEmpty ? nil : transcript)
+                    return
+                }
+                if let error {
+                    didFinish = true
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
     private func requestAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
         let current = SFSpeechRecognizer.authorizationStatus()
         guard current == .notDetermined else { return current }
@@ -1889,7 +2288,75 @@ public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
             }
         }
     }
+
+    private func prepareAudioChunks(for url: URL) async throws -> PreparedAudioChunks {
+        #if canImport(AVFoundation)
+        let asset = AVURLAsset(url: url)
+        let duration = try await asset.load(.duration)
+        let durationSeconds = CMTimeGetSeconds(duration)
+        guard durationSeconds.isFinite, durationSeconds > 0 else {
+            throw SessionKitError.persistenceFailed("interjection_audio_duration_invalid")
+        }
+        let durationMs = max(1, Int((durationSeconds * 1000).rounded()))
+        let silenceRanges = (try? sustainedSilenceRanges(in: url)) ?? []
+        let ranges = silenceAwareSpeechAudioChunkRanges(
+            durationMs: durationMs,
+            silenceRanges: silenceRanges
+        )
+        guard ranges.count > 1 else {
+            return PreparedAudioChunks(urls: [url], cleanupDirectory: nil)
+        }
+        let directory = fileManager.temporaryDirectory
+            .appending(path: "SpokenMarginsInterjectionTranscriptionV3/\(UUID().uuidString)", directoryHint: .isDirectory)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        do {
+            var urls: [URL] = []
+            for (index, range) in ranges.enumerated() {
+                let chunkURL = directory.appending(path: "chunk-\(String(format: "%04d", index)).m4a")
+                try await exportAudioChunk(
+                    asset: asset,
+                    startMs: range.startMs,
+                    lengthMs: range.lengthMs,
+                    outputURL: chunkURL
+                )
+                urls.append(chunkURL)
+            }
+            return PreparedAudioChunks(urls: urls, cleanupDirectory: directory)
+        } catch {
+            try? fileManager.removeItem(at: directory)
+            throw error
+        }
+        #else
+        return PreparedAudioChunks(urls: [url], cleanupDirectory: nil)
+        #endif
+    }
+
+    #if canImport(AVFoundation)
+    private func exportAudioChunk(asset: AVURLAsset, startMs: Int, lengthMs: Int, outputURL: URL) async throws {
+        guard let exporter = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else {
+            throw SessionKitError.persistenceFailed("interjection_audio_chunk_exporter_unavailable")
+        }
+        exporter.outputURL = outputURL
+        exporter.outputFileType = .m4a
+        exporter.timeRange = CMTimeRange(
+            start: CMTime(seconds: Double(startMs) / 1000, preferredTimescale: 600),
+            duration: CMTime(seconds: Double(lengthMs) / 1000, preferredTimescale: 600)
+        )
+        try await exporter.export(to: outputURL, as: .m4a)
+    }
     #endif
+    #endif
+
+    private static func emptyTranscriptEvidence(for url: URL) -> String {
+        let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
+        #if canImport(AVFoundation)
+        if let audioFile = try? AVAudioFile(forReading: url), audioFile.processingFormat.sampleRate > 0 {
+            let durationMs = Int((Double(audioFile.length) / audioFile.processingFormat.sampleRate * 1000).rounded())
+            return "empty_transcript(duration_ms=\(durationMs),bytes=\(bytes))"
+        }
+        #endif
+        return "empty_transcript(duration_ms=unknown,bytes=\(bytes))"
+    }
 
     private func audioURL(for path: String) throws -> URL {
         let url = URL(fileURLWithPath: path)
@@ -1917,6 +2384,8 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         var url: URL
         var offsetMs: Int
         var index: Int
+        var lengthMs: Int
+        var trimLeadingMs: Int
     }
 
     public init() {}
@@ -1927,19 +2396,40 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         guard status == .authorized else {
             throw SessionKitError.persistenceFailed("speech_recognition_not_authorized")
         }
-        let localURL = try await localAudioURL(for: url, itemId: itemId)
-        guard localURL.isFileURL, FileManager.default.fileExists(atPath: localURL.path) else {
+        guard url.isFileURL, FileManager.default.fileExists(atPath: url.path) else {
             throw SessionKitError.persistenceFailed("source_audio_file_missing")
+        }
+        if #available(iOS 26.0, macOS 26.0, *),
+           await longFormSpeechTranscriptionIsSupported() {
+            return try await transcribeLongFormTimeline(
+                url: url,
+                itemId: itemId,
+                timelineDurationMs: durationMs,
+                timelineOffsetMs: 0
+            )
         }
         guard let recognizer = SFSpeechRecognizer(), recognizer.isAvailable else {
             throw SessionKitError.persistenceFailed("speech_recognizer_unavailable")
         }
-        let chunks = try await audioChunks(for: localURL, itemId: itemId, durationMs: durationMs)
+        guard recognizer.supportsOnDeviceRecognition else {
+            throw SessionKitError.persistenceFailed("on_device_speech_recognition_unavailable")
+        }
+        let chunks = try await audioChunks(for: url, itemId: itemId, durationMs: durationMs)
         var stitchedSegments: [MediaTimelineSegment] = []
         var stitchedChapters: [MediaTimelineChapter] = []
         var stitchedDurationMs = durationMs
         for chunk in chunks {
-            let timeline = try await transcribeChunk(chunk, itemId: itemId, recognizer: recognizer, sourceDurationMs: durationMs)
+            let timeline = try await transcribeChunk(
+                chunk,
+                itemId: itemId,
+                recognizer: recognizer,
+                sourceDurationMs: chunk.lengthMs
+            )
+            guard !timeline.segments.isEmpty else {
+                throw SessionKitError.persistenceFailed(
+                    "source_audio_chunk_empty(index=\(chunk.index + 1),count=\(chunks.count))"
+                )
+            }
             let offset = offsetTimeline(timeline, chunk: chunk)
             stitchedSegments.append(contentsOf: offset.segments)
             stitchedChapters.append(contentsOf: offset.chapters)
@@ -1968,14 +2458,13 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         guard status == .authorized else {
             throw SessionKitError.persistenceFailed("speech_recognition_not_authorized")
         }
-        let localURL = try await localAudioURL(for: url, itemId: itemId)
-        guard localURL.isFileURL, FileManager.default.fileExists(atPath: localURL.path) else {
+        guard url.isFileURL || ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
+            throw SessionKitError.persistenceFailed("source_audio_url_unsupported")
+        }
+        if url.isFileURL, !FileManager.default.fileExists(atPath: url.path) {
             throw SessionKitError.persistenceFailed("source_audio_file_missing")
         }
-        guard let recognizer = SFSpeechRecognizer(), recognizer.isAvailable else {
-            throw SessionKitError.persistenceFailed("speech_recognizer_unavailable")
-        }
-        let asset = AVURLAsset(url: localURL)
+        let asset = AVURLAsset(url: url)
         let loadedDuration = try await asset.load(.duration)
         let loadedDurationMs = Int((max(0, CMTimeGetSeconds(loadedDuration)) * 1000).rounded())
         let effectiveDurationMs = durationMs ?? loadedDurationMs
@@ -1990,17 +2479,76 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         )
         let directory = caches.appending(path: "SourceAudioTranscriptionWindows/\(itemId)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let chunkURL = directory.appending(path: "window-\(anchorMediaTimeMs).m4a")
-        if !FileManager.default.fileExists(atPath: chunkURL.path) {
-            try await exportChunk(asset: asset, offsetMs: startMs, lengthMs: lengthMs, outputURL: chunkURL)
+        let windowDirectory = directory.appending(path: "window-\(anchorMediaTimeMs)-v3", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: windowDirectory, withIntermediateDirectories: true)
+        let localWindowURL = windowDirectory.appending(path: "source-window.m4a")
+        if !FileManager.default.fileExists(atPath: localWindowURL.path) {
+            try await exportChunk(
+                asset: asset,
+                offsetMs: startMs,
+                lengthMs: lengthMs,
+                outputURL: localWindowURL
+            )
         }
-        let chunk = SourceAudioChunk(url: chunkURL, offsetMs: startMs, index: 0)
-        let timeline = try await transcribeChunk(chunk, itemId: itemId, recognizer: recognizer, sourceDurationMs: lengthMs)
-        let offset = offsetTimeline(timeline, chunk: chunk)
+        if #available(iOS 26.0, macOS 26.0, *),
+           await longFormSpeechTranscriptionIsSupported() {
+            return try await transcribeLongFormTimeline(
+                url: localWindowURL,
+                itemId: itemId,
+                timelineDurationMs: durationMs ?? effectiveDurationMs,
+                timelineOffsetMs: startMs
+            )
+        }
+        guard let recognizer = SFSpeechRecognizer(), recognizer.isAvailable else {
+            throw SessionKitError.persistenceFailed("speech_recognizer_unavailable")
+        }
+        guard recognizer.supportsOnDeviceRecognition else {
+            throw SessionKitError.persistenceFailed("on_device_speech_recognition_unavailable")
+        }
+        let silenceRanges = (try? sustainedSilenceRanges(in: localWindowURL)) ?? []
+        let ranges = silenceAwareSpeechAudioChunkRanges(
+            durationMs: lengthMs,
+            silenceRanges: silenceRanges
+        )
+        let localWindowAsset = AVURLAsset(url: localWindowURL)
+        var stitchedSegments: [MediaTimelineSegment] = []
+        var stitchedChapters: [MediaTimelineChapter] = []
+        for (index, range) in ranges.enumerated() {
+            let chunkURL = windowDirectory.appending(path: "chunk-\(String(format: "%04d", index)).m4a")
+            if !FileManager.default.fileExists(atPath: chunkURL.path) {
+                try await exportChunk(
+                    asset: localWindowAsset,
+                    offsetMs: range.startMs,
+                    lengthMs: range.lengthMs,
+                    outputURL: chunkURL
+                )
+            }
+            let chunk = SourceAudioChunk(
+                url: chunkURL,
+                offsetMs: startMs + range.startMs,
+                index: index,
+                lengthMs: range.lengthMs,
+                trimLeadingMs: 0
+            )
+            let timeline = try await transcribeChunk(
+                chunk,
+                itemId: itemId,
+                recognizer: recognizer,
+                sourceDurationMs: range.lengthMs
+            )
+            guard !timeline.segments.isEmpty else {
+                throw SessionKitError.persistenceFailed(
+                    "source_audio_chunk_empty(index=\(index + 1),count=\(ranges.count))"
+                )
+            }
+            let offset = offsetTimeline(timeline, chunk: chunk)
+            stitchedSegments.append(contentsOf: offset.segments)
+            stitchedChapters.append(contentsOf: offset.chapters)
+        }
         return TranscriptTimeline(
-            segments: offset.segments.sorted { $0.startMs < $1.startMs },
-            chapters: offset.chapters.sorted { $0.startMs < $1.startMs },
-            durationMs: durationMs ?? max(effectiveDurationMs, offset.durationMs ?? 0)
+            segments: stitchedSegments.sorted { $0.startMs < $1.startMs },
+            chapters: stitchedChapters.sorted { $0.startMs < $1.startMs },
+            durationMs: durationMs ?? effectiveDurationMs
         )
         #else
         throw SessionKitError.persistenceFailed("speech_recognition_unavailable")
@@ -2008,28 +2556,67 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
     }
 
     #if canImport(Speech) && canImport(AVFoundation)
+    @available(iOS 26.0, macOS 26.0, *)
+    private func transcribeLongFormTimeline(
+        url: URL,
+        itemId: String,
+        timelineDurationMs: Int?,
+        timelineOffsetMs: Int
+    ) async throws -> TranscriptTimeline {
+        let passages = try await transcribeLongFormSpeechFile(at: url)
+        var segments: [MediaTimelineSegment] = []
+        for passage in passages {
+            let timedText = passage.timedText.isEmpty
+                ? [LongFormSpeechTimedText(
+                    text: passage.text.trimmingCharacters(in: .whitespacesAndNewlines),
+                    startMs: passage.startMs,
+                    endMs: passage.endMs
+                )]
+                : passage.timedText
+            for timed in timedText where !timed.text.isEmpty {
+                let index = segments.count + 1
+                segments.append(MediaTimelineSegment(
+                    id: "seg-\(String(format: "%06d", index))",
+                    startMs: timelineOffsetMs + timed.startMs,
+                    endMs: timelineOffsetMs + max(timed.startMs + 1, timed.endMs),
+                    text: timed.text
+                ))
+            }
+        }
+        guard !segments.isEmpty else {
+            throw SessionKitError.persistenceFailed("long_form_source_transcript_empty(item=\(itemId))")
+        }
+        return TranscriptTimeline(
+            segments: segments,
+            chapters: [],
+            durationMs: timelineDurationMs ?? segments.map(\.endMs).max()
+        )
+    }
+
     private func transcribeChunk(
         _ chunk: SourceAudioChunk,
         itemId: String,
         recognizer: SFSpeechRecognizer,
         sourceDurationMs: Int?
     ) async throws -> TranscriptTimeline {
-        let request = SFSpeechURLRecognitionRequest(url: chunk.url)
-        request.shouldReportPartialResults = false
-        if #available(iOS 13.0, macOS 10.15, *) {
-            request.requiresOnDeviceRecognition = false
-        }
+        let request = makeOnDeviceSpeechRecognitionRequest(url: chunk.url)
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<TranscriptTimeline, Error>) in
             var didFinish = false
             recognizer.recognitionTask(with: request) { result, error in
-                if let error, !didFinish {
+                guard !didFinish else { return }
+                if let result, result.isFinal {
                     didFinish = true
-                    continuation.resume(throwing: error)
+                    continuation.resume(returning: Self.timeline(
+                        from: result.bestTranscription,
+                        itemId: itemId,
+                        durationMs: sourceDurationMs
+                    ))
                     return
                 }
-                guard let result, result.isFinal, !didFinish else { return }
-                didFinish = true
-                continuation.resume(returning: Self.timeline(from: result.bestTranscription, itemId: itemId, durationMs: sourceDurationMs))
+                if let error {
+                    didFinish = true
+                    continuation.resume(throwing: error)
+                }
             }
         }
     }
@@ -2049,9 +2636,19 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         let duration = try await asset.load(.duration)
         let loadedDurationMs = Int((max(0, CMTimeGetSeconds(duration)) * 1000).rounded())
         let effectiveDurationMs = durationMs ?? loadedDurationMs
-        let chunkLengthMs = 10 * 60 * 1000
-        guard effectiveDurationMs > chunkLengthMs else {
-            return [SourceAudioChunk(url: localURL, offsetMs: 0, index: 0)]
+        let silenceRanges = (try? sustainedSilenceRanges(in: localURL)) ?? []
+        let ranges = silenceAwareSpeechAudioChunkRanges(
+            durationMs: effectiveDurationMs,
+            silenceRanges: silenceRanges
+        )
+        guard ranges.count > 1 else {
+            return [SourceAudioChunk(
+                url: localURL,
+                offsetMs: 0,
+                index: 0,
+                lengthMs: effectiveDurationMs,
+                trimLeadingMs: 0
+            )]
         }
         let caches = try FileManager.default.url(
             for: .cachesDirectory,
@@ -2059,20 +2656,26 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
             appropriateFor: nil,
             create: true
         )
-        let directory = caches.appending(path: "SourceAudioTranscriptionChunks/\(itemId)", directoryHint: .isDirectory)
+        let directory = caches.appending(path: "SourceAudioTranscriptionChunksV3/\(itemId)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var chunks: [SourceAudioChunk] = []
-        var offsetMs = 0
-        var index = 0
-        while offsetMs < effectiveDurationMs {
-            let lengthMs = min(chunkLengthMs, effectiveDurationMs - offsetMs)
+        for (index, range) in ranges.enumerated() {
             let chunkURL = directory.appending(path: "chunk-\(String(format: "%04d", index)).m4a")
             if !FileManager.default.fileExists(atPath: chunkURL.path) {
-                try await exportChunk(asset: asset, offsetMs: offsetMs, lengthMs: lengthMs, outputURL: chunkURL)
+                try await exportChunk(
+                    asset: asset,
+                    offsetMs: range.startMs,
+                    lengthMs: range.lengthMs,
+                    outputURL: chunkURL
+                )
             }
-            chunks.append(SourceAudioChunk(url: chunkURL, offsetMs: offsetMs, index: index))
-            offsetMs += lengthMs
-            index += 1
+            chunks.append(SourceAudioChunk(
+                url: chunkURL,
+                offsetMs: range.startMs,
+                index: index,
+                lengthMs: range.lengthMs,
+                trimLeadingMs: 0
+            ))
         }
         return chunks
     }
@@ -2095,8 +2698,9 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
 
     private func offsetTimeline(_ timeline: TranscriptTimeline, chunk: SourceAudioChunk) -> TranscriptTimeline {
         let prefix = "chunk-\(String(format: "%04d", chunk.index))"
-        let segments = timeline.segments.map { segment in
-            MediaTimelineSegment(
+        let segments = timeline.segments.compactMap { segment -> MediaTimelineSegment? in
+            guard segment.startMs >= chunk.trimLeadingMs else { return nil }
+            return MediaTimelineSegment(
                 id: "\(prefix)-\(segment.id)",
                 startMs: chunk.offsetMs + segment.startMs,
                 endMs: chunk.offsetMs + segment.endMs,
@@ -2105,8 +2709,9 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
                 text: segment.text
             )
         }
-        let chapters = timeline.chapters.map { chapter in
-            MediaTimelineChapter(
+        let chapters = timeline.chapters.compactMap { chapter -> MediaTimelineChapter? in
+            guard chapter.startMs >= chunk.trimLeadingMs else { return nil }
+            return MediaTimelineChapter(
                 id: "\(prefix)-\(chapter.id)",
                 title: chapter.title,
                 description: chapter.description,
@@ -2119,34 +2724,6 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
             chapters: chapters,
             durationMs: timeline.durationMs.map { chunk.offsetMs + $0 }
         )
-    }
-
-    private func localAudioURL(for url: URL, itemId: String) async throws -> URL {
-        if url.isFileURL {
-            return url
-        }
-        guard ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
-            throw SessionKitError.persistenceFailed("source_audio_url_unsupported")
-        }
-        let caches = try FileManager.default.url(
-            for: .cachesDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        let directory = caches.appending(path: "SourceAudioTranscription", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let extensionName = url.pathExtension.isEmpty ? "m4a" : url.pathExtension
-        let destination = directory.appending(path: "\(itemId).\(extensionName)")
-        if FileManager.default.fileExists(atPath: destination.path) {
-            return destination
-        }
-        let (downloadedURL, _) = try await URLSession.shared.download(from: url)
-        if FileManager.default.fileExists(atPath: destination.path) {
-            try FileManager.default.removeItem(at: destination)
-        }
-        try FileManager.default.moveItem(at: downloadedURL, to: destination)
-        return destination
     }
 
     private static func timeline(from transcription: SFTranscription, itemId: String, durationMs: Int?) -> TranscriptTimeline {
@@ -2165,7 +2742,7 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         if !segments.isEmpty {
             return TranscriptTimeline(
                 segments: segments,
-                chapters: generatedChapters(from: segments),
+                chapters: [],
                 durationMs: durationMs ?? segments.map(\.endMs).max()
             )
         }
@@ -2181,28 +2758,9 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         )
         return TranscriptTimeline(
             segments: [segment],
-            chapters: [MediaTimelineChapter(id: "ch-transcript-01", title: "Transcript", startMs: 0, transcriptSegmentId: segment.id)],
+            chapters: [],
             durationMs: durationMs
         )
-    }
-
-    private static func generatedChapters(from segments: [MediaTimelineSegment]) -> [MediaTimelineChapter] {
-        guard !segments.isEmpty else { return [] }
-        let stride = max(1, Int((Double(segments.count) / 8.0).rounded(.up)))
-        return segments.enumerated().compactMap { index, segment in
-            guard index % stride == 0 else { return nil }
-            let title = segment.text
-                .split(separator: " ")
-                .prefix(6)
-                .joined(separator: " ")
-                .trimmingCharacters(in: CharacterSet(charactersIn: ".!?;:,"))
-            return MediaTimelineChapter(
-                id: "ch-transcript-\(String(format: "%02d", (index / stride) + 1))",
-                title: title.isEmpty ? "Chapter \((index / stride) + 1)" : title,
-                startMs: segment.startMs,
-                transcriptSegmentId: segment.id
-            )
-        }
     }
     #endif
 }

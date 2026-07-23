@@ -3,6 +3,7 @@
   "id": "session-pill-discussion",
   "itemId": "item-pill",
   "createdAt": "2026-06-11T12:15:00.000Z",
+  "updatedAt": "2026-06-11T13:05:00.000Z",
   "completedAt": null,
   "status": "in_progress",
   "phase": "conversation",

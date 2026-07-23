@@ -1,4 +1,5 @@
 import Foundation
+import SessionKit
 import SessionKitAudio
 
 @MainActor
@@ -10,21 +11,35 @@ final class StreamingSpeechQueue {
         var text: String
     }
 
-    private let speech = SystemSpeechPlaybackClient()
+    private var speech: AudioPlaybackClient = SystemSpeechPlaybackClient()
     private var pending: [Unit] = []
     private var current: Unit?
     private var nextOrdinalByTurn: [String: Int] = [:]
     private var nextCharacterOffsetByTurn: [String: Int] = [:]
     private var worker: Task<Void, Never>?
+    private var generation = 0
     private(set) var isPausedForInterjection = false
     var onTurnDrained: ((String) -> Void)?
 
     var pendingCount: Int { pending.count + (current == nil ? 0 : 1) }
     var currentTurnId: String? { current?.turnId ?? pending.first?.turnId }
     var currentSentenceStartOffset: Int? { current?.startOffset ?? pending.first?.startOffset }
+    var currentPresentationOffset: Int? {
+        guard let current else { return pending.first?.startOffset }
+        return current.startOffset + max(0, speech.currentCharOffset() ?? 0)
+    }
+    var currentRecoveryOffset: Int? {
+        guard let current else { return pending.first?.startOffset }
+        return current.startOffset + max(0, speech.currentRecoveryCharOffset() ?? 0)
+    }
 
     func hasPendingSpeech(for turnId: String) -> Bool {
         current?.turnId == turnId || pending.contains(where: { $0.turnId == turnId })
+    }
+
+    func configureSpeechClient(_ speech: AudioPlaybackClient) {
+        stopAndClear()
+        self.speech = speech
     }
 
     func enqueue(_ texts: [String], turnId: String) {
@@ -52,6 +67,21 @@ final class StreamingSpeechQueue {
         try? speech.stop()
     }
 
+    /// Cancels streamed-unit ownership after the canonical session has handled a
+    /// transport command. The shared speech client is deliberately left alone:
+    /// it now belongs to SessionEngine, which may have paused or replaced its
+    /// current item as part of the same command.
+    func relinquishToCanonicalPlayback() {
+        generation += 1
+        worker?.cancel()
+        worker = nil
+        pending.removeAll()
+        current = nil
+        nextOrdinalByTurn.removeAll()
+        nextCharacterOffsetByTurn.removeAll()
+        isPausedForInterjection = false
+    }
+
     func resumeAfterInterjection() {
         guard isPausedForInterjection else { return }
         isPausedForInterjection = false
@@ -59,6 +89,7 @@ final class StreamingSpeechQueue {
     }
 
     func stopAndClear() {
+        generation += 1
         worker?.cancel()
         worker = nil
         pending.removeAll()
@@ -71,9 +102,13 @@ final class StreamingSpeechQueue {
 
     private func startWorkerIfNeeded() {
         guard worker == nil, !isPausedForInterjection, !pending.isEmpty else { return }
+        let workerGeneration = generation
         worker = Task { @MainActor [weak self] in
             guard let self else { return }
-            while !Task.isCancelled, !self.isPausedForInterjection, !self.pending.isEmpty {
+            while !Task.isCancelled,
+                  workerGeneration == self.generation,
+                  !self.isPausedForInterjection,
+                  !self.pending.isEmpty {
                 let unit = self.pending.removeFirst()
                 self.current = unit
                 let targetId = "stream:\(unit.turnId):\(unit.ordinal)"
@@ -81,6 +116,7 @@ final class StreamingSpeechQueue {
                     _ = try self.speech.prepareSpeechText(unit.text)
                     try self.speech.play(targetId: targetId)
                     while !Task.isCancelled,
+                          workerGeneration == self.generation,
                           !self.isPausedForInterjection,
                           !self.speech.isPlaybackComplete(targetId: targetId) {
                         try? await Task.sleep(for: .milliseconds(50))
@@ -88,6 +124,7 @@ final class StreamingSpeechQueue {
                 } catch {
                     // The persisted turn remains playable even if immediate speech fails.
                 }
+                guard workerGeneration == self.generation else { return }
                 if self.current == unit {
                     self.current = nil
                 }
@@ -95,6 +132,7 @@ final class StreamingSpeechQueue {
                     self.onTurnDrained?(unit.turnId)
                 }
             }
+            guard workerGeneration == self.generation else { return }
             self.worker = nil
             if !self.isPausedForInterjection, !self.pending.isEmpty {
                 self.startWorkerIfNeeded()

@@ -12,6 +12,8 @@ public final class InMemorySessionRepository: SessionRepository {
     public var importedWatchSyncEventIds: Set<String>
     public var watchPackageRequests: [String: WatchPackageRequestEvent]
     public var transcriptTimelines: [String: SourceTranscriptTimeline]
+    public var audioAssets: [String: AudioAsset]
+    public var podcastDownloads: [String: PodcastDownloadRecord]
 
     public init(
         items: [String: Item] = [:],
@@ -24,7 +26,9 @@ public final class InMemorySessionRepository: SessionRepository {
         watchSyncEvents: [String: WatchSyncEvent] = [:],
         importedWatchSyncEventIds: Set<String> = [],
         watchPackageRequests: [String: WatchPackageRequestEvent] = [:],
-        transcriptTimelines: [String: SourceTranscriptTimeline] = [:]
+        transcriptTimelines: [String: SourceTranscriptTimeline] = [:],
+        audioAssets: [String: AudioAsset] = [:],
+        podcastDownloads: [String: PodcastDownloadRecord] = [:]
     ) {
         self.items = items
         self.mapsByItemId = mapsByItemId
@@ -37,6 +41,8 @@ public final class InMemorySessionRepository: SessionRepository {
         self.importedWatchSyncEventIds = importedWatchSyncEventIds
         self.watchPackageRequests = watchPackageRequests
         self.transcriptTimelines = transcriptTimelines
+        self.audioAssets = audioAssets
+        self.podcastDownloads = podcastDownloads
     }
 
     public func loadItem(id: String) throws -> Item {
@@ -146,4 +152,24 @@ public final class InMemorySessionRepository: SessionRepository {
             .sorted { $0.createdAt < $1.createdAt }
             .last
     }
+
+    public func saveAudioAsset(_ asset: AudioAsset) throws { audioAssets[asset.id] = asset }
+
+    public func loadAudioAssets(itemId: String) throws -> [AudioAsset] {
+        audioAssets.values.filter { $0.itemId == itemId }.sorted { $0.createdAt < $1.createdAt }
+    }
+
+    public func deleteAudioAsset(id: String) throws { audioAssets[id] = nil }
+
+    public func savePodcastDownload(_ record: PodcastDownloadRecord) throws { podcastDownloads[record.id] = record }
+
+    public func loadPodcastDownload(itemId: String) throws -> PodcastDownloadRecord? {
+        podcastDownloads.values.first { $0.itemId == itemId }
+    }
+
+    public func loadPodcastDownloads() throws -> [PodcastDownloadRecord] {
+        podcastDownloads.values.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    public func deletePodcastDownload(id: String) throws { podcastDownloads[id] = nil }
 }
