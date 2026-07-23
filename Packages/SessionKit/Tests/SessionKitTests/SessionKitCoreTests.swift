@@ -37,7 +37,7 @@ final class SessionKitCoreTests: XCTestCase {
     func testSpeechRecognitionRequestsAreAlwaysOnDeviceOnly() {
         let request = makeOnDeviceSpeechRecognitionRequest(url: URL(fileURLWithPath: "/tmp/context.m4a"))
         XCTAssertTrue(request.requiresOnDeviceRecognition)
-        XCTAssertFalse(request.shouldReportPartialResults)
+        XCTAssertTrue(request.shouldReportPartialResults)
     }
     #endif
 

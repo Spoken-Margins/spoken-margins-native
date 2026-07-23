@@ -20,7 +20,7 @@ import UIKit
 #if canImport(Speech)
 func makeOnDeviceSpeechRecognitionRequest(url: URL) -> SFSpeechURLRecognitionRequest {
     let request = SFSpeechURLRecognitionRequest(url: url)
-    request.shouldReportPartialResults = false
+    request.shouldReportPartialResults = true
     if #available(iOS 13.0, macOS 10.15, *) {
         request.requiresOnDeviceRecognition = true
     }
@@ -1927,31 +1927,51 @@ public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
         guard recognizer.supportsOnDeviceRecognition else {
             throw SessionKitError.persistenceFailed("on_device_speech_recognition_unavailable")
         }
-        let request = makeOnDeviceSpeechRecognitionRequest(url: url)
-        return try await withCheckedThrowingContinuation { continuation in
-            var didFinish = false
-            recognizer.recognitionTask(with: request) { result, error in
-                if let error, !didFinish {
-                    didFinish = true
-                    continuation.resume(throwing: error)
-                    return
-                }
-                guard let result, result.isFinal, !didFinish else { return }
-                didFinish = true
-                let transcript = result.bestTranscription.formattedString.trimmingCharacters(in: .whitespacesAndNewlines)
-                if transcript.isEmpty {
-                    continuation.resume(throwing: SessionKitError.persistenceFailed("empty_transcript"))
-                } else {
-                    continuation.resume(returning: transcript)
-                }
+        for attempt in 0..<2 {
+            if let transcript = try await recognizeAudio(at: url, recognizer: recognizer), !transcript.isEmpty {
+                return transcript
+            }
+            if attempt == 0 {
+                try? await Task.sleep(nanoseconds: 200_000_000)
             }
         }
+        throw SessionKitError.persistenceFailed(Self.emptyTranscriptEvidence(for: url))
         #else
         throw SessionKitError.persistenceFailed("speech_recognition_unavailable")
         #endif
     }
 
     #if canImport(Speech)
+    private func recognizeAudio(at url: URL, recognizer: SFSpeechRecognizer) async throws -> String? {
+        let request = makeOnDeviceSpeechRecognitionRequest(url: url)
+        return try await withCheckedThrowingContinuation { continuation in
+            var didFinish = false
+            var latestTranscript = ""
+            recognizer.recognitionTask(with: request) { result, error in
+                guard !didFinish else { return }
+                if let result {
+                    let candidate = result.bestTranscription.formattedString.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !candidate.isEmpty {
+                        latestTranscript = candidate
+                    }
+                    if result.isFinal {
+                        didFinish = true
+                        continuation.resume(returning: latestTranscript.isEmpty ? nil : latestTranscript)
+                        return
+                    }
+                }
+                if let error {
+                    didFinish = true
+                    if latestTranscript.isEmpty {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume(returning: latestTranscript)
+                    }
+                }
+            }
+        }
+    }
+
     private func requestAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
         let current = SFSpeechRecognizer.authorizationStatus()
         guard current == .notDetermined else { return current }
@@ -1962,6 +1982,17 @@ public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
         }
     }
     #endif
+
+    private static func emptyTranscriptEvidence(for url: URL) -> String {
+        let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
+        #if canImport(AVFoundation)
+        if let audioFile = try? AVAudioFile(forReading: url), audioFile.processingFormat.sampleRate > 0 {
+            let durationMs = Int((Double(audioFile.length) / audioFile.processingFormat.sampleRate * 1000).rounded())
+            return "empty_transcript(duration_ms=\(durationMs),bytes=\(bytes))"
+        }
+        #endif
+        return "empty_transcript(duration_ms=unknown,bytes=\(bytes))"
+    }
 
     private func audioURL(for path: String) throws -> URL {
         let url = URL(fileURLWithPath: path)
@@ -2096,15 +2127,29 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         let request = makeOnDeviceSpeechRecognitionRequest(url: chunk.url)
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<TranscriptTimeline, Error>) in
             var didFinish = false
+            var latestTranscription: SFTranscription?
             recognizer.recognitionTask(with: request) { result, error in
-                if let error, !didFinish {
-                    didFinish = true
-                    continuation.resume(throwing: error)
-                    return
+                guard !didFinish else { return }
+                if let result {
+                    let candidate = result.bestTranscription
+                    if !candidate.formattedString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        latestTranscription = candidate
+                    }
+                    if result.isFinal {
+                        didFinish = true
+                        let transcription = latestTranscription ?? candidate
+                        continuation.resume(returning: Self.timeline(from: transcription, itemId: itemId, durationMs: sourceDurationMs))
+                        return
+                    }
                 }
-                guard let result, result.isFinal, !didFinish else { return }
-                didFinish = true
-                continuation.resume(returning: Self.timeline(from: result.bestTranscription, itemId: itemId, durationMs: sourceDurationMs))
+                if let error {
+                    didFinish = true
+                    if let latestTranscription {
+                        continuation.resume(returning: Self.timeline(from: latestTranscription, itemId: itemId, durationMs: sourceDurationMs))
+                    } else {
+                        continuation.resume(throwing: error)
+                    }
+                }
             }
         }
     }
