@@ -1145,7 +1145,7 @@ private struct PlaybackScreen: View {
     @State private var scrubberTextOffset = 0.0
     @State private var isScrubbing = false
     @State private var isPlaybackRatePresented = false
-    @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = false
+    @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @FocusState private var followUpFocused: Bool
 
     var body: some View {
