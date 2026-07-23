@@ -2921,7 +2921,8 @@ final class SessionKitCoreTests: XCTestCase {
         let response = ConversationTurn(id: "turn-response-001", sessionId: session.id, role: "assistant", turnType: "assistant_response", status: "complete", summary: "Brief.", text: "Response text.", rawText: nil, sourceInterjectionIds: [])
         let itemInterjection = Interjection(id: "ij-item", itemId: item.id, sessionId: session.id, targetType: .item, targetId: item.id, createdAt: Date(timeIntervalSince1970: 1), roughPercent: 10, anchor: Anchor(anchorType: .text, startChar: 0, endChar: 6, anchorBefore: "Source.", anchorAfter: ""), audioPath: nil, audioStatus: "none", transcriptionStatus: "transcribed", transcript: "source note", cleanedTranscript: "clean source note", displayText: nil, status: "active")
         let turnInterjection = Interjection(id: "ij-turn", itemId: item.id, sessionId: session.id, targetType: .assistantTurn, targetId: response.id, createdAt: Date(timeIntervalSince1970: 2), roughPercent: 30, anchor: Anchor(anchorType: .turn, startChar: 0, endChar: 8, anchorBefore: "Response", anchorAfter: "text."), audioPath: nil, audioStatus: "none", transcriptionStatus: "transcribed", transcript: "turn note", cleanedTranscript: nil, displayText: nil, status: "active")
-        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session], interjections: [itemInterjection.id: itemInterjection, turnInterjection.id: turnInterjection], turns: [response.id: response])
+        let deletedInterjection = Interjection(id: "ij-deleted", itemId: item.id, sessionId: session.id, targetType: .item, targetId: item.id, createdAt: Date(timeIntervalSince1970: 3), roughPercent: 40, anchor: Anchor(anchorType: .text, startChar: 0, endChar: 6, anchorBefore: "Source.", anchorAfter: ""), audioPath: nil, audioStatus: "none", transcriptionStatus: "transcribed", transcript: "deleted note", cleanedTranscript: nil, displayText: nil, status: "deleted")
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session], interjections: [itemInterjection.id: itemInterjection, turnInterjection.id: turnInterjection, deletedInterjection.id: deletedInterjection], turns: [response.id: response])
         let engine = SessionEngine(profile: profile, repository: repo)
 
         let export = try engine.buildExport(options: ExportOptions(
@@ -2941,6 +2942,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(export.turns.map(\.id), [response.id])
         XCTAssertTrue(markdown.contains("turn note"))
         XCTAssertFalse(markdown.contains("source note"))
+        XCTAssertFalse(markdown.contains("deleted note"))
 
         let selected = try engine.buildExport(options: ExportOptions(
             sessionId: session.id,
@@ -2959,6 +2961,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertTrue(selectedMarkdown.contains("Response"))
         XCTAssertTrue(selectedMarkdown.contains("text."))
         XCTAssertFalse(selectedMarkdown.contains("source note"))
+        XCTAssertFalse(selectedMarkdown.contains("deleted note"))
     }
 
     func testMalformedAIChaptersPreserveResponseText() throws {

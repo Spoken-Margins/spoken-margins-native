@@ -24,6 +24,7 @@ enum Gate1Screen: Hashable {
     case playback
     case settings
     case export
+    case batchExport
 }
 
 enum AIDataSharingConsent: String {
@@ -101,6 +102,27 @@ struct SessionPresentation: Identifiable {
     let interjectionPreview: String?
 
     var id: String { session.id }
+}
+
+enum BatchSessionExportFilter: String, CaseIterable, Identifiable {
+    case withInterjections = "with_interjections"
+    case all = "all"
+
+    var id: String { rawValue }
+}
+
+struct BatchSessionExportRow: Identifiable {
+    let session: Session
+    let itemTitle: String
+    let interjectionCount: Int
+
+    var id: String { session.id }
+}
+
+struct BatchSessionExportResult: Equatable {
+    let exportedFileNames: [String]
+    let failures: [String]
+    let destinationName: String
 }
 
 struct SpeechVoiceChoice: Identifiable, Hashable {
@@ -263,6 +285,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var lastError: String?
     @Published private(set) var feedbackEvent: UserFeedbackEvent?
     @Published var exportPreview = ""
+    @Published private(set) var exportFileURL: URL?
     @Published var exportSessionId: String?
     @Published var exportFormat = UserDefaults.standard.string(forKey: "exportFormat") ?? "markdown"
     @Published var exportScope = UserDefaults.standard.string(forKey: "exportScope") ?? "full_session"
@@ -271,6 +294,12 @@ final class Gate1AppModel: ObservableObject {
     @Published var exportIncludesListeningMap = UserDefaults.standard.object(forKey: "exportIncludesListeningMap") as? Bool ?? true
     @Published var exportIncludesInterjections = UserDefaults.standard.object(forKey: "exportIncludesInterjections") as? Bool ?? true
     @Published var exportIncludesTurns = UserDefaults.standard.object(forKey: "exportIncludesTurns") as? Bool ?? true
+    @Published private(set) var batchExportRows: [BatchSessionExportRow] = []
+    @Published var batchExportFilter: BatchSessionExportFilter = .withInterjections
+    @Published var selectedBatchExportSessionIds: Set<String> = []
+    @Published private(set) var batchExportFolderName = UserDefaults.standard.string(forKey: "batchExportFolderName") ?? "No folder selected"
+    @Published private(set) var batchExportResult: BatchSessionExportResult?
+    @Published private(set) var isWritingBatchExport = false
     @Published private(set) var retryingInterjectionTranscriptionIds: Set<String> = []
     @Published private(set) var playingInterjectionAudioId: String?
     @Published var libraryItems: [LibraryItemRow] = []
@@ -396,6 +425,7 @@ final class Gate1AppModel: ObservableObject {
     private let sourceWindowContextBeforeMs = 90_000
     private let sourceWindowContextAfterMs = 120_000
     private let quickAccessFolderBookmarkKey = "quickAccessFolderBookmark"
+    private let batchExportFolderBookmarkKey = "batchExportFolderBookmark"
     #if canImport(AVFoundation)
     private let speechPreviewSynthesizer = AVSpeechSynthesizer()
     private var kokoroPreviewPlayer: AVAudioPlayer?
@@ -722,11 +752,11 @@ final class Gate1AppModel: ObservableObject {
                 )
                 return
             }
-            var rows = try loadLibraryRows(store: store)
-            if rows.isEmpty && CommandLine.arguments.contains("--ui-testing") {
+            if CommandLine.arguments.contains("--ui-testing") {
                 resetAndSeed()
                 return
             }
+            var rows = try loadLibraryRows(store: store)
             let storedWelcomeSampleVersion = UserDefaults.standard.integer(
                 forKey: Self.welcomeSampleSeedVersionKey
             )
@@ -1894,6 +1924,54 @@ final class Gate1AppModel: ObservableObject {
         refreshExportPreview(reportStatus: false)
     }
 
+    func openBatchExport() {
+        syncPlaybackProgressForLifecycle()
+        exportSessionId = nil
+        exportPreview = ""
+        batchExportFilter = .withInterjections
+        selectedBatchExportSessionIds = []
+        batchExportResult = nil
+        do {
+            let store = try requireStore()
+            try refreshBatchExportRows(store: store)
+            screen = .batchExport
+        } catch {
+            reportFailure(error, context: "Session export setup failed")
+        }
+    }
+
+    var visibleBatchExportRows: [BatchSessionExportRow] {
+        switch batchExportFilter {
+        case .withInterjections:
+            batchExportRows.filter { $0.interjectionCount > 0 }
+        case .all:
+            batchExportRows
+        }
+    }
+
+    var hasBatchExportFolder: Bool {
+        UserDefaults.standard.data(forKey: batchExportFolderBookmarkKey) != nil
+    }
+
+    func toggleBatchExportSelection(sessionId: String) {
+        if selectedBatchExportSessionIds.contains(sessionId) {
+            selectedBatchExportSessionIds.remove(sessionId)
+        } else {
+            selectedBatchExportSessionIds.insert(sessionId)
+        }
+        batchExportResult = nil
+    }
+
+    func selectAllVisibleBatchExportSessions() {
+        selectedBatchExportSessionIds.formUnion(visibleBatchExportRows.map(\.id))
+        batchExportResult = nil
+    }
+
+    func clearBatchExportSelection() {
+        selectedBatchExportSessionIds = []
+        batchExportResult = nil
+    }
+
     func openItem(id: String) {
         do {
             let store = try requireStore()
@@ -2571,18 +2649,22 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func exportOptionsChanged() {
+        persistExportSettings()
         refreshExportPreview(reportStatus: false)
     }
 
     private func refreshExportPreview(reportStatus: Bool) {
         guard exportSessionId != nil else {
             exportPreview = ""
+            exportFileURL = nil
             return
         }
         run { engine in
-            persistExportSettings()
             let export = try engine.buildExport(options: currentExportOptions())
             exportPreview = try renderExport(export)
+            exportFileURL = exportFormat == "markdown"
+                ? try prepareIndividualMarkdownExportFile(markdown: exportPreview, export: export)
+                : nil
             screen = .export
             if reportStatus {
                 reportSuccess("Built session export.")
@@ -2601,6 +2683,103 @@ final class Gate1AppModel: ObservableObject {
         #else
         reportFailure("Clipboard is unavailable on this platform.")
         #endif
+    }
+
+    func configureBatchExportFolder(url: URL) {
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+        do {
+            let bookmark = try url.bookmarkData(
+                options: quickAccessBookmarkCreationOptions,
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+            UserDefaults.standard.set(bookmark, forKey: batchExportFolderBookmarkKey)
+            UserDefaults.standard.set(url.lastPathComponent, forKey: "batchExportFolderName")
+            batchExportFolderName = url.lastPathComponent
+            batchExportResult = nil
+            reportSuccess("Export folder set to \(url.lastPathComponent).")
+        } catch {
+            reportFailure(error, context: "Export folder setup failed")
+        }
+    }
+
+    func reportBatchExportFolderFailure(_ error: Error) {
+        reportFailure(error, context: "Export folder selection failed")
+    }
+
+    func exportSelectedSessionsToFolder() {
+        guard !selectedBatchExportSessionIds.isEmpty else {
+            reportFailure("Choose at least one session to export.")
+            return
+        }
+        guard let folderURL = resolvedBatchExportFolderURL() else {
+            reportFailure("Choose an export folder first.")
+            return
+        }
+        do {
+            if engine == nil {
+                let store = try requireStore()
+                installEngine(try makeEngine(store: store))
+            }
+            guard let engine else {
+                reportFailure("Session export is unavailable.")
+                return
+            }
+
+            persistExportSettings()
+            isWritingBatchExport = true
+            defer { isWritingBatchExport = false }
+
+            let didAccess = folderURL.startAccessingSecurityScopedResource()
+            defer {
+                if didAccess {
+                    folderURL.stopAccessingSecurityScopedResource()
+                }
+            }
+
+            let writer = SessionMarkdownFileWriter()
+            let selectedRows = batchExportRows.filter { selectedBatchExportSessionIds.contains($0.id) }
+            var exportedFileNames: [String] = []
+            var failures: [String] = []
+            for row in selectedRows {
+                do {
+                    let export = try engine.buildExport(options: currentExportOptions(sessionId: row.id))
+                    let markdown = SessionExportMarkdownRenderer.render(export)
+                    let fileURL = try writer.write(
+                        markdown: markdown,
+                        itemTitle: row.itemTitle,
+                        sessionDate: row.session.createdAt ?? row.session.updatedAt,
+                        sessionId: row.id,
+                        to: folderURL
+                    )
+                    exportedFileNames.append(fileURL.lastPathComponent)
+                } catch {
+                    failures.append("\(row.itemTitle): \(error.localizedDescription)")
+                }
+            }
+
+            batchExportResult = BatchSessionExportResult(
+                exportedFileNames: exportedFileNames,
+                failures: failures,
+                destinationName: folderURL.lastPathComponent
+            )
+            diagnostics["batchExportLastResult"] = "exported=\(exportedFileNames.count);failed=\(failures.count)"
+            if failures.isEmpty {
+                reportSuccess("Exported \(exportedFileNames.count) Markdown file\(exportedFileNames.count == 1 ? "" : "s") to \(folderURL.lastPathComponent).")
+            } else if exportedFileNames.isEmpty {
+                reportFailure("No sessions were exported. Review the export result for details.")
+            } else {
+                reportFailure("Exported \(exportedFileNames.count) session\(exportedFileNames.count == 1 ? "" : "s"); \(failures.count) failed.")
+            }
+        } catch {
+            isWritingBatchExport = false
+            reportFailure(error, context: "Batch export failed")
+        }
     }
 
     func copyTargetInterjections(targetType: String, targetId: String, format: String = "markdown") {
@@ -4707,19 +4886,20 @@ final class Gate1AppModel: ObservableObject {
                 speed: Float(speechRate / 0.5),
                 fallbackVoiceIdentifier: appleVoiceIsAvailable && !selectedVoice.isEmpty ? selectedVoice : nil,
                 fallbackRate: Float(speechRate),
-                diskCache: diskCache
-            ) { [weak self] reason, offset in
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    self.diagnostics["supertonicFallback"] = reason
-                    self.diagnostics["supertonicFallbackOffset"] = "\(offset)"
-                    self.statusMessage = "Using the iOS system voice for this playback."
-                    self.feedbackEvent = UserFeedbackEvent(
-                        kind: .error,
-                        message: "The on-device voice was unavailable, so playback continued with the iOS system voice."
-                    )
+                diskCache: diskCache,
+                onFallback: { [weak self] reason, offset in
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        self.diagnostics["supertonicFallback"] = reason
+                        self.diagnostics["supertonicFallbackOffset"] = "\(offset)"
+                        self.statusMessage = "Using the iOS system voice for this playback."
+                        self.feedbackEvent = UserFeedbackEvent(
+                            kind: .error,
+                            message: "The on-device voice was unavailable, so playback continued with the iOS system voice."
+                        )
+                    }
                 }
-            }
+            )
         }
         #if KOKORO_DEVICE && !targetEnvironment(simulator) && canImport(AVFoundation)
         if ttsMode == "kokoro" {
@@ -4811,6 +4991,23 @@ final class Gate1AppModel: ObservableObject {
                 continuationProgressPercent: continuation?.completionPercent
             )
         }
+    }
+
+    private func refreshBatchExportRows(store: SQLiteSessionStore) throws {
+        let itemsById = Dictionary(uniqueKeysWithValues: try store.listItems().map { ($0.id, $0) })
+        batchExportRows = try store.loadSessions().compactMap { session in
+            guard let item = itemsById[session.itemId] else { return nil }
+            let interjectionCount = try store.loadInterjections(sessionId: session.id)
+                .filter { $0.status == "active" }
+                .count
+            return BatchSessionExportRow(
+                session: session,
+                itemTitle: item.title,
+                interjectionCount: interjectionCount
+            )
+        }
+        let availableIds = Set(batchExportRows.map(\.id))
+        selectedBatchExportSessionIds.formIntersection(availableIds)
     }
 
     private func loadDeletedLibraryRows(store: SQLiteSessionStore) throws -> [LibraryItemRow] {
@@ -6007,8 +6204,12 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func currentExportOptions() -> ExportOptions {
+        currentExportOptions(sessionId: exportSessionId)
+    }
+
+    private func currentExportOptions(sessionId: String?) -> ExportOptions {
         ExportOptions(
-            sessionId: exportSessionId,
+            sessionId: sessionId,
             includeFullText: exportIncludesSourceText,
             includeReference: exportIncludesReference,
             includeListeningMap: exportIncludesListeningMap,
@@ -6024,6 +6225,54 @@ final class Gate1AppModel: ObservableObject {
             return String(data: data, encoding: .utf8) ?? ""
         }
         return SessionExportMarkdownRenderer.render(export)
+    }
+
+    private func prepareIndividualMarkdownExportFile(markdown: String, export: SessionExport) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SpokenMarginsSessionShare", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if let exportFileURL, exportFileURL.deletingLastPathComponent() == directory {
+            try? FileManager.default.removeItem(at: exportFileURL)
+        }
+        let session = try store?.loadSession(id: export.session.id)
+        return try SessionMarkdownFileWriter().write(
+            markdown: markdown,
+            itemTitle: export.item.title,
+            sessionDate: session?.createdAt ?? session?.updatedAt,
+            sessionId: export.session.id,
+            to: directory
+        )
+    }
+
+    private func resolvedBatchExportFolderURL() -> URL? {
+        guard let data = UserDefaults.standard.data(forKey: batchExportFolderBookmarkKey) else { return nil }
+        do {
+            var isStale = false
+            let url = try URL(
+                resolvingBookmarkData: data,
+                options: quickAccessBookmarkResolutionOptions,
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            )
+            if isStale {
+                let didAccess = url.startAccessingSecurityScopedResource()
+                defer {
+                    if didAccess {
+                        url.stopAccessingSecurityScopedResource()
+                    }
+                }
+                let refreshed = try url.bookmarkData(
+                    options: quickAccessBookmarkCreationOptions,
+                    includingResourceValuesForKeys: nil,
+                    relativeTo: nil
+                )
+                UserDefaults.standard.set(refreshed, forKey: batchExportFolderBookmarkKey)
+            }
+            return url
+        } catch {
+            diagnostics["batchExportBookmarkError"] = String(describing: error)
+            return nil
+        }
     }
 
     private func resolvedQuickAccessFolderURL() -> URL? {

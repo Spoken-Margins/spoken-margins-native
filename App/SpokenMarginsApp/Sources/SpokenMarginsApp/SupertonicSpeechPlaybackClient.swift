@@ -304,6 +304,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let fallback: AudioPlaybackClient
     private let diskCache: RenderedSpeechDiskCache?
     private let onFallback: FallbackHandler?
+    private let audioSessionNotificationCenter: NotificationCenter
+    private let audioSessionActivator: (@Sendable () throws -> Void)?
+    private let audioPlayerStarter: (@Sendable (AVPlayer, Float) -> Void)?
+    private let observesPlayerLifecycle: Bool
     private let lock = NSLock()
     private let maxCharacters: Int
     private var playbackRate: Float
@@ -339,6 +343,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         fallbackRate: Float,
         maxCharacters: Int = 240,
         diskCache: RenderedSpeechDiskCache? = nil,
+        audioSessionNotificationCenter: NotificationCenter = .default,
+        audioSessionActivator: (@Sendable () throws -> Void)? = nil,
+        audioPlayerStarter: (@Sendable (AVPlayer, Float) -> Void)? = nil,
+        observesPlayerLifecycle: Bool = true,
         fallbackClient: AudioPlaybackClient? = nil,
         onFallback: FallbackHandler? = nil
     ) {
@@ -350,6 +358,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             speechRate: fallbackRate
         )
         self.diskCache = diskCache
+        self.audioSessionNotificationCenter = audioSessionNotificationCenter
+        self.audioSessionActivator = audioSessionActivator
+        self.audioPlayerStarter = audioPlayerStarter
+        self.observesPlayerLifecycle = observesPlayerLifecycle
         self.maxCharacters = maxCharacters
         self.onFallback = onFallback
         super.init()
@@ -362,7 +374,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             NotificationCenter.default.removeObserver(playbackEndObserver)
         }
         for observer in audioSessionObservers {
-            NotificationCenter.default.removeObserver(observer)
+            audioSessionNotificationCenter.removeObserver(observer)
         }
     }
 
@@ -420,6 +432,16 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         let usesFallback = lock.withLock { fallbackIsActive }
         return usesFallback ? fallback.currentRecoveryCharOffset() : lock.withLock { currentStartOffset }
     }
+
+    #if DEBUG
+    func debugRenderedCacheOffsets() -> [Int] {
+        lock.withLock { renderedCache.keys.sorted() }
+    }
+
+    func debugActiveAudioState() -> (hasURL: Bool, duration: TimeInterval, targetId: String?, startOffset: Int) {
+        lock.withLock { (activeAudioURL != nil, activeAudioDuration, currentTargetId, currentStartOffset) }
+    }
+    #endif
 
     func currentPlaybackPosition() -> PlaybackPosition? {
         let snapshot = lock.withLock {
@@ -792,7 +814,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             let item = AVPlayerItem(url: audioURL)
             item.audioTimePitchAlgorithm = .timeDomain
             let nextPlayer = AVPlayer(playerItem: item)
-            installPlaybackObservers(for: item, request: request)
+            if observesPlayerLifecycle {
+                installPlaybackObservers(for: item, request: request)
+            }
             lock.withLock {
                 player = nextPlayer
                 activeAudioURL = audioURL
@@ -850,7 +874,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             return playbackRate
         }
         guard let rate else { return }
-        nextPlayer.playImmediately(atRate: rate)
+        if let audioPlayerStarter {
+            audioPlayerStarter(nextPlayer, rate)
+        } else {
+            nextPlayer.playImmediately(atRate: rate)
+        }
     }
 
     private func discardAudio(_ url: URL) {
@@ -937,6 +965,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     private func activateAudioSession() throws {
+        if let audioSessionActivator {
+            try audioSessionActivator()
+            return
+        }
         #if os(iOS)
         try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
         try AVAudioSession.sharedInstance().setActive(true)
@@ -945,7 +977,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     private func installAudioSessionObservers() {
         #if os(iOS)
-        let center = NotificationCenter.default
+        let center = audioSessionNotificationCenter
         audioSessionObservers.append(center.addObserver(
             forName: AVAudioSession.interruptionNotification,
             object: AVAudioSession.sharedInstance(),
@@ -966,7 +998,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         })
         audioSessionObservers.append(center.addObserver(
             forName: AVAudioSession.mediaServicesWereResetNotification,
-            object: AVAudioSession.sharedInstance(),
+            object: nil,
             queue: .main
         ) { [weak self] _ in
             self?.markMediaServicesReset()

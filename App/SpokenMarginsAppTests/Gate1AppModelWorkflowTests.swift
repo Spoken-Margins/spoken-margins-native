@@ -226,7 +226,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.status, .playing)
     }
 
-    func testHomeRefreshesAndOpensNewestSessionAtOneHundredPercent() throws {
+    func testHomeRefreshesAndOpensNewestSessionAtOneHundredPercent() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         model.startItem(id: "item-pill")
@@ -236,6 +236,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let completedSessionID = try XCTUnwrap(model.snapshot.sessionId)
         XCTAssertNotEqual(completedSessionID, olderSessionID)
 
+        // Starting a new session first persists the older session immediately.
+        // Wait before updating the new session so their whole-second persisted
+        // timestamps exercise newest-session ordering without a UUID tie-break.
+        try await Task.sleep(for: .seconds(1.1))
         model.skipUnit = "section"
         model.skipForward()
         XCTAssertEqual(model.snapshot.sourceProgressPercent, 100)

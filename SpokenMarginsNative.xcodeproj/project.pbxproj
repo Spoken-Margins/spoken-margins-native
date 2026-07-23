@@ -22,6 +22,7 @@
 		205189A37B2B08E1FAE0B0A2 /* icon-48.png in Resources */ = {isa = PBXBuildFile; fileRef = 534726939CEC57D001157DD9 /* icon-48.png */; };
 		296D3E3B2A4A4E4370DB534A /* SourceLinkPreprocessor.js in Resources */ = {isa = PBXBuildFile; fileRef = C52D1CADC5773F67C398A2B2 /* SourceLinkPreprocessor.js */; };
 		2D1CA28C629CB25D869FF2DA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7C356783B108E75F03704686 /* Assets.xcassets */; };
+		30B562994D489ED9F57C24FE /* SessionMarkdownFileWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 591489743D16AAB9840121FA /* SessionMarkdownFileWriter.swift */; };
 		3A296D8977ECA7A0803C5ADC /* SessionKit in Frameworks */ = {isa = PBXBuildFile; productRef = FE54D8343C9F4C1377709595 /* SessionKit */; };
 		3A8C7FE2A0DBA57C69F07308 /* Gate1AppModelWorkflowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A741433D6B3E34D30387DBB /* Gate1AppModelWorkflowTests.swift */; };
 		47FC5E80C0248169596370EB /* Gate1AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 465089CBB611D338A74CAE8A /* Gate1AppModel.swift */; };
@@ -51,6 +52,7 @@
 		907083EA86D05BC58D2D3A79 /* SessionKitSupertonic in Frameworks */ = {isa = PBXBuildFile; productRef = BE679FFC0BC2A00A74297525 /* SessionKitSupertonic */; };
 		93CE5B715E61FC3E73806701 /* SourceLinkHandoff.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69050C3D4931DF4FF8E80364 /* SourceLinkHandoff.swift */; };
 		9E8A9FCE4AA510389C729484 /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 932001F7F4C13B1FBA9BC128 /* SafariWebExtensionHandler.swift */; };
+		A2AF5B9F364DB791BFADF693 /* SessionMarkdownFileWriterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6832D3C21EF217C605FF3A2D /* SessionMarkdownFileWriterTests.swift */; };
 		A330A5CDB08329DA0454A8CB /* Gate1DiscussionContextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F27E8BBF188ABCD2B2A7B0F /* Gate1DiscussionContextTests.swift */; };
 		A701D4E1CD8EF569C4E6A579 /* Gate1SummaryEligibility.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12CA39E2FF10DDA3392AF6B /* Gate1SummaryEligibility.swift */; };
 		A978B4713391C8A80029DD08 /* SessionKit in Frameworks */ = {isa = PBXBuildFile; productRef = 857D6087011D0775305B56B7 /* SessionKit */; };
@@ -162,6 +164,8 @@
 		560C4E54442E123E42855A02 /* SpokenMarginsAppTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = SpokenMarginsAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		56AD3FBAE5A4EBD7B16F6BFC /* icon-128.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "icon-128.png"; sourceTree = "<group>"; };
 		57C1F61B420E53CF05698E57 /* icon-512.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "icon-512.png"; sourceTree = "<group>"; };
+		591489743D16AAB9840121FA /* SessionMarkdownFileWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionMarkdownFileWriter.swift; sourceTree = "<group>"; };
+		6832D3C21EF217C605FF3A2D /* SessionMarkdownFileWriterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionMarkdownFileWriterTests.swift; sourceTree = "<group>"; };
 		69050C3D4931DF4FF8E80364 /* SourceLinkHandoff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceLinkHandoff.swift; sourceTree = "<group>"; };
 		742BEE6988765C9B1F078C8B /* icon-256.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "icon-256.png"; sourceTree = "<group>"; };
 		7C356783B108E75F03704686 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -383,6 +387,7 @@
 				4306F9BA3A5512A9F518ECAD /* Gate2CompactControlTests.swift */,
 				039937DF40296F8BB983A8E4 /* Gate5BrowserTextImportTests.swift */,
 				EB069A5733426E796A80A677 /* PodcastDownloadCoordinatorTests.swift */,
+				6832D3C21EF217C605FF3A2D /* SessionMarkdownFileWriterTests.swift */,
 				BBD0F5894DD6C23AA6F999E6 /* SourceLinkImportTests.swift */,
 				1D6C701BA62F6D79A4C8A178 /* SupertonicSpeechTests.swift */,
 			);
@@ -415,6 +420,7 @@
 				A941FB9EFF74E039703ED5A9 /* OpenAIResponsesClient.swift */,
 				AD16E224F3B90976DC86B3EF /* PodcastDownloadCoordinator.swift */,
 				12B57670922723E5B5D5098C /* PublicPodcastLinkResolver.swift */,
+				591489743D16AAB9840121FA /* SessionMarkdownFileWriter.swift */,
 				A3466DCC99E6E887F6A0C536 /* SpokenMarginsApp.swift */,
 				8EFFA356312CB5D37089484A /* StreamingSpeechQueue.swift */,
 				B5E071274013CEC4CC92BA4E /* SupertonicLegalView.swift */,
@@ -721,6 +727,7 @@
 				0658D2E852C180C50CBA5D29 /* PDFStructuredTextExtractor.swift in Sources */,
 				541E1FB141EC8A331312980A /* PodcastDownloadCoordinator.swift in Sources */,
 				8A063C7813C52E3DF8EE77A7 /* PublicPodcastLinkResolver.swift in Sources */,
+				30B562994D489ED9F57C24FE /* SessionMarkdownFileWriter.swift in Sources */,
 				93CE5B715E61FC3E73806701 /* SourceLinkHandoff.swift in Sources */,
 				0DAA140F81BAE637A596E552 /* SpokenMarginsApp.swift in Sources */,
 				6C2E2AE467E044A0E63C7899 /* StreamingSpeechQueue.swift in Sources */,
@@ -761,6 +768,7 @@
 				C5B21CB3ABC42C3F27690D22 /* Gate2CompactControlTests.swift in Sources */,
 				8DE717C8441259C1129956E5 /* Gate5BrowserTextImportTests.swift in Sources */,
 				738C354D0FBFB6BA6FCD1531 /* PodcastDownloadCoordinatorTests.swift in Sources */,
+				A2AF5B9F364DB791BFADF693 /* SessionMarkdownFileWriterTests.swift in Sources */,
 				64DBF59250A264118426066B /* SourceLinkImportTests.swift in Sources */,
 				C952235E078B051615069C2E /* SupertonicSpeechTests.swift in Sources */,
 			);

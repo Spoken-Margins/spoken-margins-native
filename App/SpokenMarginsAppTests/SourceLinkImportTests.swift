@@ -504,7 +504,10 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertThrowsError(try store.handoff(payloadID: handoff.id))
         let failed = try XCTUnwrap(store.failedHandoffs().first)
         XCTAssertEqual(failed.handoff, handoff)
-        XCTAssertTrue(failed.reason.contains("could not find a public audio file"))
+        XCTAssertTrue(
+            failed.reason.contains("could not find a public audio file"),
+            "Unexpected quarantine reason: \(failed.reason)"
+        )
         XCTAssertFalse(failed.reason.contains("open.spotify.com"))
         XCTAssertEqual(model.importInbox.first?.payloadID, handoff.id)
     }

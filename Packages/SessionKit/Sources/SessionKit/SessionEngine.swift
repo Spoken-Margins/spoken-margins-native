@@ -1649,6 +1649,7 @@ public final class SessionEngine {
         let session = try resolveSession(options.sessionId)
         let item = try repository.loadItem(id: session.itemId)
         let allInterjections = try repository.loadInterjections(sessionId: session.id)
+            .filter { $0.status == "active" }
         let allTurns = try repository.loadTurns(sessionId: session.id)
         let sourceTranscript = options.includeFullText
             ? try repository.loadTranscriptTimeline(itemId: item.id)?.timeline.segments

@@ -1,6 +1,6 @@
 import Foundation
 
-public enum SessionKitError: Error, Equatable, CustomStringConvertible {
+public enum SessionKitError: Error, Equatable, CustomStringConvertible, LocalizedError {
     case invalidCommandForCapability(String)
     case invalidCommandForState(String)
     case missingFixture(String)
@@ -17,6 +17,10 @@ public enum SessionKitError: Error, Equatable, CustomStringConvertible {
         case .persistenceFailed(let message):
             return "persistence_failed:\(message)"
         }
+    }
+
+    public var errorDescription: String? {
+        description
     }
 }
 

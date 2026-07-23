@@ -4,6 +4,7 @@ import SessionKitSupertonic
 import XCTest
 @testable import SpokenMarginsApp
 
+@MainActor
 final class SupertonicSpeechTests: XCTestCase {
     func testSelectableCatalogExposesOnlyJamesLilyAndSystem() {
         XCTAssertEqual(AppTTSVoiceSelection.allCases, [.james, .lily, .system])
@@ -204,30 +205,46 @@ final class SupertonicSpeechTests: XCTestCase {
     }
 
     func testMediaServicesResetRetainsRenderedChunkForExplicitResume() async throws {
-        let template = try makeTestWAV(duration: 1)
+        let template = try makeTestWAV(duration: 5)
         defer { try? FileManager.default.removeItem(at: template) }
         let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let notificationCenter = NotificationCenter()
         let client = SupertonicSpeechPlaybackClient(
             renderer: renderer,
             voice: .m2,
             speed: 1,
             fallbackVoiceIdentifier: nil,
             fallbackRate: 0.5,
+            audioSessionNotificationCenter: notificationCenter,
+            audioSessionActivator: {},
+            audioPlayerStarter: { _, _ in },
+            observesPlayerLifecycle: false,
             fallbackClient: RecordingFallbackAudioClient()
         )
         _ = try client.prepareSpeechText("A media services reset should preserve this rendered audio chunk.")
         try client.play(targetId: "media-services-reset")
-        for _ in 0..<50 where client.playbackStartStatus(targetId: "media-services-reset") != .confirmed {
+        for _ in 0..<50 where !client.debugActiveAudioState().hasURL {
             try? await Task.sleep(for: .milliseconds(20))
         }
         XCTAssertEqual(client.playbackStartStatus(targetId: "media-services-reset"), .confirmed)
+        let preResetRenderCount = await renderer.renderCount
+        XCTAssertEqual(preResetRenderCount, 1, "Unexpected render before media-services reset")
+        let preResetAudio = client.debugActiveAudioState()
+        XCTAssertTrue(preResetAudio.hasURL)
+        XCTAssertGreaterThan(preResetAudio.duration, 0)
+        XCTAssertEqual(preResetAudio.targetId, "media-services-reset")
+        XCTAssertEqual(preResetAudio.startOffset, 0)
 
-        NotificationCenter.default.post(
+        notificationCenter.post(
             name: AVAudioSession.mediaServicesWereResetNotification,
             object: AVAudioSession.sharedInstance()
         )
         try? await Task.sleep(for: .milliseconds(50))
         XCTAssertEqual(client.playbackTransportState(targetId: "media-services-reset"), .paused)
+        let postResetRenderCount = await renderer.renderCount
+        XCTAssertEqual(postResetRenderCount, 1, "Media-services reset unexpectedly re-rendered audio")
+        XCTAssertEqual(client.currentRecoveryCharOffset(), 0)
+        XCTAssertEqual(client.debugRenderedCacheOffsets(), [0])
 
         try client.play(targetId: "media-services-reset", from: client.currentRecoveryCharOffset() ?? 0)
         for _ in 0..<50 where client.playbackStartStatus(targetId: "media-services-reset") != .confirmed {
@@ -444,10 +461,11 @@ private actor CountingAudioSupertonicRenderer: SupertonicRendering {
         let url = FileManager.default.temporaryDirectory
             .appending(path: "counting-render-\(UUID().uuidString).wav")
         try FileManager.default.copyItem(at: templateURL, to: url)
+        let audio = try AVAudioFile(forReading: url)
         return SupertonicNarrationResult(
             audioURL: url,
-            duration: 0.5,
-            sampleRate: 44_100,
+            duration: Double(audio.length) / audio.processingFormat.sampleRate,
+            sampleRate: Int(audio.processingFormat.sampleRate.rounded()),
             renderDuration: 0.01,
             sessionLoadCount: 1
         )
