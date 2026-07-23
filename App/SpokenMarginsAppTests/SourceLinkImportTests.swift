@@ -120,7 +120,7 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertNil(model.lastError)
     }
 
-    func testNativeAudioInterjectionRequestsOneMinuteSourceWindowContext() async throws {
+    func testNativeAudioInterjectionRequestsFullShoulderContext() async throws {
         let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
             requestId: "ignored",
             status: .playable,
@@ -136,9 +136,11 @@ final class SourceLinkImportTests: XCTestCase {
         let audio = WindowContextAudioClient()
         let transcriber = RecordingSourceWindowTranscriptionClient(timeline: TranscriptTimeline(
             segments: [
+                MediaTimelineSegment(id: "window-early", startMs: 33_000, endMs: 62_000, text: "Earlier context."),
                 MediaTimelineSegment(id: "window-before", startMs: 63_000, endMs: 122_000, text: "Minute before."),
                 MediaTimelineSegment(id: "window-current", startMs: 122_000, endMs: 124_000, text: "Interjection context."),
-                MediaTimelineSegment(id: "window-after", startMs: 124_000, endMs: 183_000, text: "Minute after.")
+                MediaTimelineSegment(id: "window-after", startMs: 124_000, endMs: 183_000, text: "Minute after."),
+                MediaTimelineSegment(id: "window-late", startMs: 184_000, endMs: 243_000, text: "Later context.")
             ],
             chapters: [],
             durationMs: 300_000
@@ -162,11 +164,11 @@ final class SourceLinkImportTests: XCTestCase {
         }
 
         XCTAssertEqual(request.anchorMediaTimeMs, 123_000)
-        XCTAssertEqual(request.windowBeforeMs, 60_000)
-        XCTAssertEqual(request.windowAfterMs, 60_000)
+        XCTAssertEqual(request.windowBeforeMs, 90_000)
+        XCTAssertEqual(request.windowAfterMs, 120_000)
         XCTAssertEqual(request.durationMs, 300_000)
-        XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorBefore, "Minute before. Interjection context.")
-        XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorAfter, "Minute after.")
+        XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorBefore, "Earlier context. Minute before. Interjection context.")
+        XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorAfter, "Minute after. Later context.")
         XCTAssertEqual(model.selectedItem.interjections.first?.anchorContextStatus, .ready)
         XCTAssertEqual(model.diagnostics["sourceWindowContextProvenance:ij-001"], "bounded_remote_window")
     }
@@ -302,12 +304,14 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(UserDefaults.standard.integer(forKey: "mediaSkipForwardSeconds"), 45)
     }
 
-    func testStoredTranscriptWindowAllowsNormalGapsBetweenWordTimestamps() throws {
+    func testStoredTranscriptWindowUsesFullShoulderAndAllowsTimestampGaps() throws {
         let timeline = TranscriptTimeline(
             segments: [
-                MediaTimelineSegment(id: "before", startMs: 50_000, endMs: 120_000, text: "Before."),
-                MediaTimelineSegment(id: "after", startMs: 125_000, endMs: 200_000, text: "After."),
-                MediaTimelineSegment(id: "far", startMs: 400_000, endMs: 450_000, text: "Far away.")
+                MediaTimelineSegment(id: "early", startMs: 35_000, endMs: 55_000, text: "Earlier context."),
+                MediaTimelineSegment(id: "before", startMs: 70_000, endMs: 120_000, text: "Before."),
+                MediaTimelineSegment(id: "after", startMs: 125_000, endMs: 175_000, text: "After."),
+                MediaTimelineSegment(id: "late", startMs: 200_000, endMs: 240_000, text: "Later context."),
+                MediaTimelineSegment(id: "far", startMs: 500_000, endMs: 550_000, text: "Far away.")
             ],
             chapters: [],
             durationMs: 600_000
@@ -315,8 +319,12 @@ final class SourceLinkImportTests: XCTestCase {
 
         let window = try XCTUnwrap(Gate1AppModel.sourceContextWindow(from: timeline, anchorMediaTimeMs: 123_000))
 
-        XCTAssertEqual(window.segments.map(\.id), ["before", "after"], "A normal gap between word timestamps must still use stored context")
-        XCTAssertNil(Gate1AppModel.sourceContextWindow(from: timeline, anchorMediaTimeMs: 300_000))
+        XCTAssertEqual(
+            window.segments.map(\.id),
+            ["early", "before", "after", "late"],
+            "The stored transcript should preserve the full 90-second/120-second shoulder despite normal word-timestamp gaps"
+        )
+        XCTAssertNil(Gate1AppModel.sourceContextWindow(from: timeline, anchorMediaTimeMs: 350_000))
     }
 
     func testClipboardButtonExtractsSourceLinkURL() throws {

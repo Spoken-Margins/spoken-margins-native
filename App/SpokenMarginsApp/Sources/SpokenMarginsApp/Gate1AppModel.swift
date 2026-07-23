@@ -384,8 +384,8 @@ final class Gate1AppModel: ObservableObject {
     private var failedWatchPackageRenderItemIds: Set<String> = []
     #endif
     private let preparedTextAudioStarterDurationMs = 30_000
-    private let sourceWindowContextBeforeMs = 60_000
-    private let sourceWindowContextAfterMs = 60_000
+    private let sourceWindowContextBeforeMs = 90_000
+    private let sourceWindowContextAfterMs = 120_000
     private let quickAccessFolderBookmarkKey = "quickAccessFolderBookmark"
     #if canImport(AVFoundation)
     private let speechPreviewSynthesizer = AVSpeechSynthesizer()
@@ -5539,8 +5539,8 @@ final class Gate1AppModel: ObservableObject {
     static func sourceContextWindow(
         from timeline: TranscriptTimeline,
         anchorMediaTimeMs: Int,
-        windowBeforeMs: Int = 60_000,
-        windowAfterMs: Int = 60_000
+        windowBeforeMs: Int = 90_000,
+        windowAfterMs: Int = 120_000
     ) -> TranscriptTimeline? {
         let startMs = max(0, anchorMediaTimeMs - windowBeforeMs)
         let endMs = min(timeline.durationMs ?? Int.max, anchorMediaTimeMs + windowAfterMs)
