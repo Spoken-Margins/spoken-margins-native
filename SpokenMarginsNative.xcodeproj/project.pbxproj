@@ -1307,6 +1307,7 @@
 				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				INFOPLIST_FILE = App/SpokenMarginsLegacy/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.7;
+				"IPHONEOS_DEPLOYMENT_TARGET[sdk=iphonesimulator*]" = 16.4;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -1502,6 +1503,7 @@
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsLegacyBrowserTextExtension/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.7;
+				"IPHONEOS_DEPLOYMENT_TARGET[sdk=iphonesimulator*]" = 16.4;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -1623,6 +1625,7 @@
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsLegacyShareExtension/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.7;
+				"IPHONEOS_DEPLOYMENT_TARGET[sdk=iphonesimulator*]" = 16.4;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

@@ -37,6 +37,15 @@ Regenerate the Xcode project after editing `project.yml`:
 xcodegen generate
 ```
 
+Debug simulator builds use an iOS 16.4 deployment target because Apple did not
+publish an iOS 16.7 simulator runtime. Device builds and Release simulator builds
+remain targeted at iOS 16.7. The `SessionKit` package has a 16.4 compile floor so
+the Debug app and both embedded extensions can run on the iPhone 8 simulator.
+
+In Xcode, select the `SpokenMarginsLegacy` scheme and the
+`iPhone 8 — iOS 16.4` destination, then use the normal Run action to launch with
+debug gauges attached.
+
 Build without signing:
 
 ```bash

@@ -222,6 +222,9 @@ targets:
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) SPOKEN_MARGINS_LEGACY"
         IPHONEOS_DEPLOYMENT_TARGET: "16.7"
         TARGETED_DEVICE_FAMILY: "1"
+      configs:
+        Debug:
+          "IPHONEOS_DEPLOYMENT_TARGET[sdk=iphonesimulator*]": "16.4"
     postBuildScripts:
       - name: Remove Embedded Static ONNX Runtime
         script: |
@@ -255,6 +258,9 @@ targets:
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) SPOKEN_MARGINS_LEGACY"
         IPHONEOS_DEPLOYMENT_TARGET: "16.7"
         TARGETED_DEVICE_FAMILY: "1"
+      configs:
+        Debug:
+          "IPHONEOS_DEPLOYMENT_TARGET[sdk=iphonesimulator*]": "16.4"
   SpokenMarginsLegacyBrowserTextExtension:
     type: app-extension
     platform: iOS
@@ -277,6 +283,9 @@ targets:
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) SPOKEN_MARGINS_LEGACY"
         IPHONEOS_DEPLOYMENT_TARGET: "16.7"
         TARGETED_DEVICE_FAMILY: "1"
+      configs:
+        Debug:
+          "IPHONEOS_DEPLOYMENT_TARGET[sdk=iphonesimulator*]": "16.4"
     postBuildScripts:
       - name: Select Legacy Native Messaging Host
         script: |

@@ -5,7 +5,7 @@ import PackageDescription
 let package = Package(
     name: "SessionKit",
     platforms: [
-        .iOS("16.7"),
+        .iOS("16.4"),
         .macOS(.v15)
     ],
     products: [
