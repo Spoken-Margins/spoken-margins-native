@@ -951,7 +951,7 @@ Delayed or rejected inputs:
 
 Audio source rule:
 
-Audio can be supported only when there is a transcript. Chapter markers, interjections, and reflection need text anchors.
+Native audio can play without a full transcript and uses source media time as its durable fallback anchor. Interjections derive bounded transcript excerpts around their timestamps. Full native-audio transcription is reserved for an explicit Listening Map request and remains internal derived data rather than exported full source content.
 
 Future export destinations:
 

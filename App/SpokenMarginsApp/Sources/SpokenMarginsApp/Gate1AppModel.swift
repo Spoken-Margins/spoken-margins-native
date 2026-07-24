@@ -125,6 +125,40 @@ struct BatchSessionExportResult: Equatable {
     let destinationName: String
 }
 
+enum OnboardingStep: String, CaseIterable, Identifiable, Hashable {
+    case firstInterjection = "first_interjection"
+    case reviewedTimeline = "reviewed_timeline"
+    case exportedSession = "exported_session"
+    case addedOwnSource = "added_own_source"
+    case addedFromSafari = "added_from_safari"
+    case addedFromFiles = "added_from_files"
+    case addedPodcast = "added_podcast"
+
+    var id: String { rawValue }
+
+    static let core: [OnboardingStep] = [
+        .firstInterjection,
+        .reviewedTimeline,
+        .exportedSession
+    ]
+
+    static let sourceExploration: [OnboardingStep] = [
+        .addedOwnSource,
+        .addedFromSafari,
+        .addedFromFiles,
+        .addedPodcast
+    ]
+}
+
+enum GuidedOnboardingStage: String, Equatable {
+    case inactive
+    case practiceInterjection = "practice_interjection"
+    case reviewTimeline = "review_timeline"
+    case optionalAI = "optional_ai"
+    case exportSession = "export_session"
+    case complete
+}
+
 struct SpeechVoiceChoice: Identifiable, Hashable {
     let id: String
     let name: String
@@ -257,9 +291,14 @@ typealias InterjectionTranscriptionHandler = @Sendable (_ audioPath: String) asy
 
 @MainActor
 final class Gate1AppModel: ObservableObject {
-    private static let welcomeSampleSeedVersion = 1
+    static let welcomeSampleItemId = "item-spoken-margins-overview"
+    private static let welcomeSampleSeedVersion = 2
     private static let welcomeSampleSeedVersionKey = "welcomeSampleSeedVersion"
+    private static let onboardingStepsKey = "onboardingCompletedStepsV1"
+    private static let guidedOnboardingStageKey = "guidedOnboardingStageV1"
+    private static let onboardingCardDismissedKey = "onboardingCardDismissedV1"
     private static let supertonicTTSMigrationKey = "supertonicTTSMigrationV1"
+    private static let supertonicVoicePendingTermsKey = "supertonicVoicePendingTermsV1"
     private static var isRunningUnitTests: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     }
@@ -369,6 +408,9 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var acceptedTermsVersion = SpokenMarginsTerms.acceptedVersion()
     @Published var isTermsOfUsePresented = false
     @Published var isHelpPresented = false
+    @Published private(set) var completedOnboardingSteps = Gate1AppModel.loadOnboardingSteps()
+    @Published private(set) var guidedOnboardingStage = Gate1AppModel.loadGuidedOnboardingStage()
+    @Published private(set) var isOnboardingCardDismissed = UserDefaults.standard.bool(forKey: Gate1AppModel.onboardingCardDismissedKey)
     @Published private(set) var legacyLibraryResetNotice: String?
     @Published var knownIssues = [
         "Physical-device product validation remains pending.",
@@ -422,6 +464,7 @@ final class Gate1AppModel: ObservableObject {
     private var pendingProviderJobForConsent: PendingProviderJob?
     private var pendingMapGenerationAfterConsent = false
     private var pendingTermsVoiceSelection: AppTTSVoiceSelection?
+    private var pendingPlaybackAfterTerms: PendingPlaybackAfterTerms?
     #if SPOKEN_MARGINS_WATCH
     private var activeWatchPackageRenderItemIds: Set<String> = []
     private var failedWatchPackageRenderItemIds: Set<String> = []
@@ -442,6 +485,13 @@ final class Gate1AppModel: ObservableObject {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return encoder
     }()
+
+    private enum PendingPlaybackAfterTerms {
+        case startCurrentItem
+        case resumeSession(String)
+        case jumpToChapter(String, fromTimeline: Bool)
+        case playSourceFromBeginning(fromTimeline: Bool)
+    }
     private static func availableSpeechVoiceOptions() -> [SpeechVoiceChoice] {
         #if canImport(AVFoundation)
         return AVSpeechSynthesisVoice.speechVoices()
@@ -462,6 +512,141 @@ final class Gate1AppModel: ObservableObject {
         #else
         return []
         #endif
+    }
+
+    private static func loadOnboardingSteps() -> Set<OnboardingStep> {
+        Set(
+            (UserDefaults.standard.stringArray(forKey: onboardingStepsKey) ?? [])
+                .compactMap(OnboardingStep.init(rawValue:))
+        )
+    }
+
+    private static func loadGuidedOnboardingStage() -> GuidedOnboardingStage {
+        guard let rawValue = UserDefaults.standard.string(forKey: guidedOnboardingStageKey) else {
+            return .inactive
+        }
+        return GuidedOnboardingStage(rawValue: rawValue) ?? .inactive
+    }
+
+    var onboardingCoreCompletedCount: Int {
+        OnboardingStep.core.filter(completedOnboardingSteps.contains).count
+    }
+
+    var onboardingSourceCompletedCount: Int {
+        OnboardingStep.sourceExploration.filter(completedOnboardingSteps.contains).count
+    }
+
+    var hasCompletedCoreOnboarding: Bool {
+        onboardingCoreCompletedCount == OnboardingStep.core.count
+    }
+
+    var shouldShowOnboardingCard: Bool {
+        !Self.isRunningUnitTests
+            && !CommandLine.arguments.contains("--ui-testing")
+            && !hasCompletedCoreOnboarding
+            && !isOnboardingCardDismissed
+    }
+
+    var shouldShowGuidedOnboardingCoach: Bool {
+        guidedOnboardingStage != .inactive
+            && selectedItem.id == Self.welcomeSampleItemId
+    }
+
+    func isOnboardingStepComplete(_ step: OnboardingStep) -> Bool {
+        completedOnboardingSteps.contains(step)
+    }
+
+    private func markOnboardingSteps(_ steps: Set<OnboardingStep>) {
+        let updated = completedOnboardingSteps.union(steps)
+        guard updated != completedOnboardingSteps else { return }
+        completedOnboardingSteps = updated
+        UserDefaults.standard.set(updated.map(\.rawValue).sorted(), forKey: Self.onboardingStepsKey)
+    }
+
+    private func setGuidedOnboardingStage(_ stage: GuidedOnboardingStage) {
+        guidedOnboardingStage = stage
+        UserDefaults.standard.set(stage.rawValue, forKey: Self.guidedOnboardingStageKey)
+    }
+
+    private func reconcileOnboardingEvidence(store: SQLiteSessionStore) throws {
+        let items = try store.listItems()
+        var evidence: Set<OnboardingStep> = []
+        if items.contains(where: { $0.id != Self.welcomeSampleItemId }) {
+            evidence.insert(.addedOwnSource)
+        }
+        if items.contains(where: { $0.mediaType == "text" && $0.externalReferenceType == "url" }) {
+            evidence.formUnion([.addedOwnSource, .addedFromSafari])
+        }
+        if items.contains(where: { $0.externalReferenceType == "file" }) {
+            evidence.formUnion([.addedOwnSource, .addedFromFiles])
+        }
+        let hasSavedInterjection = try store.loadSessions().contains { session in
+            ((try? store.loadInterjections(sessionId: session.id)) ?? [])
+                .contains(where: { $0.status == "active" })
+        }
+        if hasSavedInterjection {
+            evidence.insert(.firstInterjection)
+        }
+        markOnboardingSteps(evidence)
+    }
+
+    func dismissOnboardingCard() {
+        isOnboardingCardDismissed = true
+        UserDefaults.standard.set(true, forKey: Self.onboardingCardDismissedKey)
+    }
+
+    func restoreOnboardingCard() {
+        isOnboardingCardDismissed = false
+        UserDefaults.standard.set(false, forKey: Self.onboardingCardDismissedKey)
+    }
+
+    func pauseGuidedOnboarding() {
+        setGuidedOnboardingStage(.inactive)
+    }
+
+    func continueGuidedOnboardingPastAI() {
+        guard guidedOnboardingStage == .optionalAI else { return }
+        setGuidedOnboardingStage(.exportSession)
+    }
+
+    func openAISettingsFromOnboarding() {
+        continueGuidedOnboardingPastAI()
+        isHelpPresented = false
+        screen = .settings
+    }
+
+    func finishGuidedOnboarding() {
+        setGuidedOnboardingStage(.inactive)
+    }
+
+    func recordTimelineInterjectionViewed(interjectionId: String) {
+        guard selectedItem.interjections.contains(where: { $0.id == interjectionId }) else { return }
+        recordTimelineReviewCompleted()
+    }
+
+    private func recordTimelineReviewCompleted() {
+        markOnboardingSteps([.reviewedTimeline])
+        if guidedOnboardingStage == .reviewTimeline {
+            setGuidedOnboardingStage(.optionalAI)
+        }
+    }
+
+    func recordSessionExported() {
+        guard exportSessionId != nil else { return }
+        markOnboardingSteps([.exportedSession])
+        if guidedOnboardingStage == .exportSession {
+            setGuidedOnboardingStage(.complete)
+        }
+    }
+
+    func resetOnboardingProgressForTesting() {
+        guard Self.isRunningUnitTests else { return }
+        completedOnboardingSteps = []
+        guidedOnboardingStage = .inactive
+        isOnboardingCardDismissed = false
+        UserDefaults.standard.removeObject(forKey: Self.onboardingStepsKey)
+        UserDefaults.standard.removeObject(forKey: Self.guidedOnboardingStageKey)
+        UserDefaults.standard.removeObject(forKey: Self.onboardingCardDismissedKey)
     }
 
     init(
@@ -534,14 +719,27 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func enforceTermsGateForStoredVoice() {
+        let defaults = UserDefaults.standard
         hasAcceptedCurrentTerms = SpokenMarginsTerms.hasAcceptedCurrentVersion()
             && SpokenMarginsTerms.hasBundledText()
         acceptedTermsVersion = SpokenMarginsTerms.acceptedVersion()
-        guard !hasAcceptedCurrentTerms, ttsVoiceSelection.supertonicVoice != nil else { return }
+        if hasAcceptedCurrentTerms {
+            defaults.removeObject(forKey: Self.supertonicVoicePendingTermsKey)
+            return
+        }
+        if ttsVoiceSelection.supertonicVoice != nil {
+            pendingTermsVoiceSelection = ttsVoiceSelection
+            defaults.set(ttsVoiceSelection.rawValue, forKey: Self.supertonicVoicePendingTermsKey)
+        } else if let rawValue = defaults.string(forKey: Self.supertonicVoicePendingTermsKey),
+                  let pendingVoice = AppTTSVoiceSelection(rawValue: rawValue),
+                  pendingVoice.supertonicVoice != nil {
+            pendingTermsVoiceSelection = pendingVoice
+        }
+        guard pendingTermsVoiceSelection != nil else { return }
         ttsVoiceSelection = .system
         synchronizeTTSModeFromSelection()
-        UserDefaults.standard.set(ttsVoiceSelection.rawValue, forKey: "ttsVoiceSelection")
-        UserDefaults.standard.set(ttsMode, forKey: "ttsMode")
+        defaults.set(ttsVoiceSelection.rawValue, forKey: "ttsVoiceSelection")
+        defaults.set(ttsMode, forKey: "ttsMode")
     }
 
     var termsAcceptanceDescription: String {
@@ -563,12 +761,15 @@ final class Gate1AppModel: ObservableObject {
             reportFailure(SpokenMarginsTermsError.bundledTermsUnavailable, context: "Terms acceptance failed")
             return
         }
+        let pendingPlayback = pendingPlaybackAfterTerms
+        pendingPlaybackAfterTerms = nil
         SpokenMarginsTerms.recordAcceptance()
         hasAcceptedCurrentTerms = true
         acceptedTermsVersion = SpokenMarginsTerms.currentVersion
         isTermsOfUsePresented = false
         ttsVoiceSelection = pendingTermsVoiceSelection ?? .james
         pendingTermsVoiceSelection = nil
+        UserDefaults.standard.removeObject(forKey: Self.supertonicVoicePendingTermsKey)
         saveSpeechSettings()
         if let engine {
             snapshot = (try? engine.stopPlayback()) ?? snapshot
@@ -577,14 +778,52 @@ final class Gate1AppModel: ObservableObject {
         _ = rebuildEngineForCurrentSettings()
         diagnostics["termsAcceptedVersion"] = SpokenMarginsTerms.currentVersion
         reportSuccess("Terms accepted. \(ttsVoiceSelection.displayName) is enabled.")
+        continuePlaybackAfterTerms(pendingPlayback)
     }
 
     func declineCurrentTerms() {
+        let pendingPlayback = pendingPlaybackAfterTerms
+        pendingPlaybackAfterTerms = nil
         pendingTermsVoiceSelection = nil
+        UserDefaults.standard.removeObject(forKey: Self.supertonicVoicePendingTermsKey)
         isTermsOfUsePresented = false
         ttsVoiceSelection = .system
         saveSpeechSettings()
         reportSuccess("The iOS system voice remains enabled.")
+        continuePlaybackAfterTerms(pendingPlayback)
+    }
+
+    private func requireTermsDecisionBeforePlayback(_ action: PendingPlaybackAfterTerms) -> Bool {
+        guard !hasAcceptedCurrentTerms, pendingTermsVoiceSelection?.supertonicVoice != nil else {
+            return false
+        }
+        pendingPlaybackAfterTerms = action
+        isTermsOfUsePresented = true
+        diagnostics["termsGate"] = "presented_for_first_playback"
+        statusMessage = "Choose whether to enable the improved on-device voice before playback begins."
+        return true
+    }
+
+    private func continuePlaybackAfterTerms(_ action: PendingPlaybackAfterTerms?) {
+        guard let action else { return }
+        switch action {
+        case .startCurrentItem:
+            start()
+        case .resumeSession(let sessionId):
+            guard let session = try? store?.loadSession(id: sessionId) else {
+                reportFailure("The listening session could not be restored after choosing a voice.")
+                return
+            }
+            resumeSession(session)
+        case .jumpToChapter(let chapterId, let fromTimeline):
+            guard let chapter = selectedItem.chapters.first(where: { $0.id == chapterId }) else {
+                reportFailure("The selected chapter could not be restored after choosing a voice.")
+                return
+            }
+            jumpToChapter(chapter, fromTimeline: fromTimeline)
+        case .playSourceFromBeginning(let fromTimeline):
+            playSourceFromBeginning(fromTimeline: fromTimeline)
+        }
     }
 
     var aiDataSharingConsentDescription: String {
@@ -841,6 +1080,7 @@ final class Gate1AppModel: ObservableObject {
             if engine == nil {
                 installEngine(try makeEngine(store: store))
             }
+            try reconcileOnboardingEvidence(store: store)
             try recoverInterruptedAIJobs(store: store, rows: rows)
             libraryItems = rows
             recentlyDeletedItems = try loadDeletedLibraryRows(store: store)
@@ -968,8 +1208,39 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    func startGuidedOnboarding() {
+        do {
+            let store = try requireStore()
+            if !(try store.listItems()).contains(where: { $0.id == Self.welcomeSampleItemId }) {
+                let (item, map) = try makeAppOverviewSample()
+                try store.saveItem(item)
+                try store.saveListeningMap(map)
+                try refreshLibraryRows(store: store)
+            }
+            if engine == nil {
+                installEngine(try makeEngine(store: store))
+            }
+            restoreOnboardingCard()
+            isHelpPresented = false
+            if hasCompletedCoreOnboarding {
+                setGuidedOnboardingStage(.practiceInterjection)
+            } else if !isOnboardingStepComplete(.firstInterjection) {
+                setGuidedOnboardingStage(.practiceInterjection)
+            } else if !isOnboardingStepComplete(.reviewedTimeline) {
+                setGuidedOnboardingStage(.reviewTimeline)
+            } else if !isOnboardingStepComplete(.exportedSession) {
+                setGuidedOnboardingStage(.optionalAI)
+            } else {
+                setGuidedOnboardingStage(.complete)
+            }
+            startItem(id: Self.welcomeSampleItemId)
+        } catch {
+            reportFailure(error, context: "Guided tour setup failed")
+        }
+    }
+
     private func makeAppOverviewSample() throws -> (Item, ListeningMap) {
-        let itemId = "item-spoken-margins-overview"
+        let itemId = Self.welcomeSampleItemId
         let markdown = """
         # Welcome to Spoken Margins
 
@@ -985,15 +1256,15 @@ final class Gate1AppModel: ObservableObject {
 
         ## Interject while you listen
 
-        Tap Interject when an idea or question occurs to you, speak your note, then tap Done. Spoken Margins anchors the interjection near the passage you were hearing and resumes without losing your place. Your note appears in the Timeline.
+        This is your practice cue. Tap Interject now, say one thing you want to remember about this tour, then tap Done. Spoken Margins anchors the interjection near the passage you were hearing and resumes without losing your place. Open the Timeline and tap your note to review its recording or transcript.
 
         ## Load your own sources
 
-        Return Home and tap Add Source. Paste text and choose Add and Listen; paste a podcast, RSS, or public audio link and choose Add Link and Listen; or choose Import Text or PDF Files to upload Markdown, plain-text, or text-based PDF files.
+        Return Home and tap Add Source. Paste text and choose Add and Listen; paste a podcast, RSS, or public audio link and choose Add Link and Listen; or choose Import Text or PDF Files to upload Markdown, plain-text, or text-based PDF files. In Safari, enable Spoken Margins Text under Manage Extensions to capture selected text or a readable article. You can also share a page, PDF, Markdown file, or text file directly to Spoken Margins.
 
         ## Keep what matters
 
-        Ask for a summary or follow-up when it helps, review your notes and generated responses as a conversation, then export the useful context for another writing or thinking tool. Live AI is optional and requires explicit sharing consent. The goal is not passive playback; it is to help you retain and develop the ideas that mattered.
+        Summarize Notes synthesizes the interjections in this session. Discuss answers a question using relevant source and session context. Both are optional and require your OpenAI API key, network access, and separate permission to send content. Listening, interjections, the Timeline, and export work without AI. Export the useful context for another writing or thinking tool. The goal is not passive playback; it is to help you retain and develop the ideas that mattered.
         """
         let parsed = try ObsidianMarkdownParser.parse(
             fileName: "Welcome to Spoken Margins.md",
@@ -1023,7 +1294,8 @@ final class Gate1AppModel: ObservableObject {
                 mediaType: "text",
                 text: importText,
                 externalReference: "manual-import",
-                status: "needs_listening_map"
+                status: "needs_listening_map",
+                externalReferenceType: "manual"
             )
             try store.seed(item: item)
             installEngine(try makeEngine(store: store))
@@ -1032,6 +1304,7 @@ final class Gate1AppModel: ObservableObject {
             libraryItems = try loadLibraryRows(store: store)
             selectedItem = try loadItemDetail(id: item.id, store: store)
             diagnostics["lastImport"] = item.id
+            markOnboardingSteps([.addedOwnSource])
             importTitle = ""
             importText = ""
             startItem(id: item.id)
@@ -1117,7 +1390,8 @@ final class Gate1AppModel: ObservableObject {
                     mediaType: "text",
                     text: parsed.text,
                     externalReference: parsed.source ?? request.url.lastPathComponent,
-                    status: deterministicMap == nil ? "needs_listening_map" : "ready"
+                    status: deterministicMap == nil ? "needs_listening_map" : "ready",
+                    externalReferenceType: "file"
                 )
                 prepared.append(PreparedObsidianImport(item: item, listeningMap: deterministicMap))
             } catch {
@@ -1179,6 +1453,7 @@ final class Gate1AppModel: ObservableObject {
             imported.forEach { scheduleTextAudioPrewarmIfNeeded(itemId: $0.id) }
             diagnostics["lastObsidianImportCount"] = "\(imported.count)"
             diagnostics["lastObsidianImportFailures"] = "\(failures.count)"
+            markOnboardingSteps([.addedOwnSource, .addedFromFiles])
             screen = .home
             let suffix = failures.isEmpty ? "" : " \(failures.count) failed."
             reportSuccess("Imported \(imported.count) source file\(imported.count == 1 ? "" : "s").\(suffix)")
@@ -1346,6 +1621,7 @@ final class Gate1AppModel: ObservableObject {
                 ?? engine.lastLinkResolutionResult?.candidates.first?.sourceLink.provider
             diagnostics["lastSourceLinkProvider"] = sourceLinkProvider ?? "unknown"
             if snapshot.linkResolutionStatus == LinkResolutionStatus.playable.rawValue, let title = snapshot.title {
+                markOnboardingSteps([.addedOwnSource, .addedPodcast])
                 screen = startSession ? .playback : .item
                 sourceTranscriptStatus = snapshot.sourceTranscriptStatus ?? "not_started"
                 diagnostics["sourceTranscriptionStatus"] = sourceTranscriptStatus
@@ -1393,6 +1669,7 @@ final class Gate1AppModel: ObservableObject {
             let sourceLinkProvider = result.originalLink.provider ?? result.candidates.first?.sourceLink.provider
             diagnostics["lastSourceLinkProvider"] = sourceLinkProvider ?? "unknown"
             if snapshot.linkResolutionStatus == LinkResolutionStatus.playable.rawValue, let title = snapshot.title {
+                markOnboardingSteps([.addedOwnSource, .addedPodcast])
                 screen = startSession ? .playback : .item
                 sourceTranscriptStatus = snapshot.sourceTranscriptStatus ?? "not_started"
                 diagnostics["sourceTranscriptionStatus"] = sourceTranscriptStatus
@@ -1459,6 +1736,7 @@ final class Gate1AppModel: ObservableObject {
         }
         libraryItems = try loadLibraryRows(store: store)
         diagnostics["lastBackgroundSourceLinkImport"] = item.id
+        markOnboardingSteps([.addedOwnSource, .addedPodcast])
         schedulePodcastDownloadIfNeeded(itemId: item.id)
         scheduleSourceTranscriptImportIfAvailable(
             result.selectedCandidate?.transcriptLinks ?? result.candidates.flatMap(\.transcriptLinks),
@@ -1477,6 +1755,16 @@ final class Gate1AppModel: ObservableObject {
         let item = try engine.importBrowserTextInBackground(Self.sanitizedBrowserTextHandoff(handoff))
         libraryItems = try loadLibraryRows(store: store)
         diagnostics["lastBackgroundBrowserTextImport"] = item.id
+        markOnboardingSteps(onboardingSteps(for: handoff))
+    }
+
+    private func onboardingSteps(for handoff: BrowserTextHandoff) -> Set<OnboardingStep> {
+        switch handoff.captureMode {
+        case .markdownFile, .plainTextFile:
+            return [.addedOwnSource, .addedFromFiles]
+        case .selectedText, .readablePage:
+            return [.addedOwnSource, .addedFromSafari]
+        }
     }
 
     func configureQuickAccessFolder(url: URL) {
@@ -1603,6 +1891,7 @@ final class Gate1AppModel: ObservableObject {
             scheduleTextAudioPrewarmIfNeeded(itemId: importedItemId)
             diagnostics["lastBrowserTextImport"] = importedItemId
             diagnostics["lastBrowserTextSource"] = handoff.source.url
+            markOnboardingSteps(onboardingSteps(for: handoff))
             if shouldStart {
                 startItem(id: importedItemId)
             } else {
@@ -1725,6 +2014,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func start() {
+        guard !requireTermsDecisionBeforePlayback(.startCurrentItem) else { return }
         stopSpeechPreviews()
         streamingSpeechQueue.stopAndClear()
         scheduleTextAudioPrewarmIfNeeded(itemId: activeItemId)
@@ -1766,6 +2056,11 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func resumePlayback() {
+        guard let sessionId = snapshot.sessionId else {
+            reportFailure("There is no listening session to resume.")
+            return
+        }
+        guard !requireTermsDecisionBeforePlayback(.resumeSession(sessionId)) else { return }
         stopSpeechPreviews()
         streamingSpeechQueue.relinquishToCanonicalPlayback()
         run { engine in
@@ -1789,7 +2084,7 @@ final class Gate1AppModel: ObservableObject {
             }
             pendingMapGenerationItemId = item.id
             isGeneratingListeningMap = false
-            scheduleSourceTranscriptionIfNeeded(for: item)
+            scheduleFullSourceTranscriptionForListeningMap(for: item)
             reportSuccess("Preparing the podcast transcript for its Listening Map. Playback remains available.")
             return
         }
@@ -1905,7 +2200,8 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func jumpToChapter(_ chapter: Chapter) {
+    func jumpToChapter(_ chapter: Chapter, fromTimeline: Bool = false) {
+        guard !requireTermsDecisionBeforePlayback(.jumpToChapter(chapter.id, fromTimeline: fromTimeline)) else { return }
         stopSpeechPreviews()
         clearPendingAutoPlayTurns()
         run { engine in
@@ -1916,11 +2212,15 @@ final class Gate1AppModel: ObservableObject {
             snapshot = try engine.jumpToChapter(chapterId: chapter.id)
             refreshSelectedItem()
             screen = .playback
+            if fromTimeline {
+                recordTimelineReviewCompleted()
+            }
             reportSuccess("Jumped to \(chapter.title).")
         }
     }
 
-    func playSourceFromBeginning() {
+    func playSourceFromBeginning(fromTimeline: Bool = false) {
+        guard !requireTermsDecisionBeforePlayback(.playSourceFromBeginning(fromTimeline: fromTimeline)) else { return }
         stopSpeechPreviews()
         clearPendingAutoPlayTurns()
         run { engine in
@@ -1932,6 +2232,9 @@ final class Gate1AppModel: ObservableObject {
             }
             refreshSelectedItem()
             screen = .playback
+            if fromTimeline {
+                recordTimelineReviewCompleted()
+            }
             reportSuccess("Playing source from the beginning.")
         }
     }
@@ -2103,6 +2406,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func resumeSession(_ session: Session) {
+        guard !requireTermsDecisionBeforePlayback(.resumeSession(session.id)) else { return }
         stopSpeechPreviews()
         do {
             let store = try requireStore()
@@ -2480,12 +2784,20 @@ final class Gate1AppModel: ObservableObject {
         run { engine in
             snapshot = try engine.finishInterjection(audioRef: nil)
             refreshSelectedItem()
+            recordSavedInterjectionForOnboarding()
             if let interjection = latestInterjectionNeedingTranscription() {
                 scheduleTranscription(for: interjection)
             }
             reportSuccess("Saved interjection. Playback resumed; transcribing in the background.")
         }
         streamingSpeechQueue.resumeAfterInterjection()
+    }
+
+    private func recordSavedInterjectionForOnboarding() {
+        markOnboardingSteps([.firstInterjection])
+        if guidedOnboardingStage == .practiceInterjection {
+            setGuidedOnboardingStage(.reviewTimeline)
+        }
     }
 
     func cancelInterjection() {
@@ -2566,21 +2878,27 @@ final class Gate1AppModel: ObservableObject {
         submitDiscussionFollowUp(request, explicitFollowUp: trimmed, primaryInterjections: currentInterjections)
     }
 
-    func playTurn(_ turn: ConversationTurn) {
+    func playTurn(_ turn: ConversationTurn, fromTimeline: Bool = false) {
         stopSpeechPreviews()
         run { engine in
             try playTurn(turn.id, engine: engine)
+            if fromTimeline {
+                recordTimelineReviewCompleted()
+            }
             reportSuccess("Playing \(turnTitleText(turn)).")
         }
     }
 
-    func jumpToTurnChapter(turn: ConversationTurn, chapter: Chapter) {
+    func jumpToTurnChapter(turn: ConversationTurn, chapter: Chapter, fromTimeline: Bool = false) {
         stopSpeechPreviews()
         clearPendingAutoPlayTurns()
         run { engine in
             snapshot = try engine.jumpToTurnChapter(turnId: turn.id, chapterId: chapter.id)
             refreshSelectedItem()
             screen = .playback
+            if fromTimeline {
+                recordTimelineReviewCompleted()
+            }
             reportSuccess("Jumped to \(chapter.title).")
         }
     }
@@ -2745,6 +3063,7 @@ final class Gate1AppModel: ObservableObject {
         }
         #if canImport(UIKit)
         UIPasteboard.general.string = exportPreview
+        recordSessionExported()
         reportSuccess("Copied \(exportFormat == "json" ? "JSON" : "Markdown") export.")
         #else
         reportFailure("Clipboard is unavailable on this platform.")
@@ -2834,6 +3153,9 @@ final class Gate1AppModel: ObservableObject {
                 failures: failures,
                 destinationName: folderURL.lastPathComponent
             )
+            if !exportedFileNames.isEmpty {
+                markOnboardingSteps([.exportedSession])
+            }
             diagnostics["batchExportLastResult"] = "exported=\(exportedFileNames.count);failed=\(failures.count)"
             if failures.isEmpty {
                 reportSuccess("Exported \(exportedFileNames.count) Markdown file\(exportedFileNames.count == 1 ? "" : "s") to \(folderURL.lastPathComponent).")
@@ -3411,6 +3733,7 @@ final class Gate1AppModel: ObservableObject {
     func ttsVoiceSelectionChanged() {
         if ttsVoiceSelection.supertonicVoice != nil, !hasAcceptedCurrentTerms {
             pendingTermsVoiceSelection = ttsVoiceSelection
+            UserDefaults.standard.set(ttsVoiceSelection.rawValue, forKey: Self.supertonicVoicePendingTermsKey)
             ttsVoiceSelection = .system
             saveSpeechSettings()
             isTermsOfUsePresented = true
@@ -3455,6 +3778,7 @@ final class Gate1AppModel: ObservableObject {
     private func previewSupertonicVoice(_ voice: SupertonicVoiceID) {
         guard hasAcceptedCurrentTerms else {
             pendingTermsVoiceSelection = ttsVoiceSelection.supertonicVoice == nil ? .james : ttsVoiceSelection
+            UserDefaults.standard.set(pendingTermsVoiceSelection?.rawValue, forKey: Self.supertonicVoicePendingTermsKey)
             ttsVoiceSelection = .system
             saveSpeechSettings()
             isTermsOfUsePresented = true
@@ -4390,6 +4714,9 @@ final class Gate1AppModel: ObservableObject {
                 UserDefaults.standard.set(speechRate, forKey: "speechRate")
             }
             refreshSelectedItem()
+            if command == .finishInterjection {
+                recordSavedInterjectionForOnboarding()
+            }
             if command == .finishInterjection, let interjection = latestInterjectionNeedingTranscription() {
                 scheduleTranscription(for: interjection)
             }
@@ -4659,7 +4986,19 @@ final class Gate1AppModel: ObservableObject {
     private func rebuildEngineForCurrentSettings() -> Bool {
         guard let store else { return true }
         do {
-            installEngine(try makeEngine(store: store))
+            let replacement = try makeEngine(store: store)
+            let sessionId = engine?.currentSession?.id ?? snapshot.sessionId
+            if engine?.currentSession != nil {
+                snapshot = try engine?.stopPlayback() ?? snapshot
+            }
+            let restoredSnapshot = try sessionId.map { try replacement.inspectSession(sessionId: $0) }
+            installEngine(replacement)
+            if let restoredSnapshot {
+                snapshot = restoredSnapshot
+                activeItemId = restoredSnapshot.itemId ?? activeItemId
+                refreshSelectedItem()
+                diagnostics["sessionRestoredAfterRuntimeRebuild"] = sessionId
+            }
             return true
         } catch {
             reportFailure(error, context: "Runtime profile update failed")
@@ -5901,13 +6240,15 @@ final class Gate1AppModel: ObservableObject {
             .replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
     }
 
-    private func scheduleSourceTranscriptionIfNeeded(for item: Item) {
+    private func scheduleFullSourceTranscriptionForListeningMap(for item: Item, localSourceURL: URL? = nil) {
         guard item.transcriptId == nil,
               let sourceURLString = item.media?.url,
               let canonicalURL = URL(string: sourceURLString) else {
             return
         }
-        let sourceURL = podcastDownloadCoordinator?.validatedLocalURL(for: item.id) ?? canonicalURL
+        let sourceURL = localSourceURL
+            ?? podcastDownloadCoordinator?.validatedLocalURL(for: item.id)
+            ?? canonicalURL
         guard sourceURL.isFileURL else {
             diagnostics["sourceTranscriptionStatus"] = "waiting_for_local_audio"
             return
@@ -5956,7 +6297,6 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["sourceTranscriptionItem"] = itemId
             sourceTranscriptStatus = "ready"
             snapshot.sourceTranscriptStatus = "ready"
-            reportSuccess("Source transcript ready for anchored notes.")
         }
         if shouldGeneratePendingMap {
             pendingMapGenerationItemId = nil
@@ -6839,19 +7179,27 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["podcastDownload:\(record.itemId)"] = record.state.rawValue
         }
         coordinator.onLocalAssetReady = { [weak self] itemId, url in
-            guard let self, let engine else { return }
-            run { _ in
-                snapshot = try engine.updatePlaybackTransport(itemId: itemId, playbackURL: url.absoluteString)
-                refreshSelectedItem()
-            }
-            retrySourceWindowContexts(itemId: itemId)
-            if let item = try? store.loadItem(id: itemId) {
-                scheduleSourceTranscriptionIfNeeded(for: item)
-            }
+            self?.podcastLocalAssetDidBecomeReady(itemId: itemId, url: url)
         }
         podcastDownloadCoordinator = coordinator
         podcastDownloadRecords = coordinator.recordsByItemId
         diagnostics["podcastCacheLimitGB"] = "\(limit.rawValue)"
+    }
+
+    func podcastLocalAssetDidBecomeReady(itemId: String, url: URL) {
+        guard let engine, let store else { return }
+        run { _ in
+            snapshot = try engine.updatePlaybackTransport(itemId: itemId, playbackURL: url.absoluteString)
+            refreshSelectedItem()
+        }
+        retrySourceWindowContexts(itemId: itemId)
+        guard pendingMapGenerationItemId == itemId,
+              let item = try? store.loadItem(id: itemId) else {
+            diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "deferred_until_listening_map_request"
+            return
+        }
+        diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "requested_for_listening_map"
+        scheduleFullSourceTranscriptionForListeningMap(for: item, localSourceURL: url)
     }
 
     private func schedulePodcastDownloadIfNeeded(itemId: String) {

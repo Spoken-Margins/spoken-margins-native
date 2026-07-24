@@ -23,8 +23,9 @@ Use these states consistently:
 Routine development should prefer fast checks:
 
 ```bash
-python3 scripts/validate-contracts.py
-python3 scripts/validate-surface-contracts.py
+./scripts/bootstrap-python-tools.sh
+.venv/bin/python scripts/validate-contracts.py
+.venv/bin/python scripts/validate-surface-contracts.py
 swift build --build-tests --package-path Packages/SessionKit
 ```
 

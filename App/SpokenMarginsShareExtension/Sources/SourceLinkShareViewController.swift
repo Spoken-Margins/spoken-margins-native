@@ -234,7 +234,15 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         if let data = item as? Data,
            let text = String(data: data, encoding: .utf8),
            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let url = firstURL(in: cleaned), cleaned == url.absoluteString || cleaned.count < url.absoluteString.count + 20 {
+                return .sourceLink(url.absoluteString)
+            }
             return browserPayloadForPlainText(text, title: "Shared Text").map(SharedImport.browserText)
+        }
+        if let dictionary = item as? [String: Any] ?? item as? NSDictionary as? [String: Any],
+           let url = firstWebURL(in: dictionary) {
+            return .sourceLink(url.absoluteString)
         }
         if let text = item as? String {
             let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -332,6 +340,36 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
         return detector?.matches(in: text, options: [], range: range).compactMap(\.url).first.flatMap(validatedWebURL)
+    }
+
+    nonisolated private static func firstWebURL(in value: Any) -> URL? {
+        if let url = value as? URL {
+            return validatedWebURL(url)
+        }
+        if let text = value as? String {
+            return firstURL(in: text)
+        }
+        if let dictionary = value as? [String: Any] {
+            let preferredKeys = ["url", "URL", "shareURL", "episodeURL", "canonicalURL", "link"]
+            for key in preferredKeys {
+                if let nested = dictionary[key], let url = firstWebURL(in: nested) {
+                    return url
+                }
+            }
+            for nested in dictionary.values {
+                if let url = firstWebURL(in: nested) {
+                    return url
+                }
+            }
+        }
+        if let array = value as? [Any] {
+            for nested in array {
+                if let url = firstWebURL(in: nested) {
+                    return url
+                }
+            }
+        }
+        return nil
     }
 
     nonisolated private static func validatedWebURL(_ url: URL) -> URL? {

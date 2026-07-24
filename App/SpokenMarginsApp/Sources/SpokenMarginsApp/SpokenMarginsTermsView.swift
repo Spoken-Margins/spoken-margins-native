@@ -50,7 +50,7 @@ struct SpokenMarginsTermsView: View {
                                 .accessibilityIdentifier("terms.unavailable.error")
                         }
 
-                        Button("Not Now", role: .cancel) {
+                        Button("Use iOS Voice", role: .cancel) {
                             model.declineCurrentTerms()
                         }
                         .buttonStyle(.bordered)

@@ -3,8 +3,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE="$ROOT/Packages/SessionKit"
+PYTHON="$ROOT/.venv/bin/python"
 
-python3 "$ROOT/scripts/validate-contracts.py"
+"$ROOT/scripts/bootstrap-python-tools.sh"
+"$PYTHON" "$ROOT/scripts/validate-contracts.py"
 
 cd "$PACKAGE"
 swift build --build-tests
