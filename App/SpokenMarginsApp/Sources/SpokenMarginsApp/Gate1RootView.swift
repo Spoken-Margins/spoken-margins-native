@@ -1354,7 +1354,7 @@ private struct PlaybackScreen: View {
                     .padding(20)
                 }
                 .accessibilityIdentifier("playback.screen")
-                .onChange(of: model.guidedOnboardingStage) { _, stage in
+                .onCompatibleChange(of: model.guidedOnboardingStage) { stage in
                     if stage == .reviewTimeline {
                         withAnimation {
                             proxy.scrollTo("playback.timeline", anchor: .top)

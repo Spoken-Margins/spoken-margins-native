@@ -127,6 +127,13 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     }
 
     func testGuidedOnboardingAdvancesOnlyFromCompletedProductActions() throws {
+        let priorTermsVersion = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceVersionKey)
+        let priorTermsDate = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceDateKey)
+        defer {
+            restoreUserDefault(priorTermsVersion, forKey: SpokenMarginsTerms.acceptanceVersionKey)
+            restoreUserDefault(priorTermsDate, forKey: SpokenMarginsTerms.acceptanceDateKey)
+        }
+        SpokenMarginsTerms.recordAcceptance()
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
             recordingClient: NoopRecordingClient(),
