@@ -18,6 +18,8 @@ The active recovery boundary is:
 
 Watch, standalone Home Screen widgets, Kokoro/MLX, bundled Piper, arbitrary AI providers, and dedicated car behavior are not part of the active release. The WidgetKit extension remains only because ActivityKit requires it to host the listening Live Activity.
 
+An independently signed `SpokenMarginsLegacy` target preserves the broad MVP for iPhone 8 on iOS 16.7. It includes the core intake and listening flows, system speech, Supertonic/ONNX speech, Now Playing controls, and the share and Safari extensions. Its custom interactive Live Activity is intentionally unavailable because that surface depends on newer ActivityKit APIs. This compatibility target is maintained on demand and does not change the iOS 18+ release boundary above. See [the legacy-target notes](docs/legacy-ios16-target.md) for build, signing, and validation details.
+
 ## Repository Map
 
 - `Contracts/`: canonical schemas, fixtures, traces, and current product documentation bundled by the app

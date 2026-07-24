@@ -13,7 +13,11 @@ public struct Gate2QueuedCompactCommand: Codable, Equatable, Sendable {
 }
 
 public enum Gate2CompactCommandQueue {
+    #if SPOKEN_MARGINS_LEGACY
+    public static let appGroupIdentifier = "group.com.spokenmargins.native.legacy"
+    #else
     public static let appGroupIdentifier = "group.com.spokenmargins.native"
+    #endif
 
     private static let storageKey = "Gate2CompactCommandQueue.v1"
     private static let maximumBufferedCommands = 20

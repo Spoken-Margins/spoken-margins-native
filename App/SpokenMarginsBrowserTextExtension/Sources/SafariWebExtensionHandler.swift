@@ -2,7 +2,13 @@ import Foundation
 import SafariServices
 
 final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
+    #if SPOKEN_MARGINS_LEGACY
+    private static let appGroupIdentifier = "group.com.spokenmargins.native.legacy"
+    private static let appURLScheme = "spokenmargins-legacy"
+    #else
     private static let appGroupIdentifier = "group.com.spokenmargins.native"
+    private static let appURLScheme = "spokenmargins"
+    #endif
     private static let payloadDirectoryName = "BrowserTextHandoffs"
 
     func beginRequest(with context: NSExtensionContext) {
@@ -36,7 +42,7 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
             return [
                 "ok": true,
                 "payloadId": payloadID,
-                "openURL": "spokenmargins://browser-text?payloadId=\(payloadID)"
+                "openURL": "\(Self.appURLScheme)://browser-text?payloadId=\(payloadID)"
             ]
         } catch {
             return errorResponse("Unable to store browser text payload: \(error.localizedDescription)")

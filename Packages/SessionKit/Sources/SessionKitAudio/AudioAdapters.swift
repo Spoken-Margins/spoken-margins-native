@@ -2046,21 +2046,26 @@ public final class SystemRecordingClient: RecordingClient {
 
     public static func requestRecordPermission() async -> Bool {
         #if canImport(AVFoundation)
-        #if os(iOS) || os(watchOS)
-        switch AVAudioApplication.shared.recordPermission {
-        case .granted:
-            return true
-        case .denied:
-            return false
-        case .undetermined:
-            return await withCheckedContinuation { continuation in
-                AVAudioApplication.requestRecordPermission { granted in
-                    continuation.resume(returning: granted)
+        #if os(iOS)
+        if #available(iOS 17.0, *) {
+            switch AVAudioApplication.shared.recordPermission {
+            case .granted:
+                return true
+            case .denied:
+                return false
+            case .undetermined:
+                return await withCheckedContinuation { continuation in
+                    AVAudioApplication.requestRecordPermission { granted in
+                        continuation.resume(returning: granted)
+                    }
                 }
+            @unknown default:
+                return false
             }
-        @unknown default:
-            return false
         }
+        return await requestLegacyRecordPermission()
+        #elseif os(watchOS)
+        return await requestLegacyRecordPermission()
         #else
         return false
         #endif
@@ -2069,11 +2074,46 @@ public final class SystemRecordingClient: RecordingClient {
         #endif
     }
 
+    #if canImport(AVFoundation) && (os(iOS) || os(watchOS))
+    private static func requestLegacyRecordPermission() async -> Bool {
+        let session = AVAudioSession.sharedInstance()
+        switch session.recordPermission {
+        case .granted:
+            return true
+        case .denied:
+            return false
+        case .undetermined:
+            return await withCheckedContinuation { continuation in
+                session.requestRecordPermission { granted in
+                    continuation.resume(returning: granted)
+                }
+            }
+        @unknown default:
+            return false
+        }
+    }
+    #endif
+
     public func beginRecording() throws {
         #if canImport(AVFoundation)
-        #if os(iOS) || os(watchOS)
+        #if os(iOS)
         let session = AVAudioSession.sharedInstance()
-        switch AVAudioApplication.shared.recordPermission {
+        let recordPermission: AVAudioSession.RecordPermission
+        if #available(iOS 17.0, *) {
+            switch AVAudioApplication.shared.recordPermission {
+            case .granted:
+                recordPermission = .granted
+            case .denied:
+                recordPermission = .denied
+            case .undetermined:
+                recordPermission = .undetermined
+            @unknown default:
+                recordPermission = .undetermined
+            }
+        } else {
+            recordPermission = session.recordPermission
+        }
+        switch recordPermission {
         case .granted:
             break
         case .denied:
@@ -2083,6 +2123,20 @@ public final class SystemRecordingClient: RecordingClient {
         @unknown default:
             throw SessionKitError.persistenceFailed("recording_permission_unknown")
         }
+        #elseif os(watchOS)
+        let session = AVAudioSession.sharedInstance()
+        switch session.recordPermission {
+        case .granted:
+            break
+        case .denied:
+            throw SessionKitError.persistenceFailed("recording_permission_denied")
+        case .undetermined:
+            throw SessionKitError.persistenceFailed("recording_permission_required")
+        @unknown default:
+            throw SessionKitError.persistenceFailed("recording_permission_unknown")
+        }
+        #endif
+        #if os(iOS) || os(watchOS)
         #if os(watchOS)
         try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.allowBluetoothHFP, .duckOthers])
         #else

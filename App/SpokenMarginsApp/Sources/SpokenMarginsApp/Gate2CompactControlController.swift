@@ -225,6 +225,10 @@ private final class Gate2LiveActivityController {
     private(set) var status = "not_started"
 
     func publish(_ snapshot: CompactControlSnapshot) {
+        #if SPOKEN_MARGINS_LEGACY
+        status = "unavailable_legacy"
+        return
+        #else
         publishGeneration += 1
         let generation = publishGeneration
         #if canImport(ActivityKit)
@@ -265,6 +269,7 @@ private final class Gate2LiveActivityController {
         }
         #else
         status = "unavailable"
+        #endif
         #endif
     }
 

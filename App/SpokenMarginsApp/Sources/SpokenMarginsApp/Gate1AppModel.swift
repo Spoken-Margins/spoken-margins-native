@@ -2424,7 +2424,13 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["lastInterjectionTap"] = "begin"
         let requestedAt = Date()
         #if canImport(AVFoundation) && os(iOS)
-        if AVAudioApplication.shared.recordPermission == .granted {
+        let recordPermissionIsGranted: Bool
+        if #available(iOS 17.0, *) {
+            recordPermissionIsGranted = AVAudioApplication.shared.recordPermission == .granted
+        } else {
+            recordPermissionIsGranted = AVAudioSession.sharedInstance().recordPermission == .granted
+        }
+        if recordPermissionIsGranted {
             diagnostics["lastMicrophonePermissionResult"] = "granted"
             startInterjectionRecording(requestedAt: requestedAt)
             return
@@ -3217,7 +3223,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleIncomingURL(_ url: URL) {
-        if url.scheme == "spokenmargins", url.host == "open" {
+        if url.scheme == Gate5BrowserTextHandoffURL.scheme, url.host == "open" {
             screen = hasActiveSession ? .playback : .home
             return
         }

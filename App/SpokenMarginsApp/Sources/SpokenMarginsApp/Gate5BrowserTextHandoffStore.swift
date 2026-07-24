@@ -19,7 +19,11 @@ enum Gate5BrowserTextHandoffStoreError: Error, Equatable, LocalizedError {
 }
 
 struct Gate5BrowserTextHandoffStore {
+    #if SPOKEN_MARGINS_LEGACY
+    static let appGroupIdentifier = "group.com.spokenmargins.native.legacy"
+    #else
     static let appGroupIdentifier = "group.com.spokenmargins.native"
+    #endif
     private static let payloadDirectoryName = "BrowserTextHandoffs"
     private static let failedPayloadDirectoryName = "FailedBrowserTextHandoffs"
 

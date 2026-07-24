@@ -1,7 +1,11 @@
 import Foundation
 
 public enum Gate2CompactCommandURL {
+    #if SPOKEN_MARGINS_LEGACY
+    public static let scheme = "spokenmargins-legacy"
+    #else
     public static let scheme = "spokenmargins"
+    #endif
     public static let host = "compact-control"
 
     public static func url(command: String) -> URL {

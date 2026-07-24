@@ -54,7 +54,11 @@ public enum SourceLinkHandoffStoreError: Error, Equatable, LocalizedError {
 }
 
 public struct SourceLinkHandoffStore {
+    #if SPOKEN_MARGINS_LEGACY
+    public static let appGroupIdentifier = "group.com.spokenmargins.native.legacy"
+    #else
     public static let appGroupIdentifier = "group.com.spokenmargins.native"
+    #endif
 
     private static let payloadDirectoryName = "SourceLinkHandoffs"
     private static let failedPayloadDirectoryName = "FailedSourceLinkHandoffs"
@@ -214,7 +218,11 @@ public struct SourceLinkHandoffStore {
 }
 
 public enum SourceLinkHandoffURL {
+    #if SPOKEN_MARGINS_LEGACY
+    public static let scheme = "spokenmargins-legacy"
+    #else
     public static let scheme = "spokenmargins"
+    #endif
     public static let host = "source-link"
 
     public static func isSourceLinkURL(_ url: URL) -> Bool {

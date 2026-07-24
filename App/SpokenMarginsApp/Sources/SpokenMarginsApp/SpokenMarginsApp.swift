@@ -46,7 +46,7 @@ struct SpokenMarginsApp: App {
                 .onOpenURL { url in
                     model.handleIncomingURL(url)
                 }
-                .onChange(of: scenePhase) { _, phase in
+                .onCompatibleChange(of: scenePhase) { phase in
                     if phase == .active {
                         model.handleAppBecameActive()
                     } else if phase == .inactive || phase == .background {

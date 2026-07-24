@@ -376,6 +376,7 @@ private struct HomeScreen: View {
     @State private var isAddSourcePresented = false
     @State private var pendingTrashItem: LibraryItemRow?
     @State private var suppressSourceLinkBlurSubmission = false
+    @State private var previousFocusedField: Field?
 
     private enum Field {
         case title
@@ -465,7 +466,7 @@ private struct HomeScreen: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
                 .onAppear { model.resetSourceLinkImportState() }
-                .onChange(of: model.sourceLinkImportState) { _, state in
+                .onCompatibleChange(of: model.sourceLinkImportState) { state in
                     if state == "success" {
                         isAddSourcePresented = false
                     }
@@ -577,7 +578,9 @@ private struct HomeScreen: View {
             .accessibilityLabel("Paste Link From Clipboard")
             .accessibilityIdentifier("sourceLink.clipboard.button")
         }
-        .onChange(of: focusedField) { oldValue, newValue in
+        .onCompatibleChange(of: focusedField) { newValue in
+            let oldValue = previousFocusedField
+            previousFocusedField = newValue
             guard oldValue == .sourceLink, newValue != .sourceLink else { return }
             if suppressSourceLinkBlurSubmission {
                 suppressSourceLinkBlurSubmission = false
@@ -1267,11 +1270,11 @@ private struct PlaybackScreen: View {
                 scrubberSeconds = Double(model.snapshot.currentMediaTimeMs ?? 0) / 1_000
                 scrubberTextOffset = Double(model.snapshot.currentTextStart ?? 0)
             }
-            .onChange(of: model.snapshot.currentMediaTimeMs) { _, mediaTimeMs in
+            .onCompatibleChange(of: model.snapshot.currentMediaTimeMs) { mediaTimeMs in
                 guard !isScrubbing else { return }
                 scrubberSeconds = Double(mediaTimeMs ?? 0) / 1_000
             }
-            .onChange(of: model.snapshot.currentTextStart) { _, textOffset in
+            .onCompatibleChange(of: model.snapshot.currentTextStart) { textOffset in
                 guard !isScrubbing else { return }
                 scrubberTextOffset = Double(textOffset ?? 0)
             }
@@ -1431,8 +1434,8 @@ private struct PlaybackScreen: View {
             Button {
                 usesVerbosePlaybackActions.toggle()
             } label: {
-                Label(
-                    usesVerbosePlaybackActions ? "Compact" : "Labels",
+                PlaybackControlLabel(
+                    title: usesVerbosePlaybackActions ? "Compact" : "Labels",
                     systemImage: usesVerbosePlaybackActions ? "rectangle.compress.vertical" : "textformat"
                 )
             }
@@ -1444,7 +1447,7 @@ private struct PlaybackScreen: View {
                     sourceTextOffsetAtPresentation = model.snapshot.currentTextStart ?? 0
                     isSourceTextPresented = true
                 } label: {
-                    Label("Text", systemImage: "doc.plaintext")
+                    PlaybackControlLabel(title: "Text", systemImage: "doc.plaintext")
                 }
                 .accessibilityLabel("View native source text")
                 .accessibilityIdentifier("playback.sourceText.button")
@@ -1455,7 +1458,7 @@ private struct PlaybackScreen: View {
             Button {
                 isPlaybackRatePresented = true
             } label: {
-                Label(model.compactPlaybackRateDescription, systemImage: "speedometer")
+                PlaybackControlLabel(title: model.compactPlaybackRateDescription, systemImage: "speedometer")
                     .font(.subheadline.weight(.semibold).monospacedDigit())
             }
             .accessibilityLabel("Playback speed, \(model.compactPlaybackRateDescription)")
@@ -1492,7 +1495,7 @@ private struct PlaybackScreen: View {
                     .accessibilityLabel("Speaking rate")
                     .accessibilityValue(model.speechRateDescription)
                     .accessibilityIdentifier("playback.speechRate.slider")
-                    .onChange(of: model.speechRate) { _, _ in model.playbackSpeechRateChanged() }
+                    .onCompatibleChange(of: model.speechRate) { _ in model.playbackSpeechRateChanged() }
                 Text("Prepared audio: \(model.preparedTextAudioStatusDescription)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -1921,9 +1924,9 @@ private struct SettingsScreen: View {
                     }
                     .accessibilityIdentifier("provider.advanced.disclosure")
                 }
-                .onChange(of: model.listeningMapModel) { _, _ in model.settingsValueChanged() }
-                .onChange(of: model.summaryModel) { _, _ in model.settingsValueChanged() }
-                .onChange(of: model.conversationModel) { _, _ in model.settingsValueChanged() }
+                .onCompatibleChange(of: model.listeningMapModel) { _ in model.settingsValueChanged() }
+                .onCompatibleChange(of: model.summaryModel) { _ in model.settingsValueChanged() }
+                .onCompatibleChange(of: model.conversationModel) { _ in model.settingsValueChanged() }
                 Section("Playback & Voice") {
                     Picker("App Voice", selection: $model.ttsVoiceSelection) {
                         ForEach(AppTTSVoiceSelection.allCases) { voice in
@@ -1931,7 +1934,7 @@ private struct SettingsScreen: View {
                         }
                     }
                     .accessibilityIdentifier("settings.ttsVoice.picker")
-                    .onChange(of: model.ttsVoiceSelection) { _, _ in
+                    .onCompatibleChange(of: model.ttsVoiceSelection) { _ in
                         model.ttsVoiceSelectionChanged()
                     }
                     Text(model.ttsVoiceSelection.detail)
@@ -1962,7 +1965,7 @@ private struct SettingsScreen: View {
                             }
                         }
                         .accessibilityIdentifier("settings.speechVoice.picker")
-                        .onChange(of: model.speechVoiceIdentifier) { _, _ in
+                        .onCompatibleChange(of: model.speechVoiceIdentifier) { _ in
                             model.ttsVoiceSelectionChanged()
                         }
                     }
@@ -1978,7 +1981,7 @@ private struct SettingsScreen: View {
                             .accessibilityValue(model.speechRateDescription)
                             .accessibilityIdentifier("settings.speechRate.slider")
                     }
-                    .onChange(of: model.speechRate) { _, _ in
+                    .onCompatibleChange(of: model.speechRate) { _ in
                         model.speechSettingsChanged()
                     }
                     Picker("Rendered Speech Cache", selection: $model.renderedSpeechCacheLimitMB) {
@@ -1988,7 +1991,7 @@ private struct SettingsScreen: View {
                         }
                     }
                     .accessibilityIdentifier("settings.renderedSpeechCache.picker")
-                    .onChange(of: model.renderedSpeechCacheLimitMB) { _, _ in
+                    .onCompatibleChange(of: model.renderedSpeechCacheLimitMB) { _ in
                         model.renderedSpeechCacheLimitChanged()
                     }
                     Text("Rendered native-text speech is reused until this least-recently-used cache exceeds the selected limit.")
@@ -2026,7 +2029,7 @@ private struct SettingsScreen: View {
                         Text("Section").tag("section")
                     }
                     .accessibilityIdentifier("settings.skipUnit.picker")
-                    .onChange(of: model.skipUnit) { _, _ in
+                    .onCompatibleChange(of: model.skipUnit) { _ in
                         model.settingsValueChanged()
                         model.saveProviderSettings()
                     }
@@ -2036,7 +2039,7 @@ private struct SettingsScreen: View {
                         }
                     }
                     .accessibilityIdentifier("settings.mediaSkipBack.picker")
-                    .onChange(of: model.mediaSkipBackSeconds) { _, _ in
+                    .onCompatibleChange(of: model.mediaSkipBackSeconds) { _ in
                         model.mediaSkipSettingsChanged()
                     }
                     Picker("Native Audio Forward", selection: $model.mediaSkipForwardSeconds) {
@@ -2045,7 +2048,7 @@ private struct SettingsScreen: View {
                         }
                     }
                     .accessibilityIdentifier("settings.mediaSkipForward.picker")
-                    .onChange(of: model.mediaSkipForwardSeconds) { _, _ in
+                    .onCompatibleChange(of: model.mediaSkipForwardSeconds) { _ in
                         model.mediaSkipSettingsChanged()
                     }
                 }
@@ -2056,7 +2059,7 @@ private struct SettingsScreen: View {
                         }
                     }
                     .accessibilityIdentifier("settings.podcastCacheLimit.picker")
-                    .onChange(of: model.podcastCacheLimitGB) { _, _ in
+                    .onCompatibleChange(of: model.podcastCacheLimitGB) { _ in
                         model.podcastCacheLimitChanged()
                     }
                     Text("Episodes stream immediately. Complete episodes download automatically on Wi-Fi and the least recently played files are removed when this limit is exceeded.")
@@ -2165,7 +2168,7 @@ private struct SettingsScreen: View {
                             Text("Phone/Tablet Offline").tag("phone-tablet-offline")
                         }
                         .accessibilityIdentifier("runtime.profile.picker")
-                        .onChange(of: model.selectedProfileId) { _, _ in
+                        .onCompatibleChange(of: model.selectedProfileId) { _ in
                             model.runtimeProfileChanged()
                         }
                         Button("Reset Library and Load Sample", role: .destructive) {
@@ -2378,23 +2381,23 @@ private struct BatchExportScreen: View {
                     }
                     .pickerStyle(.segmented)
                     .accessibilityIdentifier("batchExport.scope.picker")
-                    .onChange(of: model.exportScope) { _, _ in model.exportOptionsChanged() }
+                    .onCompatibleChange(of: model.exportScope) { _ in model.exportOptionsChanged() }
 
                     Toggle("Source Text", isOn: $model.exportIncludesSourceText)
                         .accessibilityIdentifier("batchExport.includeSourceText.toggle")
-                        .onChange(of: model.exportIncludesSourceText) { _, _ in model.exportOptionsChanged() }
+                        .onCompatibleChange(of: model.exportIncludesSourceText) { _ in model.exportOptionsChanged() }
                     Toggle("Reference", isOn: $model.exportIncludesReference)
                         .accessibilityIdentifier("batchExport.includeReference.toggle")
-                        .onChange(of: model.exportIncludesReference) { _, _ in model.exportOptionsChanged() }
+                        .onCompatibleChange(of: model.exportIncludesReference) { _ in model.exportOptionsChanged() }
                     Toggle("Listening Map", isOn: $model.exportIncludesListeningMap)
                         .accessibilityIdentifier("batchExport.includeListeningMap.toggle")
-                        .onChange(of: model.exportIncludesListeningMap) { _, _ in model.exportOptionsChanged() }
+                        .onCompatibleChange(of: model.exportIncludesListeningMap) { _ in model.exportOptionsChanged() }
                     Toggle("Interjections", isOn: $model.exportIncludesInterjections)
                         .accessibilityIdentifier("batchExport.includeInterjections.toggle")
-                        .onChange(of: model.exportIncludesInterjections) { _, _ in model.exportOptionsChanged() }
+                        .onCompatibleChange(of: model.exportIncludesInterjections) { _ in model.exportOptionsChanged() }
                     Toggle("AI Turns", isOn: $model.exportIncludesTurns)
                         .accessibilityIdentifier("batchExport.includeTurns.toggle")
-                        .onChange(of: model.exportIncludesTurns) { _, _ in model.exportOptionsChanged() }
+                        .onCompatibleChange(of: model.exportIncludesTurns) { _ in model.exportOptionsChanged() }
                 }
             }
         }
@@ -2502,7 +2505,7 @@ private struct ExportScreen: View {
                             }
                             .pickerStyle(.segmented)
                             .accessibilityIdentifier("export.format.picker")
-                            .onChange(of: model.exportFormat) { _, _ in model.exportOptionsChanged() }
+                            .onCompatibleChange(of: model.exportFormat) { _ in model.exportOptionsChanged() }
 
                             Picker("Scope", selection: $model.exportScope) {
                                 Text("Original").tag("original")
@@ -2511,23 +2514,23 @@ private struct ExportScreen: View {
                             }
                             .pickerStyle(.segmented)
                             .accessibilityIdentifier("export.scope.picker")
-                            .onChange(of: model.exportScope) { _, _ in model.exportOptionsChanged() }
+                            .onCompatibleChange(of: model.exportScope) { _ in model.exportOptionsChanged() }
 
                             Toggle("Source Text", isOn: $model.exportIncludesSourceText)
                                 .accessibilityIdentifier("export.includeSourceText.toggle")
-                                .onChange(of: model.exportIncludesSourceText) { _, _ in model.exportOptionsChanged() }
+                                .onCompatibleChange(of: model.exportIncludesSourceText) { _ in model.exportOptionsChanged() }
                             Toggle("Reference", isOn: $model.exportIncludesReference)
                                 .accessibilityIdentifier("export.includeReference.toggle")
-                                .onChange(of: model.exportIncludesReference) { _, _ in model.exportOptionsChanged() }
+                                .onCompatibleChange(of: model.exportIncludesReference) { _ in model.exportOptionsChanged() }
                             Toggle("Listening Map", isOn: $model.exportIncludesListeningMap)
                                 .accessibilityIdentifier("export.includeListeningMap.toggle")
-                                .onChange(of: model.exportIncludesListeningMap) { _, _ in model.exportOptionsChanged() }
+                                .onCompatibleChange(of: model.exportIncludesListeningMap) { _ in model.exportOptionsChanged() }
                             Toggle("Interjections", isOn: $model.exportIncludesInterjections)
                                 .accessibilityIdentifier("export.includeInterjections.toggle")
-                                .onChange(of: model.exportIncludesInterjections) { _, _ in model.exportOptionsChanged() }
+                                .onCompatibleChange(of: model.exportIncludesInterjections) { _ in model.exportOptionsChanged() }
                             Toggle("AI Turns", isOn: $model.exportIncludesTurns)
                                 .accessibilityIdentifier("export.includeTurns.toggle")
-                                .onChange(of: model.exportIncludesTurns) { _, _ in model.exportOptionsChanged() }
+                                .onCompatibleChange(of: model.exportIncludesTurns) { _ in model.exportOptionsChanged() }
                         }
                     }
                     VStack(alignment: .leading, spacing: 12) {
@@ -3249,6 +3252,26 @@ private struct RoundPlaybackButtonStyle: ButtonStyle {
             .frame(width: 62, height: 62)
             .background(AppColors.watchControl.opacity(configuration.isPressed ? 0.72 : 1))
             .clipShape(Circle())
+    }
+}
+
+private struct PlaybackControlLabel: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    let title: String
+    let systemImage: String
+
+    @ViewBuilder
+    var body: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(spacing: 4) {
+                Image(systemName: systemImage)
+                Text(title)
+                    .multilineTextAlignment(.center)
+            }
+        } else {
+            Label(title, systemImage: systemImage)
+        }
     }
 }
 

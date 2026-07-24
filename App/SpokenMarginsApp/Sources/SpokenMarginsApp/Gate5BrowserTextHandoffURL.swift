@@ -2,7 +2,11 @@ import Foundation
 import SessionKit
 
 enum Gate5BrowserTextHandoffURL {
+    #if SPOKEN_MARGINS_LEGACY
+    static let scheme = "spokenmargins-legacy"
+    #else
     static let scheme = "spokenmargins"
+    #endif
     static let host = "browser-text"
 
     static func isBrowserTextURL(_ url: URL) -> Bool {
