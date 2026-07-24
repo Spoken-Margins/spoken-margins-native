@@ -117,11 +117,59 @@ final class SupertonicTermsGateTests: XCTestCase {
         XCTAssertNoThrow(try model.verifyCurrentTermsForOnDeviceVoice())
     }
 
+    func testFirstPlaybackPromptsForTermsAndAcceptanceContinuesWithSupertonic() {
+        let snapshot = StandardDefaultsSnapshot(keys: termsAndVoiceDefaultsKeys)
+        defer { snapshot.restore() }
+        let defaults = UserDefaults.standard
+        SpokenMarginsTerms.clearAcceptance(in: defaults)
+        defaults.set(true, forKey: "supertonicTTSMigrationV1")
+        defaults.set(AppTTSVoiceSelection.james.rawValue, forKey: "ttsVoiceSelection")
+        defaults.set("supertonic", forKey: "ttsMode")
+        _ = Gate1AppModel(audioPlaybackClient: TermsNoopAudioPlaybackClient())
+        let model = Gate1AppModel(audioPlaybackClient: TermsNoopAudioPlaybackClient())
+        model.resetAndSeed()
+
+        model.start()
+
+        XCTAssertTrue(model.isTermsOfUsePresented)
+        XCTAssertNil(model.snapshot.sessionId)
+
+        model.acceptCurrentTermsAndEnableOnDeviceVoice()
+
+        XCTAssertFalse(model.isTermsOfUsePresented)
+        XCTAssertEqual(model.ttsVoiceSelection, .james)
+        XCTAssertEqual(model.snapshot.status, .playing)
+        XCTAssertNotNil(model.snapshot.sessionId)
+    }
+
+    func testDecliningFirstPlaybackTermsContinuesWithIOSVoice() {
+        let snapshot = StandardDefaultsSnapshot(keys: termsAndVoiceDefaultsKeys)
+        defer { snapshot.restore() }
+        let defaults = UserDefaults.standard
+        SpokenMarginsTerms.clearAcceptance(in: defaults)
+        defaults.set(true, forKey: "supertonicTTSMigrationV1")
+        defaults.set(AppTTSVoiceSelection.james.rawValue, forKey: "ttsVoiceSelection")
+        defaults.set("supertonic", forKey: "ttsMode")
+        let model = Gate1AppModel(audioPlaybackClient: TermsNoopAudioPlaybackClient())
+        model.resetAndSeed()
+
+        model.start()
+        model.declineCurrentTerms()
+
+        XCTAssertFalse(model.isTermsOfUsePresented)
+        XCTAssertFalse(model.hasAcceptedCurrentTerms)
+        XCTAssertEqual(model.ttsVoiceSelection, .system)
+        XCTAssertEqual(model.ttsMode, "systemImmediate")
+        XCTAssertEqual(model.snapshot.status, .playing)
+        XCTAssertNotNil(model.snapshot.sessionId)
+    }
+
     private var termsAndVoiceDefaultsKeys: [String] {
         [
             SpokenMarginsTerms.acceptanceVersionKey,
             SpokenMarginsTerms.acceptanceDateKey,
             "supertonicTTSMigrationV1",
+            "supertonicVoicePendingTermsV1",
             "ttsVoiceSelection",
             "ttsMode"
         ]

@@ -581,7 +581,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(audio.configuredSpeechVoices.last!, "test.voice")
     }
 
-    func testSupertonicVoiceChangeStopsPlaybackAndWaitsForExplicitPlay() throws {
+    func testSupertonicVoiceChangeStopsPlaybackAndCanResumeFromConfirmedPosition() throws {
         let priorTermsVersion = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceVersionKey)
         let priorTermsDate = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceDateKey)
         defer {
@@ -606,6 +606,12 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(audio.playedOffsets.count, playCount)
         XCTAssertEqual(UserDefaults.standard.string(forKey: "ttsVoiceSelection"), "supertonic:F2")
         XCTAssertEqual(UserDefaults.standard.string(forKey: "ttsMode"), "supertonic")
+
+        model.resumePlayback()
+
+        XCTAssertEqual(model.snapshot.status, .playing)
+        XCTAssertEqual(model.snapshot.currentTextStart, "One sentence. ".count)
+        XCTAssertEqual(audio.playedOffsets.last, "One sentence. ".count)
     }
 
     private func restoreUserDefault(_ value: Any?, forKey key: String) {

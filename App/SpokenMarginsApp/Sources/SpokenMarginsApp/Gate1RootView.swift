@@ -67,6 +67,7 @@ struct Gate1RootView: View {
                 SpokenMarginsTermsView(allowsAcceptance: true)
                     .environmentObject(model)
             }
+            .interactiveDismissDisabled(!model.hasAcceptedCurrentTerms)
         }
         .sheet(isPresented: $model.isHelpPresented) {
             HelpScreen()

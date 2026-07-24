@@ -298,6 +298,7 @@ final class Gate1AppModel: ObservableObject {
     private static let guidedOnboardingStageKey = "guidedOnboardingStageV1"
     private static let onboardingCardDismissedKey = "onboardingCardDismissedV1"
     private static let supertonicTTSMigrationKey = "supertonicTTSMigrationV1"
+    private static let supertonicVoicePendingTermsKey = "supertonicVoicePendingTermsV1"
     private static var isRunningUnitTests: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     }
@@ -463,6 +464,7 @@ final class Gate1AppModel: ObservableObject {
     private var pendingProviderJobForConsent: PendingProviderJob?
     private var pendingMapGenerationAfterConsent = false
     private var pendingTermsVoiceSelection: AppTTSVoiceSelection?
+    private var pendingPlaybackAfterTerms: PendingPlaybackAfterTerms?
     #if SPOKEN_MARGINS_WATCH
     private var activeWatchPackageRenderItemIds: Set<String> = []
     private var failedWatchPackageRenderItemIds: Set<String> = []
@@ -483,6 +485,13 @@ final class Gate1AppModel: ObservableObject {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return encoder
     }()
+
+    private enum PendingPlaybackAfterTerms {
+        case startCurrentItem
+        case resumeSession(String)
+        case jumpToChapter(String)
+        case playSourceFromBeginning
+    }
     private static func availableSpeechVoiceOptions() -> [SpeechVoiceChoice] {
         #if canImport(AVFoundation)
         return AVSpeechSynthesisVoice.speechVoices()
@@ -706,14 +715,27 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func enforceTermsGateForStoredVoice() {
+        let defaults = UserDefaults.standard
         hasAcceptedCurrentTerms = SpokenMarginsTerms.hasAcceptedCurrentVersion()
             && SpokenMarginsTerms.hasBundledText()
         acceptedTermsVersion = SpokenMarginsTerms.acceptedVersion()
-        guard !hasAcceptedCurrentTerms, ttsVoiceSelection.supertonicVoice != nil else { return }
+        if hasAcceptedCurrentTerms {
+            defaults.removeObject(forKey: Self.supertonicVoicePendingTermsKey)
+            return
+        }
+        if ttsVoiceSelection.supertonicVoice != nil {
+            pendingTermsVoiceSelection = ttsVoiceSelection
+            defaults.set(ttsVoiceSelection.rawValue, forKey: Self.supertonicVoicePendingTermsKey)
+        } else if let rawValue = defaults.string(forKey: Self.supertonicVoicePendingTermsKey),
+                  let pendingVoice = AppTTSVoiceSelection(rawValue: rawValue),
+                  pendingVoice.supertonicVoice != nil {
+            pendingTermsVoiceSelection = pendingVoice
+        }
+        guard pendingTermsVoiceSelection != nil else { return }
         ttsVoiceSelection = .system
         synchronizeTTSModeFromSelection()
-        UserDefaults.standard.set(ttsVoiceSelection.rawValue, forKey: "ttsVoiceSelection")
-        UserDefaults.standard.set(ttsMode, forKey: "ttsMode")
+        defaults.set(ttsVoiceSelection.rawValue, forKey: "ttsVoiceSelection")
+        defaults.set(ttsMode, forKey: "ttsMode")
     }
 
     var termsAcceptanceDescription: String {
@@ -735,12 +757,15 @@ final class Gate1AppModel: ObservableObject {
             reportFailure(SpokenMarginsTermsError.bundledTermsUnavailable, context: "Terms acceptance failed")
             return
         }
+        let pendingPlayback = pendingPlaybackAfterTerms
+        pendingPlaybackAfterTerms = nil
         SpokenMarginsTerms.recordAcceptance()
         hasAcceptedCurrentTerms = true
         acceptedTermsVersion = SpokenMarginsTerms.currentVersion
         isTermsOfUsePresented = false
         ttsVoiceSelection = pendingTermsVoiceSelection ?? .james
         pendingTermsVoiceSelection = nil
+        UserDefaults.standard.removeObject(forKey: Self.supertonicVoicePendingTermsKey)
         saveSpeechSettings()
         if let engine {
             snapshot = (try? engine.stopPlayback()) ?? snapshot
@@ -749,14 +774,52 @@ final class Gate1AppModel: ObservableObject {
         _ = rebuildEngineForCurrentSettings()
         diagnostics["termsAcceptedVersion"] = SpokenMarginsTerms.currentVersion
         reportSuccess("Terms accepted. \(ttsVoiceSelection.displayName) is enabled.")
+        continuePlaybackAfterTerms(pendingPlayback)
     }
 
     func declineCurrentTerms() {
+        let pendingPlayback = pendingPlaybackAfterTerms
+        pendingPlaybackAfterTerms = nil
         pendingTermsVoiceSelection = nil
+        UserDefaults.standard.removeObject(forKey: Self.supertonicVoicePendingTermsKey)
         isTermsOfUsePresented = false
         ttsVoiceSelection = .system
         saveSpeechSettings()
         reportSuccess("The iOS system voice remains enabled.")
+        continuePlaybackAfterTerms(pendingPlayback)
+    }
+
+    private func requireTermsDecisionBeforePlayback(_ action: PendingPlaybackAfterTerms) -> Bool {
+        guard !hasAcceptedCurrentTerms, pendingTermsVoiceSelection?.supertonicVoice != nil else {
+            return false
+        }
+        pendingPlaybackAfterTerms = action
+        isTermsOfUsePresented = true
+        diagnostics["termsGate"] = "presented_for_first_playback"
+        statusMessage = "Choose whether to enable the improved on-device voice before playback begins."
+        return true
+    }
+
+    private func continuePlaybackAfterTerms(_ action: PendingPlaybackAfterTerms?) {
+        guard let action else { return }
+        switch action {
+        case .startCurrentItem:
+            start()
+        case .resumeSession(let sessionId):
+            guard let session = try? store?.loadSession(id: sessionId) else {
+                reportFailure("The listening session could not be restored after choosing a voice.")
+                return
+            }
+            resumeSession(session)
+        case .jumpToChapter(let chapterId):
+            guard let chapter = selectedItem.chapters.first(where: { $0.id == chapterId }) else {
+                reportFailure("The selected chapter could not be restored after choosing a voice.")
+                return
+            }
+            jumpToChapter(chapter)
+        case .playSourceFromBeginning:
+            playSourceFromBeginning()
+        }
     }
 
     var aiDataSharingConsentDescription: String {
@@ -1947,6 +2010,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func start() {
+        guard !requireTermsDecisionBeforePlayback(.startCurrentItem) else { return }
         stopSpeechPreviews()
         streamingSpeechQueue.stopAndClear()
         scheduleTextAudioPrewarmIfNeeded(itemId: activeItemId)
@@ -1988,6 +2052,11 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func resumePlayback() {
+        guard let sessionId = snapshot.sessionId else {
+            reportFailure("There is no listening session to resume.")
+            return
+        }
+        guard !requireTermsDecisionBeforePlayback(.resumeSession(sessionId)) else { return }
         stopSpeechPreviews()
         streamingSpeechQueue.relinquishToCanonicalPlayback()
         run { engine in
@@ -2128,6 +2197,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func jumpToChapter(_ chapter: Chapter) {
+        guard !requireTermsDecisionBeforePlayback(.jumpToChapter(chapter.id)) else { return }
         stopSpeechPreviews()
         clearPendingAutoPlayTurns()
         run { engine in
@@ -2143,6 +2213,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func playSourceFromBeginning() {
+        guard !requireTermsDecisionBeforePlayback(.playSourceFromBeginning) else { return }
         stopSpeechPreviews()
         clearPendingAutoPlayTurns()
         run { engine in
@@ -2325,6 +2396,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func resumeSession(_ session: Session) {
+        guard !requireTermsDecisionBeforePlayback(.resumeSession(session.id)) else { return }
         stopSpeechPreviews()
         do {
             let store = try requireStore()
@@ -3639,6 +3711,7 @@ final class Gate1AppModel: ObservableObject {
     func ttsVoiceSelectionChanged() {
         if ttsVoiceSelection.supertonicVoice != nil, !hasAcceptedCurrentTerms {
             pendingTermsVoiceSelection = ttsVoiceSelection
+            UserDefaults.standard.set(ttsVoiceSelection.rawValue, forKey: Self.supertonicVoicePendingTermsKey)
             ttsVoiceSelection = .system
             saveSpeechSettings()
             isTermsOfUsePresented = true
@@ -3683,6 +3756,7 @@ final class Gate1AppModel: ObservableObject {
     private func previewSupertonicVoice(_ voice: SupertonicVoiceID) {
         guard hasAcceptedCurrentTerms else {
             pendingTermsVoiceSelection = ttsVoiceSelection.supertonicVoice == nil ? .james : ttsVoiceSelection
+            UserDefaults.standard.set(pendingTermsVoiceSelection?.rawValue, forKey: Self.supertonicVoicePendingTermsKey)
             ttsVoiceSelection = .system
             saveSpeechSettings()
             isTermsOfUsePresented = true
@@ -4890,7 +4964,19 @@ final class Gate1AppModel: ObservableObject {
     private func rebuildEngineForCurrentSettings() -> Bool {
         guard let store else { return true }
         do {
-            installEngine(try makeEngine(store: store))
+            let replacement = try makeEngine(store: store)
+            let sessionId = engine?.currentSession?.id ?? snapshot.sessionId
+            if engine?.currentSession != nil {
+                snapshot = try engine?.stopPlayback() ?? snapshot
+            }
+            let restoredSnapshot = try sessionId.map { try replacement.inspectSession(sessionId: $0) }
+            installEngine(replacement)
+            if let restoredSnapshot {
+                snapshot = restoredSnapshot
+                activeItemId = restoredSnapshot.itemId ?? activeItemId
+                refreshSelectedItem()
+                diagnostics["sessionRestoredAfterRuntimeRebuild"] = sessionId
+            }
             return true
         } catch {
             reportFailure(error, context: "Runtime profile update failed")
