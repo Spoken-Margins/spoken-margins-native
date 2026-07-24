@@ -90,9 +90,14 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             storedVersion: 0,
             isUITesting: false
         ))
-        XCTAssertFalse(Gate1AppModel.shouldSeedWelcomeSample(
+        XCTAssertTrue(Gate1AppModel.shouldSeedWelcomeSample(
             libraryIsEmpty: true,
             storedVersion: 1,
+            isUITesting: false
+        ))
+        XCTAssertFalse(Gate1AppModel.shouldSeedWelcomeSample(
+            libraryIsEmpty: true,
+            storedVersion: 2,
             isUITesting: false
         ))
         XCTAssertFalse(Gate1AppModel.shouldSeedWelcomeSample(
@@ -115,8 +120,66 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(model.selectedItem.text.contains("backward and forward buttons"))
         XCTAssertTrue(model.selectedItem.text.contains("paste a podcast"))
         XCTAssertTrue(model.selectedItem.text.contains("Import Text or PDF Files"))
+        XCTAssertTrue(model.selectedItem.text.contains("Summarize Notes synthesizes"))
+        XCTAssertTrue(model.selectedItem.text.contains("enable Spoken Margins Text"))
         XCTAssertFalse(model.selectedItem.text.contains("You Can't Inspect the Pill"))
         XCTAssertEqual(model.selectedItem.chapters.count, 5)
+    }
+
+    func testGuidedOnboardingAdvancesOnlyFromCompletedProductActions() throws {
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: NoopRecordingClient(),
+            interjectionTranscriptionHandler: { _ in "A practice note." }
+        )
+        model.resetOnboardingProgressForTesting()
+        defer { model.resetOnboardingProgressForTesting() }
+        model.resetAndSeed()
+
+        model.startGuidedOnboarding()
+
+        XCTAssertEqual(model.selectedItem.id, Gate1AppModel.welcomeSampleItemId)
+        XCTAssertEqual(model.screen, .playback)
+        XCTAssertEqual(model.guidedOnboardingStage, .practiceInterjection)
+        XCTAssertFalse(model.isOnboardingStepComplete(.firstInterjection))
+
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        XCTAssertTrue(model.snapshot.isRecording)
+        model.dispatchGate2CompactCommand(.finishInterjection)
+
+        XCTAssertTrue(model.isOnboardingStepComplete(.firstInterjection))
+        XCTAssertEqual(model.guidedOnboardingStage, .reviewTimeline)
+        let interjection = try XCTUnwrap(model.selectedItem.interjections.first)
+
+        model.recordTimelineInterjectionViewed(interjectionId: interjection.id)
+
+        XCTAssertTrue(model.isOnboardingStepComplete(.reviewedTimeline))
+        XCTAssertEqual(model.guidedOnboardingStage, .optionalAI)
+
+        model.continueGuidedOnboardingPastAI()
+        XCTAssertEqual(model.guidedOnboardingStage, .exportSession)
+        model.openExport()
+        model.recordSessionExported()
+
+        XCTAssertTrue(model.isOnboardingStepComplete(.exportedSession))
+        XCTAssertTrue(model.hasCompletedCoreOnboarding)
+        XCTAssertEqual(model.guidedOnboardingStage, .complete)
+    }
+
+    func testManualImportCountsAsOwnSourceButNotAsSafariFileOrPodcast() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetOnboardingProgressForTesting()
+        defer { model.resetOnboardingProgressForTesting() }
+        model.resetAndSeed()
+        model.importTitle = "My Source"
+        model.importText = "This source belongs to the user."
+
+        model.importTextItem()
+
+        XCTAssertTrue(model.isOnboardingStepComplete(.addedOwnSource))
+        XCTAssertFalse(model.isOnboardingStepComplete(.addedFromSafari))
+        XCTAssertFalse(model.isOnboardingStepComplete(.addedFromFiles))
+        XCTAssertFalse(model.isOnboardingStepComplete(.addedPodcast))
     }
 
     func testManualImportClearsEntryFieldsAfterSuccessfulCreate() {

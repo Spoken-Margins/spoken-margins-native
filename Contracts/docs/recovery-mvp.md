@@ -4,7 +4,17 @@
 
 Spoken Margins is a personal conversational listening app. A complete daily-driver loop imports an article or podcast, plays it with native audio or the user's installed iOS voice, preserves play/pause/back/forward behavior, captures an anchored interjection, streams a contextual OpenAI response into local speech, supports a manually generated Listening Map, and exports the complete exchange for another chatbot.
 
-The phone app is library-first. Source intake lives behind Add Source and continues to support pasted text, links, files, and a configured quick folder without occupying the primary library surface. A new production library starts empty; sample data is an explicit user or developer action.
+The phone app is library-first. Source intake lives behind Add Source and continues to support pasted text, links, files, and a configured quick folder without occupying the primary library surface. A new production library contains one clearly identified Welcome to Spoken Margins item that doubles as a replayable guided tour; it is not treated as user-owned content.
+
+## Onboarding
+
+Onboarding teaches the product's core loop before asking the user to explore intake breadth: listen, save an interjection, open that interjection from the Timeline, and successfully copy or share the session export. The welcome item provides the practice context. The tour is skippable, resumable, and replayable from Help.
+
+Core progress is shown in a dismissible Home card rather than a global safe-area banner, because transient errors, import state, undo, and playback feedback retain priority. The card opens the Help onboarding hub. Help also documents optional source exploration through Safari, Files, and podcast links; those source types do not block completion of core onboarding.
+
+Checklist completion comes from evidence rather than self-reported taps. A saved active interjection, an explicit Timeline interjection open, and a successful clipboard/share completion satisfy the three core steps. The app reconciles interjection and typed item provenance from local persistence after relaunch. The seeded welcome item never satisfies "add one source of your own." Browser-page captures, file imports, and playable podcast resolution record distinct optional intake evidence.
+
+The AI explanation appears after the user has reviewed an interjection. It distinguishes Summarize Notes from Discuss and states that both require the user's OpenAI API key, network access, and separate content-sharing permission. The explanation must also state that playback, interjections, Timeline review, and export work without AI.
 
 ## Active Boundary
 

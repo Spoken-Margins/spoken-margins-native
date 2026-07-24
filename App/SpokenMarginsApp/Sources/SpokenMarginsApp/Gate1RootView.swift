@@ -188,6 +188,65 @@ private struct HelpScreen: View {
     var body: some View {
         NavigationStack {
             List {
+                Section("Getting Started") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text("Learn the core loop")
+                                .font(.headline)
+                            Spacer()
+                            Text("\(model.onboardingCoreCompletedCount) of \(OnboardingStep.core.count)")
+                                .font(.subheadline.monospacedDigit())
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
+                        ProgressView(
+                            value: Double(model.onboardingCoreCompletedCount),
+                            total: Double(OnboardingStep.core.count)
+                        )
+                        .tint(AppColors.primaryAction)
+                    }
+                    .padding(.vertical, 4)
+                    OnboardingChecklistRow(
+                        title: "Make your first interjection",
+                        isComplete: model.isOnboardingStepComplete(.firstInterjection)
+                    )
+                    OnboardingChecklistRow(
+                        title: "Find it in the timeline",
+                        isComplete: model.isOnboardingStepComplete(.reviewedTimeline)
+                    )
+                    OnboardingChecklistRow(
+                        title: "Export or copy a session",
+                        isComplete: model.isOnboardingStepComplete(.exportedSession)
+                    )
+                    Button(
+                        model.hasCompletedCoreOnboarding ? "Replay Guided Tour" : "Start or Resume Guided Tour",
+                        action: model.startGuidedOnboarding
+                    )
+                    .accessibilityIdentifier("help.onboarding.start.button")
+                    if model.isOnboardingCardDismissed && !model.hasCompletedCoreOnboarding {
+                        Button("Show Progress on Home", action: model.restoreOnboardingCard)
+                            .accessibilityIdentifier("help.onboarding.restoreCard.button")
+                    }
+                }
+                Section("Bring In Your Content") {
+                    Text("These are optional ways to build your library. You do not need to try every source type to finish onboarding.")
+                        .foregroundStyle(AppColors.secondaryText)
+                    OnboardingChecklistRow(
+                        title: "Add one source of your own",
+                        isComplete: model.isOnboardingStepComplete(.addedOwnSource)
+                    )
+                    OnboardingChecklistRow(
+                        title: "Add something from Safari",
+                        isComplete: model.isOnboardingStepComplete(.addedFromSafari)
+                    )
+                    OnboardingChecklistRow(
+                        title: "Add something from Files",
+                        isComplete: model.isOnboardingStepComplete(.addedFromFiles)
+                    )
+                    OnboardingChecklistRow(
+                        title: "Add a podcast",
+                        isComplete: model.isOnboardingStepComplete(.addedPodcast)
+                    )
+                }
                 Section("Listening Sessions") {
                     Text("Continue Listening resumes your most recent unfinished session. Start New Session creates a separate listening pass with its own notes.")
                     Text("The X in the mini-player saves your place, stops playback, and hides the mini-player. It does not delete the session.")
@@ -195,15 +254,24 @@ private struct HelpScreen: View {
                 Section("Interjections") {
                     Text("Tap Interject, speak your note, then tap Done. The note stays attached to the session and the point you were hearing.")
                     Text("Playback restarts before transcription runs in the background. A short pause can still occur while the app saves the recording and switches the audio session back to playback.")
+                    Text("Open Timeline and tap an interjection to review its recording or transcript.")
                 }
-                Section("Summarize Notes") {
-                    Text("Summarize Notes uses your configured OpenAI API key to turn the current session’s interjections into a spoken debrief. Playback and recording work without an API key.")
+                Section("Optional AI") {
+                    Text("Summarize Notes synthesizes the interjections in the current session. Discuss answers a question using relevant source and session context.")
+                    Text("Both features require your OpenAI API key, network access, and separate permission to send content. Listening, interjections, the timeline, and export work without AI.")
+                    Button("Open AI Settings", action: model.openAISettingsFromOnboarding)
+                        .accessibilityIdentifier("help.aiSettings.button")
                 }
-                Section("Discuss") {
-                    Text("Type a question in Ask a follow-up, then tap Discuss. Spoken Margins sends the question with the relevant source context and interjection transcripts to the configured AI provider, then adds and reads the response in the session.")
+                Section("Safari Extension") {
+                    Text("In Safari, open Manage Extensions and enable Spoken Margins Text. Use Send to Spoken Margins to capture selected text or the readable page.")
+                    Text("You can also use Safari’s Share menu and choose Spoken Margins. The Safari extension captures articles; the Add Link field in the app is for podcast, RSS, or direct audio links.")
+                }
+                Section("Files and PDFs") {
+                    Text("From Home, tap Add Source, then Import Text or PDF Files. You can also share a PDF, Markdown file, or text file to Spoken Margins from another app.")
+                    Text("PDFs must contain extractable text. Image-only or scanned PDFs need OCR before Spoken Margins can import them.")
                 }
                 Section("Podcast Links") {
-                    Text("For Spotify, open the specific episode, tap Share, and send the episode link. A show or podcast-page link does not identify one episode.")
+                    Text("Paste a podcast episode, RSS, or direct audio URL into Add Source. For Spotify, share the specific episode; a show or podcast-page link does not identify one episode.")
                 }
                 Section("Share and Export") {
                     Text("Choose the listening session, format, and included material. Share Session opens the iOS share sheet; Copy puts the generated Markdown or JSON on the clipboard.")
@@ -220,6 +288,23 @@ private struct HelpScreen: View {
             }
             .accessibilityIdentifier("help.screen")
         }
+    }
+}
+
+private struct OnboardingChecklistRow: View {
+    let title: String
+    let isComplete: Bool
+
+    var body: some View {
+        Label {
+            Text(title)
+                .foregroundStyle(isComplete ? AppColors.secondaryText : AppColors.text)
+        } icon: {
+            Image(systemName: isComplete ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(isComplete ? AppColors.green : AppColors.secondaryText)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(isComplete ? "Complete" : "Not complete")
     }
 }
 
@@ -393,6 +478,9 @@ private struct HomeScreen: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     header
+                    if model.shouldShowOnboardingCard {
+                        onboardingCard
+                    }
                     queue
                 }
                 .padding(20)
@@ -534,6 +622,50 @@ private struct HomeScreen: View {
                 .font(.subheadline)
                 .foregroundStyle(AppColors.secondaryText)
         }
+    }
+
+    private var onboardingCard: some View {
+        ProductPanel {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 12) {
+                    Button(action: model.openHelp) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Label("Getting Started", systemImage: "questionmark.circle.fill")
+                                    .font(.headline)
+                                Spacer()
+                                Text("\(model.onboardingCoreCompletedCount) of \(OnboardingStep.core.count)")
+                                    .font(.subheadline.monospacedDigit())
+                                    .foregroundStyle(AppColors.secondaryText)
+                            }
+                            ProgressView(
+                                value: Double(model.onboardingCoreCompletedCount),
+                                total: Double(OnboardingStep.core.count)
+                            )
+                            .tint(AppColors.primaryAction)
+                            Text("Practice the listen, interject, review, and export loop.")
+                                .font(.subheadline)
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("home.onboarding.checklist.button")
+
+                    Button(action: model.dismissOnboardingCard) {
+                        Image(systemName: "xmark")
+                            .frame(width: 32, height: 32)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Hide getting started progress")
+                    .accessibilityIdentifier("home.onboarding.dismiss.button")
+                }
+                Button("Continue Guided Tour", action: model.startGuidedOnboarding)
+                    .buttonStyle(PrimaryButtonStyle())
+                    .accessibilityIdentifier("home.onboarding.continue.button")
+            }
+        }
+        .accessibilityIdentifier("home.onboarding.card")
     }
 
     private var createItem: some View {
@@ -1184,30 +1316,48 @@ private struct PlaybackScreen: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                Group {
-                    if horizontalSizeClass == .regular {
-                        HStack(alignment: .top, spacing: 24) {
-                            playbackControls
-                                .frame(width: 430)
-                            VStack(spacing: 20) {
-                                timeline
-                                conversation
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(spacing: 20) {
+                        if model.shouldShowGuidedOnboardingCoach {
+                            GuidedOnboardingPlaybackCard {
+                                withAnimation {
+                                    proxy.scrollTo("playback.timeline", anchor: .top)
+                                }
                             }
-                            .frame(maxWidth: 680)
                         }
-                        .frame(maxWidth: 1160, alignment: .topLeading)
-                    } else {
-                        VStack(spacing: 20) {
-                            playbackControls
-                            timeline
-                            conversation
+                        Group {
+                            if horizontalSizeClass == .regular {
+                                HStack(alignment: .top, spacing: 24) {
+                                    playbackControls
+                                        .frame(width: 430)
+                                    VStack(spacing: 20) {
+                                        timeline
+                                        conversation
+                                    }
+                                    .frame(maxWidth: 680)
+                                }
+                                .frame(maxWidth: 1160, alignment: .topLeading)
+                            } else {
+                                VStack(spacing: 20) {
+                                    playbackControls
+                                    timeline
+                                    conversation
+                                }
+                            }
+                        }
+                    }
+                    .padding(20)
+                }
+                .accessibilityIdentifier("playback.screen")
+                .onChange(of: model.guidedOnboardingStage) { _, stage in
+                    if stage == .reviewTimeline {
+                        withAnimation {
+                            proxy.scrollTo("playback.timeline", anchor: .top)
                         }
                     }
                 }
-                .padding(20)
             }
-            .accessibilityIdentifier("playback.screen")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(action: model.openHome) {
@@ -1709,6 +1859,7 @@ private struct PlaybackScreen: View {
                         .accessibilityIdentifier("timeline.chapter.jump.\(chapter.id)")
                     case .interjection(let interjection):
                         Button {
+                            model.recordTimelineInterjectionViewed(interjectionId: interjection.id)
                             selectedInterjection = interjection
                         } label: {
                             TimelineRow(
@@ -1745,6 +1896,7 @@ private struct PlaybackScreen: View {
             }
         }
         .accessibilityIdentifier("timeline.section")
+        .id("playback.timeline")
     }
 
     private var timelineEntries: [PlaybackTimelineEntry] {
@@ -1859,6 +2011,99 @@ private struct PlaybackScreen: View {
             }
         }
         .accessibilityIdentifier("conversation.section")
+    }
+}
+
+private struct GuidedOnboardingPlaybackCard: View {
+    @EnvironmentObject private var model: Gate1AppModel
+    let showTimeline: () -> Void
+
+    var body: some View {
+        ProductPanel {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 12) {
+                    Label("Guided Tour", systemImage: "sparkles")
+                        .font(.headline)
+                    Spacer()
+                    Button(action: model.pauseGuidedOnboarding) {
+                        Image(systemName: "xmark")
+                            .frame(width: 32, height: 32)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Pause guided tour")
+                }
+                stageContent
+            }
+        }
+        .frame(maxWidth: 720)
+        .accessibilityIdentifier("playback.onboarding.card")
+    }
+
+    @ViewBuilder
+    private var stageContent: some View {
+        switch model.guidedOnboardingStage {
+        case .practiceInterjection:
+            Text("Practice making an interjection")
+                .font(.title3.bold())
+            Text("Let the welcome source play until an idea occurs to you, then record a short note. Spoken Margins will anchor it to this listening session.")
+                .foregroundStyle(AppColors.secondaryText)
+            if model.snapshot.isRecording {
+                Button("Done Recording", action: model.finishInterjection)
+                    .buttonStyle(PrimaryButtonStyle())
+                    .accessibilityIdentifier("onboarding.interjection.done.button")
+            } else {
+                Button("Make an Interjection", action: model.beginInterjection)
+                    .buttonStyle(PrimaryButtonStyle())
+                    .disabled(!model.hasActiveSession)
+                    .accessibilityIdentifier("onboarding.interjection.start.button")
+            }
+        case .reviewTimeline:
+            Text("Find your note in the timeline")
+                .font(.title3.bold())
+            Text("Your saved interjection appears alongside the source chapters. Open it to review the recording or transcript.")
+                .foregroundStyle(AppColors.secondaryText)
+            Button("Show Timeline", action: showTimeline)
+                .buttonStyle(PrimaryButtonStyle())
+                .accessibilityIdentifier("onboarding.timeline.show.button")
+        case .optionalAI:
+            Text("AI is optional")
+                .font(.title3.bold())
+            Text("Summarize Notes synthesizes this session’s interjections. Discuss answers a question using relevant source and session context. Both require your OpenAI API key, network access, and permission to send content. Listening, notes, the timeline, and export work without AI.")
+                .foregroundStyle(AppColors.secondaryText)
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    Button("Set Up AI", action: model.openAISettingsFromOnboarding)
+                        .buttonStyle(SecondaryButtonStyle())
+                    Button("Continue Without AI", action: model.continueGuidedOnboardingPastAI)
+                        .buttonStyle(PrimaryButtonStyle())
+                }
+                VStack(alignment: .leading, spacing: 10) {
+                    Button("Continue Without AI", action: model.continueGuidedOnboardingPastAI)
+                        .buttonStyle(PrimaryButtonStyle())
+                    Button("Set Up AI", action: model.openAISettingsFromOnboarding)
+                        .buttonStyle(SecondaryButtonStyle())
+                }
+            }
+        case .exportSession:
+            Text("Keep the useful context")
+                .font(.title3.bold())
+            Text("Open the session export, then share it or copy its Markdown or JSON. Completion is recorded only after a share succeeds or the export is copied.")
+                .foregroundStyle(AppColors.secondaryText)
+            Button("Open Session Export", action: model.openExport)
+                .buttonStyle(PrimaryButtonStyle())
+                .disabled(!model.hasActiveSession)
+                .accessibilityIdentifier("onboarding.export.open.button")
+        case .complete:
+            Text("You know the core loop")
+                .font(.title3.bold())
+            Text("You can now add a source of your own, or keep exploring the welcome session. Source-specific setup remains available in Help.")
+                .foregroundStyle(AppColors.secondaryText)
+            Button("Finish Tour", action: model.finishGuidedOnboarding)
+                .buttonStyle(PrimaryButtonStyle())
+                .accessibilityIdentifier("onboarding.finish.button")
+        case .inactive:
+            EmptyView()
+        }
     }
 }
 
@@ -2468,6 +2713,7 @@ private struct BatchExportScreen: View {
 
 private struct ExportScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
+    @State private var isSharePresented = false
 
     var body: some View {
         NavigationStack {
@@ -2532,19 +2778,27 @@ private struct ExportScreen: View {
                     }
                     VStack(alignment: .leading, spacing: 12) {
                         if !model.exportPreview.isEmpty {
-                            if model.exportFormat == "markdown", let fileURL = model.exportFileURL {
-                                ShareLink(item: fileURL) {
-                                    Label("Share Session", systemImage: "square.and.arrow.up")
-                                }
-                                .buttonStyle(PrimaryButtonStyle())
-                                .accessibilityIdentifier("export.share.button")
-                            } else {
-                                ShareLink(item: model.exportPreview) {
-                                    Label("Share Session", systemImage: "square.and.arrow.up")
-                                }
-                                .buttonStyle(PrimaryButtonStyle())
-                                .accessibilityIdentifier("export.share.button")
+                            #if canImport(UIKit)
+                            Button {
+                                isSharePresented = true
+                            } label: {
+                                Label("Share Session", systemImage: "square.and.arrow.up")
                             }
+                            .buttonStyle(PrimaryButtonStyle())
+                            .accessibilityIdentifier("export.share.button")
+                            .sheet(isPresented: $isSharePresented) {
+                                SessionActivityView(
+                                    activityItems: exportActivityItems,
+                                    onSuccessfulCompletion: model.recordSessionExported
+                                )
+                            }
+                            #else
+                            ShareLink(item: model.exportPreview) {
+                                Label("Share Session", systemImage: "square.and.arrow.up")
+                            }
+                            .buttonStyle(PrimaryButtonStyle())
+                            .accessibilityIdentifier("export.share.button")
+                            #endif
                         }
                         Button {
                             model.copyPlainTextExport()
@@ -2579,7 +2833,37 @@ private struct ExportScreen: View {
             }
         }
     }
+
+    #if canImport(UIKit)
+    private var exportActivityItems: [Any] {
+        if model.exportFormat == "markdown", let fileURL = model.exportFileURL {
+            return [fileURL]
+        }
+        return [model.exportPreview]
+    }
+    #endif
 }
+
+#if canImport(UIKit)
+private struct SessionActivityView: UIViewControllerRepresentable {
+    @Environment(\.dismiss) private var dismiss
+    let activityItems: [Any]
+    let onSuccessfulCompletion: () -> Void
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+        controller.completionWithItemsHandler = { _, completed, _, _ in
+            if completed {
+                onSuccessfulCompletion()
+            }
+            dismiss()
+        }
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+#endif
 
 private struct PastedAssistantResponseView: View {
     @EnvironmentObject private var model: Gate1AppModel
