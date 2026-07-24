@@ -489,8 +489,8 @@ final class Gate1AppModel: ObservableObject {
     private enum PendingPlaybackAfterTerms {
         case startCurrentItem
         case resumeSession(String)
-        case jumpToChapter(String)
-        case playSourceFromBeginning
+        case jumpToChapter(String, fromTimeline: Bool)
+        case playSourceFromBeginning(fromTimeline: Bool)
     }
     private static func availableSpeechVoiceOptions() -> [SpeechVoiceChoice] {
         #if canImport(AVFoundation)
@@ -621,6 +621,10 @@ final class Gate1AppModel: ObservableObject {
 
     func recordTimelineInterjectionViewed(interjectionId: String) {
         guard selectedItem.interjections.contains(where: { $0.id == interjectionId }) else { return }
+        recordTimelineReviewCompleted()
+    }
+
+    private func recordTimelineReviewCompleted() {
         markOnboardingSteps([.reviewedTimeline])
         if guidedOnboardingStage == .reviewTimeline {
             setGuidedOnboardingStage(.optionalAI)
@@ -811,14 +815,14 @@ final class Gate1AppModel: ObservableObject {
                 return
             }
             resumeSession(session)
-        case .jumpToChapter(let chapterId):
+        case .jumpToChapter(let chapterId, let fromTimeline):
             guard let chapter = selectedItem.chapters.first(where: { $0.id == chapterId }) else {
                 reportFailure("The selected chapter could not be restored after choosing a voice.")
                 return
             }
-            jumpToChapter(chapter)
-        case .playSourceFromBeginning:
-            playSourceFromBeginning()
+            jumpToChapter(chapter, fromTimeline: fromTimeline)
+        case .playSourceFromBeginning(let fromTimeline):
+            playSourceFromBeginning(fromTimeline: fromTimeline)
         }
     }
 
@@ -2196,8 +2200,8 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func jumpToChapter(_ chapter: Chapter) {
-        guard !requireTermsDecisionBeforePlayback(.jumpToChapter(chapter.id)) else { return }
+    func jumpToChapter(_ chapter: Chapter, fromTimeline: Bool = false) {
+        guard !requireTermsDecisionBeforePlayback(.jumpToChapter(chapter.id, fromTimeline: fromTimeline)) else { return }
         stopSpeechPreviews()
         clearPendingAutoPlayTurns()
         run { engine in
@@ -2208,12 +2212,15 @@ final class Gate1AppModel: ObservableObject {
             snapshot = try engine.jumpToChapter(chapterId: chapter.id)
             refreshSelectedItem()
             screen = .playback
+            if fromTimeline {
+                recordTimelineReviewCompleted()
+            }
             reportSuccess("Jumped to \(chapter.title).")
         }
     }
 
-    func playSourceFromBeginning() {
-        guard !requireTermsDecisionBeforePlayback(.playSourceFromBeginning) else { return }
+    func playSourceFromBeginning(fromTimeline: Bool = false) {
+        guard !requireTermsDecisionBeforePlayback(.playSourceFromBeginning(fromTimeline: fromTimeline)) else { return }
         stopSpeechPreviews()
         clearPendingAutoPlayTurns()
         run { engine in
@@ -2225,6 +2232,9 @@ final class Gate1AppModel: ObservableObject {
             }
             refreshSelectedItem()
             screen = .playback
+            if fromTimeline {
+                recordTimelineReviewCompleted()
+            }
             reportSuccess("Playing source from the beginning.")
         }
     }
@@ -2862,21 +2872,27 @@ final class Gate1AppModel: ObservableObject {
         submitDiscussionFollowUp(request, explicitFollowUp: trimmed, primaryInterjections: currentInterjections)
     }
 
-    func playTurn(_ turn: ConversationTurn) {
+    func playTurn(_ turn: ConversationTurn, fromTimeline: Bool = false) {
         stopSpeechPreviews()
         run { engine in
             try playTurn(turn.id, engine: engine)
+            if fromTimeline {
+                recordTimelineReviewCompleted()
+            }
             reportSuccess("Playing \(turnTitleText(turn)).")
         }
     }
 
-    func jumpToTurnChapter(turn: ConversationTurn, chapter: Chapter) {
+    func jumpToTurnChapter(turn: ConversationTurn, chapter: Chapter, fromTimeline: Bool = false) {
         stopSpeechPreviews()
         clearPendingAutoPlayTurns()
         run { engine in
             snapshot = try engine.jumpToTurnChapter(turnId: turn.id, chapterId: chapter.id)
             refreshSelectedItem()
             screen = .playback
+            if fromTimeline {
+                recordTimelineReviewCompleted()
+            }
             reportSuccess("Jumped to \(chapter.title).")
         }
     }

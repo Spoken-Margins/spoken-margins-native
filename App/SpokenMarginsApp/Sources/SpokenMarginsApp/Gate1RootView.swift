@@ -1836,7 +1836,7 @@ private struct PlaybackScreen: View {
                     switch entry {
                     case .sourceItem:
                         Button {
-                            model.playSourceFromBeginning()
+                            model.playSourceFromBeginning(fromTimeline: true)
                         } label: {
                             TimelineRow(percent: "SRC", title: model.selectedItem.title, subtitle: "Play source from beginning")
                         }
@@ -1847,7 +1847,7 @@ private struct PlaybackScreen: View {
                             .accessibilityIdentifier("timeline.overview")
                     case .chapter(let chapter):
                         Button {
-                            model.jumpToChapter(chapter)
+                            model.jumpToChapter(chapter, fromTimeline: true)
                         } label: {
                             TimelineRow(
                                 percent: "\(chapter.percent)%",
@@ -1873,7 +1873,7 @@ private struct PlaybackScreen: View {
                         .accessibilityIdentifier("timeline.interjection.\(interjection.id)")
                     case .turn(let turn):
                         Button {
-                            model.playTurn(turn)
+                            model.playTurn(turn, fromTimeline: true)
                         } label: {
                             TimelineRow(percent: turnBadge(turn), title: turnTitle(turn), subtitle: turn.summary ?? turn.text ?? humanizedTurnStatus(turn.status))
                         }
@@ -1881,7 +1881,7 @@ private struct PlaybackScreen: View {
                         .accessibilityIdentifier("timeline.turn.play.\(turn.id)")
                     case .turnChapter(let turn, let chapter):
                         Button {
-                            model.jumpToTurnChapter(turn: turn, chapter: chapter)
+                            model.jumpToTurnChapter(turn: turn, chapter: chapter, fromTimeline: true)
                         } label: {
                             TimelineRow(
                                 percent: "AI \(chapter.percent)%",
@@ -2059,9 +2059,9 @@ private struct GuidedOnboardingPlaybackCard: View {
                     .accessibilityIdentifier("onboarding.interjection.start.button")
             }
         case .reviewTimeline:
-            Text("Find your note in the timeline")
+            Text("Use the timeline")
                 .font(.title3.bold())
-            Text("Your saved interjection appears alongside the source chapters. Open it to review the recording or transcript.")
+            Text("Tap your saved interjection to review it, or tap any source chapter to jump there. Either action completes this step.")
                 .foregroundStyle(AppColors.secondaryText)
             Button("Show Timeline", action: showTimeline)
                 .buttonStyle(PrimaryButtonStyle())

@@ -166,6 +166,37 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.guidedOnboardingStage, .complete)
     }
 
+    func testGuidedOnboardingTimelineChapterCompletesReviewStep() throws {
+        let priorTermsVersion = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceVersionKey)
+        let priorTermsDate = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceDateKey)
+        defer {
+            restoreUserDefault(priorTermsVersion, forKey: SpokenMarginsTerms.acceptanceVersionKey)
+            restoreUserDefault(priorTermsDate, forKey: SpokenMarginsTerms.acceptanceDateKey)
+        }
+        SpokenMarginsTerms.recordAcceptance()
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: NoopRecordingClient()
+        )
+        model.resetOnboardingProgressForTesting()
+        defer { model.resetOnboardingProgressForTesting() }
+        model.resetAndSeed()
+        model.startGuidedOnboarding()
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        model.dispatchGate2CompactCommand(.finishInterjection)
+        let chapter = try XCTUnwrap(model.selectedItem.chapters.first)
+
+        model.jumpToChapter(chapter)
+
+        XCTAssertEqual(model.guidedOnboardingStage, .reviewTimeline)
+        XCTAssertFalse(model.isOnboardingStepComplete(.reviewedTimeline))
+
+        model.jumpToChapter(chapter, fromTimeline: true)
+
+        XCTAssertTrue(model.isOnboardingStepComplete(.reviewedTimeline))
+        XCTAssertEqual(model.guidedOnboardingStage, .optionalAI)
+    }
+
     func testManualImportCountsAsOwnSourceButNotAsSafariFileOrPodcast() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetOnboardingProgressForTesting()
