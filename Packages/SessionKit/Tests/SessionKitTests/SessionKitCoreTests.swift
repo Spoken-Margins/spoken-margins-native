@@ -1260,6 +1260,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(interjection.anchor.mediaTimeMs, 123_000)
         XCTAssertNil(interjection.anchor.transcriptSegmentId)
         XCTAssertEqual(interjection.anchor.playbackRateObserved, 1)
+        XCTAssertEqual(interjection.roughPercent, 13)
 
         let export = try engine.buildExport(options: ExportOptions(
             includeFullText: false,
@@ -1272,6 +1273,93 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(export.interjections.first?.mediaTimeMs, 123_000)
         XCTAssertTrue(markdown.contains("Media time: 2:03"))
         XCTAssertTrue(markdown.contains("Source Type: remote_stream"))
+    }
+
+    func testInspectSessionRepairsMediaPercentagesFromDurableTimestamps() throws {
+        let item = Item(
+            id: "item-source-repair",
+            title: "Repairable Podcast",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/episode",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://cdn.example.com/episode.mp3", durationMs: 900_000)
+        )
+        let session = Session(
+            id: "session-source-repair",
+            itemId: item.id,
+            status: "in_progress",
+            phase: .itemPlayback,
+            currentTargetType: .transcriptBackedMedia,
+            currentTargetId: item.media?.url ?? item.id,
+            position: Position(mediaTimeMs: 450_000),
+            completionPercent: 0,
+            playbackRate: 1
+        )
+        let interjection = Interjection(
+            id: "ij-source-repair",
+            itemId: item.id,
+            sessionId: session.id,
+            targetType: .item,
+            targetId: item.id,
+            createdAt: Date(timeIntervalSince1970: 1),
+            roughPercent: 0,
+            anchor: Anchor(
+                anchorType: .media,
+                startChar: 0,
+                endChar: 0,
+                anchorBefore: "",
+                anchorAfter: "",
+                mediaTimeMs: 225_000
+            ),
+            audioPath: "interjections/repair.m4a",
+            audioStatus: "saved",
+            transcriptionStatus: "complete",
+            transcript: "Repair this position.",
+            cleanedTranscript: nil,
+            displayText: nil,
+            status: "active"
+        )
+        let repo = InMemorySessionRepository(
+            items: [item.id: item],
+            sessions: [session.id: session],
+            interjections: [interjection.id: interjection]
+        )
+        let engine = SessionEngine(profile: phonePlaybackProfile(), repository: repo, audio: RecordingAudioClient())
+
+        let snapshot = try engine.inspectSession(sessionId: session.id)
+
+        XCTAssertEqual(snapshot.sourceProgressPercent, 50)
+        XCTAssertEqual(repo.sessions[session.id]?.completionPercent, 50)
+        XCTAssertEqual(repo.interjections[interjection.id]?.roughPercent, 25)
+    }
+
+    func testObservedPlayerDurationIsPersistedAndUsedForMediaInterjectionPercent() throws {
+        let item = Item(
+            id: "item-source-observed-duration",
+            title: "Podcast Without Feed Duration",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/episode",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://cdn.example.com/episode.mp3")
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: phonePlaybackProfile(), repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentMediaTimeValue = 225_000
+        audio.currentDurationMs = 900_000
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: "interjections/observed-duration.m4a")
+
+        let saved = try XCTUnwrap(try repo.loadInterjections(sessionId: engine.currentSession?.id ?? "").first)
+        XCTAssertEqual(saved.anchor.mediaTimeMs, 225_000)
+        XCTAssertEqual(saved.roughPercent, 25)
+        XCTAssertEqual(repo.items[item.id]?.media?.durationMs, 900_000)
     }
 
     func testTwentyFiveMinuteMediaPositionSurvivesInterjectionDismissAndResume() throws {

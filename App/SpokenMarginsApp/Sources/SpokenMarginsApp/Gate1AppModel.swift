@@ -90,6 +90,7 @@ struct ItemDetailState {
     var overview = ""
     var chapters: [Chapter] = []
     var mediaChapters: [MediaTimelineChapter] = []
+    var mediaDurationMs: Int?
     var sessions: [Session] = []
     var sessionRows: [SessionPresentation] = []
     var interjections: [Interjection] = []
@@ -7116,7 +7117,8 @@ final class Gate1AppModel: ObservableObject {
     private func loadItemDetail(id: String, store: SQLiteSessionStore) throws -> ItemDetailState {
         let item = try store.loadItem(id: id)
         let map = try store.loadListeningMap(itemId: id)
-        let mediaChapters = try store.loadTranscriptTimeline(itemId: id)?.timeline.chapters ?? []
+        let mediaTimeline = try store.loadTranscriptTimeline(itemId: id)?.timeline
+        let mediaChapters = mediaTimeline?.chapters ?? []
         let sessions = try store.loadSessions(itemId: id)
         let activeSessionId = snapshot.sessionId ?? sessions.first?.id
         let interjections = activeSessionId.flatMap { try? store.loadInterjections(sessionId: $0).filter { $0.status == "active" } } ?? []
@@ -7143,6 +7145,7 @@ final class Gate1AppModel: ObservableObject {
             overview: map?.overview ?? "",
             chapters: map?.chapters ?? [],
             mediaChapters: mediaChapters,
+            mediaDurationMs: item.media?.durationMs ?? mediaTimeline?.durationMs,
             sessions: sessions,
             sessionRows: sessionRows,
             interjections: interjections,

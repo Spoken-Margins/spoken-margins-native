@@ -930,7 +930,7 @@ private struct HomeScreen: View {
                                         .font(.subheadline)
                                         .foregroundStyle(AppColors.secondaryText)
                                     if item.hasContinuationSession, let progress = item.continuationProgressPercent {
-                                        Text("Continue at \(progress)%")
+                                        Text("Progress: \(progress)%")
                                             .font(.caption.weight(.semibold))
                                             .foregroundStyle(AppColors.green)
                                     }
@@ -1867,7 +1867,10 @@ private struct PlaybackScreen: View {
                             selectedInterjection = interjection
                         } label: {
                             TimelineRow(
-                                percent: "\(interjection.roughPercent)%",
+                                percent: InterjectionPositionPresentation.timelineBadge(
+                                    for: interjection,
+                                    durationMs: interjectionMediaDurationMs
+                                ),
                                 title: "Interjection",
                                 subtitle: interjectionPreview(interjection)
                             )
@@ -1918,10 +1921,17 @@ private struct PlaybackScreen: View {
             model.selectedItem.interjections.filter { $0.targetType == .item }.map { PlaybackTimelineEntry.interjection($0) }
         )
         .sorted { lhs, rhs in
-            if lhs.percent == rhs.percent {
+            let lhsPercent = timelinePercent(for: lhs)
+            let rhsPercent = timelinePercent(for: rhs)
+            if lhsPercent == rhsPercent {
+                if let lhsTime = lhs.interjectionMediaTimeMs,
+                   let rhsTime = rhs.interjectionMediaTimeMs,
+                   lhsTime != rhsTime {
+                    return lhsTime < rhsTime
+                }
                 return lhs.sortRank < rhs.sortRank
             }
-            return lhs.percent < rhs.percent
+            return lhsPercent < rhsPercent
         }
         let turnEntries = model.selectedItem.turns.flatMap { turn -> [PlaybackTimelineEntry] in
             let chapters = turn.chapters ?? []
@@ -1932,6 +1942,21 @@ private struct PlaybackScreen: View {
                 .map { PlaybackTimelineEntry.interjection($0) }
         }
         return sourceHeaderEntries + sourceEntries + turnEntries
+    }
+
+    private var interjectionMediaDurationMs: Int? {
+        model.selectedItem.mediaDurationMs
+            ?? (model.snapshot.itemId == model.selectedItem.id ? model.snapshot.currentPlaybackDurationMs : nil)
+    }
+
+    private func timelinePercent(for entry: PlaybackTimelineEntry) -> Int {
+        if case .interjection(let interjection) = entry, interjection.targetType == .item {
+            return InterjectionPositionPresentation.sortPercent(
+                for: interjection,
+                durationMs: interjectionMediaDurationMs
+            )
+        }
+        return entry.percent
     }
 
     private var conversation: some View {
@@ -3026,6 +3051,11 @@ private enum PlaybackTimelineEntry: Identifiable {
         case .turnChapter: return 3
         }
     }
+
+    var interjectionMediaTimeMs: Int? {
+        guard case .interjection(let interjection) = self else { return nil }
+        return interjection.anchor.mediaTimeMs
+    }
 }
 
 private struct InterjectionDetailView: View {
@@ -3054,7 +3084,14 @@ private struct InterjectionDetailView: View {
                         LabeledContent("Session position", value: sessionProgressDescription(session))
                     }
                     LabeledContent("Attached to", value: interjectionTargetLabel(current))
-                    LabeledContent("Position", value: "Around \(current.roughPercent)%")
+                    LabeledContent(
+                        "Position",
+                        value: InterjectionPositionPresentation.detailDescription(
+                            for: current,
+                            durationMs: model.selectedItem.mediaDurationMs
+                                ?? (model.snapshot.itemId == model.selectedItem.id ? model.snapshot.currentPlaybackDurationMs : nil)
+                        )
+                    )
                     if current.transcriptionStatus != "complete" {
                         LabeledContent("Transcript status", value: humanizedTurnStatus(current.transcriptionStatus))
                     }

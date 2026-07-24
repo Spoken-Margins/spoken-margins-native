@@ -203,7 +203,7 @@ public final class SessionEngine {
         } else if session.currentTargetType == .summaryTurnTTS || session.currentTargetType == .assistantTurnTTS {
             session = try syncGeneratedTurnPositionFromAudio(session)
         } else if session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia {
-            session = syncMediaPositionFromAudio(session)
+            session = try syncMediaPositionFromAudio(session)
         }
         currentSession = session
         try persistSession(session)
@@ -383,7 +383,7 @@ public final class SessionEngine {
         if currentItem?.id == item.id || currentSession?.itemId == item.id {
             currentItem = item
             if let session = currentSession, session.itemId == item.id {
-                currentSession = syncMediaPositionFromAudio(session)
+                currentSession = try syncMediaPositionFromAudio(session)
                 if let currentSession {
                     try persistSession(currentSession)
                 }
@@ -425,7 +425,7 @@ public final class SessionEngine {
                         publish(status: snapshot.status, phase: session.phase)
                         return snapshot
                     }
-                    var migrated = syncMediaPositionFromAudio(session)
+                    var migrated = try syncMediaPositionFromAudio(session)
                     let sourceOffset = migrated.position.charOffset
                     let mediaTimeMs = mediaTimeMs(forTextOffset: sourceOffset, timeline: prepared.timeline)
                     migrated.currentTargetId = replacementTargetId
@@ -887,9 +887,12 @@ public final class SessionEngine {
             session.status = "in_progress"
             try persistSession(session)
         }
-        currentSession = session
         currentItem = try repository.loadItem(id: session.itemId)
         currentMap = try repository.loadListeningMap(itemId: session.itemId)
+        if let durationMs = durableMediaDurationMs(for: session) {
+            session = try repairMediaPercentages(session, durationMs: durationMs)
+        }
+        currentSession = session
         publish(status: .paused, phase: session.phase)
         return snapshot
     }
@@ -2028,6 +2031,11 @@ public final class SessionEngine {
             ?? currentItem?.media?.durationMs
     }
 
+    private func durableMediaDurationMs(for session: Session) -> Int? {
+        sourceTranscriptTimeline(for: session)?.durationMs
+            ?? item(for: session)?.media?.durationMs
+    }
+
     private func item(for session: Session) -> Item? {
         if currentItem?.id == session.itemId {
             return currentItem
@@ -2934,7 +2942,7 @@ public final class SessionEngine {
     }
 
     private func skipMediaForward(session: Session, unit: String) throws -> SessionSnapshot {
-        var updated = syncMediaPositionFromAudio(session)
+        var updated = try syncMediaPositionFromAudio(session)
         let current = updated.position.mediaTimeMs ?? 0
         let next: Int
         if let package = currentWatchPackage, unit == "chapter" {
@@ -2963,7 +2971,7 @@ public final class SessionEngine {
     }
 
     private func skipMediaBack(session: Session, unit: String) throws -> SessionSnapshot {
-        var updated = syncMediaPositionFromAudio(session)
+        var updated = try syncMediaPositionFromAudio(session)
         let current = updated.position.mediaTimeMs ?? 0
         let previous: Int
         if let package = currentWatchPackage, unit == "chapter" {
@@ -3161,7 +3169,7 @@ public final class SessionEngine {
         return updated
     }
 
-    private func syncMediaPositionFromAudio(_ session: Session) -> Session {
+    private func syncMediaPositionFromAudio(_ session: Session) throws -> Session {
         let playbackPosition = playbackPosition(for: session)
         guard let mediaTimeMs = playbackPosition.mediaTimeMs ?? session.position.mediaTimeMs else {
             return session
@@ -3203,7 +3211,52 @@ public final class SessionEngine {
                 ? generatedTextSourcePercent(for: session, textStart: playbackPosition.textStart)
                 : mediaPercent(mediaTimeMs, durationMs: mediaDurationMs(for: session, position: playbackPosition))
         }
+        if !isGeneratedTextMedia(item(for: session)?.media),
+           let durationMs = mediaDurationMs(for: session, position: playbackPosition),
+           durationMs > 0 {
+            try persistObservedMediaDuration(durationMs, for: session)
+            updated = try repairMediaPercentages(updated, durationMs: durationMs)
+        }
         return updated
+    }
+
+    private func persistObservedMediaDuration(_ durationMs: Int, for session: Session) throws {
+        guard durationMs > 0,
+              var item = item(for: session),
+              var media = item.media,
+              (media.durationMs ?? 0) <= 0 else {
+            return
+        }
+        media.durationMs = durationMs
+        item.media = media
+        try repository.saveItem(item)
+        if currentItem?.id == item.id {
+            currentItem = item
+        }
+    }
+
+    private func repairMediaPercentages(_ session: Session, durationMs: Int) throws -> Session {
+        guard durationMs > 0,
+              !isGeneratedTextMedia(item(for: session)?.media) else {
+            return session
+        }
+        var updatedSession = session
+        if (session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia),
+           let mediaTimeMs = session.position.mediaTimeMs {
+            updatedSession.completionPercent = mediaPercent(mediaTimeMs, durationMs: durationMs)
+            if updatedSession.completionPercent != session.completionPercent {
+                try persistSession(updatedSession)
+            }
+        }
+        for var interjection in try repository.loadInterjections(sessionId: session.id)
+        where interjection.targetType == .item {
+            guard let mediaTimeMs = interjection.anchor.mediaTimeMs else { continue }
+            let percent = mediaPercent(mediaTimeMs, durationMs: durationMs)
+            guard percent != interjection.roughPercent else { continue }
+            interjection.roughPercent = percent
+            try repository.saveInterjection(interjection)
+        }
+        return updatedSession
     }
 
     private func syncCurrentPositionFromAudio(_ session: Session) throws -> Session {
@@ -3213,7 +3266,7 @@ public final class SessionEngine {
         case .summaryTurnTTS, .assistantTurnTTS:
             return try syncGeneratedTurnPositionFromAudio(session)
         case .transcriptBackedMedia, .browserOwnedMedia:
-            return syncMediaPositionFromAudio(session)
+            return try syncMediaPositionFromAudio(session)
         }
     }
 
