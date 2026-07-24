@@ -227,6 +227,84 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.interjections.first?.transcript, "My recorded note.")
     }
 
+    func testCompletedPodcastDownloadDoesNotTranscribeFullSourceWithoutListeningMapRequest() async throws {
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: "https://example.com/episode", provider: "rss", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://feeds.example.com/show.xml", provider: "rss", role: "canonical_feed"),
+                title: "Battery-Safe Episode",
+                durationMs: 300_000,
+                audioURL: "https://cdn.example.com/battery-safe.mp3",
+                confidence: 1
+            )
+        ))
+        let transcriber = RecordingFullSourceTranscriptionClient()
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            sourceTranscriptionClient: transcriber
+        )
+        model.resetAndSeed()
+
+        XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/episode", sourceSurface: "paste"))
+        let itemId = try XCTUnwrap(model.snapshot.itemId)
+        let localURL = FileManager.default.temporaryDirectory.appendingPathComponent("battery-safe.mp3")
+        model.podcastLocalAssetDidBecomeReady(itemId: itemId, url: localURL)
+        await Task.yield()
+
+        let fullRequestCount = await transcriber.fullRequestCount()
+        XCTAssertEqual(fullRequestCount, 0)
+        XCTAssertEqual(
+            model.diagnostics["sourceTranscriptionAfterDownload:\(itemId)"],
+            "deferred_until_listening_map_request"
+        )
+    }
+
+    func testListeningMapRequestAllowsFullSourceTranscriptionAfterDownload() async throws {
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: "https://example.com/episode", provider: "rss", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://feeds.example.com/show.xml", provider: "rss", role: "canonical_feed"),
+                title: "Mapped Episode",
+                durationMs: 300_000,
+                audioURL: "https://cdn.example.com/mapped.mp3",
+                confidence: 1
+            )
+        ))
+        let transcriber = RecordingFullSourceTranscriptionClient()
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            sourceTranscriptionClient: transcriber
+        )
+        model.resetAndSeed()
+
+        XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/episode", sourceSurface: "paste"))
+        let itemId = try XCTUnwrap(model.snapshot.itemId)
+        model.generateListeningMap()
+        XCTAssertEqual(model.diagnostics["sourceTranscriptionStatus"], "waiting_for_local_audio")
+
+        let localURL = FileManager.default.temporaryDirectory.appendingPathComponent("mapped.mp3")
+        model.podcastLocalAssetDidBecomeReady(itemId: itemId, url: localURL)
+        let request = await transcriber.waitForFullRequest()
+        try await waitFor("Listening Map source transcription to attach") {
+            model.diagnostics["sourceTranscriptionStatus"] == "complete"
+        }
+
+        XCTAssertEqual(request.itemId, itemId)
+        XCTAssertEqual(request.url, localURL)
+        let fullRequestCount = await transcriber.fullRequestCount()
+        XCTAssertEqual(fullRequestCount, 1)
+        XCTAssertEqual(
+            model.diagnostics["sourceTranscriptionAfterDownload:\(itemId)"],
+            "requested_for_listening_map"
+        )
+    }
+
     func testSavedInterjectionAudioCanReplaceATruncatedTranscript() async throws {
         let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
             requestId: "ignored",
@@ -871,6 +949,72 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(result.selectedCandidate?.audioURL, "https://cdn.example.com/requested-old-episode.mp3")
     }
 
+    func testPublicResolverUsesApplePageWhenShowSlugCannotIdentifyEpisodeInFeed() throws {
+        let lookup = """
+        {
+          "resultCount": 1,
+          "results": [{
+            "wrapperType": "track",
+            "kind": "podcast",
+            "trackId": 1528594034,
+            "feedUrl": "https://feeds.example.com/hard-fork.xml"
+          }]
+        }
+        """
+        let feed = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0">
+          <channel>
+            <title>Hard Fork</title>
+            <item>
+              <title>OpenAI Models Go Rogue + Kimi K3 Freakout + A.I. Superforecasting</title>
+              <enclosure url="https://cdn.example.com/feed-episode.mp3" type="audio/mpeg" />
+            </item>
+            <item>
+              <title>Another Episode</title>
+              <enclosure url="https://cdn.example.com/another.mp3" type="audio/mpeg" />
+            </item>
+          </channel>
+        </rss>
+        """
+        let page = #"""
+        <html>
+          <head><title>OpenAI Models Go Rogue - Hard Fork - Apple Podcasts</title></head>
+          <body>
+            <script>
+              {"title":"OpenAI Models Go Rogue + Kimi K3 Freakout + A.I. Superforecasting","streamUrl":"https:\/\/cdn.example.com\/apple-page-episode.mp3","duration":4094}
+            </script>
+          </body>
+        </html>
+        """#
+        let request = LinkResolutionRequest(
+            id: "request-apple-current-episode",
+            inputURL: "https://podcasts.apple.com/us/podcast/hard-fork/id1528594034?i=1000778186885",
+            sourceSurface: "paste",
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+
+        let result = try PublicPodcastLinkResolver(fetch: { url in
+            switch url.host {
+            case "itunes.apple.com":
+                return Data(lookup.utf8)
+            case "feeds.example.com":
+                return Data(feed.utf8)
+            case "podcasts.apple.com":
+                return Data(page.utf8)
+            default:
+                XCTFail("Unexpected resolver URL: \(url)")
+                return Data()
+            }
+        }).resolve(request)
+
+        XCTAssertEqual(result.status, .playable)
+        XCTAssertEqual(result.originalLink.provider, "apple_podcasts")
+        XCTAssertEqual(result.selectedCandidate?.title, "OpenAI Models Go Rogue + Kimi K3 Freakout + A.I. Superforecasting")
+        XCTAssertEqual(result.selectedCandidate?.durationMs, 4_094_000)
+        XCTAssertEqual(result.selectedCandidate?.audioURL, "https://cdn.example.com/apple-page-episode.mp3")
+    }
+
     func testAppleFeedFallbackNeverSelectsADifferentEpisode() throws {
         let lookup = """
         {
@@ -1199,6 +1343,51 @@ private actor RecordingSourceWindowTranscriptionClient: SourceTranscriptionClien
 
     func windowRequestCount() -> Int {
         windowRequest == nil ? 0 : 1
+    }
+}
+
+private actor RecordingFullSourceTranscriptionClient: SourceTranscriptionClient {
+    struct FullRequest: Sendable {
+        var url: URL
+        var itemId: String
+        var durationMs: Int?
+    }
+
+    private var requests: [FullRequest] = []
+    private var continuations: [CheckedContinuation<FullRequest, Never>] = []
+
+    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+        let request = FullRequest(url: url, itemId: itemId, durationMs: durationMs)
+        requests.append(request)
+        for continuation in continuations {
+            continuation.resume(returning: request)
+        }
+        continuations.removeAll()
+        return TranscriptTimeline(
+            segments: [
+                MediaTimelineSegment(
+                    id: "full-source-segment",
+                    startMs: 0,
+                    endMs: max(1, durationMs ?? 1),
+                    text: "The full source is derived only for a requested Listening Map."
+                )
+            ],
+            chapters: [],
+            durationMs: durationMs
+        )
+    }
+
+    func fullRequestCount() -> Int {
+        requests.count
+    }
+
+    func waitForFullRequest() async -> FullRequest {
+        if let request = requests.last {
+            return request
+        }
+        return await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+        }
     }
 }
 

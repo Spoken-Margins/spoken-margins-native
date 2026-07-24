@@ -127,13 +127,25 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
     }
 
     private func resolveApplePodcastsURL(_ url: URL, request: LinkResolutionRequest) throws -> LinkResolutionResult? {
+        let lookupResult: LinkResolutionResult?
         if let episodeId = queryValue("i", in: url),
-           let showId = appleShowId(in: url),
-           let lookupResult = try resolveAppleLookup(showId: showId, episodeId: episodeId, url: url, request: request) {
+           let showId = appleShowId(in: url) {
+            lookupResult = try resolveAppleLookup(showId: showId, episodeId: episodeId, url: url, request: request)
+        } else {
+            lookupResult = nil
+        }
+        if let lookupResult, lookupResult.status == .playable {
             return lookupResult
         }
 
-        if let pageResult = try resolveApplePage(url, request: request) {
+        let pageResult = try resolveApplePage(url, request: request)
+        if let pageResult, pageResult.status == .playable {
+            return pageResult
+        }
+        if let lookupResult {
+            return lookupResult
+        }
+        if let pageResult {
             return pageResult
         }
 
@@ -292,13 +304,35 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         request: LinkResolutionRequest,
         requestTimeoutSeconds: TimeInterval
     ) async throws -> LinkResolutionResult? {
+        let lookupResult: LinkResolutionResult?
         if let episodeId = queryValue("i", in: url),
-           let showId = appleShowId(in: url),
-           let lookupResult = try await resolveAppleLookupAsync(showId: showId, episodeId: episodeId, url: url, request: request, requestTimeoutSeconds: requestTimeoutSeconds) {
+           let showId = appleShowId(in: url) {
+            lookupResult = try await resolveAppleLookupAsync(
+                showId: showId,
+                episodeId: episodeId,
+                url: url,
+                request: request,
+                requestTimeoutSeconds: requestTimeoutSeconds
+            )
+        } else {
+            lookupResult = nil
+        }
+        if let lookupResult, lookupResult.status == .playable {
             return lookupResult
         }
 
-        if let pageResult = try await resolveApplePageAsync(url, request: request, requestTimeoutSeconds: requestTimeoutSeconds) {
+        let pageResult = try await resolveApplePageAsync(
+            url,
+            request: request,
+            requestTimeoutSeconds: requestTimeoutSeconds
+        )
+        if let pageResult, pageResult.status == .playable {
+            return pageResult
+        }
+        if let lookupResult {
+            return lookupResult
+        }
+        if let pageResult {
             return pageResult
         }
 

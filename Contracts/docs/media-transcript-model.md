@@ -6,7 +6,7 @@ This document defines how Spoken Margins should model text items, generated audi
 
 The key rule is:
 
-Every playable item needs a transcript timeline. Audio is a playback representation; transcript spans and media time are the durable navigation and interjection anchors.
+Text-backed items use a transcript timeline. Native-audio items can play and preserve durable media-time anchors without a full transcript. Spoken Margins derives only bounded transcript excerpts around interjections unless the user explicitly requests a Listening Map; a full native-audio transcript created for that map remains internal derived data and is not exposed in session exports.
 
 The active runtime capability profile decides which audio representation can be used right now. A phone/tablet online profile may generate maps and summaries; a phone/tablet offline profile may still play prepared media, synthesize local TTS when permitted, record interjections, and defer AI jobs; a browser media profile may observe page-owned playback without owning the audio; an untethered watch profile only plays prepared audio or native media already available on watch.
 
@@ -14,12 +14,12 @@ The active runtime capability profile decides which audio representation can be 
 
 An item has content and may have native audio.
 
-The transcript is the canonical navigable timeline:
+When present, a transcript is the richest navigable timeline:
 
 - For text items, the transcript is generated from the text.
 - For pre-rendered TTS, the transcript is the source text aligned to generated audio.
 - For real-time TTS, the transcript is still the source text; timing may be estimated or produced lazily.
-- For podcasts or videos, the transcript is provided, extracted, or generated from audio.
+- For podcasts or videos, bounded excerpts are generated around interjections. A publisher transcript or full generated transcript is used only when an explicitly requested Listening Map needs it.
 - For browser media, the transcript may come from the page, platform metadata, captions, or generated transcription.
 
 Audio source types:
@@ -73,12 +73,12 @@ When playback is generated just in time, the speech engine should avoid exposing
 
 For native media:
 
-1. Store or reference the media asset.
-2. Import an existing transcript when available.
-3. Generate a transcript if none exists.
-4. Align transcript segments to media time.
-5. Generate Listening Map from transcript.
-6. Use the media's native audio for playback.
+1. Store or reference the media asset and begin playback without transcription.
+2. Anchor ordinary playback and mapless interjections to source media time.
+3. When an interjection is saved, derive only its bounded before/after source excerpt when no stored timeline is available.
+4. When the user explicitly requests a Listening Map, prefer an existing publisher transcript and otherwise generate a full transcript.
+5. Keep any full native-audio transcript as internal derived data for the map and later excerpt resolution; do not expose it as full source text or transcript in exports.
+6. Use the media's native audio for playback throughout transcription and map generation.
 
 The media may be sped up or slowed down. Anchors always use source media time, not wall-clock listening time.
 

@@ -1905,7 +1905,9 @@ final class SessionKitCoreTests: XCTestCase {
             includeListeningMap: true,
             includeInterjections: true
         ))
-        XCTAssertTrue(handoff.item.sourceTranscript?.contains("Important middle point.") == true)
+        XCTAssertFalse(handoff.item.includedFullText)
+        XCTAssertNil(handoff.item.text)
+        XCTAssertNil(handoff.item.sourceTranscript)
         XCTAssertEqual(handoff.schemaVersion, "spoken-margins.export.v1")
     }
 

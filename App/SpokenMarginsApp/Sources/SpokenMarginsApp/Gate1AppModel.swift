@@ -1789,7 +1789,7 @@ final class Gate1AppModel: ObservableObject {
             }
             pendingMapGenerationItemId = item.id
             isGeneratingListeningMap = false
-            scheduleSourceTranscriptionIfNeeded(for: item)
+            scheduleFullSourceTranscriptionForListeningMap(for: item)
             reportSuccess("Preparing the podcast transcript for its Listening Map. Playback remains available.")
             return
         }
@@ -5895,13 +5895,15 @@ final class Gate1AppModel: ObservableObject {
             .replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
     }
 
-    private func scheduleSourceTranscriptionIfNeeded(for item: Item) {
+    private func scheduleFullSourceTranscriptionForListeningMap(for item: Item, localSourceURL: URL? = nil) {
         guard item.transcriptId == nil,
               let sourceURLString = item.media?.url,
               let canonicalURL = URL(string: sourceURLString) else {
             return
         }
-        let sourceURL = podcastDownloadCoordinator?.validatedLocalURL(for: item.id) ?? canonicalURL
+        let sourceURL = localSourceURL
+            ?? podcastDownloadCoordinator?.validatedLocalURL(for: item.id)
+            ?? canonicalURL
         guard sourceURL.isFileURL else {
             diagnostics["sourceTranscriptionStatus"] = "waiting_for_local_audio"
             return
@@ -5950,7 +5952,6 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["sourceTranscriptionItem"] = itemId
             sourceTranscriptStatus = "ready"
             snapshot.sourceTranscriptStatus = "ready"
-            reportSuccess("Source transcript ready for anchored notes.")
         }
         if shouldGeneratePendingMap {
             pendingMapGenerationItemId = nil
@@ -6833,19 +6834,27 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["podcastDownload:\(record.itemId)"] = record.state.rawValue
         }
         coordinator.onLocalAssetReady = { [weak self] itemId, url in
-            guard let self, let engine else { return }
-            run { _ in
-                snapshot = try engine.updatePlaybackTransport(itemId: itemId, playbackURL: url.absoluteString)
-                refreshSelectedItem()
-            }
-            retrySourceWindowContexts(itemId: itemId)
-            if let item = try? store.loadItem(id: itemId) {
-                scheduleSourceTranscriptionIfNeeded(for: item)
-            }
+            self?.podcastLocalAssetDidBecomeReady(itemId: itemId, url: url)
         }
         podcastDownloadCoordinator = coordinator
         podcastDownloadRecords = coordinator.recordsByItemId
         diagnostics["podcastCacheLimitGB"] = "\(limit.rawValue)"
+    }
+
+    func podcastLocalAssetDidBecomeReady(itemId: String, url: URL) {
+        guard let engine, let store else { return }
+        run { _ in
+            snapshot = try engine.updatePlaybackTransport(itemId: itemId, playbackURL: url.absoluteString)
+            refreshSelectedItem()
+        }
+        retrySourceWindowContexts(itemId: itemId)
+        guard pendingMapGenerationItemId == itemId,
+              let item = try? store.loadItem(id: itemId) else {
+            diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "deferred_until_listening_map_request"
+            return
+        }
+        diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "requested_for_listening_map"
+        scheduleFullSourceTranscriptionForListeningMap(for: item, localSourceURL: url)
     }
 
     private func schedulePodcastDownloadIfNeeded(itemId: String) {

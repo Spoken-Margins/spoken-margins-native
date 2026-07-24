@@ -1651,7 +1651,8 @@ public final class SessionEngine {
         let allInterjections = try repository.loadInterjections(sessionId: session.id)
             .filter { $0.status == "active" }
         let allTurns = try repository.loadTurns(sessionId: session.id)
-        let sourceTranscript = options.includeFullText
+        let exposesFullSourceText = options.includeFullText && !isNativeAudioSource(item)
+        let sourceTranscript = exposesFullSourceText
             ? try repository.loadTranscriptTimeline(itemId: item.id)?.timeline.segments
                 .sorted { $0.startMs < $1.startMs }
                 .map(\.text)
@@ -1666,8 +1667,8 @@ public final class SessionEngine {
                 externalReference: options.includeReference ? item.externalReference : nil,
                 sourceURL: options.includeReference ? item.media?.url : nil,
                 mediaSourceType: item.media?.sourceType.rawValue,
-                includedFullText: options.includeFullText,
-                text: options.includeFullText ? item.text : nil,
+                includedFullText: exposesFullSourceText,
+                text: exposesFullSourceText ? item.text : nil,
                 sourceTranscript: sourceTranscript
             ),
             session: ExportSession(id: session.id, status: session.status, completionPercent: session.completionPercent),
@@ -1692,6 +1693,15 @@ public final class SessionEngine {
         )
         lastExport = export
         return export
+    }
+
+    private func isNativeAudioSource(_ item: Item) -> Bool {
+        switch item.media?.sourceType {
+        case .nativeMediaFile, .remoteStream:
+            return true
+        default:
+            return false
+        }
     }
 
     private func scopedExportInterjections(options: ExportOptions, session: Session, interjections: [Interjection]) -> [Interjection] {
