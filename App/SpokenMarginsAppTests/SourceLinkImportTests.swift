@@ -120,6 +120,160 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertNil(model.lastError)
     }
 
+    func testNativeAudioPlaybackRatePreferenceSurvivesSessionSnapshotsAndRemoteChanges() {
+        let defaults = UserDefaults.standard
+        let previous = defaults.object(forKey: "mediaPlaybackRate")
+        defer {
+            if let previous {
+                defaults.set(previous, forKey: "mediaPlaybackRate")
+            } else {
+                defaults.removeObject(forKey: "mediaPlaybackRate")
+            }
+        }
+        defaults.set(1.75, forKey: "mediaPlaybackRate")
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "audio_file"),
+                title: "Remembered Rate Episode",
+                durationMs: 300_000,
+                audioURL: "https://cdn.example.com/remembered-rate.mp3",
+                confidence: 1
+            )
+        ))
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            sourceTranscriptionClient: ThrowingSourceTranscriptionClient()
+        )
+        model.resetAndSeed()
+
+        XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/episode", sourceSurface: "paste"))
+        XCTAssertEqual(model.snapshot.playbackRate, 1.75, accuracy: 0.001)
+        XCTAssertEqual(model.mediaPlaybackRate, 1.75, accuracy: 0.001)
+
+        var olderSessionSnapshot = model.snapshot
+        olderSessionSnapshot.playbackRate = 1
+        model.snapshot = olderSessionSnapshot
+        XCTAssertEqual(model.mediaPlaybackRate, 1.75, accuracy: 0.001)
+
+        model.dispatchGate2CompactCommand(.setPlaybackRate, playbackRate: 1.5, origin: "now_playing")
+        XCTAssertEqual(model.mediaPlaybackRate, 1.5, accuracy: 0.001)
+        XCTAssertEqual(defaults.double(forKey: "mediaPlaybackRate"), 1.5, accuracy: 0.001)
+
+        let relaunched = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        XCTAssertEqual(relaunched.mediaPlaybackRate, 1.5, accuracy: 0.001)
+    }
+
+    func testAmbiguousPodcastCandidatesRequireSelectionBeforeImport() throws {
+        let originalURL = "https://open.spotify.com/episode/ambiguous"
+        let first = LinkResolutionCandidate(
+            sourceLink: SourceLink(url: "https://podcasts.apple.com/one", provider: "apple_podcasts", role: "canonical_source"),
+            title: "Shared title",
+            showTitle: "Show One",
+            durationMs: 120_000,
+            publishedAt: "2026-07-01T00:00:00Z",
+            audioURL: "https://cdn.example.com/one.mp3",
+            confidence: 0.71
+        )
+        let second = LinkResolutionCandidate(
+            sourceLink: SourceLink(url: "https://podcasts.apple.com/two", provider: "apple_podcasts", role: "canonical_source"),
+            title: "Shared title",
+            showTitle: "Show Two",
+            durationMs: 180_000,
+            publishedAt: "2026-07-02T00:00:00Z",
+            audioURL: "https://cdn.example.com/two.mp3",
+            confidence: 0.70
+        )
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .needsReview,
+            originalLink: SourceLink(url: originalURL, provider: "spotify", role: "discovery"),
+            candidates: [first, second],
+            failureReason: "spotify_episode_match_ambiguous"
+        ))
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            sourceTranscriptionClient: ThrowingSourceTranscriptionClient()
+        )
+        model.resetAndSeed()
+        let itemCount = model.libraryItems.count
+
+        XCTAssertFalse(model.importSourceLink(urlString: originalURL, sourceSurface: "paste"))
+        XCTAssertEqual(model.libraryItems.count, itemCount)
+        XCTAssertEqual(model.sourceLinkCandidateReview?.result.candidates, [first, second])
+
+        model.selectSourceLinkCandidate(second)
+
+        XCTAssertNil(model.sourceLinkCandidateReview)
+        XCTAssertEqual(model.snapshot.status, .playing)
+        XCTAssertEqual(model.snapshot.targetId, second.audioURL)
+        XCTAssertEqual(model.selectedItem.externalReference, originalURL)
+        XCTAssertEqual(model.selectedItem.title, "Shared title")
+    }
+
+    #if canImport(UIKit)
+    func testPDFImportPreservesActiveNativeMediaSession() async throws {
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "audio_file"),
+                title: "Episode Audio",
+                durationMs: 300_000,
+                audioURL: "https://cdn.example.com/episode.mp3",
+                confidence: 1
+            )
+        ))
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            sourceTranscriptionClient: ThrowingSourceTranscriptionClient()
+        )
+        model.resetAndSeed()
+        XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/episode", sourceSurface: "paste"))
+        model.setMediaPlaybackRate(1.5)
+        model.seekMedia(toMediaTimeMs: 87_000)
+        let sessionId = try XCTUnwrap(model.snapshot.sessionId)
+        let itemId = try XCTUnwrap(model.snapshot.itemId)
+        let targetId = try XCTUnwrap(model.snapshot.targetId)
+        let selectedItemId = model.selectedItem.id
+
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "spoken-margins-active-pdf-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appending(path: "Imported During Playback.pdf")
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        try renderer.writePDF(to: file) { context in
+            context.beginPage()
+            ("PDF text imported without replacing playback." as NSString).draw(
+                at: CGPoint(x: 40, y: 40),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 18)]
+            )
+        }
+
+        model.importObsidianMarkdownFiles(urls: [file])
+        try await waitFor("PDF import to preserve native playback", timeoutNanoseconds: 5_000_000_000) {
+            !model.isImportingSources
+        }
+
+        XCTAssertEqual(model.snapshot.sessionId, sessionId)
+        XCTAssertEqual(model.snapshot.itemId, itemId)
+        XCTAssertEqual(model.snapshot.targetId, targetId)
+        XCTAssertEqual(model.snapshot.status, .playing)
+        XCTAssertEqual(model.snapshot.currentMediaTimeMs, 87_000)
+        XCTAssertEqual(model.snapshot.playbackRate, 1.5)
+        XCTAssertEqual(model.selectedItem.id, selectedItemId)
+        XCTAssertEqual(model.gate2CompactSnapshot?.sessionId, sessionId)
+        XCTAssertNotNil(model.libraryItems.first(where: { $0.title == "Imported During Playback" }))
+    }
+    #endif
+
     func testNativeAudioInterjectionRequestsFullShoulderContext() async throws {
         let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
             requestId: "ignored",
@@ -244,7 +398,8 @@ final class SourceLinkImportTests: XCTestCase {
         let model = Gate1AppModel(
             sourceLinkResolver: resolver,
             audioPlaybackClient: NoopAudioPlaybackClient(),
-            sourceTranscriptionClient: transcriber
+            sourceTranscriptionClient: transcriber,
+            localFoundationModelClient: SourceLinkFoundationModelStub()
         )
         model.resetAndSeed()
 
@@ -258,11 +413,11 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(fullRequestCount, 0)
         XCTAssertEqual(
             model.diagnostics["sourceTranscriptionAfterDownload:\(itemId)"],
-            "deferred_until_listening_map_request"
+            "not_requested"
         )
     }
 
-    func testListeningMapRequestAllowsFullSourceTranscriptionAfterDownload() async throws {
+    func testDefaultReleaseDoesNotTranscribePodcastForAIGeneratedListeningMap() async throws {
         let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
             requestId: "ignored",
             status: .playable,
@@ -279,29 +434,30 @@ final class SourceLinkImportTests: XCTestCase {
         let model = Gate1AppModel(
             sourceLinkResolver: resolver,
             audioPlaybackClient: NoopAudioPlaybackClient(),
-            sourceTranscriptionClient: transcriber
+            sourceTranscriptionClient: transcriber,
+            localFoundationModelClient: SourceLinkFoundationModelStub()
         )
         model.resetAndSeed()
 
         XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/episode", sourceSurface: "paste"))
         let itemId = try XCTUnwrap(model.snapshot.itemId)
+        XCTAssertFalse(model.canGenerateListeningMap)
         model.generateListeningMap()
-        XCTAssertEqual(model.diagnostics["sourceTranscriptionStatus"], "waiting_for_local_audio")
+        XCTAssertEqual(model.diagnostics["lastListeningMapMode"], "on_device_generation_disabled")
+        XCTAssertEqual(
+            model.lastError,
+            "Publisher chapters appear when available. AI-generated podcast maps are reserved for a future server-hosted option."
+        )
 
         let localURL = FileManager.default.temporaryDirectory.appendingPathComponent("mapped.mp3")
         model.podcastLocalAssetDidBecomeReady(itemId: itemId, url: localURL)
-        let request = await transcriber.waitForFullRequest()
-        try await waitFor("Listening Map source transcription to attach") {
-            model.diagnostics["sourceTranscriptionStatus"] == "complete"
-        }
+        await Task.yield()
 
-        XCTAssertEqual(request.itemId, itemId)
-        XCTAssertEqual(request.url, localURL)
         let fullRequestCount = await transcriber.fullRequestCount()
-        XCTAssertEqual(fullRequestCount, 1)
+        XCTAssertEqual(fullRequestCount, 0)
         XCTAssertEqual(
             model.diagnostics["sourceTranscriptionAfterDownload:\(itemId)"],
-            "requested_for_listening_map"
+            "not_requested"
         )
     }
 
@@ -753,7 +909,7 @@ final class SourceLinkImportTests: XCTestCase {
     func testPublicResolverExtractsRSSAudioEnclosure() throws {
         let feed = """
         <?xml version="1.0" encoding="UTF-8"?>
-        <rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:podcast="https://podcastindex.org/namespace/1.0">
+        <rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:podcast="https://podcastindex.org/namespace/1.0" xmlns:psc="http://podlove.org/simple-chapters">
           <channel>
             <title>Example Show</title>
             <item>
@@ -763,6 +919,15 @@ final class SourceLinkImportTests: XCTestCase {
               <itunes:duration>00:30:00</itunes:duration>
               <enclosure url="https://cdn.example.com/episode-one.mp3" type="audio/mpeg" length="1" />
               <podcast:transcript url="https://cdn.example.com/episode-one.vtt" type="text/vtt" language="en" rel="captions" />
+              <podcast:chapters url="https://cdn.example.com/episode-one-chapters.json" type="application/json+chapters" />
+              <psc:chapters version="1.2">
+                <psc:chapter start="0" title="Podlove Intro" />
+                <psc:chapter start="12:30.250" title="Podlove Topic" />
+              </psc:chapters>
+              <description><![CDATA[
+                00:00 Description Intro<br />
+                15:00 Description Topic
+              ]]></description>
             </item>
           </channel>
         </rss>
@@ -774,7 +939,19 @@ final class SourceLinkImportTests: XCTestCase {
             createdAt: Date(timeIntervalSince1970: 1)
         )
 
-        let result = try PublicPodcastLinkResolver(fetch: { _ in Data(feed.utf8) }).resolve(request)
+        let chapterJSON = """
+        {
+          "version": "1.2.0",
+          "chapters": [
+            { "startTime": 0, "title": "Publisher Intro" },
+            { "startTime": 600.5, "title": "Publisher Topic" },
+            { "startTime": 900, "title": "Silent Artwork", "toc": false }
+          ]
+        }
+        """
+        let result = try PublicPodcastLinkResolver(fetch: { url in
+            url.path.hasSuffix("episode-one-chapters.json") ? Data(chapterJSON.utf8) : Data(feed.utf8)
+        }).resolve(request)
 
         XCTAssertEqual(result.status, .playable)
         XCTAssertEqual(result.selectedCandidate?.title, "Episode One")
@@ -789,6 +966,111 @@ final class SourceLinkImportTests: XCTestCase {
                 rel: "captions"
             )
         ])
+        XCTAssertEqual(result.selectedCandidate?.chapterLinks, [
+            SourceChapterLink(
+                url: "https://cdn.example.com/episode-one-chapters.json",
+                type: "application/json+chapters"
+            )
+        ])
+        XCTAssertEqual(result.selectedCandidate?.publisherChapterCollections.map(\.source), [
+            .podcasting20JSON,
+            .podloveSimpleChapters,
+            .timestampedDescription
+        ])
+        XCTAssertEqual(result.selectedCandidate?.publisherChapterCollections[0].chapters, [
+            PublisherChapter(title: "Publisher Intro", startMs: 0),
+            PublisherChapter(title: "Publisher Topic", startMs: 600_500)
+        ])
+        XCTAssertEqual(result.selectedCandidate?.publisherChapterCollections[1].chapters[1].startMs, 750_250)
+    }
+
+    func testPublicResolverAcceptsLegacyPodcastingNamespaceUsedByNoAgendaFeed() throws {
+        let feed = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0" xmlns:podcast="https://github.com/Podcastindex-org/podcast-namespace/blob/main/docs/1.0.md">
+          <channel>
+            <title>No Agenda Show</title>
+            <item>
+              <title>1891 - "We Need Memes!"</title>
+              <guid>http://1891.noagendanotes.com</guid>
+              <enclosure url="https://op3.dev/e/example/NA-1891-Final.mp3" type="audio/mpeg" length="1" />
+              <podcast:transcript url="https://mp3s.nashownotes.com/NA-1891-Captions.srt" type="application/srt" rel="captions" />
+              <podcast:chapters url="https://chapters.example.com/NA-1891-Chapters.json" type="application/json" />
+            </item>
+          </channel>
+        </rss>
+        """
+        let chapterJSON = """
+        {"version":"1.2.0","chapters":[
+          {"startTime":0,"title":"Show Open"},
+          {"startTime":150.74,"title":"Producer Context"}
+        ]}
+        """
+        let lookup = """
+        {"resultCount":1,"results":[{
+          "wrapperType":"track",
+          "kind":"podcast",
+          "trackId":269169796,
+          "collectionName":"No Agenda Show",
+          "feedUrl":"https://feeds.noagendaassets.com/noagenda.xml"
+        }]}
+        """
+        let request = LinkResolutionRequest(
+            id: "request-no-agenda-apple",
+            inputURL: "https://podcasts.apple.com/us/podcast/1891-we-need-memes/id269169796?i=1000779583526",
+            sourceSurface: "paste",
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+
+        let result = try PublicPodcastLinkResolver(fetch: { url in
+            if url.host == "itunes.apple.com" { return Data(lookup.utf8) }
+            if url.host == "feeds.noagendaassets.com" { return Data(feed.utf8) }
+            if url.host == "chapters.example.com" { return Data(chapterJSON.utf8) }
+            throw URLError(.badURL)
+        }).resolve(request)
+
+        XCTAssertEqual(result.status, .playable)
+        XCTAssertEqual(result.selectedCandidate?.title, "1891 - \"We Need Memes!\"")
+        XCTAssertEqual(result.selectedCandidate?.transcriptLinks.first?.type, "application/srt")
+        XCTAssertEqual(result.selectedCandidate?.publisherChapterCollections.first?.source, .podcasting20JSON)
+        XCTAssertEqual(result.selectedCandidate?.publisherChapterCollections.first?.chapters[1].startMs, 150_740)
+    }
+
+    func testPublicResolverImportsStructuredPodcastEpisodePageWithPublisherChapters() throws {
+        let metadata = #"{"type":"episode","code":"1891","title":"1891: We Need Memes!","src":"https://op3.dev/e/example/NA-1891-Final.mp3","duration":11215,"publishedAt":"2026-08-02","transcript":"https://mp3s.nashownotes.com/NA-1891-Captions.srt","chapters":"https://chapters.example.com/NA-1891-Chapters.json"}"#
+        let encodedMetadata = metadata.replacingOccurrences(of: "\"", with: "&quot;")
+        let page = """
+        <!doctype html>
+        <html><head><title>No Agenda 1891</title></head><body>
+          <a data-play-metadata-value="\(encodedMetadata)">Play</a>
+        </body></html>
+        """
+        let chapterJSON = """
+        {"version":"1.2.0","chapters":[
+          {"startTime":0,"title":"Show Open"},
+          {"startTime":303.322,"title":"Press Malpractice"}
+        ]}
+        """
+        let request = LinkResolutionRequest(
+            id: "request-no-agenda-page",
+            inputURL: "https://www.noagendashow.net/listen/1891",
+            sourceSurface: "paste",
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+
+        let result = try PublicPodcastLinkResolver(fetch: { url in
+            if url.host == "www.noagendashow.net" { return Data(page.utf8) }
+            if url.host == "chapters.example.com" { return Data(chapterJSON.utf8) }
+            throw URLError(.badURL)
+        }).resolve(request)
+
+        XCTAssertEqual(result.status, .playable)
+        XCTAssertEqual(result.originalLink.provider, "episode_page")
+        XCTAssertEqual(result.selectedCandidate?.title, "1891: We Need Memes!")
+        XCTAssertEqual(result.selectedCandidate?.durationMs, 11_215_000)
+        XCTAssertEqual(result.selectedCandidate?.audioURL, "https://op3.dev/e/example/NA-1891-Final.mp3")
+        XCTAssertEqual(result.selectedCandidate?.transcriptLinks.first?.type, "application/srt")
+        XCTAssertEqual(result.selectedCandidate?.publisherChapterCollections.first?.chapters[1].startMs, 303_322)
     }
 
     func testPublicResolverUsesAppleLookupAudioURL() throws {
@@ -827,8 +1109,25 @@ final class SourceLinkImportTests: XCTestCase {
             sourceSurface: "paste",
             createdAt: Date(timeIntervalSince1970: 1)
         )
+        let feed = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0" xmlns:psc="http://podlove.org/simple-chapters">
+          <channel>
+            <title>Apple Show</title>
+            <item>
+              <title>Apple Episode</title>
+              <guid>https://podcasts.apple.com/us/podcast/show/id123456?i=999</guid>
+              <enclosure url="https://cdn.example.com/apple-episode.mp3" type="audio/mpeg" />
+              <psc:chapters><psc:chapter start="0" title="Publisher Opening" /></psc:chapters>
+            </item>
+          </channel>
+        </rss>
+        """
 
         let result = try PublicPodcastLinkResolver(fetch: { url in
+            if url.absoluteString == "https://feeds.example.com/apple-show.xml" {
+                return Data(feed.utf8)
+            }
             XCTAssertTrue(url.absoluteString.contains("itunes.apple.com/lookup"))
             XCTAssertTrue(url.absoluteString.contains("id=123456"))
             XCTAssertTrue(url.absoluteString.contains("entity=podcastEpisode"))
@@ -840,6 +1139,7 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(result.selectedCandidate?.title, "Apple Episode")
         XCTAssertEqual(result.selectedCandidate?.showTitle, "Apple Show")
         XCTAssertEqual(result.selectedCandidate?.audioURL, "https://cdn.example.com/apple-episode.mp3")
+        XCTAssertEqual(result.selectedCandidate?.publisherChapterCollections.first?.source, .podloveSimpleChapters)
     }
 
     func testPublicResolverAcceptsAppleLookupExtensionlessAudioURL() throws {
@@ -1072,6 +1372,9 @@ final class SourceLinkImportTests: XCTestCase {
             if url.path == "/oembed" {
                 return Data(oEmbed.utf8)
             }
+            if url.host?.contains("spotify.com") == true {
+                return Data()
+            }
             XCTAssertEqual(url.host, "itunes.apple.com")
             return Data(#"{"resultCount":0,"results":[]}"#.utf8)
         }).resolve(request)
@@ -1140,6 +1443,9 @@ final class SourceLinkImportTests: XCTestCase {
                 )
                 return Data(oEmbed.utf8)
             }
+            if url.host?.contains("spotify.com") == true {
+                return Data()
+            }
             XCTAssertEqual(url.host, "itunes.apple.com")
             XCTAssertEqual(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "entity" })?.value, "podcastEpisode")
             return Data(appleSearch.utf8)
@@ -1183,12 +1489,67 @@ final class SourceLinkImportTests: XCTestCase {
         )
 
         let result = try PublicPodcastLinkResolver(fetch: { url in
-            url.path == "/oembed" ? Data(oEmbed.utf8) : Data(appleSearch.utf8)
+            if url.path == "/oembed" { return Data(oEmbed.utf8) }
+            if url.host?.contains("spotify.com") == true { return Data() }
+            return Data(appleSearch.utf8)
         }).resolve(request)
 
         XCTAssertEqual(result.status, .needsReview)
         XCTAssertNil(result.selectedCandidate)
+        XCTAssertEqual(result.candidates.count, 2)
         XCTAssertEqual(result.failureReason, "spotify_episode_match_ambiguous")
+    }
+
+    func testPublicResolverUsesShowDateAndDurationToDisambiguateSpotifyEpisode() throws {
+        let oEmbed = """
+        {
+          "title": "A Shared Episode",
+          "showTitle": "The Correct Show",
+          "releaseDate": "2026-07-02T00:00:00Z",
+          "durationMs": 3600000
+        }
+        """
+        let appleSearch = """
+        {
+          "resultCount": 2,
+          "results": [
+            {
+              "wrapperType": "podcastEpisode",
+              "trackName": "A Shared Episode",
+              "collectionName": "The Wrong Show",
+              "episodeUrl": "https://cdn.example.com/wrong.mp3",
+              "trackTimeMillis": 2400000,
+              "releaseDate": "2025-01-01T00:00:00Z"
+            },
+            {
+              "wrapperType": "podcastEpisode",
+              "trackName": "A Shared Episode",
+              "collectionName": "The Correct Show",
+              "trackViewUrl": "https://podcasts.apple.com/correct",
+              "episodeUrl": "https://cdn.example.com/correct.mp3",
+              "trackTimeMillis": 3601000,
+              "releaseDate": "2026-07-02T12:00:00Z"
+            }
+          ]
+        }
+        """
+        let request = LinkResolutionRequest(
+            id: "request-spotify-evidence",
+            inputURL: "https://open.spotify.com/episode/evidence123",
+            sourceSurface: "paste",
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+
+        let result = try PublicPodcastLinkResolver(fetch: { url in
+            if url.path == "/oembed" { return Data(oEmbed.utf8) }
+            if url.host?.contains("spotify.com") == true { return Data() }
+            return Data(appleSearch.utf8)
+        }).resolve(request)
+
+        XCTAssertEqual(result.status, .playable)
+        XCTAssertEqual(result.selectedCandidate?.showTitle, "The Correct Show")
+        XCTAssertEqual(result.selectedCandidate?.audioURL, "https://cdn.example.com/correct.mp3")
+        XCTAssertGreaterThanOrEqual(result.selectedCandidate?.confidence ?? 0, 0.78)
     }
 
     private func makePayloadStore() -> SourceLinkHandoffStore {
@@ -1213,6 +1574,17 @@ final class SourceLinkImportTests: XCTestCase {
             elapsed += interval
         }
         XCTFail("Timed out waiting for \(description).")
+    }
+}
+
+private struct SourceLinkFoundationModelStub: LocalFoundationModelClient {
+    func availability() -> LocalFoundationModelAvailability { .available }
+    func summarizeInterjections(context: String) async throws -> String { "Summary" }
+    func labelListeningMapChapter(text: String, chapterNumber: Int) async throws -> LocalListeningMapLabel {
+        LocalListeningMapLabel(title: "Chapter \(chapterNumber)", description: "A bounded chapter description.")
+    }
+    func summarizeListeningMap(labels: [LocalListeningMapLabel]) async throws -> String {
+        "A bounded map overview."
     }
 }
 

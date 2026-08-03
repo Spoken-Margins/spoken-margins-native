@@ -522,6 +522,7 @@ final class SessionKitCoreTests: XCTestCase {
             displayName: "Watch Tethered",
             capabilities: [
                 "timeline": ["chapter_timing"],
+                "ai": ["continue_discussion"],
                 "remoteControl": ["display_snapshot", "send_transport_commands", "send_chapter_jump", "send_ai_commands"]
             ],
             forbiddenCapabilities: ["record_audio", "continue_discussion"]
@@ -548,6 +549,7 @@ final class SessionKitCoreTests: XCTestCase {
             capabilities: [
                 "timeline": ["chapter_timing"],
                 "interjection": ["delegate_interjection_to_canonical_runtime"],
+                "ai": ["summarize_interjections", "continue_discussion"],
                 "remoteControl": ["display_snapshot", "send_transport_commands", "send_chapter_jump", "send_interjection_commands", "send_ai_commands"]
             ]
         )
@@ -671,6 +673,27 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertThrowsError(try dispatcher.dispatch(.generateInterjectionSummary)) { error in
             XCTAssertEqual(error as? SessionKitError, .invalidCommandForCapability("generateInterjectionSummary"))
         }
+        XCTAssertThrowsError(try dispatcher.dispatch(.submitFollowup, followUpText: "Discuss this.")) { error in
+            XCTAssertEqual(error as? SessionKitError, .invalidCommandForCapability("submitFollowup"))
+        }
+    }
+
+    func testCompactControlSummaryOnlyProfileDoesNotExposeDiscussion() throws {
+        let surfaceProfile = RuntimeCapabilityProfile(
+            id: "local-summary-surface",
+            displayName: "Local Summary Surface",
+            capabilities: [
+                "ai": ["summarize_interjections"],
+                "remoteControl": ["display_snapshot", "send_ai_commands"]
+            ],
+            forbiddenCapabilities: ["continue_discussion", "provider_diagnostics"]
+        )
+        let engine = try compactControlEngine()
+        _ = try engine.startSession(itemId: "item-pill")
+        let dispatcher = CompactControlDispatcher(surfaceProfile: surfaceProfile, canonicalRuntime: engine)
+
+        XCTAssertTrue(dispatcher.snapshot().exposedCommands.contains(.generateInterjectionSummary))
+        XCTAssertFalse(dispatcher.snapshot().exposedCommands.contains(.submitFollowup))
         XCTAssertThrowsError(try dispatcher.dispatch(.submitFollowup, followUpText: "Discuss this.")) { error in
             XCTAssertEqual(error as? SessionKitError, .invalidCommandForCapability("submitFollowup"))
         }
@@ -1136,6 +1159,126 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(item.media?.durationMs, 1_800_000)
     }
 
+    func testPodcastPublisherChaptersUsePrecedencePersistAndNavigateWithoutTranscript() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["native_media"],
+                "timeline": ["chapter_timing"]
+            ]
+        )
+        let request = LinkResolutionRequest(
+            id: "link-request-publisher-chapters",
+            inputURL: "https://feeds.example.com/show.xml",
+            sourceSurface: "paste",
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let candidate = LinkResolutionCandidate(
+            sourceLink: SourceLink(url: request.inputURL, provider: "rss", role: "canonical_feed"),
+            title: "Chaptered Episode",
+            durationMs: 1_200_000,
+            audioURL: "https://cdn.example.com/chaptered.mp3",
+            publisherChapterCollections: [
+                PublisherChapterCollection(source: .timestampedDescription, chapters: [
+                    PublisherChapter(title: "Description Intro", startMs: 0),
+                    PublisherChapter(title: "Description Topic", startMs: 300_000)
+                ]),
+                PublisherChapterCollection(source: .podloveSimpleChapters, chapters: [
+                    PublisherChapter(title: "Podlove Intro", startMs: 0),
+                    PublisherChapter(title: "Podlove Topic", startMs: 240_000)
+                ]),
+                PublisherChapterCollection(source: .podcasting20JSON, chapters: [
+                    PublisherChapter(title: "Publisher Intro", startMs: 0),
+                    PublisherChapter(title: "Publisher Topic", startMs: 600_000)
+                ])
+            ],
+            confidence: 0.96
+        )
+        let resolver = StaticLinkResolutionClient(result: LinkResolutionResult(
+            requestId: request.id,
+            status: .playable,
+            originalLink: SourceLink(url: request.inputURL, provider: "rss", role: "canonical_feed"),
+            selectedCandidate: candidate,
+            candidates: [candidate]
+        ))
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository()
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio, linkResolver: resolver)
+
+        let imported = try engine.importSourceLink(request, startSessionWhenPlayable: true)
+        let itemId = try XCTUnwrap(imported.itemId)
+        let map = try XCTUnwrap(try repo.loadListeningMap(itemId: itemId))
+        let timeline = try XCTUnwrap(try repo.loadTranscriptTimeline(itemId: itemId)?.timeline)
+
+        XCTAssertEqual(map.id, "map-\(itemId)-publisher-podcasting_2_json")
+        XCTAssertEqual(map.chapters.map(\.title), ["Publisher Intro", "Publisher Topic"])
+        XCTAssertEqual(timeline.segments, [])
+        XCTAssertEqual(timeline.chapters.map(\.startMs), [0, 600_000])
+
+        let jumped = try engine.jumpToChapter(chapterId: map.chapters[1].id)
+        XCTAssertEqual(jumped.currentMediaTimeMs, 600_000)
+        XCTAssertEqual(jumped.chapterTitle, "Publisher Topic")
+        XCTAssertEqual(audio.playedOffsets.last, 600_000)
+
+        _ = try engine.attachPublisherChapters(
+            itemId: itemId,
+            collection: PublisherChapterCollection(source: .embeddedMedia, chapters: [
+                PublisherChapter(title: "Lower Priority", startMs: 0)
+            ])
+        )
+        XCTAssertEqual(try repo.loadListeningMap(itemId: itemId)?.id, map.id)
+    }
+
+    func testPublisherChapterSourcesUpgradeInDeclaredOrder() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "publisher-chapter-import",
+            displayName: "Publisher Chapter Import",
+            capabilities: ["sync": ["canonical_persistence"]]
+        )
+        let item = Item(
+            id: "item-publisher-order",
+            title: "Publisher Order",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/episode",
+            status: "ready",
+            media: ItemMedia(sourceType: .nativeMediaFile, url: "file:///tmp/episode.mp3", durationMs: 900_000)
+        )
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo)
+
+        for source in [
+            PublisherChapterSource.timestampedDescription,
+            .embeddedMedia,
+            .podloveSimpleChapters,
+            .podcasting20JSON
+        ] {
+            _ = try engine.attachPublisherChapters(
+                itemId: item.id,
+                collection: PublisherChapterCollection(source: source, chapters: [
+                    PublisherChapter(title: source.rawValue, startMs: 0)
+                ])
+            )
+            XCTAssertEqual(
+                try repo.loadListeningMap(itemId: item.id)?.id,
+                "map-\(item.id)-publisher-\(source.rawValue)"
+            )
+        }
+
+        _ = try engine.attachPublisherChapters(
+            itemId: item.id,
+            collection: PublisherChapterCollection(source: .timestampedDescription, chapters: [
+                PublisherChapter(title: "Must not replace JSON", startMs: 0)
+            ])
+        )
+        XCTAssertEqual(
+            try repo.loadListeningMap(itemId: item.id)?.id,
+            "map-\(item.id)-publisher-\(PublisherChapterSource.podcasting20JSON.rawValue)"
+        )
+    }
+
     func testImportSourceLinkUnsupportedDoesNotCreateItem() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
@@ -1543,6 +1686,80 @@ final class SessionKitCoreTests: XCTestCase {
         audio.currentMediaTimeValue = 85_000
         let back = try engine.skipBack(unit: "time_30s")
         XCTAssertEqual(back.currentMediaTimeMs, 55_000)
+    }
+
+    func testNativeAudioSkipForwardAtCompletedEndStaysAtEndAndPauses() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["native_media"]
+            ]
+        )
+        let item = Item(
+            id: "item-native-complete-skip",
+            title: "Completed Native Skip",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/episode",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://cdn.example.com/episode.mp3", durationMs: 120_000)
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        let playCount = audio.playedOffsets.count
+        audio.currentMediaTimeValue = 0 // AVPlayer may report a reset position after completion.
+        audio.completedTargetIds.insert(item.media?.url ?? "")
+
+        let snapshot = try engine.skipForward(unit: "time_60s")
+
+        XCTAssertEqual(snapshot.currentMediaTimeMs, 120_000)
+        XCTAssertEqual(snapshot.progressPercent, 100)
+        XCTAssertEqual(snapshot.status, .paused)
+        XCTAssertEqual(snapshot.phase, .finished)
+        XCTAssertEqual(audio.seekRequests.last, 120_000)
+        XCTAssertEqual(audio.playedOffsets.count, playCount)
+        XCTAssertEqual(audio.pauseCount, 1)
+    }
+
+    func testNativeAudioSkipForwardThatReachesEndClampsWithoutRestartingPlayback() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["native_media"]
+            ]
+        )
+        let item = Item(
+            id: "item-native-clamped-skip",
+            title: "Clamped Native Skip",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/episode",
+            status: "ready",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://cdn.example.com/episode.mp3", durationMs: 90_000)
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        let playCount = audio.playedOffsets.count
+        audio.currentMediaTimeValue = 75_000
+
+        let snapshot = try engine.skipForward(unit: "time_30s")
+
+        XCTAssertEqual(snapshot.currentMediaTimeMs, 90_000)
+        XCTAssertEqual(snapshot.status, .paused)
+        XCTAssertEqual(snapshot.phase, .finished)
+        XCTAssertEqual(audio.seekRequests.last, 90_000)
+        XCTAssertEqual(audio.playedOffsets.count, playCount)
     }
 
     func testNativeAudioPlaybackRatePropagatesToAudioClientAndSnapshot() throws {
@@ -2752,6 +2969,15 @@ final class SessionKitCoreTests: XCTestCase {
         let engine = SessionEngine(profile: profile, repository: repo)
 
         _ = try engine.generateInterjectionSummary(scope: SummaryScope(targetType: "item", sessionId: session.id))
+        var interruptedSummary = try XCTUnwrap(try repo.loadTurns(sessionId: session.id).first { $0.id == "turn-summary-001" })
+        interruptedSummary.status = "failed_partial"
+        try repo.saveTurn(interruptedSummary)
+
+        _ = try engine.generateInterjectionSummary(scope: SummaryScope(targetType: "item", sessionId: session.id))
+        XCTAssertEqual(try repo.loadTurns(sessionId: session.id).first { $0.id == "turn-summary-001" }?.status, "pending")
+
+        _ = try engine.aiStreamDelta(turnId: "turn-summary-001", content: "<sm_response>Current summary.</sm_response>")
+        _ = try engine.aiJobCompleted(turnId: "turn-summary-001")
         XCTAssertThrowsError(try engine.generateInterjectionSummary(scope: SummaryScope(targetType: "item", sessionId: session.id))) { error in
             XCTAssertEqual(error as? SessionKitError, .invalidCommandForState("interjection_summary_already_current"))
         }
@@ -2925,15 +3151,66 @@ final class SessionKitCoreTests: XCTestCase {
         audio.currentOffset = 7
         _ = try engine.aiStreamDelta(turnId: "turn-response-stream", content: "First response. Final fragment")
         let active = try engine.activateStreamingTurn(turnId: "turn-response-stream")
+        let observed = try engine.streamingTurnPlaybackStarted(turnId: "turn-response-stream", charOffset: 0)
         _ = try engine.aiJobCompleted(turnId: "turn-response-stream")
         let finished = try engine.finishStreamingTurnPlayback(turnId: "turn-response-stream")
 
         XCTAssertEqual(audio.pauseCount, 1)
         XCTAssertEqual(active.targetId, "turn-response-stream")
         XCTAssertEqual(active.status, .playing)
+        XCTAssertEqual(observed.status, .playing)
         XCTAssertEqual(finished.status, .paused)
         XCTAssertEqual(finished.phase, .aiResponsePlayback)
         XCTAssertEqual(engine.currentSession?.position.charOffset, "First response. Final fragment".count)
+    }
+
+    func testCompactControlsCanonicallyPauseAndResumeStreamingAssistantPlayback() throws {
+        let runtimeProfile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts", "assistant_turn_tts"]
+            ]
+        )
+        let compactProfile = RuntimeCapabilityProfile(
+            id: "lock-screen-widget",
+            displayName: "Lock Screen",
+            capabilities: [
+                "remoteControl": ["display_snapshot", "send_transport_commands"],
+                "timeline": ["playback_rate_observation"]
+            ]
+        )
+        let item = Item(
+            id: "item-stream-compact",
+            title: "Stream Compact",
+            mediaType: "text",
+            text: "Source text.",
+            externalReference: nil,
+            status: "ready"
+        )
+        let audio = RecordingAudioClient()
+        let repository = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: runtimeProfile, repository: repository, audio: audio)
+        _ = try engine.startSession(itemId: item.id)
+        _ = try engine.aiStreamDelta(turnId: "turn-stream-compact", content: "A streamed assistant response.")
+        _ = try engine.activateStreamingTurn(turnId: "turn-stream-compact")
+        _ = try engine.streamingTurnPlaybackStarted(turnId: "turn-stream-compact", charOffset: 4)
+        let dispatcher = CompactControlDispatcher(surfaceProfile: compactProfile, canonicalRuntime: engine)
+
+        let paused = try dispatcher.dispatch(.pause)
+
+        XCTAssertEqual(paused.snapshot.targetType, TargetType.assistantTurnTTS.rawValue)
+        XCTAssertEqual(paused.snapshot.targetId, "turn-stream-compact")
+        XCTAssertEqual(paused.snapshot.status, .paused)
+        XCTAssertEqual(engine.snapshot.status, .paused)
+        XCTAssertTrue(paused.snapshot.availableCommands.contains(.play))
+
+        let resumed = try dispatcher.dispatch(.play)
+
+        XCTAssertEqual(resumed.snapshot.status, .playing)
+        XCTAssertEqual(engine.snapshot.status, .playing)
+        XCTAssertTrue(resumed.snapshot.availableCommands.contains(.pause))
     }
 
     func testInterjectionDuringExternallyStreamedSpeechTargetsCurrentAssistantSentenceWithoutDoubleResume() throws {

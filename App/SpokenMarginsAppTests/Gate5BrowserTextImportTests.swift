@@ -35,6 +35,76 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         XCTAssertEqual(parsed.requestedContinuation.preferredPlaybackOwner, "browser_or_app")
     }
 
+    func testArticleShortcutBuildsReadablePageHandoff() throws {
+        let publishedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let handoff = try AddArticleShortcutImport.makeHandoff(
+            articleURL: try XCTUnwrap(URL(string: "https://example.com/article?id=38")),
+            title: "  Shortcut Article  ",
+            body: "\nArticle body from Safari Reader.\n",
+            author: "  A. Reader  ",
+            publishedAt: publishedAt,
+            startListening: true
+        )
+
+        XCTAssertEqual(handoff.captureMode, .readablePage)
+        XCTAssertEqual(handoff.contentFormat, .plainText)
+        XCTAssertEqual(handoff.source.url, "https://example.com/article?id=38")
+        XCTAssertEqual(handoff.source.title, "Shortcut Article")
+        XCTAssertEqual(handoff.source.author, "A. Reader")
+        XCTAssertEqual(handoff.source.publishedAt, ISO8601DateFormatter().string(from: publishedAt))
+        XCTAssertEqual(handoff.text, "Article body from Safari Reader.")
+        XCTAssertTrue(handoff.requestedContinuation.startSession)
+        XCTAssertEqual(handoff.requestedContinuation.preferredPlaybackOwner, "app")
+    }
+
+    func testArticleShortcutRejectsUnsupportedURLAndEmptyArticleFields() throws {
+        XCTAssertThrowsError(try AddArticleShortcutImport.makeHandoff(
+            articleURL: try XCTUnwrap(URL(string: "file:///tmp/article.txt")),
+            title: "Article",
+            body: "Body"
+        )) { error in
+            XCTAssertEqual(error as? AddArticleShortcutError, .unsupportedURL)
+        }
+
+        XCTAssertThrowsError(try AddArticleShortcutImport.makeHandoff(
+            articleURL: try XCTUnwrap(URL(string: "https://example.com/article")),
+            title: "   ",
+            body: "Body"
+        )) { error in
+            XCTAssertEqual(error as? AddArticleShortcutError, .missingTitle)
+        }
+
+        XCTAssertThrowsError(try AddArticleShortcutImport.makeHandoff(
+            articleURL: try XCTUnwrap(URL(string: "https://example.com/article")),
+            title: "Article",
+            body: "  \n  "
+        )) { error in
+            XCTAssertEqual(error as? AddArticleShortcutError, .missingBody)
+        }
+    }
+
+    func testArticleShortcutEnqueuesPayloadForAppImport() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("spoken-margins-shortcut-\(UUID().uuidString)", isDirectory: true)
+        temporaryDirectories.append(directory)
+        let store = Gate5BrowserTextHandoffStore(baseDirectory: directory)
+        let handoff = try AddArticleShortcutImport.makeHandoff(
+            articleURL: try XCTUnwrap(URL(string: "https://example.com/enqueued")),
+            title: "Enqueued Article",
+            body: "Article text queued by an App Intent.",
+            startListening: false
+        )
+
+        let openURL = try AddArticleShortcutImport.enqueue(
+            handoff,
+            store: store,
+            payloadID: "shortcut-payload-38"
+        )
+
+        XCTAssertEqual(Gate5BrowserTextHandoffURL.payloadID(from: openURL), "shortcut-payload-38")
+        XCTAssertEqual(try store.handoff(payloadID: "shortcut-payload-38"), handoff)
+    }
+
     func testExactEmojiArticleImportPreservesSourceWhileSystemSpeechProjectionRemovesUnsafeContent() throws {
         let sourceText = try EmojiArticleRegressionFixture.browserMarkdown()
         let handoff = BrowserTextHandoff(

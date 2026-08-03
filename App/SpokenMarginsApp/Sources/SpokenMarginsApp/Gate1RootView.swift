@@ -73,12 +73,74 @@ struct Gate1RootView: View {
             HelpScreen()
                 .environmentObject(model)
         }
+        .sheet(item: $model.sourceLinkCandidateReview) { review in
+            SourceLinkCandidateReviewView(review: review)
+                .environmentObject(model)
+        }
         .alert("AI Setup Needed", isPresented: $model.isAISetupNeededPresented) {
             Button("Open AI Settings", action: model.openAISettingsFromSummaryPrompt)
             Button("Not Now", role: .cancel) {}
         } message: {
             Text("Summarize Notes uses your OpenAI API key to turn this session’s interjections into a spoken debrief. Your session and saved position have not changed.")
         }
+    }
+}
+
+private struct SourceLinkCandidateReviewView: View {
+    @EnvironmentObject private var model: Gate1AppModel
+    let review: SourceLinkCandidateReviewState
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(Array(review.result.candidates.enumerated()), id: \.offset) { index, candidate in
+                    Button {
+                        model.selectSourceLinkCandidate(candidate)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(candidate.title)
+                                .font(.headline)
+                                .foregroundStyle(AppColors.text)
+                            if let show = candidate.showTitle, !show.isEmpty {
+                                Text(show)
+                                    .foregroundStyle(AppColors.secondaryText)
+                            }
+                            HStack(spacing: 10) {
+                                if let published = candidate.publishedAt, !published.isEmpty {
+                                    Text(String(published.prefix(10)))
+                                }
+                                if let durationMs = candidate.durationMs, durationMs > 0 {
+                                    Text(Self.duration(durationMs))
+                                }
+                                Text("\(Int((candidate.confidence * 100).rounded()))% match")
+                            }
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(AppColors.secondaryText)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 4)
+                    }
+                    .accessibilityIdentifier("sourceLink.candidate.\(index)")
+                }
+            }
+            .navigationTitle("Choose Episode")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: model.cancelSourceLinkCandidateReview)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .accessibilityIdentifier("sourceLink.candidateReview.sheet")
+    }
+
+    private static func duration(_ milliseconds: Int) -> String {
+        let totalSeconds = milliseconds / 1_000
+        let hours = totalSeconds / 3_600
+        let minutes = (totalSeconds % 3_600) / 60
+        if hours > 0 { return "\(hours)h \(minutes)m" }
+        return "\(minutes)m"
     }
 }
 
@@ -258,14 +320,21 @@ private struct HelpScreen: View {
                     Text("Open Timeline and tap an interjection to review its recording or transcript.")
                 }
                 Section("Optional AI") {
-                    Text("Summarize Notes synthesizes the interjections in the current session. Discuss answers a question using relevant source and session context.")
-                    Text("Both features require your OpenAI API key, network access, and separate permission to send content. Listening, interjections, the timeline, and export work without AI.")
-                    Button("Open AI Settings", action: model.openAISettingsFromOnboarding)
-                        .accessibilityIdentifier("help.aiSettings.button")
+                    if model.remoteProviderExperienceEnabled {
+                        Text("Summarize Notes synthesizes the interjections in the current session. Discuss answers a question using relevant source and session context.")
+                        Text("Both features require your OpenAI API key, network access, and separate permission to send content. Listening, interjections, the timeline, and export work without AI.")
+                        Button("Open AI Settings", action: model.openAISettingsFromOnboarding)
+                            .accessibilityIdentifier("help.aiSettings.button")
+                    } else {
+                        Text("Summarize Notes uses Apple’s on-device Foundation Model when available. Listening Maps use publisher chapters for podcasts and deterministic structure for native text.")
+                        Text("AI-generated Listening Maps are reserved for a future server-hosted option and are not included in this release.")
+                        Text("Discuss and third-party API settings are disabled. Copy your interjections to another chatbot and paste its response into the Conversation section if you want that workflow.")
+                        LabeledContent("Availability", value: model.localFoundationModelAvailabilityDescription)
+                    }
                 }
-                Section("Safari Extension") {
+                Section("Safari Articles") {
                     Text("In Safari, open Manage Extensions and enable Spoken Margins Text. Use Send to Spoken Margins to capture selected text or the readable page.")
-                    Text("You can also use Safari’s Share menu and choose Spoken Margins. The Safari extension captures articles; the Add Link field in the app is for podcast, RSS, or direct audio links.")
+                    Text("For Safari’s Share menu, run the Add Article to Spoken Margins Shortcut. The Add Link field in the app is for podcast, RSS, or direct audio links.")
                 }
                 Section("Files and PDFs") {
                     Text("From Home, tap Add Source, then Import Text or PDF Files. You can also share a PDF, Markdown file, or text file to Spoken Margins from another app.")
@@ -1099,14 +1168,20 @@ private struct ItemScreen: View {
                         .font(.headline)
                     Spacer()
                 }
-                Button {
-                    model.generateListeningMap()
-                } label: {
-                    Label(model.isGeneratingListeningMap ? "Generating Listening Map" : "Generate Listening Map", systemImage: "sparkles")
+                if model.canGenerateListeningMap {
+                    Button {
+                        model.generateListeningMap()
+                    } label: {
+                        Label(model.isGeneratingListeningMap ? "Generating Listening Map" : "Generate Listening Map", systemImage: "sparkles")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .disabled(model.isGeneratingListeningMap)
+                    .accessibilityIdentifier("item.generateMap.button")
+                } else {
+                    Text(model.listeningMapGenerationAvailabilityDescription)
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
                 }
-                .buttonStyle(SecondaryButtonStyle())
-                .disabled(model.isGeneratingListeningMap)
-                .accessibilityIdentifier("item.generateMap.button")
                 Button {
                     showsManualListeningMapEditor.toggle()
                 } label: {
@@ -1152,14 +1227,20 @@ private struct ItemScreen: View {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Mapless playback is available.")
                             .foregroundStyle(AppColors.secondaryText)
-                        Button {
-                            model.generateListeningMap()
-                        } label: {
-                            Label(model.isGeneratingListeningMap ? "Generating Listening Map" : "Generate Listening Map", systemImage: "sparkles")
+                        if model.canGenerateListeningMap {
+                            Button {
+                                model.generateListeningMap()
+                            } label: {
+                                Label(model.isGeneratingListeningMap ? "Generating Listening Map" : "Generate Listening Map", systemImage: "sparkles")
+                            }
+                            .buttonStyle(SecondaryButtonStyle())
+                            .disabled(model.isGeneratingListeningMap)
+                            .accessibilityIdentifier("chapters.generateMap.button")
+                        } else {
+                            Text(model.listeningMapGenerationAvailabilityDescription)
+                                .font(.caption)
+                                .foregroundStyle(AppColors.secondaryText)
                         }
-                        .buttonStyle(SecondaryButtonStyle())
-                        .disabled(model.isGeneratingListeningMap)
-                        .accessibilityIdentifier("chapters.generateMap.button")
                     }
                 }
             } else {
@@ -1682,21 +1763,23 @@ private struct PlaybackScreen: View {
             VStack(spacing: 10) {
                 if usesVerbosePlaybackActions {
                     HStack(spacing: 10) {
-                        Button(action: model.summarize) {
-                            HStack(spacing: 6) {
-                                if model.isSummarizingInterjections {
-                                    ProgressView()
-                                } else {
-                                    Image(systemName: "sparkles")
+                        if model.aiSummaryExperienceAvailable {
+                            Button(action: model.summarize) {
+                                HStack(spacing: 6) {
+                                    if model.isSummarizingInterjections {
+                                        ProgressView()
+                                    } else {
+                                        Image(systemName: "sparkles")
+                                    }
+                                    Text(model.isSummarizingInterjections ? "Summarizing" : "Summarize Notes")
                                 }
-                                Text(model.isSummarizingInterjections ? "Summarizing" : "Summarize Notes")
+                                .frame(maxWidth: .infinity, minHeight: 52)
                             }
-                            .frame(maxWidth: .infinity, minHeight: 52)
+                            .buttonStyle(WatchSecondaryButtonStyle())
+                            .disabled(!model.canSummarizeInterjections || model.isSummarizingInterjections)
+                            .accessibilityLabel(model.isSummarizingInterjections ? "Summarizing interjections" : "Summarize interjections")
+                            .accessibilityIdentifier("playback.summary.button")
                         }
-                        .buttonStyle(WatchSecondaryButtonStyle())
-                        .disabled(!model.canSummarizeInterjections || model.isSummarizingInterjections)
-                        .accessibilityLabel(model.isSummarizingInterjections ? "Summarizing interjections" : "Summarize interjections")
-                        .accessibilityIdentifier("playback.summary.button")
                         Button(action: model.beginInterjection) {
                             Label(model.interjectionButtonTitle, systemImage: "mic").frame(maxWidth: .infinity)
                         }
@@ -1704,38 +1787,48 @@ private struct PlaybackScreen: View {
                         .disabled(!model.hasActiveSession)
                         .accessibilityIdentifier("playback.interject.button")
                     }
-                    if !model.hasConfiguredProviderAPIKey {
+                    if !model.aiSummaryExperienceAvailable {
+                        Text(model.localFoundationModelAvailabilityDescription)
+                            .font(.caption)
+                            .foregroundStyle(AppColors.watchSecondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityIdentifier("playback.summary.description")
+                    } else if model.remoteProviderExperienceEnabled && !model.hasConfiguredProviderAPIKey {
                         Text("Add an OpenAI API key in Settings to summarize notes or discuss them.")
                             .font(.caption)
                             .foregroundStyle(AppColors.watchSecondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .accessibilityIdentifier("playback.summary.description")
                     }
-                    Button {
-                        followUpFocused = false
-                        model.discuss(followUp: followUp)
-                    } label: {
-                        Label("Discuss", systemImage: "bubble.left.and.bubble.right.fill")
+                    if model.remoteProviderExperienceEnabled {
+                        Button {
+                            followUpFocused = false
+                            model.discuss(followUp: followUp)
+                        } label: {
+                            Label("Discuss", systemImage: "bubble.left.and.bubble.right.fill")
+                        }
+                        .buttonStyle(LightButtonStyle())
+                        .disabled(!model.hasActiveSession || followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityIdentifier("playback.discuss.button")
                     }
-                    .buttonStyle(LightButtonStyle())
-                    .disabled(!model.hasActiveSession || followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .accessibilityIdentifier("playback.discuss.button")
                 } else {
                     HStack(spacing: 12) {
-                        Button(action: model.summarize) {
-                            Group {
-                                if model.isSummarizingInterjections {
-                                    ProgressView()
-                                } else {
-                                    Image(systemName: "sparkles")
+                        if model.aiSummaryExperienceAvailable {
+                            Button(action: model.summarize) {
+                                Group {
+                                    if model.isSummarizingInterjections {
+                                        ProgressView()
+                                    } else {
+                                        Image(systemName: "sparkles")
+                                    }
                                 }
+                                .frame(maxWidth: .infinity, minHeight: 52)
                             }
-                            .frame(maxWidth: .infinity, minHeight: 52)
+                            .buttonStyle(WatchSecondaryButtonStyle())
+                            .disabled(!model.canSummarizeInterjections || model.isSummarizingInterjections)
+                            .accessibilityLabel(model.isSummarizingInterjections ? "Summarizing interjections" : "Summarize interjections")
+                            .accessibilityIdentifier("playback.summary.button")
                         }
-                        .buttonStyle(WatchSecondaryButtonStyle())
-                        .disabled(!model.canSummarizeInterjections || model.isSummarizingInterjections)
-                        .accessibilityLabel(model.isSummarizingInterjections ? "Summarizing interjections" : "Summarize interjections")
-                        .accessibilityIdentifier("playback.summary.button")
 
                         Button(action: model.beginInterjection) {
                             Image(systemName: "mic")
@@ -1746,17 +1839,19 @@ private struct PlaybackScreen: View {
                         .accessibilityLabel(model.interjectionButtonTitle)
                         .accessibilityIdentifier("playback.interject.button")
 
-                        Button {
-                            followUpFocused = false
-                            model.discuss(followUp: followUp)
-                        } label: {
-                            Image(systemName: "bubble.left.and.bubble.right.fill")
-                                .frame(maxWidth: .infinity, minHeight: 52)
+                        if model.remoteProviderExperienceEnabled {
+                            Button {
+                                followUpFocused = false
+                                model.discuss(followUp: followUp)
+                            } label: {
+                                Image(systemName: "bubble.left.and.bubble.right.fill")
+                                    .frame(maxWidth: .infinity, minHeight: 52)
+                            }
+                            .buttonStyle(WatchSecondaryButtonStyle())
+                            .disabled(!model.hasActiveSession || followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .accessibilityLabel("Discuss")
+                            .accessibilityIdentifier("playback.discuss.button")
                         }
-                        .buttonStyle(WatchSecondaryButtonStyle())
-                        .disabled(!model.hasActiveSession || followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .accessibilityLabel("Discuss")
-                        .accessibilityIdentifier("playback.discuss.button")
                     }
                 }
             }
@@ -1979,7 +2074,9 @@ private struct PlaybackScreen: View {
                     .accessibilityIdentifier("conversation.pasteResponse.button")
                 }
                 if model.selectedItem.turns.isEmpty {
-                    Text("Generate a summary or send a follow-up after listening.")
+                    Text(model.remoteProviderExperienceEnabled
+                        ? "Generate a summary or send a follow-up after listening."
+                        : "Generate an on-device summary, or paste a response from another chatbot.")
                         .foregroundStyle(AppColors.secondaryText)
                 } else {
                     ForEach(model.selectedItem.turns, id: \.id) { turn in
@@ -2019,23 +2116,25 @@ private struct PlaybackScreen: View {
                         Divider()
                     }
                 }
-                TextField("Ask a follow-up…", text: $followUp, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
-                    .focused($followUpFocused)
-                    .accessibilityLabel("Ask a follow-up")
-                    .accessibilityIdentifier("conversation.followup.field")
-                HStack {
-                    Button("Submit") {
-                        followUpFocused = false
-                        model.followUp(followUp)
+                if model.remoteProviderExperienceEnabled {
+                    TextField("Ask a follow-up…", text: $followUp, axis: .vertical)
+                        .textFieldStyle(.roundedBorder)
+                        .focused($followUpFocused)
+                        .accessibilityLabel("Ask a follow-up")
+                        .accessibilityIdentifier("conversation.followup.field")
+                    HStack {
+                        Button("Submit") {
+                            followUpFocused = false
+                            model.followUp(followUp)
+                        }
+                        .buttonStyle(PrimaryButtonStyle())
+                        .disabled(!model.hasActiveSession || followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityIdentifier("conversation.submit.button")
+                        Button("Retry AI", action: model.retryPendingAI)
+                            .buttonStyle(SecondaryButtonStyle())
+                            .disabled(!model.hasActiveSession)
+                            .accessibilityIdentifier("conversation.retry.button")
                     }
-                    .buttonStyle(PrimaryButtonStyle())
-                    .disabled(!model.hasActiveSession || followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .accessibilityIdentifier("conversation.submit.button")
-                    Button("Retry AI", action: model.retryPendingAI)
-                        .buttonStyle(SecondaryButtonStyle())
-                        .disabled(!model.hasActiveSession)
-                        .accessibilityIdentifier("conversation.retry.button")
                 }
             }
         }
@@ -2097,21 +2196,31 @@ private struct GuidedOnboardingPlaybackCard: View {
         case .optionalAI:
             Text("AI is optional")
                 .font(.title3.bold())
-            Text("Summarize Notes synthesizes this session’s interjections. Discuss answers a question using relevant source and session context. Both require your OpenAI API key, network access, and permission to send content. Listening, notes, the timeline, and export work without AI.")
+            Text(model.remoteProviderExperienceEnabled
+                ? "Summarize Notes synthesizes this session’s interjections. Discuss answers a question using relevant source and session context. Both require your OpenAI API key, network access, and permission to send content."
+                : "Summarize Notes uses Apple’s on-device model when it is available. Nothing is sent to a third-party AI service. You can also copy notes to another chatbot and paste its response back here.")
                 .foregroundStyle(AppColors.secondaryText)
-            ViewThatFits(in: .horizontal) {
-                HStack {
-                    Button("Set Up AI", action: model.openAISettingsFromOnboarding)
-                        .buttonStyle(SecondaryButtonStyle())
-                    Button("Continue Without AI", action: model.continueGuidedOnboardingPastAI)
-                        .buttonStyle(PrimaryButtonStyle())
+            if model.remoteProviderExperienceEnabled {
+                ViewThatFits(in: .horizontal) {
+                    HStack {
+                        Button("Set Up AI", action: model.openAISettingsFromOnboarding)
+                            .buttonStyle(SecondaryButtonStyle())
+                        Button("Continue Without AI", action: model.continueGuidedOnboardingPastAI)
+                            .buttonStyle(PrimaryButtonStyle())
+                    }
+                    VStack(alignment: .leading, spacing: 10) {
+                        Button("Continue Without AI", action: model.continueGuidedOnboardingPastAI)
+                            .buttonStyle(PrimaryButtonStyle())
+                        Button("Set Up AI", action: model.openAISettingsFromOnboarding)
+                            .buttonStyle(SecondaryButtonStyle())
+                    }
                 }
-                VStack(alignment: .leading, spacing: 10) {
-                    Button("Continue Without AI", action: model.continueGuidedOnboardingPastAI)
-                        .buttonStyle(PrimaryButtonStyle())
-                    Button("Set Up AI", action: model.openAISettingsFromOnboarding)
-                        .buttonStyle(SecondaryButtonStyle())
-                }
+            } else {
+                Text(model.localFoundationModelAvailabilityDescription)
+                    .font(.caption)
+                    .foregroundStyle(AppColors.secondaryText)
+                Button("Continue", action: model.continueGuidedOnboardingPastAI)
+                    .buttonStyle(PrimaryButtonStyle())
             }
         case .exportSession:
             Text("Keep the useful context")
@@ -2156,44 +2265,52 @@ private struct SettingsScreen: View {
         NavigationStack {
             Form {
                 Section("AI Features") {
-                    LabeledContent("Provider", value: "OpenAI")
-                        .accessibilityIdentifier("provider.name")
-                    LabeledContent("Data Sharing", value: model.aiDataSharingConsentDescription)
-                    if model.aiDataSharingConsent == .grantedV1 {
-                        Button("Revoke OpenAI Data Sharing", role: .destructive, action: model.revokeAIDataSharingConsent)
-                            .accessibilityIdentifier("provider.revokeConsent.button")
+                    if model.remoteProviderExperienceEnabled {
+                        LabeledContent("Provider", value: "OpenAI")
+                            .accessibilityIdentifier("provider.name")
+                        LabeledContent("Data Sharing", value: model.aiDataSharingConsentDescription)
+                        if model.aiDataSharingConsent == .grantedV1 {
+                            Button("Revoke OpenAI Data Sharing", role: .destructive, action: model.revokeAIDataSharingConsent)
+                                .accessibilityIdentifier("provider.revokeConsent.button")
+                        }
+                        SecureField("API Key", text: $model.providerAPIKey)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .focused($focusedField, equals: .apiKey)
+                            .accessibilityIdentifier("provider.apiKey.field")
+                        Button("Save Provider Settings", action: model.saveProviderSettings)
+                            .accessibilityIdentifier("provider.save.button")
+                        Button("Delete API Key", role: .destructive, action: model.deleteProviderAPIKey)
+                            .disabled(model.providerAPIKey.isEmpty)
+                            .accessibilityIdentifier("provider.deleteAPIKey.button")
+                        Button("Probe Provider", action: model.probeProvider)
+                            .accessibilityIdentifier("provider.probe.button")
+                        LabeledContent("Probe", value: model.providerProbeStatus)
+                        DisclosureGroup("Advanced model settings", isExpanded: $showsAdvancedAISettings) {
+                            TextField("Listening Map Model", text: $model.listeningMapModel)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .focused($focusedField, equals: .mapModel)
+                                .accessibilityIdentifier("provider.mapModel.field")
+                            TextField("Summary Model", text: $model.summaryModel)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .focused($focusedField, equals: .summaryModel)
+                                .accessibilityIdentifier("provider.summaryModel.field")
+                            TextField("Conversation Model", text: $model.conversationModel)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .focused($focusedField, equals: .conversationModel)
+                                .accessibilityIdentifier("provider.conversationModel.field")
+                        }
+                        .accessibilityIdentifier("provider.advanced.disclosure")
+                    } else {
+                        LabeledContent("Processing", value: "On device")
+                        LabeledContent("Apple Foundation Model", value: model.localFoundationModelAvailabilityDescription)
+                        Text("Interjection summaries stay on this device. Publisher podcast chapters and deterministic native-text Listening Maps do not require AI. AI-generated Listening Maps, remote providers, and API keys are disabled in this release.")
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
                     }
-                    SecureField("API Key", text: $model.providerAPIKey)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .focused($focusedField, equals: .apiKey)
-                        .accessibilityIdentifier("provider.apiKey.field")
-                    Button("Save Provider Settings", action: model.saveProviderSettings)
-                        .accessibilityIdentifier("provider.save.button")
-                    Button("Delete API Key", role: .destructive, action: model.deleteProviderAPIKey)
-                        .disabled(model.providerAPIKey.isEmpty)
-                        .accessibilityIdentifier("provider.deleteAPIKey.button")
-                    Button("Probe Provider", action: model.probeProvider)
-                        .accessibilityIdentifier("provider.probe.button")
-                    LabeledContent("Probe", value: model.providerProbeStatus)
-                    DisclosureGroup("Advanced model settings", isExpanded: $showsAdvancedAISettings) {
-                        TextField("Listening Map Model", text: $model.listeningMapModel)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .focused($focusedField, equals: .mapModel)
-                            .accessibilityIdentifier("provider.mapModel.field")
-                        TextField("Summary Model", text: $model.summaryModel)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .focused($focusedField, equals: .summaryModel)
-                            .accessibilityIdentifier("provider.summaryModel.field")
-                        TextField("Conversation Model", text: $model.conversationModel)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .focused($focusedField, equals: .conversationModel)
-                            .accessibilityIdentifier("provider.conversationModel.field")
-                    }
-                    .accessibilityIdentifier("provider.advanced.disclosure")
                 }
                 .onCompatibleChange(of: model.listeningMapModel) { _ in model.settingsValueChanged() }
                 .onCompatibleChange(of: model.summaryModel) { _ in model.settingsValueChanged() }

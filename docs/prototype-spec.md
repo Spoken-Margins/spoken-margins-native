@@ -972,7 +972,7 @@ Delayed or rejected inputs:
 
 Audio source rule:
 
-Native audio can play without a full transcript and uses source media time as its durable fallback anchor. Interjections derive bounded transcript excerpts around their timestamps. Full native-audio transcription is reserved for an explicit Listening Map request and remains internal derived data rather than exported full source content.
+Native audio can play without a full transcript and uses source media time as its durable fallback anchor. Interjections derive bounded transcript excerpts around their timestamps. The default MVP does not perform full native-audio transcription for Listening Map generation; any future server-hosted map path must keep the transcript internal rather than exporting full source content.
 
 Future export destinations:
 

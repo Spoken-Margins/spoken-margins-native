@@ -117,6 +117,56 @@ public struct SourceLink: Codable, Equatable, Sendable {
     }
 }
 
+public enum PublisherChapterSource: String, Codable, Equatable, Sendable, CaseIterable {
+    case podcasting20JSON = "podcasting_2_json"
+    case podloveSimpleChapters = "podlove_simple_chapters"
+    case embeddedMedia = "embedded_media"
+    case timestampedDescription = "timestamped_description"
+
+    public var precedence: Int {
+        switch self {
+        case .podcasting20JSON: return 4
+        case .podloveSimpleChapters: return 3
+        case .embeddedMedia: return 2
+        case .timestampedDescription: return 1
+        }
+    }
+}
+
+public struct SourceChapterLink: Codable, Equatable, Sendable {
+    public var url: String
+    public var type: String
+
+    public init(url: String, type: String) {
+        self.url = url
+        self.type = type
+    }
+}
+
+public struct PublisherChapter: Codable, Equatable, Sendable {
+    public var title: String
+    public var description: String?
+    public var startMs: Int
+    public var endMs: Int?
+
+    public init(title: String, description: String? = nil, startMs: Int, endMs: Int? = nil) {
+        self.title = title
+        self.description = description
+        self.startMs = startMs
+        self.endMs = endMs
+    }
+}
+
+public struct PublisherChapterCollection: Codable, Equatable, Sendable {
+    public var source: PublisherChapterSource
+    public var chapters: [PublisherChapter]
+
+    public init(source: PublisherChapterSource, chapters: [PublisherChapter]) {
+        self.source = source
+        self.chapters = chapters
+    }
+}
+
 public enum LinkResolutionStatus: String, Codable, Equatable, Sendable {
     case resolving
     case playable
@@ -132,6 +182,8 @@ public struct LinkResolutionCandidate: Codable, Equatable, Sendable {
     public var publishedAt: String?
     public var audioURL: String?
     public var transcriptLinks: [SourceTranscriptLink]
+    public var chapterLinks: [SourceChapterLink]
+    public var publisherChapterCollections: [PublisherChapterCollection]
     public var confidence: Double
 
     public init(
@@ -142,6 +194,8 @@ public struct LinkResolutionCandidate: Codable, Equatable, Sendable {
         publishedAt: String? = nil,
         audioURL: String? = nil,
         transcriptLinks: [SourceTranscriptLink] = [],
+        chapterLinks: [SourceChapterLink] = [],
+        publisherChapterCollections: [PublisherChapterCollection] = [],
         confidence: Double
     ) {
         self.sourceLink = sourceLink
@@ -151,6 +205,8 @@ public struct LinkResolutionCandidate: Codable, Equatable, Sendable {
         self.publishedAt = publishedAt
         self.audioURL = audioURL
         self.transcriptLinks = transcriptLinks
+        self.chapterLinks = chapterLinks
+        self.publisherChapterCollections = publisherChapterCollections
         self.confidence = confidence
     }
 
@@ -162,6 +218,8 @@ public struct LinkResolutionCandidate: Codable, Equatable, Sendable {
         case publishedAt
         case audioURL
         case transcriptLinks
+        case chapterLinks
+        case publisherChapterCollections
         case confidence
     }
 
@@ -174,6 +232,8 @@ public struct LinkResolutionCandidate: Codable, Equatable, Sendable {
         publishedAt = try container.decodeIfPresent(String.self, forKey: .publishedAt)
         audioURL = try container.decodeIfPresent(String.self, forKey: .audioURL)
         transcriptLinks = try container.decodeIfPresent([SourceTranscriptLink].self, forKey: .transcriptLinks) ?? []
+        chapterLinks = try container.decodeIfPresent([SourceChapterLink].self, forKey: .chapterLinks) ?? []
+        publisherChapterCollections = try container.decodeIfPresent([PublisherChapterCollection].self, forKey: .publisherChapterCollections) ?? []
         confidence = try container.decode(Double.self, forKey: .confidence)
     }
 }

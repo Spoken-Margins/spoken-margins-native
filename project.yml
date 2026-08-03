@@ -46,7 +46,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsApp/SpokenMarginsApp.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "8"
+        CURRENT_PROJECT_VERSION: "12"
         DEVELOPMENT_TEAM: J8SWC6J3VY
         INFOPLIST_FILE: App/SpokenMarginsApp/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Spoken Margins
@@ -59,6 +59,12 @@ targets:
       - name: Remove Embedded Static ONNX Runtime
         script: |
           "${SRCROOT}/scripts/remove-embedded-static-onnxruntime.sh"
+        inputFiles:
+          - $(BUILT_PRODUCTS_DIR)/onnxruntime.framework/onnxruntime
+          - $(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)
+          - $(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/onnxruntime.framework/onnxruntime
+        outputFiles:
+          - $(DERIVED_FILE_DIR)/remove-embedded-static-onnxruntime.stamp
         basedOnDependencyAnalysis: false
     info:
       path: App/SpokenMarginsApp/Info.plist
@@ -72,6 +78,7 @@ targets:
               - spokenmargins
         LSRequiresIPhoneOS: true
         ITSAppUsesNonExemptEncryption: false
+        SMRemoteProviderExperienceEnabled: false
         UILaunchScreen: {}
         NSMicrophoneUsageDescription: Spoken Margins records spoken interjections during listening sessions.
         NSSpeechRecognitionUsageDescription: Spoken Margins may transcribe spoken interjections when enabled.
@@ -101,7 +108,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.gate2widget
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsGate2Widget/SpokenMarginsGate2Widget.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "8"
+        CURRENT_PROJECT_VERSION: "12"
         DEVELOPMENT_TEAM: J8SWC6J3VY
         ENABLE_DEBUG_DYLIB: NO
         MARKETING_VERSION: "0.1"
@@ -125,7 +132,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.browsertext
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsBrowserTextExtension/SpokenMarginsBrowserTextExtension.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "8"
+        CURRENT_PROJECT_VERSION: "12"
         DEVELOPMENT_TEAM: J8SWC6J3VY
         ENABLE_DEBUG_DYLIB: NO
         INFOPLIST_FILE: App/SpokenMarginsBrowserTextExtension/Info.plist
@@ -150,7 +157,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.share
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsShareExtension/SpokenMarginsShareExtension.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "8"
+        CURRENT_PROJECT_VERSION: "12"
         DEVELOPMENT_TEAM: J8SWC6J3VY
         ENABLE_DEBUG_DYLIB: NO
         INFOPLIST_FILE: App/SpokenMarginsShareExtension/Info.plist
@@ -215,7 +222,7 @@ targets:
         PRODUCT_NAME: SpokenMarginsLegacy
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsLegacy/SpokenMarginsLegacy.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "8"
+        CURRENT_PROJECT_VERSION: "12"
         DEVELOPMENT_TEAM: J8SWC6J3VY
         INFOPLIST_FILE: App/SpokenMarginsLegacy/Info.plist
         MARKETING_VERSION: "0.1"
@@ -231,6 +238,12 @@ targets:
       - name: Remove Embedded Static ONNX Runtime
         script: |
           "${SRCROOT}/scripts/remove-embedded-static-onnxruntime.sh"
+        inputFiles:
+          - $(BUILT_PRODUCTS_DIR)/onnxruntime.framework/onnxruntime
+          - $(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)
+          - $(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/onnxruntime.framework/onnxruntime
+        outputFiles:
+          - $(DERIVED_FILE_DIR)/remove-embedded-static-onnxruntime.stamp
         basedOnDependencyAnalysis: false
   SpokenMarginsLegacyShareExtension:
     type: app-extension
@@ -250,7 +263,7 @@ targets:
         PRODUCT_NAME: SpokenMarginsLegacyShareExtension
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsLegacyShareExtension/SpokenMarginsLegacyShareExtension.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "8"
+        CURRENT_PROJECT_VERSION: "12"
         DEVELOPMENT_TEAM: J8SWC6J3VY
         ENABLE_DEBUG_DYLIB: NO
         INFOPLIST_FILE: App/SpokenMarginsLegacyShareExtension/Info.plist
@@ -275,7 +288,7 @@ targets:
         PRODUCT_NAME: SpokenMarginsLegacyBrowserTextExtension
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsLegacyBrowserTextExtension/SpokenMarginsLegacyBrowserTextExtension.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "8"
+        CURRENT_PROJECT_VERSION: "12"
         DEVELOPMENT_TEAM: J8SWC6J3VY
         ENABLE_DEBUG_DYLIB: NO
         INFOPLIST_FILE: App/SpokenMarginsLegacyBrowserTextExtension/Info.plist

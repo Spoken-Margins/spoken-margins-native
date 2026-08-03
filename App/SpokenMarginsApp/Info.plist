@@ -41,6 +41,8 @@
 	<string>Spoken Margins may transcribe spoken interjections when enabled.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
+	<key>SMRemoteProviderExperienceEnabled</key>
+	<false/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

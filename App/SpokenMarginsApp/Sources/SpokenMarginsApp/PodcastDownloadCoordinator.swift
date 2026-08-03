@@ -3,6 +3,34 @@ import Network
 import SessionKit
 import SessionKitPersistence
 
+enum PodcastDownloadTransportURLPolicy {
+    /// Returns a transport URL that can be used without weakening App Transport Security.
+    /// The publisher URL remains on the item as provenance; only the download transport is upgraded.
+    static func secureURL(for url: URL) -> URL? {
+        guard let scheme = url.scheme?.lowercased() else { return nil }
+        if scheme == "https" { return url }
+        guard scheme == "http", var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+
+        components.scheme = "https"
+        if components.port == 80 { components.port = nil }
+
+        // BBC Media Selector includes the redirect protocol in its path. Changing only the
+        // URL scheme still produces an HTTP redirect, so request its HTTPS redirect chain.
+        let host = components.host?.lowercased() ?? ""
+        if (host == "bbc.co.uk" || host.hasSuffix(".bbc.co.uk")),
+           components.percentEncodedPath.contains("/mediaselector/"),
+           components.percentEncodedPath.contains("/proto/http/") {
+            components.percentEncodedPath = components.percentEncodedPath.replacingOccurrences(
+                of: "/proto/http/",
+                with: "/proto/https/"
+            )
+        }
+        return components.url
+    }
+}
+
 @MainActor
 final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked Sendable {
     static let backgroundSessionIdentifier = "com.spokenmargins.podcast-downloads"
@@ -116,22 +144,34 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         }
         if existing?.state == .downloading { return }
 
+        guard let transportURL = PodcastDownloadTransportURLPolicy.secureURL(for: remoteURL) else {
+            var record = existing ?? PodcastDownloadRecord(
+                id: "podcast-download-\(itemId)",
+                itemId: itemId,
+                remoteURL: remoteURL.absoluteString,
+                state: .failed
+            )
+            record.remoteURL = remoteURL.absoluteString
+            fail(record, reason: "The podcast audio URL does not support a secure HTTP connection.")
+            return
+        }
+
         let remoteAsset = AudioAsset(
             id: "podcast-remote-\(itemId)",
             itemId: itemId,
             audioSourceType: .remoteStream,
             availability: .remote,
-            url: remoteURL.absoluteString
+            url: transportURL.absoluteString
         )
         try? store.saveAudioAsset(remoteAsset)
 
         var record = existing ?? PodcastDownloadRecord(
             id: "podcast-download-\(itemId)",
             itemId: itemId,
-            remoteURL: remoteURL.absoluteString,
+            remoteURL: transportURL.absoluteString,
             state: .streamingOnly
         )
-        record.remoteURL = remoteURL.absoluteString
+        record.remoteURL = transportURL.absoluteString
         record.failureReason = nil
         switch PodcastDownloadPolicy.action(for: networkTransport, userInitiated: userInitiated) {
         case .download:
@@ -245,9 +285,14 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
 
     private func beginDownload(record: PodcastDownloadRecord, userInitiated: Bool) {
         guard !activeTaskItemIds.contains(record.itemId) else { return }
-        guard let url = URL(string: record.remoteURL) else {
+        guard let originalURL = URL(string: record.remoteURL),
+              let url = PodcastDownloadTransportURLPolicy.secureURL(for: originalURL) else {
             fail(record, reason: "The podcast audio URL is invalid.")
             return
+        }
+        var record = record
+        if record.remoteURL != url.absoluteString {
+            record.remoteURL = url.absoluteString
         }
         var request = URLRequest(url: url)
         request.allowsCellularAccess = userInitiated
@@ -393,6 +438,24 @@ extension PodcastDownloadCoordinator: URLSessionDownloadDelegate {
 }
 
 extension PodcastDownloadCoordinator: URLSessionTaskDelegate {
+    nonisolated func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        guard let url = request.url,
+              url.scheme?.lowercased() == "http",
+              let secureURL = PodcastDownloadTransportURLPolicy.secureURL(for: url) else {
+            completionHandler(request)
+            return
+        }
+        var secureRequest = request
+        secureRequest.url = secureURL
+        completionHandler(secureRequest)
+    }
+
     nonisolated func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
         Task { @MainActor in
             PodcastBackgroundSessionEvents.completeIfPending()

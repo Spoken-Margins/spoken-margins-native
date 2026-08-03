@@ -3,7 +3,7 @@
   "$id": "https://spokenmargins.local/schemas/listening-map.schema.json",
   "title": "ListeningMap",
   "type": "object",
-  "required": ["schemaVersion", "id", "itemId", "overview", "claims", "chapters"],
+  "required": ["schemaVersion", "id", "itemId", "overview", "chapters"],
   "additionalProperties": false,
   "properties": {
     "schemaVersion": { "const": "listening-map.v1" },
@@ -11,18 +11,6 @@
     "itemId": { "type": "string", "minLength": 1 },
     "itemTitle": { "type": ["string", "null"] },
     "overview": { "type": "string", "minLength": 1 },
-    "claims": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["id", "text"],
-        "properties": {
-          "id": { "type": "string", "minLength": 1 },
-          "text": { "type": "string", "minLength": 1 }
-        }
-      }
-    },
     "chapters": {
       "type": "array",
       "minItems": 1,

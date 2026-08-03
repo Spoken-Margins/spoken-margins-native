@@ -4,12 +4,6 @@
   "itemId": "item-duplicate",
   "itemTitle": "Duplicate Anchor Example",
   "overview": "This fixture exists to verify duplicate anchor repair behavior.",
-  "claims": [
-    {
-      "id": "claim-1",
-      "text": "Repeated anchors must be rejected or repaired."
-    }
-  ],
   "chapters": [
     {
       "id": "ch-repeat",
