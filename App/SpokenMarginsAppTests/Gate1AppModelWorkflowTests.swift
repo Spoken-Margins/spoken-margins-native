@@ -234,6 +234,24 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.title, "Scratch Item")
     }
 
+    func testRapidManualImportsReceiveDistinctIdentifiers() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.importTitle = "First Import"
+        model.importText = "The first rapidly imported item."
+        model.importTextItem()
+        let firstID = model.selectedItem.id
+
+        model.importTitle = "Second Import"
+        model.importText = "The second rapidly imported item."
+        model.importTextItem()
+        let secondID = model.selectedItem.id
+
+        XCTAssertNotEqual(firstID, secondID)
+        XCTAssertTrue(model.libraryItems.contains(where: { $0.id == firstID }))
+        XCTAssertTrue(model.libraryItems.contains(where: { $0.id == secondID }))
+    }
+
     func testLeavingPlaybackKeepsSessionPlayingAndShowsMiniPlayer() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
@@ -590,13 +608,26 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     }
 
     func testBootstrapRestoresNewestUnfinishedSessionPausedWithoutAutoplay() throws {
-        let firstModel = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        let databaseURL = FileManager.default.temporaryDirectory
+            .appending(path: "spoken-margins-relaunch-\(UUID().uuidString).sqlite")
+        defer {
+            for suffix in ["", "-wal", "-shm"] {
+                try? FileManager.default.removeItem(atPath: databaseURL.path + suffix)
+            }
+        }
+        let firstModel = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: databaseURL
+        )
         firstModel.resetAndSeed()
         firstModel.startItem(id: "item-pill")
         firstModel.pause()
         let sessionID = try XCTUnwrap(firstModel.snapshot.sessionId)
 
-        let relaunchedModel = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        let relaunchedModel = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: databaseURL
+        )
         relaunchedModel.bootstrapLibraryIfNeeded()
 
         XCTAssertEqual(relaunchedModel.snapshot.sessionId, sessionID)
@@ -744,11 +775,22 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     }
 
     func testLegacyEmbeddedPiperModeSanitizesToBundledJamesPath() {
-        let priorTermsVersion = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceVersionKey)
-        let priorTermsDate = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceDateKey)
+        let defaults = UserDefaults.standard
+        let keys = [
+            "supertonicTTSMigrationV1",
+            "supertonicVoicePendingTermsV1",
+            "ttsMode",
+            "ttsVoiceSelection",
+            SpokenMarginsTerms.acceptanceVersionKey,
+            SpokenMarginsTerms.acceptanceDateKey
+        ]
+        let prior = keys.reduce(into: [String: Any]()) { values, key in
+            values[key] = defaults.object(forKey: key)
+        }
         defer {
-            restoreUserDefault(priorTermsVersion, forKey: SpokenMarginsTerms.acceptanceVersionKey)
-            restoreUserDefault(priorTermsDate, forKey: SpokenMarginsTerms.acceptanceDateKey)
+            for key in keys {
+                restoreUserDefault(prior[key], forKey: key)
+            }
         }
         SpokenMarginsTerms.recordAcceptance()
         let model = Gate1AppModel(audioPlaybackClient: WorkflowRecordingAudioClient())
@@ -828,11 +870,22 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     }
 
     func testSupertonicVoiceChangeStopsPlaybackAndCanResumeFromConfirmedPosition() throws {
-        let priorTermsVersion = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceVersionKey)
-        let priorTermsDate = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceDateKey)
+        let defaults = UserDefaults.standard
+        let keys = [
+            "supertonicTTSMigrationV1",
+            "supertonicVoicePendingTermsV1",
+            "ttsMode",
+            "ttsVoiceSelection",
+            SpokenMarginsTerms.acceptanceVersionKey,
+            SpokenMarginsTerms.acceptanceDateKey
+        ]
+        let prior = keys.reduce(into: [String: Any]()) { values, key in
+            values[key] = defaults.object(forKey: key)
+        }
         defer {
-            restoreUserDefault(priorTermsVersion, forKey: SpokenMarginsTerms.acceptanceVersionKey)
-            restoreUserDefault(priorTermsDate, forKey: SpokenMarginsTerms.acceptanceDateKey)
+            for key in keys {
+                restoreUserDefault(prior[key], forKey: key)
+            }
         }
         SpokenMarginsTerms.recordAcceptance()
         let audio = WorkflowRecordingAudioClient()

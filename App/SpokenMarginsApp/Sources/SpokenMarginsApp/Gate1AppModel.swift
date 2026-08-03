@@ -429,6 +429,7 @@ final class Gate1AppModel: ObservableObject {
 
     private var engine: SessionEngine?
     private var store: SQLiteSessionStore?
+    private var databaseURLOverride: URL?
     private let gate2CompactControls: Gate2CompactControlController
     private let featureFlags: SpokenMarginsFeatureFlags
     private let localFoundationModelClient: any LocalFoundationModelClient
@@ -675,6 +676,7 @@ final class Gate1AppModel: ObservableObject {
         gate2CompactControls: Gate2CompactControlController = Gate2CompactControlController(),
         featureFlags: SpokenMarginsFeatureFlags = .release,
         localFoundationModelClient: any LocalFoundationModelClient = AppleFoundationModelClient(),
+        databaseURLOverride: URL? = nil,
         trashUndoDismissDelay: Duration = .seconds(5)
     ) {
         self.sourceLinkResolver = sourceLinkResolver
@@ -687,6 +689,7 @@ final class Gate1AppModel: ObservableObject {
         self.gate2CompactControls = gate2CompactControls
         self.featureFlags = featureFlags
         self.localFoundationModelClient = localFoundationModelClient
+        self.databaseURLOverride = databaseURLOverride
         self.trashUndoDismissDelay = trashUndoDismissDelay
         if let interjectionTranscriptionHandler {
             self.interjectionTranscriptionHandler = interjectionTranscriptionHandler
@@ -1248,6 +1251,10 @@ final class Gate1AppModel: ObservableObject {
 
     func resetAndSeed() {
         do {
+            if Self.isRunningUnitTests, databaseURLOverride == nil {
+                databaseURLOverride = FileManager.default.temporaryDirectory
+                    .appending(path: "spoken-margins-tests-\(UUID().uuidString).sqlite")
+            }
             let databaseURL = try databaseURL()
             let store = try SQLiteSessionStore(path: databaseURL.path)
             try store.reset()
@@ -1379,7 +1386,7 @@ final class Gate1AppModel: ObservableObject {
         do {
             let store = try requireStore()
             let item = Item(
-                id: "item-import-\(Int(Date().timeIntervalSince1970))",
+                id: "item-import-\(UUID().uuidString.lowercased())",
                 title: importTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Imported Text" : importTitle,
                 mediaType: "text",
                 text: importText,
@@ -7683,6 +7690,9 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func databaseURL() throws -> URL {
+        if let databaseURLOverride {
+            return databaseURLOverride
+        }
         let directory = try FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,

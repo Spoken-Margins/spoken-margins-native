@@ -59,6 +59,12 @@ targets:
       - name: Remove Embedded Static ONNX Runtime
         script: |
           "${SRCROOT}/scripts/remove-embedded-static-onnxruntime.sh"
+        inputFiles:
+          - $(BUILT_PRODUCTS_DIR)/onnxruntime.framework/onnxruntime
+          - $(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)
+          - $(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/onnxruntime.framework/onnxruntime
+        outputFiles:
+          - $(DERIVED_FILE_DIR)/remove-embedded-static-onnxruntime.stamp
         basedOnDependencyAnalysis: false
     info:
       path: App/SpokenMarginsApp/Info.plist
@@ -232,6 +238,12 @@ targets:
       - name: Remove Embedded Static ONNX Runtime
         script: |
           "${SRCROOT}/scripts/remove-embedded-static-onnxruntime.sh"
+        inputFiles:
+          - $(BUILT_PRODUCTS_DIR)/onnxruntime.framework/onnxruntime
+          - $(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)
+          - $(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/onnxruntime.framework/onnxruntime
+        outputFiles:
+          - $(DERIVED_FILE_DIR)/remove-embedded-static-onnxruntime.stamp
         basedOnDependencyAnalysis: false
   SpokenMarginsLegacyShareExtension:
     type: app-extension

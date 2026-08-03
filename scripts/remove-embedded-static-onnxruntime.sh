@@ -6,8 +6,12 @@ product_framework="${BUILT_PRODUCTS_DIR}/onnxruntime.framework"
 product_binary="${product_framework}/onnxruntime"
 embedded_framework="${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/onnxruntime.framework"
 app_binary="${TARGET_BUILD_DIR}/${EXECUTABLE_PATH}"
+stamp_file="${SCRIPT_OUTPUT_FILE_0:-}"
 
 if [[ ! -d "${embedded_framework}" ]]; then
+    if [[ -n "${stamp_file}" ]]; then
+        /usr/bin/touch "${stamp_file}"
+    fi
     exit 0
 fi
 
@@ -37,4 +41,7 @@ fi
 # synthesized executable. The exact bundle is safe to remove after the guards
 # above prove it is not a runtime dependency.
 /bin/rm -rf "${embedded_framework}"
+if [[ -n "${stamp_file}" ]]; then
+    /usr/bin/touch "${stamp_file}"
+fi
 echo "Removed redundant embedded static ONNX Runtime framework."

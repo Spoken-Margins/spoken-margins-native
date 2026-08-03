@@ -978,11 +978,15 @@
 			inputFileListPaths = (
 			);
 			inputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/onnxruntime.framework/onnxruntime",
+				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)",
+				"$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/onnxruntime.framework/onnxruntime",
 			);
 			name = "Remove Embedded Static ONNX Runtime";
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(DERIVED_FILE_DIR)/remove-embedded-static-onnxruntime.stamp",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -997,11 +1001,15 @@
 			inputFileListPaths = (
 			);
 			inputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/onnxruntime.framework/onnxruntime",
+				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)",
+				"$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/onnxruntime.framework/onnxruntime",
 			);
 			name = "Remove Embedded Static ONNX Runtime";
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(DERIVED_FILE_DIR)/remove-embedded-static-onnxruntime.stamp",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
