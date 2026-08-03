@@ -4,6 +4,18 @@ import SessionKitAudio
 
 @MainActor
 final class StreamingSpeechQueue {
+    struct PlaybackObservation: Equatable {
+        enum Event: Equatable {
+            case started
+            case progressed
+            case failed
+        }
+
+        var event: Event
+        var turnId: String
+        var charOffset: Int
+    }
+
     private struct Unit: Equatable {
         var turnId: String
         var ordinal: Int
@@ -20,6 +32,7 @@ final class StreamingSpeechQueue {
     private var generation = 0
     private(set) var isPausedForInterjection = false
     var onTurnDrained: ((String) -> Void)?
+    var onPlaybackObservation: ((PlaybackObservation) -> Void)?
 
     var pendingCount: Int { pending.count + (current == nil ? 0 : 1) }
     var currentTurnId: String? { current?.turnId ?? pending.first?.turnId }
@@ -115,13 +128,28 @@ final class StreamingSpeechQueue {
                 do {
                     _ = try self.speech.prepareSpeechText(unit.text)
                     try self.speech.play(targetId: targetId)
+                    self.onPlaybackObservation?(
+                        PlaybackObservation(event: .started, turnId: unit.turnId, charOffset: unit.startOffset)
+                    )
                     while !Task.isCancelled,
                           workerGeneration == self.generation,
                           !self.isPausedForInterjection,
                           !self.speech.isPlaybackComplete(targetId: targetId) {
                         try? await Task.sleep(for: .milliseconds(50))
                     }
+                    if !Task.isCancelled, workerGeneration == self.generation {
+                        self.onPlaybackObservation?(
+                            PlaybackObservation(
+                                event: .progressed,
+                                turnId: unit.turnId,
+                                charOffset: unit.startOffset + unit.text.count
+                            )
+                        )
+                    }
                 } catch {
+                    self.onPlaybackObservation?(
+                        PlaybackObservation(event: .failed, turnId: unit.turnId, charOffset: unit.startOffset)
+                    )
                     // The persisted turn remains playable even if immediate speech fails.
                 }
                 guard workerGeneration == self.generation else { return }

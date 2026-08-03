@@ -20,7 +20,7 @@ The durable product loop is:
 4. Navigate by chapter or coarse movement controls.
 5. Capture spoken interjections anchored to the current text, transcript, media time, or AI turn.
 6. Resume from a nearby rollback point.
-7. Summarize interjections and continue discussion inside the session.
+7. Summarize interjections locally when supported, or continue the conversation through explicit export and pasted-response import.
 8. Export or revisit the session later.
 
 Listening Maps are playback infrastructure, not optional decoration. They restore the spatial affordances missing from long linear audio and video.
@@ -84,23 +84,24 @@ For browser-owned media, anchors must use source media time and transcript spans
 
 For browser text, the extension may own text capture, TTS, and interjection recording when browser permissions allow. For browser media, the extension primarily observes or controls page-owned playback, captures media time and playback rate, and packages portable session events for handoff.
 
-### AI Providers
+### Local Intelligence And Preserved Provider Boundary
 
-AI integration should use a provider abstraction:
+Model integration uses a provider abstraction:
 
 - `openai_compatible`
 - `apple_foundation`
 
-OpenAI-compatible providers are the primary path for Listening Maps and deeper discussion. A user may point the app at OpenAI, OpenRouter, Ollama, LM Studio, llama-server, or another compatible endpoint.
+The Recovery MVP release profile uses `apple_foundation` only and exposes no third-party provider UI. `openai_compatible` remains implemented behind one release-controlled flag so the prior Discuss and bring-your-own-provider experience can be restored later without a destructive migration. With the flag disabled, no remote model call, retry, deferred job, capability, or delegated command may execute.
 
-Apple Foundation Models are optional and should be used only for narrow private tasks where short context is enough:
+Apple Foundation Models are optional capabilities because framework, device, model, locale, and user settings can make them unavailable. Supported MVP tasks are:
 
-- cleanup of noisy interjection transcripts
-- cleanup of spoken addenda
-- short summaries of interjections alone
-- lightweight labels or titles
+- scoped summaries of interjections with bounded anchor context
 
-They should not be required for long Listening Maps or deep session discussion.
+The evaluated on-device Listening Map spike is not a supported MVP task. Product-owner device evidence found unacceptable podcast latency and a media-outside-timeline failure. AI-generated maps are reserved for a future server-hosted path behind the existing remote-provider release flag; the default release exposes no map-generation command for native audio and does not start full-source transcription for that purpose.
+
+Native-audio transcripts created for this work are internal derived data. They are not a user-visible or exportable representation. Only map overview/chapter metadata, attribution, timestamps, and bounded interjection context may cross the native-audio privacy boundary.
+
+Publisher podcast chapters bypass model generation. RSS resolution carries typed chapter links and collections into the canonical import result. Podcasting 2.0 JSON outranks inline Podlove Simple Chapters; after local audio is available, AVFoundation embedded chapter metadata outranks timestamped-description heuristics. Podcasts without publisher chapters remain mapless in the default MVP. Chapter JSON is size/count bounded, silent `toc: false` markers are not exposed, chapter artwork and related URLs are not fetched, and timestamps are resolved by app code rather than a model.
 
 ## Storage Direction
 
@@ -126,7 +127,7 @@ The product has two classes of interfaces:
 - canonical runtimes that own playback, recording, persistence, and AI jobs when available
 - constrained clients that display snapshots and send commands to a canonical or prepared runtime
 
-The canonical phone/tablet app still has multiple modes. Online mode may call configured AI providers, generate maps, summarize interjections, continue discussion, and diagnose providers. Offline mode must still play local/prepared media, record interjections, preserve anchors, persist sessions, and queue deferred AI jobs. Offline mode must not pretend full AI service is available.
+The canonical phone/tablet app still has multiple modes. A local-model-available profile may generate bounded maps and summarize interjections on device. A model-unavailable profile still plays local/prepared media, records interjections, preserves anchors, persists sessions, creates deterministic native-text maps, imports pasted responses, and exports handoff context. It hides unsupported local-model commands and does not queue work for an unavailable remote provider.
 
 The browser extension also has multiple modes. Browser text mode can create text-backed sessions and may perform TTS/interjection capture in-browser. Browser media mode must deal with source media time, captions/transcripts, playback-rate observation, and page-owned playback.
 
@@ -144,7 +145,6 @@ Full controls:
 - chapter list
 - jump to chapter
 - summarize
-- discuss
 
 Watch/widget controls:
 
@@ -176,14 +176,14 @@ Preserve as product contracts:
 - TTS link cleanup without mutating source text.
 - Portable anchors for text, transcript/media, and AI turns.
 - Mapless playback, interjections, and export.
-- AI summary and discussion split, including scoped summaries.
+- Local scoped summaries and explicit external-conversation handoff/import.
 - Interjections against both source playback and AI responses.
 - AI failure recoverability through retryable jobs.
 - Assistant response text preservation when generated structure is malformed.
 - Session-isolated exports.
 - Browser media anchoring to source media time and playback-rate observation.
 - Runtime capability honesty across phone/tablet, watch, browser, widget, and car modes.
-- OpenAI-compatible provider settings and diagnostics.
+- OpenAI-compatible provider implementation behind a release-controlled disabled-by-default flag.
 - Pending AI task model.
 
 Preserve abstractly:

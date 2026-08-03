@@ -6,7 +6,7 @@ This document defines how Spoken Margins should model text items, generated audi
 
 The key rule is:
 
-Text-backed items use a transcript timeline. Native-audio items can play and preserve durable media-time anchors without a full transcript. Spoken Margins derives only bounded transcript excerpts around interjections unless the user explicitly requests a Listening Map; a full native-audio transcript created for that map remains internal derived data and is not exposed in session exports.
+Text-backed items use a transcript timeline. Native-audio items can play and preserve durable media-time anchors without a full transcript. Spoken Margins derives only bounded transcript excerpts around interjections in the default MVP. Full native-audio transcription for AI-generated Listening Maps is reserved for a future server-hosted feature and must remain internal derived data rather than becoming visible through a transcript view, search, clipboard, share sheet, export, portable package, or diagnostics.
 
 The active runtime capability profile decides which audio representation can be used right now. A phone/tablet online profile may generate maps and summaries; a phone/tablet offline profile may still play prepared media, synthesize local TTS when permitted, record interjections, and defer AI jobs; a browser media profile may observe page-owned playback without owning the audio; an untethered watch profile only plays prepared audio or native media already available on watch.
 
@@ -19,7 +19,7 @@ When present, a transcript is the richest navigable timeline:
 - For text items, the transcript is generated from the text.
 - For pre-rendered TTS, the transcript is the source text aligned to generated audio.
 - For real-time TTS, the transcript is still the source text; timing may be estimated or produced lazily.
-- For podcasts or videos, bounded excerpts are generated around interjections. A publisher transcript or full generated transcript is used only when an explicitly requested Listening Map needs it.
+- For podcasts or videos, bounded excerpts are generated around interjections. The default MVP does not create a full generated transcript for Listening Map generation.
 - For browser media, the transcript may come from the page, platform metadata, captions, or generated transcription.
 
 Audio source types:
@@ -63,7 +63,7 @@ Real-time TTS is memory efficient and quick to start, but may use more battery a
 
 Pre-rendered TTS is better for offline watch use, battery predictability, and consistent chapter timing, but requires preparation time and storage.
 
-Phone/tablet text playback supports both real-time local TTS and pre-rendered audio when available. If the device is offline, map generation, interjection summarization, and discussion jobs are queued unless an explicitly supported local model can handle the narrow task.
+Phone/tablet text playback supports both real-time local TTS and pre-rendered audio when available. The Recovery MVP does not queue map, summary, or discussion work for a remote provider. Apple Foundation Models is used only for eligible interjection summaries. Deterministic native-text maps, publisher podcast chapters, mapless playback, interjections, export, and pasted-response import remain available without the local model.
 
 Production TTS segmentation should optimize for low latency, natural continuity, reliable interruption, and stable anchors. It should not copy the prototype's fixed chunk sizes as a product requirement.
 
@@ -74,11 +74,15 @@ When playback is generated just in time, the speech engine should avoid exposing
 For native media:
 
 1. Store or reference the media asset and begin playback without transcription.
-2. Anchor ordinary playback and mapless interjections to source media time.
-3. When an interjection is saved, derive only its bounded before/after source excerpt when no stored timeline is available.
-4. When the user explicitly requests a Listening Map, prefer an existing publisher transcript and otherwise generate a full transcript.
-5. Keep any full native-audio transcript as internal derived data for the map and later excerpt resolution; do not expose it as full source text or transcript in exports.
-6. Use the media's native audio for playback throughout transcription and map generation.
+2. Import publisher chapter timing in this precedence: Podcasting 2.0 chapter JSON, inline Podlove Simple Chapters, embedded media chapters, then timestamped episode-description chapters. Podcasts without publisher chapters remain mapless in the default MVP; a future server-generated map must never replace a publisher map.
+3. Persist publisher timestamps as media chapters even when no transcript exists, so chapter navigation does not require transcription.
+4. Anchor ordinary playback and mapless interjections to source media time.
+5. When an interjection is saved, derive only its bounded before/after source excerpt when no stored timeline is available.
+6. When the user explicitly requests a Listening Map and no valid publisher map exists, prefer an existing publisher transcript and otherwise generate a full transcript.
+7. Keep any full native-audio transcript as internal derived data for the map and later excerpt resolution; do not expose, search, copy, share, or export it as source text or transcript.
+8. Use the media's native audio for playback throughout transcription and map generation.
+
+The permitted user-visible native-audio derivative is deliberately narrow: source attribution, map overview, chapter titles and descriptions, timestamps/resolved positions, and bounded context immediately before and after a saved interjection. The user's own interjection representations remain separately exportable.
 
 The media may be sped up or slowed down. Anchors always use source media time, not wall-clock listening time.
 

@@ -4,6 +4,29 @@ import SessionKit
 struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
     typealias Fetch = @Sendable (URL) throws -> Data
 
+    private struct EpisodeEvidence {
+        var title: String
+        var showTitle: String?
+        var publisher: String?
+        var publishedAt: String?
+        var durationMs: Int?
+    }
+
+    private struct ScoredAppleCandidate {
+        var candidate: LinkResolutionCandidate
+        var score: Double
+    }
+
+    private struct EpisodePageMetadata {
+        var title: String
+        var showTitle: String?
+        var durationMs: Int?
+        var publishedAt: String?
+        var audioURL: String
+        var transcriptLinks: [SourceTranscriptLink]
+        var chapterLinks: [SourceChapterLink]
+    }
+
     private let fetch: Fetch
 
     init(fetch: @escaping Fetch = PublicPodcastLinkResolver.fetchSynchronously) {
@@ -48,6 +71,10 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         }
 
         if let result = try resolveRSSFeed(url, request: request, expectedTitle: nil, expectedURL: nil) {
+            return result
+        }
+
+        if let result = try resolveEpisodePage(url, request: request) {
             return result
         }
 
@@ -123,6 +150,14 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             return result
         }
 
+        if let result = try await resolveEpisodePageAsync(
+            url,
+            request: request,
+            requestTimeoutSeconds: requestTimeoutSeconds
+        ) {
+            return result
+        }
+
         return try await metadataOnlyResultAsync(request: request, url: url, provider: url.host, reason: "audio_enclosure_not_found", requestTimeoutSeconds: requestTimeoutSeconds)
     }
 
@@ -155,8 +190,8 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
 
     private func resolveSpotifyURL(_ url: URL, request: LinkResolutionRequest) throws -> LinkResolutionResult {
         let oEmbedData = try? fetch(spotifyOEmbedURL(for: url))
-        let pageData = oEmbedData == nil ? try? fetch(url) : nil
-        guard let episodeTitle = spotifyEpisodeTitle(oEmbedData: oEmbedData, pageData: pageData) else {
+        let pageData = try? fetch(url)
+        guard let evidence = spotifyEpisodeEvidence(oEmbedData: oEmbedData, pageData: pageData) else {
             return needsReview(
                 request: request,
                 provider: "spotify",
@@ -164,19 +199,19 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
                 reason: "spotify_metadata_unavailable"
             )
         }
-        guard let searchData = try? fetch(appleEpisodeSearchURL(title: episodeTitle)),
+        guard let searchData = try? fetch(appleEpisodeSearchURL(title: evidence.title)),
               let results = appleSearchResults(from: searchData) else {
             return needsReview(
                 request: request,
                 provider: "spotify",
-                title: episodeTitle,
+                title: evidence.title,
                 reason: "spotify_episode_not_found_on_apple"
             )
         }
         return spotifyAppleMatchResult(
             request: request,
             spotifyURL: url,
-            episodeTitle: episodeTitle,
+            evidence: evidence,
             results: results
         )
     }
@@ -187,8 +222,8 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         requestTimeoutSeconds: TimeInterval
     ) async throws -> LinkResolutionResult {
         let oEmbedData = try? await fetchAsync(spotifyOEmbedURL(for: url), timeout: requestTimeoutSeconds)
-        let pageData = oEmbedData == nil ? try? await fetchAsync(url, timeout: requestTimeoutSeconds) : nil
-        guard let episodeTitle = spotifyEpisodeTitle(oEmbedData: oEmbedData, pageData: pageData) else {
+        let pageData = try? await fetchAsync(url, timeout: requestTimeoutSeconds)
+        guard let evidence = spotifyEpisodeEvidence(oEmbedData: oEmbedData, pageData: pageData) else {
             return needsReview(
                 request: request,
                 provider: "spotify",
@@ -196,19 +231,19 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
                 reason: "spotify_metadata_unavailable"
             )
         }
-        guard let searchData = try? await fetchAsync(appleEpisodeSearchURL(title: episodeTitle), timeout: requestTimeoutSeconds),
+        guard let searchData = try? await fetchAsync(appleEpisodeSearchURL(title: evidence.title), timeout: requestTimeoutSeconds),
               let results = appleSearchResults(from: searchData) else {
             return needsReview(
                 request: request,
                 provider: "spotify",
-                title: episodeTitle,
+                title: evidence.title,
                 reason: "spotify_episode_not_found_on_apple"
             )
         }
         return spotifyAppleMatchResult(
             request: request,
             spotifyURL: url,
-            episodeTitle: episodeTitle,
+            evidence: evidence,
             results: results
         )
     }
@@ -216,15 +251,13 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
     private func spotifyAppleMatchResult(
         request: LinkResolutionRequest,
         spotifyURL: URL,
-        episodeTitle: String,
+        evidence: EpisodeEvidence,
         results: [[String: Any]]
     ) -> LinkResolutionResult {
-        let normalizedTitle = normalize(episodeTitle)
-        let exactMatches = results.filter { result in
+        let playableEpisodes = results.filter { result in
             let isEpisode = (result["wrapperType"] as? String) == "podcastEpisode"
                 || (result["kind"] as? String) == "podcast-episode"
             guard isEpisode,
-                  normalize(result["trackName"] as? String ?? "") == normalizedTitle,
                   let audioURLString = result["episodeUrl"] as? String,
                   let audioURL = URL(string: audioURLString),
                   isHTTPURL(audioURL) else {
@@ -232,30 +265,76 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             }
             return true
         }
-        guard exactMatches.count == 1, let episode = exactMatches.first else {
+        var scored = playableEpisodes.compactMap { episode -> ScoredAppleCandidate? in
+            scoreAppleEpisode(episode, against: evidence, spotifyURL: spotifyURL)
+        }.sorted { lhs, rhs in
+            if lhs.score == rhs.score { return lhs.candidate.title < rhs.candidate.title }
+            return lhs.score > rhs.score
+        }
+        if scored.count == 1 {
+            scored[0].score = min(1, scored[0].score + 0.18)
+            scored[0].candidate.confidence = scored[0].score
+        }
+        guard let best = scored.first else {
             return needsReview(
                 request: request,
                 provider: "spotify",
-                title: episodeTitle,
-                reason: exactMatches.isEmpty ? "spotify_episode_not_found_on_apple" : "spotify_episode_match_ambiguous"
+                title: evidence.title,
+                reason: "spotify_episode_not_found_on_apple"
             )
         }
+        let runnerUp = scored.dropFirst().first?.score ?? 0
+        if best.score >= 0.78, best.score - runnerUp >= 0.08 {
+            return playable(request: request, provider: "spotify", candidate: best.candidate)
+        }
+        return review(
+            request: request,
+            provider: "spotify",
+            title: evidence.title,
+            reason: "spotify_episode_match_ambiguous",
+            candidates: Array(scored.prefix(5).map(\.candidate))
+        )
+    }
+
+    private func scoreAppleEpisode(
+        _ episode: [String: Any],
+        against evidence: EpisodeEvidence,
+        spotifyURL: URL
+    ) -> ScoredAppleCandidate? {
+        let title = episode["trackName"] as? String ?? ""
+        let titleScore = textSimilarity(evidence.title, title)
+        guard titleScore >= 0.55,
+              let audioURL = episode["episodeUrl"] as? String else { return nil }
+        let showTitle = episode["collectionName"] as? String
+        let publishedAt = episode["releaseDate"] as? String
+        let durationMs = (episode["trackTimeMillis"] as? NSNumber)?.intValue
+        let publisher = episode["artistName"] as? String
+        var score = 0.62 * titleScore
+        if let expected = evidence.showTitle, let showTitle {
+            score += 0.18 * textSimilarity(expected, showTitle)
+        }
+        if let expected = evidence.publisher, let publisher {
+            score += 0.04 * textSimilarity(expected, publisher)
+        }
+        score += dateScore(evidence.publishedAt, publishedAt) * 0.08
+        score += durationScore(evidence.durationMs, durationMs) * 0.08
+        score = min(1, score)
         let appleURL = (episode["trackViewUrl"] as? String).flatMap(URL.init(string:))
         let candidate = LinkResolutionCandidate(
             sourceLink: SourceLink(
                 url: appleURL?.absoluteString ?? spotifyURL.absoluteString,
                 provider: "apple_podcasts",
-                title: episode["collectionName"] as? String,
+                title: showTitle,
                 role: "canonical_source"
             ),
-            title: episode["trackName"] as? String ?? episodeTitle,
-            showTitle: episode["collectionName"] as? String,
-            durationMs: (episode["trackTimeMillis"] as? NSNumber)?.intValue,
-            publishedAt: episode["releaseDate"] as? String,
-            audioURL: episode["episodeUrl"] as? String,
-            confidence: 0.92
+            title: title.isEmpty ? evidence.title : title,
+            showTitle: showTitle,
+            durationMs: durationMs,
+            publishedAt: publishedAt,
+            audioURL: audioURL,
+            confidence: score
         )
-        return playable(request: request, provider: "spotify", candidate: candidate)
+        return ScoredAppleCandidate(candidate: candidate, score: score)
     }
 
     private func spotifyOEmbedURL(for url: URL) -> URL {
@@ -276,22 +355,73 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         return components.url!
     }
 
-    private func spotifyEpisodeTitle(oEmbedData: Data?, pageData: Data?) -> String? {
+    private func spotifyEpisodeEvidence(oEmbedData: Data?, pageData: Data?) -> EpisodeEvidence? {
+        var object: [String: Any] = [:]
         if let oEmbedData,
-           let object = try? JSONSerialization.jsonObject(with: oEmbedData) as? [String: Any],
-           let title = object["title"] as? String,
-           !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return title.trimmingCharacters(in: .whitespacesAndNewlines)
+           let decoded = try? JSONSerialization.jsonObject(with: oEmbedData) as? [String: Any] {
+            object = decoded
         }
-        guard let pageData,
-              let html = String(data: pageData, encoding: .utf8),
-              let title = htmlTitle(html) else {
-            return nil
-        }
-        return title
+        let html = pageData.flatMap { String(data: $0, encoding: .utf8) }
+        let rawTitle = (object["title"] as? String) ?? html.flatMap(htmlTitle)
+        guard let rawTitle else { return nil }
+        let title = rawTitle
             .replacingOccurrences(of: " | Podcast on Spotify", with: "")
             .replacingOccurrences(of: " - song and lyrics by", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return nil }
+        let showTitle = (object["showTitle"] as? String)
+            ?? (object["podcastName"] as? String)
+            ?? html.flatMap { jsonStringValue(named: "showName", in: $0) }
+            ?? html.flatMap { jsonStringValue(named: "podcastName", in: $0) }
+        let publisher = (object["publisher"] as? String)
+            ?? html.flatMap { jsonStringValue(named: "publisher", in: $0) }
+        let publishedAt = (object["releaseDate"] as? String)
+            ?? (object["datePublished"] as? String)
+            ?? html.flatMap { jsonStringValue(named: "releaseDate", in: $0) }
+            ?? html.flatMap { jsonStringValue(named: "datePublished", in: $0) }
+        let objectDuration = (object["durationMs"] as? NSNumber)?.intValue
+            ?? (object["duration"] as? NSNumber).map { normalizedDurationMs($0.intValue) }
+        let pageDuration = html.flatMap { jsonNumberValue(named: "durationMs", in: $0) }
+            ?? html.flatMap { jsonNumberValue(named: "duration", in: $0) }.map(normalizedDurationMs)
+        return EpisodeEvidence(
+            title: title,
+            showTitle: showTitle,
+            publisher: publisher,
+            publishedAt: publishedAt,
+            durationMs: objectDuration ?? pageDuration
+        )
+    }
+
+    private func normalizedDurationMs(_ value: Int) -> Int {
+        value > 100_000 ? value : max(0, value * 1_000)
+    }
+
+    private func textSimilarity(_ lhs: String, _ rhs: String) -> Double {
+        let left = Set(normalize(lhs).split(separator: " ").map(String.init))
+        let right = Set(normalize(rhs).split(separator: " ").map(String.init))
+        guard !left.isEmpty, !right.isEmpty else { return 0 }
+        if left == right { return 1 }
+        return Double(left.intersection(right).count) / Double(left.union(right).count)
+    }
+
+    private func dateScore(_ lhs: String?, _ rhs: String?) -> Double {
+        guard let lhs, let rhs,
+              let left = ISO8601DateFormatter().date(from: lhs),
+              let right = ISO8601DateFormatter().date(from: rhs) else { return 0 }
+        let days = abs(left.timeIntervalSince(right)) / 86_400
+        if days <= 1 { return 1 }
+        if days <= 7 { return 0.65 }
+        if days <= 31 { return 0.25 }
+        return 0
+    }
+
+    private func durationScore(_ lhs: Int?, _ rhs: Int?) -> Double {
+        guard let lhs, let rhs, lhs > 0, rhs > 0 else { return 0 }
+        let difference = abs(lhs - rhs)
+        if difference <= 2_000 { return 1 }
+        if difference <= 30_000 { return 0.7 }
+        if difference <= 120_000 { return 0.25 }
+        return 0
     }
 
     private func appleSearchResults(from data: Data) -> [[String: Any]]? {
@@ -361,6 +491,11 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             return nil
         }
         let title = episode["trackName"] as? String ?? episode["collectionName"] as? String
+        if let feedURL = (episode["feedUrl"] as? String).flatMap(URL.init(string:)) ?? appleFeedURL(in: results),
+           let result = try resolveRSSFeed(feedURL, request: request, expectedTitle: title, expectedURL: url.absoluteString),
+           result.status == .playable {
+            return result
+        }
         if let episodeURL = episode["episodeUrl"] as? String,
            let audioURL = URL(string: episodeURL),
            isHTTPURL(audioURL) {
@@ -372,11 +507,6 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
                 confidence: 0.95
             )
             return playable(request: request, provider: "apple_podcasts", candidate: candidate)
-        }
-        if let feedURLString = episode["feedUrl"] as? String,
-           let feedURL = URL(string: feedURLString),
-           let result = try resolveRSSFeed(feedURL, request: request, expectedTitle: title, expectedURL: url.absoluteString) {
-            return result
         }
         return nil
     }
@@ -409,6 +539,16 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             return nil
         }
         let title = episode["trackName"] as? String ?? episode["collectionName"] as? String
+        if let feedURL = (episode["feedUrl"] as? String).flatMap(URL.init(string:)) ?? appleFeedURL(in: results),
+           let result = try await resolveRSSFeedAsync(
+                feedURL,
+                request: request,
+                expectedTitle: title,
+                expectedURL: url.absoluteString,
+                requestTimeoutSeconds: requestTimeoutSeconds
+           ), result.status == .playable {
+            return result
+        }
         if let episodeURL = episode["episodeUrl"] as? String,
            let audioURL = URL(string: episodeURL),
            isHTTPURL(audioURL) {
@@ -421,11 +561,6 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             )
             return playable(request: request, provider: "apple_podcasts", candidate: candidate)
         }
-        if let feedURLString = episode["feedUrl"] as? String,
-           let feedURL = URL(string: feedURLString),
-           let result = try await resolveRSSFeedAsync(feedURL, request: request, expectedTitle: title, expectedURL: url.absoluteString, requestTimeoutSeconds: requestTimeoutSeconds) {
-            return result
-        }
         return nil
     }
 
@@ -435,6 +570,12 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             return nil
         }
         let pageTitle = htmlTitle(html)?.replacingOccurrences(of: " - Apple Podcasts", with: "") ?? title(from: url)
+        if let feedURLString = jsonStringValue(named: "feedUrl", in: html),
+           let feedURL = URL(string: feedURLString),
+           let result = try resolveRSSFeed(feedURL, request: request, expectedTitle: pageTitle, expectedURL: url.absoluteString),
+           result.status == .playable {
+            return result
+        }
         if let streamURL = jsonStringValue(named: "streamUrl", in: html),
            let audioURL = URL(string: streamURL),
            isHTTPURL(audioURL) {
@@ -447,11 +588,6 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
                 confidence: 0.78
             )
             return playable(request: request, provider: "apple_podcasts", candidate: candidate)
-        }
-        if let feedURLString = jsonStringValue(named: "feedUrl", in: html),
-           let feedURL = URL(string: feedURLString),
-           let result = try resolveRSSFeed(feedURL, request: request, expectedTitle: pageTitle, expectedURL: url.absoluteString) {
-            return result
         }
         return needsReview(request: request, provider: "apple_podcasts", title: pageTitle, reason: "apple_audio_enclosure_not_found")
     }
@@ -466,6 +602,17 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             return nil
         }
         let pageTitle = htmlTitle(html)?.replacingOccurrences(of: " - Apple Podcasts", with: "") ?? title(from: url)
+        if let feedURLString = jsonStringValue(named: "feedUrl", in: html),
+           let feedURL = URL(string: feedURLString),
+           let result = try await resolveRSSFeedAsync(
+                feedURL,
+                request: request,
+                expectedTitle: pageTitle,
+                expectedURL: url.absoluteString,
+                requestTimeoutSeconds: requestTimeoutSeconds
+           ), result.status == .playable {
+            return result
+        }
         if let streamURL = jsonStringValue(named: "streamUrl", in: html),
            let audioURL = URL(string: streamURL),
            isHTTPURL(audioURL) {
@@ -478,11 +625,6 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
                 confidence: 0.78
             )
             return playable(request: request, provider: "apple_podcasts", candidate: candidate)
-        }
-        if let feedURLString = jsonStringValue(named: "feedUrl", in: html),
-           let feedURL = URL(string: feedURLString),
-           let result = try await resolveRSSFeedAsync(feedURL, request: request, expectedTitle: pageTitle, expectedURL: url.absoluteString, requestTimeoutSeconds: requestTimeoutSeconds) {
-            return result
         }
         return needsReview(request: request, provider: "apple_podcasts", title: pageTitle, reason: "apple_audio_enclosure_not_found")
     }
@@ -505,6 +647,7 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         guard let audioURL = selected.enclosureURL, !audioURL.isEmpty else {
             return needsReview(request: request, provider: "rss", title: selected.title ?? expectedTitle ?? title(from: url), reason: "rss_audio_enclosure_missing")
         }
+        let chapterCollections = resolvedChapterCollections(for: selected)
         let candidate = LinkResolutionCandidate(
             sourceLink: SourceLink(url: url.absoluteString, provider: "rss", title: selected.feedTitle, role: "canonical_feed"),
             title: selected.title ?? expectedTitle ?? title(from: url),
@@ -513,6 +656,8 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             publishedAt: selected.publishedAt,
             audioURL: audioURL,
             transcriptLinks: selected.transcriptLinks,
+            chapterLinks: selected.chapterLinks,
+            publisherChapterCollections: chapterCollections,
             confidence: selected.isExactMatch ? 0.96 : 0.82
         )
         return playable(request: request, provider: "rss", candidate: candidate)
@@ -542,6 +687,10 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         guard let audioURL = selected.enclosureURL, !audioURL.isEmpty else {
             return needsReview(request: request, provider: "rss", title: selected.title ?? expectedTitle ?? title(from: url), reason: "rss_audio_enclosure_missing")
         }
+        let chapterCollections = await resolvedChapterCollections(
+            for: selected,
+            requestTimeoutSeconds: requestTimeoutSeconds
+        )
         let candidate = LinkResolutionCandidate(
             sourceLink: SourceLink(url: url.absoluteString, provider: "rss", title: selected.feedTitle, role: "canonical_feed"),
             title: selected.title ?? expectedTitle ?? title(from: url),
@@ -550,9 +699,194 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             publishedAt: selected.publishedAt,
             audioURL: audioURL,
             transcriptLinks: selected.transcriptLinks,
+            chapterLinks: selected.chapterLinks,
+            publisherChapterCollections: chapterCollections,
             confidence: selected.isExactMatch ? 0.96 : 0.82
         )
         return playable(request: request, provider: "rss", candidate: candidate)
+    }
+
+    private func resolvedChapterCollections(for item: RSSFeedItem) -> [PublisherChapterCollection] {
+        var collections: [PublisherChapterCollection] = []
+        if let link = item.chapterLinks.first(where: isSupportedChapterLink),
+           let url = URL(string: link.url),
+           let data = try? fetch(url),
+           let collection = Podcasting2ChapterJSONParser.parse(data) {
+            collections.append(collection)
+        }
+        collections.append(contentsOf: item.publisherChapterCollections)
+        return collections
+    }
+
+    private func resolvedChapterCollections(
+        for item: RSSFeedItem,
+        requestTimeoutSeconds: TimeInterval
+    ) async -> [PublisherChapterCollection] {
+        var collections: [PublisherChapterCollection] = []
+        if let link = item.chapterLinks.first(where: isSupportedChapterLink),
+           let url = URL(string: link.url),
+           let data = try? await fetchAsync(url, timeout: requestTimeoutSeconds),
+           let collection = Podcasting2ChapterJSONParser.parse(data) {
+            collections.append(collection)
+        }
+        collections.append(contentsOf: item.publisherChapterCollections)
+        return collections
+    }
+
+    private func resolveEpisodePage(_ url: URL, request: LinkResolutionRequest) throws -> LinkResolutionResult? {
+        guard let data = try? fetch(url),
+              let html = String(data: data, encoding: .utf8),
+              let metadata = episodePageMetadata(in: html, pageURL: url) else {
+            return nil
+        }
+        let collections = resolvedChapterCollections(for: RSSFeedItem(chapterLinks: metadata.chapterLinks))
+        return playable(
+            request: request,
+            provider: "episode_page",
+            candidate: episodePageCandidate(metadata: metadata, pageURL: url, collections: collections)
+        )
+    }
+
+    private func resolveEpisodePageAsync(
+        _ url: URL,
+        request: LinkResolutionRequest,
+        requestTimeoutSeconds: TimeInterval
+    ) async throws -> LinkResolutionResult? {
+        guard let data = try? await fetchAsync(url, timeout: requestTimeoutSeconds),
+              let html = String(data: data, encoding: .utf8),
+              let metadata = episodePageMetadata(in: html, pageURL: url) else {
+            return nil
+        }
+        let collections = await resolvedChapterCollections(
+            for: RSSFeedItem(chapterLinks: metadata.chapterLinks),
+            requestTimeoutSeconds: requestTimeoutSeconds
+        )
+        return playable(
+            request: request,
+            provider: "episode_page",
+            candidate: episodePageCandidate(metadata: metadata, pageURL: url, collections: collections)
+        )
+    }
+
+    private func episodePageCandidate(
+        metadata: EpisodePageMetadata,
+        pageURL: URL,
+        collections: [PublisherChapterCollection]
+    ) -> LinkResolutionCandidate {
+        LinkResolutionCandidate(
+            sourceLink: SourceLink(
+                url: pageURL.absoluteString,
+                provider: "episode_page",
+                title: metadata.title,
+                role: "episode_page"
+            ),
+            title: metadata.title,
+            showTitle: metadata.showTitle,
+            durationMs: metadata.durationMs,
+            publishedAt: metadata.publishedAt,
+            audioURL: metadata.audioURL,
+            transcriptLinks: metadata.transcriptLinks,
+            chapterLinks: metadata.chapterLinks,
+            publisherChapterCollections: collections,
+            confidence: 0.9
+        )
+    }
+
+    private func episodePageMetadata(in html: String, pageURL: URL) -> EpisodePageMetadata? {
+        guard let encoded = episodeMetadataAttribute(in: html),
+              encoded.count <= 32_000,
+              let data = encoded.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let rawAudioURL = (object["src"] ?? object["audio"] ?? object["contentUrl"]) as? String,
+              let audioURL = URL(string: rawAudioURL, relativeTo: pageURL)?.absoluteURL,
+              isHTTPURL(audioURL) else {
+            return nil
+        }
+        let title = ((object["title"] as? String) ?? htmlTitle(html) ?? self.title(from: pageURL))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let durationMs: Int?
+        if let duration = object["duration"] as? NSNumber {
+            durationMs = max(0, Int((duration.doubleValue * 1_000).rounded()))
+        } else if let duration = object["duration"] as? String, let seconds = Double(duration) {
+            durationMs = max(0, Int((seconds * 1_000).rounded()))
+        } else {
+            durationMs = nil
+        }
+
+        var transcriptLinks: [SourceTranscriptLink] = []
+        if let rawTranscriptURL = object["transcript"] as? String,
+           let transcriptURL = URL(string: rawTranscriptURL, relativeTo: pageURL)?.absoluteURL,
+           isHTTPURL(transcriptURL) {
+            transcriptLinks.append(SourceTranscriptLink(
+                url: transcriptURL.absoluteString,
+                type: transcriptType(for: transcriptURL)
+            ))
+        }
+
+        var chapterLinks: [SourceChapterLink] = []
+        if let rawChapterURL = object["chapters"] as? String,
+           let chapterURL = URL(string: rawChapterURL, relativeTo: pageURL)?.absoluteURL,
+           isHTTPURL(chapterURL) {
+            chapterLinks.append(SourceChapterLink(
+                url: chapterURL.absoluteString,
+                type: "application/json+chapters"
+            ))
+        }
+
+        return EpisodePageMetadata(
+            title: title.isEmpty ? self.title(from: pageURL) : title,
+            showTitle: (object["showTitle"] ?? object["podcastName"]) as? String,
+            durationMs: durationMs,
+            publishedAt: object["publishedAt"] as? String,
+            audioURL: audioURL.absoluteString,
+            transcriptLinks: transcriptLinks,
+            chapterLinks: chapterLinks
+        )
+    }
+
+    private func episodeMetadataAttribute(in html: String) -> String? {
+        let range = NSRange(html.startIndex..<html.endIndex, in: html)
+        let patterns = [
+            #"\bdata-(?:play|resume)-metadata-value\s*=\s*\"([^\"]+)\""#,
+            #"\bdata-(?:play|resume)-metadata-value\s*=\s*'([^']+)'"#
+        ]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+                  let match = regex.firstMatch(in: html, range: range),
+                  match.numberOfRanges > 1,
+                  let valueRange = Range(match.range(at: 1), in: html) else {
+                continue
+            }
+            return decodeHTMLEntities(String(html[valueRange]))
+        }
+        return nil
+    }
+
+    private func decodeHTMLEntities(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#34;", with: "\"")
+            .replacingOccurrences(of: "&apos;", with: "'")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&amp;", with: "&")
+    }
+
+    private func transcriptType(for url: URL) -> String {
+        switch url.pathExtension.lowercased() {
+        case "vtt": return "text/vtt"
+        case "srt": return "application/srt"
+        case "json": return "application/json"
+        case "html", "htm": return "text/html"
+        default: return "text/plain"
+        }
+    }
+
+    private func isSupportedChapterLink(_ link: SourceChapterLink) -> Bool {
+        guard let url = URL(string: link.url), url.scheme?.lowercased() == "https" else { return false }
+        let type = link.type.lowercased()
+        return type == "application/json+chapters" || type == "application/json"
     }
 
     private func selectRSSItem(_ items: [RSSFeedItem], expectedTitle: String?, expectedURL: String?) -> RSSFeedItem? {
@@ -625,6 +959,23 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             originalLink: SourceLink(url: request.inputURL, provider: provider, title: title, role: "discovery"),
             selectedCandidate: nil,
             candidates: [candidate],
+            failureReason: reason
+        )
+    }
+
+    private func review(
+        request: LinkResolutionRequest,
+        provider: String?,
+        title: String,
+        reason: String,
+        candidates: [LinkResolutionCandidate]
+    ) -> LinkResolutionResult {
+        LinkResolutionResult(
+            requestId: request.id,
+            status: .needsReview,
+            originalLink: SourceLink(url: request.inputURL, provider: provider, title: title, role: "discovery"),
+            selectedCandidate: nil,
+            candidates: candidates,
             failureReason: reason
         )
     }
@@ -857,6 +1208,10 @@ private struct RSSFeedItem {
     var guid: String?
     var enclosureURL: String?
     var transcriptLinks: [SourceTranscriptLink] = []
+    var chapterLinks: [SourceChapterLink] = []
+    var publisherChapterCollections: [PublisherChapterCollection] = []
+    var podloveChapters: [PublisherChapter] = []
+    var description: String?
     var publishedAt: String?
     var durationMs: Int?
     var isExactMatch = false
@@ -869,9 +1224,11 @@ private final class RSSFeedParser: NSObject, XMLParserDelegate {
     private var currentElement = ""
     private var currentText = ""
     private var isInItem = false
+    private var isInPodloveChapters = false
 
     func parse(data: Data) -> [RSSFeedItem] {
         let parser = XMLParser(data: data)
+        parser.shouldProcessNamespaces = true
         parser.delegate = self
         _ = parser.parse()
         return items
@@ -879,6 +1236,7 @@ private final class RSSFeedParser: NSObject, XMLParserDelegate {
 
     func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
         let element = localName(elementName)
+        let namespace = namespaceURI?.lowercased()
         currentElement = element
         currentText = ""
         if element == "item" || element == "entry" {
@@ -888,13 +1246,34 @@ private final class RSSFeedParser: NSObject, XMLParserDelegate {
             currentItem?.enclosureURL = attributeDict["url"]
         } else if isInItem, element == "link", let href = attributeDict["href"], currentItem?.link == nil {
             currentItem?.link = href
-        } else if isInItem, element == "transcript" {
+        } else if isInItem,
+                  element == "transcript",
+                  isPodcasting20Namespace(namespace) {
             appendTranscriptLink(attributes: attributeDict)
+        } else if isInItem,
+                  element == "chapters",
+                  isPodcasting20Namespace(namespace) {
+            appendChapterLink(attributes: attributeDict)
+        } else if isInItem,
+                  element == "chapters",
+                  namespace == "http://podlove.org/simple-chapters" {
+            isInPodloveChapters = true
+        } else if isInItem,
+                  isInPodloveChapters,
+                  element == "chapter",
+                  namespace == "http://podlove.org/simple-chapters" {
+            appendPodloveChapter(attributes: attributeDict)
         }
     }
 
     func parser(_ parser: XMLParser, foundCharacters string: String) {
         currentText += string
+    }
+
+    func parser(_ parser: XMLParser, foundCDATA CDATABlock: Data) {
+        if let string = String(data: CDATABlock, encoding: .utf8) {
+            currentText += string
+        }
     }
 
     func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
@@ -912,13 +1291,32 @@ private final class RSSFeedParser: NSObject, XMLParserDelegate {
                 currentItem?.publishedAt = text
             case "duration":
                 currentItem?.durationMs = parseDurationMs(text)
+            case "description", "encoded", "summary":
+                if currentItem?.description?.isEmpty != false, !text.isEmpty {
+                    currentItem?.description = text
+                }
+            case "chapters":
+                if namespaceURI?.lowercased() == "http://podlove.org/simple-chapters" {
+                    isInPodloveChapters = false
+                }
             case "item", "entry":
                 if var item = currentItem {
                     item.feedTitle = item.feedTitle ?? feedTitle
+                    if !item.podloveChapters.isEmpty {
+                        item.publisherChapterCollections.append(PublisherChapterCollection(
+                            source: .podloveSimpleChapters,
+                            chapters: item.podloveChapters
+                        ))
+                    }
+                    if let description = item.description,
+                       let descriptionChapters = TimestampedDescriptionChapterParser.parse(description) {
+                        item.publisherChapterCollections.append(descriptionChapters)
+                    }
                     items.append(item)
                 }
                 currentItem = nil
                 isInItem = false
+                isInPodloveChapters = false
             default:
                 break
             }
@@ -955,6 +1353,38 @@ private final class RSSFeedParser: NSObject, XMLParserDelegate {
             language: normalized["language"] ?? normalized["lang"],
             rel: normalized["rel"]
         ))
+    }
+
+    private func appendChapterLink(attributes: [String: String]) {
+        let normalized = normalizedAttributes(attributes)
+        guard let url = normalized["url"], !url.isEmpty,
+              let type = normalized["type"], !type.isEmpty else { return }
+        currentItem?.chapterLinks.append(SourceChapterLink(url: url, type: type))
+    }
+
+    private func appendPodloveChapter(attributes: [String: String]) {
+        let normalized = normalizedAttributes(attributes)
+        guard let rawStart = normalized["start"],
+              let startMs = PodcastChapterTimeParser.milliseconds(rawStart),
+              let rawTitle = normalized["title"] else { return }
+        let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return }
+        currentItem?.podloveChapters.append(PublisherChapter(
+            title: String(title.prefix(240)),
+            startMs: startMs
+        ))
+    }
+
+    private func normalizedAttributes(_ attributes: [String: String]) -> [String: String] {
+        Dictionary(uniqueKeysWithValues: attributes.map { key, value in
+            (key.lowercased(), value.trimmingCharacters(in: .whitespacesAndNewlines))
+        })
+    }
+
+    private func isPodcasting20Namespace(_ namespace: String?) -> Bool {
+        guard let namespace else { return false }
+        return namespace.trimmingCharacters(in: CharacterSet(charactersIn: "/")) == "https://podcastindex.org/namespace/1.0"
+            || namespace == "https://github.com/podcastindex-org/podcast-namespace/blob/main/docs/1.0.md"
     }
 
     private func localName(_ elementName: String) -> String {

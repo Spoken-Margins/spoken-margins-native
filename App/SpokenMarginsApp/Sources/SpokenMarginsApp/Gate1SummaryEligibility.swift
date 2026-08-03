@@ -9,7 +9,7 @@ struct Gate1SummaryEligibility {
         currentTargetId: String?
     ) -> [Interjection] {
         let summarized = Set(turns
-            .filter { $0.turnType == "interjection_summary" && $0.status != "failed" }
+            .filter { $0.turnType == "interjection_summary" && $0.status == "complete" }
             .flatMap(\.sourceInterjectionIds))
         return interjections.filter { interjection in
             guard !summarized.contains(interjection.id) else { return false }

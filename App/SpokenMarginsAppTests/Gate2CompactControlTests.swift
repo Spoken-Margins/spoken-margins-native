@@ -4,6 +4,54 @@ import XCTest
 
 @MainActor
 final class Gate2CompactControlTests: XCTestCase {
+    func testAIResponsePlaybackStateStaysSynchronizedAcrossAppAndCompactControls() throws {
+        let defaults = UserDefaults.standard
+        let priorTermsVersion = defaults.object(forKey: SpokenMarginsTerms.acceptanceVersionKey)
+        let priorTermsDate = defaults.object(forKey: SpokenMarginsTerms.acceptanceDateKey)
+        defer {
+            restoreUserDefault(priorTermsVersion, forKey: SpokenMarginsTerms.acceptanceVersionKey)
+            restoreUserDefault(priorTermsDate, forKey: SpokenMarginsTerms.acceptanceDateKey)
+        }
+        SpokenMarginsTerms.recordAcceptance()
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.pastedAssistantResponse = "A playable assistant response."
+
+        model.importPastedAssistantResponse()
+
+        XCTAssertEqual(model.snapshot.targetType, TargetType.assistantTurnTTS.rawValue)
+        XCTAssertEqual(model.snapshot.status, .playing)
+        XCTAssertEqual(model.gate2CompactSnapshot?.status, .playing)
+        XCTAssertTrue(model.gate2CompactSnapshot?.availableCommands.contains(.pause) == true)
+
+        model.dispatchGate2CompactCommand(.pause, origin: "live_activity_test")
+
+        XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertEqual(model.gate2CompactSnapshot?.status, .paused)
+        XCTAssertTrue(model.gate2CompactSnapshot?.availableCommands.contains(.play) == true)
+
+        model.dispatchGate2CompactCommand(.play, origin: "app_ui_test")
+
+        XCTAssertEqual(model.snapshot.status, .playing)
+        XCTAssertEqual(model.gate2CompactSnapshot?.status, .playing)
+        XCTAssertTrue(model.gate2CompactSnapshot?.availableCommands.contains(.pause) == true)
+    }
+
+    func testApplicationTerminationExplicitlyEndsLiveActivities() {
+        let liveActivity = RecordingLiveActivityController()
+        let controller = Gate2CompactControlController(liveActivity: liveActivity)
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            gate2CompactControls: controller
+        )
+
+        model.handleApplicationWillTerminate()
+
+        XCTAssertEqual(liveActivity.endAllCallCount, 1)
+        XCTAssertEqual(controller.diagnostics()["gate2NowPlaying"], "ended")
+    }
+
     func testCompactSnapshotIsPublishedForSeededSession() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
@@ -104,6 +152,11 @@ final class Gate2CompactControlTests: XCTestCase {
         finished.status = .idle
 
         XCTAssertTrue(Gate2LiveActivityPolicy.isEligible(active))
+        XCTAssertTrue(Gate2LiveActivityPolicy.shouldMaintain(active, adoptedSessionId: nil))
+        var paused = active
+        paused.status = .paused
+        XCTAssertFalse(Gate2LiveActivityPolicy.shouldMaintain(paused, adoptedSessionId: nil))
+        XCTAssertTrue(Gate2LiveActivityPolicy.shouldMaintain(paused, adoptedSessionId: "session-pill"))
         XCTAssertFalse(Gate2LiveActivityPolicy.isEligible(finished))
         XCTAssertFalse(Gate2LiveActivityPolicy.shouldEnd(activitySessionId: "session-pill", currentSessionId: "session-pill"))
         XCTAssertTrue(Gate2LiveActivityPolicy.shouldEnd(activitySessionId: "session-old", currentSessionId: "session-pill"))
@@ -127,8 +180,15 @@ final class Gate2CompactControlTests: XCTestCase {
         var finishedSpeech = liveSpeech
         finishedSpeech.phase = .finished
         finishedSpeech.status = .idle
+        let assistantSpeech = compactSnapshot(
+            targetType: TargetType.assistantTurnTTS.rawValue,
+            availableCommands: [.togglePlayPause, .skipBack, .skipForward, .setPlaybackRate],
+            durationMs: nil
+        )
 
         XCTAssertTrue(Gate2LiveSpeechNowPlayingPolicy.shouldPublish(liveSpeech))
+        XCTAssertTrue(Gate2LiveSpeechNowPlayingPolicy.shouldPublish(assistantSpeech))
+        XCTAssertTrue(Gate2NowPlayingCommandAvailability(snapshot: assistantSpeech).canPause)
         XCTAssertFalse(Gate2LiveSpeechNowPlayingPolicy.shouldPublish(nativeMedia))
         XCTAssertFalse(Gate2LiveSpeechNowPlayingPolicy.shouldPublish(finishedSpeech))
     }
@@ -163,5 +223,26 @@ final class Gate2CompactControlTests: XCTestCase {
             compactSurfaceReady: true,
             surfaceProfileId: "lock-screen-widget"
         )
+    }
+
+    private func restoreUserDefault(_ value: Any?, forKey key: String) {
+        if let value {
+            UserDefaults.standard.set(value, forKey: key)
+        } else {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
+}
+
+@MainActor
+private final class RecordingLiveActivityController: Gate2LiveActivityControlling {
+    private(set) var status = "recording"
+    private(set) var endAllCallCount = 0
+
+    func publish(_ snapshot: CompactControlSnapshot) {}
+
+    func endAll() {
+        endAllCallCount += 1
+        status = "ended"
     }
 }

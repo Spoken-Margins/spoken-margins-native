@@ -255,9 +255,14 @@ public final class CompactControlDispatcher {
                 return snapshot.isRecording
                     && surfaceProfile.has("interjection", "delegate_interjection_to_canonical_runtime")
                     && surfaceProfile.has("remoteControl", "send_interjection_commands")
-            case .generateInterjectionSummary, .submitFollowup:
+            case .generateInterjectionSummary:
                 return !snapshot.isRecording
                     && surfaceProfile.has("remoteControl", "send_ai_commands")
+                    && surfaceProfile.has("ai", "summarize_interjections")
+            case .submitFollowup:
+                return !snapshot.isRecording
+                    && surfaceProfile.has("remoteControl", "send_ai_commands")
+                    && surfaceProfile.has("ai", "continue_discussion")
             }
         }
         let availableCommands = exposedCommands.filter { command in
@@ -332,10 +337,12 @@ public final class CompactControlDispatcher {
         case .generateInterjectionSummary:
             return !snapshot.isRecording
                 && surfaceProfile.has("remoteControl", "send_ai_commands")
+                && surfaceProfile.has("ai", "summarize_interjections")
                 && canonicalRuntime.hasSummaryCandidates(scope: defaultSummaryScope())
         case .submitFollowup:
             return !snapshot.isRecording
                 && surfaceProfile.has("remoteControl", "send_ai_commands")
+                && surfaceProfile.has("ai", "continue_discussion")
         }
     }
 

@@ -159,6 +159,10 @@ public final class SessionEngine {
         snapshot.currentTranscriptSegmentId = item.transcriptId
         snapshot.currentAnchorConfidence = .providerMetadata
 
+        if let publisherChapters = preferredPublisherChapterCollection(in: candidate) {
+            _ = try attachPublisherChapters(itemId: item.id, collection: publisherChapters)
+        }
+
         if startSessionWhenPlayable {
             return try startSession(itemId: item.id)
         }
@@ -181,6 +185,9 @@ public final class SessionEngine {
         }
         let item = item(from: candidate, result: result, request: request)
         try repository.saveItem(item)
+        if let publisherChapters = preferredPublisherChapterCollection(in: candidate) {
+            _ = try attachPublisherChapters(itemId: item.id, collection: publisherChapters)
+        }
         return item
     }
 
@@ -365,7 +372,14 @@ public final class SessionEngine {
     public func attachTranscriptTimeline(itemId: String, timeline: TranscriptTimeline) throws -> SessionSnapshot {
         try require("attachTranscriptTimeline", category: "sync", capabilities: ["canonical_persistence"])
         var item = try repository.loadItem(id: itemId)
-        let normalized = normalizedSourceTranscriptTimeline(timeline)
+        var timelineWithPreferredChapters = timeline
+        if let map = try repository.loadListeningMap(itemId: itemId),
+           publisherChapterSource(from: map.id) != nil,
+           let existingChapters = try repository.loadTranscriptTimeline(itemId: itemId)?.timeline.chapters,
+           !existingChapters.isEmpty {
+            timelineWithPreferredChapters.chapters = existingChapters
+        }
+        let normalized = normalizedSourceTranscriptTimeline(timelineWithPreferredChapters)
         let transcriptId = item.transcriptId ?? "transcript-\(item.id)"
         let stored = SourceTranscriptTimeline(
             id: transcriptId,
@@ -639,6 +653,12 @@ public final class SessionEngine {
     @discardableResult
     public func generateListeningMap(itemId: String) throws -> SessionSnapshot {
         try require("generateListeningMap", category: "ai", capabilities: ["generate_listening_map"])
+        if let existing = try repository.loadListeningMap(itemId: itemId) {
+            if currentItem?.id == itemId || currentSession?.itemId == itemId {
+                currentMap = existing
+            }
+            return snapshot
+        }
         var item = try repository.loadItem(id: itemId)
         let map = generatedListeningMap(for: item)
         try repository.saveListeningMap(map)
@@ -681,6 +701,84 @@ public final class SessionEngine {
                 currentSession = session
                 try persistSession(session)
             }
+            publish(status: snapshot.status, phase: session.phase)
+        } else {
+            snapshot.itemId = item.id
+            snapshot.title = item.title
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func attachPublisherChapters(
+        itemId: String,
+        collection: PublisherChapterCollection
+    ) throws -> SessionSnapshot {
+        try require("attachPublisherChapters", category: "sync", capabilities: ["canonical_persistence"])
+        var item = try repository.loadItem(id: itemId)
+        if let existingMap = try repository.loadListeningMap(itemId: itemId),
+           let existingSource = publisherChapterSource(from: existingMap.id),
+           existingSource.precedence > collection.source.precedence {
+            return snapshot
+        }
+
+        let existingTimeline = try repository.loadTranscriptTimeline(itemId: itemId)
+        let durationMs = item.media?.durationMs ?? existingTimeline?.timeline.durationMs
+        let normalized = normalizedPublisherChapters(collection.chapters, durationMs: durationMs)
+        guard !normalized.isEmpty else { return snapshot }
+
+        let segments = existingTimeline?.timeline.segments ?? []
+        let mediaChapters = normalized.enumerated().map { index, chapter in
+            let id = publisherChapterId(source: collection.source, index: index)
+            let segmentId = segments.last(where: { $0.startMs <= chapter.startMs })?.id
+                ?? segments.first?.id
+                ?? "publisher-anchor-\(index + 1)"
+            return MediaTimelineChapter(
+                id: id,
+                title: chapter.title,
+                description: chapter.description,
+                startMs: chapter.startMs,
+                transcriptSegmentId: segmentId
+            )
+        }
+        let timeline = TranscriptTimeline(
+            segments: segments,
+            chapters: mediaChapters,
+            durationMs: durationMs ?? normalized.compactMap(\.endMs).max() ?? normalized.last?.startMs
+        )
+        try repository.saveTranscriptTimeline(SourceTranscriptTimeline(
+            id: existingTimeline?.id ?? "media-chapters-\(itemId)",
+            itemId: itemId,
+            createdAt: existingTimeline?.createdAt ?? Date(),
+            timeline: timeline
+        ))
+
+        let percentDuration = max(1, timeline.durationMs ?? normalized.last?.startMs ?? 1)
+        let chapters = normalized.enumerated().map { index, chapter in
+            Chapter(
+                id: mediaChapters[index].id,
+                title: chapter.title,
+                startChar: index,
+                endChar: index + 1,
+                percent: max(0, min(100, Int((Double(chapter.startMs) / Double(percentDuration) * 100).rounded())))
+            )
+        }
+        let map = ListeningMap(
+            id: "map-\(itemId)-publisher-\(collection.source.rawValue)",
+            itemId: itemId,
+            overview: "Publisher-provided chapters for \(item.title).",
+            chapters: chapters
+        )
+        try repository.saveListeningMap(map)
+        if item.status == "needs_listening_map" {
+            item.status = "ready"
+            try repository.saveItem(item)
+        }
+
+        guard currentItem?.id == itemId || currentSession?.itemId == itemId else { return snapshot }
+        currentItem = item
+        currentMap = map
+        if let session = currentSession, session.itemId == itemId {
             publish(status: snapshot.status, phase: session.phase)
         } else {
             snapshot.itemId = item.id
@@ -1029,6 +1127,8 @@ public final class SessionEngine {
         let interjections = try repository.loadInterjections(sessionId: session.id)
         let existingTurn = replacementSummaryTurn(scope: scope, session: session, turns: turns, interjections: interjections)
         if let existingTurn,
+           existingTurn.status != "failed",
+           existingTurn.status != "failed_partial",
            Set(existingTurn.sourceInterjectionIds) == Set(lastSummaryCandidates.map(\.id)) {
             throw SessionKitError.invalidCommandForState("interjection_summary_already_current")
         }
@@ -1115,8 +1215,9 @@ public final class SessionEngine {
         return snapshot
     }
 
-    /// Makes an incrementally generated turn the canonical interjection target while
-    /// its audio is owned by the app's streaming speech queue.
+    /// Makes an incrementally generated turn the canonical interjection target. The
+    /// app's streaming queue feeds audio chunks, while SessionEngine remains the
+    /// canonical owner of user-visible playback state and position.
     @discardableResult
     public func activateStreamingTurn(turnId: String) throws -> SessionSnapshot {
         var session = try resolveSession(nil)
@@ -1180,6 +1281,20 @@ public final class SessionEngine {
         currentSession = session
         try persistSession(session)
         publish(status: snapshot.status, phase: session.phase)
+        return snapshot
+    }
+
+    /// Reconciles the observed start of an externally fed speech chunk with the
+    /// canonical generated-turn state used by every playback surface.
+    @discardableResult
+    public func streamingTurnPlaybackStarted(turnId: String, charOffset: Int) throws -> SessionSnapshot {
+        _ = try updateStreamingTurnPosition(turnId: turnId, charOffset: charOffset)
+        guard let session = currentSession,
+              externallyStreamedTurnId == turnId,
+              session.currentTargetId == turnId else {
+            return snapshot
+        }
+        publish(status: .playing, phase: session.phase)
         return snapshot
     }
 
@@ -1570,7 +1685,21 @@ public final class SessionEngine {
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("endSession")
         }
+        let sourceWasComplete = session.completionPercent >= 100
+        let targetWasComplete = audio.isPlaybackComplete(targetId: session.currentTargetId)
         session = try syncCurrentPositionFromAudio(session)
+        if targetWasComplete {
+            switch session.currentTargetType {
+            case .itemTextTTS, .transcriptBackedMedia, .browserOwnedMedia:
+                session = markPlaybackComplete(session, item: currentItem)
+            case .summaryTurnTTS, .assistantTurnTTS:
+                if sourceWasComplete {
+                    session.completionPercent = 100
+                    session.phase = .finished
+                    session.status = "finished"
+                }
+            }
+        }
         try audio.stop()
         if session.phase == .finished, session.completionPercent >= 100 {
             session.status = "finished"
@@ -1620,6 +1749,9 @@ public final class SessionEngine {
             return false
         }
         guard let existingTurn = replacementSummaryTurn(scope: scope, session: session, turns: turns, interjections: interjections) else {
+            return true
+        }
+        if existingTurn.status == "failed" || existingTurn.status == "failed_partial" {
             return true
         }
         return Set(existingTurn.sourceInterjectionIds) != Set(candidates.map(\.id))
@@ -2098,6 +2230,12 @@ public final class SessionEngine {
         return max(0, min(100, Int((Double(max(0, mediaTimeMs)) / Double(durationMs)) * 100)))
     }
 
+    private func mediaChapter(at mediaTimeMs: Int, timeline: TranscriptTimeline) -> MediaTimelineChapter? {
+        timeline.chapters
+            .filter { !isSyntheticTranscriptChapter($0) && $0.startMs <= max(0, mediaTimeMs) }
+            .max { $0.startMs < $1.startMs }
+    }
+
     private func mediaTimeMs(forTextOffset textOffset: Int, timeline: TranscriptTimeline) -> Int {
         let sortedSegments = timeline.segments.sorted { $0.startMs < $1.startMs }
         guard !sortedSegments.isEmpty else { return 0 }
@@ -2117,6 +2255,54 @@ public final class SessionEngine {
             return next.startMs
         }
         return timeline.durationMs ?? sortedSegments.last?.endMs ?? 0
+    }
+
+    private func preferredPublisherChapterCollection(in candidate: LinkResolutionCandidate) -> PublisherChapterCollection? {
+        candidate.publisherChapterCollections
+            .filter { !$0.chapters.isEmpty }
+            .max { lhs, rhs in lhs.source.precedence < rhs.source.precedence }
+    }
+
+    private func publisherChapterSource(from mapId: String) -> PublisherChapterSource? {
+        PublisherChapterSource.allCases.first { mapId.hasSuffix("publisher-\($0.rawValue)") }
+    }
+
+    private func normalizedPublisherChapters(
+        _ chapters: [PublisherChapter],
+        durationMs: Int?
+    ) -> [PublisherChapter] {
+        let sorted = chapters
+            .filter { chapter in
+                let title = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !title.isEmpty, chapter.startMs >= 0 else { return false }
+                if let durationMs, durationMs > 0, chapter.startMs > durationMs { return false }
+                return true
+            }
+            .sorted { lhs, rhs in
+                lhs.startMs == rhs.startMs ? lhs.title < rhs.title : lhs.startMs < rhs.startMs
+            }
+        var seenStarts: Set<Int> = []
+        let unique = sorted.filter { seenStarts.insert($0.startMs).inserted }
+        return Array(unique.prefix(500)).enumerated().map { index, chapter in
+            let nextStart = unique.indices.contains(index + 1) ? unique[index + 1].startMs : durationMs
+            let explicitEnd = chapter.endMs.flatMap { $0 >= chapter.startMs ? $0 : nil }
+            let end = [explicitEnd, nextStart, durationMs]
+                .compactMap { $0 }
+                .filter { $0 >= chapter.startMs }
+                .min()
+            return PublisherChapter(
+                title: String(chapter.title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240)),
+                description: chapter.description.map {
+                    String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(500))
+                }.flatMap { $0.isEmpty ? nil : $0 },
+                startMs: chapter.startMs,
+                endMs: end
+            )
+        }
+    }
+
+    private func publisherChapterId(source: PublisherChapterSource, index: Int) -> String {
+        "ch-publisher-\(source.rawValue)-\(String(format: "%03d", index + 1))"
     }
 
     private func item(from candidate: LinkResolutionCandidate, result: LinkResolutionResult, request: LinkResolutionRequest) -> Item {
@@ -2177,7 +2363,9 @@ public final class SessionEngine {
         let progress = playbackProgress(for: session)
         let position = playbackPosition(for: session)
         snapshot.sourceProgressPercent = progress.sourcePercent
-        snapshot.currentPlaybackProgressPercent = progress.currentPercent
+        let completedFullTarget = audio.isPlaybackComplete(targetId: session.currentTargetId)
+            && !isPartialGeneratedTextPlayback(session)
+        snapshot.currentPlaybackProgressPercent = completedFullTarget ? 100 : progress.currentPercent
         snapshot.currentMediaTimeMs = position.mediaTimeMs
         snapshot.currentPlaybackDurationMs = position.durationMs
         snapshot.currentTextStart = position.textStart
@@ -2317,21 +2505,26 @@ public final class SessionEngine {
                     chapterTitle: title
                 )
             }
-            if let timeline = sourceTranscriptTimeline(for: session), !timeline.segments.isEmpty {
-                let resolved = MediaTimelineAnchorResolver.resolve(
-                    mediaTimeMs: mediaTimeMs,
-                    timeline: timeline,
-                    playbackRateObserved: session.playbackRate
-                )
-                let title = resolved.chapterId.flatMap { chapterId in
-                    timeline.chapters.first(where: {
-                        $0.id == chapterId && !isSyntheticTranscriptChapter($0)
-                    })?.title
-                } ?? currentItem?.title
+            if let timeline = sourceTranscriptTimeline(for: session) {
+                let chapterTitle: String?
+                if timeline.segments.isEmpty {
+                    chapterTitle = mediaChapter(at: mediaTimeMs, timeline: timeline)?.title
+                } else {
+                    let resolved = MediaTimelineAnchorResolver.resolve(
+                        mediaTimeMs: mediaTimeMs,
+                        timeline: timeline,
+                        playbackRateObserved: session.playbackRate
+                    )
+                    chapterTitle = resolved.chapterId.flatMap { chapterId in
+                        timeline.chapters.first(where: {
+                            $0.id == chapterId && !isSyntheticTranscriptChapter($0)
+                        })?.title
+                    }
+                }
                 let percent = isGeneratedTextMedia(item(for: session)?.media)
                     ? generatedTextSourcePercent(for: session, textStart: position.textStart)
                     : mediaPercent(mediaTimeMs, durationMs: mediaDurationMs(for: session, position: position))
-                return PlaybackProgress(sourcePercent: percent, currentPercent: percent, chapterTitle: title)
+                return PlaybackProgress(sourcePercent: percent, currentPercent: percent, chapterTitle: chapterTitle ?? currentItem?.title)
             }
             let percent = isGeneratedTextMedia(item(for: session)?.media)
                 ? generatedTextSourcePercent(for: session, textStart: position.textStart)
@@ -2437,6 +2630,19 @@ public final class SessionEngine {
                     chapterId: resolved.chapterId,
                     playbackRate: resolved.playbackRateObserved,
                     anchorConfidence: resolved.transcriptSegmentId == nil ? .mediaTime : .transcriptSpan
+                )
+            }
+            if let timeline = sourceTranscriptTimeline(for: session),
+               let chapter = mediaChapter(at: mediaTimeMs, timeline: timeline) {
+                return PlaybackPosition(
+                    itemId: session.itemId,
+                    targetType: session.currentTargetType,
+                    targetId: session.currentTargetId,
+                    mediaTimeMs: max(0, mediaTimeMs),
+                    durationMs: durationMs,
+                    chapterId: chapter.id,
+                    playbackRate: session.playbackRate,
+                    anchorConfidence: .providerMetadata
                 )
             }
             return PlaybackPosition(
@@ -2943,7 +3149,10 @@ public final class SessionEngine {
 
     private func skipMediaForward(session: Session, unit: String) throws -> SessionSnapshot {
         var updated = try syncMediaPositionFromAudio(session)
-        let current = updated.position.mediaTimeMs ?? 0
+        let duration = mediaDurationMs(for: updated)
+        let playbackCompleted = audio.isPlaybackComplete(targetId: updated.currentTargetId)
+        let observedCurrent = updated.position.mediaTimeMs ?? 0
+        let current = playbackCompleted ? (duration ?? observedCurrent) : observedCurrent
         let next: Int
         if let package = currentWatchPackage, unit == "chapter" {
             next = package.chapters.first(where: { $0.startMs > current })?.startMs ?? package.primaryAudioAsset?.durationMs ?? current
@@ -2958,7 +3167,20 @@ public final class SessionEngine {
         } else {
             next = current + 15_000
         }
-        updated = mediaSession(updated, movedTo: next)
+        let clampedNext = duration.map { max(0, min(next, $0)) } ?? max(0, next)
+        updated = mediaSession(updated, movedTo: clampedNext)
+        let reachedEnd = duration.map { $0 > 0 && clampedNext >= $0 } ?? playbackCompleted
+        if reachedEnd {
+            updated = markPlaybackComplete(updated, item: item(for: updated))
+            currentSession = updated
+            try persistSession(updated)
+            if let duration {
+                try audio.seek(toMediaTimeMs: duration)
+            }
+            try audio.pause()
+            publish(status: .paused, phase: updated.phase)
+            return snapshot
+        }
         currentSession = updated
         try persistSession(updated)
         if snapshot.status.isPlaybackActive {
@@ -3207,6 +3429,10 @@ public final class SessionEngine {
                 : mediaPercent(mediaTimeMs, durationMs: mediaDurationMs(for: session, position: playbackPosition))
             lastResolvedMediaAnchor = resolved
         } else if currentWatchPackage == nil {
+            if let timeline = sourceTranscriptTimeline(for: session),
+               let chapter = mediaChapter(at: mediaTimeMs, timeline: timeline) {
+                updated.position.chapterId = chapter.id
+            }
             updated.completionPercent = isGeneratedTextMedia(item(for: session)?.media)
                 ? generatedTextSourcePercent(for: session, textStart: playbackPosition.textStart)
                 : mediaPercent(mediaTimeMs, durationMs: mediaDurationMs(for: session, position: playbackPosition))

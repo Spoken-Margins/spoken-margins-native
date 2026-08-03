@@ -275,6 +275,47 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.selectedItem.sessions.isEmpty, "Restoring an item should restore its existing sessions")
     }
 
+    func testTrashUndoAutoDismissesAfterConfiguredDelay() async throws {
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            trashUndoDismissDelay: .milliseconds(20)
+        )
+        model.resetAndSeed()
+
+        model.moveItemToTrash(id: "item-pill")
+
+        XCTAssertEqual(model.trashUndo?.itemId, "item-pill")
+        try await waitFor("trash Undo to auto-dismiss") {
+            model.trashUndo == nil
+        }
+        XCTAssertTrue(model.recentlyDeletedItems.contains(where: { $0.id == "item-pill" }))
+    }
+
+    func testReplacingTrashUndoCancelsOlderDismissal() async throws {
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            trashUndoDismissDelay: .milliseconds(80)
+        )
+        model.resetAndSeed()
+        model.importTitle = "Second Item"
+        model.importText = "A second item to delete."
+        model.importTextItem()
+        let secondItemId = model.selectedItem.id
+
+        model.moveItemToTrash(id: "item-pill")
+        let firstUndoId = try XCTUnwrap(model.trashUndo?.id)
+        try await Task.sleep(for: .milliseconds(40))
+        model.moveItemToTrash(id: secondItemId)
+        let secondUndoId = try XCTUnwrap(model.trashUndo?.id)
+
+        XCTAssertNotEqual(firstUndoId, secondUndoId)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(model.trashUndo?.id, secondUndoId, "The older timer must not dismiss the replacement Undo")
+        try await waitFor("replacement trash Undo to auto-dismiss") {
+            model.trashUndo == nil
+        }
+    }
+
     func testPermanentDeletionCannotCrossFireIntoRestore() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
@@ -384,7 +425,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     }
 
     func testMissingAPIKeySummaryPreflightDoesNotMutateSession() {
-        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: true)
+        )
         model.resetAndSeed()
         model.startItem(id: "item-pill")
         model.pause()
@@ -398,6 +442,151 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot, snapshotBefore)
         XCTAssertEqual(model.selectedItem.turns, turnsBefore)
         XCTAssertEqual(model.diagnostics["summaryPreflight"], "api_key_missing")
+    }
+
+    func testReleaseFeatureFlagDisablesRemoteProviderAndProbe() {
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false),
+            localFoundationModelClient: WorkflowFoundationModelStub(availability: .unavailable("Unsupported test device"))
+        )
+        model.providerAPIKey = "configured-but-unused"
+
+        model.probeProvider()
+
+        XCTAssertFalse(model.remoteProviderExperienceEnabled)
+        XCTAssertFalse(model.aiSummaryExperienceAvailable)
+        XCTAssertEqual(model.providerProbeStatus, "Disabled by release feature flag")
+        XCTAssertEqual(model.lastError, "Remote provider access is disabled in this release.")
+    }
+
+    func testUnavailableLocalModelDoesNotCreateRemoteSummaryOrDiscussionJobs() {
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false),
+            localFoundationModelClient: WorkflowFoundationModelStub(availability: .unavailable("Unsupported test device"))
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.pause()
+        let snapshotBefore = model.snapshot
+        let turnsBefore = model.selectedItem.turns
+
+        model.summarize()
+        model.discuss(followUp: "Send this remotely")
+
+        XCTAssertEqual(model.snapshot, snapshotBefore)
+        XCTAssertEqual(model.selectedItem.turns, turnsBefore)
+        XCTAssertEqual(model.diagnostics["summaryPreflight"], "local_model_unavailable")
+        XCTAssertEqual(model.lastError, "Discuss is disabled in this release. Copy your notes to another chatbot and paste its response back here instead.")
+    }
+
+    func testAvailableLocalFoundationModelCompletesInterjectionSummaryWithoutAPIKey() async throws {
+        let priorTermsVersion = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceVersionKey)
+        let priorTermsDate = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceDateKey)
+        defer {
+            restoreUserDefault(priorTermsVersion, forKey: SpokenMarginsTerms.acceptanceVersionKey)
+            restoreUserDefault(priorTermsDate, forKey: SpokenMarginsTerms.acceptanceDateKey)
+        }
+        SpokenMarginsTerms.recordAcceptance()
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: NoopRecordingClient(),
+            interjectionTranscriptionHandler: { _ in "Structure helps me remember the source." },
+            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false),
+            localFoundationModelClient: WorkflowFoundationModelStub(
+                availability: .available,
+                summary: "The listener wants to preserve the relationship between structure and recall."
+            )
+        )
+        model.providerAPIKey = ""
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        model.dispatchGate2CompactCommand(.finishInterjection)
+        XCTAssertEqual(model.selectedItem.interjections.count, 1)
+        XCTAssertTrue(model.canSummarizeInterjections)
+
+        model.summarize()
+
+        try await waitFor("local summary completion") {
+            model.diagnostics["lastSummaryMode"] == "apple_foundation_on_device"
+        }
+        XCTAssertEqual(model.providerAPIKey, "")
+        XCTAssertTrue(model.selectedItem.turns.contains {
+            $0.turnType == "interjection_summary"
+                && $0.text?.contains("relationship between structure and recall") == true
+        })
+    }
+
+    func testCompletedSummaryPlaybackDoesNotBlockSummarizingANewInterjection() async throws {
+        let priorTermsVersion = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceVersionKey)
+        let priorTermsDate = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceDateKey)
+        defer {
+            restoreUserDefault(priorTermsVersion, forKey: SpokenMarginsTerms.acceptanceVersionKey)
+            restoreUserDefault(priorTermsDate, forKey: SpokenMarginsTerms.acceptanceDateKey)
+        }
+        SpokenMarginsTerms.recordAcceptance()
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: NoopRecordingClient(),
+            interjectionTranscriptionHandler: { _ in "A newly added listener note." },
+            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false),
+            localFoundationModelClient: WorkflowFoundationModelStub(
+                availability: .available,
+                summary: "A concise listener note."
+            )
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.pause()
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        model.dispatchGate2CompactCommand(.finishInterjection)
+        model.summarize()
+        try await waitFor("first local summary completion") {
+            model.selectedItem.turns.filter { $0.turnType == "interjection_summary" && $0.status == "complete" }.count == 1
+        }
+
+        XCTAssertFalse(model.isSummarizingInterjections)
+        XCTAssertFalse(model.canSummarizeInterjections)
+
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        model.dispatchGate2CompactCommand(.finishInterjection)
+
+        XCTAssertTrue(model.canSummarizeInterjections)
+        XCTAssertFalse(model.isSummarizingInterjections)
+
+        model.summarize()
+        try await waitFor("second local summary completion") {
+            model.selectedItem.turns.contains {
+                $0.turnType == "interjection_summary"
+                    && $0.status == "complete"
+                    && $0.sourceInterjectionIds.count == 2
+            }
+        }
+        XCTAssertFalse(model.isSummarizingInterjections)
+
+        model.snapshot.targetType = TargetType.summaryTurnTTS.rawValue
+        XCTAssertFalse(model.isSummarizingInterjections)
+    }
+
+    func testDefaultReleaseUsesDeterministicTextMapInsteadOfFoundationModelGeneration() {
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false),
+            localFoundationModelClient: WorkflowFoundationModelStub(availability: .available)
+        )
+        model.resetAndSeed()
+        model.importTitle = "Deterministic Map Source"
+        model.importText = "# Opening\n\nA first section.\n\n## Next Topic\n\nA second section."
+        model.importTextItem()
+        XCTAssertTrue(model.selectedItem.chapters.isEmpty)
+
+        model.generateListeningMap()
+
+        XCTAssertEqual(model.diagnostics["lastListeningMapMode"], "local_deterministic")
+        XCTAssertFalse(model.selectedItem.chapters.isEmpty)
+        XCTAssertFalse(model.isGeneratingListeningMap)
     }
 
     func testBootstrapRestoresNewestUnfinishedSessionPausedWithoutAutoplay() throws {
@@ -506,6 +695,25 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(session.position.charOffset, "One. Two. ".count)
         XCTAssertEqual(model.snapshot.currentTextStart, "One. Two. ".count)
         XCTAssertEqual(model.diagnostics["playbackLifecycleSync"], "saved")
+    }
+
+    func testCompletingFinalAudioAutomaticallyClosesTheSession() throws {
+        let audio = WorkflowCompletionAudioClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let completedSessionID = try XCTUnwrap(model.snapshot.sessionId)
+
+        audio.completeCurrentTarget()
+        model.syncPlaybackProgressForLifecycle()
+
+        XCTAssertNil(model.snapshot.sessionId)
+        XCTAssertEqual(model.screen, .home)
+        XCTAssertEqual(model.statusMessage, "Finished listening. The completed session was closed.")
+        XCTAssertEqual(
+            model.selectedItem.sessions.first(where: { $0.id == completedSessionID })?.status,
+            "finished"
+        )
     }
 
     func testPlaybackSpeechRateChangeRestartsActiveNativeTextAtCurrentOffset() throws {
@@ -762,6 +970,13 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     #endif
 
     func testPlaybackControlsRemainUsableWhileObsidianImportIsPending() async throws {
+        let priorTermsVersion = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceVersionKey)
+        let priorTermsDate = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceDateKey)
+        defer {
+            restoreUserDefault(priorTermsVersion, forKey: SpokenMarginsTerms.acceptanceVersionKey)
+            restoreUserDefault(priorTermsDate, forKey: SpokenMarginsTerms.acceptanceDateKey)
+        }
+        SpokenMarginsTerms.recordAcceptance()
         let directory = FileManager.default.temporaryDirectory
             .appending(path: "spoken-margins-responsive-import-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -783,7 +998,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         try await waitFor("responsive Obsidian import to finish", timeoutNanoseconds: 5_000_000_000) {
             !model.isImportingSources
         }
-        XCTAssertEqual(model.selectedItem.title, "Long Import")
+        XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertEqual(model.snapshot.itemId, "item-pill")
+        XCTAssertEqual(model.selectedItem.id, "item-pill")
+        XCTAssertNotNil(model.libraryItems.first(where: { $0.title == "Long Import" }))
     }
 
     private func waitFor(
@@ -824,6 +1042,35 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             ),
             createdAt: Date(timeIntervalSince1970: 1)
         )
+    }
+}
+
+private struct WorkflowFoundationModelStub: LocalFoundationModelClient {
+    let configuredAvailability: LocalFoundationModelAvailability
+    let summary: String
+
+    init(
+        availability: LocalFoundationModelAvailability,
+        summary: String = "Local summary"
+    ) {
+        configuredAvailability = availability
+        self.summary = summary
+    }
+
+    func availability() -> LocalFoundationModelAvailability {
+        configuredAvailability
+    }
+
+    func summarizeInterjections(context: String) async throws -> String {
+        summary
+    }
+
+    func labelListeningMapChapter(text: String, chapterNumber: Int) async throws -> LocalListeningMapLabel {
+        LocalListeningMapLabel(title: "Chapter \(chapterNumber)", description: "A bounded section description.")
+    }
+
+    func summarizeListeningMap(labels: [LocalListeningMapLabel]) async throws -> String {
+        "A bounded local listening map."
     }
 }
 
@@ -906,5 +1153,63 @@ private final class WorkflowRecordingAudioClient: AudioPlaybackClient {
             textEnd: currentOffset + 1,
             anchorConfidence: .textRange
         )
+    }
+}
+
+private final class WorkflowCompletionAudioClient: AudioPlaybackClient {
+    private let lock = NSLock()
+    private var preparedText = ""
+    private var activeTargetId: String?
+    private var completedTargetId: String?
+    private var currentOffset = 0
+
+    func prepareSpeechText(_ text: String) throws -> String {
+        let normalized = SpeechTextNormalizer.normalize(text)
+        lock.lock()
+        preparedText = normalized
+        lock.unlock()
+        return normalized
+    }
+
+    func play(targetId: String) throws {
+        try play(targetId: targetId, from: 0)
+    }
+
+    func play(targetId: String, from charOffset: Int) throws {
+        lock.lock()
+        activeTargetId = targetId
+        completedTargetId = nil
+        currentOffset = charOffset
+        lock.unlock()
+    }
+
+    func pause() throws {}
+
+    func stop() throws {
+        lock.lock()
+        activeTargetId = nil
+        completedTargetId = nil
+        lock.unlock()
+    }
+
+    func currentCharOffset() -> Int? {
+        lock.lock()
+        let offset = currentOffset
+        lock.unlock()
+        return offset
+    }
+
+    func isPlaybackComplete(targetId: String) -> Bool {
+        lock.lock()
+        let complete = completedTargetId == targetId
+        lock.unlock()
+        return complete
+    }
+
+    func completeCurrentTarget() {
+        lock.lock()
+        currentOffset = preparedText.count
+        completedTargetId = activeTargetId
+        lock.unlock()
     }
 }

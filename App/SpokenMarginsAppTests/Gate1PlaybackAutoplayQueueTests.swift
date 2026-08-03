@@ -118,6 +118,29 @@ final class Gate1PlaybackAutoplayQueueTests: XCTestCase {
         ).map(\.id), ["ij-2"])
     }
 
+    func testFailedPartialSummaryKeepsItsInterjectionsEligibleForRetry() {
+        let interjection = interjection(id: "ij-1", targetType: .item, targetId: "item-pill")
+        let interruptedSummary = ConversationTurn(
+            id: "turn-summary-001",
+            sessionId: "session-1",
+            role: "assistant",
+            turnType: "interjection_summary",
+            status: "failed_partial",
+            summary: nil,
+            text: "Incomplete summary.",
+            rawText: nil,
+            chapters: nil,
+            sourceInterjectionIds: [interjection.id]
+        )
+
+        XCTAssertEqual(Gate1SummaryEligibility.unsummarizedInterjections(
+            turns: [interruptedSummary],
+            interjections: [interjection],
+            currentTargetType: TargetType.itemTextTTS.rawValue,
+            currentTargetId: "item-pill"
+        ).map(\.id), [interjection.id])
+    }
+
     func testAITurnSummaryEligibilityUsesCurrentTurnOnly() {
         let aiInterjection = interjection(id: "ij-ai", targetType: .assistantTurn, targetId: "turn-response-001")
         let otherAIInterjection = interjection(id: "ij-other", targetType: .assistantTurn, targetId: "turn-response-002")

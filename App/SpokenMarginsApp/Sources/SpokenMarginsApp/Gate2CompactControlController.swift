@@ -54,6 +54,14 @@ enum Gate2LiveActivityPolicy {
         return activitySessionId != currentSessionId
     }
 
+    static func shouldMaintain(_ snapshot: CompactControlSnapshot, adoptedSessionId: String?) -> Bool {
+        guard isEligible(snapshot), let sessionId = snapshot.sessionId else { return false }
+        if snapshot.status.isPlaybackActive || snapshot.isRecording {
+            return true
+        }
+        return snapshot.status == .paused && adoptedSessionId == sessionId
+    }
+
     static func shouldEndInactive(
         activitySessionId: String,
         activityId: String,
@@ -96,17 +104,29 @@ enum Gate2LiveSpeechNowPlayingPolicy {
 }
 
 @MainActor
+protocol Gate2LiveActivityControlling: AnyObject {
+    var status: String { get }
+
+    func publish(_ snapshot: CompactControlSnapshot)
+    func endAll()
+}
+
+@MainActor
 final class Gate2CompactControlController {
     private var dispatcher: CompactControlDispatcher?
     private var queuedCommandTask: Task<Void, Never>?
     private var queuedCommandHandler: (@MainActor (CompactControlCommand, String, Int?, Double?) -> Void)?
     private var queuedApplicationCommandHandler: (@MainActor (String) -> Bool)?
-    private let liveActivity = Gate2LiveActivityController()
+    private let liveActivity: any Gate2LiveActivityControlling
     private let liveSpeechNowPlaying = Gate2LiveSpeechNowPlayingController()
     private(set) var lastCommand: CompactControlCommand?
     private(set) var lastCommandOrigin = "none"
     private(set) var lastApplicationCommand = "none"
     private(set) var lastResult = "none"
+
+    init(liveActivity: (any Gate2LiveActivityControlling)? = nil) {
+        self.liveActivity = liveActivity ?? Gate2LiveActivityController()
+    }
 
     var snapshot: CompactControlSnapshot? {
         dispatcher?.snapshot()
@@ -134,7 +154,7 @@ final class Gate2CompactControlController {
         lastResult = "configured"
     }
 
-    func update(snapshot: SessionSnapshot) {
+    func update(snapshot _: SessionSnapshot) {
         guard dispatcher != nil else { return }
         let drainedCommand = drainQueuedWidgetCommands()
         if !drainedCommand {
@@ -164,7 +184,17 @@ final class Gate2CompactControlController {
         lastCommand = command
         lastCommandOrigin = origin
         lastResult = result.delegatedToCanonicalRuntime ? "delegated" : (result.rejectedReason ?? "rejected")
+        publish(result.snapshot)
         return result
+    }
+
+    func reconcileLiveActivities() {
+        publishCurrentSnapshot()
+    }
+
+    func endLiveActivities() {
+        liveActivity.endAll()
+        liveSpeechNowPlaying.end()
     }
 
     func diagnostics() -> [String: String] {
@@ -188,6 +218,10 @@ final class Gate2CompactControlController {
 
     private func publishCurrentSnapshot() {
         guard let snapshot = dispatcher?.snapshot() else { return }
+        publish(snapshot)
+    }
+
+    private func publish(_ snapshot: CompactControlSnapshot) {
         liveSpeechNowPlaying.publish(snapshot)
         liveActivity.publish(snapshot)
     }
@@ -219,9 +253,11 @@ final class Gate2CompactControlController {
 }
 
 @MainActor
-private final class Gate2LiveActivityController {
+private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
     private var activityId: String?
+    private var adoptedSessionId: String?
     private var publishGeneration = 0
+    private var activityTask: Task<Void, Never>?
     private(set) var status = "not_started"
 
     func publish(_ snapshot: CompactControlSnapshot) {
@@ -231,16 +267,26 @@ private final class Gate2LiveActivityController {
         #else
         publishGeneration += 1
         let generation = publishGeneration
+        let previousActivityTask = activityTask
         #if canImport(ActivityKit)
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
             status = "disabled"
             return
         }
-        guard Gate2LiveActivityPolicy.isEligible(snapshot), let sessionId = snapshot.sessionId else {
+        if let sessionId = snapshot.sessionId,
+           snapshot.status.isPlaybackActive || snapshot.isRecording {
+            adoptedSessionId = sessionId
+        }
+        guard Gate2LiveActivityPolicy.shouldMaintain(snapshot, adoptedSessionId: adoptedSessionId),
+              let sessionId = snapshot.sessionId else {
             let inactiveSessionId = snapshot.sessionId
             let trackedActivityId = activityId
+            if inactiveSessionId == nil || inactiveSessionId == adoptedSessionId {
+                adoptedSessionId = nil
+            }
             status = "ending"
-            Task { @MainActor in
+            activityTask = Task { @MainActor in
+                await previousActivityTask?.value
                 guard generation == publishGeneration else { return }
                 let endedCount = await Self.endInactiveActivities(
                     inactiveSessionId: inactiveSessionId,
@@ -261,11 +307,35 @@ private final class Gate2LiveActivityController {
             isRecording: snapshot.isRecording,
             availableCommands: snapshot.availableCommands.map(\.rawValue)
         )
-        Task { @MainActor in
+        activityTask = Task { @MainActor in
+            await previousActivityTask?.value
+            guard generation == publishGeneration else { return }
             let result = await Self.publishActivity(sessionId: sessionId, state: state)
             guard generation == publishGeneration else { return }
             activityId = result.activityId
             status = result.status
+        }
+        #else
+        status = "unavailable"
+        #endif
+        #endif
+    }
+
+    func endAll() {
+        #if SPOKEN_MARGINS_LEGACY
+        status = "unavailable_legacy"
+        #else
+        publishGeneration += 1
+        let generation = publishGeneration
+        activityTask?.cancel()
+        status = "ending"
+        #if canImport(ActivityKit)
+        activityTask = Task { @MainActor in
+            let endedCount = await Self.endInactiveActivities(inactiveSessionId: nil, trackedActivityId: nil)
+            guard generation == publishGeneration else { return }
+            activityId = nil
+            adoptedSessionId = nil
+            status = endedCount > 0 ? "ended" : "not_ready"
         }
         #else
         status = "unavailable"
@@ -399,6 +469,17 @@ private final class Gate2LiveSpeechNowPlayingController {
         #else
         status = "unavailable"
         #endif
+    }
+
+    func end() {
+        #if canImport(MediaPlayer)
+        if ownsNowPlayingInfo {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        }
+        uninstallRemoteCommandHandlers()
+        #endif
+        ownsNowPlayingInfo = false
+        status = "ended"
     }
 
     private func installRemoteCommandHandlersIfNeeded() {

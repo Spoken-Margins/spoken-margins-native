@@ -57,6 +57,9 @@ struct SpokenMarginsApp: App {
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
                     model.handleMemoryWarning()
                 }
+                .onReceive(NotificationCenter.default.publisher(for: UIApplication.willTerminateNotification)) { _ in
+                    model.handleApplicationWillTerminate()
+                }
                 #endif
                 .task {
                     model.importPendingSourceLinkHandoffs()
