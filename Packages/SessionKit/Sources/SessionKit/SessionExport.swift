@@ -137,13 +137,29 @@ public enum SessionExportMarkdownRenderer {
 
         let interjectionsById = Dictionary(uniqueKeysWithValues: export.interjections.map { ($0.id, $0) })
         let turnsById = Dictionary(uniqueKeysWithValues: export.turns.map { ($0.id, $0) })
+        let contextualSourceInterjections = export.timeline.compactMap { entry -> ExportInterjection? in
+            guard entry.type == "interjection",
+                  let id = entry.interjectionId,
+                  let interjection = interjectionsById[id],
+                  interjection.targetType == InterjectionTargetType.item.rawValue else {
+                return nil
+            }
+            return interjection
+        }
         lines.append("## Timeline")
         lines.append("")
+        var renderedSourceContext = false
         for entry in export.timeline {
             switch entry.type {
             case "interjection":
                 guard let id = entry.interjectionId, let interjection = interjectionsById[id] else { continue }
-                append(interjection: interjection, to: &lines)
+                if interjection.targetType == InterjectionTargetType.item.rawValue {
+                    guard !renderedSourceContext else { continue }
+                    appendContextualSourceInterjections(contextualSourceInterjections, to: &lines)
+                    renderedSourceContext = true
+                } else {
+                    append(interjection: interjection, to: &lines)
+                }
             case "ai_turn":
                 guard let turnId = entry.turnId, let turn = turnsById[turnId] else { continue }
                 append(turn: turn, to: &lines)
@@ -159,7 +175,11 @@ public enum SessionExportMarkdownRenderer {
             }
         }
         if export.timeline.isEmpty, !export.interjections.isEmpty {
-            for interjection in export.interjections {
+            let sourceInterjections = export.interjections
+                .filter { $0.targetType == InterjectionTargetType.item.rawValue }
+                .sorted { ($0.mediaTimeMs ?? 0) < ($1.mediaTimeMs ?? 0) }
+            appendContextualSourceInterjections(sourceInterjections, to: &lines)
+            for interjection in export.interjections where interjection.targetType != InterjectionTargetType.item.rawValue {
                 append(interjection: interjection, to: &lines)
             }
         }
@@ -213,6 +233,95 @@ public enum SessionExportMarkdownRenderer {
             lines.append("Transcript: \(interjection.transcriptionStatus)")
             lines.append("")
         }
+    }
+
+    private static func appendContextualSourceInterjections(
+        _ interjections: [ExportInterjection],
+        to lines: inout [String]
+    ) {
+        guard let first = interjections.first else { return }
+        lines.append("### Source Context and Listener Interjections")
+        lines.append("")
+        if !first.anchorBefore.isEmpty {
+            lines.append("Source context:")
+            lines.append(first.anchorBefore)
+            lines.append("")
+        }
+        appendSourceInterjectionMarker(first, to: &lines)
+
+        var previous = first
+        for current in interjections.dropFirst() {
+            let sameMoment = abs((current.mediaTimeMs ?? 0) - (previous.mediaTimeMs ?? 0)) <= 1_000
+            if !sameMoment,
+               let shared = sharedPassage(after: previous.anchorAfter, before: current.anchorBefore) {
+                if !shared.isEmpty {
+                    lines.append("Source continues:")
+                    lines.append(shared)
+                    lines.append("")
+                }
+            } else if !sameMoment {
+                if !previous.anchorAfter.isEmpty {
+                    lines.append("Source continues:")
+                    lines.append(previous.anchorAfter)
+                    lines.append("")
+                }
+                if !current.anchorBefore.isEmpty {
+                    lines.append("Later source context:")
+                    lines.append(current.anchorBefore)
+                    lines.append("")
+                }
+            }
+            appendSourceInterjectionMarker(current, to: &lines)
+            previous = current
+        }
+
+        if !previous.anchorAfter.isEmpty {
+            lines.append("Source continues:")
+            lines.append(previous.anchorAfter)
+            lines.append("")
+        }
+    }
+
+    private static func appendSourceInterjectionMarker(
+        _ interjection: ExportInterjection,
+        to lines: inout [String]
+    ) {
+        let position = interjection.mediaTimeMs.map(formattedMediaTime) ?? "\(interjection.roughPercent)%"
+        lines.append("#### \(position) — Listener interjection")
+        lines.append("")
+        if let transcript = interjection.transcript?.trimmingCharacters(in: .whitespacesAndNewlines), !transcript.isEmpty {
+            lines.append(transcript)
+        } else {
+            lines.append("Transcript: \(interjection.transcriptionStatus)")
+        }
+        lines.append("")
+    }
+
+    /// For overlapping time windows, the source passage between two interjections is
+    /// both a prefix of the earlier note's `after` context and a suffix of the later
+    /// note's `before` context. Rendering that shared passage once keeps each listener
+    /// note embedded in sequence without repeating minutes of source material.
+    private static func sharedPassage(after: String, before: String) -> String? {
+        let afterTokens = whitespaceTokens(after)
+        let beforeTokens = whitespaceTokens(before)
+        let maximum = min(afterTokens.count, beforeTokens.count)
+        guard maximum >= 4 else { return nil }
+        for count in stride(from: maximum, through: 4, by: -1) {
+            let afterCandidate = afterTokens.prefix(count).map(comparisonToken)
+            let beforeCandidate = beforeTokens.suffix(count).map(comparisonToken)
+            if afterCandidate == beforeCandidate {
+                return afterTokens.prefix(count).joined(separator: " ")
+            }
+        }
+        return nil
+    }
+
+    private static func whitespaceTokens(_ source: String) -> [String] {
+        source.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+    }
+
+    private static func comparisonToken(_ source: String) -> String {
+        source.lowercased().trimmingCharacters(in: .punctuationCharacters)
     }
 
     private static func title(for turn: ConversationTurn) -> String {

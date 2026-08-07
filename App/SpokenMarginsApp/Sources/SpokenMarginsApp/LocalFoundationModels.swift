@@ -94,10 +94,14 @@ enum LocalInterjectionSummaryPolicy {
             throw LocalFoundationModelError.invalidInterjectionSummary
         }
         let filler = try NSRegularExpression(pattern: #"(?i)\b(?:um+|uh+|er+|ah+|hmm+)\b"#)
+        let longestListenerNote = payload.interjections
+            .map { normalizedWords($0.note).count }
+            .max() ?? 0
+        let maximumBulletWords = max(35, min(120, longestListenerNote))
         for bullet in cleaned {
             let range = NSRange(bullet.startIndex..<bullet.endIndex, in: bullet)
             guard filler.firstMatch(in: bullet, range: range) == nil,
-                  bullet.split(whereSeparator: { $0.isWhitespace }).count <= 35 else {
+                  bullet.split(whereSeparator: { $0.isWhitespace }).count <= maximumBulletWords else {
                 throw LocalFoundationModelError.invalidInterjectionSummary
             }
             for record in payload.interjections {
@@ -107,6 +111,17 @@ enum LocalInterjectionSummaryPolicy {
                 }
             }
         }
+        return cleaned
+    }
+
+    static func fallbackRewrite(for record: LocalInterjectionSummaryRecord) throws -> String {
+        let cleaned = cleanSpokenNote(record.note)
+        guard !cleaned.isEmpty else {
+            throw LocalFoundationModelError.invalidInterjectionSummary
+        }
+        // This fallback is derived only from the listener-authored note. It cannot copy
+        // source anchors or answer the listener, and it keeps one difficult model output
+        // from discarding every other valid note in the session.
         return cleaned
     }
 
@@ -291,7 +306,12 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
                     bullets.append(try await rewrite(record: record, payload: scopedPayload, includeAnchors: true))
                 } catch {
                     if error is CancellationError { throw error }
-                    bullets.append(try await rewrite(record: record, payload: scopedPayload, includeAnchors: false))
+                    do {
+                        bullets.append(try await rewrite(record: record, payload: scopedPayload, includeAnchors: false))
+                    } catch {
+                        if error is CancellationError { throw error }
+                        bullets.append(try LocalInterjectionSummaryPolicy.fallbackRewrite(for: record))
+                    }
                 }
             }
             return bullets.map { "- \($0)" }.joined(separator: "\n")

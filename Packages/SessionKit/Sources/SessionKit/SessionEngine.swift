@@ -1416,10 +1416,17 @@ public final class SessionEngine {
         job.lastError = error
         job.attempts = max(1, job.attempts)
         try repository.updateAIJob(job)
+        if let turnId = job.turnId,
+           var turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == turnId }) {
+            let hasPartialContent = turn.rawText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                || turn.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            turn.status = hasPartialContent ? "failed_partial" : "failed"
+            try repository.saveTurn(turn)
+        }
         snapshot.pendingAiJobKind = job.kind
         snapshot.pendingAiJobStatus = job.status
         snapshot.lastFailure = "ai_provider_unreachable"
-        snapshot.turnStatus = "pending"
+        snapshot.turnStatus = "failed"
         jobs = try repository.loadAIJobs(sessionId: session.id)
         snapshot.pendingAiJobCount = jobs.filter { $0.status != "complete" }.count
         return snapshot
@@ -1585,16 +1592,26 @@ public final class SessionEngine {
                 timeline: normalized,
                 playbackRateObserved: interjection.anchor.playbackRateObserved
             )
-            let context = sourceWindowContext(mediaTimeMs: mediaTimeMs, timeline: normalized, resolved: resolved)
-            interjection.anchor.anchorType = resolved.transcriptSegmentId == nil ? .media : .transcript
-            interjection.anchor.startChar = resolved.startChar
-            interjection.anchor.endChar = resolved.endChar
-            interjection.anchor.anchorBefore = context.before
-            interjection.anchor.anchorAfter = context.after
+            let context = SourceAnchorContextResolver.resolve(mediaTimeMs: mediaTimeMs, timeline: normalized)
             interjection.anchor.mediaTimeMs = resolved.mediaTimeMs
             interjection.anchor.playbackRateObserved = resolved.playbackRateObserved
-            interjection.anchor.transcriptSegmentId = resolved.transcriptSegmentId
-            interjection.anchorContextStatus = .ready
+            if let context {
+                interjection.anchor.anchorType = .transcript
+                interjection.anchor.startChar = context.startChar
+                interjection.anchor.endChar = context.endChar
+                interjection.anchor.anchorBefore = context.anchorBefore
+                interjection.anchor.anchorAfter = context.anchorAfter
+                interjection.anchor.transcriptSegmentId = context.transcriptSegmentId
+                interjection.anchorContextStatus = .ready
+            } else {
+                interjection.anchor.anchorType = .media
+                interjection.anchor.startChar = resolved.startChar
+                interjection.anchor.endChar = resolved.endChar
+                interjection.anchor.anchorBefore = ""
+                interjection.anchor.anchorAfter = ""
+                interjection.anchor.transcriptSegmentId = nil
+                interjection.anchorContextStatus = .unavailable
+            }
         }
         return snapshot
     }
@@ -1613,37 +1630,6 @@ public final class SessionEngine {
             interjection.anchorContextStatus = .pending
         }
         return snapshot
-    }
-
-    private func sourceWindowContext(
-        mediaTimeMs: Int,
-        timeline: TranscriptTimeline,
-        resolved: MediaResolvedAnchor
-    ) -> (before: String, after: String) {
-        let segments = timeline.segments.sorted { $0.startMs < $1.startMs }
-        guard !segments.isEmpty else {
-            return (resolved.anchorBefore, resolved.anchorAfter)
-        }
-        let anchorIndex = resolved.transcriptSegmentId
-            .flatMap { transcriptSegmentId in segments.firstIndex { $0.id == transcriptSegmentId } }
-            ?? segments.lastIndex { $0.startMs <= mediaTimeMs }
-            ?? segments.startIndex
-        let before = joinedSourceWindowText(segments[segments.startIndex...anchorIndex])
-        let afterStart = segments.index(after: anchorIndex)
-        let after = afterStart < segments.endIndex
-            ? joinedSourceWindowText(segments[afterStart..<segments.endIndex])
-            : ""
-        return (
-            before.isEmpty ? resolved.anchorBefore : before,
-            after.isEmpty ? resolved.anchorAfter : after
-        )
-    }
-
-    private func joinedSourceWindowText(_ segments: ArraySlice<MediaTimelineSegment>) -> String {
-        segments
-            .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
     }
 
     @discardableResult
@@ -1783,12 +1769,13 @@ public final class SessionEngine {
     public func buildExport(options: ExportOptions) throws -> SessionExport {
         let session = try resolveSession(options.sessionId)
         let item = try repository.loadItem(id: session.itemId)
+        let sourceTimeline = try repository.loadTranscriptTimeline(itemId: item.id)?.timeline
         let allInterjections = try repository.loadInterjections(sessionId: session.id)
             .filter { $0.status == "active" }
         let allTurns = try repository.loadTurns(sessionId: session.id)
         let exposesFullSourceText = options.includeFullText && !isNativeAudioSource(item)
         let sourceTranscript = exposesFullSourceText
-            ? try repository.loadTranscriptTimeline(itemId: item.id)?.timeline.segments
+            ? sourceTimeline?.segments
                 .sorted { $0.startMs < $1.startMs }
                 .map(\.text)
                 .joined(separator: " ")
@@ -1810,18 +1797,38 @@ public final class SessionEngine {
             listeningMap: options.includeListeningMap ? try repository.loadListeningMap(itemId: item.id) : nil,
             turns: turns,
             timeline: exportTimeline(interjections: interjections, turns: turns),
-            interjections: interjections.map {
-                ExportInterjection(
-                    id: $0.id,
-                    sessionId: $0.sessionId,
-                    targetType: $0.targetType.rawValue,
-                    targetId: $0.targetId,
-                    roughPercent: $0.roughPercent,
-                    anchorBefore: $0.anchor.anchorBefore,
-                    anchorAfter: $0.anchor.anchorAfter,
-                    mediaTimeMs: $0.anchor.mediaTimeMs,
-                    transcriptionStatus: $0.transcriptionStatus,
-                    transcript: $0.cleanedTranscript ?? $0.transcript,
+            interjections: interjections.map { interjection in
+                let resolvedContext: SourceAnchorContext?
+                let shouldResolveNativeContext = isNativeAudioSource(item)
+                    && interjection.targetType == .item
+                    && interjection.anchor.mediaTimeMs != nil
+                    && sourceTimeline != nil
+                if shouldResolveNativeContext,
+                   interjection.targetType == .item,
+                   let mediaTimeMs = interjection.anchor.mediaTimeMs,
+                   let sourceTimeline {
+                    resolvedContext = SourceAnchorContextResolver.resolve(
+                        mediaTimeMs: mediaTimeMs,
+                        timeline: sourceTimeline
+                    )
+                } else {
+                    resolvedContext = nil
+                }
+                return ExportInterjection(
+                    id: interjection.id,
+                    sessionId: interjection.sessionId,
+                    targetType: interjection.targetType.rawValue,
+                    targetId: interjection.targetId,
+                    roughPercent: interjection.roughPercent,
+                    anchorBefore: shouldResolveNativeContext
+                        ? resolvedContext?.anchorBefore ?? ""
+                        : interjection.anchor.anchorBefore,
+                    anchorAfter: shouldResolveNativeContext
+                        ? resolvedContext?.anchorAfter ?? ""
+                        : interjection.anchor.anchorAfter,
+                    mediaTimeMs: interjection.anchor.mediaTimeMs,
+                    transcriptionStatus: interjection.transcriptionStatus,
+                    transcript: interjection.cleanedTranscript ?? interjection.transcript,
                     audioPath: nil
                 )
             }

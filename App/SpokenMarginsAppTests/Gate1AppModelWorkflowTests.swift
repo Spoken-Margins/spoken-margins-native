@@ -273,6 +273,44 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.shouldShowMiniPlayer)
     }
 
+    func testChapterFromAnotherItemClosesRestoredSessionAndStartsSelectedItem() throws {
+        let priorTermsVersion = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceVersionKey)
+        let priorTermsDate = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceDateKey)
+        defer {
+            restoreUserDefault(priorTermsVersion, forKey: SpokenMarginsTerms.acceptanceVersionKey)
+            restoreUserDefault(priorTermsDate, forKey: SpokenMarginsTerms.acceptanceDateKey)
+        }
+        SpokenMarginsTerms.recordAcceptance()
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let previousSessionID = try XCTUnwrap(model.snapshot.sessionId)
+
+        model.addSampleItem()
+        let selectedItemID = model.selectedItem.id
+        let chapter = try XCTUnwrap(model.selectedItem.chapters.dropFirst().first)
+        model.jumpToChapter(chapter)
+
+        XCTAssertEqual(model.snapshot.itemId, selectedItemID)
+        XCTAssertNotEqual(model.snapshot.sessionId, previousSessionID)
+        XCTAssertEqual(model.snapshot.chapterTitle, chapter.title)
+        XCTAssertEqual(model.screen, .playback)
+        model.openItem(id: "item-pill")
+        XCTAssertTrue(model.selectedItem.sessions.contains { $0.id == previousSessionID })
+    }
+
+    func testLargeExportUsesBoundedVisiblePreviewWithoutChangingCopiedPayload() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        let complete = String(repeating: "source context ", count: 4_000)
+        model.exportPreview = complete
+
+        XCTAssertTrue(model.exportPreviewIsTruncated)
+        XCTAssertTrue(model.displayedExportPreview.contains("Preview truncated"))
+        XCTAssertLessThan(model.displayedExportPreview.count, model.exportPreview.count)
+        XCTAssertEqual(model.exportPreview, complete)
+        XCTAssertFalse(model.exportPreviewSizeDescription.isEmpty)
+    }
+
     func testTrashUndoPreservesItemSessions() throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
@@ -535,6 +573,39 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             $0.turnType == "interjection_summary"
                 && $0.text?.contains("relationship between structure and recall") == true
         })
+    }
+
+    func testFailedLocalSummaryExitsBusyStateAndCanBeRetried() async throws {
+        let priorTermsVersion = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceVersionKey)
+        let priorTermsDate = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceDateKey)
+        defer {
+            restoreUserDefault(priorTermsVersion, forKey: SpokenMarginsTerms.acceptanceVersionKey)
+            restoreUserDefault(priorTermsDate, forKey: SpokenMarginsTerms.acceptanceDateKey)
+        }
+        SpokenMarginsTerms.recordAcceptance()
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: NoopRecordingClient(),
+            interjectionTranscriptionHandler: { _ in "I am uncertain whether this premise supports the conclusion." },
+            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false),
+            localFoundationModelClient: ThrowingWorkflowFoundationModelStub()
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        model.dispatchGate2CompactCommand(.finishInterjection)
+        try await waitFor("listener note transcription") {
+            model.selectedItem.interjections.first?.transcriptionStatus == "transcribed"
+        }
+
+        model.summarize()
+
+        try await waitFor("local summary failure") {
+            model.diagnostics["lastSummaryMode"] == "apple_foundation_failed"
+        }
+        XCTAssertFalse(model.isSummarizingInterjections)
+        XCTAssertTrue(model.canSummarizeInterjections)
+        XCTAssertEqual(model.selectedItem.turns.last(where: { $0.turnType == "interjection_summary" })?.status, "failed")
     }
 
     func testCompletedSummaryPlaybackDoesNotBlockSummarizingANewInterjection() async throws {
@@ -1124,6 +1195,24 @@ private struct WorkflowFoundationModelStub: LocalFoundationModelClient {
 
     func summarizeListeningMap(labels: [LocalListeningMapLabel]) async throws -> String {
         "A bounded local listening map."
+    }
+}
+
+private struct ThrowingWorkflowFoundationModelStub: LocalFoundationModelClient {
+    func availability() -> LocalFoundationModelAvailability {
+        .available
+    }
+
+    func summarizeInterjections(context: String) async throws -> String {
+        throw LocalFoundationModelError.invalidInterjectionSummary
+    }
+
+    func labelListeningMapChapter(text: String, chapterNumber: Int) async throws -> LocalListeningMapLabel {
+        throw LocalFoundationModelError.invalidInterjectionSummary
+    }
+
+    func summarizeListeningMap(labels: [LocalListeningMapLabel]) async throws -> String {
+        throw LocalFoundationModelError.invalidInterjectionSummary
     }
 }
 

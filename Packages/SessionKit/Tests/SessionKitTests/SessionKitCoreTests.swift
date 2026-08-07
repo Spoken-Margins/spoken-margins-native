@@ -1414,7 +1414,7 @@ final class SessionKitCoreTests: XCTestCase {
         let markdown = SessionExportMarkdownRenderer.render(export)
         XCTAssertEqual(export.item.mediaSourceType, AudioSourceType.remoteStream.rawValue)
         XCTAssertEqual(export.interjections.first?.mediaTimeMs, 123_000)
-        XCTAssertTrue(markdown.contains("Media time: 2:03"))
+        XCTAssertTrue(markdown.contains("2:03 — Listener interjection"))
         XCTAssertTrue(markdown.contains("Source Type: remote_stream"))
     }
 
@@ -1618,6 +1618,184 @@ final class SessionKitCoreTests: XCTestCase {
         let markdown = SessionExportMarkdownRenderer.render(export)
         XCTAssertTrue(markdown.contains("Context before the note. Context at the note."))
         XCTAssertTrue(markdown.contains("Context after the note."))
+    }
+
+    func testSourceAnchorContextSlicesOneWholeEpisodeSegmentByMediaTime() throws {
+        let words = (0..<600).map { String(format: "token%03d", $0) }
+        let timeline = TranscriptTimeline(
+            segments: [
+                MediaTimelineSegment(
+                    id: "whole-episode",
+                    startMs: 0,
+                    endMs: 600_000,
+                    startChar: 0,
+                    endChar: words.joined(separator: " ").count,
+                    text: words.joined(separator: " ")
+                )
+            ],
+            chapters: [],
+            durationMs: 600_000
+        )
+
+        let context = try XCTUnwrap(SourceAnchorContextResolver.resolve(
+            mediaTimeMs: 300_000,
+            timeline: timeline
+        ))
+
+        XCTAssertTrue(context.anchorBefore.contains("token210"))
+        XCTAssertTrue(context.anchorBefore.contains("token299"))
+        XCTAssertFalse(context.anchorBefore.contains("token050"))
+        XCTAssertTrue(context.anchorAfter.contains("token300"))
+        XCTAssertTrue(context.anchorAfter.contains("token419"))
+        XCTAssertFalse(context.anchorAfter.contains("token550"))
+        XCTAssertLessThan(context.anchorBefore.count + context.anchorAfter.count, words.joined(separator: " ").count / 2)
+    }
+
+    func testNativeAudioExportReResolvesLegacyOversizedAnchorsFromStoredTimeline() throws {
+        let item = Item(
+            id: "item-legacy-anchor",
+            title: "Legacy Anchor Podcast",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/episode",
+            status: "ready",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://example.com/episode.mp3", durationMs: 600_000)
+        )
+        let session = Session(
+            id: "session-legacy-anchor",
+            itemId: item.id,
+            status: "in_progress",
+            phase: .itemPlayback,
+            currentTargetType: .transcriptBackedMedia,
+            currentTargetId: item.id,
+            position: Position(mediaTimeMs: 300_000),
+            completionPercent: 50,
+            playbackRate: 1
+        )
+        let completeTranscript = (0..<600).map { String(format: "word%03d", $0) }.joined(separator: " ")
+        let interjection = Interjection(
+            id: "ij-legacy-anchor",
+            itemId: item.id,
+            sessionId: session.id,
+            targetType: .item,
+            targetId: item.id,
+            createdAt: Date(timeIntervalSince1970: 1),
+            roughPercent: 50,
+            anchor: Anchor(
+                anchorType: .transcript,
+                startChar: 0,
+                endChar: completeTranscript.count,
+                anchorBefore: completeTranscript,
+                anchorAfter: completeTranscript,
+                mediaTimeMs: 300_000,
+                transcriptSegmentId: "whole-episode"
+            ),
+            audioPath: nil,
+            audioStatus: "none",
+            transcriptionStatus: "transcribed",
+            transcript: "This is where I question the speaker's assumption.",
+            cleanedTranscript: nil,
+            displayText: nil,
+            status: "active"
+        )
+        let transcript = SourceTranscriptTimeline(
+            id: "transcript-legacy-anchor",
+            itemId: item.id,
+            createdAt: Date(timeIntervalSince1970: 1),
+            timeline: TranscriptTimeline(
+                segments: [
+                    MediaTimelineSegment(
+                        id: "whole-episode",
+                        startMs: 0,
+                        endMs: 600_000,
+                        startChar: 0,
+                        endChar: completeTranscript.count,
+                        text: completeTranscript
+                    )
+                ],
+                chapters: [],
+                durationMs: 600_000
+            )
+        )
+        let repo = InMemorySessionRepository(
+            items: [item.id: item],
+            sessions: [session.id: session],
+            interjections: [interjection.id: interjection],
+            transcriptTimelines: [item.id: transcript]
+        )
+        let engine = SessionEngine(
+            profile: RuntimeCapabilityProfile(
+                id: "phone-tablet-online",
+                displayName: "Phone/Tablet Online",
+                capabilities: ["sync": ["canonical_persistence"]]
+            ),
+            repository: repo
+        )
+
+        let export = try engine.buildExport(options: ExportOptions(
+            sessionId: session.id,
+            includeFullText: false,
+            includeReference: true,
+            includeListeningMap: false,
+            includeInterjections: true
+        ))
+        let exported = try XCTUnwrap(export.interjections.first)
+
+        XCTAssertLessThan(exported.anchorBefore.count + exported.anchorAfter.count, completeTranscript.count / 2)
+        XCTAssertFalse(exported.anchorBefore.contains("word050"))
+        XCTAssertFalse(exported.anchorAfter.contains("word550"))
+        XCTAssertEqual(try repo.loadInterjections(sessionId: session.id).first?.anchor.anchorBefore, completeTranscript)
+    }
+
+    func testMarkdownEmbedsNearbyInterjectionsInOneSharedSourcePassage() throws {
+        let first = ExportInterjection(
+            id: "ij-1",
+            sessionId: "session",
+            targetType: InterjectionTargetType.item.rawValue,
+            targetId: "item",
+            roughPercent: 20,
+            anchorBefore: "Lead-in source context.",
+            anchorAfter: "one two three four five six source after both notes",
+            mediaTimeMs: 120_000,
+            transcriptionStatus: "transcribed",
+            transcript: "First listener thought.",
+            audioPath: nil
+        )
+        let second = ExportInterjection(
+            id: "ij-2",
+            sessionId: "session",
+            targetType: InterjectionTargetType.item.rawValue,
+            targetId: "item",
+            roughPercent: 21,
+            anchorBefore: "Earlier context one two three four five six",
+            anchorAfter: "Source after the second note.",
+            mediaTimeMs: 130_000,
+            transcriptionStatus: "transcribed",
+            transcript: "Second listener thought.",
+            audioPath: nil
+        )
+        let export = SessionExport(
+            item: ExportItem(id: "item", title: "Source", includedFullText: false),
+            session: ExportSession(id: "session", status: "in_progress", completionPercent: 21),
+            listeningMap: nil,
+            turns: [],
+            timeline: [
+                ExportTimelineEntry(type: "interjection", interjectionId: first.id, targetType: first.targetType),
+                ExportTimelineEntry(type: "interjection", interjectionId: second.id, targetType: second.targetType)
+            ],
+            interjections: [first, second]
+        )
+
+        let markdown = SessionExportMarkdownRenderer.render(export)
+
+        XCTAssertTrue(markdown.contains("Source Context and Listener Interjections"))
+        XCTAssertTrue(markdown.contains("2:00 — Listener interjection"))
+        XCTAssertTrue(markdown.contains("2:10 — Listener interjection"))
+        XCTAssertEqual(markdown.components(separatedBy: "one two three four five six").count - 1, 1)
+        XCTAssertLessThan(
+            markdown.range(of: "First listener thought.")!.lowerBound,
+            markdown.range(of: "Second listener thought.")!.lowerBound
+        )
     }
 
     func testNativeAudioSkipWorksWithoutWatchPackage() throws {
@@ -2787,6 +2965,53 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.status, .playing)
         XCTAssertEqual(snapshot.phase, .itemPlayback)
         XCTAssertEqual(snapshot.targetType, TargetType.itemTextTTS.rawValue)
+    }
+
+    func testFailedInterjectionSummaryBecomesRetryableWithoutRemainingPending() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "ai": ["summarize_interjections"]
+            ]
+        )
+        let item = Item(id: "item-summary-retry", title: "Summary Retry", mediaType: "text", text: "One. Two.", externalReference: nil, status: "ready")
+        let session = Session(id: "session-summary-retry", itemId: item.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 20, playbackRate: 1)
+        let interjection = Interjection(
+            id: "ij-summary-retry",
+            itemId: item.id,
+            sessionId: session.id,
+            targetType: .item,
+            targetId: item.id,
+            createdAt: Date(timeIntervalSince1970: 1),
+            roughPercent: 20,
+            anchor: Anchor(anchorType: .text, startChar: 0, endChar: 3, anchorBefore: "One.", anchorAfter: "Two."),
+            audioPath: nil,
+            audioStatus: "none",
+            transcriptionStatus: "transcribed",
+            transcript: "I want to keep this qualification.",
+            cleanedTranscript: nil,
+            displayText: nil,
+            status: "active"
+        )
+        let repo = InMemorySessionRepository(
+            items: [item.id: item],
+            sessions: [session.id: session],
+            interjections: [interjection.id: interjection]
+        )
+        let engine = SessionEngine(profile: profile, repository: repo)
+
+        _ = try engine.inspectSession(sessionId: session.id)
+        _ = try engine.generateInterjectionSummary(scope: SummaryScope(targetType: "item", sessionId: session.id))
+        let failed = try engine.aiProviderFailed(error: "invalid_interjection_summary")
+
+        XCTAssertEqual(try repo.loadAIJobs(sessionId: session.id).last?.status, "retryable")
+        XCTAssertEqual(try repo.loadTurns(sessionId: session.id).last?.status, "failed")
+        XCTAssertEqual(failed.turnStatus, "failed")
+        XCTAssertNoThrow(try engine.generateInterjectionSummary(scope: SummaryScope(targetType: "item", sessionId: session.id)))
+        XCTAssertEqual(try repo.loadTurns(sessionId: session.id).last?.status, "pending")
     }
 
     func testFinishInterjectionSchedulesTranscriptionAfterAudioIsSaved() throws {

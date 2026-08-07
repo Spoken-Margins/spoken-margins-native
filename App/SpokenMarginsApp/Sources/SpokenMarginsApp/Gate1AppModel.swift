@@ -309,6 +309,7 @@ final class Gate1AppModel: ObservableObject {
     private static let onboardingCardDismissedKey = "onboardingCardDismissedV1"
     private static let supertonicTTSMigrationKey = "supertonicTTSMigrationV1"
     private static let supertonicVoicePendingTermsKey = "supertonicVoicePendingTermsV1"
+    static let exportPreviewCharacterLimit = 24_000
     private static var isRunningUnitTests: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     }
@@ -353,6 +354,23 @@ final class Gate1AppModel: ObservableObject {
     @Published var trashUndo: TrashUndoState?
     @Published var selectedItem = ItemDetailState()
     @Published var pastedAssistantResponse = ""
+
+    var displayedExportPreview: String {
+        guard exportPreview.count > Self.exportPreviewCharacterLimit else { return exportPreview }
+        return String(exportPreview.prefix(Self.exportPreviewCharacterLimit))
+            + "\n\n… Preview truncated. Copy or Share uses the complete export."
+    }
+
+    var exportPreviewIsTruncated: Bool {
+        exportPreview.count > Self.exportPreviewCharacterLimit
+    }
+
+    var exportPreviewSizeDescription: String {
+        ByteCountFormatter.string(
+            fromByteCount: Int64(exportPreview.utf8.count),
+            countStyle: .file
+        )
+    }
     @Published var quickAccessFolderName = UserDefaults.standard.string(forKey: "quickAccessFolderName") ?? "No folder selected"
     @Published var quickAccessRecentFiles: [QuickAccessFile] = []
     @Published private(set) var sourceImportProgressMessage: String?
@@ -484,8 +502,8 @@ final class Gate1AppModel: ObservableObject {
     private var failedWatchPackageRenderItemIds: Set<String> = []
     #endif
     private let preparedTextAudioStarterDurationMs = 30_000
-    private let sourceWindowContextBeforeMs = 90_000
-    private let sourceWindowContextAfterMs = 120_000
+    private let sourceWindowContextBeforeMs = SourceAnchorContextResolver.windowBeforeMs
+    private let sourceWindowContextAfterMs = SourceAnchorContextResolver.windowAfterMs
     private let quickAccessFolderBookmarkKey = "quickAccessFolderBookmark"
     private let batchExportFolderBookmarkKey = "batchExportFolderBookmark"
     #if canImport(AVFoundation)
@@ -2385,10 +2403,7 @@ final class Gate1AppModel: ObservableObject {
         stopSpeechPreviews()
         clearPendingAutoPlayTurns()
         run { engine in
-            if !hasActiveSession {
-                let started = try engine.startSession(itemId: activeItemId)
-                snapshot = try applyPreferredPlaybackRate(to: started, engine: engine)
-            }
+            _ = try ensureSessionForSelectedItem(engine)
             snapshot = try engine.jumpToChapter(chapterId: chapter.id)
             refreshSelectedItem()
             screen = .playback
@@ -2404,10 +2419,8 @@ final class Gate1AppModel: ObservableObject {
         stopSpeechPreviews()
         clearPendingAutoPlayTurns()
         run { engine in
-            if !hasActiveSession {
-                let started = try engine.startSession(itemId: activeItemId)
-                snapshot = try applyPreferredPlaybackRate(to: started, engine: engine)
-            } else {
+            let startedSelectedItem = try ensureSessionForSelectedItem(engine)
+            if !startedSelectedItem {
                 snapshot = try engine.playSourceFromBeginning()
             }
             refreshSelectedItem()
@@ -2417,6 +2430,20 @@ final class Gate1AppModel: ObservableObject {
             }
             reportSuccess("Playing source from the beginning.")
         }
+    }
+
+    /// Item Detail can be opened while another item remains in the mini player. Chapter
+    /// actions belong to the item being viewed, not merely to whichever session happens
+    /// to be restored in the engine.
+    @discardableResult
+    private func ensureSessionForSelectedItem(_ engine: SessionEngine) throws -> Bool {
+        guard engine.currentSession?.itemId != activeItemId else { return false }
+        if engine.currentSession != nil {
+            snapshot = try engine.endSession()
+        }
+        let started = try engine.startSession(itemId: activeItemId)
+        snapshot = try applyPreferredPlaybackRate(to: started, engine: engine)
+        return true
     }
 
     func openHome() {
@@ -3235,7 +3262,9 @@ final class Gate1AppModel: ObservableObject {
               let jobs = try? store?.loadAIJobs(sessionId: sessionId) else {
             return nil
         }
-        return jobs.last { $0.kind == kind && $0.status != "complete" }
+        return jobs.last {
+            $0.kind == kind && ($0.status == "pending" || $0.status == "deferred")
+        }
     }
 
     func followUp(_ text: String) {
@@ -7540,7 +7569,38 @@ final class Gate1AppModel: ObservableObject {
         let mediaChapters = mediaTimeline?.chapters ?? []
         let sessions = try store.loadSessions(itemId: id)
         let activeSessionId = snapshot.sessionId ?? sessions.first?.id
-        let interjections = activeSessionId.flatMap { try? store.loadInterjections(sessionId: $0).filter { $0.status == "active" } } ?? []
+        let storedInterjections = activeSessionId.flatMap {
+            try? store.loadInterjections(sessionId: $0).filter { $0.status == "active" }
+        } ?? []
+        let isNativeAudio = item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream
+        let interjections = storedInterjections.map { interjection -> Interjection in
+            guard isNativeAudio,
+                  interjection.targetType == .item,
+                  let mediaTimeMs = interjection.anchor.mediaTimeMs,
+                  let mediaTimeline else {
+                return interjection
+            }
+            var resolved = interjection
+            if let context = SourceAnchorContextResolver.resolve(
+                mediaTimeMs: mediaTimeMs,
+                timeline: mediaTimeline
+            ) {
+                resolved.anchor.anchorBefore = context.anchorBefore
+                resolved.anchor.anchorAfter = context.anchorAfter
+                resolved.anchor.transcriptSegmentId = context.transcriptSegmentId
+                resolved.anchor.startChar = context.startChar
+                resolved.anchor.endChar = context.endChar
+                resolved.anchorContextStatus = .ready
+            } else {
+                resolved.anchor.anchorBefore = ""
+                resolved.anchor.anchorAfter = ""
+                resolved.anchor.transcriptSegmentId = nil
+                resolved.anchor.startChar = 0
+                resolved.anchor.endChar = 0
+                resolved.anchorContextStatus = .unavailable
+            }
+            return resolved
+        }
         let turns = activeSessionId.flatMap { try? store.loadTurns(sessionId: $0) } ?? []
         let sessionRows = sessions.map { session in
             let notes = ((try? store.loadInterjections(sessionId: session.id)) ?? [])

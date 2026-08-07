@@ -27,7 +27,7 @@
       "event": "aiProviderFailed",
       "args": { "error": "Could not contact AI provider" },
       "expect": {
-        "turnStatus": "pending",
+        "turnStatus": "failed",
         "pendingAiJobStatus": "retryable",
         "preservedFields": ["providerConfig", "messages", "itemId", "sessionId", "turnId", "playbackMode", "attempts", "lastError"]
       }

@@ -995,6 +995,8 @@ private struct HomeScreen: View {
                                         .font(.headline)
                                         .foregroundStyle(AppColors.text)
                                         .multilineTextAlignment(.leading)
+                                        .lineLimit(3)
+                                        .truncationMode(.tail)
                                     Text(item.status)
                                         .font(.subheadline)
                                         .foregroundStyle(AppColors.secondaryText)
@@ -2959,11 +2961,37 @@ private struct ExportScreen: View {
                             .accessibilityIdentifier("export.item.button")
                     }
                     ProductPanel {
-                        Text(model.exportPreview.isEmpty ? "No export yet." : model.exportPreview)
-                            .font(.system(.caption, design: .monospaced))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .accessibilityIdentifier("export.preview")
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Preview")
+                                    .font(.headline)
+                                Spacer()
+                                if !model.exportPreview.isEmpty {
+                                    Text(model.exportPreviewSizeDescription)
+                                        .font(.caption.monospacedDigit())
+                                        .foregroundStyle(AppColors.secondaryText)
+                                }
+                            }
+                            if model.exportPreviewIsTruncated {
+                                Label(
+                                    "Preview truncated; Copy and Share use the complete export.",
+                                    systemImage: "doc.text.magnifyingglass"
+                                )
+                                .font(.caption)
+                                .foregroundStyle(AppColors.secondaryText)
+                                .accessibilityIdentifier("export.preview.truncated")
+                            }
+                            Text(model.exportPreview.isEmpty ? "No export yet." : model.displayedExportPreview)
+                                .font(.system(.caption, design: .monospaced))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .accessibilityLabel(
+                                    model.exportPreviewIsTruncated
+                                        ? "Truncated export preview, \(model.exportPreviewSizeDescription). Copy and Share use the complete export."
+                                        : "Export preview, \(model.exportPreviewSizeDescription)."
+                                )
+                                .accessibilityIdentifier("export.preview")
+                        }
                     }
                 }
                 .padding(20)

@@ -84,6 +84,8 @@ For native media:
 
 The permitted user-visible native-audio derivative is deliberately narrow: source attribution, map overview, chapter titles and descriptions, timestamps/resolved positions, and bounded context immediately before and after a saved interjection. The user's own interjection representations remain separately exportable.
 
+The human-facing anchor reconstructs the listening moment rather than acting only as a machine locator. The default native-audio context window retains up to 90 seconds before and 120 seconds after the interjection, aligned to the durable source media timestamp. A transcript supplied as one coarse segment must be sliced by its media-time relationship instead of attaching the whole source. Session exports place the listener's interjection inside that source passage and merge overlapping windows so nearby notes share context without repeating it. Smaller excerpts may be derived for bounded model inputs, but they do not replace the human-facing anchor.
+
 The media may be sped up or slowed down. Anchors always use source media time, not wall-clock listening time.
 
 ## Browser Flow
