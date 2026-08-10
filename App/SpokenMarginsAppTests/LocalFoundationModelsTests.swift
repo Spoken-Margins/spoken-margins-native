@@ -13,8 +13,9 @@ final class LocalFoundationModelsTests: XCTestCase {
         let anchored = AppleFoundationModelClient.interjectionRewritePrompt(record: record, includeAnchors: true)
         let noteOnly = AppleFoundationModelClient.interjectionRewritePrompt(record: record, includeAnchors: false)
 
-        XCTAssertTrue(anchored.contains("Remove fillers"))
-        XCTAssertTrue(anchored.contains("Preserve viewpoint"))
+        XCTAssertTrue(anchored.contains("Remove verbal ticks"))
+        XCTAssertTrue(anchored.contains("Preserve meaningful uncertainty"))
+        XCTAssertTrue(anchored.contains("at most 12 words"))
         XCTAssertTrue(anchored.contains("Do not answer the note"))
         XCTAssertTrue(anchored.contains("OPTIONAL SOURCE CONTEXT"))
         XCTAssertTrue(anchored.contains("A source claim"))
@@ -28,7 +29,7 @@ final class LocalFoundationModelsTests: XCTestCase {
             "So, uhm, I, I think that, ahh, um, maybe this is a good test."
         )
 
-        XCTAssertEqual(cleaned, "So, I think that, maybe this is a good test")
+        XCTAssertEqual(cleaned, "Maybe this is a good test")
     }
 
     func testDeterministicSummaryFallbackKeepsTheCompleteListenerNoteWithoutSourceAnchors() throws {
@@ -71,6 +72,10 @@ final class LocalFoundationModelsTests: XCTestCase {
             bullets: ["Uhm, maybe this tests whether clipped posts remain understandable."],
             payload: payload
         ))
+        XCTAssertThrowsError(try LocalInterjectionSummaryPolicy.validate(
+            bullets: ["I think that, you know, maybe this tests whether clipped posts remain understandable."],
+            payload: payload
+        ))
         XCTAssertEqual(
             try LocalInterjectionSummaryPolicy.validate(
                 bullets: ["Maybe this tests whether clipped posts remain understandable in Spoken Margins."],
@@ -78,6 +83,31 @@ final class LocalFoundationModelsTests: XCTestCase {
             ),
             ["Maybe this tests whether clipped posts remain understandable in Spoken Margins."]
         )
+    }
+
+    func testSummaryValidationRejectsLightlyCleanedTranscriptInsteadOfCompressedIntent() {
+        let payload = LocalInterjectionSummaryPayload(
+            schemaVersion: "local-interjection-summary.v1",
+            itemTitle: "Moving Forward from Hot Fable Summer",
+            interjections: [
+                LocalInterjectionSummaryRecord(
+                    id: "note-1",
+                    anchorBefore: "",
+                    anchorAfter: "",
+                    note: "I, um, think that, well, you know, that there's a lot of good points that they're making here. And I think their best one is that the strength of America is its relationship with middle powers and abandoning them significantly weakens us."
+                )
+            ]
+        )
+
+        XCTAssertEqual(LocalInterjectionSummaryPolicy.summaryWordLimit(for: 41), 24)
+        XCTAssertThrowsError(try LocalInterjectionSummaryPolicy.validate(
+            bullets: ["There's a lot of good points that they're making here, and their best one is that America's strength is its relationship with middle powers and abandoning them significantly weakens us."],
+            payload: payload
+        ))
+        XCTAssertNoThrow(try LocalInterjectionSummaryPolicy.validate(
+            bullets: ["America's strongest advantage is its relationships with middle powers; abandoning them would significantly weaken the country."],
+            payload: payload
+        ))
     }
 
     func testPartialSummaryReductionProducesStructuredListenerOnlyPayload() throws {

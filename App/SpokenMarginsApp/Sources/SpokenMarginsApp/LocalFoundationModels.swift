@@ -60,6 +60,7 @@ struct LocalInterjectionSummaryPayload: Codable, Equatable, Sendable {
 enum LocalInterjectionSummaryPolicy {
     static let anchorCharacterLimit = 240
     private static let fillerPattern = #"(?i)\b(?:u+h+m*|u+m+|e+r+m*|a+h+|h+m+)\b"#
+    private static let verbalTickPattern = #"(?i)(?:\b(?:you know|i mean)\b|\bi\s*,?\s*think\b|(?:^|[.!?]\s+)(?:yeah|well|okay|so)\b)"#
 
     static func cleanSpokenNote(_ note: String) -> String {
         var cleaned = note
@@ -73,10 +74,21 @@ enum LocalInterjectionSummaryPolicy {
             in: cleaned,
             with: "$1"
         )
+        cleaned = replacing(#"(?i)\b(?:you know|i mean)\b[\s,;:—–-]*"#, in: cleaned, with: "")
+        cleaned = replacing(#"(?i)\bi\s*,?\s*think\b[\s,;:—–-]*(?:that\b[\s,;:—–-]*)?"#, in: cleaned, with: "")
+        cleaned = replacing(#"(?i)^(?:yeah|well|okay|so)\s*,?\s*"#, in: cleaned, with: "")
+        cleaned = replacing(#"(?i)(?<=[.!?])\s+(?:yeah|well|okay|so)\s*,?\s*"#, in: cleaned, with: " ")
+        cleaned = replacing(
+            #"(?i)\b([[:alpha:]][[:alnum:]’']*)\b(?:[\s,;:—–-]+\1\b)+"#,
+            in: cleaned,
+            with: "$1"
+        )
         cleaned = replacing(#"\s+([,.!?;:])"#, in: cleaned, with: "$1")
         cleaned = replacing(#"([,;:]){2,}"#, in: cleaned, with: "$1")
         cleaned = replacing(#"\s{2,}"#, in: cleaned, with: " ")
-        return cleaned.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        guard let first = cleaned.first else { return cleaned }
+        return first.uppercased() + String(cleaned.dropFirst())
     }
 
     static func boundedAnchorBefore(_ anchor: String) -> String {
@@ -95,13 +107,14 @@ enum LocalInterjectionSummaryPolicy {
             throw LocalFoundationModelError.invalidInterjectionSummary
         }
         let filler = try NSRegularExpression(pattern: fillerPattern)
-        let longestListenerNote = payload.interjections
-            .map { normalizedWords($0.note).count }
-            .max() ?? 0
-        let maximumBulletWords = max(35, min(120, longestListenerNote))
-        for bullet in cleaned {
+        let verbalTick = try NSRegularExpression(pattern: verbalTickPattern)
+        for (index, bullet) in cleaned.enumerated() {
             let range = NSRange(bullet.startIndex..<bullet.endIndex, in: bullet)
+            let sourceRecord = payload.interjections[min(index, payload.interjections.count - 1)]
+            let sourceWordCount = normalizedWords(sourceRecord.note).count
+            let maximumBulletWords = summaryWordLimit(for: sourceWordCount)
             guard filler.firstMatch(in: bullet, range: range) == nil,
+                  verbalTick.firstMatch(in: bullet, range: range) == nil,
                   bullet.split(whereSeparator: { $0.isWhitespace }).count <= maximumBulletWords else {
                 throw LocalFoundationModelError.invalidInterjectionSummary
             }
@@ -113,6 +126,11 @@ enum LocalInterjectionSummaryPolicy {
             }
         }
         return cleaned
+    }
+
+    static func summaryWordLimit(for sourceWordCount: Int) -> Int {
+        guard sourceWordCount > 12 else { return 12 }
+        return min(24, max(12, Int((Double(sourceWordCount) * 0.72).rounded(.down))))
     }
 
     static func fallbackRewrite(for record: LocalInterjectionSummaryRecord) throws -> String {
@@ -154,7 +172,7 @@ enum LocalInterjectionSummaryPolicy {
 @available(iOS 26.0, *)
 @Generable(description: "A concise rewrite of one listener note, excluding source excerpts.")
 private struct GeneratedInterjectionRewrite {
-    @Guide(description: "Only the listener's polished intent. Exclude source anchors, filler words, stutters, repetition, and answers.")
+    @Guide(description: "Only the listener's compressed intent. Exclude source anchors, verbal ticks, filler, generic acknowledgements, repetition, and answers.")
     var rewrittenNote: String
 }
 #endif
@@ -304,11 +322,11 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
                     interjections: [record]
                 )
                 do {
-                    bullets.append(try await rewrite(record: record, payload: scopedPayload, includeAnchors: true))
+                    bullets.append(try await rewrite(record: record, payload: scopedPayload, includeAnchors: true, strict: false))
                 } catch {
                     if error is CancellationError { throw error }
                     do {
-                        bullets.append(try await rewrite(record: record, payload: scopedPayload, includeAnchors: false))
+                        bullets.append(try await rewrite(record: record, payload: scopedPayload, includeAnchors: false, strict: true))
                     } catch {
                         if error is CancellationError { throw error }
                         bullets.append(try LocalInterjectionSummaryPolicy.fallbackRewrite(for: record))
@@ -326,14 +344,15 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
     private func rewrite(
         record: LocalInterjectionSummaryRecord,
         payload: LocalInterjectionSummaryPayload,
-        includeAnchors: Bool
+        includeAnchors: Bool,
+        strict: Bool
     ) async throws -> String {
         let session = LanguageModelSession(
             model: .default,
             instructions: "Rewrite only the listener note. Never answer it or output source context."
         )
         let response = try await session.respond(
-            to: Self.interjectionRewritePrompt(record: record, includeAnchors: includeAnchors),
+            to: Self.interjectionRewritePrompt(record: record, includeAnchors: includeAnchors, strict: strict),
             generating: GeneratedInterjectionRewrite.self,
             options: GenerationOptions(sampling: .greedy, maximumResponseTokens: 120)
         )
@@ -345,14 +364,25 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
 
     static func interjectionRewritePrompt(
         record: LocalInterjectionSummaryRecord,
-        includeAnchors: Bool
+        includeAnchors: Bool,
+        strict: Bool = false
     ) -> String {
+        let wordLimit = LocalInterjectionSummaryPolicy.summaryWordLimit(
+            for: record.note.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).count
+        )
         var prompt = """
-        Rewrite this single listener note as one concise, polished sentence. Remove fillers, stutters, repeated fragments, false starts, and transcription noise. Preserve viewpoint, meaningful uncertainty, qualifications, questions, preferences, and requested actions. Do not answer the note or add conclusions.
+        Compress this single listener note into one polished sentence of at most \(wordLimit) words. State the strongest distinct claim directly. Remove verbal ticks such as “yeah,” “well,” “you know,” “I mean,” and “I think,” along with fillers, generic acknowledgements, repeated framing, stutters, false starts, and transcription noise. Preserve meaningful uncertainty, qualifications, questions, preferences, and requested actions. Do not answer the note or add conclusions.
 
         LISTENER NOTE:
         \(record.note)
         """
+        if strict {
+            prompt += """
+
+
+            STRICT RETRY: The prior rewrite was still too transcript-like. Make this materially shorter than the listener note, keep only its substantive point, and do not use any of the verbal ticks listed above.
+            """
+        }
         if includeAnchors, !record.anchorBefore.isEmpty || !record.anchorAfter.isEmpty {
             prompt += """
 

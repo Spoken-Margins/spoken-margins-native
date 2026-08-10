@@ -1564,27 +1564,6 @@ private struct PlaybackScreen: View {
                 .accessibilityIdentifier("playback.chapterTitle.button")
             }
 
-            if let nextChapterTitle = model.playbackNextChapterTitle {
-                Button(action: model.jumpToNextPlaybackChapter) {
-                    HStack(spacing: 6) {
-                        Text("Next")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.white.opacity(0.62))
-                        Text(nextChapterTitle)
-                            .font(.caption.weight(.semibold))
-                            .lineLimit(1)
-                        Image(systemName: "chevron.forward")
-                            .font(.caption2.weight(.bold))
-                    }
-                    .foregroundStyle(.white.opacity(0.9))
-                    .padding(.horizontal, 12)
-                    .frame(minHeight: 32)
-                    .background(.white.opacity(0.09), in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Skip to next chapter, \(nextChapterTitle)")
-                .accessibilityIdentifier("playback.nextChapter.button")
-            }
         }
         .accessibilityIdentifier("playback.title")
     }

@@ -51,6 +51,7 @@ struct SpokenMarginsApp: App {
                         model.handleAppBecameActive()
                     } else if phase == .inactive || phase == .background {
                         model.syncPlaybackProgressForLifecycle()
+                        model.refreshLockScreenSurfacesForLifecycle()
                     }
                 }
                 #if canImport(UIKit)

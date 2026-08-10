@@ -7,6 +7,8 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
     public struct ContentState: Codable, Hashable, Sendable {
         public var title: String
         public var chapterTitle: String
+        public var nextChapterTitle: String?
+        public var nextChapterId: String?
         public var status: String
         public var phase: String
         public var progressPercent: Int
@@ -16,6 +18,8 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
         private enum CodingKeys: String, CodingKey {
             case title
             case chapterTitle
+            case nextChapterTitle
+            case nextChapterId
             case status
             case phase
             case progressPercent
@@ -26,6 +30,8 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
         public init(
             title: String,
             chapterTitle: String,
+            nextChapterTitle: String? = nil,
+            nextChapterId: String? = nil,
             status: String,
             phase: String,
             progressPercent: Int,
@@ -34,6 +40,8 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
         ) {
             self.title = title
             self.chapterTitle = chapterTitle
+            self.nextChapterTitle = nextChapterTitle
+            self.nextChapterId = nextChapterId
             self.status = status
             self.phase = phase
             self.progressPercent = progressPercent
@@ -45,6 +53,8 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             title = try container.decode(String.self, forKey: .title)
             chapterTitle = try container.decode(String.self, forKey: .chapterTitle)
+            nextChapterTitle = try container.decodeIfPresent(String.self, forKey: .nextChapterTitle)
+            nextChapterId = try container.decodeIfPresent(String.self, forKey: .nextChapterId)
             status = try container.decode(String.self, forKey: .status)
             phase = try container.decode(String.self, forKey: .phase)
             progressPercent = try container.decode(Int.self, forKey: .progressPercent)

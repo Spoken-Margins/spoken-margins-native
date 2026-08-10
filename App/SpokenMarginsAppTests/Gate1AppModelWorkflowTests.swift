@@ -48,26 +48,6 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.playbackHeaderTitle, "Ch. 2: The Analysis")
     }
 
-    func testPlaybackHeaderOffersTheFollowingChapterAsAOneTapShortcut() {
-        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
-        model.selectedItem = ItemDetailState(
-            id: "item-1",
-            title: "A Long Article",
-            chapters: [
-                Chapter(id: "chapter-1", title: "Opening", startChar: 0, endChar: 100, percent: 0),
-                Chapter(id: "chapter-2", title: "The Pivot", startChar: 100, endChar: 200, percent: 50),
-                Chapter(id: "chapter-3", title: "Conclusion", startChar: 200, endChar: 300, percent: 80)
-            ]
-        )
-        model.snapshot.targetType = TargetType.itemTextTTS.rawValue
-        model.snapshot.chapterTitle = "The Pivot"
-
-        XCTAssertEqual(model.playbackNextChapterTitle, "Conclusion")
-
-        model.snapshot.chapterTitle = "Conclusion"
-        XCTAssertNil(model.playbackNextChapterTitle)
-    }
-
     func testNativeAudioExportDisablesFullSourceTextOption() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.selectedItem = ItemDetailState(id: "podcast", title: "Podcast", isNativeAudio: true)

@@ -152,6 +152,31 @@ private struct Gate2LiveActivityView: View {
                 if state.canRun("skipForward") {
                     CompactRoundIntentButton(command: "skipForward", systemImage: "goforward.15", size: 56)
                 }
+                if let nextChapterTitle = state.nextChapterTitle,
+                   let nextChapterId = state.nextChapterId {
+                    Link(destination: Gate2CompactCommandURL.url(command: "jumpToChapter", chapterId: nextChapterId)) {
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("NEXT CHAPTER")
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(.white.opacity(0.58))
+                                Text(nextChapterTitle)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.white)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.78)
+                            }
+                            Image(systemName: "chevron.forward")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.white.opacity(0.8))
+                        }
+                        .padding(.horizontal, 14)
+                        .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    }
+                    .accessibilityLabel("Skip to next chapter, \(nextChapterTitle)")
+                }
                 Spacer()
                 if state.canRun("beginInterjection") || state.canRun("finishInterjection") {
                     Link(destination: Gate2CompactCommandURL.url(command: state.isRecording ? "finishInterjection" : "beginInterjection")) {

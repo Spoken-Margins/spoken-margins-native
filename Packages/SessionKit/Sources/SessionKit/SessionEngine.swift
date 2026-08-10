@@ -1940,6 +1940,7 @@ public final class SessionEngine {
             )
         }
 
+        let sourceTargetTypes: [TargetType] = [.itemTextTTS, .transcriptBackedMedia, .browserOwnedMedia]
         let sourceEntries = sourceChapters.map { chapter in
             CompactTimelineEntry(
                 id: "source-\(chapter.id)",
@@ -1948,7 +1949,7 @@ public final class SessionEngine {
                 detail: "Source",
                 chapterId: chapter.id,
                 percent: chapter.percent,
-                isCurrent: session.currentTargetType == .itemTextTTS && session.position.chapterId == chapter.id
+                isCurrent: sourceTargetTypes.contains(session.currentTargetType) && session.position.chapterId == chapter.id
             )
         } + interjections
             .filter { $0.targetType == .item }

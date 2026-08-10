@@ -57,7 +57,7 @@ Do not add Watch, standalone Home Screen widgets, Kokoro/MLX, arbitrary provider
 5. Fix and reframe [#43](https://github.com/uncomposed/spoken-margins-native/issues/43) around all generated-turn playback, including pasted assistant responses and local summaries, so the retained conversation workflow has one playback source of truth.
 6. Run the bounded final daily-driver validation, then refresh submission screenshots in [#41](https://github.com/uncomposed/spoken-margins-native/issues/41) only after the release UI is frozen.
 
-Issues #39 and #44 were human-validated by the product owner on 2026-08-03 and closed. Issue #40 remains a separate historical build-9/legacy validation tracker; it is not evidence for the new Recovery MVP candidate. Cross-item semantic links and advanced embeddings belong to post-MVP research in [#48](https://github.com/uncomposed/spoken-margins-native/issues/48).
+Issues #39 and #44 were human-validated by the product owner on 2026-08-03 and closed. The product owner retired the legacy iOS 16.7 app on 2026-08-10, so issue #40 is a closed historical tracker rather than an active compatibility gate. Cross-item semantic links and advanced embeddings belong to post-MVP research in [#48](https://github.com/uncomposed/spoken-margins-native/issues/48).
 
 ## Current Implementation State
 

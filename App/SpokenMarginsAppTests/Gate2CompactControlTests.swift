@@ -139,6 +139,51 @@ final class Gate2CompactControlTests: XCTestCase {
 
         XCTAssertEqual(state.title, "Pill")
         XCTAssertEqual(state.availableCommands, [])
+        XCTAssertNil(state.nextChapterTitle)
+        XCTAssertNil(state.nextChapterId)
+    }
+
+    func testLiveActivityUsesOpenSpaceForTheFollowingSourceChapter() throws {
+        var snapshot = compactSnapshot(
+            targetType: TargetType.itemTextTTS.rawValue,
+            availableCommands: [.beginInterjection],
+            durationMs: nil
+        )
+        snapshot.chapterTitle = "Inputs"
+        snapshot.sourceProgressPercent = 9
+        snapshot.timeline = [
+            CompactTimelineEntry(id: "source-inputs", kind: "source_chapter", title: "Inputs", chapterId: "inputs", percent: 0, isCurrent: true),
+            CompactTimelineEntry(id: "note", kind: "interjection", title: "Interjection", percent: 8),
+            CompactTimelineEntry(id: "source-chain", kind: "source_chapter", title: "Chain of Thought", chapterId: "chain", percent: 27)
+        ]
+
+        let next = try XCTUnwrap(Gate2LiveActivityPolicy.nextSourceChapter(from: snapshot))
+        XCTAssertEqual(next.title, "Chain of Thought")
+        XCTAssertEqual(next.chapterId, "chain")
+
+        let url = Gate2CompactCommandURL.url(command: CompactControlCommand.jumpToChapter.rawValue, chapterId: next.chapterId)
+        XCTAssertEqual(Gate2CompactCommandURL.command(from: url), CompactControlCommand.jumpToChapter.rawValue)
+        XCTAssertEqual(Gate2CompactCommandURL.chapterId(from: url), "chain")
+    }
+
+    func testLiveActivityFindsNextNativeAudioChapterAndStopsAtTheLastChapter() {
+        var snapshot = compactSnapshot(
+            targetType: TargetType.transcriptBackedMedia.rawValue,
+            availableCommands: [.beginInterjection],
+            durationMs: 120_000
+        )
+        snapshot.chapterTitle = "Opening"
+        snapshot.timeline = [
+            CompactTimelineEntry(id: "source-opening", kind: "source_chapter", title: "Opening", chapterId: "opening", percent: 0, isCurrent: true),
+            CompactTimelineEntry(id: "source-analysis", kind: "source_chapter", title: "Analysis", chapterId: "analysis", percent: 50)
+        ]
+
+        XCTAssertEqual(Gate2LiveActivityPolicy.nextSourceChapter(from: snapshot)?.chapterId, "analysis")
+
+        snapshot.timeline[0].isCurrent = false
+        snapshot.timeline[1].isCurrent = true
+        snapshot.chapterTitle = "Analysis"
+        XCTAssertNil(Gate2LiveActivityPolicy.nextSourceChapter(from: snapshot))
     }
 
     func testLiveActivityPolicyRejectsFinishedAndStaleSessions() {
@@ -187,7 +232,7 @@ final class Gate2CompactControlTests: XCTestCase {
         )
     }
 
-    func testLiveSpeechNowPlayingPolicyDoesNotCompeteWithNativeMedia() {
+    func testNowPlayingPoliciesKeepNativeMediaMetadataWithoutSharingCommandOwnership() {
         let liveSpeech = compactSnapshot(
             targetType: TargetType.itemTextTTS.rawValue,
             availableCommands: [.togglePlayPause, .skipBack, .skipForward],
@@ -201,6 +246,9 @@ final class Gate2CompactControlTests: XCTestCase {
         var finishedSpeech = liveSpeech
         finishedSpeech.phase = .finished
         finishedSpeech.status = .idle
+        var finishedMedia = nativeMedia
+        finishedMedia.phase = .finished
+        finishedMedia.status = .idle
         let assistantSpeech = compactSnapshot(
             targetType: TargetType.assistantTurnTTS.rawValue,
             availableCommands: [.togglePlayPause, .skipBack, .skipForward, .setPlaybackRate],
@@ -212,6 +260,26 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertTrue(Gate2NowPlayingCommandAvailability(snapshot: assistantSpeech).canPause)
         XCTAssertFalse(Gate2LiveSpeechNowPlayingPolicy.shouldPublish(nativeMedia))
         XCTAssertFalse(Gate2LiveSpeechNowPlayingPolicy.shouldPublish(finishedSpeech))
+        XCTAssertTrue(Gate2NativeMediaNowPlayingPolicy.shouldPublish(nativeMedia))
+        XCTAssertFalse(Gate2NativeMediaNowPlayingPolicy.shouldPublish(liveSpeech))
+        XCTAssertFalse(Gate2NativeMediaNowPlayingPolicy.shouldPublish(finishedMedia))
+    }
+
+    func testLifecycleRefreshRepublishesCompactAndLockScreenSurfaces() {
+        let liveActivity = RecordingLiveActivityController()
+        let controller = Gate2CompactControlController(liveActivity: liveActivity)
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            gate2CompactControls: controller
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let priorCount = liveActivity.publishCallCount
+
+        model.refreshLockScreenSurfacesForLifecycle()
+
+        XCTAssertEqual(liveActivity.publishCallCount, priorCount + 1)
+        XCTAssertEqual(model.diagnostics["lockScreenLifecycleRefresh"], model.snapshot.targetType ?? "none")
     }
 
     private func compactSnapshot(
@@ -259,8 +327,11 @@ final class Gate2CompactControlTests: XCTestCase {
 private final class RecordingLiveActivityController: Gate2LiveActivityControlling {
     private(set) var status = "recording"
     private(set) var endAllCallCount = 0
+    private(set) var publishCallCount = 0
 
-    func publish(_ snapshot: CompactControlSnapshot) {}
+    func publish(_ snapshot: CompactControlSnapshot) {
+        publishCallCount += 1
+    }
 
     func endAll() {
         endAllCallCount += 1

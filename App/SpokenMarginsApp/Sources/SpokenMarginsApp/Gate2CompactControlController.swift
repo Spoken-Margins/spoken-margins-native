@@ -56,6 +56,26 @@ enum Gate2LiveActivityPolicy {
         }
     }
 
+    static func nextSourceChapter(from snapshot: CompactControlSnapshot) -> CompactTimelineEntry? {
+        let sourceTargetTypes = [
+            TargetType.itemTextTTS.rawValue,
+            TargetType.transcriptBackedMedia.rawValue,
+            TargetType.browserOwnedMedia.rawValue
+        ]
+        guard let targetType = snapshot.targetType, sourceTargetTypes.contains(targetType) else {
+            return nil
+        }
+        let chapters = snapshot.timeline.filter { $0.kind == "source_chapter" && $0.chapterId != nil }
+        guard chapters.count > 1 else { return nil }
+        let currentIndex = chapters.firstIndex(where: \.isCurrent)
+            ?? snapshot.chapterTitle.flatMap { title in
+                chapters.firstIndex(where: { $0.title.caseInsensitiveCompare(title) == .orderedSame })
+            }
+            ?? chapters.lastIndex(where: { ($0.percent ?? 0) <= snapshot.sourceProgressPercent })
+        guard let currentIndex, chapters.indices.contains(currentIndex + 1) else { return nil }
+        return chapters[currentIndex + 1]
+    }
+
     static func isEligible(_ snapshot: CompactControlSnapshot) -> Bool {
         guard snapshot.compactSurfaceReady, snapshot.sessionId != nil else { return false }
         switch snapshot.phase {
@@ -109,6 +129,22 @@ enum Gate2LiveSpeechNowPlayingPolicy {
 
     static func shouldPublish(_ snapshot: CompactControlSnapshot) -> Bool {
         guard isLiveSpeech(snapshot), snapshot.compactSurfaceReady, snapshot.sessionId != nil else {
+            return false
+        }
+        switch snapshot.phase {
+        case .finished, .abandoned:
+            return false
+        default:
+            return true
+        }
+    }
+}
+
+enum Gate2NativeMediaNowPlayingPolicy {
+    static func shouldPublish(_ snapshot: CompactControlSnapshot) -> Bool {
+        guard snapshot.compactSurfaceReady, snapshot.sessionId != nil else { return false }
+        guard snapshot.targetType == TargetType.transcriptBackedMedia.rawValue
+                || snapshot.targetType == TargetType.browserOwnedMedia.rawValue else {
             return false
         }
         switch snapshot.phase {
@@ -315,9 +351,12 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
             }
             return
         }
+        let nextChapter = Gate2LiveActivityPolicy.nextSourceChapter(from: snapshot)
         let state = Gate2LiveActivityAttributes.ContentState(
             title: snapshot.title ?? "Spoken Margins",
             chapterTitle: snapshot.chapterTitle ?? "Session",
+            nextChapterTitle: nextChapter?.title,
+            nextChapterId: nextChapter?.chapterId,
             status: snapshot.status.rawValue,
             phase: snapshot.phase.rawValue,
             progressPercent: snapshot.currentPlaybackProgressPercent,
@@ -431,13 +470,9 @@ private final class Gate2LiveSpeechNowPlayingController {
 
     func publish(_ snapshot: CompactControlSnapshot) {
         #if canImport(MediaPlayer)
-        guard Gate2LiveSpeechNowPlayingPolicy.isLiveSpeech(snapshot) else {
-            uninstallRemoteCommandHandlers()
-            ownsNowPlayingInfo = false
-            status = "media_coordinator"
-            return
-        }
-        guard Gate2LiveSpeechNowPlayingPolicy.shouldPublish(snapshot) else {
+        let publishesLiveSpeech = Gate2LiveSpeechNowPlayingPolicy.isLiveSpeech(snapshot)
+        let publishesNativeMediaMetadata = Gate2NativeMediaNowPlayingPolicy.shouldPublish(snapshot)
+        guard publishesLiveSpeech || publishesNativeMediaMetadata else {
             if ownsNowPlayingInfo {
                 MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             }
@@ -446,7 +481,23 @@ private final class Gate2LiveSpeechNowPlayingController {
             status = "inactive"
             return
         }
-        installRemoteCommandHandlersIfNeeded()
+        guard !publishesLiveSpeech || Gate2LiveSpeechNowPlayingPolicy.shouldPublish(snapshot) else {
+            if ownsNowPlayingInfo {
+                MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            }
+            uninstallRemoteCommandHandlers()
+            ownsNowPlayingInfo = false
+            status = "inactive"
+            return
+        }
+        if publishesLiveSpeech {
+            installRemoteCommandHandlersIfNeeded()
+        } else {
+            // The native AVPlayer route remains the transport-command owner. This
+            // controller republishes metadata so its system Now Playing card does
+            // not disappear after pause, backgrounding, or a route handoff.
+            uninstallRemoteCommandHandlers()
+        }
         #if canImport(UIKit)
         UIApplication.shared.beginReceivingRemoteControlEvents()
         #endif
@@ -469,7 +520,8 @@ private final class Gate2LiveSpeechNowPlayingController {
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
         ownsNowPlayingInfo = true
-        status = "live_speech_published"
+        status = publishesLiveSpeech ? "live_speech_published" : "native_media_metadata_published"
+        guard publishesLiveSpeech else { return }
         let center = MPRemoteCommandCenter.shared()
         let availability = Gate2NowPlayingCommandAvailability(snapshot: snapshot)
         center.playCommand.isEnabled = availability.canPlay

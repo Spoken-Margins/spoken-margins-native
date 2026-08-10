@@ -108,3 +108,48 @@ These changes are `verified`, not `human_validated`. Evidence collected on 2026-
 - generic iOS Simulator builds passed for both `SpokenMarginsApp` and `SpokenMarginsLegacy`, including their Share and Safari extensions.
 
 Only the four changed flows above require a focused product-owner recheck. The earlier bounded passes do not need to be repeated unless the next candidate differs beyond this recorded scope.
+
+## Focused Recheck Results
+
+Later on 2026-08-10, the product owner tested the four follow-ups and reported:
+
+1. **FAIL** — the next-chapter shortcut was not present in the Live Activity, and native-audio playback was reported as gone. A supplied lock-screen screenshot shows the chaptered text item `Moving Forward from Hot Fable Summer` paused in the medium Live Activity with unused space beside the Interject button and no next-chapter affordance. The report does not identify a separate native-audio item or exact in-app reproduction path, so the native-audio observation remains a distinct unresolved device regression rather than an inferred cause.
+2. **FAIL** — summary output removed `um` but remained an insufficiently compressed transcript. The supplied handoff preserves `well`, `you know`, repeated `I think` framing, a generic acknowledgement, and nearly all original wording. Summary acceptance therefore requires verbal-tick removal and material compression, not only filler-token cleanup.
+3. **PASS / `human_validated`** — Source Text is correctly unavailable for native-audio export.
+4. **PASS / `human_validated`** — the compact one-action Safari and Share extension UX was accepted.
+
+The product owner also retired the iOS 16.7 legacy app because its final intended user now has a device that supports the normal app. Legacy parity and normal/legacy isolation are no longer release objectives; this is a product-scope decision, not a claim that the legacy checks passed.
+
+## Remediation After Focused Recheck
+
+The next-chapter affordance was moved from the in-app playback header to the Live Activity control row. Its state now carries the exact following source-chapter title and identifier, and the tap opens the normal app directly into a canonical chapter jump. Source timeline current-chapter detection now covers text, transcript-backed native audio, and browser-owned media.
+
+The on-device summary contract now:
+
+- treats `yeah`, `well`, `okay`, `so`, `you know`, `I mean`, and `I think` framing as removable verbal ticks;
+- sets a per-note compression budget capped at 24 words;
+- rejects lightly cleaned transcripts that are not materially shorter;
+- retries with an explicit strict-compression prompt before using a listener-note-only fallback;
+- preserves meaningful uncertainty rather than deleting negation or qualifications.
+
+These remediations are implemented and automated-verified only. Objectives 1 and 2 remain not `human_validated` until a new traceable device build passes. The native-audio playback observation also remains open pending a reproducible device path or a passing device recheck.
+
+Current automated evidence collected after the focused-recheck remediation:
+
+- contract and surface-contract validators passed;
+- SessionKit passed 142 tests with zero failures, including native-audio import, start, chapter jump, transport, rate, skip, and interjection/resume coverage;
+- browser extraction passed 8 tests with zero failures;
+- focused Live Activity and summary-policy suites passed 20 tests with zero failures;
+- the full normal-app unit suite passed 178 tests with zero failures on an iPhone 16 Pro simulator running iOS 18.6;
+- the normal app and its three supported extensions passed a generic iOS Simulator build;
+- the generated project contains no legacy app, legacy extension, or legacy scheme.
+
+GitHub issue #40 was closed as `not planned` to record the product decision without misrepresenting the unrun legacy checks as accepted.
+
+## Native Lock-Screen Playback Clarification
+
+The product owner clarified that “native audio playback is gone” means the system Now Playing playback card is absent from the lock screen; it does not mean that podcast playback fails inside the app.
+
+The remediation keeps transport-command ownership with the canonical native player while also republishing its current Now Playing metadata through the compact-control coordinator. This closes the metadata-ownership gap after pause, backgrounding, or a playback-route handoff. The app also explicitly refreshes Live Activity and Now Playing surfaces when its scene becomes inactive or enters the background.
+
+This lock-screen remediation is `implemented` and automated-verified, not `human_validated`. The focused device recheck is: start or resume a native/prepared-audio item, lock the phone, confirm the system Now Playing card is present beside the Live Activity, then verify play/pause and seek operate the same session.
