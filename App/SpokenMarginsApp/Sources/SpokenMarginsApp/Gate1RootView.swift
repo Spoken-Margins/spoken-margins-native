@@ -150,8 +150,8 @@ private struct UserFeedbackBanner: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: feedback.kind == .success ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                .foregroundStyle(feedback.kind == .success ? .green : .red)
+            Image(systemName: iconName)
+                .foregroundStyle(iconColor)
             Text(feedback.message)
                 .font(.subheadline.weight(.semibold))
                 .lineLimit(3)
@@ -174,6 +174,22 @@ private struct UserFeedbackBanner: View {
                 try await Task.sleep(for: .seconds(feedback.kind == .success ? 3 : 6))
                 model.dismissFeedback(id: feedback.id)
             } catch {}
+        }
+    }
+
+    private var iconName: String {
+        switch feedback.kind {
+        case .success: "checkmark.circle.fill"
+        case .warning: "exclamationmark.triangle.fill"
+        case .error: "xmark.octagon.fill"
+        }
+    }
+
+    private var iconColor: Color {
+        switch feedback.kind {
+        case .success: .green
+        case .warning: .orange
+        case .error: .red
         }
     }
 }

@@ -123,6 +123,62 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertTrue(mediaAvailability.canSetPlaybackRate)
     }
 
+    func testNowPlayingKeepsNativePlayAndPauseRegisteredWhileTextIsPaused() {
+        var pausedText = compactSnapshot(
+            targetType: TargetType.itemTextTTS.rawValue,
+            availableCommands: [.play, .togglePlayPause, .skipBack, .skipForward],
+            durationMs: nil
+        )
+        pausedText.status = .paused
+
+        let availability = Gate2NowPlayingCommandAvailability(snapshot: pausedText)
+
+        XCTAssertTrue(availability.canPlay)
+        XCTAssertTrue(availability.canPause)
+        XCTAssertTrue(availability.canTogglePlayPause)
+        XCTAssertTrue(availability.canSkipBack)
+        XCTAssertTrue(availability.canSkipForward)
+    }
+
+    func testQueuedNextChapterPreservesItsBoundedIntentArgument() throws {
+        let suiteName = "Gate2CompactControlTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        XCTAssertTrue(
+            Gate2CompactCommandQueue.enqueue(
+                command: CompactControlCommand.jumpToChapter.rawValue,
+                chapterId: "chapter-analysis",
+                id: "queued-next",
+                now: Date(timeIntervalSince1970: 42),
+                defaults: defaults
+            )
+        )
+
+        XCTAssertEqual(
+            Gate2CompactCommandQueue.drain(defaults: defaults),
+            [
+                Gate2QueuedCompactCommand(
+                    id: "queued-next",
+                    command: CompactControlCommand.jumpToChapter.rawValue,
+                    chapterId: "chapter-analysis",
+                    createdAt: 42
+                )
+            ]
+        )
+    }
+
+    func testQueuedCommandDecodesPayloadWrittenBeforeChapterArguments() throws {
+        let data = Data("""
+        [{"id":"legacy","command":"togglePlayPause","createdAt":42}]
+        """.utf8)
+
+        let command = try XCTUnwrap(JSONDecoder().decode([Gate2QueuedCompactCommand].self, from: data).first)
+
+        XCTAssertEqual(command.command, "togglePlayPause")
+        XCTAssertNil(command.chapterId)
+    }
+
     func testLiveActivityContentStateDecodesLegacyPayloadWithoutAvailableCommands() throws {
         let data = Data("""
         {

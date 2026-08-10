@@ -154,7 +154,7 @@ private struct Gate2LiveActivityView: View {
                 }
                 if let nextChapterTitle = state.nextChapterTitle,
                    let nextChapterId = state.nextChapterId {
-                    Link(destination: Gate2CompactCommandURL.url(command: "jumpToChapter", chapterId: nextChapterId)) {
+                    Button(intent: Gate2NextChapterIntent(chapterId: nextChapterId)) {
                         HStack(spacing: 8) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("NEXT CHAPTER")
@@ -175,6 +175,8 @@ private struct Gate2LiveActivityView: View {
                         .background(Color.white.opacity(0.12))
                         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                     }
+                    .buttonStyle(.plain)
+                    .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                     .accessibilityLabel("Skip to next chapter, \(nextChapterTitle)")
                 }
                 Spacer()
@@ -303,6 +305,30 @@ struct Gate2CompactPlaybackIntent: LiveActivityIntent, AudioPlaybackIntent {
 
     func perform() async throws -> some IntentResult {
         guard Gate2CompactCommandQueue.enqueue(command: command) else {
+            throw Gate2CompactPlaybackIntentError.appGroupUnavailable
+        }
+        return .result()
+    }
+}
+
+struct Gate2NextChapterIntent: LiveActivityIntent {
+    static let title: LocalizedStringResource = "Open Next Chapter"
+    static let description = IntentDescription("Opens Spoken Margins and continues from the next chapter.")
+    static let openAppWhenRun = true
+
+    @Parameter(title: "Chapter")
+    var chapterId: String
+
+    init() {
+        chapterId = ""
+    }
+
+    init(chapterId: String) {
+        self.chapterId = chapterId
+    }
+
+    func perform() async throws -> some IntentResult {
+        guard Gate2CompactCommandQueue.enqueue(command: "jumpToChapter", chapterId: chapterId) else {
             throw Gate2CompactPlaybackIntentError.appGroupUnavailable
         }
         return .result()

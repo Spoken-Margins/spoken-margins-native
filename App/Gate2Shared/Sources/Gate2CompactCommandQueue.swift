@@ -3,11 +3,13 @@ import Foundation
 public struct Gate2QueuedCompactCommand: Codable, Equatable, Sendable {
     public let id: String
     public let command: String
+    public let chapterId: String?
     public let createdAt: Double
 
-    public init(id: String, command: String, createdAt: Double) {
+    public init(id: String, command: String, chapterId: String? = nil, createdAt: Double) {
         self.id = id
         self.command = command
+        self.chapterId = chapterId
         self.createdAt = createdAt
     }
 }
@@ -25,6 +27,7 @@ public enum Gate2CompactCommandQueue {
     @discardableResult
     public static func enqueue(
         command: String,
+        chapterId: String? = nil,
         id: String = UUID().uuidString,
         now: Date = Date(),
         defaults: UserDefaults? = nil
@@ -37,6 +40,7 @@ public enum Gate2CompactCommandQueue {
             Gate2QueuedCompactCommand(
                 id: id,
                 command: command,
+                chapterId: chapterId,
                 createdAt: now.timeIntervalSince1970
             )
         )

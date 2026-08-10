@@ -153,3 +153,32 @@ The product owner clarified that “native audio playback is gone” means the s
 The remediation keeps transport-command ownership with the canonical native player while also republishing its current Now Playing metadata through the compact-control coordinator. This closes the metadata-ownership gap after pause, backgrounding, or a playback-route handoff. The app also explicitly refreshes Live Activity and Now Playing surfaces when its scene becomes inactive or enters the background.
 
 This lock-screen remediation is `implemented` and automated-verified, not `human_validated`. The focused device recheck is: start or resume a native/prepared-audio item, lock the phone, confirm the system Now Playing card is present beside the Live Activity, then verify play/pause and seek operate the same session.
+
+## Second Focused Recheck: Text Now Playing And Live Activity Tap Scope
+
+The product owner clarified the remaining result on a later device pass:
+
+- **PASS / `human_validated`** — the next-chapter affordance is visible in the Live Activity and jumps to the following chapter.
+- **FAIL** — during native text narration, the Apple Now Playing card is absent. Consequently the lock screen has no system play/pause or skip controls. This supersedes the earlier record's description of the failing route as native/prepared audio: the reported failing item is a native text item.
+- **FAIL** — tapping outside the visible next-chapter affordance also performs the chapter jump instead of merely opening Spoken Margins. The chapter link had become the Live Activity's effective global tap destination.
+
+The first result advances only the visibility and canonical chapter-jump behavior to `human_validated`. It does not validate the tap boundary or native text Now Playing controls.
+
+## Remediation After Second Focused Recheck
+
+The chapter link is now a bounded Live Activity App Intent button carrying the exact chapter identifier through the shared command queue. Only that button queues `jumpToChapter`; it opens the app to let the canonical runtime perform the jump. The rest of the Live Activity retains the system's normal app-opening behavior.
+
+For native text narration, the Now Playing coordinator now keeps both Apple play and pause commands registered throughout the session, including while paused, and reasserts the existing playback audio session when Now Playing metadata is published or refreshed for lifecycle changes. Skip-back and skip-forward remain canonical compact commands rather than duplicate Live Activity controls.
+
+These changes are `implemented` and automated-verified, not `human_validated`. Evidence collected after this remediation:
+
+- contract and surface-contract validators passed;
+- SessionKit built successfully with tests enabled;
+- the focused `Gate2CompactControlTests` suite passed 15 tests with zero failures on an iPhone 17 Pro simulator;
+- the full normal-app unit suite passed 181 tests with zero failures on the same simulator;
+- the focused test build compiled and embedded the normal app and Live Activity widget extension, including App Intent metadata extraction;
+- the normal app and all three supported extensions passed a signed generic iOS device build;
+- queue regression coverage proves the bounded intent preserves its chapter identifier and still decodes older queued commands without that field;
+- Now Playing policy coverage proves native text keeps play, pause, toggle, skip-back, and skip-forward registered in the paused state.
+
+The shortest remaining device recheck is: begin native text narration, lock the phone and exercise Apple play/pause and skip; tap the non-button portion of the Live Activity and confirm it opens the app without moving position; then relock and tap the next-chapter button and confirm exactly one canonical chapter jump.

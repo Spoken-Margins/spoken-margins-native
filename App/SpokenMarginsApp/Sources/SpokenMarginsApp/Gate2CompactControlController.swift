@@ -27,12 +27,16 @@ struct Gate2NowPlayingCommandAvailability: Equatable {
     init(snapshot: CompactControlSnapshot) {
         let canSendPlay = snapshot.availableCommands.contains(.play) || snapshot.availableCommands.contains(.togglePlayPause)
         let canSendPause = snapshot.availableCommands.contains(.pause) || snapshot.availableCommands.contains(.togglePlayPause)
-        canPlay = !snapshot.status.isPlaybackActive && canSendPlay
-        canPause = snapshot.status.isPlaybackActive && canSendPause
+        // Keep both native transport commands registered for the lifetime of the
+        // playback session. The system chooses the visible play/pause state from
+        // Now Playing metadata; disabling the currently hidden counterpart can
+        // make the entire Lock Screen transport surface disappear on a handoff.
+        canPlay = canSendPlay
+        canPause = canSendPause
         canTogglePlayPause = canSendPlay || canSendPause
         canSkipBack = snapshot.availableCommands.contains(.skipBack)
         canSkipForward = snapshot.availableCommands.contains(.skipForward)
-        canStop = snapshot.status.isPlaybackActive && canSendPause
+        canStop = canSendPause
         canSeek = snapshot.availableCommands.contains(.seekToMediaTime)
         canSetPlaybackRate = snapshot.availableCommands.contains(.setPlaybackRate)
     }
@@ -168,7 +172,7 @@ protocol Gate2LiveActivityControlling: AnyObject {
 final class Gate2CompactControlController {
     private var dispatcher: CompactControlDispatcher?
     private var queuedCommandTask: Task<Void, Never>?
-    private var queuedCommandHandler: (@MainActor (CompactControlCommand, String, Int?, Double?) -> Void)?
+    private var queuedCommandHandler: (@MainActor (CompactControlCommand, String, String?, Int?, Double?) -> Void)?
     private var queuedApplicationCommandHandler: (@MainActor (String) -> Bool)?
     private let liveActivity: any Gate2LiveActivityControlling
     private let liveSpeechNowPlaying = Gate2LiveSpeechNowPlayingController()
@@ -189,7 +193,7 @@ final class Gate2CompactControlController {
         canonicalRuntime: SessionEngine,
         surfaceProfile: RuntimeCapabilityProfile,
         skipUnit: String,
-        commandHandler: @escaping @MainActor (CompactControlCommand, String, Int?, Double?) -> Void,
+        commandHandler: @escaping @MainActor (CompactControlCommand, String, String?, Int?, Double?) -> Void,
         applicationCommandHandler: @escaping @MainActor (String) -> Bool = { _ in false }
     ) {
         dispatcher = CompactControlDispatcher(
@@ -200,7 +204,7 @@ final class Gate2CompactControlController {
         queuedCommandHandler = commandHandler
         queuedApplicationCommandHandler = applicationCommandHandler
         liveSpeechNowPlaying.commandHandler = { [weak self] command, playbackRate in
-            self?.queuedCommandHandler?(command, "now_playing_live_speech", nil, playbackRate)
+            self?.queuedCommandHandler?(command, "now_playing_live_speech", nil, nil, playbackRate)
         }
         installQueuedWidgetCommandProcessor()
         publishCurrentSnapshot()
@@ -296,7 +300,7 @@ final class Gate2CompactControlController {
         guard !queuedCommands.isEmpty else { return false }
         for queuedCommand in queuedCommands {
             if let command = CompactControlCommand(rawValue: queuedCommand.command) {
-                queuedCommandHandler(command, "widget_or_live_activity_queue", nil, nil)
+                queuedCommandHandler(command, "widget_or_live_activity_queue", queuedCommand.chapterId, nil, nil)
             } else if queuedApplicationCommandHandler?(queuedCommand.command) == true {
                 lastApplicationCommand = queuedCommand.command
             }
@@ -492,6 +496,7 @@ private final class Gate2LiveSpeechNowPlayingController {
         }
         if publishesLiveSpeech {
             installRemoteCommandHandlersIfNeeded()
+            activatePlaybackAudioSessionIfNeeded(for: snapshot)
         } else {
             // The native AVPlayer route remains the transport-command owner. This
             // controller republishes metadata so its system Now Playing card does
@@ -578,6 +583,21 @@ private final class Gate2LiveSpeechNowPlayingController {
             return .success
         }
         remoteCommandTargets.append((center.changePlaybackRateCommand, rateTarget))
+        #endif
+    }
+
+    private func activatePlaybackAudioSessionIfNeeded(for snapshot: CompactControlSnapshot) {
+        #if canImport(AVFoundation) && os(iOS)
+        guard snapshot.status.isPlaybackActive || snapshot.status == .paused else { return }
+        do {
+            let session = AVAudioSession.sharedInstance()
+            if session.category != .playback {
+                try session.setCategory(.playback, mode: .spokenAudio, options: [])
+            }
+            try session.setActive(true)
+        } catch {
+            status = "audio_session_failed:\(error.localizedDescription)"
+        }
         #endif
     }
 

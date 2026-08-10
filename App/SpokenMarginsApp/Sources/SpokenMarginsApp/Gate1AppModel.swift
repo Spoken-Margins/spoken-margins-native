@@ -82,6 +82,7 @@ struct SourceLinkCandidateReviewState: Identifiable, Equatable {
 struct UserFeedbackEvent: Identifiable, Equatable {
     enum Kind: Equatable {
         case success
+        case warning
         case error
     }
 
@@ -828,7 +829,7 @@ final class Gate1AppModel: ObservableObject {
         }
         _ = rebuildEngineForCurrentSettings()
         diagnostics["termsAcceptedVersion"] = SpokenMarginsTerms.currentVersion
-        reportSuccess("Terms accepted. \(ttsVoiceSelection.displayName) is enabled.")
+        reportConfirmation("Terms accepted. \(ttsVoiceSelection.displayName) is enabled.")
         continuePlaybackAfterTerms(pendingPlayback)
     }
 
@@ -980,7 +981,7 @@ final class Gate1AppModel: ObservableObject {
         if pendingProviderJobForConsent != nil {
             markProviderFailure("ai_data_sharing_not_allowed", userMessage: "Live AI request cancelled. No content was sent.")
         } else {
-            reportSuccess("Live AI request cancelled. No content was sent.")
+            reportConfirmation("Live AI request cancelled. No content was sent.")
         }
         pendingProviderJobForConsent = nil
     }
@@ -991,7 +992,7 @@ final class Gate1AppModel: ObservableObject {
         pendingProviderJobForConsent = nil
         pendingMapGenerationAfterConsent = false
         diagnostics["aiDataSharingConsent"] = aiDataSharingConsent.rawValue
-        reportSuccess("OpenAI data-sharing permission revoked.")
+        reportConfirmation("OpenAI data-sharing permission revoked.")
     }
 
     func deleteProviderAPIKey() {
@@ -1007,7 +1008,7 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["apiKeyConfigured"] = "false"
         diagnostics["keychainStatus"] = "deleted"
         _ = rebuildEngineForCurrentSettings()
-        reportSuccess("OpenAI API key deleted from Keychain.")
+        reportConfirmation("OpenAI API key deleted from Keychain.")
     }
 
     deinit {
@@ -1088,7 +1089,7 @@ final class Gate1AppModel: ObservableObject {
             _ = try engine.updateSpeechPlaybackSettings(voiceIdentifier: nil, rate: Float(speechRate))
             let resumed = try engine.resumePlayback()
             diagnostics["speechVoiceFallback:\(sessionId)"] = "default_voice_from_confirmed_offset"
-            reportSuccess("The selected voice was unavailable offline. Continuing with the installed default voice.")
+            reportWarning("The selected voice was unavailable offline. Continuing with the installed default voice.")
             return resumed
         } catch {
             diagnostics["speechVoiceFallback:\(sessionId)"] = "failed:\(error.localizedDescription)"
@@ -1607,7 +1608,7 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["lastObsidianImportFailures"] = "\(failures.count)"
             markOnboardingSteps([.addedOwnSource, .addedFromFiles])
             let suffix = failures.isEmpty ? "" : " \(failures.count) failed."
-            reportSuccess("Imported \(imported.count) source file\(imported.count == 1 ? "" : "s").\(suffix)")
+            reportConfirmation("Imported \(imported.count) source file\(imported.count == 1 ? "" : "s").\(suffix)")
         } catch {
             reportFailure(error, context: "File import failed")
         }
@@ -1792,7 +1793,7 @@ final class Gate1AppModel: ObservableObject {
                         itemId: itemId
                     )
                 }
-                reportSuccess(startSession ? "Imported and started \(title)." : "Imported \(title).")
+                reportConfirmation(startSession ? "Imported and started \(title)." : "Imported \(title).")
                 return true
             }
             screen = .home
@@ -1845,7 +1846,7 @@ final class Gate1AppModel: ObservableObject {
                         itemId: itemId
                     )
                 }
-                reportSuccess(startSession ? "Imported and started \(title)." : "Imported \(title).")
+                reportConfirmation(startSession ? "Imported and started \(title)." : "Imported \(title).")
                 return true
             }
             screen = .home
@@ -2101,7 +2102,7 @@ final class Gate1AppModel: ObservableObject {
                 startItem(id: importedItemId)
             } else {
                 screen = .item
-                reportSuccess("Imported browser text from \(handoff.source.title).")
+                reportConfirmation("Imported browser text from \(handoff.source.title).")
             }
             return true
         } catch {
@@ -2163,7 +2164,7 @@ final class Gate1AppModel: ObservableObject {
             refreshKokoroAssetStatus()
             let ignoredSuffix = ignored.isEmpty ? "" : " Ignored: \(ignored.joined(separator: ", "))."
             if copiedModel || copiedVoices {
-                reportSuccess("Imported Kokoro asset\(copiedModel && copiedVoices ? "s" : "").\(ignoredSuffix)")
+                reportConfirmation("Imported Kokoro asset\(copiedModel && copiedVoices ? "s" : "").\(ignoredSuffix)")
             } else {
                 reportFailure("No Kokoro assets were imported. Select kokoro-v1_0.safetensors and voices.npz.\(ignoredSuffix)")
             }
@@ -2211,7 +2212,7 @@ final class Gate1AppModel: ObservableObject {
             if copied.isEmpty {
                 reportFailure("No Piper assets were imported. Select a .onnx voice model and its .onnx.json config.\(ignoredSuffix)")
             } else {
-                reportSuccess("Imported Piper asset\(copied.count == 1 ? "" : "s").\(ignoredSuffix)")
+                reportConfirmation("Imported Piper asset\(copied.count == 1 ? "" : "s").\(ignoredSuffix)")
             }
         } catch {
             reportFailure(error, context: "Piper voice import failed")
@@ -2360,7 +2361,7 @@ final class Gate1AppModel: ObservableObject {
                 diagnostics["lastGeneratedMapItem"] = activeItemId
                 diagnostics["lastListeningMapMode"] = "local_deterministic"
                 scheduleTextAudioPrewarmIfNeeded(itemId: activeItemId)
-                reportSuccess("Generated local Listening Map.")
+                reportConfirmation("Generated local Listening Map.")
             }
             isGeneratingListeningMap = false
             return
@@ -2396,14 +2397,14 @@ final class Gate1AppModel: ObservableObject {
             do {
                 try saveProviderListeningMapResponse(firstResponse, item: &item, store: store)
                 diagnostics["lastListeningMapRepairAttempt"] = "0"
-                reportSuccess("Generated Listening Map with \(model).")
+                reportConfirmation("Generated Listening Map with \(model).")
             } catch {
                 let repairPrompt = listeningMapRepairPrompt(sourceText: text, invalidResponse: firstResponse, error: String(describing: error))
                 let repairedResponse = try await callProvider(messages: [repairPrompt], model: model, systemPrompt: systemPromptForAIJob(kind: "listening_map"))
                 try saveProviderListeningMapResponse(repairedResponse, item: &item, store: store)
                 diagnostics["lastListeningMapRepairAttempt"] = "1"
                 diagnostics["lastListeningMapInitialError"] = String(describing: error)
-                reportSuccess("Generated repaired Listening Map with \(model).")
+                reportConfirmation("Generated repaired Listening Map with \(model).")
             }
         } catch {
             reportFailure(error, context: "Listening Map generation failed")
@@ -2436,7 +2437,7 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["lastGeneratedMapItem"] = activeItemId
             diagnostics["lastListeningMapMode"] = "local_deterministic"
             scheduleTextAudioPrewarmIfNeeded(itemId: activeItemId)
-            reportSuccess("Generated Listening Map.")
+            reportConfirmation("Generated Listening Map.")
         }
     }
 
@@ -3028,7 +3029,7 @@ final class Gate1AppModel: ObservableObject {
 
     func clearPodcastDownloads() {
         podcastDownloadCoordinator?.clearDownloads()
-        reportSuccess("Cleared downloaded podcast audio. Remote sources remain available.")
+        reportConfirmation("Cleared downloaded podcast audio. Remote sources remain available.")
     }
 
     private func skipUnitForCurrentTarget() -> String {
@@ -3114,7 +3115,7 @@ final class Gate1AppModel: ObservableObject {
             if let interjection = latestInterjectionNeedingTranscription() {
                 scheduleTranscription(for: interjection)
             }
-            reportSuccess("Saved interjection. Playback resumed; transcribing in the background.")
+            reportConfirmation("Interjection saved. Transcription is continuing in the background.")
         }
         streamingSpeechQueue.resumeAfterInterjection()
     }
@@ -3145,7 +3146,7 @@ final class Gate1AppModel: ObservableObject {
 
     private func closeCurrentSession(
         navigateHome: Bool,
-        successMessage: String = "Saved your place. The session is ready to resume."
+        successMessage: String = "Session saved. You can resume it later."
     ) {
         let closedItemId = snapshot.itemId ?? activeItemId
         run { engine in
@@ -3155,7 +3156,7 @@ final class Gate1AppModel: ObservableObject {
             if let store {
                 try refreshLibraryRows(store: store)
             }
-            reportSuccess(successMessage)
+            reportConfirmation(successMessage)
         }
         streamingSpeechQueue.stopAndClear()
         gate2CompactControls.endLiveActivities()
@@ -3218,7 +3219,7 @@ final class Gate1AppModel: ObservableObject {
             let turnId = latestPendingSummaryTurnId() ?? "turn-summary-001"
             submitProviderJobIfNeeded(kind: "interjection_summary", turnId: turnId, messages: [summaryPrompt(interjections: engine.lastSummaryCandidates)])
             refreshSelectedItem()
-            reportSuccess(snapshot.pendingAiJobStatus == "deferred" ? "Summary queued for later." : "Summary job started.")
+            reportConfirmation(snapshot.pendingAiJobStatus == "deferred" ? "Summary queued for later." : "Summary job started.")
         }
     }
 
@@ -3317,7 +3318,7 @@ final class Gate1AppModel: ObservableObject {
         }
         closeCurrentSession(
             navigateHome: true,
-            successMessage: "Finished listening. The completed session was closed."
+            successMessage: "Session complete and saved."
         )
     }
 
@@ -3383,7 +3384,7 @@ final class Gate1AppModel: ObservableObject {
                 )]
             )
             refreshSelectedItem()
-            reportSuccess(snapshot.pendingAiJobStatus == "deferred" ? "Follow-up queued for later." : "Follow-up submitted.")
+            reportConfirmation(snapshot.pendingAiJobStatus == "deferred" ? "Follow-up queued for later." : "Follow-up submitted.")
         }
     }
 
@@ -3409,7 +3410,7 @@ final class Gate1AppModel: ObservableObject {
             let messages = job.messages.isEmpty ? [job.kind == "interjection_summary" ? summaryPrompt(interjections: engine.lastSummaryCandidates) : "Continue the discussion."] : job.messages
             submitProviderJobIfNeeded(kind: job.kind, turnId: turnId, messages: messages, force: true)
             refreshSelectedItem()
-            reportSuccess("Retrying \(job.kind).")
+            reportConfirmation("Retrying \(job.kind).")
         }
     }
 
@@ -3449,7 +3450,7 @@ final class Gate1AppModel: ObservableObject {
         #if canImport(UIKit)
         UIPasteboard.general.string = exportPreview
         recordSessionExported()
-        reportSuccess("Copied \(exportFormat == "json" ? "JSON" : "Markdown") export.")
+        reportConfirmation("Copied \(exportFormat == "json" ? "JSON" : "Markdown") export.")
         #else
         reportFailure("Clipboard is unavailable on this platform.")
         #endif
@@ -3543,7 +3544,7 @@ final class Gate1AppModel: ObservableObject {
             }
             diagnostics["batchExportLastResult"] = "exported=\(exportedFileNames.count);failed=\(failures.count)"
             if failures.isEmpty {
-                reportSuccess("Exported \(exportedFileNames.count) Markdown file\(exportedFileNames.count == 1 ? "" : "s") to \(folderURL.lastPathComponent).")
+                reportConfirmation("Exported \(exportedFileNames.count) Markdown file\(exportedFileNames.count == 1 ? "" : "s") to \(folderURL.lastPathComponent).")
             } else if exportedFileNames.isEmpty {
                 reportFailure("No sessions were exported. Review the export result for details.")
             } else {
@@ -3575,7 +3576,7 @@ final class Gate1AppModel: ObservableObject {
             let text = try renderExport(export, format: format)
             #if canImport(UIKit)
             UIPasteboard.general.string = text
-            reportSuccess("Copied target interjections.")
+            reportConfirmation("Copied target interjections.")
             #else
             exportPreview = text
             reportSuccess("Built target interjection export.")
@@ -3598,7 +3599,7 @@ final class Gate1AppModel: ObservableObject {
             let text = try renderExport(export, format: format)
             #if canImport(UIKit)
             UIPasteboard.general.string = text
-            reportSuccess("Copied interjection with its anchors.")
+            reportConfirmation("Copied interjection with its anchors.")
             #else
             exportPreview = text
             reportSuccess("Built interjection export.")
@@ -3609,7 +3610,7 @@ final class Gate1AppModel: ObservableObject {
     func retryAnchorContext(_ interjection: Interjection) {
         guard !pendingSourceContextInterjectionIds.contains(interjection.id) else { return }
         scheduleSourceWindowContextIfNeeded(for: interjection)
-        reportSuccess("Retrying source context.")
+        reportConfirmation("Retrying source context.")
     }
 
     func retryInterjectionTranscription(_ interjection: Interjection) {
@@ -3619,7 +3620,7 @@ final class Gate1AppModel: ObservableObject {
         }
         guard retryingInterjectionTranscriptionIds.insert(interjection.id).inserted else { return }
         scheduleTranscription(for: interjection)
-        reportSuccess("Retranscribing the saved interjection audio.")
+        reportConfirmation("Retranscribing the saved interjection audio.")
     }
 
     func toggleInterjectionAudioPlayback(_ interjection: Interjection) {
@@ -3770,7 +3771,7 @@ final class Gate1AppModel: ObservableObject {
                 try resolvedBrowserTextHandoffStore().retryFailed(payloadID: entry.payloadID)
             }
             importPendingSourceLinkHandoffs()
-            reportSuccess("Import retry queued.")
+            reportConfirmation("Import retry queued.")
         } catch {
             reportFailure(error, context: "Import retry failed")
         }
@@ -3806,7 +3807,7 @@ final class Gate1AppModel: ObservableObject {
             guard let text = String(data: data, encoding: .utf8) else { return }
             #if canImport(UIKit)
             UIPasteboard.general.string = text
-            reportSuccess("Copied privacy-safe diagnostics.")
+            reportConfirmation("Copied privacy-safe diagnostics.")
             #else
             exportPreview = text
             reportSuccess("Built privacy-safe diagnostics.")
@@ -4064,7 +4065,7 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["apiKeyConfigured"] = providerAPIKey.isEmpty ? "false" : "true"
         if rebuildEngineForCurrentSettings() {
             screen = .settings
-            reportSuccess("Provider settings saved.")
+            reportConfirmation("Provider settings saved.")
         }
     }
 
@@ -4118,7 +4119,7 @@ final class Gate1AppModel: ObservableObject {
                 )
                 refreshSelectedItem()
                 diagnostics["speechSettingsApplied"] = snapshot.status.rawValue
-                reportSuccess("Speech settings saved.")
+                reportConfirmation("Speech settings saved.")
             }
         }
     }
@@ -4816,8 +4817,14 @@ final class Gate1AppModel: ObservableObject {
                 canonicalRuntime: engine,
                 surfaceProfile: surfaceProfile,
                 skipUnit: mediaSkipUnit(seconds: mediaSkipForwardSeconds)
-            ) { [weak self] command, origin, mediaTimeMs, playbackRate in
-                self?.dispatchGate2CompactCommand(command, mediaTimeMs: mediaTimeMs, playbackRate: playbackRate, origin: origin)
+            ) { [weak self] command, origin, chapterId, mediaTimeMs, playbackRate in
+                self?.dispatchGate2CompactCommand(
+                    command,
+                    chapterId: chapterId,
+                    mediaTimeMs: mediaTimeMs,
+                    playbackRate: playbackRate,
+                    origin: origin
+                )
             } applicationCommandHandler: { [weak self] command in
                 self?.handleGate2CompactApplicationCommand(command) ?? false
             }
@@ -5791,7 +5798,7 @@ final class Gate1AppModel: ObservableObject {
                         self.diagnostics["supertonicFallbackOffset"] = "\(offset)"
                         self.statusMessage = "Using the iOS system voice for this playback."
                         self.feedbackEvent = UserFeedbackEvent(
-                            kind: .error,
+                            kind: .warning,
                             message: "The on-device voice was unavailable, so playback continued with the iOS system voice."
                         )
                     }
@@ -6108,7 +6115,7 @@ final class Gate1AppModel: ObservableObject {
                         )
                     }
                     refreshSelectedItem()
-                    reportSuccess(streamsSpeechImmediately == true
+                    reportConfirmation(streamsSpeechImmediately == true
                         ? "Provider response saved and streamed to speech."
                         : "Provider response saved and queued after the current source.")
                     await generateAssistantChaptersIfUseful(turnId: turnId, model: selectedModel)
@@ -6165,7 +6172,7 @@ final class Gate1AppModel: ObservableObject {
                 )
                 diagnostics["lastSummaryMode"] = "apple_foundation_on_device"
                 refreshSelectedItem()
-                reportSuccess("On-device summary saved and queued after the current source.")
+                reportConfirmation("On-device summary saved and queued after the current source.")
             } catch {
                 diagnostics["lastSummaryMode"] = "apple_foundation_failed"
                 markProviderFailure(String(describing: error), userMessage: "On-device summary failed: \(error.localizedDescription)")
@@ -7632,7 +7639,23 @@ final class Gate1AppModel: ObservableObject {
     private func reportSuccess(_ message: String) {
         statusMessage = message
         lastError = nil
+        diagnostics["lastStatus"] = message
+        diagnostics["recentFailure"] = "none"
+    }
+
+    /// Records a successful outcome and presents it only when the result is not
+    /// otherwise apparent from the current interface.
+    private func reportConfirmation(_ message: String) {
+        reportSuccess(message)
         feedbackEvent = UserFeedbackEvent(kind: .success, message: message)
+    }
+
+    /// Presents degraded-but-successful behavior without styling it as either a
+    /// normal confirmation or a failure.
+    private func reportWarning(_ message: String) {
+        statusMessage = message
+        lastError = nil
+        feedbackEvent = UserFeedbackEvent(kind: .warning, message: message)
         diagnostics["lastStatus"] = message
         diagnostics["recentFailure"] = "none"
     }

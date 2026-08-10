@@ -359,6 +359,43 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.shouldShowMiniPlayer)
     }
 
+    func testRoutinePlaybackAndNavigationActionsDoNotPresentFeedback() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+
+        XCTAssertNil(model.feedbackEvent)
+
+        model.startItem(id: "item-pill")
+        XCTAssertNil(model.feedbackEvent)
+        XCTAssertTrue(model.statusMessage.hasPrefix("Started "))
+
+        model.pause()
+        XCTAssertNil(model.feedbackEvent)
+        XCTAssertEqual(model.statusMessage, "Paused.")
+
+        model.resumePlayback()
+        XCTAssertNil(model.feedbackEvent)
+        XCTAssertEqual(model.statusMessage, "Resumed.")
+
+        model.openHome()
+        model.openItem(id: "item-pill")
+        XCTAssertNil(model.feedbackEvent)
+        XCTAssertTrue(model.statusMessage.hasPrefix("Opened "))
+    }
+
+    func testBuildingVisibleExportPreviewDoesNotPresentFeedback() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+
+        model.openExport()
+        model.buildExport()
+
+        XCTAssertFalse(model.exportPreview.isEmpty)
+        XCTAssertNil(model.feedbackEvent)
+        XCTAssertEqual(model.statusMessage, "Built session export.")
+    }
+
     func testPlaybackHeaderOpensCurrentItemWithoutStoppingItsSession() throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
@@ -424,6 +461,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.libraryItems.contains(where: { $0.id == "item-pill" }))
         XCTAssertTrue(model.recentlyDeletedItems.contains(where: { $0.id == "item-pill" }))
         XCTAssertEqual(model.trashUndo?.itemId, "item-pill")
+        XCTAssertNil(model.feedbackEvent)
 
         model.undoLastTrash()
         model.openItem(id: "item-pill")
@@ -520,14 +558,18 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.phase, .idle)
         XCTAssertEqual(model.snapshot.status, .idle)
         XCTAssertFalse(model.shouldShowMiniPlayer)
+        XCTAssertEqual(model.feedbackEvent?.kind, .success)
+        XCTAssertEqual(model.feedbackEvent?.message, "Session saved. You can resume it later.")
         let saved = model.selectedItem.sessions.first(where: { $0.id == sessionId })
         XCTAssertEqual(saved?.status, "in_progress")
         XCTAssertLessThan(saved?.completionPercent ?? 100, 100)
+        model.dismissFeedback()
         if let saved {
             model.resumeSession(saved)
         }
         XCTAssertEqual(model.snapshot.sessionId, sessionId)
         XCTAssertEqual(model.snapshot.status, .playing)
+        XCTAssertNil(model.feedbackEvent)
     }
 
     func testHomePlayResumesLatestSessionWithoutCreatingAnother() throws {
@@ -930,7 +972,9 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         XCTAssertNil(model.snapshot.sessionId)
         XCTAssertEqual(model.screen, .home)
-        XCTAssertEqual(model.statusMessage, "Finished listening. The completed session was closed.")
+        XCTAssertEqual(model.statusMessage, "Session complete and saved.")
+        XCTAssertEqual(model.feedbackEvent?.kind, .success)
+        XCTAssertEqual(model.feedbackEvent?.message, "Session complete and saved.")
         XCTAssertEqual(
             model.selectedItem.sessions.first(where: { $0.id == completedSessionID })?.status,
             "finished"
