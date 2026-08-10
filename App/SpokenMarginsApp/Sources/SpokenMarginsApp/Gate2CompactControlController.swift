@@ -97,7 +97,17 @@ enum Gate2LiveActivityPolicy {
 
     static func shouldMaintain(_ snapshot: CompactControlSnapshot, adoptedSessionId: String?) -> Bool {
         guard isEligible(snapshot), let sessionId = snapshot.sessionId else { return false }
-        if snapshot.status.isPlaybackActive || snapshot.isRecording {
+        if snapshot.isRecording {
+            return true
+        }
+        // For native text speech, the system Now Playing surface is the lock-
+        // screen playback owner. A simultaneous Live Activity from the same app
+        // replaces that surface with our custom card and hides Apple's transport
+        // controls. Keep Live Activity for recording, but end it for live speech.
+        if Gate2LiveSpeechNowPlayingPolicy.isLiveSpeech(snapshot) {
+            return false
+        }
+        if snapshot.status.isPlaybackActive {
             return true
         }
         return snapshot.status == .paused && adoptedSessionId == sessionId
@@ -536,7 +546,15 @@ private final class Gate2LiveSpeechNowPlayingController {
         if let targetId = snapshot.targetId, let url = URL(string: targetId), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
             info[MPNowPlayingInfoPropertyAssetURL] = url
         }
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        let nowPlayingCenter = MPNowPlayingInfoCenter.default()
+        nowPlayingCenter.nowPlayingInfo = info
+        if snapshot.status.isPlaybackActive {
+            nowPlayingCenter.playbackState = .playing
+        } else if snapshot.status == .paused {
+            nowPlayingCenter.playbackState = .paused
+        } else {
+            nowPlayingCenter.playbackState = .stopped
+        }
         ownsNowPlayingInfo = true
         if let audioSessionFailure {
             status = "live_speech_audio_session_failed:\(audioSessionFailure)"
@@ -569,7 +587,9 @@ private final class Gate2LiveSpeechNowPlayingController {
     func end() {
         #if canImport(MediaPlayer)
         if ownsNowPlayingInfo {
-            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            let nowPlayingCenter = MPNowPlayingInfoCenter.default()
+            nowPlayingCenter.playbackState = .stopped
+            nowPlayingCenter.nowPlayingInfo = nil
         }
         uninstallRemoteCommandHandlers()
         #endif
@@ -612,7 +632,9 @@ private final class Gate2LiveSpeechNowPlayingController {
         guard snapshot.status.isPlaybackActive || snapshot.status == .paused else { return nil }
         do {
             let session = AVAudioSession.sharedInstance()
-            if session.category != .playback {
+            if session.category != .playback
+                || session.mode != .spokenAudio
+                || !session.categoryOptions.isEmpty {
                 try session.setCategory(.playback, mode: .spokenAudio, options: [])
             }
             try session.setActive(true)

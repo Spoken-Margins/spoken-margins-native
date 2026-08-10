@@ -1006,7 +1006,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             return
         }
         #if os(iOS)
-        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        // Now Playing eligibility requires a non-mixable playback session.
+        // `.duckOthers` implicitly makes this session mixable, which lets audio
+        // play while preventing iOS from promoting the app to the system media
+        // controls.
+        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [])
         try AVAudioSession.sharedInstance().setActive(true)
         #endif
     }

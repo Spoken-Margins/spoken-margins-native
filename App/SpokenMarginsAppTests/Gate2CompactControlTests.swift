@@ -270,11 +270,14 @@ final class Gate2CompactControlTests: XCTestCase {
         finished.status = .idle
 
         XCTAssertTrue(Gate2LiveActivityPolicy.isEligible(active))
-        XCTAssertTrue(Gate2LiveActivityPolicy.shouldMaintain(active, adoptedSessionId: nil))
+        XCTAssertFalse(Gate2LiveActivityPolicy.shouldMaintain(active, adoptedSessionId: nil))
         var paused = active
         paused.status = .paused
         XCTAssertFalse(Gate2LiveActivityPolicy.shouldMaintain(paused, adoptedSessionId: nil))
-        XCTAssertTrue(Gate2LiveActivityPolicy.shouldMaintain(paused, adoptedSessionId: "session-pill"))
+        XCTAssertFalse(Gate2LiveActivityPolicy.shouldMaintain(paused, adoptedSessionId: "session-pill"))
+        var recording = active
+        recording.isRecording = true
+        XCTAssertTrue(Gate2LiveActivityPolicy.shouldMaintain(recording, adoptedSessionId: nil))
         XCTAssertFalse(Gate2LiveActivityPolicy.isEligible(finished))
         XCTAssertFalse(Gate2LiveActivityPolicy.shouldEnd(activitySessionId: "session-pill", currentSessionId: "session-pill"))
         XCTAssertTrue(Gate2LiveActivityPolicy.shouldEnd(activitySessionId: "session-old", currentSessionId: "session-pill"))

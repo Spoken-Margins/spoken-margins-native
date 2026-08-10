@@ -733,6 +733,11 @@ final class Gate1AppModel: ObservableObject {
                 speechRate = testRate
                 UserDefaults.standard.set(testRate, forKey: "speechRate")
             }
+            if ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_SUPERTONIC"] == "1" {
+                SpokenMarginsTerms.recordAcceptance()
+                ttsVoiceSelection = .james
+                UserDefaults.standard.set(ttsVoiceSelection.rawValue, forKey: "ttsVoiceSelection")
+            }
         }
         migrateTTSSettingsIfNeeded()
         enforceTermsGateForStoredVoice()

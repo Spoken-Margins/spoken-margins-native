@@ -1905,6 +1905,7 @@ private struct PlaybackScreen: View {
                 .font(.caption)
                 .foregroundStyle(.white)
                 .accessibilityIdentifier("gate2.compact.chapter")
+                .accessibilityValue(model.snapshot.status.rawValue)
             HStack(spacing: 8) {
                 Button {
                     model.dispatchGate2CompactCommand(.skipBack)

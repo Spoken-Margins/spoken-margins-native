@@ -136,6 +136,67 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("gate2.compact.chapter").waitForExistence(timeout: 4))
     }
 
+    func testNativeTextPublishesVisibleSimulatorSystemPlaybackControls() throws {
+        let title = "Now Playing Simulator Probe"
+        app.terminate()
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE"] = title
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"] = String(
+            repeating: "This native text playback probe must remain long enough to inspect the system media controls. ",
+            count: 200
+        )
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_URL"] = "https://example.com/now-playing-probe"
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SUPERTONIC"] = "1"
+        app.launch()
+
+        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
+        let start = app.buttons["queue.start.item-ui-text-regression"]
+        XCTAssertTrue(start.waitForExistence(timeout: 5))
+        start.tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5))
+        let playPause = app.buttons["playback.play.button"]
+        XCTAssertTrue(playPause.waitForExistence(timeout: 8))
+        XCTAssertEqual(playPause.label, "Pause")
+        let compactChapter = element("gate2.compact.chapter")
+        XCTAssertTrue(compactChapter.waitForExistence(timeout: 4))
+        let nativePlaybackConfirmed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "playing"),
+            object: compactChapter
+        )
+        XCTAssertEqual(
+            XCTWaiter().wait(for: [nativePlaybackConfirmed], timeout: 60),
+            .completed,
+            "Native text playback never advanced from starting to playing."
+        )
+        XCUIDevice.shared.press(.home)
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        XCTAssertTrue(springboard.wait(for: .runningForeground, timeout: 5))
+        let topCenter = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.50, dy: 0.01))
+        let notificationCenter = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.50, dy: 0.72))
+        topCenter.press(forDuration: 0.1, thenDragTo: notificationCenter)
+
+        // On current simulator runtimes the lock-screen playback card is hosted
+        // by MediaRemoteUI rather than SpringBoard. Query both because the host
+        // process changed across supported iOS versions.
+        let mediaRemoteUI = XCUIApplication(bundleIdentifier: "com.apple.MediaRemoteUI")
+        _ = mediaRemoteUI.wait(for: .runningForeground, timeout: 5)
+        let playbackTitlePredicate = NSPredicate(format: "label CONTAINS[c] %@", title)
+        let systemPlaybackTitleExists = springboard.descendants(matching: .any)
+            .matching(playbackTitlePredicate).firstMatch.waitForExistence(timeout: 8)
+            || mediaRemoteUI.descendants(matching: .any)
+                .matching(playbackTitlePredicate).firstMatch.waitForExistence(timeout: 8)
+        XCTAssertTrue(
+            systemPlaybackTitleExists,
+            "Native text playback did not become visible on the Simulator system playback surface.\nSPRINGBOARD:\n\(springboard.debugDescription)\nMEDIA REMOTE UI:\n\(mediaRemoteUI.debugDescription)"
+        )
+        let pauseButtonPredicate = NSPredicate(format: "label CONTAINS[c] %@", "pause")
+        let systemPauseControlExists = springboard.buttons.matching(pauseButtonPredicate).firstMatch.exists
+            || mediaRemoteUI.buttons.matching(pauseButtonPredicate).firstMatch.exists
+        XCTAssertTrue(
+            systemPauseControlExists,
+            "The Simulator system playback surface did not expose a pause control for active native text playback.\nSPRINGBOARD:\n\(springboard.debugDescription)\nMEDIA REMOTE UI:\n\(mediaRemoteUI.debugDescription)"
+        )
+    }
+
     func testPermanentDeleteDoesNotRestoreRecentlyDeletedItem() throws {
         let itemTitle = "Permanent Delete \(UUID().uuidString.prefix(8))"
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
