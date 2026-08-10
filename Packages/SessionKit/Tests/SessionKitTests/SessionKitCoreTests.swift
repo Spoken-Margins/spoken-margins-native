@@ -3630,6 +3630,59 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertFalse(selectedMarkdown.contains("deleted note"))
     }
 
+    func testFullSessionExportAndCompactTimelinePreserveInterjectionsWhoseTurnRecordIsMissing() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: ["sync": ["canonical_persistence"]]
+        )
+        let item = Item(id: "item-orphan", title: "Orphan Recovery", mediaType: "text", text: "Source.", externalReference: nil, status: "ready")
+        let session = Session(id: "session-orphan", itemId: item.id, status: "in_progress", phase: .conversation, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 0, playbackRate: 1)
+        let survivingTurn = ConversationTurn(id: "turn-response-003", sessionId: session.id, role: "assistant", turnType: "assistant_response", status: "complete", summary: nil, text: "Surviving response.", rawText: nil, sourceInterjectionIds: [])
+        let orphanedInterjection = Interjection(
+            id: "ij-ai-001",
+            itemId: item.id,
+            sessionId: session.id,
+            targetType: .assistantTurn,
+            targetId: "turn-response-001",
+            createdAt: Date(timeIntervalSince1970: 1),
+            roughPercent: 100,
+            anchor: Anchor(anchorType: .turn, startChar: 0, endChar: 8, anchorBefore: "Missing response context.", anchorAfter: "Next sentence."),
+            audioPath: nil,
+            audioStatus: "none",
+            transcriptionStatus: "transcribed",
+            transcript: "Recovered listener note.",
+            cleanedTranscript: nil,
+            displayText: nil,
+            status: "active"
+        )
+        let repo = InMemorySessionRepository(
+            items: [item.id: item],
+            sessions: [session.id: session],
+            interjections: [orphanedInterjection.id: orphanedInterjection],
+            turns: [survivingTurn.id: survivingTurn]
+        )
+        let engine = SessionEngine(profile: profile, repository: repo)
+
+        let export = try engine.buildExport(options: ExportOptions(
+            sessionId: session.id,
+            includeFullText: false,
+            includeReference: false,
+            includeListeningMap: false,
+            includeInterjections: true,
+            includeTurns: true
+        ))
+        let markdown = SessionExportMarkdownRenderer.render(export)
+        _ = try engine.inspectSession(sessionId: session.id)
+        let compactTimeline = engine.compactTimelineEntries()
+
+        XCTAssertEqual(export.interjections.map(\.id), [orphanedInterjection.id])
+        XCTAssertTrue(export.timeline.contains(where: { $0.interjectionId == orphanedInterjection.id }))
+        XCTAssertTrue(markdown.contains("Recovered listener note."))
+        XCTAssertTrue(markdown.contains("Missing response context."))
+        XCTAssertTrue(compactTimeline.contains(where: { $0.id == "interjection-\(orphanedInterjection.id)" }))
+    }
+
     func testMalformedAIChaptersPreserveResponseText() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",

@@ -21,15 +21,13 @@ You agree to comply with paragraph 5 and Attachment A of the Open RAIL-M License
 
 Voice synthesis runs locally. Spoken Margins reads text selected by you and does not author, endorse, interpret, or verify that text. You remain responsible for the selected text and for any use or distribution of synthesized output.
 
-4. External services and optional AI
+4. External services
 
-Spoken Margins may provide access to third-party services and websites, including public source websites, podcast feeds, Apple services, and the OpenAI API. Those services may be governed by separate terms, and you must comply with applicable third-party terms.
-
-Live AI features are optional and require a compatible API key supplied by you. Spoken Margins requests separate permission before sending source or conversation text to OpenAI. You are responsible for your API account, charges, usage limits, and compliance with the API provider's terms. AI-generated content may be inaccurate or inappropriate and must not be treated as professional, medical, legal, financial, or safety advice.
+Spoken Margins may retrieve user-selected material from third-party services and websites, including public source websites, podcast feeds and media hosts, Spotify's public metadata service, and Apple's public podcast search and lookup services. Those services may be governed by separate terms, and you must comply with applicable third-party terms.
 
 5. Privacy
 
-Spoken Margins' data practices are described in the Privacy Policy at https://spokenmargins.proximitytoprogress.com/privacy/. Local library data, recordings, transcripts, and settings remain on your device unless you deliberately use a feature that sends selected text to an external service or share or export content using a destination you choose.
+Spoken Margins' data practices are described in the Privacy Policy at https://spokenmargins.proximitytoprogress.com/privacy/. Local library data, recordings, transcripts, and settings remain on your device. Outside services receive information only when needed to retrieve a source you select or when you deliberately share or export content to a destination you choose.
 
 6. Third-party software and model licenses
 
@@ -42,4 +40,3 @@ The Developer may revise these Terms prospectively as Spoken Margins evolves. Th
 8. Support
 
 Questions about these Terms or Spoken Margins may be sent to resists.fabric-0o@icloud.com.
-

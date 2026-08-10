@@ -1995,6 +1995,20 @@ public final class SessionEngine {
             )
         }
 
+        let turnIds = Set(turns.map(\.id))
+        entries.append(
+            contentsOf: interjections
+                .filter { $0.targetType != .item && !turnIds.contains($0.targetId) }
+                .map { interjection in
+                    CompactTimelineEntry(
+                        id: "interjection-\(interjection.id)",
+                        kind: "interjection",
+                        title: "Interjection",
+                        detail: interjectionPreview(interjection)
+                    )
+                }
+        )
+
         return entries
     }
 
@@ -2030,6 +2044,7 @@ public final class SessionEngine {
         let sourceInterjections = interjections.filter { $0.targetType == .item }.map {
             ExportTimelineEntry(type: "interjection", interjectionId: $0.id, turnId: nil, targetType: $0.targetType.rawValue, targetId: $0.targetId, percent: $0.roughPercent, chapterId: nil)
         }
+        let exportedTurnIds = Set(turns.map(\.id))
         let turnEntries = turns.flatMap { turn -> [ExportTimelineEntry] in
             let base = ExportTimelineEntry(type: "ai_turn", interjectionId: nil, turnId: turn.id, targetType: nil, targetId: nil, percent: nil, chapterId: nil)
             let chapters = (turn.chapters ?? []).map {
@@ -2040,7 +2055,12 @@ public final class SessionEngine {
             }
             return [base] + chapters + turnInterjections
         }
-        return sourceInterjections + turnEntries
+        let orphanedTurnInterjections = interjections
+            .filter { $0.targetType != .item && !exportedTurnIds.contains($0.targetId) }
+            .map {
+                ExportTimelineEntry(type: "interjection", interjectionId: $0.id, turnId: nil, targetType: $0.targetType.rawValue, targetId: $0.targetId, percent: $0.roughPercent, chapterId: nil)
+            }
+        return sourceInterjections + turnEntries + orphanedTurnInterjections
     }
 
     public func diagnostics() throws -> [String: String] {

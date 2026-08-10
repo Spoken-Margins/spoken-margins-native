@@ -3,7 +3,8 @@ import SessionKit
 import SQLite3
 
 public final class SQLiteSessionStore: SessionRepository {
-    public static let currentSchemaVersion = 3
+    public static let currentSchemaVersion = 4
+    private static let sessionScopedRecordKinds: Set<String> = ["interjection", "turn", "ai_job"]
     private var db: OpaquePointer?
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
@@ -31,7 +32,7 @@ public final class SQLiteSessionStore: SessionRepository {
         );
         """)
         let existingVersion = try metadataValue(forKey: "schema_version").flatMap(Int.init)
-        guard existingVersion.map({ [1, 2, Self.currentSchemaVersion].contains($0) }) ?? true else {
+        guard existingVersion.map({ [1, 2, 3, Self.currentSchemaVersion].contains($0) }) ?? true else {
             throw SessionKitError.persistenceFailed("unsupported_schema_version:\(existingVersion ?? -1)")
         }
         try execute("""
@@ -59,6 +60,9 @@ public final class SQLiteSessionStore: SessionRepository {
         try execute("CREATE INDEX IF NOT EXISTS records_item_idx ON records(kind, item_id);")
         if existingVersion == 1 || existingVersion == 2 {
             try migrateSessionTimestamps()
+        }
+        if let existingVersion, existingVersion < 4 {
+            try migrateSessionScopedRecordKeys()
         }
         try setMetadataValue("\(Self.currentSchemaVersion)", forKey: "schema_version")
     }
@@ -349,7 +353,7 @@ public final class SQLiteSessionStore: SessionRepository {
         }
         defer { sqlite3_finalize(statement) }
         bind(statement, index: 1, value: kind)
-        bind(statement, index: 2, value: id)
+        bind(statement, index: 2, value: storageID(kind: kind, id: id, sessionId: sessionId))
         bind(statement, index: 3, value: sessionId)
         bind(statement, index: 4, value: itemId)
         bind(statement, index: 5, value: payload)
@@ -476,6 +480,38 @@ public final class SQLiteSessionStore: SessionRepository {
                 }
             }
         }
+    }
+
+    /// Turns, interjections, and AI jobs use IDs that are intentionally local to a
+    /// listening session (for example, `turn-response-001`). The records table has
+    /// a `(kind, id)` primary key, so storing those logical IDs directly allowed a
+    /// later session to move and overwrite an earlier session's record. Keep the
+    /// payload IDs unchanged while making only the internal SQLite key session-scoped.
+    private func migrateSessionScopedRecordKeys() throws {
+        for kind in Self.sessionScopedRecordKinds.sorted() {
+            var statement: OpaquePointer?
+            let sql = """
+            UPDATE records
+            SET id = session_id || '::' || id
+            WHERE kind = ?
+              AND session_id IS NOT NULL
+              AND id NOT LIKE session_id || '::%';
+            """
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_session_scoped_key_migration")
+            }
+            bind(statement, index: 1, value: kind)
+            let result = sqlite3_step(statement)
+            sqlite3_finalize(statement)
+            guard result == SQLITE_DONE else {
+                throw SessionKitError.persistenceFailed("step_session_scoped_key_migration")
+            }
+        }
+    }
+
+    private func storageID(kind: String, id: String, sessionId: String?) -> String {
+        guard Self.sessionScopedRecordKinds.contains(kind), let sessionId else { return id }
+        return "\(sessionId)::\(id)"
     }
 
     private static func iso8601Timestamp(fromSQLite value: String) -> String {

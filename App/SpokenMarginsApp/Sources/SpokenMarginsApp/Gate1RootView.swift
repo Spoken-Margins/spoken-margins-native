@@ -2057,7 +2057,11 @@ private struct PlaybackScreen: View {
                 .filter { $0.targetId == turn.id && $0.targetType != .item }
                 .map { PlaybackTimelineEntry.interjection($0) }
         }
-        return sourceHeaderEntries + sourceEntries + turnEntries
+        let turnIds = Set(model.selectedItem.turns.map(\.id))
+        let orphanedTurnInterjections = model.selectedItem.interjections
+            .filter { $0.targetType != .item && !turnIds.contains($0.targetId) }
+            .map { PlaybackTimelineEntry.interjection($0) }
+        return sourceHeaderEntries + sourceEntries + turnEntries + orphanedTurnInterjections
     }
 
     private var interjectionMediaDurationMs: Int? {
