@@ -288,6 +288,19 @@ public final class SQLiteSessionStore: SessionRepository {
         }
     }
 
+    /// Permanently removes several item graphs as one database operation. Callers
+    /// validate the trash boundary before invoking this method; the transaction
+    /// prevents a bulk-empty action from leaving only part of the selection behind.
+    public func deleteItems(ids: [String]) throws {
+        let uniqueIDs = Array(Set(ids)).sorted()
+        guard !uniqueIDs.isEmpty else { return }
+        try withTransaction {
+            for id in uniqueIDs {
+                try deleteItem(id: id)
+            }
+        }
+    }
+
     private func deleteRecords(kind: String, itemId: String) throws {
         var statement: OpaquePointer?
         let sql = "DELETE FROM records WHERE kind = ? AND item_id = ?;"

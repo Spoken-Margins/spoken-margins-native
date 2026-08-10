@@ -999,7 +999,20 @@ public final class SessionEngine {
     public func beginInterjection() throws -> SessionSnapshot {
         try require("beginInterjection", category: "interjection", capabilities: ["record_audio", "delegate_interjection_to_canonical_runtime"])
         guard var session = currentSession else { throw SessionKitError.invalidCommandForState("beginInterjection") }
-        session = try syncCurrentPositionFromAudio(session)
+        let usesNativeMediaClock = session.currentTargetType == .transcriptBackedMedia
+            || session.currentTargetType == .browserOwnedMedia
+        if usesNativeMediaClock {
+            // Freeze native transport before sampling its clock. Sampling first
+            // lets media advance before the interruption and accumulates drift.
+            try audio.pause()
+            session = try syncCurrentPositionFromAudio(session)
+        } else {
+            // Speech pause callbacks can report terminal state synchronously.
+            // Capture text position before pausing so that callback cannot turn an
+            // in-progress interjection anchor into end-of-source completion.
+            session = try syncCurrentPositionFromAudio(session)
+            try audio.pause()
+        }
         currentSession = session
         try persistSession(session)
         priorPhase = session.phase
@@ -1007,7 +1020,6 @@ public final class SessionEngine {
         recordingTargetType = target.type
         recordingTargetId = target.id
         recordingAnchor = buildAnchor(for: session, targetType: target.type, targetId: target.id)
-        try audio.pause()
         try recorder.beginRecording()
         session.phase = .recordingInterjection
         currentSession = session
@@ -1254,6 +1266,10 @@ public final class SessionEngine {
         let text = turn.map { generatedTurnNavigationText(for: $0) } ?? ""
         session.position.charOffset = text.count
         session.position.chapterId = turn?.chapters?.last?.id
+        // The streaming queue uses chunk-scoped target IDs. Clear that completed
+        // transport before publishing the turn-scoped terminal snapshot so a
+        // final chunk offset cannot make a completed response appear 80–90% done.
+        try audio.stop()
         externallyStreamedTurnId = nil
         currentSession = session
         try persistSession(session)

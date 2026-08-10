@@ -332,6 +332,19 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertLessThanOrEqual(map.chapters.count, 12)
     }
 
+    func testTitleOverrideKeepsFirstPastedHeadingAsAChapter() throws {
+        let parsed = try ObsidianMarkdownParser.parse(
+            fileName: "Manual Paste.md",
+            contents: "# Opening\n\nFirst section.\n\n## Next\n\nSecond section.",
+            titleOverride: "User-entered title"
+        )
+        let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "item-manual-paste"))
+
+        XCTAssertEqual(parsed.title, "User-entered title")
+        XCTAssertEqual(map.chapters.map(\.title), ["Opening", "Next"])
+        XCTAssertEqual(map.chapters.first?.startChar, 0)
+    }
+
     func testHSAStyleMapKeepsNumberedSectionsAndMergesShortCallouts() throws {
         func words(_ count: Int) -> String {
             Array(repeating: "content", count: count).joined(separator: " ")
@@ -1416,6 +1429,43 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(export.interjections.first?.mediaTimeMs, 123_000)
         XCTAssertTrue(markdown.contains("2:03 — Listener interjection"))
         XCTAssertTrue(markdown.contains("Source Type: remote_stream"))
+    }
+
+    func testNativeAudioInterjectionFreezesClockBeforeSavingAndResumesAtExactAnchor() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["native_media"],
+                "interjection": ["record_audio", "capture_media_anchor"]
+            ]
+        )
+        let item = Item(
+            id: "item-exact-media-anchor",
+            title: "Exact Anchor",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/episode",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://cdn.example.com/episode.mp3", durationMs: 900_000)
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentMediaTimeValue = 123_000
+        audio.mediaTimeOnPause = 124_250
+
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: "interjections/exact-anchor.m4a")
+
+        let interjection = try XCTUnwrap(try repo.loadInterjections(sessionId: engine.currentSession?.id ?? "").first)
+        XCTAssertEqual(interjection.anchor.mediaTimeMs, 124_250)
+        XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 124_250)
+        XCTAssertEqual(audio.playedOffsets.last, 124_250)
     }
 
     func testInspectSessionRepairsMediaPercentagesFromDurableTimestamps() throws {
@@ -2581,6 +2631,28 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertNil(try store.loadSession(id: session.id))
     }
 
+    func testSQLiteStoreBulkDeleteRemovesTrashedGraphsAndPreservesActiveItems() throws {
+        let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-\(UUID().uuidString).sqlite").path
+        let store = try SQLiteSessionStore(path: path)
+        let active = Item(id: "item-active", title: "Active", mediaType: "text", text: "Keep.", externalReference: nil, status: "ready")
+        let first = Item(id: "item-trash-one", title: "One", mediaType: "text", text: "Remove one.", externalReference: nil, status: "ready")
+        let second = Item(id: "item-trash-two", title: "Two", mediaType: "text", text: "Remove two.", externalReference: nil, status: "ready")
+        try store.saveItem(active)
+        try store.saveItem(first)
+        try store.saveItem(second)
+        try store.saveSession(Session(id: "session-trash-one", itemId: first.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: first.id, position: Position(), completionPercent: 10, playbackRate: 1))
+        try store.saveSession(Session(id: "session-trash-two", itemId: second.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: second.id, position: Position(), completionPercent: 20, playbackRate: 1))
+        try store.moveItemToTrash(id: first.id)
+        try store.moveItemToTrash(id: second.id)
+
+        try store.deleteItems(ids: [first.id, second.id, first.id])
+
+        XCTAssertEqual(try store.listItems().map(\.id), [active.id])
+        XCTAssertTrue(try store.listDeletedItems().isEmpty)
+        XCTAssertNil(try store.loadSession(id: "session-trash-one"))
+        XCTAssertNil(try store.loadSession(id: "session-trash-two"))
+    }
+
     func testSQLiteStoreReplacesListeningMapForItem() throws {
         let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-\(UUID().uuidString).sqlite").path
         let store = try SQLiteSessionStore(path: path)
@@ -3386,6 +3458,8 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(observed.status, .playing)
         XCTAssertEqual(finished.status, .paused)
         XCTAssertEqual(finished.phase, .aiResponsePlayback)
+        XCTAssertEqual(finished.currentPlaybackProgressPercent, 100)
+        XCTAssertEqual(audio.stopCount, 1)
         XCTAssertEqual(engine.currentSession?.position.charOffset, "First response. Final fragment".count)
     }
 
@@ -4135,8 +4209,10 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     var playedOffsets: [Int] = []
     var preparedTexts: [String] = []
     var pauseCount = 0
+    var stopCount = 0
     var currentOffset: Int?
     var currentMediaTimeValue: Int?
+    var mediaTimeOnPause: Int?
     var currentDurationMs: Int?
     var activeTargetId: String?
     var completedTargetIds = Set<String>()
@@ -4197,12 +4273,22 @@ private final class RecordingAudioClient: AudioPlaybackClient {
 
     func pause() throws {
         pauseCount += 1
+        if let mediaTimeOnPause {
+            currentMediaTimeValue = mediaTimeOnPause
+        }
         if completeActiveTargetOnPause, let activeTargetId {
             completedTargetIds.insert(activeTargetId)
             if let completionOffsetOnPause {
                 currentOffset = completionOffsetOnPause
             }
         }
+    }
+
+    func stop() throws {
+        stopCount += 1
+        activeTargetId = nil
+        currentOffset = nil
+        currentMediaTimeValue = nil
     }
 
     func currentCharOffset() -> Int? {

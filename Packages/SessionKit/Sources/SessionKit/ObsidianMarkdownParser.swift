@@ -187,9 +187,14 @@ public struct ParsedMarkdownHeading: Equatable, Sendable {
 }
 
 public enum ObsidianMarkdownParser {
-    public static func parse(fileName: String, contents: String) throws -> ParsedObsidianMarkdown {
+    public static func parse(
+        fileName: String,
+        contents: String,
+        titleOverride: String? = nil
+    ) throws -> ParsedObsidianMarkdown {
         let parsed = splitFrontmatter(contents)
         let title = firstNonEmpty([
+            titleOverride,
             parsed.metadata["title"],
             firstMarkdownHeading(in: parsed.body),
             (fileName as NSString).deletingPathExtension

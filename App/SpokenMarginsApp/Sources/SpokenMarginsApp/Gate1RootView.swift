@@ -1540,12 +1540,31 @@ private struct PlaybackScreen: View {
 
     private var playbackHeader: some View {
         VStack(spacing: 6) {
-            Text(model.playbackHeaderTitle)
-                .font(.title2.weight(.bold))
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.white)
-                .accessibilityIdentifier("playback.title")
+            Button(action: model.openCurrentPlaybackItem) {
+                Text(model.playbackItemHeaderTitle)
+                    .font(.title2.weight(.bold))
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+            .accessibilityHint("Opens item details and listening-session history")
+            .accessibilityIdentifier("playback.itemTitle.button")
+
+            if let chapterTitle = model.playbackChapterHeaderTitle {
+                Button(action: model.openCurrentPlaybackItem) {
+                    Text(chapterTitle)
+                        .font(.subheadline.weight(.semibold))
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.white.opacity(0.82))
+                }
+                .buttonStyle(.plain)
+                .contentShape(Rectangle())
+                .accessibilityHint("Opens item details and listening-session history")
+                .accessibilityIdentifier("playback.chapterTitle.button")
+            }
         }
+        .accessibilityIdentifier("playback.title")
     }
 
     @ViewBuilder
@@ -2253,6 +2272,7 @@ private struct SettingsScreen: View {
     @State private var showsAdvancedAISettings = false
     @State private var showsDeveloperTools = false
     @State private var pendingPermanentDeletion: LibraryItemRow?
+    @State private var isEmptyRecentlyDeletedConfirmationPresented = false
     @State private var isResetConfirmationPresented = false
     @State private var copiedDiagnostics = false
 
@@ -2463,6 +2483,10 @@ private struct SettingsScreen: View {
                         Text("Items moved here can be restored. Nothing is deleted automatically.")
                             .foregroundStyle(AppColors.secondaryText)
                     } else {
+                        Button("Empty Recently Deleted", role: .destructive) {
+                            isEmptyRecentlyDeletedConfirmationPresented = true
+                        }
+                        .accessibilityIdentifier("recentlyDeleted.empty.button")
                         ForEach(model.recentlyDeletedItems) { item in
                             VStack(alignment: .leading, spacing: 8) {
                                 Text(item.title)
@@ -2612,6 +2636,14 @@ private struct SettingsScreen: View {
                 }
             } message: { item in
                 Text("\(item.title) and all of its sessions, notes, and transcripts will be deleted. This cannot be undone.")
+            }
+            .alert("Empty Recently Deleted?", isPresented: $isEmptyRecentlyDeletedConfirmationPresented) {
+                Button("Cancel", role: .cancel) {}
+                Button("Delete All Permanently", role: .destructive) {
+                    model.permanentlyDeleteRecentlyDeletedItems()
+                }
+            } message: {
+                Text("All \(model.recentlyDeletedItems.count) recently deleted item\(model.recentlyDeletedItems.count == 1 ? "" : "s") and their sessions, notes, transcripts, and downloaded audio will be permanently deleted. This cannot be undone.")
             }
             .alert("Reset the entire library?", isPresented: $isResetConfirmationPresented) {
                 Button("Cancel", role: .cancel) {}

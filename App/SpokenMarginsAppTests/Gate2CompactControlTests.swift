@@ -166,6 +166,27 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertTrue(Gate2LiveActivityPolicy.shouldEndInactive(activitySessionId: "session-any", activityId: "activity-1", inactiveSessionId: nil, trackedActivityId: "activity-1"))
     }
 
+    func testLiveActivityPolicyRetainsInterjectionButRemovesSuspensionUnsafeControls() {
+        let snapshot = compactSnapshot(
+            targetType: TargetType.transcriptBackedMedia.rawValue,
+            availableCommands: [
+                .togglePlayPause,
+                .skipBack,
+                .skipForward,
+                .setPlaybackRate,
+                .beginInterjection,
+                .finishInterjection,
+                .generateInterjectionSummary
+            ],
+            durationMs: 120_000
+        )
+
+        XCTAssertEqual(
+            Gate2LiveActivityPolicy.availableCommands(from: snapshot),
+            [.beginInterjection, .finishInterjection]
+        )
+    }
+
     func testLiveSpeechNowPlayingPolicyDoesNotCompeteWithNativeMedia() {
         let liveSpeech = compactSnapshot(
             targetType: TargetType.itemTextTTS.rawValue,

@@ -39,6 +39,23 @@ struct Gate2NowPlayingCommandAvailability: Equatable {
 }
 
 enum Gate2LiveActivityPolicy {
+    /// Live Activity intents cannot command the in-process player reliably when
+    /// the app is suspended. Now Playing remains the authoritative transport
+    /// surface; the Live Activity retains only actions that intentionally open or
+    /// hand off to the app, chiefly Interject.
+    static func availableCommands(from snapshot: CompactControlSnapshot) -> [CompactControlCommand] {
+        snapshot.availableCommands.filter {
+            switch $0 {
+            case .beginInterjection, .finishInterjection:
+                return true
+            case .play, .pause, .togglePlayPause, .skipBack, .skipForward,
+                 .seekToMediaTime, .setPlaybackRate, .jumpToChapter,
+                 .cancelInterjection, .generateInterjectionSummary, .submitFollowup:
+                return false
+            }
+        }
+    }
+
     static func isEligible(_ snapshot: CompactControlSnapshot) -> Bool {
         guard snapshot.compactSurfaceReady, snapshot.sessionId != nil else { return false }
         switch snapshot.phase {
@@ -305,7 +322,7 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
             phase: snapshot.phase.rawValue,
             progressPercent: snapshot.currentPlaybackProgressPercent,
             isRecording: snapshot.isRecording,
-            availableCommands: snapshot.availableCommands.map(\.rawValue)
+            availableCommands: Gate2LiveActivityPolicy.availableCommands(from: snapshot).map(\.rawValue)
         )
         activityTask = Task { @MainActor in
             await previousActivityTask?.value

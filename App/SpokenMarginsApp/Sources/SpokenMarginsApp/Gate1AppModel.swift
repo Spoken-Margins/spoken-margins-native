@@ -323,6 +323,7 @@ final class Gate1AppModel: ObservableObject {
                 sourceTranscriptStatus = snapshotSourceTranscriptStatus
             }
             reconcilePlaybackProgressTicker()
+            reconcileTextPlaybackStartupBackgroundTask()
             updateGate2CompactState()
         }
     }
@@ -478,6 +479,9 @@ final class Gate1AppModel: ObservableObject {
     private var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-5.6"
     private var playbackProgressTask: Task<Void, Never>?
     private var trashUndoDismissTask: Task<Void, Never>?
+    #if canImport(UIKit) && os(iOS)
+    private var textPlaybackStartupBackgroundTask: UIBackgroundTaskIdentifier = .invalid
+    #endif
     #if canImport(AVFoundation)
     private var interjectionAudioPlayer: AVPlayer?
     private var interjectionAudioCompletionTask: Task<Void, Never>?
@@ -1258,6 +1262,7 @@ final class Gate1AppModel: ObservableObject {
 
     func handleApplicationWillTerminate() {
         syncPlaybackProgressForLifecycle()
+        endTextPlaybackStartupBackgroundTask()
         gate2CompactControls.endLiveActivities()
     }
 
@@ -1403,16 +1408,29 @@ final class Gate1AppModel: ObservableObject {
     func importTextItem() {
         do {
             let store = try requireStore()
+            let itemId = "item-import-\(UUID().uuidString.lowercased())"
+            let enteredTitle = importTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            let parsed = try ObsidianMarkdownParser.parse(
+                fileName: enteredTitle.isEmpty ? "Imported Text.md" : "\(enteredTitle).md",
+                contents: importText,
+                titleOverride: enteredTitle.isEmpty ? nil : enteredTitle
+            )
+            let deterministicMap = parsed.deterministicListeningMap(itemId: itemId)
             let item = Item(
-                id: "item-import-\(UUID().uuidString.lowercased())",
-                title: importTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Imported Text" : importTitle,
+                id: itemId,
+                title: enteredTitle.isEmpty ? parsed.title : enteredTitle,
                 mediaType: "text",
-                text: importText,
+                text: parsed.text,
                 externalReference: "manual-import",
-                status: "needs_listening_map",
+                status: deterministicMap == nil ? "needs_listening_map" : "ready",
                 externalReferenceType: "manual"
             )
             try store.seed(item: item)
+            if let deterministicMap {
+                try store.saveListeningMap(deterministicMap)
+                diagnostics["lastListeningMapMode"] = "deterministic_headings"
+                diagnostics["lastGeneratedMapItem"] = item.id
+            }
             installEngine(try makeEngine(store: store))
             activeItemId = item.id
             scheduleTextAudioPrewarmIfNeeded(itemId: item.id)
@@ -2200,6 +2218,7 @@ final class Gate1AppModel: ObservableObject {
         streamingSpeechQueue.stopAndClear()
         scheduleTextAudioPrewarmIfNeeded(itemId: activeItemId)
         preparePodcastPlayback(itemId: activeItemId)
+        beginTextPlaybackStartupBackgroundTaskIfNeeded(itemId: activeItemId)
         run { engine in
             let started = try engine.startSession(itemId: activeItemId)
             snapshot = try applyPreferredPlaybackRate(to: started, engine: engine)
@@ -2214,6 +2233,46 @@ final class Gate1AppModel: ObservableObject {
             screen = .playback
             reportSuccess("Started \(snapshot.title ?? "session").")
         }
+        reconcileTextPlaybackStartupBackgroundTask()
+    }
+
+    private func beginTextPlaybackStartupBackgroundTaskIfNeeded(itemId: String) {
+        #if canImport(UIKit) && os(iOS)
+        guard textPlaybackStartupBackgroundTask == .invalid,
+              ttsVoiceSelection.supertonicVoice != nil,
+              let item = try? store?.loadItem(id: itemId),
+              item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            return
+        }
+        textPlaybackStartupBackgroundTask = UIApplication.shared.beginBackgroundTask(
+            withName: "Start native text audio"
+        ) { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.diagnostics["textAudioBackgroundStartup"] = "expired"
+                self?.endTextPlaybackStartupBackgroundTask()
+            }
+        }
+        diagnostics["textAudioBackgroundStartup"] = textPlaybackStartupBackgroundTask == .invalid
+            ? "unavailable"
+            : "protected"
+        #endif
+    }
+
+    private func reconcileTextPlaybackStartupBackgroundTask() {
+        guard snapshot.status != .starting else { return }
+        endTextPlaybackStartupBackgroundTask()
+    }
+
+    private func endTextPlaybackStartupBackgroundTask() {
+        #if canImport(UIKit) && os(iOS)
+        guard textPlaybackStartupBackgroundTask != .invalid else { return }
+        let identifier = textPlaybackStartupBackgroundTask
+        textPlaybackStartupBackgroundTask = .invalid
+        UIApplication.shared.endBackgroundTask(identifier)
+        if diagnostics["textAudioBackgroundStartup"] != "expired" {
+            diagnostics["textAudioBackgroundStartup"] = "completed"
+        }
+        #endif
     }
 
     func playPause() {
@@ -2762,6 +2821,35 @@ final class Gate1AppModel: ObservableObject {
             reportSuccess("Permanently deleted \(item.title).")
         } catch {
             reportFailure(error, context: "Permanent delete failed")
+        }
+    }
+
+    func permanentlyDeleteRecentlyDeletedItems() {
+        do {
+            let store = try requireStore()
+            let ids = recentlyDeletedItems.map(\.id)
+            guard !ids.isEmpty else {
+                reportSuccess("Recently Deleted is already empty.")
+                return
+            }
+            for id in ids {
+                guard try store.loadItem(id: id).deletedAt != nil else {
+                    throw SessionKitError.persistenceFailed("bulk_delete_requires_trashed_items")
+                }
+            }
+            ids.forEach { podcastDownloadCoordinator?.removeItem($0) }
+            try store.deleteItems(ids: ids)
+            try refreshLibraryRows(store: store)
+            guard recentlyDeletedItems.isEmpty,
+                  ids.allSatisfy({ (try? store.loadItem(id: $0)) == nil }) else {
+                throw SessionKitError.persistenceFailed("bulk_permanent_delete_verification_failed")
+            }
+            if let undoItemId = trashUndo?.itemId, ids.contains(undoItemId) {
+                dismissTrashUndo()
+            }
+            reportSuccess("Permanently deleted \(ids.count) item\(ids.count == 1 ? "" : "s") from Recently Deleted.")
+        } catch {
+            reportFailure(error, context: "Empty Recently Deleted failed")
         }
     }
 
@@ -4558,6 +4646,25 @@ final class Gate1AppModel: ObservableObject {
             return snapshotTitle
         }
         return "Ch. \(chapterIndex + 1): \(snapshotTitle)"
+    }
+
+    var playbackItemHeaderTitle: String {
+        selectedItem.title.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var playbackChapterHeaderTitle: String? {
+        let itemTitle = playbackItemHeaderTitle
+        let combined = playbackHeaderTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !combined.isEmpty,
+              combined.caseInsensitiveCompare(itemTitle) != .orderedSame else {
+            return nil
+        }
+        return combined
+    }
+
+    func openCurrentPlaybackItem() {
+        guard let itemId = snapshot.itemId ?? (selectedItem.id.isEmpty ? nil : selectedItem.id) else { return }
+        openItem(id: itemId)
     }
 
     func isCurrentTimelineChapter(_ chapter: Chapter, turnId: String? = nil) -> Bool {

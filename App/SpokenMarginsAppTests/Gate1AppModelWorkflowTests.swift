@@ -234,6 +234,51 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.title, "Scratch Item")
     }
 
+    func testManualImportBuildsListeningMapFromPastedMarkdownHeadings() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.importTitle = "Structured Notes"
+        model.importText = """
+        # Source Heading
+
+        Opening context.
+
+        ## First Claim
+
+        Evidence for the first claim.
+
+        ## Counterpoint
+
+        Evidence for the counterpoint.
+
+        ## Conclusion
+
+        Closing synthesis.
+        """
+
+        model.importTextItem()
+
+        XCTAssertEqual(model.selectedItem.title, "Structured Notes")
+        XCTAssertEqual(model.selectedItem.chapters.map(\.title), ["Source Heading", "First Claim", "Counterpoint", "Conclusion"])
+        XCTAssertEqual(model.selectedItem.chapters.first?.startChar, 0)
+        XCTAssertEqual(model.selectedItem.chapters.last?.endChar, model.selectedItem.text.count)
+        XCTAssertTrue(zip(model.selectedItem.chapters, model.selectedItem.chapters.dropFirst()).allSatisfy {
+            $0.endChar == $1.startChar
+        })
+    }
+
+    func testManualImportDoesNotInventChaptersForUnstructuredText() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.importTitle = "Plain Notes"
+        model.importText = "A paragraph without structural headings. Another sentence follows."
+
+        model.importTextItem()
+
+        XCTAssertEqual(model.selectedItem.title, "Plain Notes")
+        XCTAssertTrue(model.selectedItem.chapters.isEmpty)
+    }
+
     func testRapidManualImportsReceiveDistinctIdentifiers() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
@@ -271,6 +316,22 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.screen, .playback)
         XCTAssertEqual(model.selectedItem.id, playingItemId)
         XCTAssertFalse(model.shouldShowMiniPlayer)
+    }
+
+    func testPlaybackHeaderOpensCurrentItemWithoutStoppingItsSession() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let sessionID = try XCTUnwrap(model.snapshot.sessionId)
+
+        model.openCurrentPlaybackItem()
+
+        XCTAssertEqual(model.screen, .item)
+        XCTAssertEqual(model.selectedItem.id, "item-pill")
+        XCTAssertTrue(model.selectedItem.sessions.contains(where: { $0.id == sessionID }))
+        XCTAssertEqual(model.snapshot.sessionId, sessionID)
+        XCTAssertEqual(model.snapshot.status, .playing)
+        XCTAssertTrue(model.shouldShowMiniPlayer)
     }
 
     func testChapterFromAnotherItemClosesRestoredSessionAndStartsSelectedItem() throws {
@@ -384,6 +445,26 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.restoreItem(id: "item-pill")
         XCTAssertFalse(model.libraryItems.contains(where: { $0.id == "item-pill" }))
         XCTAssertFalse(model.recentlyDeletedItems.contains(where: { $0.id == "item-pill" }))
+    }
+
+    func testEmptyRecentlyDeletedPermanentlyDeletesEveryTrashedItem() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.importTitle = "Second Trashed Item"
+        model.importText = "A second item with its own listening session."
+        model.importTextItem()
+        let secondID = model.selectedItem.id
+
+        model.moveItemToTrash(id: "item-pill")
+        model.moveItemToTrash(id: secondID)
+        XCTAssertEqual(Set(model.recentlyDeletedItems.map(\.id)), ["item-pill", secondID])
+
+        model.permanentlyDeleteRecentlyDeletedItems()
+
+        XCTAssertTrue(model.recentlyDeletedItems.isEmpty)
+        XCTAssertFalse(model.libraryItems.contains(where: { $0.id == "item-pill" || $0.id == secondID }))
+        XCTAssertNil(model.trashUndo)
     }
 
     func testStoppingTextPlaybackKeepsSessionInProgressAndResumable() {
@@ -659,7 +740,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.isSummarizingInterjections)
     }
 
-    func testDefaultReleaseUsesDeterministicTextMapInsteadOfFoundationModelGeneration() {
+    func testDefaultReleaseBuildsDeterministicTextMapOnPasteInsteadOfUsingFoundationModel() {
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
             featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false),
@@ -669,11 +750,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.importTitle = "Deterministic Map Source"
         model.importText = "# Opening\n\nA first section.\n\n## Next Topic\n\nA second section."
         model.importTextItem()
-        XCTAssertTrue(model.selectedItem.chapters.isEmpty)
 
-        model.generateListeningMap()
-
-        XCTAssertEqual(model.diagnostics["lastListeningMapMode"], "local_deterministic")
+        XCTAssertEqual(model.diagnostics["lastListeningMapMode"], "deterministic_headings")
         XCTAssertFalse(model.selectedItem.chapters.isEmpty)
         XCTAssertFalse(model.isGeneratingListeningMap)
     }
