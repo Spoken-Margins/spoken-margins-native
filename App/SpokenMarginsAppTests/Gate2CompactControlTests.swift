@@ -52,6 +52,23 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertEqual(controller.diagnostics()["gate2NowPlaying"], "ended")
     }
 
+    func testClosingSessionExplicitlyEndsLiveActivityAndNowPlaying() {
+        let liveActivity = RecordingLiveActivityController()
+        let controller = Gate2CompactControlController(liveActivity: liveActivity)
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            gate2CompactControls: controller
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+
+        model.endSession()
+
+        XCTAssertEqual(liveActivity.endAllCallCount, 1)
+        XCTAssertEqual(controller.diagnostics()["gate2NowPlaying"], "ended")
+        XCTAssertNil(model.snapshot.sessionId)
+    }
+
     func testCompactSnapshotIsPublishedForSeededSession() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()

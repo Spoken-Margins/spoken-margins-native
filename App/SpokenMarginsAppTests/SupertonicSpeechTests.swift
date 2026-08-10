@@ -141,6 +141,40 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    func testBackgroundingDuringInitialRenderStartsSystemFallbackImmediately() async throws {
+        let template = try makeTestWAV(duration: 0.5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(
+            templateURL: template,
+            firstRenderDelay: .milliseconds(300)
+        )
+        let fallback = RecordingFallbackAudioClient()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer,
+            voice: .m2,
+            speed: 1,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            audioSessionActivator: {},
+            observesPlayerLifecycle: false,
+            fallbackClient: fallback
+        )
+        let source = "Playback should become audible before the app is suspended during initial rendering."
+        _ = try client.prepareSpeechText(source)
+        try client.play(targetId: "background-start", from: 11)
+        XCTAssertEqual(client.playbackStartStatus(targetId: "background-start"), .pending)
+
+        XCTAssertTrue(client.ensurePlaybackStartsBeforeBackgrounding())
+
+        XCTAssertEqual(fallback.preparedText, source)
+        XCTAssertEqual(fallback.playedOffsets, [11])
+        XCTAssertEqual(client.playbackStartStatus(targetId: "background-start"), .confirmed)
+        XCTAssertEqual(client.playbackTransportState(targetId: "background-start"), .playing)
+        try await Task.sleep(for: .milliseconds(350))
+        XCTAssertEqual(fallback.playedOffsets, [11], "A stale render replaced the background fallback")
+        try client.stop()
+    }
+
     func testRateChangeUsesTransportWithoutChangingSynthesisOrRestartingRender() async throws {
         let template = try makeTestWAV(duration: 3)
         defer { try? FileManager.default.removeItem(at: template) }

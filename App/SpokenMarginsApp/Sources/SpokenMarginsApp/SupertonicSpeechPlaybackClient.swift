@@ -492,6 +492,34 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         return snapshot.3 ? .pending : .confirmed
     }
 
+    /// On-device rendering may be suspended before it produces the first audio
+    /// buffer. When the app is leaving the foreground, switch an unconfirmed
+    /// start to the system speech client so background audio actually begins.
+    @discardableResult
+    func ensurePlaybackStartsBeforeBackgrounding() -> Bool {
+        let pending = lock.withLock { () -> (targetId: String, startOffset: Int)? in
+            guard !fallbackIsActive,
+                  transportIntent == .playing,
+                  startedTargetId == nil,
+                  let targetId = currentTargetId else {
+                return nil
+            }
+            generation = UUID()
+            inFlightOffsets.removeAll()
+            pendingAutoplayOffset = nil
+            pendingStartTargetId = targetId
+            playbackFailure = nil
+            return (targetId, currentStartOffset)
+        }
+        guard let pending else { return false }
+        activateSystemFallback(
+            targetId: pending.targetId,
+            startOffset: pending.startOffset,
+            reason: "background_during_initial_render"
+        )
+        return true
+    }
+
     func pause() throws {
         let snapshot = lock.withLock { () -> (Bool, AVPlayer?) in
             transportIntent = .paused
@@ -765,21 +793,29 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     private func activateSystemFallback(request: RenderRequest, reason: String) {
+        activateSystemFallback(
+            targetId: request.targetId,
+            startOffset: request.startOffset,
+            reason: reason
+        )
+    }
+
+    private func activateSystemFallback(targetId: String, startOffset: Int, reason: String) {
         let source = lock.withLock { preparedSourceText }
         do {
             _ = try fallback.prepareSpeechText(source)
-            try fallback.play(targetId: request.targetId, from: request.startOffset)
+            try fallback.play(targetId: targetId, from: startOffset)
             lock.withLock {
                 fallbackIsActive = true
-                currentTargetId = request.targetId
-                currentStartOffset = request.startOffset
+                currentTargetId = targetId
+                currentStartOffset = startOffset
                 currentChunkLength = 0
                 pendingStartTargetId = nil
-                startedTargetId = request.targetId
+                startedTargetId = targetId
                 playbackFailure = nil
                 transportIntent = .playing
             }
-            onFallback?(reason, request.startOffset)
+            onFallback?(reason, startOffset)
         } catch {
             lock.withLock {
                 fallbackIsActive = false

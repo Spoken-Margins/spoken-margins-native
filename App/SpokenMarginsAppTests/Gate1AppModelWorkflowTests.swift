@@ -770,6 +770,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.isSummarizingInterjections)
         XCTAssertTrue(model.canSummarizeInterjections)
         XCTAssertEqual(model.selectedItem.turns.last(where: { $0.turnType == "interjection_summary" })?.status, "failed")
+        XCTAssertEqual(model.feedbackEvent?.kind, .error)
+        XCTAssertTrue(model.lastError?.contains("No cleaned-transcript fallback was saved") == true)
     }
 
     func testCompletedSummaryPlaybackDoesNotBlockSummarizingANewInterjection() async throws {

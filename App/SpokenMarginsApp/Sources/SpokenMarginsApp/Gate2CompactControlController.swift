@@ -387,10 +387,17 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
         #else
         publishGeneration += 1
         let generation = publishGeneration
-        activityTask?.cancel()
+        let previousActivityTask = activityTask
+        previousActivityTask?.cancel()
         status = "ending"
         #if canImport(ActivityKit)
         activityTask = Task { @MainActor in
+            // ActivityKit requests and updates are not guaranteed to stop when the
+            // wrapping Swift task is cancelled. Wait for the prior publication to
+            // settle before sweeping, or a late request can recreate an activity
+            // immediately after an apparently successful end-all pass.
+            await previousActivityTask?.value
+            guard generation == publishGeneration else { return }
             let endedCount = await Self.endInactiveActivities(inactiveSessionId: nil, trackedActivityId: nil)
             guard generation == publishGeneration else { return }
             activityId = nil
@@ -494,9 +501,10 @@ private final class Gate2LiveSpeechNowPlayingController {
             status = "inactive"
             return
         }
+        var audioSessionFailure: String?
         if publishesLiveSpeech {
             installRemoteCommandHandlersIfNeeded()
-            activatePlaybackAudioSessionIfNeeded(for: snapshot)
+            audioSessionFailure = activatePlaybackAudioSessionIfNeeded(for: snapshot)
         } else {
             // The native AVPlayer route remains the transport-command owner. This
             // controller republishes metadata so its system Now Playing card does
@@ -506,6 +514,9 @@ private final class Gate2LiveSpeechNowPlayingController {
         #if canImport(UIKit)
         UIApplication.shared.beginReceivingRemoteControlEvents()
         #endif
+        if publishesLiveSpeech {
+            configureRemoteCommandAvailability(for: snapshot)
+        }
         let durationSeconds = snapshot.currentPlaybackDurationMs.map { max(0, Double($0) / 1000) }
         let elapsedSeconds = snapshot.currentMediaTimeMs.map { max(0, Double($0) / 1000) }
         let fallbackDuration = 100.0
@@ -513,20 +524,32 @@ private final class Gate2LiveSpeechNowPlayingController {
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: snapshot.title ?? "Spoken Margins",
             MPMediaItemPropertyAlbumTitle: snapshot.chapterTitle ?? "Session",
+            MPMediaItemPropertyArtist: "Spoken Margins",
             MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsedSeconds ?? fallbackElapsed,
             MPMediaItemPropertyPlaybackDuration: durationSeconds ?? fallbackDuration,
-            MPNowPlayingInfoPropertyPlaybackRate: snapshot.status == .playing ? snapshot.playbackRate : 0,
+            MPNowPlayingInfoPropertyPlaybackRate: snapshot.status.isPlaybackActive ? snapshot.playbackRate : 0,
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue
         ]
         info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = snapshot.playbackRate
         info[MPNowPlayingInfoPropertyIsLiveStream] = false
+        info[MPNowPlayingInfoPropertyExternalContentIdentifier] = snapshot.sessionId
         if let targetId = snapshot.targetId, let url = URL(string: targetId), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
             info[MPNowPlayingInfoPropertyAssetURL] = url
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
         ownsNowPlayingInfo = true
-        status = publishesLiveSpeech ? "live_speech_published" : "native_media_metadata_published"
-        guard publishesLiveSpeech else { return }
+        if let audioSessionFailure {
+            status = "live_speech_audio_session_failed:\(audioSessionFailure)"
+        } else {
+            status = publishesLiveSpeech ? "live_speech_published" : "native_media_metadata_published"
+        }
+        #else
+        status = "unavailable"
+        #endif
+    }
+
+    private func configureRemoteCommandAvailability(for snapshot: CompactControlSnapshot) {
+        #if canImport(MediaPlayer)
         let center = MPRemoteCommandCenter.shared()
         let availability = Gate2NowPlayingCommandAvailability(snapshot: snapshot)
         center.playCommand.isEnabled = availability.canPlay
@@ -540,8 +563,6 @@ private final class Gate2LiveSpeechNowPlayingController {
         center.changePlaybackPositionCommand.isEnabled = availability.canSeek
         center.changePlaybackRateCommand.isEnabled = availability.canSetPlaybackRate
         center.changePlaybackRateCommand.supportedPlaybackRates = [0.75, 1.0, 1.25, 1.5, 2.0]
-        #else
-        status = "unavailable"
         #endif
     }
 
@@ -586,18 +607,21 @@ private final class Gate2LiveSpeechNowPlayingController {
         #endif
     }
 
-    private func activatePlaybackAudioSessionIfNeeded(for snapshot: CompactControlSnapshot) {
+    private func activatePlaybackAudioSessionIfNeeded(for snapshot: CompactControlSnapshot) -> String? {
         #if canImport(AVFoundation) && os(iOS)
-        guard snapshot.status.isPlaybackActive || snapshot.status == .paused else { return }
+        guard snapshot.status.isPlaybackActive || snapshot.status == .paused else { return nil }
         do {
             let session = AVAudioSession.sharedInstance()
             if session.category != .playback {
                 try session.setCategory(.playback, mode: .spokenAudio, options: [])
             }
             try session.setActive(true)
+            return nil
         } catch {
-            status = "audio_session_failed:\(error.localizedDescription)"
+            return error.localizedDescription
         }
+        #else
+        return nil
         #endif
     }
 

@@ -1130,6 +1130,16 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["lockScreenLifecycleRefresh"] = snapshot.targetType ?? "none"
     }
 
+    func handleAppBecameInactiveOrBackground() {
+        if snapshot.status == .starting,
+           let supertonic = speechPlaybackClient as? SupertonicSpeechPlaybackClient,
+           supertonic.ensurePlaybackStartsBeforeBackgrounding() {
+            diagnostics["textAudioBackgroundStartup"] = "system_fallback_started"
+        }
+        syncPlaybackProgressForLifecycle()
+        refreshLockScreenSurfacesForLifecycle()
+    }
+
     private func reflectTextAudioPrewarmStatusIfActive(itemId: String) {
         let updated = snapshotReflectingTextAudioPrewarmStatus(snapshot, itemId: itemId)
         guard updated != snapshot else { return }

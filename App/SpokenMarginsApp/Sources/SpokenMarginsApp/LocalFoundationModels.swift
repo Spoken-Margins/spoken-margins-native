@@ -118,6 +118,9 @@ enum LocalInterjectionSummaryPolicy {
                   bullet.split(whereSeparator: { $0.isWhitespace }).count <= maximumBulletWords else {
                 throw LocalFoundationModelError.invalidInterjectionSummary
             }
+            if sourceWordCount > 12, sharesLongPhrase(bullet, with: sourceRecord.note) {
+                throw LocalFoundationModelError.invalidInterjectionSummary
+            }
             for record in payload.interjections {
                 if sharesLongPhrase(bullet, with: record.anchorBefore)
                     || sharesLongPhrase(bullet, with: record.anchorAfter) {
@@ -130,18 +133,7 @@ enum LocalInterjectionSummaryPolicy {
 
     static func summaryWordLimit(for sourceWordCount: Int) -> Int {
         guard sourceWordCount > 12 else { return 12 }
-        return min(24, max(12, Int((Double(sourceWordCount) * 0.72).rounded(.down))))
-    }
-
-    static func fallbackRewrite(for record: LocalInterjectionSummaryRecord) throws -> String {
-        let cleaned = cleanSpokenNote(record.note)
-        guard !cleaned.isEmpty else {
-            throw LocalFoundationModelError.invalidInterjectionSummary
-        }
-        // This fallback is derived only from the listener-authored note. It cannot copy
-        // source anchors or answer the listener, and it keeps one difficult model output
-        // from discarding every other valid note in the session.
-        return cleaned
+        return min(24, max(10, Int((Double(sourceWordCount) * 0.60).rounded(.down))))
     }
 
     private static func replacing(_ pattern: String, in source: String, with replacement: String) -> String {
@@ -329,7 +321,7 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
                         bullets.append(try await rewrite(record: record, payload: scopedPayload, includeAnchors: false, strict: true))
                     } catch {
                         if error is CancellationError { throw error }
-                        bullets.append(try LocalInterjectionSummaryPolicy.fallbackRewrite(for: record))
+                        throw LocalFoundationModelError.invalidInterjectionSummary
                     }
                 }
             }
@@ -371,7 +363,7 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
             for: record.note.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).count
         )
         var prompt = """
-        Compress this single listener note into one polished sentence of at most \(wordLimit) words. State the strongest distinct claim directly. Remove verbal ticks such as “yeah,” “well,” “you know,” “I mean,” and “I think,” along with fillers, generic acknowledgements, repeated framing, stutters, false starts, and transcription noise. Preserve meaningful uncertainty, qualifications, questions, preferences, and requested actions. Do not answer the note or add conclusions.
+        Summarize this single listener note into one materially shorter sentence of at most \(wordLimit) words. Precipitate its central claim, question, preference, or requested action instead of lightly editing or excerpting the transcript. State that point directly. Remove verbal ticks such as “yeah,” “well,” “you know,” “I mean,” and “I think,” along with fillers, generic acknowledgements, repeated framing, stutters, false starts, and transcription noise. Preserve meaningful uncertainty and qualifications. Do not answer the note or add conclusions. Do not copy any seven-word sequence from the listener note.
 
         LISTENER NOTE:
         \(record.note)
@@ -428,7 +420,8 @@ enum LocalFoundationModelError: LocalizedError, Equatable {
         case .sourceTextUnavailable: return "No source text is available for a Listening Map."
         case .outputTooLong: return "The on-device model returned chapter metadata outside the allowed length."
         case .excessiveSourceQuotation: return "The on-device model copied too much source text into chapter metadata."
-        case .invalidInterjectionSummary: return "The on-device model did not produce a safe, concise listener-note summary."
+        case .invalidInterjectionSummary:
+            return "Apple’s on-device model did not produce a materially shorter summary. No cleaned-transcript fallback was saved. Try again."
         }
     }
 }

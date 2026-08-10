@@ -16,6 +16,8 @@ final class LocalFoundationModelsTests: XCTestCase {
         XCTAssertTrue(anchored.contains("Remove verbal ticks"))
         XCTAssertTrue(anchored.contains("Preserve meaningful uncertainty"))
         XCTAssertTrue(anchored.contains("at most 12 words"))
+        XCTAssertTrue(anchored.contains("Precipitate its central claim"))
+        XCTAssertTrue(anchored.contains("Do not copy any seven-word sequence"))
         XCTAssertTrue(anchored.contains("Do not answer the note"))
         XCTAssertTrue(anchored.contains("OPTIONAL SOURCE CONTEXT"))
         XCTAssertTrue(anchored.contains("A source claim"))
@@ -30,24 +32,6 @@ final class LocalFoundationModelsTests: XCTestCase {
         )
 
         XCTAssertEqual(cleaned, "Maybe this is a good test")
-    }
-
-    func testDeterministicSummaryFallbackKeepsTheCompleteListenerNoteWithoutSourceAnchors() throws {
-        let record = LocalInterjectionSummaryRecord(
-            id: "note-fallback",
-            anchorBefore: "A long publisher passage that must never become the listener's words.",
-            anchorAfter: "More publisher language that is context rather than listener intent.",
-            note: "Um, I, I am still uncertain whether this premise supports the conclusion, and I want to compare it with the speaker's later qualification before deciding."
-        )
-
-        let fallback = try LocalInterjectionSummaryPolicy.fallbackRewrite(for: record)
-
-        XCTAssertEqual(
-            fallback,
-            "I am still uncertain whether this premise supports the conclusion, and I want to compare it with the speaker's later qualification before deciding"
-        )
-        XCTAssertFalse(fallback.contains(record.anchorBefore))
-        XCTAssertFalse(fallback.contains(record.anchorAfter))
     }
 
     func testSummaryValidationRejectsAnchorCopyAndResidualFillers() throws {
@@ -106,6 +90,10 @@ final class LocalFoundationModelsTests: XCTestCase {
         ))
         XCTAssertNoThrow(try LocalInterjectionSummaryPolicy.validate(
             bullets: ["America's strongest advantage is its relationships with middle powers; abandoning them would significantly weaken the country."],
+            payload: payload
+        ))
+        XCTAssertThrowsError(try LocalInterjectionSummaryPolicy.validate(
+            bullets: ["There's a lot of good points that they're making here and their best one is America's relationship with middle powers."],
             payload: payload
         ))
     }
