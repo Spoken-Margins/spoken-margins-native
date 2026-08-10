@@ -38,14 +38,18 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
     private var didProcess = false
     private var didCompleteRequest = false
     private typealias ExtractionCompletion = @Sendable (Result<SharedImport, Error>) -> Void
+    private let cardView = UIView()
+    private let iconView = UIImageView()
+    private let titleLabel = UILabel()
     private let statusLabel = UILabel()
     private let closeButton = UIButton(type: .system)
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
+        preferredContentSize = CGSize(width: 320, height: 148)
         configureStatusUI()
-        updateStatus("Preparing shared item...")
+        updateStatus("Adding to your library…")
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -73,13 +77,14 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
             UTType.propertyList.identifier,
             UTType.pdf.identifier,
             UTType.fileURL.identifier,
-            UTType.plainText.identifier,
-            UTType.text.identifier,
             UTType.url.identifier
         ]
         let candidates = providers.flatMap { provider -> [ProviderCandidate] in
             let identifiers = preferredIdentifiers.filter(provider.hasItemConformingToTypeIdentifier)
-                + provider.registeredTypeIdentifiers.filter { !preferredIdentifiers.contains($0) }
+                + provider.registeredTypeIdentifiers.filter {
+                    !preferredIdentifiers.contains($0)
+                        && Self.acceptsRegisteredIdentifier($0, suggestedName: provider.suggestedName)
+                }
             return identifiers.map { ProviderCandidate(provider: provider, identifier: $0) }
         }
         loadFirstSharedImport(candidates, index: 0, completion: completion)
@@ -175,25 +180,60 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
     }
 
     private func configureStatusUI() {
+        cardView.translatesAutoresizingMaskIntoConstraints = false
+        cardView.backgroundColor = .secondarySystemBackground
+        cardView.layer.cornerRadius = 18
+        cardView.layer.cornerCurve = .continuous
+
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.image = UIImage(systemName: "waveform.and.mic")
+        iconView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 20, weight: .semibold)
+        iconView.tintColor = .systemGreen
+        iconView.contentMode = .scaleAspectFit
+
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.text = "Spoken Margins"
+        titleLabel.font = .preferredFont(forTextStyle: .headline)
+        titleLabel.textColor = .label
+
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.textAlignment = .center
+        statusLabel.textAlignment = .left
         statusLabel.numberOfLines = 0
-        statusLabel.font = .preferredFont(forTextStyle: .body)
-        statusLabel.textColor = .label
+        statusLabel.font = .preferredFont(forTextStyle: .subheadline)
+        statusLabel.textColor = .secondaryLabel
 
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.setTitle("Done", for: .normal)
         closeButton.addTarget(self, action: #selector(close), for: .touchUpInside)
         closeButton.isHidden = true
 
-        view.addSubview(statusLabel)
-        view.addSubview(closeButton)
+        view.addSubview(cardView)
+        cardView.addSubview(iconView)
+        cardView.addSubview(titleLabel)
+        cardView.addSubview(statusLabel)
+        cardView.addSubview(closeButton)
         NSLayoutConstraint.activate([
-            statusLabel.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
-            statusLabel.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
-            statusLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -20),
-            closeButton.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 20),
-            closeButton.centerXAnchor.constraint(equalTo: view.centerXAnchor)
+            cardView.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
+            cardView.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
+            cardView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+            cardView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
+
+            iconView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 16),
+            iconView.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 16),
+            iconView.widthAnchor.constraint(equalToConstant: 28),
+            iconView.heightAnchor.constraint(equalToConstant: 28),
+
+            titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 10),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -8),
+            titleLabel.centerYAnchor.constraint(equalTo: iconView.centerYAnchor),
+
+            statusLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            statusLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -16),
+            statusLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 4),
+            statusLabel.bottomAnchor.constraint(lessThanOrEqualTo: cardView.bottomAnchor, constant: -14),
+
+            closeButton.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -16),
+            closeButton.centerYAnchor.constraint(equalTo: iconView.centerYAnchor)
         ])
     }
 
@@ -209,7 +249,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
     private func showSaved(_ message: String) {
         updateStatus(message)
         closeButton.isHidden = false
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
             self?.close()
         }
     }
@@ -238,7 +278,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
             if let url = firstURL(in: cleaned), cleaned == url.absoluteString || cleaned.count < url.absoluteString.count + 20 {
                 return .sourceLink(url.absoluteString)
             }
-            return browserPayloadForPlainText(text, title: "Shared Text").map(SharedImport.browserText)
+            return nil
         }
         if let dictionary = item as? [String: Any] ?? item as? NSDictionary as? [String: Any],
            let url = firstWebURL(in: dictionary) {
@@ -249,7 +289,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
             if let url = firstURL(in: cleaned), cleaned == url.absoluteString || cleaned.count < url.absoluteString.count + 20 {
                 return .sourceLink(url.absoluteString)
             }
-            return browserPayloadForPlainText(cleaned, title: "Shared Text").map(SharedImport.browserText)
+            return nil
         }
         return nil
     }
@@ -324,16 +364,10 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         )
     }
 
-    nonisolated private static func browserPayloadForPlainText(_ text: String, title: String) -> BrowserTextSharePayload? {
-        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleaned.isEmpty else { return nil }
-        return BrowserTextSharePayload(
-            id: "browser-text-\(UUID().uuidString)",
-            captureMode: "plain_text_file",
-            contentFormat: "plain_text",
-            source: .init(url: "shared-text://share-sheet", title: title),
-            text: cleaned
-        )
+    nonisolated private static func acceptsRegisteredIdentifier(_ identifier: String, suggestedName: String?) -> Bool {
+        guard let type = UTType(identifier), type.conforms(to: .text) else { return true }
+        let fileExtension = ((suggestedName ?? "") as NSString).pathExtension.lowercased()
+        return ["md", "markdown", "txt"].contains(fileExtension)
     }
 
     nonisolated private static func firstURL(in text: String) -> URL? {

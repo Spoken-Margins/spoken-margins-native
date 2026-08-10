@@ -1,6 +1,5 @@
 import {
   captureReadablePage,
-  captureSelectedText,
   normalizeWhitespace,
   sourceMetadata
 } from "./browserExtractionCore.mjs";
@@ -11,7 +10,6 @@ import {
   globalRef.SpokenMarginsBrowserTextCapture = {
     normalizeWhitespace,
     sourceMetadata,
-    captureSelectedText: (documentRef) => captureSelectedText(globalRef, documentRef),
     captureReadablePage: (documentRef) => captureReadablePage(globalRef, documentRef)
   };
 })(globalThis);

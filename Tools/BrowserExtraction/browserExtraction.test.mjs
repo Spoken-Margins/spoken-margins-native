@@ -82,14 +82,14 @@ test("popup capture returns the injected result without tabs messaging", async (
     }
   };
 
-  assert.equal(await capturePageText(extensionAPI, "captureReadablePage"), payload);
+  assert.equal(await capturePageText(extensionAPI), payload);
   assert.equal(calls.length, 2);
   assert.deepEqual(calls[0], {
     target: { tabId: 42 },
     files: ["browserTextCapture.js"]
   });
   assert.equal(calls[1].func, invokeInjectedCapture);
-  assert.deepEqual(calls[1].args, ["captureReadablePage"]);
+  assert.deepEqual(calls[1].args, []);
   assert.equal(extensionAPI.tabs.sendMessage, undefined);
 });
 
@@ -106,7 +106,7 @@ test("popup capture reports the injected failure instead of a generic missing re
   };
 
   await assert.rejects(
-    capturePageText(extensionAPI, "captureReadablePage"),
+    capturePageText(extensionAPI),
     /No readable article was found\./
   );
 });
@@ -120,7 +120,7 @@ test("injected dispatcher invokes the initialized page capture directly", () => 
     captureReadablePage: (document) => ({ title: document.title })
   };
   try {
-    assert.deepEqual(invokeInjectedCapture("captureReadablePage"), {
+    assert.deepEqual(invokeInjectedCapture(), {
       ok: true,
       payload: { title: "Direct Capture" }
     });

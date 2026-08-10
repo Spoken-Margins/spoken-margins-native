@@ -1,30 +1,55 @@
 body {
   margin: 0;
-  width: 176px;
-  min-width: 176px;
+  width: 214px;
+  min-width: 214px;
   color: #f6f6f6;
-  background: #141414;
+  background: #101312;
   font: 14px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
 }
 
 main {
   display: grid;
-  gap: 8px;
-  padding: 10px;
+  gap: 10px;
+  padding: 12px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  color: #07110d;
+  background: #57d696;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: -0.2px;
 }
 
 h1 {
-  margin: 0 0 4px;
-  font-size: 15px;
+  margin: 0;
+  font-size: 14px;
   line-height: 1.2;
 }
 
+.brand p {
+  margin: 2px 0 0;
+  color: #aeb8b3;
+  font-size: 11px;
+}
+
 button {
-  min-height: 36px;
+  min-height: 32px;
   border: 0;
   border-radius: 8px;
   color: #111;
-  background: #f4f4f4;
+  background: #57d696;
   font: inherit;
   font-weight: 700;
 }
@@ -34,7 +59,7 @@ button:disabled {
 }
 
 #status {
-  min-height: 16px;
+  min-height: 14px;
   margin: 0;
   color: #bdbdbd;
   font-size: 11px;

@@ -7,9 +7,14 @@
   </head>
   <body>
     <main>
-      <h1>Spoken Margins</h1>
-      <button id="selectedTextButton" type="button">Selected Text</button>
-      <button id="readablePageButton" type="button">Readable Page</button>
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">SM</span>
+        <div>
+          <h1>Spoken Margins</h1>
+          <p>Adding this page…</p>
+        </div>
+      </div>
+      <button id="readablePageButton" type="button" hidden>Try Again</button>
       <p id="status" role="status"></p>
     </main>
     <script src="popup.js"></script>

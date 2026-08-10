@@ -25,7 +25,7 @@ final class LocalFoundationModelsTests: XCTestCase {
 
     func testSpokenNoteCleanupRemovesFillersAndRepeatedWordsWithoutRemovingUncertainty() {
         let cleaned = LocalInterjectionSummaryPolicy.cleanSpokenNote(
-            "So, uh, I, I think that, um, maybe this is a good test."
+            "So, uhm, I, I think that, ahh, um, maybe this is a good test."
         )
 
         XCTAssertEqual(cleaned, "So, I think that, maybe this is a good test")
@@ -68,7 +68,7 @@ final class LocalFoundationModelsTests: XCTestCase {
             payload: payload
         ))
         XCTAssertThrowsError(try LocalInterjectionSummaryPolicy.validate(
-            bullets: ["Um, maybe this tests whether clipped posts remain understandable."],
+            bullets: ["Uhm, maybe this tests whether clipped posts remain understandable."],
             payload: payload
         ))
         XCTAssertEqual(

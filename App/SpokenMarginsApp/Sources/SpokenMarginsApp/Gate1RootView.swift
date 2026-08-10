@@ -333,7 +333,7 @@ private struct HelpScreen: View {
                     }
                 }
                 Section("Safari Articles") {
-                    Text("In Safari, open Manage Extensions and enable Spoken Margins Text. Use Send to Spoken Margins to capture selected text or the readable page.")
+                    Text("In Safari, open Manage Extensions and enable Spoken Margins Text. Tap the extension once to send the readable page to Spoken Margins.")
                     Text("For Safari’s Share menu, run the Add Article to Spoken Margins Shortcut. The Add Link field in the app is for podcast, RSS, or direct audio links.")
                 }
                 Section("Files and PDFs") {
@@ -1562,6 +1562,28 @@ private struct PlaybackScreen: View {
                 .contentShape(Rectangle())
                 .accessibilityHint("Opens item details and listening-session history")
                 .accessibilityIdentifier("playback.chapterTitle.button")
+            }
+
+            if let nextChapterTitle = model.playbackNextChapterTitle {
+                Button(action: model.jumpToNextPlaybackChapter) {
+                    HStack(spacing: 6) {
+                        Text("Next")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.62))
+                        Text(nextChapterTitle)
+                            .font(.caption.weight(.semibold))
+                            .lineLimit(1)
+                        Image(systemName: "chevron.forward")
+                            .font(.caption2.weight(.bold))
+                    }
+                    .foregroundStyle(.white.opacity(0.9))
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: 32)
+                    .background(.white.opacity(0.09), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Skip to next chapter, \(nextChapterTitle)")
+                .accessibilityIdentifier("playback.nextChapter.button")
             }
         }
         .accessibilityIdentifier("playback.title")
@@ -2946,6 +2968,12 @@ private struct ExportScreen: View {
                             Toggle("Source Text", isOn: $model.exportIncludesSourceText)
                                 .accessibilityIdentifier("export.includeSourceText.toggle")
                                 .onCompatibleChange(of: model.exportIncludesSourceText) { _ in model.exportOptionsChanged() }
+                                .disabled(!model.exportSourceTextAvailable)
+                            if !model.exportSourceTextAvailable {
+                                Text("Native audio exports include only bounded listening context, not full source text.")
+                                    .font(.caption)
+                                    .foregroundStyle(AppColors.secondaryText)
+                            }
                             Toggle("Reference", isOn: $model.exportIncludesReference)
                                 .accessibilityIdentifier("export.includeReference.toggle")
                                 .onCompatibleChange(of: model.exportIncludesReference) { _ in model.exportOptionsChanged() }

@@ -40,8 +40,10 @@ test("popup and manifest reference flattened bundled resources", () => {
   assert.match(popup, /href="popup\.css"/);
   assert.match(popup, /src="popup\.js"/);
   assert.doesNotMatch(popup, /Styles\/popup\.css|Scripts\/popup\.js/);
-  assert.match(styles, /width:\s*176px/);
-  assert.match(styles, /min-height:\s*36px/);
+  assert.match(styles, /width:\s*214px/);
+  assert.match(styles, /min-height:\s*32px/);
+  assert.doesNotMatch(popup, /selectedTextButton|Selected Text/);
+  assert.match(popup, /Adding this page/);
 });
 
 function loadCapture(documentRef) {
@@ -59,40 +61,12 @@ function loadCapture(documentRef) {
   return context.SpokenMarginsBrowserTextCapture;
 }
 
-test("selected text capture preserves page metadata", () => {
-  const documentRef = {
-    title: "Fallback Title",
-    location: { href: "https://example.com/selected" },
-    getSelection: () => ({ toString: () => "  Selected\n\npage text. " }),
-    querySelector: (selector) => {
-      if (selector === "meta[property='og:title']") {
-        return { getAttribute: () => "Article Title" };
-      }
-      if (selector === "meta[name='author']") {
-        return { getAttribute: () => "A. Writer" };
-      }
-      return null;
-    }
-  };
-
-  const capture = loadCapture(documentRef);
-  const payload = capture.captureSelectedText(documentRef);
-
-  assert.equal(payload.id, "test-payload-id");
-  assert.equal(payload.captureMode, "selected_text");
-  assert.equal(payload.contentFormat, "plain_text");
-  assert.equal(payload.text, "Selected page text.");
-  assert.equal(payload.source.title, "Article Title");
-  assert.equal(payload.source.url, "https://example.com/selected");
-  assert.equal(payload.source.author, "A. Writer");
-  assert.equal(payload.requestedContinuation.startSession, false);
-});
-
 test("readable page bundle contains the pinned local extractor", () => {
   const source = fs.readFileSync("App/SpokenMarginsBrowserTextExtension/Resources/Scripts/browserTextCapture.js", "utf8");
   const license = fs.readFileSync("App/SpokenMarginsBrowserTextExtension/Resources/Defuddle-LICENSE.txt", "utf8");
 
   assert.match(source, /Bundled Defuddle 0\.19\.1/);
   assert.match(source, /networkFallback/);
+  assert.doesNotMatch(source, /captureSelectedText/);
   assert.match(license, /Copyright \(c\) 2025 Steph Ango/);
 });

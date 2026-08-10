@@ -6,17 +6,13 @@ export async function activeTab(extensionAPI) {
   return tabs[0];
 }
 
-export function invokeInjectedCapture(action) {
+export function invokeInjectedCapture() {
   try {
     const capture = globalThis.SpokenMarginsBrowserTextCapture;
     if (!capture) {
       return { ok: false, error: "The page capture script did not initialize." };
     }
-    const captureFunction = action === "captureSelectedText"
-      ? capture.captureSelectedText
-      : action === "captureReadablePage"
-        ? capture.captureReadablePage
-        : null;
+    const captureFunction = capture.captureReadablePage;
     if (typeof captureFunction !== "function") {
       return { ok: false, error: "The requested page capture action is unavailable." };
     }
@@ -32,7 +28,7 @@ export function invokeInjectedCapture(action) {
   }
 }
 
-export async function capturePageText(extensionAPI, action) {
+export async function capturePageText(extensionAPI) {
   const tab = await activeTab(extensionAPI);
   const target = { tabId: tab.id };
   try {
@@ -49,7 +45,7 @@ export async function capturePageText(extensionAPI, action) {
     results = await extensionAPI.scripting.executeScript({
       target,
       func: invokeInjectedCapture,
-      args: [action]
+      args: []
     });
   } catch (error) {
     throw new Error(`Safari could not run page capture: ${error instanceof Error ? error.message : String(error)}`);

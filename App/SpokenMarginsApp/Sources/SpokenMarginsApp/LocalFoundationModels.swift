@@ -59,11 +59,12 @@ struct LocalInterjectionSummaryPayload: Codable, Equatable, Sendable {
 
 enum LocalInterjectionSummaryPolicy {
     static let anchorCharacterLimit = 240
+    private static let fillerPattern = #"(?i)\b(?:u+h+m*|u+m+|e+r+m*|a+h+|h+m+)\b"#
 
     static func cleanSpokenNote(_ note: String) -> String {
         var cleaned = note
         cleaned = replacing(
-            #"(?i)\b(?:um+|uh+|er+|ah+|hmm+)\b[\s,;:—–-]*"#,
+            fillerPattern + #"[\s,;:—–-]*"#,
             in: cleaned,
             with: ""
         )
@@ -93,7 +94,7 @@ enum LocalInterjectionSummaryPolicy {
         guard !cleaned.isEmpty, cleaned.count <= payload.interjections.count else {
             throw LocalFoundationModelError.invalidInterjectionSummary
         }
-        let filler = try NSRegularExpression(pattern: #"(?i)\b(?:um+|uh+|er+|ah+|hmm+)\b"#)
+        let filler = try NSRegularExpression(pattern: fillerPattern)
         let longestListenerNote = payload.interjections
             .map { normalizedWords($0.note).count }
             .max() ?? 0
@@ -336,7 +337,7 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
             generating: GeneratedInterjectionRewrite.self,
             options: GenerationOptions(sampling: .greedy, maximumResponseTokens: 120)
         )
-        let candidate = response.content.rewrittenNote
+        let candidate = LocalInterjectionSummaryPolicy.cleanSpokenNote(response.content.rewrittenNote)
             .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "-•")))
         return try LocalInterjectionSummaryPolicy.validate(bullets: [candidate], payload: payload)[0]
     }

@@ -10,29 +10,28 @@ import {
   const extensionAPI = globalRef.browser || globalRef.chrome;
   const nativeApplicationID = "com.spokenmargins.native.browsertext";
   const status = globalRef.document.getElementById("status");
-  const selectedTextButton = globalRef.document.getElementById("selectedTextButton");
   const readablePageButton = globalRef.document.getElementById("readablePageButton");
 
   function setStatus(message) {
     status.textContent = message || "";
   }
 
-  async function run(action) {
-    selectedTextButton.disabled = true;
+  async function run() {
     readablePageButton.disabled = true;
+    readablePageButton.hidden = true;
     setStatus("Sending to Spoken Margins...");
     try {
-      const payload = await capturePageText(extensionAPI, action);
+      const payload = await capturePageText(extensionAPI);
       const openURL = await storePayload(extensionAPI, nativeApplicationID, payload);
       await openNativeApp(extensionAPI, openURL);
       setStatus("Opening Spoken Margins.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
-      selectedTextButton.disabled = false;
       readablePageButton.disabled = false;
+      readablePageButton.hidden = false;
     }
   }
 
-  selectedTextButton.addEventListener("click", () => { void run("captureSelectedText"); });
-  readablePageButton.addEventListener("click", () => { void run("captureReadablePage"); });
+  readablePageButton.addEventListener("click", () => { void run(); });
+  void run();
 })(globalThis);

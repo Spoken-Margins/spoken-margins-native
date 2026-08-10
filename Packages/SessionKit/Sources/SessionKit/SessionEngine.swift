@@ -1191,7 +1191,8 @@ public final class SessionEngine {
         guard !turn.sourceInterjectionIds.isEmpty else { return false }
         let byId = Dictionary(uniqueKeysWithValues: interjections.map { ($0.id, $0) })
         let sourceInterjections = turn.sourceInterjectionIds.compactMap { byId[$0] }
-        guard sourceInterjections.count == turn.sourceInterjectionIds.count else { return false }
+        guard sourceInterjections.count == turn.sourceInterjectionIds.count,
+              sourceInterjections.allSatisfy({ $0.status == "active" }) else { return false }
         switch target.type {
         case .item:
             return sourceInterjections.allSatisfy { $0.targetType == .item && $0.targetId == target.id }
@@ -1732,6 +1733,7 @@ public final class SessionEngine {
     public func selectSummaryCandidates(scope: SummaryScope) throws -> [Interjection] {
         let session = try resolveSession(scope.sessionId)
         let all = try repository.loadInterjections(sessionId: scope.sessionId ?? session.id)
+            .filter { $0.status == "active" }
         if let explicit = scope.interjectionIds {
             lastSummaryCandidates = all.filter { explicit.contains($0.id) }
         } else if scope.targetType == "turn", let turnId = scope.turnId {
@@ -1762,6 +1764,7 @@ public final class SessionEngine {
     private func summaryCandidates(scope: SummaryScope) throws -> [Interjection] {
         let session = try summarySession(scope.sessionId)
         let all = try repository.loadInterjections(sessionId: scope.sessionId ?? session.id)
+            .filter { $0.status == "active" }
         if let explicit = scope.interjectionIds {
             return all.filter { explicit.contains($0.id) }
         }
@@ -1788,7 +1791,13 @@ public final class SessionEngine {
         let sourceTimeline = try repository.loadTranscriptTimeline(itemId: item.id)?.timeline
         let allInterjections = try repository.loadInterjections(sessionId: session.id)
             .filter { $0.status == "active" }
-        let allTurns = try repository.loadTurns(sessionId: session.id)
+        let activeInterjectionIDs = Set(allInterjections.map(\.id))
+        let allTurns = try repository.loadTurns(sessionId: session.id).filter { turn in
+            guard turn.turnType == "interjection_summary", !turn.sourceInterjectionIds.isEmpty else {
+                return true
+            }
+            return Set(turn.sourceInterjectionIds).isSubset(of: activeInterjectionIDs)
+        }
         let exposesFullSourceText = options.includeFullText && !isNativeAudioSource(item)
         let sourceTranscript = exposesFullSourceText
             ? sourceTimeline?.segments

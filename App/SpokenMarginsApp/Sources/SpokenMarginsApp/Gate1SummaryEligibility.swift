@@ -12,6 +12,7 @@ struct Gate1SummaryEligibility {
             .filter { $0.turnType == "interjection_summary" && $0.status == "complete" }
             .flatMap(\.sourceInterjectionIds))
         return interjections.filter { interjection in
+            guard interjection.status == "active" else { return false }
             guard !summarized.contains(interjection.id) else { return false }
             switch currentTargetType {
             case TargetType.summaryTurnTTS.rawValue, TargetType.assistantTurnTTS.rawValue:

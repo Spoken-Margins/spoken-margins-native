@@ -3630,6 +3630,42 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertFalse(selectedMarkdown.contains("deleted note"))
     }
 
+    func testDeletedInterjectionInvalidatesItsDerivedSummaryAndCannotBeResummarized() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: ["sync": ["canonical_persistence"]]
+        )
+        let item = Item(id: "item-summary-delete", title: "Summary Deletion", mediaType: "text", text: "Source.", externalReference: nil, status: "ready")
+        let session = Session(id: "session-summary-delete", itemId: item.id, status: "in_progress", phase: .conversation, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 20, playbackRate: 1)
+        let active = Interjection(id: "ij-active", itemId: item.id, sessionId: session.id, targetType: .item, targetId: item.id, createdAt: Date(timeIntervalSince1970: 1), roughPercent: 10, anchor: Anchor(anchorType: .text, startChar: 0, endChar: 3, anchorBefore: "Source.", anchorAfter: ""), audioPath: nil, audioStatus: "none", transcriptionStatus: "transcribed", transcript: "Keep this note", cleanedTranscript: nil, displayText: nil, status: "active")
+        let deleted = Interjection(id: "ij-deleted", itemId: item.id, sessionId: session.id, targetType: .item, targetId: item.id, createdAt: Date(timeIntervalSince1970: 2), roughPercent: 15, anchor: Anchor(anchorType: .text, startChar: 0, endChar: 3, anchorBefore: "Source.", anchorAfter: ""), audioPath: nil, audioStatus: "none", transcriptionStatus: "transcribed", transcript: "Delete this note", cleanedTranscript: nil, displayText: nil, status: "deleted")
+        let staleSummary = ConversationTurn(id: "turn-summary-001", sessionId: session.id, role: "assistant", turnType: "interjection_summary", status: "complete", summary: nil, text: "Keep this note. Delete this note.", rawText: nil, sourceInterjectionIds: [active.id, deleted.id])
+        let repo = InMemorySessionRepository(
+            items: [item.id: item],
+            sessions: [session.id: session],
+            interjections: [active.id: active, deleted.id: deleted],
+            turns: [staleSummary.id: staleSummary]
+        )
+        let engine = SessionEngine(profile: profile, repository: repo)
+
+        let candidates = try engine.selectSummaryCandidates(scope: SummaryScope(targetType: "item", sessionId: session.id))
+        let export = try engine.buildExport(options: ExportOptions(
+            sessionId: session.id,
+            includeFullText: false,
+            includeReference: true,
+            includeListeningMap: false,
+            includeInterjections: true,
+            includeTurns: true,
+            scope: "full_session"
+        ))
+
+        XCTAssertEqual(candidates.map(\.id), [active.id])
+        XCTAssertTrue(engine.hasSummaryCandidates(scope: SummaryScope(targetType: "item", sessionId: session.id)))
+        XCTAssertTrue(export.turns.isEmpty)
+        XCTAssertFalse(SessionExportMarkdownRenderer.render(export).contains("Delete this note"))
+    }
+
     func testFullSessionExportAndCompactTimelinePreserveInterjectionsWhoseTurnRecordIsMissing() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",

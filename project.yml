@@ -180,7 +180,6 @@ targets:
               NSExtensionActivationSupportsAttachmentsWithMaxCount: 1
               NSExtensionActivationSupportsAttachmentsWithMinCount: 1
               NSExtensionActivationSupportsFileWithMaxCount: 1
-              NSExtensionActivationSupportsText: true
               NSExtensionActivationSupportsWebPageWithMaxCount: 1
               NSExtensionActivationSupportsWebURLWithMaxCount: 1
   SpokenMarginsLegacy:

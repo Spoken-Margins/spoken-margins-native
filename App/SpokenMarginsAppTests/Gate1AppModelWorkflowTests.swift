@@ -1,5 +1,5 @@
 import XCTest
-import SessionKit
+@testable import SessionKit
 @testable import SpokenMarginsApp
 #if canImport(UIKit)
 import UIKit
@@ -46,6 +46,67 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.snapshot.chapterTitle = "The Analysis"
 
         XCTAssertEqual(model.playbackHeaderTitle, "Ch. 2: The Analysis")
+    }
+
+    func testPlaybackHeaderOffersTheFollowingChapterAsAOneTapShortcut() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.selectedItem = ItemDetailState(
+            id: "item-1",
+            title: "A Long Article",
+            chapters: [
+                Chapter(id: "chapter-1", title: "Opening", startChar: 0, endChar: 100, percent: 0),
+                Chapter(id: "chapter-2", title: "The Pivot", startChar: 100, endChar: 200, percent: 50),
+                Chapter(id: "chapter-3", title: "Conclusion", startChar: 200, endChar: 300, percent: 80)
+            ]
+        )
+        model.snapshot.targetType = TargetType.itemTextTTS.rawValue
+        model.snapshot.chapterTitle = "The Pivot"
+
+        XCTAssertEqual(model.playbackNextChapterTitle, "Conclusion")
+
+        model.snapshot.chapterTitle = "Conclusion"
+        XCTAssertNil(model.playbackNextChapterTitle)
+    }
+
+    func testNativeAudioExportDisablesFullSourceTextOption() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.selectedItem = ItemDetailState(id: "podcast", title: "Podcast", isNativeAudio: true)
+        XCTAssertFalse(model.exportSourceTextAvailable)
+
+        model.selectedItem = ItemDetailState(id: "article", title: "Article", isNativeAudio: false)
+        XCTAssertTrue(model.exportSourceTextAvailable)
+    }
+
+    func testDeletedInterjectionsAreNeverEligibleForAnotherSummary() {
+        let active = Interjection(
+            id: "active",
+            itemId: "item",
+            sessionId: "session",
+            targetType: .item,
+            targetId: "item",
+            createdAt: Date(timeIntervalSince1970: 1),
+            roughPercent: 10,
+            anchor: Anchor(anchorType: .text, startChar: 0, endChar: 1, anchorBefore: "", anchorAfter: ""),
+            audioPath: nil,
+            audioStatus: "none",
+            transcriptionStatus: "transcribed",
+            transcript: "Keep me",
+            cleanedTranscript: nil,
+            displayText: nil,
+            status: "active"
+        )
+        var deleted = active
+        deleted.id = "deleted"
+        deleted.status = "deleted"
+
+        let eligible = Gate1SummaryEligibility.unsummarizedInterjections(
+            turns: [],
+            interjections: [active, deleted],
+            currentTargetType: TargetType.itemTextTTS.rawValue,
+            currentTargetId: "item"
+        )
+
+        XCTAssertEqual(eligible.map(\.id), ["active"])
     }
 
     func testTimelineMarksTheCurrentSourceChapter() {

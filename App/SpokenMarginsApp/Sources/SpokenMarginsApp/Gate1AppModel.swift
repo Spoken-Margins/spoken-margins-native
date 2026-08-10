@@ -100,6 +100,7 @@ struct ItemDetailState {
     var chapters: [Chapter] = []
     var mediaChapters: [MediaTimelineChapter] = []
     var mediaDurationMs: Int?
+    var isNativeAudio = false
     var sessions: [Session] = []
     var sessionRows: [SessionPresentation] = []
     var interjections: [Interjection] = []
@@ -4662,6 +4663,56 @@ final class Gate1AppModel: ObservableObject {
         return combined
     }
 
+    var playbackNextChapterTitle: String? {
+        nextPlaybackChapter?.chapter.title
+    }
+
+    func jumpToNextPlaybackChapter() {
+        guard let next = nextPlaybackChapter else { return }
+        if let turn = next.turn {
+            jumpToTurnChapter(turn: turn, chapter: next.chapter)
+        } else {
+            jumpToChapter(next.chapter)
+        }
+    }
+
+    private var nextPlaybackChapter: (turn: ConversationTurn?, chapter: Chapter)? {
+        let turn: ConversationTurn?
+        let chapters: [Chapter]
+        switch snapshot.targetType {
+        case TargetType.summaryTurnTTS.rawValue, TargetType.assistantTurnTTS.rawValue:
+            turn = selectedItem.turns.first(where: { $0.id == snapshot.targetId })
+            chapters = turn?.chapters ?? []
+        case TargetType.itemTextTTS.rawValue,
+             TargetType.transcriptBackedMedia.rawValue,
+             TargetType.browserOwnedMedia.rawValue:
+            turn = nil
+            chapters = selectedItem.chapters
+        default:
+            return nil
+        }
+        guard chapters.count > 1 else { return nil }
+
+        let currentChapterId = engine?.currentSession?.position.chapterId
+        let currentIndex = currentChapterId.flatMap { id in
+            chapters.firstIndex(where: { $0.id == id })
+        } ?? snapshot.chapterTitle.flatMap { title in
+            chapters.firstIndex(where: { $0.title.caseInsensitiveCompare(title) == .orderedSame })
+        } ?? {
+            if turn != nil {
+                let offset = snapshot.currentTextStart ?? 0
+                return chapters.lastIndex(where: { $0.startChar <= offset })
+            }
+            return chapters.lastIndex(where: { $0.percent <= snapshot.sourceProgressPercent })
+        }()
+        guard let currentIndex, chapters.indices.contains(currentIndex + 1) else { return nil }
+        return (turn, chapters[currentIndex + 1])
+    }
+
+    var exportSourceTextAvailable: Bool {
+        !selectedItem.isNativeAudio
+    }
+
     func openCurrentPlaybackItem() {
         guard let itemId = snapshot.itemId ?? (selectedItem.id.isEmpty ? nil : selectedItem.id) else { return }
         openItem(id: itemId)
@@ -7708,7 +7759,13 @@ final class Gate1AppModel: ObservableObject {
             }
             return resolved
         }
-        let turns = activeSessionId.flatMap { try? store.loadTurns(sessionId: $0) } ?? []
+        let activeInterjectionIDs = Set(storedInterjections.map(\.id))
+        let turns = (activeSessionId.flatMap { try? store.loadTurns(sessionId: $0) } ?? []).filter { turn in
+            guard turn.turnType == "interjection_summary", !turn.sourceInterjectionIds.isEmpty else {
+                return true
+            }
+            return Set(turn.sourceInterjectionIds).isSubset(of: activeInterjectionIDs)
+        }
         let sessionRows = sessions.map { session in
             let notes = ((try? store.loadInterjections(sessionId: session.id)) ?? [])
                 .filter { $0.status == "active" }
@@ -7732,6 +7789,7 @@ final class Gate1AppModel: ObservableObject {
             chapters: map?.chapters ?? [],
             mediaChapters: mediaChapters,
             mediaDurationMs: item.media?.durationMs ?? mediaTimeline?.durationMs,
+            isNativeAudio: isNativeAudio,
             sessions: sessions,
             sessionRows: sessionRows,
             interjections: interjections,
