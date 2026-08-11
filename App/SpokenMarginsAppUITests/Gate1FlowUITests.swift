@@ -230,7 +230,7 @@ final class Gate1FlowUITests: XCTestCase {
         summarize.tap()
 
         XCTAssertTrue(
-            scrollToStaticText("Each interjection should be condensed into its substantive claims instead of receiving a cleaned transcript.")
+            scrollToStaticText(containing: "Each interjection should be condensed into its substantive claims instead of receiving a cleaned transcript.")
                 .waitForExistence(timeout: 8)
         )
         XCTAssertEqual(summarize.label, "Summarize interjections")
@@ -307,6 +307,16 @@ final class Gate1FlowUITests: XCTestCase {
             app.swipeUp()
         }
         XCTAssertTrue(candidate.waitForExistence(timeout: 4), "Missing \(text)")
+        return candidate
+    }
+
+    private func scrollToStaticText(containing text: String) -> XCUIElement {
+        let predicate = NSPredicate(format: "label CONTAINS %@", text)
+        let candidate = app.staticTexts.matching(predicate).firstMatch
+        for _ in 0..<6 where !candidate.isHittable {
+            app.swipeUp()
+        }
+        XCTAssertTrue(candidate.waitForExistence(timeout: 4), "Missing static text containing \(text)")
         return candidate
     }
 

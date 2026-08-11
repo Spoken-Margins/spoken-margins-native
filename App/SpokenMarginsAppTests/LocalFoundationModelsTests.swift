@@ -3,33 +3,81 @@ import SessionKit
 @testable import SpokenMarginsApp
 
 final class LocalFoundationModelsTests: XCTestCase {
-    func testInterjectionClaimPromptsTreatAnchorsAsOptionalContextAndRequireDirectCondensation() {
+    func testInterjectionSummaryPromptsUseOnlyOneNoteAndNeverSourceAnchors() {
         let record = LocalInterjectionSummaryRecord(
             id: "note-1",
-            anchorBefore: "A source claim",
-            anchorAfter: "More source",
+            anchorBefore: "SECRET SOURCE BEFORE",
+            anchorAfter: "SECRET SOURCE AFTER",
             note: "Maybe this matters"
         )
-        let anchored = AppleFoundationModelClient.interjectionClaimExtractionPrompt(record: record, includeAnchors: true)
-        let noteOnly = AppleFoundationModelClient.interjectionClaimExtractionPrompt(record: record, includeAnchors: false)
-        let condensation = AppleFoundationModelClient.interjectionCondensationPrompt(
-            claims: ["Maybe this matters"],
-            record: record
+        let prompts = AppleFoundationModelClient.interjectionSummaryPrompts(record: record)
+        let synthesis = AppleFoundationModelClient.interjectionSynthesisPrompt(
+            record: record,
+            drafts: ["Maybe it matters"]
+        )
+        let extraction = AppleFoundationModelClient.interjectionPointExtractionPrompt(record: record)
+
+        XCTAssertEqual(prompts.count, 5)
+        XCTAssertTrue(prompts.allSatisfy { $0.contains("Maybe this matters") })
+        XCTAssertTrue(prompts.allSatisfy { $0.contains("at most 3 words") })
+        XCTAssertTrue(prompts.allSatisfy { !$0.contains("SECRET SOURCE BEFORE") })
+        XCTAssertTrue(prompts.allSatisfy { !$0.contains("SECRET SOURCE AFTER") })
+        XCTAssertTrue(prompts.allSatisfy { !$0.contains("itemTitle") })
+        XCTAssertTrue(synthesis.contains("Maybe this matters"))
+        XCTAssertTrue(synthesis.contains("Maybe it matters"))
+        XCTAssertFalse(synthesis.contains("SECRET SOURCE BEFORE"))
+        XCTAssertFalse(synthesis.contains("SECRET SOURCE AFTER"))
+        XCTAssertTrue(extraction.contains("Maybe this matters"))
+        XCTAssertFalse(extraction.contains("SECRET SOURCE BEFORE"))
+        XCTAssertFalse(extraction.contains("SECRET SOURCE AFTER"))
+        XCTAssertTrue(AppleFoundationModelClient.interjectionPointExtractionInstructions.contains("Preserve questions as questions"))
+        XCTAssertTrue(AppleFoundationModelClient.interjectionPointExtractionInstructions.contains("transformation requirement"))
+        XCTAssertFalse(extraction.contains("Extract the minimum number"))
+        XCTAssertTrue(
+            AppleFoundationModelClient.interjectionPointCondensationInstructions(
+                point: "Does this work?",
+                wordLimit: 6
+            ).contains("must remain a question")
+        )
+    }
+
+    func testPlainTextPointDecoderAcceptsFencedJSONWithoutGenerableDecoding() throws {
+        let points = try AppleFoundationModelClient.decodePlainTextPoints("""
+        ```json
+        [
+          "Confirm saving when closing.",
+          "Remove the toast when opening."
+        ]
+        ```
+        """)
+
+        XCTAssertEqual(points, ["Confirm saving when closing.", "Remove the toast when opening."])
+        XCTAssertThrowsError(try AppleFoundationModelClient.decodePlainTextPoints("not JSON"))
+        XCTAssertThrowsError(try AppleFoundationModelClient.decodePlainTextPoints("[\"one\", \"two\", \"three\", \"four\"]"))
+
+        let deduplicated = try AppleFoundationModelClient.decodePlainTextPoints("""
+        [
+          "Does pausing immediately after playback starts prevent background activation?",
+          "Does pausing immediately after playback start prevent background activation?"
+        ]
+        """)
+        XCTAssertEqual(deduplicated.count, 1)
+    }
+
+    func testUncoveredTermsCollapseInflectionsAndExcludePriorMeaning() {
+        let terms = LocalInterjectionSummaryPolicy.uncoveredTerms(
+            in: "Fail loudly when failing to summarize claims.",
+            excluding: "Summarize the claims."
         )
 
-        XCTAssertTrue(anchored.contains("Remove verbal ticks"))
-        XCTAssertTrue(anchored.contains("Preserve meaningful uncertainty"))
-        XCTAssertTrue(anchored.contains("distinct substantive claims"))
-        XCTAssertTrue(anchored.contains("no more than four nonredundant points"))
-        XCTAssertTrue(anchored.contains("OPTIONAL SOURCE CONTEXT"))
-        XCTAssertTrue(anchored.contains("A source claim"))
-        XCTAssertTrue(noteOnly.contains("Maybe this matters"))
-        XCTAssertFalse(noteOnly.contains("OPTIONAL SOURCE CONTEXT"))
-        XCTAssertFalse(noteOnly.contains("A source claim"))
-        XCTAssertTrue(condensation.contains("at most 12 words"))
-        XCTAssertTrue(condensation.contains("Precipitate these linked points"))
-        XCTAssertTrue(condensation.contains("Do not copy any seven-word sequence"))
-        XCTAssertTrue(condensation.contains("Maybe this matters"))
+        XCTAssertEqual(terms, ["fail", "loudly"])
+        XCTAssertGreaterThanOrEqual(
+            LocalInterjectionSummaryPolicy.semanticOverlapRatio(
+                "Fail loudly while summarizing claims",
+                with: "Summarize the claims"
+            ),
+            0.40
+        )
     }
 
     func testSpokenNoteCleanupRemovesFillersAndRepeatedWordsWithoutRemovingUncertainty() {
@@ -38,6 +86,10 @@ final class LocalFoundationModelsTests: XCTestCase {
         )
 
         XCTAssertEqual(cleaned, "Maybe this is a good test")
+        XCTAssertEqual(
+            LocalInterjectionSummaryPolicy.cleanModelCandidate("Does pausing prevent background playback?"),
+            "Does pausing prevent background playback?"
+        )
     }
 
     func testSummaryValidationRejectsAnchorCopyAndResidualFillers() throws {
@@ -72,10 +124,10 @@ final class LocalFoundationModelsTests: XCTestCase {
         ))
         XCTAssertEqual(
             try LocalInterjectionSummaryPolicy.validate(
-                bullets: ["Maybe this tests whether clipped posts remain understandable in Spoken Margins."],
+                bullets: ["Clipped posts may remain understandable."],
                 payload: payload
             ),
-            ["Maybe this tests whether clipped posts remain understandable in Spoken Margins."]
+            ["Clipped posts may remain understandable."]
         )
     }
 
@@ -93,7 +145,7 @@ final class LocalFoundationModelsTests: XCTestCase {
             ]
         )
 
-        XCTAssertEqual(LocalInterjectionSummaryPolicy.summaryWordLimit(for: 41), 24)
+        XCTAssertEqual(LocalInterjectionSummaryPolicy.summaryWordLimit(for: 41), 21)
         XCTAssertThrowsError(try LocalInterjectionSummaryPolicy.validate(
             bullets: ["There's a lot of good points that they're making here, and their best one is that America's strength is its relationship with middle powers and abandoning them significantly weakens us."],
             payload: payload
@@ -105,6 +157,108 @@ final class LocalFoundationModelsTests: XCTestCase {
         XCTAssertThrowsError(try LocalInterjectionSummaryPolicy.validate(
             bullets: ["There's a lot of good points that they're making here and their best one is America's relationship with middle powers."],
             payload: payload
+        ))
+    }
+
+    func testSummaryValidationNeverExpandsShortNotesOrAcceptsTranscriptEquivalentText() {
+        let payload = LocalInterjectionSummaryPayload(
+            schemaVersion: "local-interjection-summary.v1",
+            itemTitle: "Source",
+            interjections: [
+                LocalInterjectionSummaryRecord(
+                    id: "note-1",
+                    anchorBefore: "",
+                    anchorAfter: "",
+                    note: "Maybe this actually matters"
+                )
+            ]
+        )
+
+        XCTAssertEqual(LocalInterjectionSummaryPolicy.summaryWordLimit(for: 4), 4)
+        XCTAssertThrowsError(try LocalInterjectionSummaryPolicy.validate(
+            bullets: ["Maybe this actually matters"],
+            payload: payload
+        ))
+        XCTAssertThrowsError(try LocalInterjectionSummaryPolicy.validate(
+            bullets: ["Maybe this issue actually matters now"],
+            payload: payload
+        ))
+        XCTAssertEqual(
+            try LocalInterjectionSummaryPolicy.validate(
+                bullets: ["Maybe it matters"],
+                payload: payload
+            ),
+            ["Maybe it matters"]
+        )
+    }
+
+    func testBestCandidateRejectsTranscriptCleanupAndSelectsConciseCoveredRewrite() throws {
+        let payload = LocalInterjectionSummaryPayload(
+            schemaVersion: "local-interjection-summary.v1",
+            itemTitle: "Source",
+            interjections: [
+                LocalInterjectionSummaryRecord(
+                    id: "note-1",
+                    anchorBefore: "",
+                    anchorAfter: "",
+                    note: "I think opening a session does not need a toast because the navigation is already visually obvious, but closing should confirm that the session was saved."
+                )
+            ]
+        )
+
+        let best = try LocalInterjectionSummaryPolicy.bestCandidate(
+            from: [
+                "Summary: Opening a session does not need a toast because the navigation is already visually obvious, but closing should confirm that the session was saved.",
+                "Opening needs no toast; closing should confirm the session was saved.",
+                "Navigation works."
+            ],
+            payload: payload
+        )
+
+        XCTAssertEqual(best, "Opening needs no toast; closing should confirm the session was saved")
+    }
+
+    func testSummaryValidationPreservesQuestionsAndRejectsLowCoverageHallucination() {
+        let questionPayload = LocalInterjectionSummaryPayload(
+            schemaVersion: "local-interjection-summary.v1",
+            itemTitle: "Source",
+            interjections: [
+                LocalInterjectionSummaryRecord(
+                    id: "question",
+                    anchorBefore: "",
+                    anchorAfter: "",
+                    note: "Maybe I'm missing something, but does pausing immediately after playback starts prevent the audio session from becoming active in the background?"
+                )
+            ]
+        )
+        XCTAssertThrowsError(try LocalInterjectionSummaryPolicy.validate(
+            bullets: ["Pause playback to prevent background audio session activation."],
+            payload: questionPayload
+        ))
+        XCTAssertNoThrow(try LocalInterjectionSummaryPolicy.validate(
+            bullets: ["Does pausing playback prevent background audio session activation?"],
+            payload: questionPayload
+        ))
+
+        let safetyPayload = LocalInterjectionSummaryPayload(
+            schemaVersion: "local-interjection-summary.v1",
+            itemTitle: "Source",
+            interjections: [
+                LocalInterjectionSummaryRecord(
+                    id: "safety",
+                    anchorBefore: "",
+                    anchorAfter: "",
+                    note: "The article discusses unsafe AI behavior, and I want the concise claim to preserve that risk without copying the surrounding source text."
+                )
+            ]
+        )
+        XCTAssertThrowsError(try LocalInterjectionSummaryPolicy.validate(
+            bullets: ["AI systems need updated safety protocols."],
+            payload: safetyPayload
+        ))
+        XCTAssertNoThrow(try LocalInterjectionSummaryPolicy.validate(
+            bullets: ["Preserve the article's unsafe-AI risk without copying surrounding source text."],
+            payload: safetyPayload
         ))
     }
 
