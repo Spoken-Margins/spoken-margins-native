@@ -251,7 +251,16 @@ public enum SessionExportMarkdownRenderer {
 
         var previous = first
         for current in interjections.dropFirst() {
-            let sameMoment = abs((current.mediaTimeMs ?? 0) - (previous.mediaTimeMs ?? 0)) <= 1_000
+            // Text-native interjections do not have a media clock. Treating two
+            // missing timestamps as zero made every note in a text item look as
+            // though it occurred at the same moment, suppressing all context
+            // between the first and last notes in Markdown exports.
+            let sameMoment = if let currentMediaTimeMs = current.mediaTimeMs,
+                                let previousMediaTimeMs = previous.mediaTimeMs {
+                abs(currentMediaTimeMs - previousMediaTimeMs) <= 1_000
+            } else {
+                false
+            }
             if !sameMoment,
                let shared = sharedPassage(after: previous.anchorAfter, before: current.anchorBefore) {
                 if !shared.isEmpty {

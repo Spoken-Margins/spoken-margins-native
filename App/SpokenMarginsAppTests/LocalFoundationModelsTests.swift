@@ -30,7 +30,8 @@ final class LocalFoundationModelsTests: XCTestCase {
         XCTAssertTrue(extraction.contains("Maybe this matters"))
         XCTAssertFalse(extraction.contains("SECRET SOURCE BEFORE"))
         XCTAssertFalse(extraction.contains("SECRET SOURCE AFTER"))
-        XCTAssertTrue(AppleFoundationModelClient.interjectionPointExtractionInstructions.contains("Preserve questions as questions"))
+        XCTAssertTrue(AppleFoundationModelClient.interjectionPointExtractionInstructions.contains("Use question only"))
+        XCTAssertTrue(AppleFoundationModelClient.interjectionPointExtractionInstructions.contains("attribution constraints"))
         XCTAssertTrue(AppleFoundationModelClient.interjectionPointExtractionInstructions.contains("transformation requirement"))
         XCTAssertFalse(extraction.contains("Extract the minimum number"))
         XCTAssertTrue(
@@ -62,6 +63,210 @@ final class LocalFoundationModelsTests: XCTestCase {
         ]
         """)
         XCTAssertEqual(deduplicated.count, 1)
+    }
+
+    func testMeaningSlotDecoderPreservesActualFourSightQuestionAndAttributionPoints() throws {
+        let source = "I wonder if she is a ideator and an implementer. Um, this is fine in a quote. We need to make sure this is not foresight saying this. This can totally be declare saying it."
+        let points = try AppleFoundationModelClient.decodeInterjectionMeaningSlots(
+            """
+            {
+              "question": "I wonder if she is an Ideator and an Implementer.",
+              "points": [
+                "This is fine in a quote.",
+                "Do not present this as FourSight saying it.",
+                "It can be De Clercq saying it."
+              ]
+            }
+            """,
+            source: source
+        )
+
+        XCTAssertEqual(points.count, 4)
+        XCTAssertEqual(points[0], "I wonder if she is a ideator and an implementer?")
+        XCTAssertEqual(points[1], "This is fine in a quote")
+        XCTAssertEqual(points[2], "Do not present this as FourSight saying it")
+        XCTAssertEqual(points[3], "It can be De Clercq saying it")
+    }
+
+    func testMeaningSlotDecoderDoesNotInventQuestionModalityForActualPromptLeakageNote() throws {
+        let source = "This sounds like prompt leakage and makes it seem AI-written. Remove that wording, but keep the point and express it differently."
+        let points = try AppleFoundationModelClient.decodeInterjectionMeaningSlots(
+            """
+            {"question":"This sounds like prompt leakage.","points":["Remove the AI-written wording.","Keep the valid point but express it differently."]}
+            """,
+            source: source
+        )
+
+        XCTAssertFalse(points[0].contains("?"))
+        XCTAssertEqual(points.count, 2)
+    }
+
+    func testSourceAnchorsOnlyRepairLikelyProperNamesAfterMeaningExtraction() {
+        let anchor = "The quotation says De Clercq. FourSight's framework describes Ideators and Implementers."
+        let repaired = LocalInterjectionSummaryPolicy.repairSourceNames(
+            in: "Is declare an ideator and implementer? Do not attribute this to foresight.",
+            from: anchor
+        )
+
+        XCTAssertEqual(
+            repaired,
+            "Is De Clercq an ideator and implementer? Do not attribute this to FourSight."
+        )
+    }
+
+    func testActualFourSightLowPreferenceNoteRejectsPolarityReversal() throws {
+        let payload = LocalInterjectionSummaryPayload(
+            schemaVersion: "local-interjection-summary.v1",
+            itemTitle: "FourSight L&D's Edge",
+            interjections: [
+                LocalInterjectionSummaryRecord(
+                    id: "tools",
+                    anchorBefore: "FourSight's Team Insights & Tools.",
+                    anchorAfter: "",
+                    note: "Pair people with tools so they benefit from a creative problem-solving stage even if they are not high preferencing."
+                )
+            ]
+        )
+
+        XCTAssertThrowsError(try LocalInterjectionSummaryPolicy.validate(
+            bullets: ["Offer tools for creative problem solving even when high preference is used."],
+            payload: payload
+        ))
+        XCTAssertNoThrow(try LocalInterjectionSummaryPolicy.validate(
+            bullets: ["Offer tools for creative problem solving despite low preference."],
+            payload: payload
+        ))
+    }
+
+    func testCleanupRemovesGeneratedYesAfterQuestionWithoutRemovingAssertion() {
+        XCTAssertEqual(
+            LocalInterjectionSummaryPolicy.cleanModelCandidate(
+                "Is she an Ideator?; Yes, it is fine in a quote; attribute it to De Clercq."
+            ),
+            "Is she an Ideator?; it is fine in a quote; attribute it to De Clercq"
+        )
+    }
+
+    func testActualFourSightAttributionPointsCompactWithoutDroppingQualification() {
+        let reference = "The quotation says De Clercq. FourSight article."
+        XCTAssertEqual(
+            LocalInterjectionSummaryPolicy.compactMeaningPoint(
+                "This is fine to have in a quote.",
+                sourceNameReference: reference
+            ),
+            "Fine in a quote"
+        )
+        XCTAssertEqual(
+            LocalInterjectionSummaryPolicy.compactMeaningPoint(
+                "It can be declared instead.",
+                sourceNameReference: reference
+            ),
+            "Attribute it to De Clercq"
+        )
+        XCTAssertEqual(
+            LocalInterjectionSummaryPolicy.compactMeaningPoint(
+                "Make sure it's not FourSight saying it can be De Clercq saying it.",
+                sourceNameReference: reference
+            ),
+            "Attribute it to De Clercq, not FourSight"
+        )
+        XCTAssertEqual(
+            LocalInterjectionSummaryPolicy.compactMeaningSummary(
+                "I wonder if she is an Ideator?; Make sure it's not FourSight saying it can be De Clercq saying it"
+            ),
+            "I wonder if she is an Ideator?; Attribute it to De Clercq, not FourSight"
+        )
+        XCTAssertEqual(
+            LocalInterjectionSummaryPolicy.requiredExplicitMeaningPoints(
+                "I wonder if she is an Ideator and Implementer. This is fine to have in a quote. Make sure this is not foresight saying this. It can be declare saying it."
+            ),
+            [
+                "I wonder if she is an Ideator and Implementer?",
+                "Fine in a quote",
+                "Attribute it to declare, not foresight"
+            ]
+        )
+    }
+
+    func testActualFourSightDictationArtifactsRepairAndCompactAgainstSourceNames() {
+        let reference = "FourSight L&D's Edge"
+        XCTAssertEqual(
+            LocalInterjectionSummaryPolicy.repairSourceNames(
+                in: "Force it does offer those tools.",
+                from: reference
+            ),
+            "FourSight does offer those tools."
+        )
+        XCTAssertEqual(
+            LocalInterjectionSummaryPolicy.compactMeaningPoint(
+                "Remove 'we're writing as foresight'",
+                sourceNameReference: reference
+            ),
+            "Remove self-referential FourSight wording"
+        )
+        XCTAssertEqual(
+            LocalInterjectionSummaryPolicy.compactMeaningSummary(
+                "Prompt leakage; AI-written; FourSight message; Doesn't make any sense; Make this point differently"
+            ),
+            "Prompt leakage; AI-written; Remove self-referential FourSight wording; Make this point differently"
+        )
+        XCTAssertEqual(
+            LocalInterjectionSummaryPolicy.compactMeaningSummary(
+                "Prompt leakage; Make it seem very AI written; Remove; Make the point differently"
+            ),
+            "Remove prompt-leakage, AI-written wording; Make the point differently"
+        )
+        XCTAssertEqual(
+            LocalInterjectionSummaryPolicy.compactMeaningPoint(
+                "Low preference for pairing members.",
+                sourceNameReference: reference
+            ),
+            "Identify low-preference thinking stages"
+        )
+        XCTAssertEqual(
+            LocalInterjectionSummaryPolicy.compactMeaningPoint(
+                "FourSight's message doesn't resonate.",
+                sourceNameReference: reference
+            ),
+            "Remove self-referential FourSight wording"
+        )
+    }
+
+    func testActualPromptLeakageSummaryMustPreserveNamedConcerns() {
+        let payload = LocalInterjectionSummaryPayload(
+            schemaVersion: "v1",
+            itemTitle: "FourSight",
+            interjections: [
+                LocalInterjectionSummaryRecord(
+                    id: "prompt-leakage",
+                    anchorBefore: "",
+                    anchorAfter: "",
+                    note: "This sounds like prompt leakage and AI-written wording; make the point differently."
+                )
+            ]
+        )
+
+        XCTAssertThrowsError(try LocalInterjectionSummaryPolicy.validate(
+            bullets: ["Remove the FourSight wording and make the point differently."],
+            payload: payload
+        ))
+        XCTAssertNoThrow(try LocalInterjectionSummaryPolicy.validate(
+            bullets: ["Remove prompt-leakage, AI-written wording; make point differently."],
+            payload: payload
+        ))
+
+        XCTAssertEqual(
+            LocalInterjectionSummaryPolicy.auditedMeaningPoints(
+                ["FourSight's message resonates here."],
+                source: payload.interjections[0].note
+            ),
+            [
+                "FourSight's message resonates here.",
+                "Prompt leakage",
+                "AI-written",
+                "Make the point differently"
+            ]
+        )
     }
 
     func testUncoveredTermsCollapseInflectionsAndExcludePriorMeaning() {
@@ -122,6 +327,10 @@ final class LocalFoundationModelsTests: XCTestCase {
             bullets: ["The listener thinks clipped posts should remain understandable."],
             payload: payload
         ))
+        XCTAssertThrowsError(try LocalInterjectionSummaryPolicy.validate(
+            bullets: ["Attribution: Clipped posts may remain understandable."],
+            payload: payload
+        ))
         XCTAssertEqual(
             try LocalInterjectionSummaryPolicy.validate(
                 bullets: ["Clipped posts may remain understandable."],
@@ -145,7 +354,7 @@ final class LocalFoundationModelsTests: XCTestCase {
             ]
         )
 
-        XCTAssertEqual(LocalInterjectionSummaryPolicy.summaryWordLimit(for: 41), 21)
+        XCTAssertEqual(LocalInterjectionSummaryPolicy.summaryWordLimit(for: 41), 26)
         XCTAssertThrowsError(try LocalInterjectionSummaryPolicy.validate(
             bullets: ["There's a lot of good points that they're making here, and their best one is that America's strength is its relationship with middle powers and abandoning them significantly weakens us."],
             payload: payload
@@ -238,6 +447,27 @@ final class LocalFoundationModelsTests: XCTestCase {
         XCTAssertNoThrow(try LocalInterjectionSummaryPolicy.validate(
             bullets: ["Does pausing playback prevent background audio session activation?"],
             payload: questionPayload
+        ))
+
+        let implicitQuestionPayload = LocalInterjectionSummaryPayload(
+            schemaVersion: "local-interjection-summary.v1",
+            itemTitle: "Source",
+            interjections: [
+                LocalInterjectionSummaryRecord(
+                    id: "implicit-question",
+                    anchorBefore: "",
+                    anchorAfter: "",
+                    note: "I wonder if she is an Ideator and an Implementer."
+                )
+            ]
+        )
+        XCTAssertThrowsError(try LocalInterjectionSummaryPolicy.validate(
+            bullets: ["She is an Ideator and an Implementer."],
+            payload: implicitQuestionPayload
+        ))
+        XCTAssertNoThrow(try LocalInterjectionSummaryPolicy.validate(
+            bullets: ["Is she an Ideator and an Implementer?"],
+            payload: implicitQuestionPayload
         ))
 
         let safetyPayload = LocalInterjectionSummaryPayload(

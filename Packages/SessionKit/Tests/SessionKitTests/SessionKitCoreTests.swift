@@ -1848,6 +1848,61 @@ final class SessionKitCoreTests: XCTestCase {
         )
     }
 
+    func testMarkdownPreservesContextBetweenTextInterjectionsWithoutMediaTimestamps() throws {
+        let first = ExportInterjection(
+            id: "ij-text-1",
+            sessionId: "session",
+            targetType: InterjectionTargetType.item.rawValue,
+            targetId: "item",
+            roughPercent: 20,
+            anchorBefore: "Context before the first note.",
+            anchorAfter: "Context after the first note.",
+            mediaTimeMs: nil,
+            transcriptionStatus: "transcribed",
+            transcript: "First listener thought.",
+            audioPath: nil
+        )
+        let second = ExportInterjection(
+            id: "ij-text-2",
+            sessionId: "session",
+            targetType: InterjectionTargetType.item.rawValue,
+            targetId: "item",
+            roughPercent: 60,
+            anchorBefore: "Context before the second note.",
+            anchorAfter: "Context after the second note.",
+            mediaTimeMs: nil,
+            transcriptionStatus: "transcribed",
+            transcript: "Second listener thought.",
+            audioPath: nil
+        )
+        let export = SessionExport(
+            item: ExportItem(id: "item", title: "Text Source", includedFullText: false),
+            session: ExportSession(id: "session", status: "in_progress", completionPercent: 60),
+            listeningMap: nil,
+            turns: [],
+            timeline: [
+                ExportTimelineEntry(type: "interjection", interjectionId: first.id, targetType: first.targetType),
+                ExportTimelineEntry(type: "interjection", interjectionId: second.id, targetType: second.targetType)
+            ],
+            interjections: [first, second]
+        )
+
+        let markdown = SessionExportMarkdownRenderer.render(export)
+
+        XCTAssertTrue(markdown.contains("Context before the first note."))
+        XCTAssertTrue(markdown.contains("Context after the first note."))
+        XCTAssertTrue(markdown.contains("Context before the second note."))
+        XCTAssertTrue(markdown.contains("Context after the second note."))
+        XCTAssertLessThan(
+            markdown.range(of: "First listener thought.")!.lowerBound,
+            markdown.range(of: "Context after the first note.")!.lowerBound
+        )
+        XCTAssertLessThan(
+            markdown.range(of: "Context before the second note.")!.lowerBound,
+            markdown.range(of: "Second listener thought.")!.lowerBound
+        )
+    }
+
     func testNativeAudioSkipWorksWithoutWatchPackage() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
