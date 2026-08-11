@@ -97,17 +97,7 @@ enum Gate2LiveActivityPolicy {
 
     static func shouldMaintain(_ snapshot: CompactControlSnapshot, adoptedSessionId: String?) -> Bool {
         guard isEligible(snapshot), let sessionId = snapshot.sessionId else { return false }
-        if snapshot.isRecording {
-            return true
-        }
-        // For native text speech, the system Now Playing surface is the lock-
-        // screen playback owner. A simultaneous Live Activity from the same app
-        // replaces that surface with our custom card and hides Apple's transport
-        // controls. Keep Live Activity for recording, but end it for live speech.
-        if Gate2LiveSpeechNowPlayingPolicy.isLiveSpeech(snapshot) {
-            return false
-        }
-        if snapshot.status.isPlaybackActive {
+        if snapshot.status.isPlaybackActive || snapshot.isRecording {
             return true
         }
         return snapshot.status == .paused && adoptedSessionId == sessionId

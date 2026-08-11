@@ -712,7 +712,13 @@ final class Gate1AppModel: ObservableObject {
         self.sourceTranscriptionClient = sourceTranscriptionClient
         self.gate2CompactControls = gate2CompactControls
         self.featureFlags = featureFlags
-        self.localFoundationModelClient = localFoundationModelClient
+        if CommandLine.arguments.contains("--ui-testing"),
+           let rawMode = ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_LOCAL_SUMMARY"],
+           let mode = UITestingLocalFoundationModelClient.Mode(rawValue: rawMode) {
+            self.localFoundationModelClient = UITestingLocalFoundationModelClient(mode: mode)
+        } else {
+            self.localFoundationModelClient = localFoundationModelClient
+        }
         self.databaseURLOverride = databaseURLOverride
         self.trashUndoDismissDelay = trashUndoDismissDelay
         if let interjectionTranscriptionHandler {
@@ -2245,6 +2251,7 @@ final class Gate1AppModel: ObservableObject {
             let started = try engine.startSession(itemId: activeItemId)
             snapshot = try applyPreferredPlaybackRate(to: started, engine: engine)
             if let store, let sessionId = snapshot.sessionId {
+                try seedUITestingSummaryInterjectionIfNeeded(sessionId: sessionId, engine: engine, store: store)
                 try seedUITestingGeneratedTimelineIfNeeded(sessionId: sessionId, engine: engine, store: store)
             }
             if let store {
@@ -4619,6 +4626,19 @@ final class Gate1AppModel: ObservableObject {
         latestPendingJob(kind: "interjection_summary") != nil
     }
 
+    var canRetryLocalSummary: Bool {
+        guard !remoteProviderExperienceEnabled,
+              hasActiveSession,
+              let sessionId = snapshot.sessionId,
+              let jobs = try? store?.loadAIJobs(sessionId: sessionId) else { return false }
+        return jobs.contains { $0.kind == "interjection_summary" && $0.status == "retryable" }
+    }
+
+    var summaryActionTitle: String {
+        if isSummarizingInterjections { return "Summarizing" }
+        return canRetryLocalSummary ? "Retry Summary" : "Summarize Notes"
+    }
+
     var interjectionButtonTitle: String {
         "Interject"
     }
@@ -6190,7 +6210,11 @@ final class Gate1AppModel: ObservableObject {
                 reportConfirmation("On-device summary saved and queued after the current source.")
             } catch {
                 diagnostics["lastSummaryMode"] = "apple_foundation_failed"
-                markProviderFailure(String(describing: error), userMessage: "On-device summary failed: \(error.localizedDescription)")
+                diagnostics["lastLocalSummaryErrorType"] = String(reflecting: type(of: error))
+                markProviderFailure(
+                    String(describing: error),
+                    userMessage: "On-device summary failed: \(error.localizedDescription) Tap Retry Summary to try the model again."
+                )
             }
         }
     }
@@ -7719,6 +7743,43 @@ final class Gate1AppModel: ObservableObject {
         )
         _ = try engine.aiJobCompleted(turnId: "turn-response-001")
         snapshot = try engine.inspectSession(sessionId: sessionId)
+    }
+
+    private func seedUITestingSummaryInterjectionIfNeeded(
+        sessionId: String,
+        engine: SessionEngine,
+        store: SQLiteSessionStore
+    ) throws {
+        guard CommandLine.arguments.contains("--ui-testing"),
+              let note = ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_INTERJECTION"],
+              try store.loadInterjections(sessionId: sessionId).isEmpty else { return }
+        let interjection = Interjection(
+            id: "ij-ui-summary",
+            itemId: activeItemId,
+            sessionId: sessionId,
+            targetType: .item,
+            targetId: activeItemId,
+            createdAt: Date(timeIntervalSince1970: 1),
+            roughPercent: snapshot.sourceProgressPercent,
+            anchor: Anchor(
+                anchorType: .text,
+                startChar: 0,
+                endChar: min(24, selectedItem.text.count),
+                anchorBefore: String(selectedItem.text.prefix(120)),
+                anchorAfter: ""
+            ),
+            audioPath: nil,
+            audioStatus: "saved",
+            transcriptionStatus: "transcribed",
+            transcript: note,
+            cleanedTranscript: nil,
+            displayText: note,
+            status: "active",
+            anchorContextStatus: .ready
+        )
+        try store.saveInterjection(interjection)
+        snapshot = try engine.inspectSession(sessionId: sessionId)
+        diagnostics["uiTestSummaryFixture"] = interjection.id
     }
 
     private func loadItemDetail(id: String, store: SQLiteSessionStore) throws -> ItemDetailState {

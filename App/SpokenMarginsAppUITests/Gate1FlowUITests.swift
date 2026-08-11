@@ -197,6 +197,45 @@ final class Gate1FlowUITests: XCTestCase {
         )
     }
 
+    func testFailedLocalSummaryShowsPersistentRetryAndRetryCompletes() throws {
+        app.terminate()
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE"] = "Summary Retry Probe"
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"] = String(
+            repeating: "A bounded source sentence provides context for the listener note. ",
+            count: 20
+        )
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_URL"] = "https://example.com/summary-retry"
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_INTERJECTION"] = "The app should condense one interjection into its substantive claims instead of lightly cleaning up the transcript."
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_LOCAL_SUMMARY"] = "fail_once"
+        app.launch()
+
+        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
+        let start = app.buttons["queue.start.item-ui-text-regression"]
+        XCTAssertTrue(start.waitForExistence(timeout: 5))
+        start.tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5))
+
+        let summarize = scrollToElement("playback.summary.button")
+        XCTAssertTrue(summarize.isEnabled)
+        summarize.tap()
+
+        let failure = element("app.feedback.banner")
+        XCTAssertTrue(failure.waitForExistence(timeout: 8))
+        XCTAssertTrue(failure.label.contains("On-device summary failed"))
+        XCTAssertTrue(failure.label.contains("Retry Summary"))
+
+        XCTAssertTrue(summarize.waitForExistence(timeout: 4))
+        XCTAssertEqual(summarize.label, "Retry summary")
+        XCTAssertTrue(summarize.isEnabled)
+        summarize.tap()
+
+        XCTAssertTrue(
+            scrollToStaticText("Each interjection should be condensed into its substantive claims instead of receiving a cleaned transcript.")
+                .waitForExistence(timeout: 8)
+        )
+        XCTAssertEqual(summarize.label, "Summarize interjections")
+    }
+
     func testPermanentDeleteDoesNotRestoreRecentlyDeletedItem() throws {
         let itemTitle = "Permanent Delete \(UUID().uuidString.prefix(8))"
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))

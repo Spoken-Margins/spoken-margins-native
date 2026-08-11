@@ -61,6 +61,7 @@ enum LocalInterjectionSummaryPolicy {
     static let anchorCharacterLimit = 240
     private static let fillerPattern = #"(?i)\b(?:u+h+m*|u+m+|e+r+m*|a+h+|h+m+)\b"#
     private static let verbalTickPattern = #"(?i)(?:\b(?:you know|i mean)\b|\bi\s*,?\s*think\b|(?:^|[.!?]\s+)(?:yeah|well|okay|so)\b)"#
+    private static let metaFramingPattern = #"(?i)^(?:(?:the\s+)?(?:listener|speaker|note|interjection|feedback)|the\s+user)\b"#
 
     static func cleanSpokenNote(_ note: String) -> String {
         var cleaned = note
@@ -108,6 +109,7 @@ enum LocalInterjectionSummaryPolicy {
         }
         let filler = try NSRegularExpression(pattern: fillerPattern)
         let verbalTick = try NSRegularExpression(pattern: verbalTickPattern)
+        let metaFraming = try NSRegularExpression(pattern: metaFramingPattern)
         for (index, bullet) in cleaned.enumerated() {
             let range = NSRange(bullet.startIndex..<bullet.endIndex, in: bullet)
             let sourceRecord = payload.interjections[min(index, payload.interjections.count - 1)]
@@ -115,6 +117,7 @@ enum LocalInterjectionSummaryPolicy {
             let maximumBulletWords = summaryWordLimit(for: sourceWordCount)
             guard filler.firstMatch(in: bullet, range: range) == nil,
                   verbalTick.firstMatch(in: bullet, range: range) == nil,
+                  metaFraming.firstMatch(in: bullet, range: range) == nil,
                   bullet.split(whereSeparator: { $0.isWhitespace }).count <= maximumBulletWords else {
                 throw LocalFoundationModelError.invalidInterjectionSummary
             }
@@ -162,10 +165,13 @@ enum LocalInterjectionSummaryPolicy {
 
 #if canImport(FoundationModels)
 @available(iOS 26.0, *)
-@Generable(description: "A concise rewrite of one listener note, excluding source excerpts.")
-private struct GeneratedInterjectionRewrite {
-    @Guide(description: "Only the listener's compressed intent. Exclude source anchors, verbal ticks, filler, generic acknowledgements, repetition, and answers.")
-    var rewrittenNote: String
+@Generable(description: "The distinct substantive claims and requirements in one listener note.")
+private struct GeneratedInterjectionClaims {
+    @Guide(
+        description: "Each entry states one distinct claim, requirement, objection, question, preference, or requested action directly in the author's voice, with conversational framing removed.",
+        .count(1...4)
+    )
+    var claims: [String]
 }
 #endif
 
@@ -174,6 +180,46 @@ protocol LocalFoundationModelClient: Sendable {
     func summarizeInterjections(context: String) async throws -> String
     func labelListeningMapChapter(text: String, chapterNumber: Int) async throws -> LocalListeningMapLabel
     func summarizeListeningMap(labels: [LocalListeningMapLabel]) async throws -> String
+}
+
+/// Deterministic model seam for end-to-end UI tests. Production construction
+/// never selects this client because it requires both `--ui-testing` and an
+/// explicit launch environment value.
+final class UITestingLocalFoundationModelClient: LocalFoundationModelClient, @unchecked Sendable {
+    enum Mode: String {
+        case succeed
+        case failOnce = "fail_once"
+        case fail
+    }
+
+    private let mode: Mode
+    private let lock = NSLock()
+    private var summaryAttempts = 0
+
+    init(mode: Mode) {
+        self.mode = mode
+    }
+
+    func availability() -> LocalFoundationModelAvailability { .available }
+
+    func summarizeInterjections(context: String) async throws -> String {
+        let attempt = lock.withLock {
+            summaryAttempts += 1
+            return summaryAttempts
+        }
+        if mode == .fail || (mode == .failOnce && attempt == 1) {
+            throw LocalFoundationModelError.invalidInterjectionSummary
+        }
+        return "- Each interjection should be condensed into its substantive claims instead of receiving a cleaned transcript."
+    }
+
+    func labelListeningMapChapter(text: String, chapterNumber: Int) async throws -> LocalListeningMapLabel {
+        LocalListeningMapLabel(title: "Chapter \(chapterNumber)", description: "A UI testing chapter.")
+    }
+
+    func summarizeListeningMap(labels: [LocalListeningMapLabel]) async throws -> String {
+        "A UI testing listening map."
+    }
 }
 
 struct AppleFoundationModelClient: LocalFoundationModelClient {
@@ -313,16 +359,27 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
                     itemTitle: payload.itemTitle,
                     interjections: [record]
                 )
+                let firstError: Error
                 do {
-                    bullets.append(try await rewrite(record: record, payload: scopedPayload, includeAnchors: true, strict: false))
+                    bullets.append(try await summarize(record: record, payload: scopedPayload, includeAnchors: true, strict: false))
+                    continue
                 } catch {
                     if error is CancellationError { throw error }
-                    do {
-                        bullets.append(try await rewrite(record: record, payload: scopedPayload, includeAnchors: false, strict: true))
-                    } catch {
-                        if error is CancellationError { throw error }
-                        throw LocalFoundationModelError.invalidInterjectionSummary
+                    firstError = error
+                }
+                do {
+                    bullets.append(try await summarize(record: record, payload: scopedPayload, includeAnchors: false, strict: true))
+                } catch {
+                    if error is CancellationError { throw error }
+                    // Preserve Foundation Models generation errors instead of
+                    // disguising every failure as a quality rejection. If both
+                    // attempts generated text that failed our summary contract,
+                    // report that contract failure explicitly.
+                    if error is LocalFoundationModelError {
+                        if firstError is LocalFoundationModelError { throw error }
+                        throw firstError
                     }
+                    throw error
                 }
             }
             return bullets.map { "- \($0)" }.joined(separator: "\n")
@@ -333,37 +390,47 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
 
     #if canImport(FoundationModels)
     @available(iOS 26.0, *)
-    private func rewrite(
+    private func summarize(
         record: LocalInterjectionSummaryRecord,
         payload: LocalInterjectionSummaryPayload,
         includeAnchors: Bool,
         strict: Bool
     ) async throws -> String {
-        let session = LanguageModelSession(
+        let extractionSession = LanguageModelSession(
             model: .default,
-            instructions: "Rewrite only the listener note. Never answer it or output source context."
+            instructions: "Extract the substantive claims and product requirements from exactly one listener note. State each point directly in the author's voice. Never answer, evaluate, or describe the note or its author."
         )
-        let response = try await session.respond(
-            to: Self.interjectionRewritePrompt(record: record, includeAnchors: includeAnchors, strict: strict),
-            generating: GeneratedInterjectionRewrite.self,
-            options: GenerationOptions(sampling: .greedy, maximumResponseTokens: 120)
+        let sampling: GenerationOptions.SamplingMode = strict ? .random(top: 20) : .greedy
+        let extracted = try await extractionSession.respond(
+            to: Self.interjectionClaimExtractionPrompt(record: record, includeAnchors: includeAnchors, strict: strict),
+            generating: GeneratedInterjectionClaims.self,
+            options: GenerationOptions(sampling: sampling, maximumResponseTokens: 160)
         )
-        let candidate = LocalInterjectionSummaryPolicy.cleanSpokenNote(response.content.rewrittenNote)
+        let claims = extracted.content.claims
+            .map(LocalInterjectionSummaryPolicy.cleanSpokenNote)
+            .filter { !$0.isEmpty }
+        guard !claims.isEmpty else { throw LocalFoundationModelError.emptyResponse }
+        let condensationSession = LanguageModelSession(
+            model: .default,
+            instructions: "Condense claims extracted from one listener note into a direct statement. Preserve the central substantive point; remove framing and repetition."
+        )
+        let response = try await condensationSession.respond(
+            to: Self.interjectionCondensationPrompt(claims: claims, record: record, strict: strict),
+            options: GenerationOptions(sampling: sampling, maximumResponseTokens: 100)
+        )
+        let candidate = LocalInterjectionSummaryPolicy.cleanSpokenNote(response.content)
             .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "-•")))
         return try LocalInterjectionSummaryPolicy.validate(bullets: [candidate], payload: payload)[0]
     }
     #endif
 
-    static func interjectionRewritePrompt(
+    static func interjectionClaimExtractionPrompt(
         record: LocalInterjectionSummaryRecord,
         includeAnchors: Bool,
         strict: Bool = false
     ) -> String {
-        let wordLimit = LocalInterjectionSummaryPolicy.summaryWordLimit(
-            for: record.note.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).count
-        )
         var prompt = """
-        Summarize this single listener note into one materially shorter sentence of at most \(wordLimit) words. Precipitate its central claim, question, preference, or requested action instead of lightly editing or excerpting the transcript. State that point directly. Remove verbal ticks such as “yeah,” “well,” “you know,” “I mean,” and “I think,” along with fillers, generic acknowledgements, repeated framing, stutters, false starts, and transcription noise. Preserve meaningful uncertainty and qualifications. Do not answer the note or add conclusions. Do not copy any seven-word sequence from the listener note.
+        Extract the distinct substantive claims, product requirements, objections, questions, preferences, or requested actions from this one listener note. Keep no more than four nonredundant points. State each proposition directly in the author's voice. Remove verbal ticks, filler, acknowledgements, repeated framing, stutters, false starts, and transcription noise. Preserve meaningful uncertainty and qualifications. Do not answer or evaluate the note. Do not describe “the listener,” “the user,” “the note,” “the speaker,” or “the interjection.”
 
         LISTENER NOTE:
         \(record.note)
@@ -382,6 +449,36 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
             OPTIONAL SOURCE CONTEXT — use only to resolve references; never copy or summarize it:
             BEFORE: \(record.anchorBefore)
             AFTER: \(record.anchorAfter)
+            """
+        }
+        return prompt
+    }
+
+    static func interjectionCondensationPrompt(
+        claims: [String],
+        record: LocalInterjectionSummaryRecord,
+        strict: Bool = false
+    ) -> String {
+        let wordLimit = LocalInterjectionSummaryPolicy.summaryWordLimit(
+            for: record.note.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).count
+        )
+        var prompt = """
+        Precipitate these linked points from one note into one direct statement of at most \(wordLimit) words. Preserve the central substantive claim or requirement and any qualification essential to its meaning; omit repeated or merely emotional framing. State the point itself. Never mention a listener, user, note, speaker, interjection, or feedback. Do not answer it. Do not copy any seven-word sequence from the original note.
+
+        EXAMPLE POINTS:
+        - Opening a session does not need a toast because the navigation is visible.
+        - Closing a session should confirm that it was saved.
+        EXAMPLE SYNTHESIS:
+        Opening a session needs no toast because navigation confirms it; closing should confirm that the session was saved.
+
+        EXTRACTED POINTS:
+        \(claims.map { "- \($0)" }.joined(separator: "\n"))
+        """
+        if strict {
+            prompt += """
+
+
+            STRICT RETRY: The prior result was too close to the transcript, too long, or framed as commentary. Rephrase the substantive point directly and materially shorten it.
             """
         }
         return prompt

@@ -1012,6 +1012,42 @@ public struct Interjection: Codable, Equatable, Sendable {
     public var displayText: String?
     public var status: String
     public var anchorContextStatus: AnchorContextStatus? = nil
+
+    public init(
+        id: String,
+        itemId: String,
+        sessionId: String,
+        targetType: InterjectionTargetType,
+        targetId: String,
+        createdAt: Date,
+        roughPercent: Int,
+        anchor: Anchor,
+        audioPath: String?,
+        audioStatus: String,
+        transcriptionStatus: String,
+        transcript: String?,
+        cleanedTranscript: String?,
+        displayText: String?,
+        status: String,
+        anchorContextStatus: AnchorContextStatus? = nil
+    ) {
+        self.id = id
+        self.itemId = itemId
+        self.sessionId = sessionId
+        self.targetType = targetType
+        self.targetId = targetId
+        self.createdAt = createdAt
+        self.roughPercent = roughPercent
+        self.anchor = anchor
+        self.audioPath = audioPath
+        self.audioStatus = audioStatus
+        self.transcriptionStatus = transcriptionStatus
+        self.transcript = transcript
+        self.cleanedTranscript = cleanedTranscript
+        self.displayText = displayText
+        self.status = status
+        self.anchorContextStatus = anchorContextStatus
+    }
 }
 
 public struct ConversationTurn: Codable, Equatable, Sendable {

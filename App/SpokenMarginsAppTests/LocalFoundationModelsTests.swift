@@ -3,27 +3,33 @@ import SessionKit
 @testable import SpokenMarginsApp
 
 final class LocalFoundationModelsTests: XCTestCase {
-    func testInterjectionRewritePromptTreatsAnchorsAsOptionalContextAndSupportsNoteOnlyRetry() {
+    func testInterjectionClaimPromptsTreatAnchorsAsOptionalContextAndRequireDirectCondensation() {
         let record = LocalInterjectionSummaryRecord(
             id: "note-1",
             anchorBefore: "A source claim",
             anchorAfter: "More source",
             note: "Maybe this matters"
         )
-        let anchored = AppleFoundationModelClient.interjectionRewritePrompt(record: record, includeAnchors: true)
-        let noteOnly = AppleFoundationModelClient.interjectionRewritePrompt(record: record, includeAnchors: false)
+        let anchored = AppleFoundationModelClient.interjectionClaimExtractionPrompt(record: record, includeAnchors: true)
+        let noteOnly = AppleFoundationModelClient.interjectionClaimExtractionPrompt(record: record, includeAnchors: false)
+        let condensation = AppleFoundationModelClient.interjectionCondensationPrompt(
+            claims: ["Maybe this matters"],
+            record: record
+        )
 
         XCTAssertTrue(anchored.contains("Remove verbal ticks"))
         XCTAssertTrue(anchored.contains("Preserve meaningful uncertainty"))
-        XCTAssertTrue(anchored.contains("at most 12 words"))
-        XCTAssertTrue(anchored.contains("Precipitate its central claim"))
-        XCTAssertTrue(anchored.contains("Do not copy any seven-word sequence"))
-        XCTAssertTrue(anchored.contains("Do not answer the note"))
+        XCTAssertTrue(anchored.contains("distinct substantive claims"))
+        XCTAssertTrue(anchored.contains("no more than four nonredundant points"))
         XCTAssertTrue(anchored.contains("OPTIONAL SOURCE CONTEXT"))
         XCTAssertTrue(anchored.contains("A source claim"))
         XCTAssertTrue(noteOnly.contains("Maybe this matters"))
         XCTAssertFalse(noteOnly.contains("OPTIONAL SOURCE CONTEXT"))
         XCTAssertFalse(noteOnly.contains("A source claim"))
+        XCTAssertTrue(condensation.contains("at most 12 words"))
+        XCTAssertTrue(condensation.contains("Precipitate these linked points"))
+        XCTAssertTrue(condensation.contains("Do not copy any seven-word sequence"))
+        XCTAssertTrue(condensation.contains("Maybe this matters"))
     }
 
     func testSpokenNoteCleanupRemovesFillersAndRepeatedWordsWithoutRemovingUncertainty() {
@@ -58,6 +64,10 @@ final class LocalFoundationModelsTests: XCTestCase {
         ))
         XCTAssertThrowsError(try LocalInterjectionSummaryPolicy.validate(
             bullets: ["I think that, you know, maybe this tests whether clipped posts remain understandable."],
+            payload: payload
+        ))
+        XCTAssertThrowsError(try LocalInterjectionSummaryPolicy.validate(
+            bullets: ["The listener thinks clipped posts should remain understandable."],
             payload: payload
         ))
         XCTAssertEqual(

@@ -1809,13 +1809,13 @@ private struct PlaybackScreen: View {
                                     } else {
                                         Image(systemName: "sparkles")
                                     }
-                                    Text(model.isSummarizingInterjections ? "Summarizing" : "Summarize Notes")
+                                    Text(model.summaryActionTitle)
                                 }
                                 .frame(maxWidth: .infinity, minHeight: 52)
                             }
                             .buttonStyle(WatchSecondaryButtonStyle())
                             .disabled(!model.canSummarizeInterjections || model.isSummarizingInterjections)
-                            .accessibilityLabel(model.isSummarizingInterjections ? "Summarizing interjections" : "Summarize interjections")
+                            .accessibilityLabel(model.canRetryLocalSummary ? "Retry summary" : (model.isSummarizingInterjections ? "Summarizing interjections" : "Summarize interjections"))
                             .accessibilityIdentifier("playback.summary.button")
                         }
                         Button(action: model.beginInterjection) {
@@ -1864,7 +1864,7 @@ private struct PlaybackScreen: View {
                             }
                             .buttonStyle(WatchSecondaryButtonStyle())
                             .disabled(!model.canSummarizeInterjections || model.isSummarizingInterjections)
-                            .accessibilityLabel(model.isSummarizingInterjections ? "Summarizing interjections" : "Summarize interjections")
+                            .accessibilityLabel(model.canRetryLocalSummary ? "Retry summary" : (model.isSummarizingInterjections ? "Summarizing interjections" : "Summarize interjections"))
                             .accessibilityIdentifier("playback.summary.button")
                         }
 
@@ -2158,6 +2158,11 @@ private struct PlaybackScreen: View {
                         }
                         Divider()
                     }
+                }
+                if model.canRetryLocalSummary {
+                    Button("Retry Summary", action: model.retryPendingAI)
+                        .buttonStyle(SecondaryButtonStyle())
+                        .accessibilityIdentifier("conversation.retrySummary.button")
                 }
                 if model.remoteProviderExperienceEnabled {
                     TextField("Ask a follow-up…", text: $followUp, axis: .vertical)
