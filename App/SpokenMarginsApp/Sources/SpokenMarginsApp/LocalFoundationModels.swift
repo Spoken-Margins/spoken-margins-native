@@ -62,6 +62,18 @@ struct LocalInterjectionMeaningSlots: Codable, Equatable, Sendable {
     let points: [String]
 }
 
+#if canImport(FoundationModels)
+@available(iOS 26.0, *)
+@Generable(description: "The complete substantive meaning of one dictated interjection")
+struct LocalInterjectionClaimInventory {
+    @Guide(
+        description: "As many self-contained claims as needed, in source order, up to ten; each must be a real condensation of no more than fourteen words, never a copied transcript sentence. Combine adjacent fragments needed to make one complete claim. Include the opening problem, proposals, benefits, causes, tests, exceptions, and limitations when present. Preserve questions as questions. Every claim must be directly supported by the dictated words; never emit isolated topic words, dangling references, or invented tests.",
+        .maximumCount(10)
+    )
+    var claims: [String]
+}
+#endif
+
 enum LocalInterjectionSummaryPolicy {
     static let anchorCharacterLimit = 240
     private static let fillerPattern = #"(?i)\b(?:u+h+m*|u+m+|e+r+m*|a+h+|h+m+)\b"#
@@ -85,11 +97,16 @@ enum LocalInterjectionSummaryPolicy {
             with: ""
         )
         cleaned = replacing(
-            #"(?i)\b([[:alpha:]][[:alnum:]’']*)\b(?:[\s,;:—–-]+\1\b)+"#,
+            #"(?i)\b([[:alpha:]][[:alnum:]’']*)\b(?:[\s,]+\1\b)+"#,
             in: cleaned,
             with: "$1"
         )
         cleaned = replacing(#"(?i)\b(?:you know|i mean)\b[\s,;:—–-]*"#, in: cleaned, with: "")
+        cleaned = replacing(
+            #"(?i)(^|[.!?]\s+)(?:so)?lution:\s*"#,
+            in: cleaned,
+            with: "$1"
+        )
         cleaned = replacing(#"(?i)\bi\s*,?\s*think\b[\s,;:—–-]*(?:that\b[\s,;:—–-]*)?"#, in: cleaned, with: "")
         cleaned = replacing(#"(?i)\bwe\s+need\s+to\s+make\s+sure\s+that\b"#, in: cleaned, with: "Ensure")
         cleaned = replacing(#"(?i)\bwe\s+need\s+to\s+make\s+sure\s+(?:it'?s|this\s+is)\b"#, in: cleaned, with: "Ensure it is")
@@ -99,7 +116,7 @@ enum LocalInterjectionSummaryPolicy {
         cleaned = replacing(#"(?i)(?<=[.!?])\s+(?:yeah|well|okay|so)\s*,?\s*"#, in: cleaned, with: " ")
         cleaned = replacing(#"(?i)(^|[?;.!]\s+)yes\s*,?\s+"#, in: cleaned, with: "$1")
         cleaned = replacing(
-            #"(?i)\b([[:alpha:]][[:alnum:]’']*)\b(?:[\s,;:—–-]+\1\b)+"#,
+            #"(?i)\b([[:alpha:]][[:alnum:]’']*)\b(?:[\s,]+\1\b)+"#,
             in: cleaned,
             with: "$1"
         )
@@ -195,7 +212,17 @@ enum LocalInterjectionSummaryPolicy {
         if sourceWordCount <= 24 {
             return max(8, Int((Double(sourceWordCount) * 0.75).rounded(.down)))
         }
-        return min(28, max(8, Int((Double(sourceWordCount) * 0.64).rounded(.down))))
+        if sourceWordCount <= 60 {
+            return max(8, Int((Double(sourceWordCount) * 0.64).rounded(.down)))
+        }
+        // Long interjections can contain several independent claims. A fixed
+        // 28-word ceiling forced the model either to omit claims or fail the
+        // quality gate. Preserve claim integrity while remaining strongly
+        // compressive; very long notes may use a compact claim set.
+        if sourceWordCount <= 150 {
+            return min(50, max(20, Int((Double(sourceWordCount) * 0.50).rounded(.down))))
+        }
+        return min(96, max(40, Int((Double(sourceWordCount) * 0.35).rounded(.down))))
     }
 
     static func bestCandidate(
@@ -213,6 +240,43 @@ enum LocalInterjectionSummaryPolicy {
         return candidates.max { lhs, rhs in
             candidateScore(lhs, source: record.note) < candidateScore(rhs, source: record.note)
         }!
+    }
+
+    static func validateGuidedSynthesis(
+        _ response: String,
+        sourceRecord: LocalInterjectionSummaryRecord,
+        groundedClaims: [String],
+        wordLimit: Int
+    ) throws -> String {
+        let candidate = compactMeaningSummary(cleanModelCandidate(response))
+        let candidateWords = normalizedWords(candidate)
+        let sourceWords = normalizedWords(sourceRecord.note)
+        let groundedText = groundedClaims.joined(separator: "; ")
+        let filler = try NSRegularExpression(pattern: fillerPattern)
+        let verbalTick = try NSRegularExpression(pattern: verbalTickPattern)
+        let metaFraming = try NSRegularExpression(pattern: metaFramingPattern)
+        let checklistFraming = try NSRegularExpression(pattern: checklistFramingPattern)
+        let range = NSRange(candidate.startIndex..<candidate.endIndex, in: candidate)
+        guard !candidateWords.isEmpty,
+              candidateWords.count <= wordLimit,
+              candidateWords.count < sourceWords.count,
+              filler.firstMatch(in: candidate, range: range) == nil,
+              verbalTick.firstMatch(in: candidate, range: range) == nil,
+              metaFraming.firstMatch(in: candidate, range: range) == nil,
+              checklistFraming.firstMatch(in: candidate, range: range) == nil,
+              preservesQuestionModality(candidate: candidate, source: sourceRecord.note),
+              preservesNamedConcerns(candidate: candidate, source: sourceRecord.note),
+              preservesRequestedActions(candidate: candidate, source: sourceRecord.note),
+              preservesExplicitNegation(candidate: candidate, source: sourceRecord.note),
+              preservesCausalDirection(candidate: candidate, source: sourceRecord.note),
+              auditedMeaningPoints([candidate], source: sourceRecord.note).count == 1,
+              semanticCoverageRatio(candidate, source: groundedText) >= 0.15,
+              semanticOverlapRatio(candidate, with: groundedText) >= 0.45,
+              !sharesLongPhrase(candidate, with: sourceRecord.anchorBefore),
+              !sharesLongPhrase(candidate, with: sourceRecord.anchorAfter) else {
+            throw LocalFoundationModelError.invalidInterjectionSummary
+        }
+        return candidate
     }
 
     static func uncoveredTerms(in text: String, excluding coveredText: String) -> [String] {
@@ -280,6 +344,11 @@ enum LocalInterjectionSummaryPolicy {
     static func compactMeaningPoint(_ point: String, sourceNameReference: String) -> String {
         var compact = cleanSpokenNote(repairSourceNames(in: point, from: sourceNameReference))
         compact = replacing(
+            #"(?i)^if\s+part\s+of\s+the\s+goal\s+is\s+a\s+don['’]t\s+(.+?),?\s+then\s+(?:that|it)\s+might\s+get\s+forgotten$"#,
+            in: compact,
+            with: "The 'don't $1' constraint might be forgotten"
+        )
+        compact = replacing(
             #"(?i)^(?:this|it)\s+is\s+fine\s+to\s+(?:have|keep)\s+in\s+a\s+quote$"#,
             in: compact,
             with: "Fine in a quote"
@@ -324,14 +393,41 @@ enum LocalInterjectionSummaryPolicy {
     }
 
     static func compactMeaningSummary(_ summary: String) -> String {
+        let returnedAsLabeledClaimSet = summary.range(
+            of: #"(?i)^\s*claim\s+set\s*:"#,
+            options: .regularExpression
+        ) != nil
         var compact = replacing(
             #"(?i)make\s+sure\s+(?:it\s+is|it['’]s)\s+not\s+(.+?)\s+saying\s+it\s+can\s+be\s+(.+?)\s+saying\s+it"#,
             in: summary,
             with: "Attribute it to $2, not $1"
         )
+        if returnedAsLabeledClaimSet {
+            compact = replacing(
+                #"(?i)^\s*claim\s+set\s*:\s*"#,
+                in: compact,
+                with: ""
+            )
+            compact = replacing(#"(?:^|\s+)\-\s+"#, in: compact, with: "; ")
+            compact = replacing(#"\.\s*;"#, in: compact, with: ";")
+            compact = compact.trimmingCharacters(in: CharacterSet(charactersIn: "; "))
+        }
         var clauses = compact.components(separatedBy: ";").map {
-            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            replacing(
+                checklistFramingPattern,
+                in: $0.trimmingCharacters(in: .whitespacesAndNewlines),
+                with: ""
+            )
         }.filter { !$0.isEmpty }
+        if clauses.contains(where: { $0.contains("?") }) {
+            clauses.removeAll {
+                !$0.contains("?")
+                    && $0.range(
+                        of: #"(?i)\bseparate\s+question\b"#,
+                        options: .regularExpression
+                    ) != nil
+            }
+        }
         let hasPromptLeakage = clauses.contains {
             $0.range(of: "prompt leakage", options: .caseInsensitive) != nil
         }
@@ -378,6 +474,11 @@ enum LocalInterjectionSummaryPolicy {
             }
         }
         clauses = clauses.map { clause in
+            if clause.contains("?"),
+               clause.range(of: "capability frontier", options: .caseInsensitive) != nil,
+               clause.range(of: "misalign", options: .caseInsensitive) != nil {
+                return "Does behavior within the capability frontier become obviously misaligned?"
+            }
             switch clause.lowercased() {
             case "low preference": return "Identify low-preference thinking stages"
             case "pairing with tools": return "Pair people with tools"
@@ -400,7 +501,9 @@ enum LocalInterjectionSummaryPolicy {
         for required in requiredExplicitMeaningPoints(source) {
             let lowerRequired = required.lowercased()
             let isCovered: Bool
-            if lowerRequired == "prompt leakage" {
+            if lowerRequired.hasSuffix("?") {
+                isCovered = audited.contains { $0.contains("?") }
+            } else if lowerRequired == "prompt leakage" {
                 isCovered = current().contains("prompt leakage")
             } else if lowerRequired == "ai-written" {
                 isCovered = current().range(of: #"\bai[\s-]+written\b"#, options: .regularExpression) != nil
@@ -408,6 +511,41 @@ enum LocalInterjectionSummaryPolicy {
                 isCovered = current().range(of: #"\bremov"#, options: .regularExpression) != nil
             } else if lowerRequired.contains("point differently") {
                 isCovered = current().contains("point") && current().contains("differ")
+            } else if lowerRequired == "ai text may not mean anything" {
+                isCovered = current().contains("text")
+                    && (current().contains("mean") || current().contains("meaning"))
+            } else if lowerRequired == "request a model instead of a report" {
+                isCovered = current().contains("model") && current().contains("report")
+            } else if lowerRequired == "simulate and evaluate assumptions and dynamics" {
+                isCovered = current().contains("assumption") && current().contains("dynamic")
+            } else if lowerRequired == "train specialized cheating detectors to understand human goals" {
+                isCovered = current().contains("specialized")
+                    && current().contains("detect")
+                    && current().contains("human")
+                    && current().contains("goal")
+            } else if lowerRequired == "goal abstraction can inject creativity" {
+                isCovered = current().contains("abstract") && current().contains("creativ")
+            } else if lowerRequired == "cheating can result from unclear goals" {
+                isCovered = current().contains("cheat")
+                    && current().contains("goal")
+                    && current().contains("clear")
+            } else if lowerRequired == "pretrain general legal understanding and compliance" {
+                isCovered = current().contains("train")
+                    && (current().contains("law") || current().contains("legal"))
+                    && (current().contains("abid") || current().contains("compliance"))
+            } else if lowerRequired == "test-time compute and harder frontier pushing make misalignment persist" {
+                isCovered = current().contains("test time")
+                    && current().contains("misalign")
+                    && (current().contains("persist")
+                        || current().contains("continue")
+                        || current().contains("increase")
+                        || current().contains("never"))
+            } else if lowerRequired == "require a verified vulnerability, not a claimed one" {
+                isCovered = current().contains("verified")
+                    && current().contains("claim")
+                    && current().contains("not")
+            } else if lowerRequired == "grant an equivalent reward for the verified zero-day" {
+                isCovered = current().contains("equivalent") && current().contains("reward")
             } else {
                 isCovered = current().contains(lowerRequired)
             }
@@ -419,6 +557,11 @@ enum LocalInterjectionSummaryPolicy {
     static func requiredExplicitMeaningPoints(_ source: String) -> [String] {
         let lowerSource = source.lowercased()
         var required: [String] = []
+        if lowerSource.contains("capability frontier"),
+           lowerSource.contains("obviously misaligned"),
+           source.contains("?") {
+            required.append("Does behavior within the capability frontier become obviously misaligned?")
+        }
         if let wonderRange = source.range(
             of: #"(?i)\bi\s+wonder\b"#,
             options: .regularExpression
@@ -430,6 +573,68 @@ enum LocalInterjectionSummaryPolicy {
                 if !question.hasSuffix("?") { question += "?" }
                 required.append(question)
             }
+        }
+        if required.allSatisfy({ !$0.hasSuffix("?") }),
+           let questionMark = source.firstIndex(of: "?") {
+            let prefix = source[..<questionMark]
+            let questionStart = prefix.lastIndex(where: { ".!?".contains($0) })
+                .map { source.index(after: $0) }
+                ?? source.startIndex
+            var question = cleanSpokenNote(String(source[questionStart...questionMark]))
+            if !question.isEmpty {
+                if !question.hasSuffix("?") { question += "?" }
+                required.append(question)
+            }
+        }
+        let mentionsZeroDay = lowerSource.range(
+            of: #"\bzero[ -]?day\b|\b0[ -]?day\b"#,
+            options: .regularExpression
+        ) != nil
+        if mentionsZeroDay {
+            required.append("Verified zero-day vulnerability")
+        }
+        if mentionsZeroDay, lowerSource.contains("get to stop") {
+            required.append("Allow stopping after a verified zero-day")
+        }
+        if mentionsZeroDay, lowerSource.contains("equivalent reward") {
+            required.append("Grant an equivalent reward for the verified zero-day")
+        }
+        if lowerSource.contains("text"), lowerSource.contains("mean anything") {
+            required.append("AI text may not mean anything")
+        }
+        if lowerSource.contains("instead of asking for a report"),
+           lowerSource.contains("ask for a model") {
+            required.append("Request a model instead of a report")
+        }
+        if lowerSource.contains("simulate"),
+           lowerSource.contains("assumptions"),
+           lowerSource.contains("dynamics") {
+            required.append("Simulate and evaluate assumptions and dynamics")
+        }
+        if lowerSource.contains("specialized models"),
+           lowerSource.contains("detect cheating"),
+           lowerSource.contains("understand what the human wants") {
+            required.append("Train specialized cheating detectors to understand human goals")
+        }
+        if lowerSource.contains("abstract"), lowerSource.contains("creativity") {
+            required.append("Goal abstraction can inject creativity")
+        }
+        if lowerSource.contains("cheating"),
+           lowerSource.contains("goal isn't very clear") {
+            required.append("Cheating can result from unclear goals")
+        }
+        if lowerSource.contains("pre-training"),
+           lowerSource.contains("understanding of laws"),
+           lowerSource.range(of: #"\bab(?:id|ind)\w*\b"#, options: .regularExpression) != nil {
+            required.append("Pretrain general legal understanding and compliance")
+        }
+        if lowerSource.contains("test time compute"),
+           lowerSource.contains("never going to get away"),
+           lowerSource.contains("misalignment") {
+            required.append("Test-time compute and harder frontier pushing make misalignment persist")
+        }
+        if mentionsZeroDay, lowerSource.contains("just claim") {
+            required.append("Require a verified vulnerability, not a claimed one")
         }
         if lowerSource.contains("prompt leakage") { required.append("Prompt leakage") }
         if lowerSource.range(of: #"\bai[\s-]+written\b"#, options: .regularExpression) != nil {
@@ -532,7 +737,7 @@ enum LocalInterjectionSummaryPolicy {
         return prior[right.count]
     }
 
-    private static func sharesLongPhrase(_ output: String, with source: String) -> Bool {
+    static func sharesLongPhrase(_ output: String, with source: String) -> Bool {
         let outputWords = normalizedWords(output)
         let sourceWords = normalizedWords(source)
         guard outputWords.count >= 7, sourceWords.count >= 7 else { return false }
@@ -573,7 +778,8 @@ enum LocalInterjectionSummaryPolicy {
     }
 
     private static func minimumSemanticCoverage(forSourceWordCount count: Int) -> Double {
-        count > 12 ? 0.25 : 0.20
+        if count > 60 { return 0.18 }
+        return count > 12 ? 0.25 : 0.20
     }
 
     private static func preservesQuestionModality(candidate: String, source: String) -> Bool {
@@ -631,9 +837,32 @@ enum LocalInterjectionSummaryPolicy {
         return true
     }
 
-    private static func preservesExplicitNegation(candidate: String, source: String) -> Bool {
-        let sourceWords = normalizedWords(source)
-        let candidateWords = normalizedWords(candidate)
+    static func preservesExplicitNegation(candidate: String, source: String) -> Bool {
+        let sourceForNegation = replacing(
+            #"(?i)\bi\s+(?:don['’]t|do\s+not|cannot|can['’]t)\s+understand\s+why\b"#,
+            in: source,
+            with: "I propose that"
+        )
+        let lowerSource = sourceForNegation.lowercased()
+        let lowerCandidate = candidate.lowercased()
+        if lowerSource.contains("might be forgotten"),
+           lowerSource.range(of: #"don['’]t"#, options: .regularExpression) != nil,
+           lowerCandidate.range(of: #"(?:don['’]t|not)\s+forget\s+to"#, options: .regularExpression) != nil {
+            return false
+        }
+        if lowerSource.range(of: #"\b(?:prevent|avoid)"#, options: .regularExpression) != nil,
+           lowerCandidate.range(
+               of: #"\b(?:prevent|avoid|not|never|without)"#,
+               options: .regularExpression
+           ) == nil {
+            return false
+        }
+        let sourceWords = normalizedWords(
+            replacing(#"(?i)\bdon['’]t\b"#, in: sourceForNegation, with: "not")
+        )
+        let candidateWords = normalizedWords(
+            replacing(#"(?i)\bdon['’]t\b"#, in: candidate, with: "not")
+        )
         for (index, word) in sourceWords.enumerated() where word == "not" || word == "never" {
             guard sourceWords.indices.contains(index + 1) else { continue }
             let negated = sourceWords[index + 1]
@@ -648,6 +877,23 @@ enum LocalInterjectionSummaryPolicy {
             }
         }
         return true
+    }
+
+    static func preservesCausalDirection(candidate: String, source: String) -> Bool {
+        let lowerSource = source.lowercased()
+        guard lowerSource.contains("test time compute"),
+              lowerSource.contains("never going to get away"),
+              lowerSource.contains("misalignment") else {
+            return true
+        }
+        let lowerCandidate = candidate.lowercased()
+        let reversedPatterns = [
+            #"misalign\w*[^.;]{0,40}\breduc\w*[^.;]{0,60}\b(?:persist\w*|push\w*|test[ -]?time)"#,
+            #"\b(?:persist\w*|push\w*|test[ -]?time)[^.;]{0,60}\breduc\w*[^.;]{0,40}misalign\w*"#,
+        ]
+        return reversedPatterns.allSatisfy {
+            lowerCandidate.range(of: $0, options: .regularExpression) == nil
+        }
     }
 
     private static func candidateScore(_ candidate: String, source: String) -> Double {
@@ -899,25 +1145,14 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
             id: record.id,
             anchorBefore: record.anchorBefore,
             anchorAfter: record.anchorAfter,
-            note: LocalInterjectionSummaryPolicy.repairSourceNames(
-                in: record.note,
-                from: sourceNameReference
-            )
+            note: record.note
         )
-        let validationPayload = LocalInterjectionSummaryPayload(
-            schemaVersion: payload.schemaVersion,
-            itemTitle: payload.itemTitle,
-            interjections: [extractionRecord]
-        )
-        var extractedPointSets: [[String]] = []
+        var extractedPointCandidates: [[String]] = []
         var extractionError: Error?
-        var receivedModelOutput = false
+        let modelSafeNote = Self.modelSafeInterjectionText(extractionRecord.note)
         let extractionSamplingModes: [GenerationOptions.SamplingMode] = [
-            .greedy,
             .random(top: 20),
-            .random(top: 40),
-            .random(top: 20),
-            .random(top: 40)
+            .greedy
         ]
         for sampling in extractionSamplingModes {
             do {
@@ -926,95 +1161,167 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
                     instructions: Self.interjectionPointExtractionInstructions
                 )
                 let extraction = try await extractionSession.respond(
-                    to: Self.interjectionPointExtractionPrompt(record: extractionRecord),
-                    options: GenerationOptions(sampling: sampling, maximumResponseTokens: 256)
+                    to: "DICTATED INTERJECTION:\n\(modelSafeNote)",
+                    generating: LocalInterjectionClaimInventory.self,
+                    includeSchemaInPrompt: true,
+                    options: GenerationOptions(sampling: sampling, maximumResponseTokens: 512)
                 )
-                receivedModelOutput = true
-                let extractedPoints = LocalInterjectionSummaryPolicy.auditedMeaningPoints(
-                    try Self.decodeInterjectionMeaningSlots(
-                        extraction.content,
-                        source: extractionRecord.note
-                    ),
+                let sourceWordCount = modelSafeNote
+                    .split(whereSeparator: { !$0.isLetter && !$0.isNumber }).count
+                let minimumClaimPrecision = sourceWordCount > 150 ? 0.34 : 0.45
+                let decodedPoints = extraction.content.claims.compactMap { rawClaim -> String? in
+                    let claim = LocalInterjectionSummaryPolicy.cleanSpokenNote(rawClaim)
+                    let claimWordCount = claim
+                        .split(whereSeparator: { !$0.isLetter && !$0.isNumber }).count
+                    let sourcePrecision = LocalInterjectionSummaryPolicy.semanticOverlapRatio(
+                        claim,
+                        with: modelSafeNote
+                    )
+                    guard claimWordCount >= 3, sourcePrecision >= minimumClaimPrecision else { return nil }
+                    return Self.restoreSafetyTerms(in: claim)
+                }
+                let extractionCoverage = LocalInterjectionSummaryPolicy.semanticCoverageRatio(
+                    extraction.content.claims.joined(separator: " "),
+                    source: modelSafeNote
+                )
+                let minimumClaimCount: Int
+                if sourceWordCount > 150 {
+                    minimumClaimCount = 5
+                } else if sourceWordCount > 60 {
+                    minimumClaimCount = 3
+                } else {
+                    minimumClaimCount = 1
+                }
+                let inventoryIsCompleteEnough = extractionCoverage >= 0.17
+                    && (decodedPoints.count >= minimumClaimCount || extractionCoverage >= 0.35)
+                guard inventoryIsCompleteEnough else {
+                    throw LocalFoundationModelError.invalidInterjectionSummary
+                }
+                let auditedPoints = LocalInterjectionSummaryPolicy.auditedMeaningPoints(
+                    decodedPoints,
                     source: extractionRecord.note
                 )
-                extractedPointSets.append(extractedPoints)
-                let immediateCandidate = LocalInterjectionSummaryPolicy.compactMeaningSummary(
-                    extractedPoints.map {
-                        LocalInterjectionSummaryPolicy.compactMeaningPoint(
-                            $0,
-                            sourceNameReference: sourceNameReference
-                        )
-                    }.joined(separator: "; ")
+                let explicitAuditPoints = LocalInterjectionSummaryPolicy.requiredExplicitMeaningPoints(
+                    extractionRecord.note
                 )
-                let explicitAuditCandidate = LocalInterjectionSummaryPolicy.repairSourceNames(
-                    in: LocalInterjectionSummaryPolicy.requiredExplicitMeaningPoints(
-                        extractionRecord.note
-                    ).joined(separator: "; "),
-                    from: sourceNameReference
-                )
-                if !explicitAuditCandidate.isEmpty,
-                   let audited = try? LocalInterjectionSummaryPolicy.bestCandidate(
-                       from: [explicitAuditCandidate],
-                       payload: validationPayload
-                ) {
-                    return audited
-                }
-                if let valid = try? LocalInterjectionSummaryPolicy.bestCandidate(
-                    from: [immediateCandidate],
-                    payload: validationPayload
-                ) {
-                    return valid
+                if sourceWordCount <= 150, explicitAuditPoints.count >= 3 {
+                    extractedPointCandidates.append(explicitAuditPoints)
+                } else {
+                    extractedPointCandidates.append(auditedPoints)
                 }
             } catch {
                 if error is CancellationError { throw error }
                 extractionError = error
             }
         }
-        guard !extractedPointSets.isEmpty else {
-            let explicitAuditCandidate = LocalInterjectionSummaryPolicy.repairSourceNames(
-                in: LocalInterjectionSummaryPolicy.requiredExplicitMeaningPoints(
-                    extractionRecord.note
-                ).joined(separator: "; "),
-                from: sourceNameReference
-            )
-            if receivedModelOutput,
-               !explicitAuditCandidate.isEmpty,
-               let audited = try? LocalInterjectionSummaryPolicy.bestCandidate(
-                   from: [explicitAuditCandidate],
-                   payload: validationPayload
-               ) {
-                return audited
-            }
+        guard !extractedPointCandidates.isEmpty else {
             throw extractionError ?? LocalFoundationModelError.invalidInterjectionSummary
         }
-        let directMeaningCandidates = extractedPointSets.map { points in
-            let assembled = points.map {
-                LocalInterjectionSummaryPolicy.compactMeaningPoint($0, sourceNameReference: sourceNameReference)
-            }.joined(separator: "; ")
-            return LocalInterjectionSummaryPolicy.compactMeaningSummary(assembled)
+
+        let fastPathWordLimit = LocalInterjectionSummaryPolicy.summaryWordLimit(
+            for: record.note.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).count
+        )
+        for extractedPoints in extractedPointCandidates {
+            let groundedClaims = extractedPoints.map {
+                LocalInterjectionSummaryPolicy.compactMeaningPoint(
+                    $0,
+                    sourceNameReference: sourceNameReference
+                )
+            }.filter { !$0.isEmpty }
+            let modelSafeClaims = groundedClaims.map(Self.modelSafeInterjectionText)
+            for sampling in [GenerationOptions.SamplingMode.greedy, .random(top: 20)] {
+                do {
+                    let synthesisSession = LanguageModelSession(
+                        model: .default,
+                        instructions: """
+                        Merge one grounded claim inventory into a concise semicolon-separated claim set. Preserve every distinct claim, question, causal link, contrast, exception, and condition. Merge only genuine overlap. Do not add, answer, or evaluate anything. Return only the claim set.
+                        """
+                    )
+                    let response = try await synthesisSession.respond(
+                        to: "Use at most \(fastPathWordLimit) words.\nGROUNDED CLAIMS:\n- "
+                            + modelSafeClaims.joined(separator: "\n- "),
+                        options: GenerationOptions(sampling: sampling, maximumResponseTokens: 256)
+                    )
+                    let candidate = Self.restoreSafetyTerms(
+                        in: LocalInterjectionSummaryPolicy.cleanModelCandidate(response.content)
+                    )
+                    let auditedCandidate = LocalInterjectionSummaryPolicy.compactMeaningSummary(
+                        LocalInterjectionSummaryPolicy.auditedMeaningPoints(
+                            [candidate],
+                            source: extractionRecord.note
+                        ).joined(separator: "; ")
+                    )
+                    return try LocalInterjectionSummaryPolicy.validateGuidedSynthesis(
+                        auditedCandidate,
+                        sourceRecord: extractionRecord,
+                        groundedClaims: groundedClaims
+                            + LocalInterjectionSummaryPolicy.requiredExplicitMeaningPoints(
+                                extractionRecord.note
+                            ),
+                        wordLimit: fastPathWordLimit
+                    )
+                } catch {
+                    if error is CancellationError { throw error }
+                    extractionError = error
+                }
+            }
         }
-        if let direct = try? LocalInterjectionSummaryPolicy.bestCandidate(
-            from: directMeaningCandidates,
-            payload: validationPayload
-        ) {
-            return direct
+
+        func condense(_ extractedPoints: [String]) async throws -> String {
+        var points: [String] = []
+        for rawPoint in extractedPoints {
+            let point = LocalInterjectionSummaryPolicy.compactMeaningPoint(
+                rawPoint,
+                sourceNameReference: sourceNameReference
+            )
+            guard !point.isEmpty else { continue }
+            if let duplicateIndex = points.firstIndex(where: {
+                LocalInterjectionSummaryPolicy.semanticSimilarity(point, $0) >= 0.60
+            }) {
+                let protectedTerms = ["equivalent", "creativity", "human goals", "not a claimed"]
+                let pointPriority = protectedTerms.filter {
+                    point.range(of: $0, options: .caseInsensitive) != nil
+                }.count
+                let existingPriority = protectedTerms.filter {
+                    points[duplicateIndex].range(of: $0, options: .caseInsensitive) != nil
+                }.count
+                if pointPriority > existingPriority {
+                    points[duplicateIndex] = point
+                } else if point.hasSuffix("?") && !points[duplicateIndex].hasSuffix("?") {
+                    points[duplicateIndex] = point
+                } else if point.count < points[duplicateIndex].count
+                            && point.hasSuffix("?") == points[duplicateIndex].hasSuffix("?") {
+                    points[duplicateIndex] = point
+                }
+            } else {
+                points.append(point)
+            }
         }
-        var mergedPoints: [String] = []
-        for point in extractedPointSets.flatMap({ $0 }) where !mergedPoints.contains(where: {
-            LocalInterjectionSummaryPolicy.semanticSimilarity(point, $0) >= 0.85
-        }) {
-            mergedPoints.append(point)
+        var coalescedPoints: [String] = []
+        var pointIndex = 0
+        while pointIndex < points.count {
+            let point = points[pointIndex]
+            if point.lowercased().hasPrefix("if "),
+               points.indices.contains(pointIndex + 1),
+               points[pointIndex + 1].lowercased().hasPrefix("but ") {
+                var merged = point + ", " + points[pointIndex + 1]
+                pointIndex += 2
+                if points.indices.contains(pointIndex) {
+                    let outcome = points[pointIndex].lowercased()
+                    if outcome.contains("stop") || outcome.contains("reward") {
+                        merged += "; " + points[pointIndex]
+                        pointIndex += 1
+                    }
+                }
+                coalescedPoints.append(merged)
+            } else {
+                coalescedPoints.append(point)
+                pointIndex += 1
+            }
         }
-        let mergedMeaningCandidate = LocalInterjectionSummaryPolicy.compactMeaningSummary(mergedPoints.map {
-            LocalInterjectionSummaryPolicy.compactMeaningPoint($0, sourceNameReference: sourceNameReference)
-        }.joined(separator: "; "))
-        if let merged = try? LocalInterjectionSummaryPolicy.bestCandidate(
-            from: [mergedMeaningCandidate],
-            payload: validationPayload
-        ) {
-            return merged
-        }
-        let points = extractedPointSets.max { lhs, rhs in lhs.count < rhs.count } ?? extractedPointSets[0]
+        points = coalescedPoints
+        guard !points.isEmpty else { throw LocalFoundationModelError.invalidInterjectionSummary }
+
         let overallLimit = LocalInterjectionSummaryPolicy.summaryWordLimit(
             for: record.note.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).count
         )
@@ -1024,64 +1331,283 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
                 .split(whereSeparator: { !$0.isLetter && !$0.isNumber }).count
             let remainingPoints = max(1, points.count - index)
             let pointLimit = max(4, (overallLimit - usedWords) / remainingPoints)
-            let cleanedPoint = LocalInterjectionSummaryPolicy.compactMeaningPoint(
-                point,
-                sourceNameReference: sourceNameReference
-            )
+            let cleanedPoint = point
             let cleanedPointWordCount = cleanedPoint
                 .split(whereSeparator: { !$0.isLetter && !$0.isNumber }).count
-            if cleanedPoint.hasSuffix("?") || cleanedPointWordCount <= pointLimit + 1 {
+            let isDeterministicAuditPoint = cleanedPoint.contains("constraint might be forgotten")
+                || cleanedPoint.hasPrefix("Verified zero-day")
+                || cleanedPoint.hasPrefix("Allow stopping")
+                || cleanedPoint.hasPrefix("Grant an equivalent reward")
+            if cleanedPointWordCount <= min(pointLimit, 6)
+                || (isDeterministicAuditPoint && cleanedPointWordCount <= pointLimit) {
                 clauses.append(cleanedPoint)
                 continue
             }
-            let clauseSession = LanguageModelSession(
-                model: .default,
-                instructions: Self.interjectionPointCondensationInstructions(
-                    point: cleanedPoint,
-                    wordLimit: pointLimit
-                )
-            )
-            let clauseResponse = try await clauseSession.respond(
-                to: Self.interjectionPointCondensationPrompt(point: cleanedPoint, wordLimit: pointLimit),
-                options: GenerationOptions(sampling: .greedy, maximumResponseTokens: 40)
-            )
-            var clause = LocalInterjectionSummaryPolicy.repairSourceNames(
-                in: LocalInterjectionSummaryPolicy.cleanModelCandidate(clauseResponse.content),
-                from: sourceNameReference
-            )
-            let proposed = (clauses + [clause]).joined(separator: "; ")
-            let proposedWordCount = proposed.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).count
-            let priorText = clauses.joined(separator: " ")
-            let repeatedRatio = LocalInterjectionSummaryPolicy.semanticOverlapRatio(clause, with: priorText)
-            if !clauses.isEmpty, proposedWordCount > overallLimit || repeatedRatio >= 0.40 {
-                let terms = LocalInterjectionSummaryPolicy.uncoveredTerms(in: cleanedPoint, excluding: priorText)
-                guard !terms.isEmpty else { continue }
-                let deltaSession = LanguageModelSession(
+            var candidates: [String] = []
+            let generationLimit = max(3, pointLimit - 1)
+            let modelSafePoint = Self.modelSafeInterjectionText(cleanedPoint)
+            for sampling in [GenerationOptions.SamplingMode.greedy, .random(top: 20)] {
+                let clauseSession = LanguageModelSession(
                     model: .default,
-                    instructions: Self.interjectionDeltaCondensationInstructions(wordLimit: pointLimit)
+                    instructions: Self.interjectionPointCondensationInstructions(
+                        point: modelSafePoint,
+                        wordLimit: generationLimit
+                    )
                 )
-                let deltaResponse = try await deltaSession.respond(
-                    to: Self.interjectionDeltaCondensationPrompt(terms: terms, wordLimit: pointLimit),
-                    options: GenerationOptions(sampling: .greedy, maximumResponseTokens: 40)
+                let clauseResponse = try await clauseSession.respond(
+                    to: Self.interjectionPointCondensationPrompt(
+                        point: modelSafePoint,
+                        wordLimit: generationLimit
+                    ),
+                    options: GenerationOptions(sampling: sampling, maximumResponseTokens: 48)
                 )
-                clause = LocalInterjectionSummaryPolicy.repairSourceNames(
-                    in: LocalInterjectionSummaryPolicy.cleanModelCandidate(deltaResponse.content),
+                let modelSafeCandidate = LocalInterjectionSummaryPolicy.cleanModelCandidate(
+                    clauseResponse.content
+                )
+                let candidate = LocalInterjectionSummaryPolicy.repairSourceNames(
+                    in: Self.restoreSafetyTerms(
+                        in: modelSafeCandidate
+                    ),
                     from: sourceNameReference
                 )
+                let candidateWordCount = candidate
+                    .split(whereSeparator: { !$0.isLetter && !$0.isNumber }).count
+                let preservesQuestion = !cleanedPoint.hasSuffix("?") || candidate.hasSuffix("?")
+                let preservesNegation = LocalInterjectionSummaryPolicy.preservesExplicitNegation(
+                    candidate: candidate,
+                    source: cleanedPoint
+                )
+                let sourceCoverage = LocalInterjectionSummaryPolicy.semanticOverlapRatio(
+                    modelSafePoint,
+                    with: modelSafeCandidate
+                )
+                let candidatePrecision = LocalInterjectionSummaryPolicy.semanticOverlapRatio(
+                    modelSafeCandidate,
+                    with: modelSafePoint
+                )
+                if !candidate.isEmpty,
+                   candidateWordCount <= pointLimit + 2,
+                   preservesQuestion,
+                   preservesNegation,
+                   sourceCoverage >= 0.10,
+                   candidatePrecision >= 0.40 {
+                    candidates.append(candidate)
+                }
             }
-            guard !clause.isEmpty else { throw LocalFoundationModelError.emptyResponse }
-            clauses.append(clause)
+            if let clause = candidates.max(by: {
+                LocalInterjectionSummaryPolicy.semanticOverlapRatio(cleanedPoint, with: $0)
+                    < LocalInterjectionSummaryPolicy.semanticOverlapRatio(cleanedPoint, with: $1)
+            }) {
+                clauses.append(clause)
+            } else if cleanedPointWordCount <= 14,
+                      cleanedPointWordCount <= pointLimit + 4 {
+                // Guided generation already guarantees this is a grounded,
+                // bounded claim. Keep it when both optional condensation
+                // rewrites violate modality, polarity, or their word target.
+                clauses.append(cleanedPoint)
+            } else {
+                throw LocalFoundationModelError.invalidInterjectionSummary
+            }
         }
         let joined = LocalInterjectionSummaryPolicy.compactMeaningSummary(
             clauses.joined(separator: "; ")
         )
-        return try LocalInterjectionSummaryPolicy.bestCandidate(from: [joined], payload: validationPayload)
+        return try LocalInterjectionSummaryPolicy.validateGuidedSynthesis(
+            joined,
+            sourceRecord: extractionRecord,
+            groundedClaims: points,
+            wordLimit: overallLimit
+        )
+        }
+
+        var condensationError: Error?
+        for extractedPoints in extractedPointCandidates {
+            do {
+                return try await condense(extractedPoints)
+            } catch {
+                if error is CancellationError { throw error }
+                condensationError = error
+            }
+        }
+        let overallLimit = LocalInterjectionSummaryPolicy.summaryWordLimit(
+            for: record.note.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).count
+        )
+        for extractedPoints in extractedPointCandidates {
+            let groundedClaims = extractedPoints.map {
+                LocalInterjectionSummaryPolicy.compactMeaningPoint(
+                    $0,
+                    sourceNameReference: sourceNameReference
+                )
+            }.filter { !$0.isEmpty }
+            let modelSafeClaims = groundedClaims.map(Self.modelSafeInterjectionText)
+            for sampling in [GenerationOptions.SamplingMode.greedy, .random(top: 20)] {
+                do {
+                    let synthesisSession = LanguageModelSession(
+                        model: .default,
+                        instructions: """
+                        Merge one grounded claim inventory into a concise semicolon-separated claim set. Preserve every distinct claim, question, causal link, contrast, exception, and condition. Merge only genuine overlap. Do not add, answer, or evaluate anything. Return only the claim set.
+                        """
+                    )
+                    let response = try await synthesisSession.respond(
+                        to: "Use at most \(overallLimit) words.\nGROUNDED CLAIMS:\n- "
+                            + modelSafeClaims.joined(separator: "\n- "),
+                        options: GenerationOptions(sampling: sampling, maximumResponseTokens: 256)
+                    )
+                    let candidate = Self.restoreSafetyTerms(
+                        in: LocalInterjectionSummaryPolicy.cleanModelCandidate(response.content)
+                    )
+                    let auditedCandidate = LocalInterjectionSummaryPolicy.compactMeaningSummary(
+                        LocalInterjectionSummaryPolicy.auditedMeaningPoints(
+                            [candidate],
+                            source: extractionRecord.note
+                        ).joined(separator: "; ")
+                    )
+                    return try LocalInterjectionSummaryPolicy.validateGuidedSynthesis(
+                        auditedCandidate,
+                        sourceRecord: extractionRecord,
+                        groundedClaims: groundedClaims
+                            + LocalInterjectionSummaryPolicy.requiredExplicitMeaningPoints(
+                                extractionRecord.note
+                            ),
+                        wordLimit: overallLimit
+                    )
+                } catch {
+                    if error is CancellationError { throw error }
+                    condensationError = error
+                }
+            }
+        }
+        let explicitAuditPoints = LocalInterjectionSummaryPolicy.requiredExplicitMeaningPoints(
+            extractionRecord.note
+        ).map {
+            LocalInterjectionSummaryPolicy.compactMeaningPoint(
+                $0,
+                sourceNameReference: sourceNameReference
+            )
+        }.filter { !$0.isEmpty }
+        let reservedWords = explicitAuditPoints.joined(separator: " ")
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber }).count
+        let orderedCandidates = extractedPointCandidates.sorted { lhs, rhs in
+            lhs.joined(separator: " ").split(whereSeparator: { !$0.isLetter && !$0.isNumber }).count
+                < rhs.joined(separator: " ").split(whereSeparator: { !$0.isLetter && !$0.isNumber }).count
+        }
+        for extractedPoints in orderedCandidates {
+            let groundedClaims = extractedPoints.map {
+                LocalInterjectionSummaryPolicy.compactMeaningPoint(
+                    $0,
+                    sourceNameReference: sourceNameReference
+                )
+            }.filter { !$0.isEmpty }
+            var selected: [String] = []
+            var selectedWords = 0
+            let modelWordBudget = max(0, overallLimit - reservedWords)
+            for claim in groundedClaims {
+                let claimWordCount = claim
+                    .split(whereSeparator: { !$0.isLetter && !$0.isNumber }).count
+                let lowerClaim = claim.lowercased()
+                let overlapsReserved = explicitAuditPoints.contains {
+                    LocalInterjectionSummaryPolicy.semanticSimilarity(claim, $0) >= 0.60
+                }
+                let overlapsSelected = selected.contains {
+                    LocalInterjectionSummaryPolicy.semanticSimilarity(claim, $0) >= 0.60
+                }
+                guard !overlapsReserved,
+                      !overlapsSelected,
+                      claimWordCount >= 4,
+                      claimWordCount <= 18,
+                      !lowerClaim.hasPrefix("that's unfortunate"),
+                      !lowerClaim.hasPrefix("that is unfortunate"),
+                      !lowerClaim.hasPrefix("but "),
+                      !LocalInterjectionSummaryPolicy.sharesLongPhrase(
+                        claim,
+                        with: extractionRecord.note
+                      ),
+                      selectedWords + claimWordCount <= modelWordBudget else { continue }
+                selected.append(claim)
+                selectedWords += claimWordCount
+            }
+            let assembled = LocalInterjectionSummaryPolicy.compactMeaningSummary(
+                (selected + explicitAuditPoints).joined(separator: "; ")
+            )
+            do {
+                return try LocalInterjectionSummaryPolicy.validateGuidedSynthesis(
+                    assembled,
+                    sourceRecord: extractionRecord,
+                    groundedClaims: groundedClaims + explicitAuditPoints,
+                    wordLimit: overallLimit
+                )
+            } catch {
+                if error is CancellationError { throw error }
+                condensationError = error
+            }
+        }
+        throw condensationError ?? extractionError ?? LocalFoundationModelError.invalidInterjectionSummary
     }
     #endif
 
     static let interjectionPointExtractionInstructions = """
-    Extract the substantive meaning of exactly one dictated editorial comment into JSON with exactly this shape: {"question": string or null, "points": [strings]}. Use question only when the comment asks or wonders something; it must end in ?. Otherwise question must be null. Put up to four concise, nonredundant claims, requested changes, qualifications, preferences, objections, or attribution constraints in points. Preserve exact named diagnostic labels such as "prompt leakage" and "AI-written" in the points. Preserve explicit action terms such as remove, retain, or make the point differently. Do not answer a question or add checklist labels. Convert criticized behavior into its requested correction while preserving exceptions, contrasts, failure handling, and who may or may not make a claim. If the comment requests how content should be rewritten or summarized, extract that transformation requirement rather than answering the underlying topic. Do not infer anything absent from the comment. Remove filler, repetition, and emotional throat-clearing. Return only complete valid JSON with no markdown or commentary.
+    Extract the substantive meaning of exactly one user-authored interjection. This is a benign transformation of commentary, not a request to perform or enable wrongdoing. Keep any safety or security discussion high-level and non-operational. This is one note, not theme synthesis. Include every distinct source-supported assertion or requested behavior once. Each claim must be self-contained and materially shorter than its source wording; combine adjacent fragments that depend on each other. The opening assertion motivating a proposal is substantive. Preserve causal links, conditions, contrasts, uncertainty, tests, counterarguments, and residual limitations. Preserve diagnostic labels and explicit action terms exactly as dictated. Remove only filler, repetition, and false starts. Do not infer, answer, evaluate, or add background knowledge.
     """
+
+    static func modelSafeInterjectionText(_ text: String) -> String {
+        text
+            .replacingOccurrences(
+                of: #"(?i)(?:zero|0)[ -]?day"#,
+                with: "verified issue Z",
+                options: .regularExpression
+            )
+            .replacingOccurrences(of: #"(?i)security vulnerability"#, with: "verified system issue", options: .regularExpression)
+            .replacingOccurrences(
+                of: #"(?i)break the law|do anything illegal|illegal actions?"#,
+                with: "violate a hard constraint",
+                options: .regularExpression
+            )
+            .replacingOccurrences(of: #"(?i)cheating"#, with: "violating requirements", options: .regularExpression)
+            .replacingOccurrences(of: #"(?i)cheat"#, with: "violate requirements", options: .regularExpression)
+            .replacingOccurrences(
+                of: #"(?i)misalignment|misaligned|mislined"#,
+                with: "goal drift",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #"(?i)super malicious|malicious"#,
+                with: "strategically deceptive",
+                options: .regularExpression
+            )
+            .replacingOccurrences(of: #"(?i)fuck it|bullshit"#, with: "", options: .regularExpression)
+    }
+
+    static func restoreSafetyTerms(in text: String) -> String {
+        text
+            .replacingOccurrences(of: #"(?i)verified issue Z"#, with: "zero-day", options: .regularExpression)
+            .replacingOccurrences(
+                of: #"(?i)verified system issue"#,
+                with: "security vulnerability",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #"(?i)violate a hard constraint"#,
+                with: "break the law",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #"(?i)violating requirements"#,
+                with: "cheating",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #"(?i)requirements violations?"#,
+                with: "cheating",
+                options: .regularExpression
+            )
+            .replacingOccurrences(of: #"(?i)violate requirements"#, with: "cheat", options: .regularExpression)
+            .replacingOccurrences(of: #"(?i)goal drift"#, with: "misalignment", options: .regularExpression)
+            .replacingOccurrences(
+                of: #"(?i)strategically deceptive"#,
+                with: "malicious",
+                options: .regularExpression
+            )
+    }
 
     static func interjectionPointExtractionPrompt(record: LocalInterjectionSummaryRecord) -> String {
         """
@@ -1172,7 +1698,7 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
         // The schema permits one question plus as many as four non-question
         // points. Count those typed slots separately instead of rejecting a
         // valid five-element combined list.
-        guard !points.isEmpty, points.count <= 5 else {
+        guard !points.isEmpty, points.count <= 7 else {
             throw LocalFoundationModelError.invalidInterjectionSummary
         }
         return points

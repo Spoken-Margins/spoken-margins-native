@@ -591,7 +591,6 @@
 				BB06776C42C30ED723DD3416 /* Resources */,
 				CC246B3771C4C2A0697251CC /* Frameworks */,
 				7A3F276E86D032A73B80310B /* Embed Foundation Extensions */,
-				8E25FFD63C1712FC53F4BD32 /* Remove Embedded Static ONNX Runtime */,
 			);
 			buildRules = (
 			);
@@ -740,32 +739,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
-
-/* Begin PBXShellScriptBuildPhase section */
-		8E25FFD63C1712FC53F4BD32 /* Remove Embedded Static ONNX Runtime */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-				"$(BUILT_PRODUCTS_DIR)/onnxruntime.framework/onnxruntime",
-				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)",
-				"$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/onnxruntime.framework/onnxruntime",
-			);
-			name = "Remove Embedded Static ONNX Runtime";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-				"$(DERIVED_FILE_DIR)/remove-embedded-static-onnxruntime.stamp",
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "\"${SRCROOT}/scripts/remove-embedded-static-onnxruntime.sh\"\n";
-		};
-/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		34A6ED8B17073A51DCC54617 /* Sources */ = {
@@ -935,6 +908,7 @@
 				);
 				MARKETING_VERSION = 0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.native;
+				REMOVE_STATIC_EXECUTABLES_FROM_EMBEDDED_BUNDLES = YES;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -1021,6 +995,7 @@
 				);
 				MARKETING_VERSION = 0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.native;
+				REMOVE_STATIC_EXECUTABLES_FROM_EMBEDDED_BUNDLES = YES;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";

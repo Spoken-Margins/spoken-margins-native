@@ -52,20 +52,10 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: Spoken Margins
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
         MARKETING_VERSION: "0.1"
+        REMOVE_STATIC_EXECUTABLES_FROM_EMBEDDED_BUNDLES: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SWIFT_VERSION: "6.0"
         TARGETED_DEVICE_FAMILY: "1,2"
-    postBuildScripts:
-      - name: Remove Embedded Static ONNX Runtime
-        script: |
-          "${SRCROOT}/scripts/remove-embedded-static-onnxruntime.sh"
-        inputFiles:
-          - $(BUILT_PRODUCTS_DIR)/onnxruntime.framework/onnxruntime
-          - $(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)
-          - $(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/onnxruntime.framework/onnxruntime
-        outputFiles:
-          - $(DERIVED_FILE_DIR)/remove-embedded-static-onnxruntime.stamp
-        basedOnDependencyAnalysis: false
     info:
       path: App/SpokenMarginsApp/Info.plist
       properties:

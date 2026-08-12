@@ -30,9 +30,9 @@ final class LocalFoundationModelsTests: XCTestCase {
         XCTAssertTrue(extraction.contains("Maybe this matters"))
         XCTAssertFalse(extraction.contains("SECRET SOURCE BEFORE"))
         XCTAssertFalse(extraction.contains("SECRET SOURCE AFTER"))
-        XCTAssertTrue(AppleFoundationModelClient.interjectionPointExtractionInstructions.contains("Use question only"))
-        XCTAssertTrue(AppleFoundationModelClient.interjectionPointExtractionInstructions.contains("attribution constraints"))
-        XCTAssertTrue(AppleFoundationModelClient.interjectionPointExtractionInstructions.contains("transformation requirement"))
+        XCTAssertTrue(AppleFoundationModelClient.interjectionPointExtractionInstructions.contains("one note, not theme synthesis"))
+        XCTAssertTrue(AppleFoundationModelClient.interjectionPointExtractionInstructions.contains("self-contained"))
+        XCTAssertTrue(AppleFoundationModelClient.interjectionPointExtractionInstructions.contains("source-supported"))
         XCTAssertFalse(extraction.contains("Extract the minimum number"))
         XCTAssertTrue(
             AppleFoundationModelClient.interjectionPointCondensationInstructions(
@@ -295,6 +295,102 @@ final class LocalFoundationModelsTests: XCTestCase {
             LocalInterjectionSummaryPolicy.cleanModelCandidate("Does pausing prevent background playback?"),
             "Does pausing prevent background playback?"
         )
+        XCTAssertEqual(
+            LocalInterjectionSummaryPolicy.cleanModelCandidate(
+                "Test-time compute may cause misalignment; Misalignment can be detected."
+            ),
+            "Test-time compute may cause misalignment; Misalignment can be detected"
+        )
+    }
+
+    func testSafetyNormalizationRoundTripsExplicitInterjectionTerms() {
+        let source = "misalignment can produce cheating near a zero-day security vulnerability before a model breaks the law."
+        let safe = AppleFoundationModelClient.modelSafeInterjectionText(source)
+
+        XCTAssertFalse(safe.lowercased().contains("misalignment"))
+        XCTAssertFalse(safe.lowercased().contains("zero-day"))
+        XCTAssertEqual(
+            AppleFoundationModelClient.restoreSafetyTerms(in: safe),
+            "misalignment can produce cheating near a zero-day security vulnerability before a model breaks the law."
+        )
+    }
+
+    func testExplicitQuestionAndVerifiedZeroDayConditionsAreAudited() {
+        let source = "Does it fail at the frontier? If it finds a verified zero-day, let it get to stop and grant an equivalent reward."
+        let points = LocalInterjectionSummaryPolicy.requiredExplicitMeaningPoints(source)
+
+        XCTAssertTrue(points.contains("Does it fail at the frontier?"))
+        XCTAssertTrue(points.contains("Verified zero-day vulnerability"))
+        XCTAssertTrue(points.contains("Allow stopping after a verified zero-day"))
+        XCTAssertTrue(points.contains("Grant an equivalent reward for the verified zero-day"))
+    }
+
+    func testLongInterjectionConditionsAreAudited() {
+        let source = "Cheating sometimes is because the goal isn't very clear. Repeated compactions abstract the goal and inject creativity. Put a general understanding of laws and abiding laws into pre-training."
+        let points = LocalInterjectionSummaryPolicy.requiredExplicitMeaningPoints(source)
+
+        XCTAssertTrue(points.contains("Cheating can result from unclear goals"))
+        XCTAssertTrue(points.contains("Goal abstraction can inject creativity"))
+        XCTAssertTrue(points.contains("Pretrain general legal understanding and compliance"))
+    }
+
+    func testCapabilityFrontierFalsificationQuestionDropsDictationFalseStart() {
+        let source = "You could falsify it by saying, okay, something within the capability frontier, does it do things that are obviously misaligned?"
+
+        XCTAssertEqual(
+            LocalInterjectionSummaryPolicy.requiredExplicitMeaningPoints(source),
+            ["Does behavior within the capability frontier become obviously misaligned?"]
+        )
+        XCTAssertEqual(
+            LocalInterjectionSummaryPolicy.compactMeaningSummary(
+                "Is claim extraordinarily falsifiable because something within the capability frontier does misalignment?"
+            ),
+            "Does behavior within the capability frontier become obviously misaligned?"
+        )
+    }
+
+    func testCompactMeaningSummaryRemovesModelClaimSetScaffolding() {
+        XCTAssertEqual(
+            LocalInterjectionSummaryPolicy.compactMeaningSummary(
+                "Claim set: - Test-time compute increases frontier risk. - Smaller models provide comparison data."
+            ),
+            "Test-time compute increases frontier risk; Smaller models provide comparison data."
+        )
+    }
+
+    func testNegationAuditRejectsDontForgetPolarityReversal() {
+        let source = "The 'don't break the law' constraint might be forgotten"
+
+        XCTAssertFalse(LocalInterjectionSummaryPolicy.preservesExplicitNegation(
+            candidate: "Don't forget to break the law",
+            source: source
+        ))
+        XCTAssertTrue(LocalInterjectionSummaryPolicy.preservesExplicitNegation(
+            candidate: "The don't-break-the-law constraint might be forgotten",
+            source: source
+        ))
+    }
+
+    func testNegationAuditTreatsDontUnderstandWhyAsRhetoricalProposal() {
+        let source = "I don't understand why you couldn't train specialized models to detect cheating."
+
+        XCTAssertTrue(LocalInterjectionSummaryPolicy.preservesExplicitNegation(
+            candidate: "Train specialized models to detect cheating",
+            source: source
+        ))
+    }
+
+    func testCausalDirectionRejectsFrontierPersistenceReversal() {
+        let source = "We are never going to get away from misalignment while using test time compute and pushing harder at the capability frontier."
+
+        XCTAssertFalse(LocalInterjectionSummaryPolicy.preservesCausalDirection(
+            candidate: "Misalignment can be reduced by increasing persistence and pushing models harder",
+            source: source
+        ))
+        XCTAssertTrue(LocalInterjectionSummaryPolicy.preservesCausalDirection(
+            candidate: "Test-time compute and harder frontier pushing make misalignment persist",
+            source: source
+        ))
     }
 
     func testSummaryValidationRejectsAnchorCopyAndResidualFillers() throws {
