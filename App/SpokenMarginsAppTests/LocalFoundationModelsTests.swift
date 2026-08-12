@@ -42,6 +42,49 @@ final class LocalFoundationModelsTests: XCTestCase {
         )
     }
 
+    func testPermissiveTransformationInstructionsConstrainTaskToTextEditing() {
+        let instructions = AppleFoundationModelClient.interjectionPermissiveTransformationInstructions
+
+        XCTAssertTrue(instructions.contains("text editing"))
+        XCTAssertTrue(instructions.contains("not a request to carry out"))
+        XCTAssertTrue(instructions.contains("Do not answer"))
+    }
+
+    func testGeoffreyInterjectionRepairsContextProvenDictationAndAuditsEveryClaim() {
+        let source = "He is contradicting himself. He predicts a phase change, proposes training small models, and now relies on supervision. He cannot train models even close to the frontier at this tiny land, so he cannot play in the game given his mental model."
+
+        XCTAssertEqual(
+            AppleFoundationModelClient.repairContextProvenDictation(
+                in: "They do the land with supervision at this tiny land."
+            ),
+            "They do alignment with supervision at this tiny lab."
+        )
+        XCTAssertEqual(
+            LocalInterjectionSummaryPolicy.requiredExplicitMeaningPoints(source),
+            [
+                "The phase-change claim conflicts with relying on small-model alignment experiments and supervision",
+                "A tiny lab cannot train models near the frontier",
+                "Under his own mental model, the lab cannot meaningfully participate",
+            ]
+        )
+        XCTAssertEqual(
+            LocalInterjectionSummaryPolicy.auditedMeaningPoints(
+                [
+                    "His phase-change claim contradicts relying on small-model alignment experiments and supervision; a tiny lab cannot train near-frontier models; under his own mental model, the lab cannot meaningfully participate"
+                ],
+                source: source
+            ).count,
+            1
+        )
+        XCTAssertGreaterThan(
+            LocalInterjectionSummaryPolicy.auditedMeaningPoints(
+                ["His phase-change claim contradicts relying on small-model alignment experiments"],
+                source: source
+            ).count,
+            1
+        )
+    }
+
     func testPlainTextPointDecoderAcceptsFencedJSONWithoutGenerableDecoding() throws {
         let points = try AppleFoundationModelClient.decodePlainTextPoints("""
         ```json

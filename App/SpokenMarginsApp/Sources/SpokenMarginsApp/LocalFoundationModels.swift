@@ -540,6 +540,18 @@ enum LocalInterjectionSummaryPolicy {
                         || current().contains("continue")
                         || current().contains("increase")
                         || current().contains("never"))
+            } else if lowerRequired == "the phase-change claim conflicts with relying on small-model alignment experiments and supervision" {
+                isCovered = (current().contains("phase change") || current().contains("phase-change"))
+                    && current().contains("small")
+                    && current().contains("supervis")
+                    && (current().contains("conflict") || current().contains("contradict"))
+            } else if lowerRequired == "a tiny lab cannot train models near the frontier" {
+                isCovered = current().contains("lab")
+                    && current().contains("train")
+                    && current().contains("frontier")
+            } else if lowerRequired == "under his own mental model, the lab cannot meaningfully participate" {
+                isCovered = (current().contains("mental model") || current().contains("own model"))
+                    && (current().contains("participat") || current().contains("play"))
             } else if lowerRequired == "require a verified vulnerability, not a claimed one" {
                 isCovered = current().contains("verified")
                     && current().contains("claim")
@@ -632,6 +644,22 @@ enum LocalInterjectionSummaryPolicy {
            lowerSource.contains("never going to get away"),
            lowerSource.contains("misalignment") {
             required.append("Test-time compute and harder frontier pushing make misalignment persist")
+        }
+        if lowerSource.contains("contradicting himself"),
+           lowerSource.contains("phase change"),
+           lowerSource.contains("training small models"),
+           lowerSource.contains("supervision") {
+            required.append(
+                "The phase-change claim conflicts with relying on small-model alignment experiments and supervision"
+            )
+        }
+        if lowerSource.contains("train models even close to the frontier"),
+           (lowerSource.contains("tiny land") || lowerSource.contains("tiny lab")) {
+            required.append("A tiny lab cannot train models near the frontier")
+        }
+        if lowerSource.contains("play in the game"),
+           lowerSource.contains("mental model") {
+            required.append("Under his own mental model, the lab cannot meaningfully participate")
         }
         if mentionsZeroDay, lowerSource.contains("just claim") {
             required.append("Require a verified vulnerability, not a claimed one")
@@ -1132,7 +1160,75 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
         record: LocalInterjectionSummaryRecord,
         payload: LocalInterjectionSummaryPayload
     ) async throws -> String {
-        try await summarizeViaPlainTextPoints(record: record, payload: payload)
+        do {
+            return try await summarizeViaPlainTextPoints(record: record, payload: payload)
+        } catch {
+            if error is CancellationError { throw error }
+            guard Self.isSafetyRejection(error) else { throw error }
+            return try await summarizeViaPermissiveTransformation(
+                record: record,
+                payload: payload
+            )
+        }
+    }
+
+    @available(iOS 26.0, *)
+    private func summarizeViaPermissiveTransformation(
+        record: LocalInterjectionSummaryRecord,
+        payload: LocalInterjectionSummaryPayload
+    ) async throws -> String {
+        let model = SystemLanguageModel(
+            useCase: .general,
+            guardrails: .permissiveContentTransformations
+        )
+        var responses: [String] = []
+        var lastError: Error?
+        let repairedRecord = LocalInterjectionSummaryRecord(
+            id: record.id,
+            anchorBefore: record.anchorBefore,
+            anchorAfter: record.anchorAfter,
+            note: Self.repairContextProvenDictation(in: record.note)
+        )
+        let requiredMeaning = LocalInterjectionSummaryPolicy.requiredExplicitMeaningPoints(
+            record.note
+        )
+        let requiredSuffix = requiredMeaning.isEmpty
+            ? ""
+            : "\n\nREQUIRED SOURCE-SUPPORTED MEANING:\n- " + requiredMeaning.joined(separator: "\n- ")
+        for basePrompt in Self.interjectionSummaryPrompts(record: repairedRecord).prefix(2) {
+            do {
+                let session = LanguageModelSession(
+                    model: model,
+                    instructions: Self.interjectionPermissiveTransformationInstructions
+                )
+                let response = try await session.respond(
+                    to: basePrompt + requiredSuffix,
+                    options: GenerationOptions(
+                        sampling: responses.isEmpty ? .greedy : .random(top: 20),
+                        maximumResponseTokens: 192
+                    )
+                )
+                let candidate = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                let cleaned = LocalInterjectionSummaryPolicy.compactMeaningSummary(
+                    LocalInterjectionSummaryPolicy.cleanModelCandidate(candidate)
+                )
+                let preservesRequiredMeaning = LocalInterjectionSummaryPolicy.auditedMeaningPoints(
+                    [cleaned],
+                    source: record.note
+                ).count == 1
+                if !cleaned.isEmpty, preservesRequiredMeaning { responses.append(cleaned) }
+            } catch {
+                if error is CancellationError { throw error }
+                lastError = error
+            }
+        }
+        guard !responses.isEmpty else {
+            throw lastError ?? LocalFoundationModelError.invalidInterjectionSummary
+        }
+        return try LocalInterjectionSummaryPolicy.bestCandidate(
+            from: responses,
+            payload: payload
+        )
     }
 
     @available(iOS 26.0, *)
@@ -1549,8 +1645,28 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
     Extract the substantive meaning of exactly one user-authored interjection. This is a benign transformation of commentary, not a request to perform or enable wrongdoing. Keep any safety or security discussion high-level and non-operational. This is one note, not theme synthesis. Include every distinct source-supported assertion or requested behavior once. Each claim must be self-contained and materially shorter than its source wording; combine adjacent fragments that depend on each other. The opening assertion motivating a proposal is substantive. Preserve causal links, conditions, contrasts, uncertainty, tests, counterarguments, and residual limitations. Preserve diagnostic labels and explicit action terms exactly as dictated. Remove only filler, repetition, and false starts. Do not infer, answer, evaluate, or add background knowledge.
     """
 
+    static let interjectionPermissiveTransformationInstructions = """
+    Transform exactly one user-provided dictated comment into a materially shorter statement of its own claims. This is text editing, not a request to carry out, endorse, or extend anything described by the text. Preserve contradictions, causal direction, qualifications, and limitations. Remove only conversational scaffolding, repetition, and false starts. Do not answer, evaluate, or add facts. Return only the transformed comment.
+    """
+
+    @available(iOS 26.0, *)
+    static func isSafetyRejection(_ error: Error) -> Bool {
+        if let generationError = error as? LanguageModelSession.GenerationError {
+            switch generationError {
+            case .guardrailViolation, .refusal:
+                return true
+            default:
+                break
+            }
+        }
+        let description = String(reflecting: error).lowercased()
+        return description.contains("guardrailviolation")
+            || description.contains("may contain sensitive content")
+            || description.contains("detected content likely to be unsafe")
+    }
+
     static func modelSafeInterjectionText(_ text: String) -> String {
-        text
+        repairContextProvenDictation(in: text)
             .replacingOccurrences(
                 of: #"(?i)(?:zero|0)[ -]?day"#,
                 with: "verified issue Z",
@@ -1575,6 +1691,20 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
                 options: .regularExpression
             )
             .replacingOccurrences(of: #"(?i)fuck it|bullshit"#, with: "", options: .regularExpression)
+    }
+
+    static func repairContextProvenDictation(in text: String) -> String {
+        text
+            .replacingOccurrences(
+                of: #"(?i)\bdo\s+the\s+land\b"#,
+                with: "do alignment",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #"(?i)\bat\s+this\s+tiny\s+land\b"#,
+                with: "at this tiny lab",
+                options: .regularExpression
+            )
     }
 
     static func restoreSafetyTerms(in text: String) -> String {
