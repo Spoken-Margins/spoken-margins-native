@@ -1,7 +1,7 @@
 # Build 13 Internal TestFlight Handoff
 
 - Version/build: 0.1 (13)
-- Source state: uncommitted working tree based on `0508e5e`; replace this line with the candidate commit SHA before upload
+- Candidate commit SHA: `596bdce`
 - Supported devices: iPhone and iPad on iOS/iPadOS 18.0 or later
 - Automated test runtime: iPhone 16 Pro Simulator, iOS 18.6
 
@@ -48,9 +48,9 @@
 
 ## Product-Owner Checklist
 
-1. Native text >5 minutes: Lock Screen has no false short timeline or unusable scrubber; Play/Pause and ±15-second controls remain visible. Pass / Fail: ___
-2. Use each Lock Screen transport control and unlock: app state remains synchronized. Pass / Fail: ___
-3. Ambiguous Spotify URL: **Choose Episode** appears immediately on the first attempt. Pass / Fail: ___
-4. Select a candidate: the selected episode imports and starts without beginning another import. Pass / Fail: ___
+1. Native text >5 minutes: Lock Screen has no false short timeline or unusable scrubber; Play/Pause and ±15-second controls remain visible. **PASS / `human_validated`**
+2. Use each Lock Screen transport control and unlock: app state remains synchronized. **PASS / `human_validated`**
+3. Ambiguous Spotify URL: **Choose Episode** appears immediately on the first attempt. **PASS / `human_validated`**
+4. Select a candidate: the selected episode imports and starts without beginning another import. **PASS / `human_validated`**
 
-Record the completed checklist and device details beside this file after validation.
+Product-owner validation reported 2026-08-18. Device and OS were not supplied with the result.
