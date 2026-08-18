@@ -301,6 +301,45 @@ typealias PreparedTextAudioPrewarmHandler = @Sendable (
 
 typealias InterjectionTranscriptionHandler = @Sendable (_ audioPath: String) async throws -> String
 
+private struct UITestingAmbiguousSourceLinkResolver: LinkResolutionClient {
+    func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult {
+        LinkResolutionResult(
+            requestId: request.id,
+            status: .needsReview,
+            originalLink: SourceLink(url: request.inputURL, provider: "spotify", role: "discovery"),
+            candidates: [
+                LinkResolutionCandidate(
+                    sourceLink: SourceLink(
+                        url: "https://podcasts.apple.com/ui-test/episode-one",
+                        provider: "apple_podcasts",
+                        role: "canonical_source"
+                    ),
+                    title: "Ambiguous Episode One",
+                    showTitle: "UI Test Show",
+                    durationMs: 1_800_000,
+                    publishedAt: "2026-08-01T00:00:00Z",
+                    audioURL: "https://cdn.example.com/ui-test-episode-one.mp3",
+                    confidence: 0.71
+                ),
+                LinkResolutionCandidate(
+                    sourceLink: SourceLink(
+                        url: "https://podcasts.apple.com/ui-test/episode-two",
+                        provider: "apple_podcasts",
+                        role: "canonical_source"
+                    ),
+                    title: "Ambiguous Episode Two",
+                    showTitle: "UI Test Show",
+                    durationMs: 2_400_000,
+                    publishedAt: "2026-08-02T00:00:00Z",
+                    audioURL: "https://cdn.example.com/ui-test-episode-two.mp3",
+                    confidence: 0.70
+                )
+            ],
+            failureReason: "spotify_episode_match_ambiguous"
+        )
+    }
+}
+
 @MainActor
 final class Gate1AppModel: ObservableObject {
     static let welcomeSampleItemId = "item-spoken-margins-overview"
@@ -703,7 +742,13 @@ final class Gate1AppModel: ObservableObject {
         databaseURLOverride: URL? = nil,
         trashUndoDismissDelay: Duration = .seconds(5)
     ) {
-        self.sourceLinkResolver = sourceLinkResolver
+        if sourceLinkResolver == nil,
+           CommandLine.arguments.contains("--ui-testing"),
+           ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_AMBIGUOUS_SOURCE_LINK"] == "1" {
+            self.sourceLinkResolver = UITestingAmbiguousSourceLinkResolver()
+        } else {
+            self.sourceLinkResolver = sourceLinkResolver
+        }
         self.sourceLinkHandoffStore = sourceLinkHandoffStore
         self.browserTextHandoffStore = browserTextHandoffStore
         self.audioPlaybackClientOverride = audioPlaybackClient
@@ -1679,8 +1724,14 @@ final class Gate1AppModel: ObservableObject {
             if imported, sourceLinkURL.trimmingCharacters(in: .whitespacesAndNewlines) == submittedURL {
                 sourceLinkURL = ""
             }
-            sourceLinkImportState = imported ? "success" : "failure"
-            sourceLinkImportMessage = imported ? "Source added." : (lastError ?? "This source could not be added.")
+            let awaitsCandidateReview = sourceLinkCandidateReview?.request.inputURL == parsedURL.absoluteString
+            if awaitsCandidateReview {
+                sourceLinkImportState = "review"
+                sourceLinkImportMessage = "Choose the matching podcast episode."
+            } else {
+                sourceLinkImportState = imported ? "success" : "failure"
+                sourceLinkImportMessage = imported ? "Source added." : (lastError ?? "This source could not be added.")
+            }
         }
         return true
     }
@@ -1915,11 +1966,18 @@ final class Gate1AppModel: ObservableObject {
         selected.selectedCandidate = candidate
         selected.candidates = [candidate]
         selected.failureReason = nil
-        _ = importResolvedSourceLink(request: review.request, result: selected, startSession: review.startSession)
+        let imported = importResolvedSourceLink(request: review.request, result: selected, startSession: review.startSession)
+        sourceLinkImportState = imported ? "success" : "failure"
+        sourceLinkImportMessage = imported ? "Source added." : (lastError ?? "This source could not be added.")
+        if imported, sourceLinkURL.trimmingCharacters(in: .whitespacesAndNewlines) == review.request.inputURL {
+            sourceLinkURL = ""
+        }
     }
 
     func cancelSourceLinkCandidateReview() {
         sourceLinkCandidateReview = nil
+        sourceLinkImportState = "idle"
+        sourceLinkImportMessage = "Podcast import cancelled."
         reportSuccess("Podcast import cancelled. Nothing was added.")
     }
 

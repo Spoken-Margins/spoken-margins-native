@@ -215,6 +215,49 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.title, "Shared title")
     }
 
+    func testAmbiguousFormImportEntersReviewStateInsteadOfReportingFailure() async throws {
+        let originalURL = "https://open.spotify.com/episode/ambiguous-form"
+        let candidates = [
+            LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://podcasts.apple.com/one", provider: "apple_podcasts", role: "canonical_source"),
+                title: "First match",
+                durationMs: 120_000,
+                audioURL: "https://cdn.example.com/one.mp3",
+                confidence: 0.71
+            ),
+            LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://podcasts.apple.com/two", provider: "apple_podcasts", role: "canonical_source"),
+                title: "Second match",
+                durationMs: 180_000,
+                audioURL: "https://cdn.example.com/two.mp3",
+                confidence: 0.70
+            )
+        ]
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .needsReview,
+            originalLink: SourceLink(url: originalURL, provider: "spotify", role: "discovery"),
+            candidates: candidates,
+            failureReason: "spotify_episode_match_ambiguous"
+        ))
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            sourceTranscriptionClient: ThrowingSourceTranscriptionClient()
+        )
+        model.resetAndSeed()
+        model.sourceLinkURL = originalURL
+
+        XCTAssertTrue(model.beginSourceLinkImportFromForm())
+        try await waitFor("ambiguous form review") {
+            model.sourceLinkImportState == "review"
+        }
+
+        XCTAssertEqual(model.sourceLinkCandidateReview?.result.candidates, candidates)
+        XCTAssertEqual(model.sourceLinkImportMessage, "Choose the matching podcast episode.")
+        XCTAssertNil(model.lastError)
+    }
+
     #if canImport(UIKit)
     func testPDFImportPreservesActiveNativeMediaSession() async throws {
         let resolver = StaticAppLinkResolver(result: LinkResolutionResult(

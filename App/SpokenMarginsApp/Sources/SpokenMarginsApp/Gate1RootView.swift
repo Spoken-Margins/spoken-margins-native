@@ -73,10 +73,6 @@ struct Gate1RootView: View {
             HelpScreen()
                 .environmentObject(model)
         }
-        .sheet(item: $model.sourceLinkCandidateReview) { review in
-            SourceLinkCandidateReviewView(review: review)
-                .environmentObject(model)
-        }
         .alert("AI Setup Needed", isPresented: $model.isAISetupNeededPresented) {
             Button("Open AI Settings", action: model.openAISettingsFromSummaryPrompt)
             Button("Not Now", role: .cancel) {}
@@ -610,39 +606,44 @@ private struct HomeScreen: View {
                 }
             }
             .scrollDismissesKeyboard(.interactively)
-            .sheet(isPresented: $isAddSourcePresented) {
-                NavigationStack {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 18) {
-                            createItem
-                            quickAccessFolder
+            .sheet(isPresented: sourceModalIsPresented) {
+                if let review = model.sourceLinkCandidateReview {
+                    SourceLinkCandidateReviewView(review: review)
+                        .environmentObject(model)
+                } else {
+                    NavigationStack {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 18) {
+                                createItem
+                                quickAccessFolder
+                            }
+                            .padding(20)
                         }
-                        .padding(20)
-                    }
-                    .navigationTitle("Add Source")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button("Close") {
-                                suppressSourceLinkBlurSubmission = focusedField == .sourceLink
-                                focusedField = nil
-                                isAddSourcePresented = false
+                        .navigationTitle("Add Source")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button("Close") {
+                                    suppressSourceLinkBlurSubmission = focusedField == .sourceLink
+                                    focusedField = nil
+                                    isAddSourcePresented = false
+                                }
                             }
                         }
+                        .fileImporter(
+                            isPresented: $isFileImporterPresented,
+                            allowedContentTypes: fileImportAllowedContentTypes,
+                            allowsMultipleSelection: activeFileImportRequest == .obsidianFiles,
+                            onCompletion: handleFileImportResult
+                        )
                     }
-                    .fileImporter(
-                        isPresented: $isFileImporterPresented,
-                        allowedContentTypes: fileImportAllowedContentTypes,
-                        allowsMultipleSelection: activeFileImportRequest == .obsidianFiles,
-                        onCompletion: handleFileImportResult
-                    )
-                }
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-                .onAppear { model.resetSourceLinkImportState() }
-                .onCompatibleChange(of: model.sourceLinkImportState) { state in
-                    if state == "success" {
-                        isAddSourcePresented = false
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+                    .onAppear { model.resetSourceLinkImportState() }
+                    .onCompatibleChange(of: model.sourceLinkImportState) { state in
+                        if state == "success" {
+                            isAddSourcePresented = false
+                        }
                     }
                 }
             }
@@ -663,6 +664,21 @@ private struct HomeScreen: View {
                 Text("\(item.title) can be restored from Settings.")
             }
         }
+    }
+
+    private var sourceModalIsPresented: Binding<Bool> {
+        Binding(
+            get: { isAddSourcePresented || model.sourceLinkCandidateReview != nil },
+            set: { isPresented in
+                guard !isPresented else { return }
+                suppressSourceLinkBlurSubmission = focusedField == .sourceLink
+                focusedField = nil
+                isAddSourcePresented = false
+                if model.sourceLinkCandidateReview != nil {
+                    model.cancelSourceLinkCandidateReview()
+                }
+            }
+        )
     }
 
     private var fileImportAllowedContentTypes: [UTType] {

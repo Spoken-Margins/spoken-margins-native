@@ -277,6 +277,27 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertLessThan(podcast.frame.midY, plainText.frame.midY)
     }
 
+    func testAmbiguousPodcastImportImmediatelyReplacesAddSourceWithEpisodePicker() throws {
+        app.terminate()
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_AMBIGUOUS_SOURCE_LINK"] = "1"
+        app.launch()
+
+        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
+        app.buttons["home.addSource.button"].tap()
+        let link = element("sourceLink.url.field")
+        XCTAssertTrue(link.waitForExistence(timeout: 4))
+        link.tap()
+        link.typeText("https://open.spotify.com/episode/ambiguous-ui-test")
+        app.buttons["sourceLink.import.button"].tap()
+
+        XCTAssertTrue(
+            element("sourceLink.candidateReview.sheet").waitForExistence(timeout: 4),
+            "The episode picker did not replace Add Source when the first import required review."
+        )
+        XCTAssertTrue(app.buttons["sourceLink.candidate.0"].exists)
+        XCTAssertTrue(app.buttons["sourceLink.candidate.1"].exists)
+    }
+
     func testDiagnosticsCopyShowsLocalConfirmation() throws {
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
         app.buttons["home.settings.button"].tap()

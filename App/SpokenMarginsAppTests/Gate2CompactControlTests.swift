@@ -128,6 +128,8 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertTrue(textAvailability.canPause)
         XCTAssertFalse(textAvailability.canSeek)
         XCTAssertTrue(textAvailability.canSetPlaybackRate)
+        XCTAssertFalse(textAvailability.canPreviousTrack)
+        XCTAssertFalse(textAvailability.canNextTrack)
 
         let mediaSnapshot = compactSnapshot(
             targetType: TargetType.transcriptBackedMedia.rawValue,
@@ -138,6 +140,37 @@ final class Gate2CompactControlTests: XCTestCase {
 
         XCTAssertTrue(mediaAvailability.canSeek)
         XCTAssertTrue(mediaAvailability.canSetPlaybackRate)
+        XCTAssertFalse(mediaAvailability.canPreviousTrack)
+        XCTAssertFalse(mediaAvailability.canNextTrack)
+    }
+
+    func testLiveTextNowPlayingTimelineDoesNotInventDurationOrElapsedTime() {
+        let textSnapshot = compactSnapshot(
+            targetType: TargetType.itemTextTTS.rawValue,
+            availableCommands: [.togglePlayPause, .skipBack, .skipForward],
+            durationMs: 120_000
+        )
+
+        let timeline = Gate2NowPlayingTimelineMetadata(snapshot: textSnapshot)
+
+        XCTAssertNil(timeline.elapsedSeconds)
+        XCTAssertNil(timeline.durationSeconds)
+        XCTAssertFalse(timeline.isLiveStream)
+    }
+
+    func testNativeMediaNowPlayingTimelineUsesCanonicalMediaTime() {
+        var mediaSnapshot = compactSnapshot(
+            targetType: TargetType.transcriptBackedMedia.rawValue,
+            availableCommands: [.togglePlayPause, .seekToMediaTime],
+            durationMs: 120_000
+        )
+        mediaSnapshot.currentMediaTimeMs = 30_000
+
+        let timeline = Gate2NowPlayingTimelineMetadata(snapshot: mediaSnapshot)
+
+        XCTAssertEqual(timeline.elapsedSeconds, 30)
+        XCTAssertEqual(timeline.durationSeconds, 120)
+        XCTAssertFalse(timeline.isLiveStream)
     }
 
     func testNowPlayingKeepsNativePlayAndPauseRegisteredWhileTextIsPaused() {

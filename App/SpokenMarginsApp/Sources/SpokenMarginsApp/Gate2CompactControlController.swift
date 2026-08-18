@@ -23,6 +23,8 @@ struct Gate2NowPlayingCommandAvailability: Equatable {
     var canStop: Bool
     var canSeek: Bool
     var canSetPlaybackRate: Bool
+    var canPreviousTrack: Bool
+    var canNextTrack: Bool
 
     init(snapshot: CompactControlSnapshot) {
         let canSendPlay = snapshot.availableCommands.contains(.play) || snapshot.availableCommands.contains(.togglePlayPause)
@@ -39,6 +41,46 @@ struct Gate2NowPlayingCommandAvailability: Equatable {
         canStop = canSendPause
         canSeek = snapshot.availableCommands.contains(.seekToMediaTime)
         canSetPlaybackRate = snapshot.availableCommands.contains(.setPlaybackRate)
+        // Native text navigation is interval-based. Advertising track commands
+        // lets iOS replace the intended skip controls with previous/next icons
+        // and gives the commands semantics that the canonical session does not
+        // own.
+        canPreviousTrack = false
+        canNextTrack = false
+    }
+}
+
+struct Gate2NowPlayingTimelineMetadata: Equatable {
+    var elapsedSeconds: Double?
+    var durationSeconds: Double?
+    var isLiveStream: Bool
+
+    init(snapshot: CompactControlSnapshot) {
+        // Live TTS owns a source-text position, not a complete media-time
+        // timeline. Publishing a percentage as elapsed seconds with an invented
+        // duration creates a misleading Lock Screen scrubber. Do not label live
+        // TTS as an iOS live stream: that presentation can hide transport
+        // controls. Prepared text audio uses the native-media target type and
+        // reaches the media branch below with an authoritative duration.
+        if Gate2LiveSpeechNowPlayingPolicy.isLiveSpeech(snapshot) {
+            elapsedSeconds = nil
+            durationSeconds = nil
+            isLiveStream = false
+            return
+        }
+
+        guard let durationMs = snapshot.currentPlaybackDurationMs,
+              durationMs > 0,
+              let mediaTimeMs = snapshot.currentMediaTimeMs else {
+            elapsedSeconds = nil
+            durationSeconds = nil
+            isLiveStream = false
+            return
+        }
+        let duration = Double(durationMs) / 1_000
+        elapsedSeconds = min(duration, max(0, Double(mediaTimeMs) / 1_000))
+        durationSeconds = duration
+        isLiveStream = false
     }
 }
 
@@ -517,21 +559,21 @@ private final class Gate2LiveSpeechNowPlayingController {
         if publishesLiveSpeech {
             configureRemoteCommandAvailability(for: snapshot)
         }
-        let durationSeconds = snapshot.currentPlaybackDurationMs.map { max(0, Double($0) / 1000) }
-        let elapsedSeconds = snapshot.currentMediaTimeMs.map { max(0, Double($0) / 1000) }
-        let fallbackDuration = 100.0
-        let fallbackElapsed = Double(max(0, min(100, snapshot.currentPlaybackProgressPercent)))
+        let timeline = Gate2NowPlayingTimelineMetadata(snapshot: snapshot)
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: snapshot.title ?? "Spoken Margins",
             MPMediaItemPropertyAlbumTitle: snapshot.chapterTitle ?? "Session",
             MPMediaItemPropertyArtist: "Spoken Margins",
-            MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsedSeconds ?? fallbackElapsed,
-            MPMediaItemPropertyPlaybackDuration: durationSeconds ?? fallbackDuration,
             MPNowPlayingInfoPropertyPlaybackRate: snapshot.status.isPlaybackActive ? snapshot.playbackRate : 0,
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue
         ]
+        if let elapsedSeconds = timeline.elapsedSeconds,
+           let durationSeconds = timeline.durationSeconds {
+            info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = elapsedSeconds
+            info[MPMediaItemPropertyPlaybackDuration] = durationSeconds
+        }
         info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = snapshot.playbackRate
-        info[MPNowPlayingInfoPropertyIsLiveStream] = false
+        info[MPNowPlayingInfoPropertyIsLiveStream] = timeline.isLiveStream
         info[MPNowPlayingInfoPropertyExternalContentIdentifier] = snapshot.sessionId
         if let targetId = snapshot.targetId, let url = URL(string: targetId), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
             info[MPNowPlayingInfoPropertyAssetURL] = url
@@ -564,9 +606,9 @@ private final class Gate2LiveSpeechNowPlayingController {
         center.pauseCommand.isEnabled = availability.canPause
         center.togglePlayPauseCommand.isEnabled = availability.canTogglePlayPause
         center.skipBackwardCommand.isEnabled = availability.canSkipBack
-        center.previousTrackCommand.isEnabled = availability.canSkipBack
+        center.previousTrackCommand.isEnabled = availability.canPreviousTrack
         center.skipForwardCommand.isEnabled = availability.canSkipForward
-        center.nextTrackCommand.isEnabled = availability.canSkipForward
+        center.nextTrackCommand.isEnabled = availability.canNextTrack
         center.stopCommand.isEnabled = availability.canStop
         center.changePlaybackPositionCommand.isEnabled = availability.canSeek
         center.changePlaybackRateCommand.isEnabled = availability.canSetPlaybackRate
@@ -599,8 +641,6 @@ private final class Gate2LiveSpeechNowPlayingController {
         register(center.togglePlayPauseCommand, command: .togglePlayPause, detail: "none")
         register(center.skipBackwardCommand, command: .skipBack, detail: "15s")
         register(center.skipForwardCommand, command: .skipForward, detail: "15s")
-        register(center.previousTrackCommand, command: .skipBack, detail: "previous")
-        register(center.nextTrackCommand, command: .skipForward, detail: "next")
         register(center.stopCommand, command: .pause, detail: "none")
         let rateTarget = center.changePlaybackRateCommand.addTarget { [weak self] event in
             guard let event = event as? MPChangePlaybackRateCommandEvent else {
