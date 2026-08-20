@@ -67,7 +67,7 @@ Phone/tablet text playback supports both real-time local TTS and pre-rendered au
 
 Production TTS segmentation should optimize for low latency, natural continuity, reliable interruption, and stable anchors. It should not copy the prototype's fixed chunk sizes as a product requirement.
 
-When playback is generated just in time, the speech engine should avoid exposing synthesis boundaries to the user as awkward pauses whenever the platform allows it. When playback is pre-rendered, alignment metadata should preserve enough transcript timing to support chapters, interjections, rollback, and exports.
+When playback is generated just in time, the speech engine should avoid exposing synthesis boundaries to the user as awkward pauses whenever the platform allows it. Sustained on-device generation must expose current generation state and a user stop path that continues through a lower-compute speech route. Whole-item preparation should skip items with a substantially completed listening session unless the user explicitly asks to render them. When playback is pre-rendered, alignment metadata should preserve enough transcript timing to support chapters, interjections, rollback, and exports.
 
 ## Podcast Or Video Flow
 

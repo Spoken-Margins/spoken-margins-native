@@ -187,6 +187,7 @@ Required normalization:
 - Markdown links preserve readable label text and remove the URL: `[reference](https://example.com/essay)` becomes `reference`.
 - Raw `http://`, `https://`, and `www.` URLs are removed from spoken output.
 - Bare domains with optional paths are removed from spoken output.
+- Dotted numeric document references remain readable: `Claim 2.5` and `Section 3.2.1` are not domains.
 - Surrounding readable prose is preserved.
 - Whitespace is collapsed after URL removal.
 

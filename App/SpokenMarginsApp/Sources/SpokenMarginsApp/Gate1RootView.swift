@@ -1561,6 +1561,7 @@ private struct PlaybackScreen: View {
             playbackPosition
             playbackTransport
             playbackRateControl
+            onDeviceSpeechGenerationControl
             interjectionControls
         }
         .padding(18)
@@ -1759,6 +1760,46 @@ private struct PlaybackScreen: View {
         .foregroundStyle(.white)
         .buttonStyle(.bordered)
         .tint(AppColors.watchControl)
+    }
+
+    @ViewBuilder
+    private var onDeviceSpeechGenerationControl: some View {
+        if model.shouldShowOnDeviceSpeechGenerationStatus {
+            HStack(spacing: 12) {
+                if model.isOnDeviceSpeechGenerating {
+                    ProgressView()
+                        .tint(AppColors.accent)
+                } else if model.canStopOnDeviceSpeechGeneration {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(AppColors.accent)
+                } else {
+                    Image(systemName: "speaker.wave.2.fill")
+                        .foregroundStyle(AppColors.accent)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("On-device voice")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.white)
+                    Text(model.onDeviceSpeechGenerationStatusDescription)
+                        .font(.caption2)
+                        .foregroundStyle(AppColors.watchSecondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if model.canStopOnDeviceSpeechGeneration {
+                    Button("Stop", action: model.stopOnDeviceSpeechGeneration)
+                        .font(.caption.weight(.bold))
+                        .buttonStyle(.bordered)
+                        .tint(.red)
+                        .accessibilityHint("Continues playback with the iOS system voice")
+                        .accessibilityIdentifier("playback.onDeviceGeneration.stop")
+                }
+            }
+            .padding(12)
+            .background(AppColors.watchControl.opacity(0.8))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("playback.onDeviceGeneration.status")
+        }
     }
 
     private var playbackRatePopover: some View {

@@ -1164,7 +1164,11 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
             return try await summarizeViaPlainTextPoints(record: record, payload: payload)
         } catch {
             if error is CancellationError { throw error }
-            guard Self.isSafetyRejection(error) else { throw error }
+            // Structured extraction and the grounding checks can surface a
+            // content-transformation refusal as a generic quality rejection.
+            // Give either form one bounded permissive transformation attempt.
+            let qualityGateRejected = (error as? LocalFoundationModelError) == .invalidInterjectionSummary
+            guard qualityGateRejected || Self.isSafetyRejection(error) else { throw error }
             return try await summarizeViaPermissiveTransformation(
                 record: record,
                 payload: payload
@@ -1946,7 +1950,7 @@ enum LocalFoundationModelError: LocalizedError, Equatable {
         case .outputTooLong: return "The on-device model returned chapter metadata outside the allowed length."
         case .excessiveSourceQuotation: return "The on-device model copied too much source text into chapter metadata."
         case .invalidInterjectionSummary:
-            return "Apple’s on-device model did not produce a materially shorter summary. No cleaned-transcript fallback was saved. Try again."
+            return "Apple’s on-device model did not produce a concise, grounded summary that passed the completeness checks. No cleaned-transcript fallback was saved. Try again."
         }
     }
 }

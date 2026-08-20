@@ -1058,7 +1058,12 @@ public final class SessionEngine {
             targetType: targetType,
             targetId: targetId,
             createdAt: Date(timeIntervalSince1970: Double(count)),
-            roughPercent: session.completionPercent,
+            roughPercent: interjectionPercent(
+                for: session,
+                targetType: targetType,
+                targetId: targetId,
+                anchor: anchor
+            ),
             anchor: anchor,
             audioPath: savedAudioRef,
             audioStatus: "saved",
@@ -1839,18 +1844,29 @@ public final class SessionEngine {
                 } else {
                     resolvedContext = nil
                 }
+                let turn = interjection.targetType == .item
+                    ? nil
+                    : allTurns.first(where: { $0.id == interjection.targetId })
+                let turnContext = turn.map {
+                    exportTurnAnchorContext(for: interjection.anchor, turn: $0)
+                }
                 return ExportInterjection(
                     id: interjection.id,
                     sessionId: interjection.sessionId,
                     targetType: interjection.targetType.rawValue,
                     targetId: interjection.targetId,
-                    roughPercent: interjection.roughPercent,
+                    roughPercent: turn.map {
+                        percent(
+                            for: max(0, min(interjection.anchor.startChar, generatedTurnNavigationText(for: $0).count)),
+                            text: generatedTurnNavigationText(for: $0)
+                        )
+                    } ?? interjection.roughPercent,
                     anchorBefore: shouldResolveNativeContext
                         ? resolvedContext?.anchorBefore ?? ""
-                        : interjection.anchor.anchorBefore,
+                        : turnContext?.before ?? interjection.anchor.anchorBefore,
                     anchorAfter: shouldResolveNativeContext
                         ? resolvedContext?.anchorAfter ?? ""
-                        : interjection.anchor.anchorAfter,
+                        : turnContext?.after ?? interjection.anchor.anchorAfter,
                     mediaTimeMs: interjection.anchor.mediaTimeMs,
                     transcriptionStatus: interjection.transcriptionStatus,
                     transcript: interjection.cleanedTranscript ?? interjection.transcript,
@@ -2862,12 +2878,13 @@ public final class SessionEngine {
             let sentenceStart = previousBoundary(before: min(start + 1, turnText.count), unit: "sentence", text: turnText)
             let end = min(turnText.count, max(sentenceStart + 1, nextBoundary(after: start, unit: "sentence", text: turnText)))
             let segmentIndex = completeSentenceUnits(in: slice(turnText, start: 0, end: sentenceStart)).count
+            let context = textAnchorShoulder(in: turnText, at: start)
             return Anchor(
                 anchorType: .turn,
-                startChar: sentenceStart,
+                startChar: start,
                 endChar: end,
-                anchorBefore: slice(turnText, start: sentenceStart, end: end),
-                anchorAfter: slice(turnText, start: end, end: min(turnText.count, nextBoundary(after: end, unit: "sentence", text: turnText))),
+                anchorBefore: context.before,
+                anchorAfter: context.after,
                 turnSegmentIndex: segmentIndex
             )
         }
@@ -2917,6 +2934,42 @@ public final class SessionEngine {
             boundary += 1
         }
         return boundary
+    }
+
+    private func interjectionPercent(
+        for session: Session,
+        targetType: InterjectionTargetType,
+        targetId: String,
+        anchor: Anchor
+    ) -> Int {
+        guard targetType != .item,
+              let turn = try? repository.loadTurns(sessionId: session.id).first(where: { $0.id == targetId }) else {
+            return session.completionPercent
+        }
+        let text = generatedTurnNavigationText(for: turn)
+        return percent(for: anchor.startChar, text: text)
+    }
+
+    private func exportTurnAnchorContext(
+        for anchor: Anchor,
+        turn: ConversationTurn
+    ) -> (before: String, after: String) {
+        let text = generatedTurnNavigationText(for: turn)
+        guard !text.isEmpty else { return (anchor.anchorBefore, anchor.anchorAfter) }
+
+        // Older turn anchors stored the current sentence as `before` and only the
+        // following sentence as `after`. Their exact playhead was not persisted,
+        // but the end of the stored current-sentence span is the best recoverable
+        // split. New anchors store the playhead in `startChar` and already carry
+        // the same four-sentence shoulders as source-text anchors.
+        let storedCurrentSentence = slice(
+            text,
+            start: max(0, min(anchor.startChar, text.count)),
+            end: max(0, min(anchor.endChar, text.count))
+        )
+        let isLegacyTurnAnchor = anchor.anchorBefore == storedCurrentSentence
+        let split = isLegacyTurnAnchor ? anchor.endChar : anchor.startChar
+        return textAnchorShoulder(in: text, at: split)
     }
 
     private func aiJob(id: String, kind: String, session: Session, turnId: String?, status: String, messages: [String] = []) -> AIJob {

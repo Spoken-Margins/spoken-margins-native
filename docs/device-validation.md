@@ -24,6 +24,7 @@ Use this when installing the iOS build on a real phone and testing against the l
 - Start playback.
 - Confirm James and Lily use bundled Supertonic output, system fallback uses the selected iOS voice, and both routes work through the speaker and AirPods.
 - Measure Supertonic cold first audio (target ≤3 s), warm first audio (target ≤1 s), and sustained real-time factor (target ≤0.5).
+- During a long native-text session, confirm the playback card distinguishes active generation from a ready next section. Tap Stop and confirm playback continues with the iOS system voice, no later Supertonic chunk is scheduled, and device temperature begins recovering after the already-running inference call finishes.
 - Run 100 chunks and 30 minutes of foreground/background narration; record resident-memory trend, memory warnings/jetsam, render gaps, and thermal state.
 - From the phone, test play/pause, back, forward, interject, done, cancel, summarize, discuss, and addendum.
 - Confirm source interjections keep nearby anchors and item percent.

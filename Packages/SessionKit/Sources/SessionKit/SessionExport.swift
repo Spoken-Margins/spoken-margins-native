@@ -146,9 +146,19 @@ public enum SessionExportMarkdownRenderer {
             }
             return interjection
         }
+        let contextualTurnInterjections = Dictionary(grouping: export.timeline.compactMap { entry -> ExportInterjection? in
+            guard entry.type == "interjection",
+                  let id = entry.interjectionId,
+                  let interjection = interjectionsById[id],
+                  interjection.targetType != InterjectionTargetType.item.rawValue else {
+                return nil
+            }
+            return interjection
+        }, by: \.targetId)
         lines.append("## Timeline")
         lines.append("")
         var renderedSourceContext = false
+        var renderedTurnContexts: Set<String> = []
         for entry in export.timeline {
             switch entry.type {
             case "interjection":
@@ -158,7 +168,13 @@ public enum SessionExportMarkdownRenderer {
                     appendContextualSourceInterjections(contextualSourceInterjections, to: &lines)
                     renderedSourceContext = true
                 } else {
-                    append(interjection: interjection, to: &lines)
+                    guard renderedTurnContexts.insert(interjection.targetId).inserted else { continue }
+                    let turn = turnsById[interjection.targetId]
+                    appendContextualTurnInterjections(
+                        contextualTurnInterjections[interjection.targetId] ?? [interjection],
+                        turn: turn,
+                        to: &lines
+                    )
                 }
             case "ai_turn":
                 guard let turnId = entry.turnId, let turn = turnsById[turnId] else { continue }
@@ -179,8 +195,16 @@ public enum SessionExportMarkdownRenderer {
                 .filter { $0.targetType == InterjectionTargetType.item.rawValue }
                 .sorted { ($0.mediaTimeMs ?? 0) < ($1.mediaTimeMs ?? 0) }
             appendContextualSourceInterjections(sourceInterjections, to: &lines)
-            for interjection in export.interjections where interjection.targetType != InterjectionTargetType.item.rawValue {
-                append(interjection: interjection, to: &lines)
+            let turnInterjections = Dictionary(
+                grouping: export.interjections.filter { $0.targetType != InterjectionTargetType.item.rawValue },
+                by: \.targetId
+            )
+            for targetId in turnInterjections.keys.sorted() {
+                appendContextualTurnInterjections(
+                    turnInterjections[targetId] ?? [],
+                    turn: turnsById[targetId],
+                    to: &lines
+                )
             }
         }
         return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
@@ -207,47 +231,61 @@ public enum SessionExportMarkdownRenderer {
         }
     }
 
-    private static func append(interjection: ExportInterjection, to lines: inout [String]) {
-        let percent = interjection.roughPercent
-        lines.append("### \(percent)% - Interjection")
-        lines.append("")
-        if !interjection.anchorBefore.isEmpty {
-            lines.append("Anchor before:")
-            lines.append(interjection.anchorBefore)
-            lines.append("")
-        }
-        if !interjection.anchorAfter.isEmpty {
-            lines.append("Anchor after:")
-            lines.append(interjection.anchorAfter)
-            lines.append("")
-        }
-        if let mediaTimeMs = interjection.mediaTimeMs {
-            lines.append("Media time: \(formattedMediaTime(mediaTimeMs))")
-            lines.append("")
-        }
-        if let transcript = interjection.transcript?.trimmingCharacters(in: .whitespacesAndNewlines), !transcript.isEmpty {
-            lines.append("Transcript:")
-            lines.append(transcript)
-            lines.append("")
-        } else {
-            lines.append("Transcript: \(interjection.transcriptionStatus)")
-            lines.append("")
-        }
-    }
-
     private static func appendContextualSourceInterjections(
         _ interjections: [ExportInterjection],
         to lines: inout [String]
     ) {
+        appendContextualInterjections(
+            interjections,
+            heading: "Source Context and Listener Interjections",
+            initialContextLabel: "Source context:",
+            continuationLabel: "Source continues:",
+            laterContextLabel: "Later source context:",
+            to: &lines
+        )
+    }
+
+    private static func appendContextualTurnInterjections(
+        _ interjections: [ExportInterjection],
+        turn: ConversationTurn?,
+        to lines: inout [String]
+    ) {
+        guard !interjections.isEmpty else { return }
+        let targetTitle: String
+        if let turn {
+            targetTitle = title(for: turn)
+        } else if interjections.first?.targetType == InterjectionTargetType.summaryTurn.rawValue {
+            targetTitle = "Interjection Summary"
+        } else {
+            targetTitle = "AI Response"
+        }
+        appendContextualInterjections(
+            interjections,
+            heading: "\(targetTitle) Context and Listener Interjections",
+            initialContextLabel: "Turn context:",
+            continuationLabel: "Turn continues:",
+            laterContextLabel: "Later turn context:",
+            to: &lines
+        )
+    }
+
+    private static func appendContextualInterjections(
+        _ interjections: [ExportInterjection],
+        heading: String,
+        initialContextLabel: String,
+        continuationLabel: String,
+        laterContextLabel: String,
+        to lines: inout [String]
+    ) {
         guard let first = interjections.first else { return }
-        lines.append("### Source Context and Listener Interjections")
+        lines.append("### \(heading)")
         lines.append("")
         if !first.anchorBefore.isEmpty {
-            lines.append("Source context:")
+            lines.append(initialContextLabel)
             lines.append(first.anchorBefore)
             lines.append("")
         }
-        appendSourceInterjectionMarker(first, to: &lines)
+        appendInterjectionMarker(first, to: &lines)
 
         var previous = first
         for current in interjections.dropFirst() {
@@ -264,34 +302,34 @@ public enum SessionExportMarkdownRenderer {
             if !sameMoment,
                let shared = sharedPassage(after: previous.anchorAfter, before: current.anchorBefore) {
                 if !shared.isEmpty {
-                    lines.append("Source continues:")
+                    lines.append(continuationLabel)
                     lines.append(shared)
                     lines.append("")
                 }
             } else if !sameMoment {
                 if !previous.anchorAfter.isEmpty {
-                    lines.append("Source continues:")
+                    lines.append(continuationLabel)
                     lines.append(previous.anchorAfter)
                     lines.append("")
                 }
                 if !current.anchorBefore.isEmpty {
-                    lines.append("Later source context:")
+                    lines.append(laterContextLabel)
                     lines.append(current.anchorBefore)
                     lines.append("")
                 }
             }
-            appendSourceInterjectionMarker(current, to: &lines)
+            appendInterjectionMarker(current, to: &lines)
             previous = current
         }
 
         if !previous.anchorAfter.isEmpty {
-            lines.append("Source continues:")
+            lines.append(continuationLabel)
             lines.append(previous.anchorAfter)
             lines.append("")
         }
     }
 
-    private static func appendSourceInterjectionMarker(
+    private static func appendInterjectionMarker(
         _ interjection: ExportInterjection,
         to lines: inout [String]
     ) {

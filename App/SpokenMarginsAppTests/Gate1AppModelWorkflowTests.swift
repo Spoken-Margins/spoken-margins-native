@@ -928,6 +928,34 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.canPlayLiveSpeechInstead)
     }
 
+    func testSubstantiallyCompletedItemsAreIneligibleForWholeItemPrewarm() {
+        let almostComplete = Session(
+            id: "session-almost-complete",
+            itemId: "item-native-text",
+            status: "in_progress",
+            phase: .itemPlayback,
+            currentTargetType: .itemTextTTS,
+            currentTargetId: "item-native-text",
+            position: Position(charOffset: 900),
+            completionPercent: 90,
+            playbackRate: 1
+        )
+        let stillListening = Session(
+            id: "session-still-listening",
+            itemId: "item-native-text",
+            status: "in_progress",
+            phase: .itemPlayback,
+            currentTargetType: .itemTextTTS,
+            currentTargetId: "item-native-text",
+            position: Position(charOffset: 890),
+            completionPercent: 89,
+            playbackRate: 1
+        )
+
+        XCTAssertTrue(Gate1AppModel.hasSubstantiallyCompletedTextSession([almostComplete]))
+        XCTAssertFalse(Gate1AppModel.hasSubstantiallyCompletedTextSession([stillListening]))
+    }
+
     func testResumeCompletedSessionAfterExportRequiresExplicitRestart() throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()

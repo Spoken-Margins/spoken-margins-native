@@ -80,7 +80,10 @@ public enum SpeechTextNormalizer {
         let rawURLPattern = #"(?i)\b(?:https?://|www\.)[^\s<>()]+"#
         rendered = replace(pattern: rawURLPattern, in: rendered) { _, _, _ in [] }
 
-        let bareDomainPattern = #"(?i)(?<!@)\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)+(?:/[^\s<>()]*)?\b"#
+        // Require an alphabetic top-level label. The previous expression also
+        // treated decimal document references such as `Claim 2.5` and
+        // `Section 3.2.1` as domains, deleting them from imported PDF text.
+        let bareDomainPattern = #"(?i)(?<!@)\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)*\.[a-z][a-z0-9-]*(?:/[^\s<>()]*)?\b"#
         rendered = replace(pattern: bareDomainPattern, in: rendered) { _, _, _ in [] }
 
         return rendered

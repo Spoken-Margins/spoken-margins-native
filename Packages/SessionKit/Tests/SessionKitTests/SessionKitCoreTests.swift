@@ -136,6 +136,15 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertTrue(source.contains("https://example.com/x"))
     }
 
+    func testSpeechNormalizationPreservesDecimalClaimAndSectionReferences() {
+        let source = "Claim 2.5: evidence. See [Claim 3.2.1](https://example.com/claim) and Section 4.7."
+
+        XCTAssertEqual(
+            SpeechTextNormalizer.normalize(source),
+            "Claim 2.5: evidence. See Claim 3.2.1 and Section 4.7."
+        )
+    }
+
     func testSpeechNormalizationMapsSpokenTextBackToSourceOffsets() {
         let source = "Read [the reference](https://example.com/x) now."
         let normalized = SpeechTextNormalizer.normalizeWithSourceOffsets(source)
@@ -3594,7 +3603,8 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(interjection.targetType, .assistantTurn)
         XCTAssertEqual(interjection.targetId, "turn-response-stream")
         XCTAssertEqual(interjection.anchor.anchorType, .turn)
-        XCTAssertEqual(interjection.anchor.anchorBefore, "Second point has the detail.")
+        XCTAssertEqual(interjection.anchor.anchorBefore, "First response.")
+        XCTAssertEqual(interjection.anchor.anchorAfter, "Second point has the detail.")
         XCTAssertEqual(engine.currentSession?.position.charOffset, secondSentenceStart)
         XCTAssertEqual(resumed.status, .playing)
         XCTAssertTrue(audio.playedOffsets.isEmpty)
@@ -4050,8 +4060,75 @@ final class SessionKitCoreTests: XCTestCase {
 
         let interjection = try XCTUnwrap(try repo.loadInterjections(sessionId: session.id).first)
         XCTAssertEqual(interjection.targetType, .assistantTurn)
-        XCTAssertEqual(interjection.anchor.anchorBefore, "Second point has the detail.")
+        XCTAssertEqual(interjection.anchor.anchorBefore, "First response. Second")
+        XCTAssertEqual(interjection.anchor.anchorAfter, "point has the detail. Third point closes.")
+        XCTAssertGreaterThan(interjection.roughPercent, 0)
         XCTAssertEqual(audio.playedOffsets.last, "Brief intro.\n\nFirst response. ".count)
+    }
+
+    func testAssistantTurnExportRehydratesLegacyAnchorsAndUsesContextualLayout() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: ["sync": ["canonical_persistence"]]
+        )
+        let item = Item(id: "item-turn-export", title: "Turn Export", mediaType: "text", text: "Source.", externalReference: nil, status: "ready")
+        let session = Session(id: "session-turn-export", itemId: item.id, status: "in_progress", phase: .conversation, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 0, playbackRate: 1)
+        let responseText = "One opens. Two expands. Three qualifies. Four tests. Five is interrupted. Six continues. Seven compares. Eight concludes. Nine adds an appendix."
+        let fiveRange = try XCTUnwrap(responseText.range(of: "Five is interrupted."))
+        let fiveStart = responseText.distance(from: responseText.startIndex, to: fiveRange.lowerBound)
+        let fiveEnd = responseText.distance(from: responseText.startIndex, to: fiveRange.upperBound)
+        let turn = ConversationTurn(id: "turn-response-001", sessionId: session.id, role: "assistant", turnType: "assistant_response", status: "complete", summary: nil, text: responseText, rawText: responseText, sourceInterjectionIds: [])
+        let interjection = Interjection(
+            id: "ij-ai-001",
+            itemId: item.id,
+            sessionId: session.id,
+            targetType: .assistantTurn,
+            targetId: turn.id,
+            createdAt: Date(timeIntervalSince1970: 1),
+            roughPercent: 0,
+            anchor: Anchor(
+                anchorType: .turn,
+                startChar: fiveStart,
+                endChar: fiveEnd,
+                anchorBefore: "Five is interrupted.",
+                anchorAfter: "Six continues."
+            ),
+            audioPath: nil,
+            audioStatus: "none",
+            transcriptionStatus: "transcribed",
+            transcript: "Listener note.",
+            cleanedTranscript: nil,
+            displayText: nil,
+            status: "active"
+        )
+        let repo = InMemorySessionRepository(
+            items: [item.id: item],
+            sessions: [session.id: session],
+            interjections: [interjection.id: interjection],
+            turns: [turn.id: turn]
+        )
+        let engine = SessionEngine(profile: profile, repository: repo)
+
+        let export = try engine.buildExport(options: ExportOptions(
+            sessionId: session.id,
+            includeFullText: false,
+            includeReference: false,
+            includeListeningMap: false,
+            includeInterjections: true,
+            includeTurns: false
+        ))
+        let exported = try XCTUnwrap(export.interjections.first)
+        let markdown = SessionExportMarkdownRenderer.render(export)
+
+        XCTAssertTrue(exported.anchorBefore.contains("Two expands."))
+        XCTAssertTrue(exported.anchorBefore.contains("Five is interrupted."))
+        XCTAssertTrue(exported.anchorAfter.contains("Nine adds an appendix."))
+        XCTAssertGreaterThan(exported.roughPercent, 0)
+        XCTAssertTrue(markdown.contains("AI Response Context and Listener Interjections"))
+        XCTAssertTrue(markdown.contains("Turn context:"))
+        XCTAssertTrue(markdown.contains("Turn continues:"))
+        XCTAssertFalse(markdown.contains("Anchor before:"))
     }
 
     func testCancelAssistantInterjectionResumesNearRecordedTurnOffsetWithoutSavingInterjection() throws {

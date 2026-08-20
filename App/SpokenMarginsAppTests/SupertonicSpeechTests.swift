@@ -53,12 +53,13 @@ final class SupertonicSpeechTests: XCTestCase {
             speed: 1,
             fallbackVoiceIdentifier: nil,
             fallbackRate: 0.5,
-            fallbackClient: fallback
-        ) { reason, offset in
-            XCTAssertEqual(reason, "supertonic_render_failed:Failure")
-            XCTAssertEqual(offset, 17)
-            callback.fulfill()
-        }
+            fallbackClient: fallback,
+            onFallback: { reason, offset in
+                XCTAssertEqual(reason, "supertonic_render_failed:Failure")
+                XCTAssertEqual(offset, 17)
+                callback.fulfill()
+            }
+        )
         let source = "Start here, then continue through the rest of this sentence."
         _ = try client.prepareSpeechText(source)
         try client.play(targetId: "item", from: 17)
@@ -82,12 +83,13 @@ final class SupertonicSpeechTests: XCTestCase {
             speed: 1,
             fallbackVoiceIdentifier: nil,
             fallbackRate: 0.5,
-            fallbackClient: fallback
-        ) { reason, offset in
-            XCTAssertEqual(reason, "supertonic_playback_failed")
-            XCTAssertEqual(offset, 9)
-            callback.fulfill()
-        }
+            fallbackClient: fallback,
+            onFallback: { reason, offset in
+                XCTAssertEqual(reason, "supertonic_playback_failed")
+                XCTAssertEqual(offset, 9)
+                callback.fulfill()
+            }
+        )
         _ = try client.prepareSpeechText("Continue this sentence after the confirmed offset.")
         try client.play(targetId: "malformed", from: 9)
 
@@ -172,6 +174,49 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(client.playbackTransportState(targetId: "background-start"), .playing)
         try await Task.sleep(for: .milliseconds(350))
         XCTAssertEqual(fallback.playedOffsets, [11], "A stale render replaced the background fallback")
+        try client.stop()
+    }
+
+    func testUserCanStopOnDeviceRenderingAndContinueWithSystemVoice() async throws {
+        let template = try makeTestWAV(duration: 0.5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(
+            templateURL: template,
+            firstRenderDelay: .milliseconds(300)
+        )
+        let fallback = RecordingFallbackAudioClient()
+        let stopped = expectation(description: "generation stopped")
+        stopped.expectedFulfillmentCount = 2
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer,
+            voice: .m2,
+            speed: 1,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            audioSessionActivator: {},
+            observesPlayerLifecycle: false,
+            fallbackClient: fallback,
+            onGenerationStateChange: { state in
+                if state == .stopped { stopped.fulfill() }
+            }
+        )
+        let source = String(repeating: "On-device generation should stop without ending native text playback. ", count: 8)
+        _ = try client.prepareSpeechText(source)
+        try client.play(targetId: "stop-generation", from: 19)
+        let initialRenderCount = await waitForRenderCount(renderer, minimum: 1)
+        XCTAssertEqual(initialRenderCount, 1)
+
+        XCTAssertTrue(try client.stopOnDeviceRenderingAndUseSystemSpeech())
+
+        XCTAssertEqual(fallback.preparedText, source)
+        XCTAssertEqual(fallback.playedOffsets, [19])
+        _ = try client.prepareSpeechText(source)
+        try client.play(targetId: "stop-generation", from: 120)
+        await fulfillment(of: [stopped], timeout: 1)
+        XCTAssertEqual(fallback.playedOffsets, [19, 120], "Resume and navigation must keep generation stopped")
+        try? await Task.sleep(for: .milliseconds(350))
+        let finalRenderCount = await renderer.renderCount
+        XCTAssertEqual(finalRenderCount, 1, "Stopping must not schedule a following chunk")
         try client.stop()
     }
 

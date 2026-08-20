@@ -566,6 +566,35 @@ final class LocalFoundationModelsTests: XCTestCase {
         XCTAssertEqual(best, "Opening needs no toast; closing should confirm the session was saved")
     }
 
+    func testRiskReportInterjectionsHaveValidMateriallyShorterSummaries() throws {
+        let payload = LocalInterjectionSummaryPayload(
+            schemaVersion: "local-interjection-summary.v1",
+            itemTitle: "Risk Report: August 2026",
+            interjections: [
+                LocalInterjectionSummaryRecord(
+                    id: "detection-controls",
+                    anchorBefore: "Alignment audit stress-testing",
+                    anchorAfter: "The audit detected intentionally misaligned models",
+                    note: "So this seems to me that they are mostly banking on detection. And they do have other alignment techniques that they're hoping work, but that they're really putting a lot of their trust into the bet that they're going to be able to detect misalignment before it gets risky. And this is very similar to the way that I am approaching the situation as well. I don't have an ability to direct what controls Anthropic put internally, but I do think that as a voter, we could put controls externally on what they do. This is what I am suggesting in the red teaming against other red teaming in order to do a model release. There definitely is a risk where if an organization knows that they're going to have to send their weights over to a competitor lab in order for it to get publicly released, they could decide to make sure that the reasoning is obscured, so that they can't interrogate the chain of thought as much. However, that would make it almost impossible for them to feel comfortable enough with their safety cases to give it over to testing by their competitors."
+                ),
+                LocalInterjectionSummaryRecord(
+                    id: "detection-bet",
+                    anchorBefore: "Repeated attacks make detection more likely",
+                    anchorAfter: "Many computations land on monitored surfaces",
+                    note: "So this is yet another example of them leaning on detection, which I think is not a bad bet."
+                )
+            ]
+        )
+
+        XCTAssertNoThrow(try LocalInterjectionSummaryPolicy.validate(
+            bullets: [
+                "Anthropic relies heavily on detecting misalignment; external voter controls and competitor red-teaming could complement internal alignment, though mandatory weight sharing might incentivize obscured reasoning and undermine labs' confidence in their safety cases.",
+                "They again lean on detection, which seems like a sound bet."
+            ],
+            payload: payload
+        ))
+    }
+
     func testSummaryValidationPreservesQuestionsAndRejectsLowCoverageHallucination() {
         let questionPayload = LocalInterjectionSummaryPayload(
             schemaVersion: "local-interjection-summary.v1",

@@ -444,6 +444,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var renderedSpeechCacheLimitMB = Gate1AppModel.storedRenderedSpeechCacheLimitMB()
     @Published private(set) var podcastDownloadRecords: [String: PodcastDownloadRecord] = [:]
     @Published var preparedTextAudioStatus = "Not started"
+    @Published private(set) var onDeviceSpeechGenerationStatus = RenderedSpeechGenerationState.inactive.rawValue
     @Published var sourceTranscriptStatus = "Not started"
     @Published var pendingPreparedTextStartItemId: String?
     @Published var speechVoiceOptions: [SpeechVoiceChoice] = []
@@ -547,6 +548,7 @@ final class Gate1AppModel: ObservableObject {
     private var failedWatchPackageRenderItemIds: Set<String> = []
     #endif
     private let preparedTextAudioStarterDurationMs = 30_000
+    static let substantiallyCompletedTextThreshold = 90
     private let sourceWindowContextBeforeMs = SourceAnchorContextResolver.windowBeforeMs
     private let sourceWindowContextAfterMs = SourceAnchorContextResolver.windowAfterMs
     private let quickAccessFolderBookmarkKey = "quickAccessFolderBookmark"
@@ -2379,6 +2381,24 @@ final class Gate1AppModel: ObservableObject {
             streamingSpeechQueue.relinquishToCanonicalPlayback()
             refreshSelectedItem()
             reportSuccess("Paused.")
+        }
+    }
+
+    func stopOnDeviceSpeechGeneration() {
+        guard let client = speechPlaybackClient as? SupertonicSpeechPlaybackClient else {
+            reportFailure("On-device voice generation is not active for this item.")
+            return
+        }
+        do {
+            guard try client.stopOnDeviceRenderingAndUseSystemSpeech() else {
+                reportFailure("There is no active native-text generation to stop.")
+                return
+            }
+            onDeviceSpeechGenerationStatus = RenderedSpeechGenerationState.stopped.rawValue
+            diagnostics["onDeviceSpeechGeneration"] = "stopped_by_user"
+            reportConfirmation("Stopped on-device voice generation. Playback is continuing with the iOS system voice.")
+        } catch {
+            reportFailure(error, context: "Stop on-device voice generation failed")
         }
     }
 
@@ -4832,6 +4852,34 @@ final class Gate1AppModel: ObservableObject {
         humanReadableStatus(preparedTextAudioStatus)
     }
 
+    var shouldShowOnDeviceSpeechGenerationStatus: Bool {
+        snapshot.targetType == TargetType.itemTextTTS.rawValue
+            && ttsVoiceSelection.supertonicVoice != nil
+            && onDeviceSpeechGenerationStatus != RenderedSpeechGenerationState.inactive.rawValue
+    }
+
+    var canStopOnDeviceSpeechGeneration: Bool {
+        onDeviceSpeechGenerationStatus == RenderedSpeechGenerationState.rendering.rawValue
+            || onDeviceSpeechGenerationStatus == RenderedSpeechGenerationState.ready.rawValue
+    }
+
+    var isOnDeviceSpeechGenerating: Bool {
+        onDeviceSpeechGenerationStatus == RenderedSpeechGenerationState.rendering.rawValue
+    }
+
+    var onDeviceSpeechGenerationStatusDescription: String {
+        switch onDeviceSpeechGenerationStatus {
+        case RenderedSpeechGenerationState.rendering.rawValue:
+            return "Generating the next audio section on this iPhone"
+        case RenderedSpeechGenerationState.ready.rawValue:
+            return "The next audio section is ready"
+        case RenderedSpeechGenerationState.stopped.rawValue:
+            return "Generation stopped · using the iOS system voice"
+        default:
+            return "On-device voice generation is inactive"
+        }
+    }
+
     var sourceTranscriptStatusDescription: String {
         humanReadableStatus(sourceTranscriptStatus)
     }
@@ -5621,6 +5669,13 @@ final class Gate1AppModel: ObservableObject {
         do {
             let store = try requireStore()
             let item = try store.loadItem(id: itemId)
+            let substantiallyCompleted = Self.hasSubstantiallyCompletedTextSession(
+                try store.loadSessions(itemId: itemId)
+            )
+            guard !substantiallyCompleted else {
+                diagnostics["textAudioPrewarm:\(itemId)"] = "skipped_substantially_completed"
+                return
+            }
             guard shouldPrewarmTextAudio(for: item), let text = item.text else { return }
             let outputDirectory = try generatedTextAudioDirectory()
             let voiceIdentifier = speechVoiceIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : speechVoiceIdentifier
@@ -5750,6 +5805,10 @@ final class Gate1AppModel: ObservableObject {
         case .some(.nativeMediaFile), .some(.browserOwnedMedia), .some(.remoteStream):
             return false
         }
+    }
+
+    static func hasSubstantiallyCompletedTextSession(_ sessions: [Session]) -> Bool {
+        sessions.contains { $0.completionPercent >= substantiallyCompletedTextThreshold }
     }
 
     private func isStarterPreparedTextMedia(_ media: ItemMedia?) -> Bool {
@@ -5884,6 +5943,12 @@ final class Gate1AppModel: ObservableObject {
                 fallbackVoiceIdentifier: appleVoiceIsAvailable && !selectedVoice.isEmpty ? selectedVoice : nil,
                 fallbackRate: Float(speechRate),
                 diskCache: diskCache,
+                onGenerationStateChange: { [weak self] state in
+                    Task { @MainActor [weak self] in
+                        self?.onDeviceSpeechGenerationStatus = state.rawValue
+                        self?.diagnostics["onDeviceSpeechGeneration"] = state.rawValue
+                    }
+                },
                 onFallback: { [weak self] reason, offset in
                     Task { @MainActor [weak self] in
                         guard let self else { return }
