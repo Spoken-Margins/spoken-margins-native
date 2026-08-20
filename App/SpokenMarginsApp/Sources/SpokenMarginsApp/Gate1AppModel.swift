@@ -445,6 +445,11 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var podcastDownloadRecords: [String: PodcastDownloadRecord] = [:]
     @Published var preparedTextAudioStatus = "Not started"
     @Published private(set) var onDeviceSpeechGenerationStatus = RenderedSpeechGenerationState.inactive.rawValue
+    @Published private(set) var onDeviceSpeechGenerationProgress = RenderedSpeechGenerationProgress(
+        completedChunks: 0,
+        totalChunks: 0
+    )
+    @Published private(set) var isOnDeviceSpeechGenerationDelayed = false
     @Published var sourceTranscriptStatus = "Not started"
     @Published var pendingPreparedTextStartItemId: String?
     @Published var speechVoiceOptions: [SpeechVoiceChoice] = []
@@ -520,6 +525,7 @@ final class Gate1AppModel: ObservableObject {
     private var activeItemId = "item-pill"
     private var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-5.6"
     private var playbackProgressTask: Task<Void, Never>?
+    private var onDeviceSpeechGenerationDelayTask: Task<Void, Never>?
     private var trashUndoDismissTask: Task<Void, Never>?
     #if canImport(UIKit) && os(iOS)
     private var textPlaybackStartupBackgroundTask: UIBackgroundTaskIdentifier = .invalid
@@ -932,11 +938,13 @@ final class Gate1AppModel: ObservableObject {
             }
             resumeSession(session)
         case .jumpToChapter(let chapterId, let fromTimeline):
-            guard let chapter = selectedItem.chapters.first(where: { $0.id == chapterId }) else {
+            if let chapter = selectedItem.chapters.first(where: { $0.id == chapterId }) {
+                jumpToChapter(chapter, fromTimeline: fromTimeline)
+            } else if let chapter = selectedItem.mediaChapters.first(where: { $0.id == chapterId }) {
+                jumpToMediaChapter(chapter, fromTimeline: fromTimeline)
+            } else {
                 reportFailure("The selected chapter could not be restored after choosing a voice.")
-                return
             }
-            jumpToChapter(chapter, fromTimeline: fromTimeline)
         case .playSourceFromBeginning(let fromTimeline):
             playSourceFromBeginning(fromTimeline: fromTimeline)
         }
@@ -1077,6 +1085,7 @@ final class Gate1AppModel: ObservableObject {
 
     deinit {
         playbackProgressTask?.cancel()
+        onDeviceSpeechGenerationDelayTask?.cancel()
         trashUndoDismissTask?.cancel()
         textAudioPrewarmTasks.values.forEach { $0.cancel() }
         sourceImportTask?.cancel()
@@ -2401,6 +2410,9 @@ final class Gate1AppModel: ObservableObject {
                 return
             }
             onDeviceSpeechGenerationStatus = RenderedSpeechGenerationState.stopped.rawValue
+            onDeviceSpeechGenerationDelayTask?.cancel()
+            onDeviceSpeechGenerationDelayTask = nil
+            isOnDeviceSpeechGenerationDelayed = false
             diagnostics["onDeviceSpeechGeneration"] = "stopped_by_user"
             reportConfirmation("Stopped on-device voice generation. Playback is continuing with the iOS system voice.")
         } catch {
@@ -2571,6 +2583,22 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func jumpToChapter(_ chapter: Chapter, fromTimeline: Bool = false) {
+        guard !requireTermsDecisionBeforePlayback(.jumpToChapter(chapter.id, fromTimeline: fromTimeline)) else { return }
+        stopSpeechPreviews()
+        clearPendingAutoPlayTurns()
+        run { engine in
+            _ = try ensureSessionForSelectedItem(engine)
+            snapshot = try engine.jumpToChapter(chapterId: chapter.id)
+            refreshSelectedItem()
+            screen = .playback
+            if fromTimeline {
+                recordTimelineReviewCompleted()
+            }
+            reportSuccess("Jumped to \(chapter.title).")
+        }
+    }
+
+    func jumpToMediaChapter(_ chapter: MediaTimelineChapter, fromTimeline: Bool = false) {
         guard !requireTermsDecisionBeforePlayback(.jumpToChapter(chapter.id, fromTimeline: fromTimeline)) else { return }
         stopSpeechPreviews()
         clearPendingAutoPlayTurns()
@@ -2920,6 +2948,7 @@ final class Gate1AppModel: ObservableObject {
                 return
             }
             podcastDownloadCoordinator?.removeItem(id)
+            removeDurableGeneratedAudio(for: item)
             try store.deleteItem(id: id)
             try refreshLibraryRows(store: store)
             guard !libraryItems.contains(where: { $0.id == id }),
@@ -2945,12 +2974,14 @@ final class Gate1AppModel: ObservableObject {
                 reportSuccess("Recently Deleted is already empty.")
                 return
             }
-            for id in ids {
-                guard try store.loadItem(id: id).deletedAt != nil else {
+            let items = try ids.map { try store.loadItem(id: $0) }
+            for item in items {
+                guard item.deletedAt != nil else {
                     throw SessionKitError.persistenceFailed("bulk_delete_requires_trashed_items")
                 }
             }
             ids.forEach { podcastDownloadCoordinator?.removeItem($0) }
+            items.forEach(removeDurableGeneratedAudio)
             try store.deleteItems(ids: ids)
             try refreshLibraryRows(store: store)
             guard recentlyDeletedItems.isEmpty,
@@ -4834,6 +4865,18 @@ final class Gate1AppModel: ObservableObject {
         return snapshot.chapterTitle?.caseInsensitiveCompare(chapter.title) == .orderedSame
     }
 
+    func isCurrentTimelineMediaChapter(_ chapter: MediaTimelineChapter) -> Bool {
+        guard snapshot.targetType == TargetType.transcriptBackedMedia.rawValue
+                || snapshot.targetType == TargetType.browserOwnedMedia.rawValue else {
+            return false
+        }
+        if let currentChapterId = engine?.currentSession?.position.chapterId,
+           selectedItem.mediaChapters.contains(where: { $0.id == currentChapterId }) {
+            return currentChapterId == chapter.id
+        }
+        return snapshot.chapterTitle?.caseInsensitiveCompare(chapter.title) == .orderedSame
+    }
+
     var hasConfiguredProviderAPIKey: Bool {
         !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -4879,13 +4922,52 @@ final class Gate1AppModel: ObservableObject {
     var onDeviceSpeechGenerationStatusDescription: String {
         switch onDeviceSpeechGenerationStatus {
         case RenderedSpeechGenerationState.rendering.rawValue:
-            return "Generating the next audio section on this iPhone"
+            let progress = onDeviceSpeechGenerationProgress
+            guard progress.totalChunks > 0 else {
+                return "Preparing the full Supertonic audio on this iPhone"
+            }
+            if isOnDeviceSpeechGenerationDelayed {
+                return "Still rendering chunk \(min(progress.completedChunks + 1, progress.totalChunks)) of \(progress.totalChunks) · \(progress.percent)% complete"
+            }
+            return "Generating full audio · \(progress.percent)% (\(progress.completedChunks) of \(progress.totalChunks) chunks)"
         case RenderedSpeechGenerationState.ready.rawValue:
-            return "The next audio section is ready"
+            return "Full audio ready for replay and scrubbing"
         case RenderedSpeechGenerationState.stopped.rawValue:
             return "Generation stopped · using the iOS system voice"
         default:
             return "On-device voice generation is inactive"
+        }
+    }
+
+    private func updateOnDeviceSpeechGenerationState(_ state: RenderedSpeechGenerationState) {
+        onDeviceSpeechGenerationStatus = state.rawValue
+        diagnostics["onDeviceSpeechGeneration"] = state.rawValue
+        guard state != .rendering else { return }
+        onDeviceSpeechGenerationDelayTask?.cancel()
+        onDeviceSpeechGenerationDelayTask = nil
+        isOnDeviceSpeechGenerationDelayed = false
+        if state == .inactive {
+            onDeviceSpeechGenerationProgress = RenderedSpeechGenerationProgress(
+                completedChunks: 0,
+                totalChunks: 0
+            )
+        }
+    }
+
+    private func updateOnDeviceSpeechGenerationProgress(_ progress: RenderedSpeechGenerationProgress) {
+        onDeviceSpeechGenerationProgress = progress
+        isOnDeviceSpeechGenerationDelayed = false
+        diagnostics["onDeviceSpeechGenerationProgress"] = "\(progress.completedChunks)/\(progress.totalChunks)"
+        onDeviceSpeechGenerationDelayTask?.cancel()
+        onDeviceSpeechGenerationDelayTask = nil
+        guard progress.completedChunks < progress.totalChunks else { return }
+        onDeviceSpeechGenerationDelayTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(45))
+            guard !Task.isCancelled, let self,
+                  self.onDeviceSpeechGenerationStatus == RenderedSpeechGenerationState.rendering.rawValue,
+                  self.onDeviceSpeechGenerationProgress == progress else { return }
+            self.isOnDeviceSpeechGenerationDelayed = true
+            self.diagnostics["onDeviceSpeechGenerationDelay"] = "chunk_\(progress.completedChunks + 1)_over_45s"
         }
     }
 
@@ -5750,7 +5832,8 @@ final class Gate1AppModel: ObservableObject {
         _ prepared: PreparedTextAudio,
         itemId: String,
         preparedStatus: String = "ready",
-        diagnosticStatus: String = "ready"
+        diagnosticStatus: String = "ready",
+        replaceActivePlayback: Bool = false
     ) -> Bool {
         do {
             let shouldAutoStart = pendingPreparedTextStartItemId == itemId
@@ -5758,7 +5841,11 @@ final class Gate1AppModel: ObservableObject {
                 installEngine(try makeEngine(store: store))
             }
             guard let engine else { return false }
-            snapshot = try engine.attachPreparedTextAudio(itemId: itemId, prepared: prepared)
+            snapshot = try engine.attachPreparedTextAudio(
+                itemId: itemId,
+                prepared: prepared,
+                replaceActivePlayback: replaceActivePlayback
+            )
             if let store {
                 libraryItems = try loadLibraryRows(store: store)
                 if activeItemId == itemId || selectedItem.id == itemId {
@@ -5848,6 +5935,20 @@ final class Gate1AppModel: ObservableObject {
             create: true
         )
         return cachesDirectory.appending(path: "GeneratedTextAudio", directoryHint: .isDirectory)
+    }
+
+    private func removeDurableGeneratedAudio(for item: Item) {
+        guard item.media?.sourceType == .generatedTTSPrerendered,
+              let identifier = item.media?.nativeMediaId ?? item.media?.url,
+              let url = URL(string: identifier),
+              url.isFileURL,
+              let supportDirectory = try? applicationSupportDirectory() else { return }
+        let generatedDirectory = supportDirectory
+            .appending(path: "PreparedSupertonicAudio", directoryHint: .isDirectory)
+            .standardizedFileURL
+        let file = url.standardizedFileURL
+        guard file.deletingLastPathComponent() == generatedDirectory else { return }
+        try? FileManager.default.removeItem(at: file)
     }
 
     private func prepareTextPlaybackBeforeStarting(itemId: String) -> Bool {
@@ -5952,10 +6053,39 @@ final class Gate1AppModel: ObservableObject {
                 fallbackVoiceIdentifier: appleVoiceIsAvailable && !selectedVoice.isEmpty ? selectedVoice : nil,
                 fallbackRate: Float(speechRate),
                 diskCache: diskCache,
+                preparedAudioDirectory: supportDirectory.appending(
+                    path: "PreparedSupertonicAudio",
+                    directoryHint: .isDirectory
+                ),
                 onGenerationStateChange: { [weak self] state in
                     Task { @MainActor [weak self] in
-                        self?.onDeviceSpeechGenerationStatus = state.rawValue
-                        self?.diagnostics["onDeviceSpeechGeneration"] = state.rawValue
+                        self?.updateOnDeviceSpeechGenerationState(state)
+                    }
+                },
+                onGenerationProgress: { [weak self] progress in
+                    Task { @MainActor [weak self] in
+                        self?.updateOnDeviceSpeechGenerationProgress(progress)
+                    }
+                },
+                onPreparedAudio: { [weak self] itemId, prepared in
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        guard let store = self.store,
+                              let item = try? store.loadItem(id: itemId),
+                              let canonical = Self.canonicalSupertonicPreparedAudio(
+                                prepared,
+                                itemText: item.text
+                              ) else {
+                            self.diagnostics["supertonicPreparedCanonicalization:\(itemId)"] = "source_mismatch"
+                            return
+                        }
+                        _ = self.attachPreparedTextAudio(
+                            canonical,
+                            itemId: itemId,
+                            preparedStatus: "ready",
+                            diagnosticStatus: "supertonic_full_ready",
+                            replaceActivePlayback: true
+                        )
                     }
                 },
                 onFallback: { [weak self] reason, offset in
@@ -5964,12 +6094,9 @@ final class Gate1AppModel: ObservableObject {
                         self.diagnostics["supertonicFallback"] = reason
                         self.diagnostics["supertonicFallbackOffset"] = "\(offset)"
                         self.statusMessage = "Using the iOS system voice for this playback."
-                        let message = reason == "supertonic_buffer_underrun"
-                            ? "On-device rendering could not keep up, so playback continued with the iOS system voice."
-                            : "The on-device voice was unavailable, so playback continued with the iOS system voice."
                         self.feedbackEvent = UserFeedbackEvent(
                             kind: .warning,
-                            message: message
+                            message: "Supertonic encountered a rendering failure, so playback continued with the iOS system voice."
                         )
                     }
                 }
@@ -6000,6 +6127,61 @@ final class Gate1AppModel: ObservableObject {
         return SystemSpeechPlaybackClient(
             voiceIdentifier: selectedVoice.isEmpty ? nil : selectedVoice,
             speechRate: Float(speechRate)
+        )
+    }
+
+    static func canonicalSupertonicPreparedAudio(
+        _ prepared: PreparedTextAudio,
+        itemText: String?
+    ) -> PreparedTextAudio? {
+        guard let itemText, !itemText.isEmpty,
+              prepared.normalizedText.hasSuffix(itemText) else {
+            return nil
+        }
+        let prefixLength = prepared.normalizedText.count - itemText.count
+        guard prefixLength > 0 else { return prepared }
+        let itemCharacters = Array(itemText)
+        let segments = prepared.timeline.segments.map { segment -> MediaTimelineSegment in
+            let originalStart = segment.startChar ?? 0
+            let originalEnd = segment.endChar ?? originalStart
+            let start = max(0, min(itemCharacters.count, originalStart - prefixLength))
+            let end = max(start, min(itemCharacters.count, originalEnd - prefixLength))
+            let canonicalText = end > start
+                ? String(itemCharacters[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+                : segment.text
+            return MediaTimelineSegment(
+                id: segment.id,
+                startMs: segment.startMs,
+                endMs: segment.endMs,
+                startChar: start,
+                endChar: end,
+                text: canonicalText
+            )
+        }
+        let segmentByID = segments.reduce(into: [String: MediaTimelineSegment]()) {
+            $0[$1.id] = $1
+        }
+        let chapters = prepared.timeline.chapters.compactMap { chapter -> MediaTimelineChapter? in
+            guard let segment = segmentByID[chapter.transcriptSegmentId],
+                  (segment.endChar ?? 0) > 0 else { return nil }
+            let titleWords = segment.text.split(separator: " ").prefix(7).joined(separator: " ")
+            return MediaTimelineChapter(
+                id: chapter.id,
+                title: titleWords.isEmpty ? chapter.title : titleWords,
+                description: chapter.description,
+                startMs: chapter.startMs,
+                transcriptSegmentId: chapter.transcriptSegmentId
+            )
+        }
+        return PreparedTextAudio(
+            normalizedText: itemText,
+            media: prepared.media,
+            timeline: TranscriptTimeline(
+                segments: segments,
+                chapters: chapters,
+                durationMs: prepared.timeline.durationMs
+            ),
+            createdAt: prepared.createdAt
         )
     }
 

@@ -2052,6 +2052,19 @@ private struct PlaybackScreen: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("timeline.chapter.jump.\(chapter.id)")
+                    case .mediaChapter(let chapter, _):
+                        Button {
+                            model.jumpToMediaChapter(chapter, fromTimeline: true)
+                        } label: {
+                            TimelineRow(
+                                percent: formatPlaybackTime(chapter.startMs),
+                                title: chapter.title,
+                                subtitle: chapter.description ?? "Starts at \(formatPlaybackTime(chapter.startMs))",
+                                isCurrent: model.isCurrentTimelineMediaChapter(chapter)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("timeline.mediaChapter.jump.\(chapter.id)")
                     case .interjection(let interjection):
                         Button {
                             model.recordTimelineInterjectionViewed(interjectionId: interjection.id)
@@ -2098,7 +2111,7 @@ private struct PlaybackScreen: View {
     }
 
     private var timelineEntries: [PlaybackTimelineEntry] {
-        let hasChapters = !model.selectedItem.chapters.isEmpty
+        let hasChapters = !model.selectedItem.chapters.isEmpty || !visibleMediaChapters.isEmpty
         let hasSummary = !model.selectedItem.overview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let sourceHeaderEntries: [PlaybackTimelineEntry]
         if hasSummary {
@@ -2108,7 +2121,16 @@ private struct PlaybackScreen: View {
         } else {
             sourceHeaderEntries = [.sourceItem]
         }
+        let mediaDurationMs = max(1, interjectionMediaDurationMs ?? 1)
         let sourceEntries = (model.selectedItem.chapters.map { PlaybackTimelineEntry.chapter($0) } +
+            visibleMediaChapters.map { chapter in
+                PlaybackTimelineEntry.mediaChapter(
+                    chapter,
+                    max(0, min(100, Int(
+                        (Double(chapter.startMs) / Double(mediaDurationMs) * 100).rounded()
+                    )))
+                )
+            } +
             model.selectedItem.interjections.filter { $0.targetType == .item }.map { PlaybackTimelineEntry.interjection($0) }
         )
         .sorted { lhs, rhs in
@@ -2137,6 +2159,17 @@ private struct PlaybackScreen: View {
             .filter { $0.targetType != .item && !turnIds.contains($0.targetId) }
             .map { PlaybackTimelineEntry.interjection($0) }
         return sourceHeaderEntries + sourceEntries + turnEntries + orphanedTurnInterjections
+    }
+
+    private var visibleMediaChapters: [MediaTimelineChapter] {
+        let sourceChapterIDs = Set(model.selectedItem.chapters.map(\.id))
+        return model.selectedItem.mediaChapters
+            .filter {
+                !$0.id.hasPrefix("ch-transcript-")
+                    && !$0.id.contains("-ch-transcript-")
+                    && !sourceChapterIDs.contains($0.id)
+            }
+            .sorted { $0.startMs < $1.startMs }
     }
 
     private var interjectionMediaDurationMs: Int? {
@@ -3284,6 +3317,7 @@ private enum PlaybackTimelineEntry: Identifiable {
     case sourceItem
     case overview
     case chapter(Chapter)
+    case mediaChapter(MediaTimelineChapter, Int)
     case interjection(Interjection)
     case turn(ConversationTurn)
     case turnChapter(ConversationTurn, Chapter)
@@ -3293,6 +3327,7 @@ private enum PlaybackTimelineEntry: Identifiable {
         case .sourceItem: return "source-item"
         case .overview: return "overview"
         case .chapter(let chapter): return "chapter-\(chapter.id)"
+        case .mediaChapter(let chapter, _): return "media-chapter-\(chapter.id)"
         case .interjection(let interjection): return "interjection-\(interjection.id)"
         case .turn(let turn): return "turn-\(turn.id)"
         case .turnChapter(let turn, let chapter): return "turn-chapter-\(turn.id)-\(chapter.id)"
@@ -3304,6 +3339,7 @@ private enum PlaybackTimelineEntry: Identifiable {
         case .sourceItem: return 0
         case .overview: return 0
         case .chapter(let chapter): return chapter.percent
+        case .mediaChapter(_, let percent): return percent
         case .interjection(let interjection): return interjection.targetType == .item ? interjection.roughPercent : 101
         case .turn: return 101
         case .turnChapter: return 101
@@ -3314,7 +3350,7 @@ private enum PlaybackTimelineEntry: Identifiable {
         switch self {
         case .sourceItem: return -2
         case .overview: return -1
-        case .chapter: return 0
+        case .chapter, .mediaChapter: return 0
         case .interjection(let interjection): return interjection.targetType == .item ? 1 : 4
         case .turn: return 2
         case .turnChapter: return 3

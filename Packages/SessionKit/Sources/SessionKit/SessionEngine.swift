@@ -317,6 +317,18 @@ public final class SessionEngine {
             case .confirmed:
                 snapshot.status = .playing
             case .pending:
+                // Startup can remain pending while a buffered speech client is
+                // already advancing or after the user seeks. Preserve that
+                // canonical position instead of repeatedly publishing the
+                // pre-start session offset (usually zero).
+                if updated.position != session.position
+                    || updated.completionPercent != session.completionPercent
+                    || updated.phase != session.phase
+                    || updated.status != session.status {
+                    session = updated
+                    currentSession = session
+                    try persistSession(session)
+                }
                 publish(status: .starting, phase: session.phase)
                 return snapshot
             case .failed(let message):
@@ -412,7 +424,11 @@ public final class SessionEngine {
     }
 
     @discardableResult
-    public func attachPreparedTextAudio(itemId: String, prepared: PreparedTextAudio) throws -> SessionSnapshot {
+    public func attachPreparedTextAudio(
+        itemId: String,
+        prepared: PreparedTextAudio,
+        replaceActivePlayback: Bool = false
+    ) throws -> SessionSnapshot {
         try require("attachPreparedTextAudio", category: "sync", capabilities: ["canonical_persistence"])
         let item = try repository.loadItem(id: itemId)
         guard shouldPrepareGeneratedTextAudio(for: item) else {
@@ -423,14 +439,33 @@ public final class SessionEngine {
             currentItem = updated
             if let session = currentSession, session.itemId == updated.id {
                 if session.currentTargetType == .itemTextTTS, session.phase == .itemPlayback {
-                    // Do not replace a live AVSpeechSynthesizer utterance mid-session.
-                    // The prepared file is retained for the next session; switching
-                    // transports here can produce an audible voice change and reset
-                    // the user's current narration cadence.
                     let synchronized = syncSessionPositionFromAudio(session, item: updated)
-                    currentSession = synchronized
-                    try persistSession(synchronized)
-                    publish(status: snapshot.status, phase: synchronized.phase)
+                    if replaceActivePlayback {
+                        var migrated = synchronized
+                        let mediaTimeMs = mediaTimeMs(
+                            forTextOffset: synchronized.position.charOffset,
+                            timeline: prepared.timeline
+                        )
+                        migrated.currentTargetType = .transcriptBackedMedia
+                        migrated.currentTargetId = itemPlaybackTargetId(
+                            for: updated,
+                            targetType: .transcriptBackedMedia
+                        )
+                        migrated = mediaSession(migrated, movedTo: mediaTimeMs)
+                        currentSession = migrated
+                        try persistSession(migrated)
+                        if snapshot.status.isPlaybackActive {
+                            try playCurrentTarget(migrated)
+                        }
+                        publishPlaybackContinuation(for: migrated)
+                    } else {
+                        // System speech preparation can use a different voice and
+                        // cadence, so its generic attachment remains next-session
+                        // only unless the caller explicitly guarantees continuity.
+                        currentSession = synchronized
+                        try persistSession(synchronized)
+                        publish(status: snapshot.status, phase: synchronized.phase)
+                    }
                 } else if session.currentTargetType == .transcriptBackedMedia,
                           item.media?.sourceType == .generatedTTSPrerendered,
                           updated.media?.sourceType == .generatedTTSPrerendered {

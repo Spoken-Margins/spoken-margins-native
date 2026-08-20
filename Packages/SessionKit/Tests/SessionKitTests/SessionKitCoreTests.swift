@@ -782,6 +782,35 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(confirmed.status, .playing)
     }
 
+    func testPendingPlaybackStartStillPublishesAndPersistsLiveTextPosition() throws {
+        let audio = RecordingAudioClient()
+        audio.startStatus = .pending
+        let item = Item(
+            id: "item-buffered",
+            title: "Buffered",
+            mediaType: "text",
+            text: "One. Two. Three.",
+            externalReference: nil,
+            status: "ready"
+        )
+        let repository = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(
+            profile: phonePlaybackProfile(),
+            repository: repository,
+            audio: audio
+        )
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentOffset = 9
+
+        let updated = try engine.syncPlaybackProgress()
+
+        XCTAssertEqual(updated.status, .starting)
+        XCTAssertEqual(updated.currentTextStart, 9)
+        XCTAssertEqual(engine.currentSession?.position.charOffset, 9)
+        XCTAssertGreaterThan(updated.sourceProgressPercent, 0)
+    }
+
     func testPlaybackStartFailurePublishesFailedWithoutClaimingPlaying() throws {
         let audio = RecordingAudioClient()
         audio.startStatus = .failed("native_audio_failed")
@@ -2302,6 +2331,19 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(engine.currentSession?.currentTargetType, .itemTextTTS)
         XCTAssertNotEqual(audio.playedTargets.last, "file:///tmp/live-to-media.caf")
         XCTAssertEqual(try repo.loadItem(id: item.id).media?.url, "file:///tmp/live-to-media.caf")
+
+        let promoted = try engine.attachPreparedTextAudio(
+            itemId: item.id,
+            prepared: prepared,
+            replaceActivePlayback: true
+        )
+
+        XCTAssertEqual(promoted.targetType, TargetType.transcriptBackedMedia.rawValue)
+        XCTAssertEqual(promoted.targetId, "file:///tmp/live-to-media.caf")
+        XCTAssertEqual(promoted.currentMediaTimeMs, 1_000)
+        XCTAssertEqual(engine.currentSession?.currentTargetType, .transcriptBackedMedia)
+        XCTAssertEqual(audio.playedTargets.last, "file:///tmp/live-to-media.caf")
+        XCTAssertEqual(audio.playedOffsets.last, 1_000)
     }
 
     func testPreparedTextAudioAttachmentReplacesStarterMediaWithoutLosingPlayhead() throws {

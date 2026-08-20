@@ -111,6 +111,96 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.isCurrentTimelineChapter(opening))
     }
 
+    func testTimelineMarksTheCurrentPreparedAudioChapter() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        let opening = MediaTimelineChapter(
+            id: "ch-supertonic-01",
+            title: "Opening",
+            startMs: 0,
+            transcriptSegmentId: "segment-1"
+        )
+        let pivot = MediaTimelineChapter(
+            id: "ch-supertonic-02",
+            title: "The Pivot",
+            startMs: 60_000,
+            transcriptSegmentId: "segment-2"
+        )
+        model.selectedItem = ItemDetailState(
+            id: "item-1",
+            title: "A Long Article",
+            mediaChapters: [opening, pivot]
+        )
+        model.snapshot.targetType = TargetType.transcriptBackedMedia.rawValue
+        model.snapshot.chapterTitle = pivot.title
+
+        XCTAssertFalse(model.isCurrentTimelineMediaChapter(opening))
+        XCTAssertTrue(model.isCurrentTimelineMediaChapter(pivot))
+    }
+
+    func testPreparedSupertonicOverviewNeverReplacesCanonicalItemTextOrOffsets() throws {
+        let itemText = "First source sentence. Second source sentence."
+        let overview = "Overview. A brief listening map.\n\n"
+        let prefixLength = overview.count
+        let combined = overview + itemText
+        let media = ItemMedia(
+            sourceType: .generatedTTSPrerendered,
+            url: "file:///tmp/overview-source.caf",
+            durationMs: 3_000,
+            nativeMediaId: "file:///tmp/overview-source.caf"
+        )
+        let prepared = PreparedTextAudio(
+            normalizedText: combined,
+            media: media,
+            timeline: TranscriptTimeline(
+                segments: [
+                    MediaTimelineSegment(
+                        id: "overview",
+                        startMs: 0,
+                        endMs: 1_000,
+                        startChar: 0,
+                        endChar: prefixLength,
+                        text: overview
+                    ),
+                    MediaTimelineSegment(
+                        id: "source-1",
+                        startMs: 1_000,
+                        endMs: 2_000,
+                        startChar: prefixLength,
+                        endChar: prefixLength + 22,
+                        text: "First source sentence."
+                    ),
+                    MediaTimelineSegment(
+                        id: "source-2",
+                        startMs: 2_000,
+                        endMs: 3_000,
+                        startChar: prefixLength + 23,
+                        endChar: combined.count,
+                        text: "Second source sentence."
+                    )
+                ],
+                chapters: [
+                    MediaTimelineChapter(id: "overview-chapter", title: "Overview", startMs: 0, transcriptSegmentId: "overview"),
+                    MediaTimelineChapter(id: "source-chapter", title: "First source sentence", startMs: 1_000, transcriptSegmentId: "source-1")
+                ],
+                durationMs: 3_000
+            )
+        )
+
+        let canonical = try XCTUnwrap(Gate1AppModel.canonicalSupertonicPreparedAudio(
+            prepared,
+            itemText: itemText
+        ))
+
+        XCTAssertEqual(canonical.normalizedText, itemText)
+        XCTAssertEqual(canonical.media, media)
+        XCTAssertEqual(canonical.timeline.segments[0].startChar, 0)
+        XCTAssertEqual(canonical.timeline.segments[0].endChar, 0)
+        XCTAssertEqual(canonical.timeline.segments[1].startChar, 0)
+        XCTAssertEqual(canonical.timeline.segments[1].endChar, 22)
+        XCTAssertEqual(canonical.timeline.segments.last?.endChar, itemText.count)
+        XCTAssertEqual(canonical.timeline.chapters.map(\.id), ["source-chapter"])
+    }
+
     func testConfiguredProviderKeyIgnoresWhitespaceOnlyValues() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.providerAPIKey = "   \n"
