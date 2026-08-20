@@ -1466,6 +1466,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             removeTimeObserver()
             let item = AVPlayerItem(url: url)
             player = AVPlayer(playerItem: item)
+            player?.automaticallyWaitsToMinimizeStalling = true
             activeTargetId = targetId
             activePlaybackURL = url
             observeCompletion(for: item)
@@ -1481,10 +1482,10 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         playbackComplete = false
         completedTargetId = nil
         let time = CMTime(seconds: seconds, preferredTimescale: 600)
+        paused = false
         player?.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
         player?.play()
         player?.rate = Float(playbackRate)
-        paused = false
         publishNowPlaying(isPlaying: true)
         #else
         throw SessionKitError.persistenceFailed("stream_audio_playback_unavailable")
@@ -1589,7 +1590,10 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         case .waitingToPlayAtSpecifiedRate:
             return .waiting
         case .paused:
-            return playbackComplete ? .stopped : .paused
+            // AVPlayer reports transient `.paused` states while replacing,
+            // seeking, and recovering a stream. Only surface a canonical pause
+            // when the user actually requested one.
+            return playbackComplete ? .stopped : (paused ? .paused : .waiting)
         case nil:
             return .stopped
         @unknown default:
@@ -1602,8 +1606,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     public func pause() throws {
         #if canImport(AVFoundation)
-        player?.pause()
         paused = true
+        player?.pause()
         publishNowPlaying(isPlaying: false)
         #endif
     }
@@ -1683,14 +1687,14 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             guard let self else { return }
             switch player.timeControlStatus {
             case .playing:
-                self.paused = false
-                self.publishNowPlaying(isPlaying: true)
+                self.publishNowPlaying(isPlaying: !self.paused)
             case .paused:
-                self.paused = true
-                self.publishNowPlaying(isPlaying: false)
+                // `paused` tracks user intent. A transient AVPlayer pause must
+                // not turn an active session into a canonical user pause or
+                // withdraw its lock-screen playback metadata.
+                self.publishNowPlaying(isPlaying: !self.paused && !self.playbackComplete)
             case .waitingToPlayAtSpecifiedRate:
-                self.paused = false
-                self.publishNowPlaying(isPlaying: true)
+                self.publishNowPlaying(isPlaying: !self.paused)
             @unknown default:
                 break
             }

@@ -6851,8 +6851,10 @@ final class Gate1AppModel: ObservableObject {
         let sortedLinks = Self.prioritizedTranscriptLinks(links)
         diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "scheduled:\(sortedLinks.count)"
         diagnostics["sourceTranscriptionStatus"] = "downloading"
-        sourceTranscriptStatus = "downloading"
-        snapshot.sourceTranscriptStatus = "downloading"
+        if activeItemId == itemId {
+            sourceTranscriptStatus = "downloading"
+            snapshot.sourceTranscriptStatus = "downloading"
+        }
         Task { [weak self, itemId, sortedLinks, durationMs = item.media?.durationMs] in
             guard let self else { return }
             var lastFailure = ""
@@ -6875,8 +6877,10 @@ final class Gate1AppModel: ObservableObject {
             await MainActor.run {
                 self.diagnostics["sourceTranscriptDiscovery:\(itemId)"] = "unavailable:\(lastFailure)"
                 self.diagnostics["sourceTranscriptionStatus"] = "unavailable"
-                self.sourceTranscriptStatus = "unavailable"
-                self.snapshot.sourceTranscriptStatus = "unavailable"
+                if self.activeItemId == itemId {
+                    self.sourceTranscriptStatus = "unavailable"
+                    self.snapshot.sourceTranscriptStatus = "unavailable"
+                }
             }
         }
     }
@@ -7145,9 +7149,11 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         diagnostics["sourceTranscriptionStatus"] = "transcribing"
-        sourceTranscriptStatus = "transcribing"
-        snapshot.sourceTranscriptStatus = "transcribing"
-        statusMessage = "Transcribing source audio..."
+        if activeItemId == item.id {
+            sourceTranscriptStatus = "transcribing"
+            snapshot.sourceTranscriptStatus = "transcribing"
+            statusMessage = "Transcribing source audio..."
+        }
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -7163,12 +7169,14 @@ final class Gate1AppModel: ObservableObject {
                 await MainActor.run {
                     self.diagnostics["sourceTranscriptionStatus"] = "unavailable"
                     self.diagnostics["sourceTranscriptionError"] = String(describing: error)
-                    self.sourceTranscriptStatus = "unavailable"
-                    self.snapshot.sourceTranscriptStatus = "unavailable"
+                    if self.activeItemId == item.id {
+                        self.sourceTranscriptStatus = "unavailable"
+                        self.snapshot.sourceTranscriptStatus = "unavailable"
+                    }
                     if self.pendingMapGenerationItemId == item.id {
                         self.pendingMapGenerationItemId = nil
                     }
-                    if self.lastError == nil {
+                    if self.activeItemId == item.id, self.lastError == nil {
                         self.statusMessage = "Audio ready. Source transcript and Listening Map are unavailable; notes will use timestamp context."
                     }
                 }
@@ -7176,18 +7184,25 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func attachSourceTranscriptTimeline(_ timeline: TranscriptTimeline, itemId: String) {
+    func attachSourceTranscriptTimeline(_ timeline: TranscriptTimeline, itemId: String) {
         let shouldGeneratePendingMap = pendingMapGenerationItemId == itemId
         run { engine in
             snapshot = try engine.attachTranscriptTimeline(itemId: itemId, timeline: timeline)
             if let store {
                 libraryItems = try loadLibraryRows(store: store)
-                selectedItem = try loadItemDetail(id: itemId, store: store)
+                // Transcript imports can finish long after a shared podcast was
+                // added. They must never retarget the playback screen away from
+                // the item/session that is still active.
+                if activeItemId == itemId {
+                    selectedItem = try loadItemDetail(id: itemId, store: store)
+                }
             }
             diagnostics["sourceTranscriptionStatus"] = "complete"
             diagnostics["sourceTranscriptionItem"] = itemId
-            sourceTranscriptStatus = "ready"
-            snapshot.sourceTranscriptStatus = "ready"
+            if activeItemId == itemId {
+                sourceTranscriptStatus = "ready"
+                snapshot.sourceTranscriptStatus = "ready"
+            }
         }
         if shouldGeneratePendingMap {
             pendingMapGenerationItemId = nil
@@ -8105,7 +8120,13 @@ final class Gate1AppModel: ObservableObject {
         let mediaTimeline = try store.loadTranscriptTimeline(itemId: id)?.timeline
         let mediaChapters = mediaTimeline?.chapters ?? []
         let sessions = try store.loadSessions(itemId: id)
-        let activeSessionId = snapshot.sessionId ?? sessions.first?.id
+        // A snapshot session is valid only for its own item. Without this
+        // ownership check, an asynchronous selection bug can display one
+        // item's title with another item's interjections and turns.
+        let snapshotSessionId = snapshot.itemId == id ? snapshot.sessionId : nil
+        let activeSessionId = snapshotSessionId.flatMap { candidate in
+            sessions.contains(where: { $0.id == candidate }) ? candidate : nil
+        } ?? sessions.first?.id
         let storedInterjections = activeSessionId.flatMap {
             try? store.loadInterjections(sessionId: $0).filter { $0.status == "active" }
         } ?? []
@@ -8215,7 +8236,15 @@ final class Gate1AppModel: ObservableObject {
     func podcastLocalAssetDidBecomeReady(itemId: String, url: URL) {
         guard let engine, let store else { return }
         run { _ in
-            snapshot = try engine.updatePlaybackTransport(itemId: itemId, playbackURL: url.absoluteString)
+            // Keep an already-playing remote stream intact. Replacing AVPlayer
+            // while the app is locked can interrupt the audio session and make
+            // Now Playing disappear. The cached file becomes the preferred
+            // transport on the next resume/restart.
+            snapshot = try engine.updatePlaybackTransport(
+                itemId: itemId,
+                playbackURL: url.absoluteString,
+                replaceActivePlayback: false
+            )
             refreshSelectedItem()
         }
         scheduleEmbeddedPublisherChapterImport(itemId: itemId, localURL: url)

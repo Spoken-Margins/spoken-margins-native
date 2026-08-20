@@ -4479,6 +4479,48 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(audio.mediaContexts.last??.sourceURL, remote)
         XCTAssertEqual(audio.mediaContexts.last??.playbackURL, "file:///tmp/episode.mp3")
     }
+
+    func testCompletedPodcastDownloadDefersTransportReplacementUntilResume() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "podcast-deferred-cache",
+            displayName: "Podcast deferred cache",
+            capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media"]]
+        )
+        let remote = "https://example.com/episode.mp3"
+        let local = URL(fileURLWithPath: "/tmp/episode-cached.mp3").absoluteString
+        let item = Item(
+            id: "episode-deferred",
+            title: "Episode",
+            mediaType: "audio",
+            text: nil,
+            externalReference: remote,
+            status: "ready",
+            media: ItemMedia(sourceType: .remoteStream, url: remote, durationMs: 120_000)
+        )
+        let repository = InMemorySessionRepository(items: [item.id: item])
+        let audio = RecordingAudioClient()
+        let engine = SessionEngine(profile: profile, repository: repository, audio: audio)
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentMediaTimeValue = 42_000
+        let playCountBeforeDownload = audio.playedTargets.count
+
+        let unchanged = try engine.updatePlaybackTransport(
+            itemId: item.id,
+            playbackURL: local,
+            replaceActivePlayback: false
+        )
+
+        XCTAssertEqual(unchanged.status, .playing)
+        XCTAssertEqual(audio.playedTargets.count, playCountBeforeDownload)
+        XCTAssertNil(audio.mediaContexts.last??.playbackURL)
+
+        _ = try engine.pause()
+        _ = try engine.resumePlayback()
+
+        XCTAssertEqual(audio.playedOffsets.last, 42_000)
+        XCTAssertEqual(audio.mediaContexts.last??.sourceURL, remote)
+        XCTAssertEqual(audio.mediaContexts.last??.playbackURL, local)
+    }
 }
 
 private final class RecordingAudioClient: AudioPlaybackClient {

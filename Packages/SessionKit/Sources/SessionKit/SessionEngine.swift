@@ -265,7 +265,11 @@ public final class SessionEngine {
     /// Changes only the transport asset for an item. Canonical target ids, source URLs,
     /// playback rate, source time, and interjection anchors remain unchanged.
     @discardableResult
-    public func updatePlaybackTransport(itemId: String, playbackURL: String?) throws -> SessionSnapshot {
+    public func updatePlaybackTransport(
+        itemId: String,
+        playbackURL: String?,
+        replaceActivePlayback: Bool = true
+    ) throws -> SessionSnapshot {
         if let playbackURL {
             playbackURLOverrides[itemId] = playbackURL
         } else {
@@ -274,6 +278,12 @@ public final class SessionEngine {
         guard var session = currentSession,
               session.itemId == itemId,
               session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia else {
+            return snapshot
+        }
+        guard replaceActivePlayback || !snapshot.status.isPlaybackActive else {
+            // The override is durable in this engine and will be selected by
+            // playCurrentTarget on the next resume. Do not rebuild a live media
+            // player merely because its background download completed.
             return snapshot
         }
         session = try syncCurrentPositionFromAudio(session)

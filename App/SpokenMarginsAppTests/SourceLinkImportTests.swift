@@ -839,6 +839,63 @@ final class SourceLinkImportTests: XCTestCase {
         }
     }
 
+    func testBackgroundPodcastTranscriptCompletionDoesNotSpliceItIntoActivePlayback() async throws {
+        let store = makePayloadStore()
+        let sharedHandoff = SourceLinkHandoff(
+            id: "source-link-transcript-race",
+            inputURL: "https://example.com/transcript-race",
+            sourceSurface: "share_sheet",
+            startSession: false
+        )
+        try store.save(sharedHandoff)
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: sharedHandoff.inputURL, provider: "rss", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://example.com/feed", provider: "rss", role: "canonical_feed"),
+                title: "Transcript Race Podcast",
+                durationMs: 300_000,
+                audioURL: "https://cdn.example.com/transcript-race.mp3",
+                confidence: 1
+            )
+        ))
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            sourceLinkHandoffStore: store,
+            audioPlaybackClient: NoopAudioPlaybackClient()
+        )
+        model.resetAndSeed()
+        let activeItemID = try XCTUnwrap(model.libraryItems.first?.id)
+        model.startItem(id: activeItemID)
+        let activeTitle = model.selectedItem.title
+        let activeSessionID = model.snapshot.sessionId
+
+        model.handleAppBecameActive()
+        try await waitFor("background podcast import") {
+            model.libraryItems.contains { $0.title == "Transcript Race Podcast" }
+        }
+        let podcastID = try XCTUnwrap(
+            model.libraryItems.first(where: { $0.title == "Transcript Race Podcast" })?.id
+        )
+
+        model.attachSourceTranscriptTimeline(
+            TranscriptTimeline(
+                segments: [MediaTimelineSegment(id: "segment-1", startMs: 0, endMs: 2_000, text: "Podcast transcript")],
+                chapters: [],
+                durationMs: 300_000
+            ),
+            itemId: podcastID
+        )
+
+        XCTAssertEqual(model.screen, .playback)
+        XCTAssertEqual(model.snapshot.itemId, activeItemID)
+        XCTAssertEqual(model.snapshot.sessionId, activeSessionID)
+        XCTAssertEqual(model.selectedItem.id, activeItemID)
+        XCTAssertEqual(model.selectedItem.title, activeTitle)
+        XCTAssertTrue(model.selectedItem.interjections.allSatisfy { $0.itemId == activeItemID })
+    }
+
     func testPendingSourceLinkHandoffImportsAndDeletesOnSuccess() async throws {
         let store = makePayloadStore()
         let handoff = SourceLinkHandoff(
