@@ -97,7 +97,68 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(fallback.playedOffsets, [9])
     }
 
-    func testPlaybackPrefetchesExactlyOneFollowingChunk() async throws {
+    func testSourceOffsetsSurviveWhitespaceAndURLNormalization() async throws {
+        let template = try makeTestWAV(duration: 1)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: CountingAudioSupertonicRenderer(templateURL: template),
+            voice: .m2,
+            speed: 1,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { _, _ in },
+            observesPlayerLifecycle: false,
+            fallbackClient: RecordingFallbackAudioClient()
+        )
+        let source = "Opening.\n\nhttps://example.com/removed\n\nDestination sentence."
+        let destinationRange = try XCTUnwrap(source.range(of: "Destination"))
+        let destinationOffset = source.distance(from: source.startIndex, to: destinationRange.lowerBound)
+
+        _ = try client.prepareSpeechText(source)
+        try client.play(targetId: "normalized-offset", from: destinationOffset)
+        for _ in 0..<50 where !client.debugActiveAudioState().hasURL {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+
+        XCTAssertEqual(client.currentRecoveryCharOffset(), destinationOffset)
+        XCTAssertEqual(client.currentCharOffset(), destinationOffset)
+        try client.stop()
+    }
+
+    func testPausedPlaybackCanSeekWithinRenderedChunk() async throws {
+        let template = try makeTestWAV(duration: 5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: CountingAudioSupertonicRenderer(templateURL: template),
+            voice: .m2,
+            speed: 1,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { _, _ in },
+            observesPlayerLifecycle: false,
+            fallbackClient: RecordingFallbackAudioClient()
+        )
+        let source = "Opening words lead toward the destination phrase and then continue for a while."
+        let destinationRange = try XCTUnwrap(source.range(of: "destination"))
+        let destinationOffset = source.distance(from: source.startIndex, to: destinationRange.lowerBound)
+
+        _ = try client.prepareSpeechText(source)
+        try client.play(targetId: "paused-seek")
+        for _ in 0..<50 where !client.debugActiveAudioState().hasURL {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        try client.pause()
+        try client.play(targetId: "paused-seek", from: destinationOffset)
+        try client.pause()
+        try? await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertLessThanOrEqual(abs((client.currentCharOffset() ?? 0) - destinationOffset), 2)
+        try client.stop()
+    }
+
+    func testPlaybackPrefetchesRateAwareFollowingChunks() async throws {
         let template = try makeTestWAV(duration: 0.5)
         defer { try? FileManager.default.removeItem(at: template) }
         let renderer = CountingAudioSupertonicRenderer(templateURL: template)
@@ -115,9 +176,54 @@ final class SupertonicSpeechTests: XCTestCase {
         _ = try client.prepareSpeechText(source)
         try client.play(targetId: "prefetch")
 
-        let renderCount = await waitForRenderCount(renderer, minimum: 2)
-        XCTAssertEqual(renderCount, 2)
+        let renderCount = await waitForRenderCount(renderer, minimum: 3)
+        XCTAssertEqual(renderCount, 3)
         XCTAssertEqual(client.playbackStartStatus(targetId: "prefetch"), .confirmed)
+        try client.stop()
+    }
+
+    func testRenderUnderrunContinuesWithSystemVoiceAtChunkBoundary() async throws {
+        let template = try makeTestWAV(duration: 1)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(
+            templateURL: template,
+            renderDelays: [2: .milliseconds(500)]
+        )
+        let fallback = RecordingFallbackAudioClient()
+        let callback = expectation(description: "underrun fallback")
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer,
+            voice: .m2,
+            speed: 1.75,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            underrunFallbackDelay: .milliseconds(50),
+            audioSessionActivator: {},
+            audioPlayerStarter: { _, _ in },
+            observesPlayerLifecycle: false,
+            fallbackClient: fallback,
+            onFallback: { reason, offset in
+                XCTAssertEqual(reason, "supertonic_buffer_underrun")
+                XCTAssertGreaterThan(offset, 0)
+                callback.fulfill()
+            }
+        )
+        let source = (1...12).map { index in
+            "Sentence \(index) contains enough ordinary words to keep the narration moving through several chunks."
+        }.joined(separator: " ")
+
+        _ = try client.prepareSpeechText(source)
+        try client.play(targetId: "underrun")
+        for _ in 0..<50 where !client.debugActiveAudioState().hasURL {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        _ = await waitForRenderCount(renderer, minimum: 2)
+        client.debugFinishActiveChunk()
+
+        await fulfillment(of: [callback], timeout: 2)
+        XCTAssertEqual(fallback.preparedText, source)
+        XCTAssertEqual(fallback.playedOffsets.count, 1)
+        XCTAssertLessThan(fallback.playedOffsets[0], source.count)
         try client.stop()
     }
 
@@ -516,13 +622,19 @@ private struct FixedAudioSupertonicRenderer: SupertonicRendering {
 private actor CountingAudioSupertonicRenderer: SupertonicRendering {
     let templateURL: URL
     let firstRenderDelay: Duration?
+    let renderDelays: [Int: Duration]
     private(set) var renderCount = 0
     private(set) var discardCount = 0
     private(set) var requestedSpeeds: [Float] = []
 
-    init(templateURL: URL, firstRenderDelay: Duration? = nil) {
+    init(
+        templateURL: URL,
+        firstRenderDelay: Duration? = nil,
+        renderDelays: [Int: Duration] = [:]
+    ) {
         self.templateURL = templateURL
         self.firstRenderDelay = firstRenderDelay
+        self.renderDelays = renderDelays
     }
 
     func render(
@@ -536,6 +648,8 @@ private actor CountingAudioSupertonicRenderer: SupertonicRendering {
         requestedSpeeds.append(speed)
         if renderCount == 1, let firstRenderDelay {
             try await Task.sleep(for: firstRenderDelay)
+        } else if let delay = renderDelays[renderCount] {
+            try await Task.sleep(for: delay)
         }
         let url = FileManager.default.temporaryDirectory
             .appending(path: "counting-render-\(UUID().uuidString).wav")

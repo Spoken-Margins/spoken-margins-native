@@ -303,6 +303,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private enum ResumeAction {
         case none
         case resumePlayer(AVPlayer)
+        case seekPlayer(AVPlayer, TimeInterval)
         case playCached(CachedAudio)
         case awaitPendingRender
     }
@@ -319,8 +320,15 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let observesPlayerLifecycle: Bool
     private let lock = NSLock()
     private let maxCharacters: Int
+    private let minimumPrefetchDepth: Int
+    private let underrunFallbackDelay: Duration
     private var playbackRate: Float
     private var preparedSourceText = ""
+    private var preparedSpeechProjection = NormalizedSpeechText(
+        text: "",
+        sourceOffsets: [],
+        sourceLength: 0
+    )
     private var activeSourceText = ""
     private var player: AVPlayer?
     private var playbackEndObserver: NSObjectProtocol?
@@ -352,6 +360,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         fallbackVoiceIdentifier: String?,
         fallbackRate: Float,
         maxCharacters: Int = 240,
+        minimumPrefetchDepth: Int = 2,
+        underrunFallbackDelay: Duration = .milliseconds(750),
         diskCache: RenderedSpeechDiskCache? = nil,
         audioSessionNotificationCenter: NotificationCenter = .default,
         audioSessionActivator: (@Sendable () throws -> Void)? = nil,
@@ -374,6 +384,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.audioPlayerStarter = audioPlayerStarter
         self.observesPlayerLifecycle = observesPlayerLifecycle
         self.maxCharacters = maxCharacters
+        self.minimumPrefetchDepth = max(1, minimumPrefetchDepth)
+        self.underrunFallbackDelay = underrunFallbackDelay
         self.onGenerationStateChange = onGenerationStateChange
         self.onFallback = onFallback
         super.init()
@@ -396,12 +408,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     func prepareSpeechText(_ text: String) throws -> String {
-        let normalized = SpeechTextNormalizer.normalize(text)
+        let projection = SpeechTextNormalizer.normalizeWithSourceOffsets(text)
         lock.withLock {
-            preparedSourceText = normalized
+            preparedSourceText = text
+            preparedSpeechProjection = projection
         }
         reportGenerationState(.inactive)
-        return normalized
+        return projection.text
     }
 
     func play(targetId: String) throws {
@@ -416,17 +429,28 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         if usesStoppedGeneration {
             try fallback.play(targetId: targetId, from: charOffset)
+            let spokenOffset = spokenOffset(forSourceOffset: charOffset)
             lock.withLock {
                 fallbackIsActive = true
                 currentTargetId = targetId
-                currentStartOffset = charOffset
+                currentStartOffset = spokenOffset
                 transportIntent = .playing
             }
             reportGenerationState(.stopped)
             return
         }
-        switch resumeAction(targetId: targetId, from: charOffset) {
+        let spokenOffset = spokenOffset(forSourceOffset: charOffset)
+        switch resumeAction(targetId: targetId, fromSpokenOffset: spokenOffset) {
         case .resumePlayer(let player):
+            player.playImmediately(atRate: lock.withLock { playbackRate })
+            return
+        case .seekPlayer(let player, let time):
+            player.pause()
+            player.seek(
+                to: CMTime(seconds: time, preferredTimescale: 600),
+                toleranceBefore: .zero,
+                toleranceAfter: .zero
+            )
             player.playImmediately(atRate: lock.withLock { playbackRate })
             return
         case .playCached(let cached):
@@ -437,7 +461,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         case .none:
             break
         }
-        guard let request = nextRequest(targetId: targetId, from: charOffset) else {
+        guard let request = nextRequest(targetId: targetId, fromSpokenOffset: spokenOffset) else {
             throw SessionKitError.invalidCommandForState("supertonic_playback_text_empty")
         }
         enqueueRender(request)
@@ -445,20 +469,32 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     func currentCharOffset() -> Int? {
         let snapshot = lock.withLock {
-            (fallbackIsActive, currentStartOffset, currentChunkLength, player, activeAudioDuration)
+            (
+                fallbackIsActive,
+                currentStartOffset,
+                currentChunkLength,
+                player,
+                activeAudioDuration,
+                preparedSpeechProjection
+            )
         }
         if snapshot.0 { return fallback.currentCharOffset() }
         let currentTime = playerTime(snapshot.3)
         guard snapshot.4 > 0, snapshot.2 > 0, currentTime.isFinite else {
-            return snapshot.1
+            return snapshot.5.sourceOffset(atSpokenCharacterOffset: snapshot.1)
         }
         let fraction = max(0, min(1, currentTime / snapshot.4))
-        return snapshot.1 + Int((Double(snapshot.2) * fraction).rounded(.down))
+        let spokenOffset = snapshot.1 + Int((Double(snapshot.2) * fraction).rounded(.down))
+        return snapshot.5.sourceOffset(atSpokenCharacterOffset: spokenOffset)
     }
 
     func currentRecoveryCharOffset() -> Int? {
-        let usesFallback = lock.withLock { fallbackIsActive }
-        return usesFallback ? fallback.currentRecoveryCharOffset() : lock.withLock { currentStartOffset }
+        let snapshot = lock.withLock {
+            (fallbackIsActive, currentStartOffset, preparedSpeechProjection)
+        }
+        return snapshot.0
+            ? fallback.currentRecoveryCharOffset()
+            : snapshot.2.sourceOffset(atSpokenCharacterOffset: snapshot.1)
     }
 
     #if DEBUG
@@ -469,19 +505,35 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     func debugActiveAudioState() -> (hasURL: Bool, duration: TimeInterval, targetId: String?, startOffset: Int) {
         lock.withLock { (activeAudioURL != nil, activeAudioDuration, currentTargetId, currentStartOffset) }
     }
+
+    func debugFinishActiveChunk() {
+        guard let item = lock.withLock({ player?.currentItem }) else { return }
+        playbackItemFinished(item)
+    }
     #endif
 
     func currentPlaybackPosition() -> PlaybackPosition? {
         let snapshot = lock.withLock {
-            (currentTargetId, currentStartOffset, currentChunkLength, playbackRate, preparedSourceText.count)
+            (
+                currentTargetId,
+                currentStartOffset,
+                currentChunkLength,
+                playbackRate,
+                preparedSourceText.count,
+                preparedSpeechProjection
+            )
         }
         guard let targetId = snapshot.0 else { return nil }
-        let start = max(0, min(currentCharOffset() ?? snapshot.1, snapshot.4))
+        let sourceChunkStart = snapshot.5.sourceOffset(atSpokenCharacterOffset: snapshot.1)
+        let start = max(0, min(currentCharOffset() ?? sourceChunkStart, snapshot.4))
+        let sourceChunkEnd = snapshot.5.sourceOffset(
+            atSpokenCharacterOffset: snapshot.1 + snapshot.2
+        )
         return PlaybackPosition(
             targetType: .itemTextTTS,
             targetId: targetId,
             textStart: start,
-            textEnd: min(snapshot.4, max(start + 1, snapshot.1 + snapshot.2)),
+            textEnd: min(snapshot.4, max(start + 1, sourceChunkEnd)),
             playbackRate: Double(snapshot.3),
             anchorConfidence: .textRange
         )
@@ -540,9 +592,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             return (targetId, currentStartOffset)
         }
         guard let pending else { return false }
+        let sourceOffset = sourceOffset(forSpokenOffset: pending.startOffset)
         activateSystemFallback(
             targetId: pending.targetId,
-            startOffset: pending.startOffset,
+            sourceOffset: sourceOffset,
             reason: "background_during_initial_render"
         )
         return true
@@ -624,6 +677,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
 
         _ = try fallback.prepareSpeechText(lock.withLock { preparedSourceText })
+        let spokenOffset = spokenOffset(forSourceOffset: offset)
         removePlaybackEndObserver()
         let discarded = lock.withLock { () -> [URL] in
             generation = UUID()
@@ -641,7 +695,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             startedTargetId = nil
             playbackFailure = nil
             fallbackIsActive = true
-            currentStartOffset = offset
+            currentStartOffset = spokenOffset
             currentChunkLength = 0
             return urls
         }
@@ -674,7 +728,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             return (
                 nextOffset,
                 currentTargetId,
-                preparedSourceText.count,
+                preparedSpeechProjection.text.count,
                 cached,
                 currentChunkBoundary.transitionDelay,
                 generation,
@@ -700,13 +754,18 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         } else {
             lock.withLock { pendingAutoplayOffset = snapshot.0 }
             enqueueRender(request, shouldPlayWhenReady: false)
+            scheduleUnderrunFallback(
+                targetId: targetId,
+                spokenOffset: snapshot.0,
+                generation: snapshot.5
+            )
         }
     }
 
-    private func nextRequest(targetId: String, from charOffset: Int) -> RenderRequest? {
+    private func nextRequest(targetId: String, fromSpokenOffset spokenOffset: Int) -> RenderRequest? {
         removePlaybackEndObserver()
         let snapshot = lock.withLock { () -> (String, UUID, [URL]) in
-            let source = preparedSourceText
+            let source = preparedSpeechProjection.text
             generation = UUID()
             let nextGeneration = generation
             player?.pause()
@@ -725,8 +784,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             startedTargetId = nil
             playbackFailure = nil
             currentTargetId = targetId
-            activeSourceText = source
-            currentStartOffset = max(0, min(charOffset, source.count))
+            activeSourceText = preparedSourceText
+            currentStartOffset = max(0, min(spokenOffset, source.count))
             currentChunkLength = 0
             transportIntent = .playing
             return (source, nextGeneration, urls)
@@ -734,7 +793,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         for url in snapshot.2 { discardAudio(url) }
         return renderRequest(
             targetId: targetId,
-            startOffset: charOffset,
+            startOffset: spokenOffset,
             generation: snapshot.1,
             source: snapshot.0
         )
@@ -746,7 +805,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         generation: UUID,
         source: String? = nil
     ) -> RenderRequest? {
-        let source = source ?? lock.withLock { preparedSourceText }
+        let source = source ?? lock.withLock { preparedSpeechProjection.text }
         guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         let clampedOffset = max(0, min(startOffset, source.count))
         guard clampedOffset < source.count else { return nil }
@@ -881,20 +940,21 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private func activateSystemFallback(request: RenderRequest, reason: String) {
         activateSystemFallback(
             targetId: request.targetId,
-            startOffset: request.startOffset,
+            sourceOffset: sourceOffset(forSpokenOffset: request.startOffset),
             reason: reason
         )
     }
 
-    private func activateSystemFallback(targetId: String, startOffset: Int, reason: String) {
+    private func activateSystemFallback(targetId: String, sourceOffset: Int, reason: String) {
         let source = lock.withLock { preparedSourceText }
         do {
             _ = try fallback.prepareSpeechText(source)
-            try fallback.play(targetId: targetId, from: startOffset)
+            try fallback.play(targetId: targetId, from: sourceOffset)
+            let spokenOffset = spokenOffset(forSourceOffset: sourceOffset)
             lock.withLock {
                 fallbackIsActive = true
                 currentTargetId = targetId
-                currentStartOffset = startOffset
+                currentStartOffset = spokenOffset
                 currentChunkLength = 0
                 pendingStartTargetId = nil
                 startedTargetId = targetId
@@ -902,7 +962,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 transportIntent = .playing
             }
             reportGenerationState(.stopped)
-            onFallback?(reason, startOffset)
+            onFallback?(reason, sourceOffset)
         } catch {
             lock.withLock {
                 fallbackIsActive = false
@@ -953,7 +1013,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 startedTargetId = nil
                 playbackFailure = nil
             }
-            prefetchNextChunk(after: request)
+            prefetchFollowingChunks(after: request)
             if delay > 0 {
                 Task { @MainActor [weak self, weak nextPlayer, weak item] in
                     try? await Task.sleep(for: .seconds(delay))
@@ -970,21 +1030,80 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
-    private func prefetchNextChunk(after request: RenderRequest) {
+    private func prefetchFollowingChunks(after request: RenderRequest) {
         let snapshot = lock.withLock {
-            (preparedSourceText.count, currentTargetId, generation, generationDisabledTargetIds.contains(request.targetId))
+            (
+                preparedSpeechProjection.text.count,
+                currentTargetId,
+                generation,
+                generationDisabledTargetIds.contains(request.targetId),
+                playbackRate
+            )
         }
-        let nextOffset = request.startOffset + max(1, request.sourceLength)
         guard !snapshot.3,
               snapshot.2 == request.generation,
-              let targetId = snapshot.1,
-              nextOffset < snapshot.0,
-              let next = renderRequest(
-                targetId: targetId,
-                startOffset: nextOffset,
-                generation: snapshot.2
-              ) else { return }
-        enqueueRender(next, shouldPlayWhenReady: false)
+              let targetId = snapshot.1 else { return }
+        let rateAwareDepth = Int(ceil(Double(snapshot.4))) + 1
+        let depth = max(minimumPrefetchDepth, rateAwareDepth)
+        var nextOffset = request.startOffset + max(1, request.sourceLength)
+        for _ in 0..<depth {
+            guard nextOffset < snapshot.0,
+                  let next = renderRequest(
+                    targetId: targetId,
+                    startOffset: nextOffset,
+                    generation: snapshot.2
+                  ) else { break }
+            enqueueRender(next, shouldPlayWhenReady: false)
+            nextOffset += max(1, next.sourceLength)
+        }
+    }
+
+    private func scheduleUnderrunFallback(
+        targetId: String,
+        spokenOffset: Int,
+        generation expectedGeneration: UUID
+    ) {
+        let delay = underrunFallbackDelay
+        Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            await MainActor.run {
+                self?.recoverFromRenderUnderrun(
+                    targetId: targetId,
+                    spokenOffset: spokenOffset,
+                    generation: expectedGeneration
+                )
+            }
+        }
+    }
+
+    private func recoverFromRenderUnderrun(
+        targetId: String,
+        spokenOffset: Int,
+        generation expectedGeneration: UUID
+    ) {
+        let discarded = lock.withLock { () -> [URL]? in
+            guard generation == expectedGeneration,
+                  currentTargetId == targetId,
+                  transportIntent == .playing,
+                  !fallbackIsActive,
+                  pendingAutoplayOffset == spokenOffset else { return nil }
+            generation = UUID()
+            generationDisabledTargetIds.insert(targetId)
+            pendingAutoplayOffset = nil
+            inFlightOffsets.removeAll()
+            pendingStartTargetId = targetId
+            startedTargetId = nil
+            let urls = renderedCache.values.map(\.url)
+            renderedCache.removeAll()
+            return urls
+        }
+        guard let discarded else { return }
+        for url in discarded { discardAudio(url) }
+        activateSystemFallback(
+            targetId: targetId,
+            sourceOffset: sourceOffset(forSpokenOffset: spokenOffset),
+            reason: "supertonic_buffer_underrun"
+        )
     }
 
     private func reportGenerationState(_ state: RenderedSpeechGenerationState) {
@@ -1016,24 +1135,31 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
-    private func resumeAction(targetId: String, from charOffset: Int) -> ResumeAction {
+    private func resumeAction(targetId: String, fromSpokenOffset spokenOffset: Int) -> ResumeAction {
         lock.withLock {
             guard transportIntent == .paused,
                   currentTargetId == targetId,
                   activeSourceText == preparedSourceText else { return .none }
             let chunkEnd = currentStartOffset + max(0, currentChunkLength)
-            if let player, charOffset >= currentStartOffset, charOffset <= chunkEnd {
+            if let player, spokenOffset >= currentStartOffset, spokenOffset <= chunkEnd {
                 transportIntent = .playing
                 pendingStartTargetId = nil
                 startedTargetId = targetId
-                return .resumePlayer(player)
+                let currentOffset = currentStartOffset + Int(
+                    (Double(currentChunkLength) * max(0, min(1, playerTime(player) / max(activeAudioDuration, 0.001)))).rounded(.down)
+                )
+                if abs(currentOffset - spokenOffset) <= 1 {
+                    return .resumePlayer(player)
+                }
+                let fraction = Double(spokenOffset - currentStartOffset) / Double(max(1, currentChunkLength))
+                return .seekPlayer(player, max(0, min(activeAudioDuration, activeAudioDuration * fraction)))
             }
-            if let cached = renderedCache.removeValue(forKey: charOffset) {
+            if let cached = renderedCache.removeValue(forKey: spokenOffset) {
                 transportIntent = .playing
                 pendingStartTargetId = targetId
                 return .playCached(cached)
             }
-            if inFlightOffsets.contains(charOffset) {
+            if inFlightOffsets.contains(spokenOffset) {
                 transportIntent = .playing
                 pendingStartTargetId = targetId
                 return .awaitPendingRender
@@ -1045,6 +1171,18 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private func playerTime(_ player: AVPlayer?) -> TimeInterval {
         guard let seconds = player?.currentTime().seconds, seconds.isFinite else { return 0 }
         return max(0, seconds)
+    }
+
+    private func spokenOffset(forSourceOffset sourceOffset: Int) -> Int {
+        lock.withLock {
+            preparedSpeechProjection.spokenCharacterOffset(atOrAfterSourceOffset: sourceOffset)
+        }
+    }
+
+    private func sourceOffset(forSpokenOffset spokenOffset: Int) -> Int {
+        lock.withLock {
+            preparedSpeechProjection.sourceOffset(atSpokenCharacterOffset: spokenOffset)
+        }
     }
 
     private func installPlaybackObservers(for item: AVPlayerItem, request: RenderRequest) {

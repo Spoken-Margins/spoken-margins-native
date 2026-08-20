@@ -3664,7 +3664,10 @@ final class Gate1AppModel: ObservableObject {
                 includeReference: true,
                 includeListeningMap: false,
                 includeInterjections: true,
-                includeTurns: targetType != InterjectionTargetType.item.rawValue,
+                // Timeline-level note copying is intentionally compact. Full AI
+                // responses belong to the configurable Export screen; this path
+                // carries only the selected notes and their bounded anchors.
+                includeTurns: false,
                 scope: "target",
                 targetType: targetType,
                 targetId: targetId
@@ -3692,7 +3695,7 @@ final class Gate1AppModel: ObservableObject {
                 includeReference: true,
                 includeListeningMap: false,
                 includeInterjections: true,
-                includeTurns: interjection.targetType != .item,
+                includeTurns: false,
                 scope: "selected_interjections",
                 interjectionIds: [interjection.id]
             ))
@@ -5955,9 +5958,12 @@ final class Gate1AppModel: ObservableObject {
                         self.diagnostics["supertonicFallback"] = reason
                         self.diagnostics["supertonicFallbackOffset"] = "\(offset)"
                         self.statusMessage = "Using the iOS system voice for this playback."
+                        let message = reason == "supertonic_buffer_underrun"
+                            ? "On-device rendering could not keep up, so playback continued with the iOS system voice."
+                            : "The on-device voice was unavailable, so playback continued with the iOS system voice."
                         self.feedbackEvent = UserFeedbackEvent(
                             kind: .warning,
-                            message: "The on-device voice was unavailable, so playback continued with the iOS system voice."
+                            message: message
                         )
                     }
                 }

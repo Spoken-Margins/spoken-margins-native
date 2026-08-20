@@ -162,6 +162,20 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(normalized.sourceOffset(atSpokenCharacterOffset: normalized.text.count), source.count)
     }
 
+    func testSpeechNormalizationMapsSourceSeeksAcrossRemovedContent() throws {
+        let source = "Opening.\n\nhttps://example.com/removed\n\nDestination sentence."
+        let normalized = SpeechTextNormalizer.normalizeWithSourceOffsets(source)
+        let destinationRange = try XCTUnwrap(source.range(of: "Destination"))
+        let sourceOffset = source.distance(from: source.startIndex, to: destinationRange.lowerBound)
+        let spokenOffset = normalized.spokenCharacterOffset(atOrAfterSourceOffset: sourceOffset)
+
+        XCTAssertEqual(normalized.sourceOffset(atSpokenCharacterOffset: spokenOffset), sourceOffset)
+        XCTAssertEqual(
+            normalized.spokenCharacterOffset(atOrAfterSourceOffset: source.count),
+            normalized.text.count
+        )
+    }
+
     func testLiveSpeechPlannerBoundsLongDocumentsWithoutTreatingFirstChunkAsCompletion() {
         let preface = "A short listening overview.\n\n"
         let paragraph = "This paragraph explains one part of the document in enough detail to exercise continuous spoken playback. "

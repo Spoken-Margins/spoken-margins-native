@@ -450,6 +450,44 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.exportPreviewSizeDescription.isEmpty)
     }
 
+    #if canImport(UIKit)
+    func testCopyingAssistantTurnNotesOmitsTheFullAssistantResponse() async throws {
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: NoopRecordingClient(),
+            interjectionTranscriptionHandler: { _ in "Listener note about the opening claim." }
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.pastedAssistantResponse = """
+        First response sentence. Second response sentence. Third response sentence.
+        Fourth response sentence. Fifth response sentence. Sixth response sentence.
+        Seventh response sentence. Eighth response sentence. Distinctive final appendix sentence.
+        """
+        model.importPastedAssistantResponse(autoPlay: true)
+        let turn = try XCTUnwrap(model.selectedItem.turns.last(where: { $0.turnType == "assistant_response" }))
+
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        model.dispatchGate2CompactCommand(.finishInterjection)
+        try await waitFor("assistant response interjection transcription") {
+            model.selectedItem.interjections.contains {
+                $0.targetId == turn.id && $0.transcriptionStatus == "transcribed"
+            }
+        }
+
+        UIPasteboard.general.string = nil
+        model.copyTargetInterjections(
+            targetType: InterjectionTargetType.assistantTurn.rawValue,
+            targetId: turn.id
+        )
+        let copied = try XCTUnwrap(UIPasteboard.general.string)
+
+        XCTAssertTrue(copied.contains("Listener note about the opening claim."))
+        XCTAssertTrue(copied.contains("Turn continues:"))
+        XCTAssertFalse(copied.contains("Distinctive final appendix sentence."))
+    }
+    #endif
+
     func testTrashUndoPreservesItemSessions() throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()

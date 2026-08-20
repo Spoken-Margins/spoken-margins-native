@@ -17,6 +17,26 @@ public struct NormalizedSpeechText: Equatable, Sendable {
         guard clamped < sourceOffsets.count else { return sourceLength }
         return sourceOffsets[clamped]
     }
+
+    /// Resolves a canonical source offset to the first retained spoken
+    /// character at or after it. Removed markup, URLs, and repeated whitespace
+    /// therefore seek forward to the next audible character instead of being
+    /// treated as offsets in the shorter normalized string.
+    public func spokenCharacterOffset(atOrAfterSourceOffset offset: Int) -> Int {
+        let clamped = max(0, min(offset, sourceLength))
+        guard clamped < sourceLength, !sourceOffsets.isEmpty else { return text.count }
+        var lower = 0
+        var upper = sourceOffsets.count
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2
+            if sourceOffsets[middle] < clamped {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        return lower
+    }
 }
 
 public enum SpeechTextNormalizer {
