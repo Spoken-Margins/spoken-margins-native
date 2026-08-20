@@ -1371,14 +1371,41 @@ extension PreparedAudioPlaybackClient: AVAudioPlayerDelegate {
 }
 #endif
 
+public enum AudioPlaybackInterruptionEvent: Equatable, Sendable {
+    case began
+    case endedShouldResume
+}
+
+struct AudioPlaybackInterruptionResumePolicy: Equatable {
+    private(set) var wasPlayingBeforeInterruption = false
+
+    @discardableResult
+    mutating func began(wasPlaying: Bool) -> Bool {
+        wasPlayingBeforeInterruption = wasPlaying
+        return wasPlaying
+    }
+
+    mutating func ended(shouldResume: Bool) -> Bool {
+        defer { wasPlayingBeforeInterruption = false }
+        return wasPlayingBeforeInterruption && shouldResume
+    }
+
+    mutating func cancelAutomaticResume() {
+        wasPlayingBeforeInterruption = false
+    }
+}
+
 public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked Sendable {
     #if canImport(AVFoundation)
     private var player: AVPlayer?
     private var completionObserver: NSObjectProtocol?
     private var timeObserverToken: Any?
     private var playerStateObservation: NSKeyValueObservation?
+    private var audioSessionObservers: [NSObjectProtocol] = []
     #endif
     private let remoteCommandHandler: (@Sendable (CompactControlCommand, Int?, Double?) -> Void)?
+    private let interruptionHandler: (@Sendable (AudioPlaybackInterruptionEvent) -> Void)?
+    private let audioSessionNotificationCenter: NotificationCenter
     private var mediaContext: PlaybackMediaContext?
     private var activeTargetId: String?
     private var activePlaybackURL: URL?
@@ -1388,6 +1415,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private var knownDurations: [String: Int] = [:]
     private var playbackRate: Double = 1
     private var paused = true
+    private var interruptionResumePolicy = AudioPlaybackInterruptionResumePolicy()
     private var preferredSkipBackSeconds: Int
     private var preferredSkipForwardSeconds: Int
     #if canImport(MediaPlayer) && os(iOS)
@@ -1397,11 +1425,16 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     public init(
         preferredSkipBackSeconds: Int = 15,
         preferredSkipForwardSeconds: Int = 15,
+        audioSessionNotificationCenter: NotificationCenter = .default,
+        interruptionHandler: (@Sendable (AudioPlaybackInterruptionEvent) -> Void)? = nil,
         remoteCommandHandler: (@Sendable (CompactControlCommand, Int?, Double?) -> Void)? = nil
     ) {
         self.preferredSkipBackSeconds = Self.validatedSkipSeconds(preferredSkipBackSeconds)
         self.preferredSkipForwardSeconds = Self.validatedSkipSeconds(preferredSkipForwardSeconds)
+        self.audioSessionNotificationCenter = audioSessionNotificationCenter
+        self.interruptionHandler = interruptionHandler
         self.remoteCommandHandler = remoteCommandHandler
+        installAudioSessionObservers()
         installRemoteCommandHandlers()
     }
 
@@ -1432,9 +1465,15 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         removeCompletionObserver()
         removeTimeObserver()
         removeRemoteCommandHandlers()
+        for observer in audioSessionObservers {
+            audioSessionNotificationCenter.removeObserver(observer)
+        }
     }
 
     public func configureMediaContext(_ context: PlaybackMediaContext?) throws {
+        if context?.targetId != mediaContext?.targetId {
+            interruptionResumePolicy.cancelAutomaticResume()
+        }
         mediaContext = context
         if let context, let durationMs = context.durationMs {
             knownDurations[context.targetId] = durationMs
@@ -1456,6 +1495,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     public func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {
         #if canImport(AVFoundation)
+        interruptionResumePolicy.cancelAutomaticResume()
         let requestedURL = mediaContext?.targetId == targetId ? mediaContext?.playbackURL : nil
         guard let url = URL(string: requestedURL ?? targetId) else {
             throw SessionKitError.invalidCommandForState("stream_audio_invalid_url:\(requestedURL ?? targetId)")
@@ -1606,6 +1646,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     public func pause() throws {
         #if canImport(AVFoundation)
+        interruptionResumePolicy.cancelAutomaticResume()
         paused = true
         player?.pause()
         publishNowPlaying(isPlaying: false)
@@ -1614,6 +1655,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     public func stop() throws {
         #if canImport(AVFoundation)
+        interruptionResumePolicy.cancelAutomaticResume()
         player?.pause()
         removePlayerStateObserver()
         player = nil
@@ -1710,6 +1752,54 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         guard let timeObserverToken else { return }
         player?.removeTimeObserver(timeObserverToken)
         self.timeObserverToken = nil
+    }
+
+    private func installAudioSessionObservers() {
+        #if os(iOS)
+        let center = audioSessionNotificationCenter
+        audioSessionObservers.append(center.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] notification in
+            guard let typeValue = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
+            switch type {
+            case .began:
+                self?.pauseForSystemInterruption()
+            case .ended:
+                let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+                self?.finishSystemInterruption(
+                    shouldResume: AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume)
+                )
+            @unknown default:
+                break
+            }
+        })
+        audioSessionObservers.append(center.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] notification in
+            guard let reasonValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+                  AVAudioSession.RouteChangeReason(rawValue: reasonValue) == .oldDeviceUnavailable else { return }
+            self?.pauseForSystemInterruption()
+        })
+        #endif
+    }
+
+    private func pauseForSystemInterruption() {
+        let wasPlaying = activeTargetId != nil && !paused
+        guard interruptionResumePolicy.began(wasPlaying: wasPlaying) else { return }
+        paused = true
+        player?.pause()
+        publishNowPlaying(isPlaying: false)
+        interruptionHandler?(.began)
+    }
+
+    private func finishSystemInterruption(shouldResume: Bool) {
+        guard interruptionResumePolicy.ended(shouldResume: shouldResume) else { return }
+        interruptionHandler?(.endedShouldResume)
     }
     #else
     private func removePlayerStateObserver() {}

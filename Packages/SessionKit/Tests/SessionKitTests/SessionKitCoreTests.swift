@@ -11,6 +11,24 @@ import AVFoundation
 #endif
 
 final class SessionKitCoreTests: XCTestCase {
+    func testAudioInterruptionResumePolicyOnlyResumesUntouchedPlayingAudio() {
+        var policy = AudioPlaybackInterruptionResumePolicy()
+
+        XCTAssertFalse(policy.began(wasPlaying: false))
+        XCTAssertFalse(policy.ended(shouldResume: true))
+
+        XCTAssertTrue(policy.began(wasPlaying: true))
+        XCTAssertFalse(policy.ended(shouldResume: false))
+
+        XCTAssertTrue(policy.began(wasPlaying: true))
+        policy.cancelAutomaticResume()
+        XCTAssertFalse(policy.ended(shouldResume: true))
+
+        XCTAssertTrue(policy.began(wasPlaying: true))
+        XCTAssertTrue(policy.ended(shouldResume: true))
+        XCTAssertFalse(policy.ended(shouldResume: true))
+    }
+
     func testRoutedPlaybackGivesRemoteCommandOwnershipOnlyToActiveMediaRoute() throws {
         let speech = RecordingAudioClient()
         let media = RecordingAudioClient()

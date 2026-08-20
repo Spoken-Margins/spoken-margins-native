@@ -6081,13 +6081,21 @@ final class Gate1AppModel: ObservableObject {
                             self.diagnostics["supertonicPreparedCanonicalization:\(itemId)"] = "source_mismatch"
                             return
                         }
-                        _ = self.attachPreparedTextAudio(
+                        let attached = self.attachPreparedTextAudio(
                             canonical,
                             itemId: itemId,
                             preparedStatus: "ready",
                             diagnosticStatus: "supertonic_full_ready",
                             replaceActivePlayback: true
                         )
+                        if attached, let renderer = self.supertonicRenderer {
+                            Task { [weak self] in
+                                await renderer.unload(removingGeneratedAudio: false)
+                                await MainActor.run { [weak self] in
+                                    self?.diagnostics["supertonicRuntimeAfterFullAudio"] = "unloaded"
+                                }
+                            }
+                        }
                     }
                 },
                 onFallback: { [weak self] reason, offset in
@@ -6213,7 +6221,12 @@ final class Gate1AppModel: ObservableObject {
     private func makeMediaPlaybackClient() -> AudioPlaybackClient {
         let client = AVPlayerStreamPlaybackClient(
             preferredSkipBackSeconds: mediaSkipBackSeconds,
-            preferredSkipForwardSeconds: mediaSkipForwardSeconds
+            preferredSkipForwardSeconds: mediaSkipForwardSeconds,
+            interruptionHandler: { [weak self] event in
+                Task { @MainActor [weak self] in
+                    self?.handleMediaPlaybackInterruption(event)
+                }
+            }
         ) { [weak self] command, mediaTimeMs, playbackRate in
             Task { @MainActor [weak self] in
                 self?.syncPlaybackProgressForLifecycle()
@@ -6227,6 +6240,27 @@ final class Gate1AppModel: ObservableObject {
         }
         mediaPlaybackClient = client
         return client
+    }
+
+    private func handleMediaPlaybackInterruption(_ event: AudioPlaybackInterruptionEvent) {
+        switch event {
+        case .began:
+            syncPlaybackProgressForLifecycle()
+            diagnostics["mediaPlaybackInterruption"] = "paused"
+        case .endedShouldResume:
+            guard snapshot.status == .paused, let engine else {
+                diagnostics["mediaPlaybackInterruption"] = "resume_skipped"
+                return
+            }
+            do {
+                snapshot = try engine.resumePlayback()
+                refreshSelectedItem()
+                diagnostics["mediaPlaybackInterruption"] = "resumed"
+            } catch {
+                diagnostics["mediaPlaybackInterruption"] = "resume_failed:\(error.localizedDescription)"
+                reportWarning("Playback paused after the interruption. Tap Play to resume.")
+            }
+        }
     }
 
     @discardableResult
