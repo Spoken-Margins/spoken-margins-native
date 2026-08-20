@@ -2412,10 +2412,12 @@ private struct SettingsScreen: View {
                         .accessibilityIdentifier("provider.advanced.disclosure")
                     } else {
                         LabeledContent("Processing", value: "On device")
+                            .accessibilityIdentifier("settings.ai.processing")
                         LabeledContent("Apple Foundation Model", value: model.localFoundationModelAvailabilityDescription)
                         Text("Interjection summaries stay on this device. Publisher podcast chapters and deterministic native-text Listening Maps do not require AI. AI-generated Listening Maps, remote providers, and API keys are disabled in this release.")
                             .font(.caption)
                             .foregroundStyle(AppColors.secondaryText)
+                            .accessibilityIdentifier("settings.ai.releaseBoundary")
                     }
                 }
                 .onCompatibleChange(of: model.listeningMapModel) { _ in model.settingsValueChanged() }

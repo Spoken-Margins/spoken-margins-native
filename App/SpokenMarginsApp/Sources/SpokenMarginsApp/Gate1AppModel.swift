@@ -790,6 +790,12 @@ final class Gate1AppModel: ObservableObject {
                 SpokenMarginsTerms.recordAcceptance()
                 ttsVoiceSelection = .james
                 UserDefaults.standard.set(ttsVoiceSelection.rawValue, forKey: "ttsVoiceSelection")
+            } else {
+                // UI routes share a simulator preferences domain. Keep a route
+                // that explicitly exercises Supertonic from changing the voice
+                // used by later system-speech routes.
+                ttsVoiceSelection = .system
+                UserDefaults.standard.set(ttsVoiceSelection.rawValue, forKey: "ttsVoiceSelection")
             }
         }
         migrateTTSSettingsIfNeeded()

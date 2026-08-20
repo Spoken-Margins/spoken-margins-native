@@ -29,7 +29,11 @@ final class EmojiArticlePlaybackUITests: XCTestCase {
         var didExerciseCrashPointResume = false
         while Date() < deadline {
             XCTAssertNotEqual(app.state, .notRunning, "The app terminated while speaking the exact emoji article.")
-            if let percent = Self.progressPercent(from: progress.label) {
+            let progressElements = app.descendants(matching: .any)
+                .matching(identifier: "playback.progress.label")
+                .allElementsBoundByIndex
+            if let progressElement = progressElements.first,
+               let percent = Self.progressPercent(from: progressElement.label) {
                 highestProgress = max(highestProgress, percent)
                 if !didExerciseCrashPointResume, percent >= 23 {
                     playPause.tap()
@@ -50,6 +54,14 @@ final class EmojiArticlePlaybackUITests: XCTestCase {
                     XCTAssertTrue(app.descendants(matching: .any)["playback.screen"].exists)
                     return
                 }
+            } else if app.descendants(matching: .any)["home.screen"].exists {
+                XCTAssertTrue(didExerciseCrashPointResume)
+                XCTAssertGreaterThanOrEqual(
+                    highestProgress,
+                    90,
+                    "Playback returned Home before reaching the end of the emoji article."
+                )
+                return
             }
             Thread.sleep(forTimeInterval: 1)
         }

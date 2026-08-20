@@ -39,9 +39,10 @@ final class Gate1FlowUITests: XCTestCase {
         app.buttons["home.settings.button"].tap()
 
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 4))
-        XCTAssertTrue(element("provider.name").waitForExistence(timeout: 4))
-        XCTAssertTrue(scrollToElement("provider.apiKey.field").exists)
-        XCTAssertTrue(scrollToElement("provider.save.button").exists)
+        XCTAssertTrue(scrollToElement("settings.ai.processing").exists)
+        XCTAssertTrue(scrollToElement("settings.ai.releaseBoundary").exists)
+        XCTAssertFalse(element("provider.name").exists)
+        XCTAssertFalse(element("provider.apiKey.field").exists)
     }
 
     func testManualListeningMapJSONCanBeAppliedFromItemScreen() throws {
@@ -95,6 +96,7 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 4))
         app.buttons["playback.export.button"].tap()
         XCTAssertTrue(element("export.screen").waitForExistence(timeout: 4))
+        configureFullSessionExport()
         let firstExport = element("export.preview").label
         XCTAssertFalse(firstExport.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
@@ -112,11 +114,12 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 4))
         app.buttons["playback.export.button"].tap()
         XCTAssertTrue(element("export.screen").waitForExistence(timeout: 4))
+        configureFullSessionExport()
         let secondExport = element("export.preview").label
 
         XCTAssertFalse(secondExport.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        XCTAssertEqual(firstExport.components(separatedBy: "Can you respond to my interjection?").count - 1, 1)
-        XCTAssertEqual(secondExport.components(separatedBy: "Can you respond to my interjection?").count - 1, 1)
+        XCTAssertTrue(firstExport.contains("bytes"))
+        XCTAssertEqual(secondExport, firstExport, "The second session export accumulated data from the first session")
     }
 
     func testGate2CompactValidationControlsDelegateTransportCommands() throws {
@@ -357,6 +360,20 @@ final class Gate1FlowUITests: XCTestCase {
             object: element
         )
         return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    private func configureFullSessionExport() {
+        let fullSession = app.buttons["Full Session"]
+        XCTAssertTrue(fullSession.waitForExistence(timeout: 4))
+        if !fullSession.isSelected {
+            fullSession.tap()
+        }
+
+        let includeTurns = scrollToElement("export.includeTurns.toggle")
+        if includeTurns.value as? String == "0" {
+            includeTurns.tap()
+        }
+        XCTAssertEqual(includeTurns.value as? String, "1")
     }
 
     private static let manualListeningMapJSON = """

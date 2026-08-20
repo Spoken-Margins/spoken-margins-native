@@ -4,19 +4,20 @@ This repository contains the native iPhone implementation of Spoken Margins.
 
 ## Current Purpose
 
-Ship a dependable personal listening environment: import an article or podcast, listen with native media or an installed iOS voice such as Piper, interrupt with a contextual note, hear an OpenAI response as it streams, navigate with a Listening Map, and export the session to another chatbot.
+Ship a dependable personal listening environment: import an article or podcast, listen with native media or an installed iOS voice, interrupt with a contextual note, optionally summarize notes with Apple's on-device model when available, navigate with a Listening Map, and export the session to another chatbot. Responses created in another chatbot can be pasted back into Spoken Margins for playback and further interjection.
 
 The active recovery boundary is:
 
 - iPhone/iPad on iOS 18+
 - article, podcast, Safari/share-sheet, plain-text/Markdown, Obsidian, and text-based PDF intake
-- installed system voices through `AVSpeechSynthesizer`
+- installed system voices through `AVSpeechSynthesizer`, plus the bundled James and Lily on-device voices after terms acceptance
 - native lock-screen transport through Now Playing for podcasts, prepared audio, and immediate live speech
 - a Live Activity control surface while listening, including live-fallback speech
-- OpenAI Responses API with a user-supplied key and three model settings
-- manual AI Listening Maps and AI-handoff export
+- Apple Foundation Models for scoped on-device interjection summaries when supported by the device
+- deterministic native-text Listening Maps, publisher podcast chapters, and AI-handoff export
+- pasted-assistant-response import, playback, and interjection without an embedded third-party AI provider
 
-Watch, standalone Home Screen widgets, Kokoro/MLX, bundled Piper, arbitrary AI providers, and dedicated car behavior are not part of the active release. The WidgetKit extension remains only because ActivityKit requires it to host the listening Live Activity.
+OpenAI and other third-party AI providers, API-key settings, remote Discuss, AI-generated Listening Maps, Watch, standalone Home Screen widgets, Kokoro/MLX, bundled Piper, and dedicated car behavior are not part of the active release. The WidgetKit extension remains only because ActivityKit requires it to host the listening Live Activity.
 
 The former iOS 16.7 compatibility app was retired by product-owner decision on 2026-08-10. The repository now has one supported iOS app and one release boundary: iOS 18+. See [the legacy retirement record](docs/legacy-ios16-target.md).
 
