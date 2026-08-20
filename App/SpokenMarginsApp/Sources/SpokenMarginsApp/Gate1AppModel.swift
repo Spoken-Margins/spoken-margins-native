@@ -1204,6 +1204,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleAppBecameInactiveOrBackground() {
+        supertonicRenderer?.setBackgroundInferencePacingEnabled(true)
         if snapshot.status == .starting,
            let supertonic = speechPlaybackClient as? SupertonicSpeechPlaybackClient,
            supertonic.ensurePlaybackStartsBeforeBackgrounding() {
@@ -1339,6 +1340,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleAppBecameActive() {
+        supertonicRenderer?.setBackgroundInferencePacingEnabled(false)
         let refreshedAvailability = localFoundationModelClient.availability()
         if refreshedAvailability != localFoundationModelAvailability {
             localFoundationModelAvailability = refreshedAvailability

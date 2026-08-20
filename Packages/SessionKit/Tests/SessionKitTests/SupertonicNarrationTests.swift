@@ -3,6 +3,19 @@ import XCTest
 @testable import SessionKitSupertonic
 
 final class SupertonicNarrationTests: XCTestCase {
+    func testBackgroundInferencePacingLeavesSafetyMarginBelowIOSCPUQuota() {
+        XCTAssertEqual(
+            SupertonicInferencePacingPolicy.delay(afterInferenceDuration: 10, backgrounded: false),
+            0
+        )
+        let delay = SupertonicInferencePacingPolicy.delay(
+            afterInferenceDuration: 10,
+            backgrounded: true
+        )
+        XCTAssertEqual(delay, 5.384615, accuracy: 0.000_001)
+        XCTAssertEqual(10 / (10 + delay), 0.65, accuracy: 0.000_001)
+    }
+
     func testCanonicalVoiceIDsRoundTripWithoutDisplayNames() throws {
         XCTAssertEqual(SupertonicVoiceID.m2.rawValue, "M2")
         XCTAssertEqual(SupertonicVoiceID.f2.rawValue, "F2")

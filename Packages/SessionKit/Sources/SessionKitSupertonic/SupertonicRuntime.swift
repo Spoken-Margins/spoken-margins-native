@@ -555,6 +555,16 @@ struct Style {
     let dp: ORTValue
 }
 
+private func runPacedInference<T>(
+    _ paceAfterInference: ((TimeInterval) -> Void)?,
+    operation: () throws -> T
+) rethrows -> T {
+    let startedAt = ProcessInfo.processInfo.systemUptime
+    let result = try operation()
+    paceAfterInference?(max(0, ProcessInfo.processInfo.systemUptime - startedAt))
+    return result
+}
+
 class TextToSpeech {
     let cfgs: Config
     let textProcessor: UnicodeProcessor
@@ -576,7 +586,14 @@ class TextToSpeech {
         self.sampleRate = cfgs.ae.sample_rate
     }
 
-    private func _infer(_ textList: [String], _ langList: [String], _ style: Style, _ totalStep: Int, speed: Float = 1.05) throws -> (wav: [Float], duration: [Float]) {
+    private func _infer(
+        _ textList: [String],
+        _ langList: [String],
+        _ style: Style,
+        _ totalStep: Int,
+        speed: Float = 1.05,
+        paceAfterInference: ((TimeInterval) -> Void)? = nil
+    ) throws -> (wav: [Float], duration: [Float]) {
         let bsz = textList.count
 
         // Process text
@@ -597,9 +614,11 @@ class TextToSpeech {
                                          shape: textMaskShape)
 
         // Predict duration
-        let dpOutputs = try dpOrt.run(withInputs: ["text_ids": textIdsValue, "style_dp": style.dp, "text_mask": textMaskValue],
-                                      outputNames: ["duration"],
-                                      runOptions: nil)
+        let dpOutputs = try runPacedInference(paceAfterInference) {
+            try dpOrt.run(withInputs: ["text_ids": textIdsValue, "style_dp": style.dp, "text_mask": textMaskValue],
+                          outputNames: ["duration"],
+                          runOptions: nil)
+        }
 
         let durationData = try dpOutputs["duration"]!.tensorData() as Data
         var duration = durationData.withUnsafeBytes { ptr in
@@ -612,9 +631,11 @@ class TextToSpeech {
         }
 
         // Encode text
-        let textEncOutputs = try textEncOrt.run(withInputs: ["text_ids": textIdsValue, "style_ttl": style.ttl, "text_mask": textMaskValue],
-                                                outputNames: ["text_emb"],
-                                                runOptions: nil)
+        let textEncOutputs = try runPacedInference(paceAfterInference) {
+            try textEncOrt.run(withInputs: ["text_ids": textIdsValue, "style_ttl": style.ttl, "text_mask": textMaskValue],
+                               outputNames: ["text_emb"],
+                               runOptions: nil)
+        }
 
         let textEmbValue = textEncOutputs["text_emb"]!
 
@@ -651,15 +672,17 @@ class TextToSpeech {
                                                elementType: .float,
                                                shape: latentMaskShape)
 
-            let vectorEstOutputs = try vectorEstOrt.run(withInputs: [
-                "noisy_latent": xtValue,
-                "text_emb": textEmbValue,
-                "style_ttl": style.ttl,
-                "latent_mask": latentMaskValue,
-                "text_mask": textMaskValue,
-                "current_step": currentStepValue,
-                "total_step": totalStepValue
-            ], outputNames: ["denoised_latent"], runOptions: nil)
+            let vectorEstOutputs = try runPacedInference(paceAfterInference) {
+                try vectorEstOrt.run(withInputs: [
+                    "noisy_latent": xtValue,
+                    "text_emb": textEmbValue,
+                    "style_ttl": style.ttl,
+                    "latent_mask": latentMaskValue,
+                    "text_mask": textMaskValue,
+                    "current_step": currentStepValue,
+                    "total_step": totalStepValue
+                ], outputNames: ["denoised_latent"], runOptions: nil)
+            }
 
             let denoisedData = try vectorEstOutputs["denoised_latent"]!.tensorData() as Data
             let denoisedFlat = denoisedData.withUnsafeBytes { ptr in
@@ -692,9 +715,11 @@ class TextToSpeech {
                                         elementType: .float,
                                         shape: finalXtShape)
 
-        let vocoderOutputs = try vocoderOrt.run(withInputs: ["latent": finalXtValue],
-                                                outputNames: ["wav_tts"],
-                                                runOptions: nil)
+        let vocoderOutputs = try runPacedInference(paceAfterInference) {
+            try vocoderOrt.run(withInputs: ["latent": finalXtValue],
+                               outputNames: ["wav_tts"],
+                               runOptions: nil)
+        }
 
         let wavData = try vocoderOutputs["wav_tts"]!.tensorData() as Data
         let wav = wavData.withUnsafeBytes { ptr in
@@ -704,7 +729,15 @@ class TextToSpeech {
         return (wav, duration)
     }
 
-    func call(_ text: String, _ lang: String, _ style: Style, _ totalStep: Int, speed: Float = 1.05, silenceDuration: Float = 0.3) throws -> (wav: [Float], duration: Float) {
+    func call(
+        _ text: String,
+        _ lang: String,
+        _ style: Style,
+        _ totalStep: Int,
+        speed: Float = 1.05,
+        silenceDuration: Float = 0.3,
+        paceAfterInference: ((TimeInterval) -> Void)? = nil
+    ) throws -> (wav: [Float], duration: Float) {
         let maxLen = (lang == "ko" || lang == "ja") ? 120 : 300
         let chunks = chunkText(text, maxLen: maxLen)
         let langList = Array(repeating: lang, count: chunks.count)
@@ -713,7 +746,14 @@ class TextToSpeech {
         var durCat: Float = 0.0
 
         for (i, chunk) in chunks.enumerated() {
-            let result = try _infer([chunk], [langList[i]], style, totalStep, speed: speed)
+            let result = try _infer(
+                [chunk],
+                [langList[i]],
+                style,
+                totalStep,
+                speed: speed,
+                paceAfterInference: paceAfterInference
+            )
 
             let dur = result.duration[0]
             let wavLen = Int(Float(sampleRate) * dur)

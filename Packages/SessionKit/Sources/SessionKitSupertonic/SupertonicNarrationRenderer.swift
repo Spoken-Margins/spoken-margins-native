@@ -115,6 +115,8 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
     private let outputDirectory: URL
     private let fileManager: FileManager
     private let renderQueue = DispatchQueue(label: "com.spokenmargins.supertonic.render", qos: .userInitiated)
+    private let inferencePacingLock = NSLock()
+    private var backgroundInferencePacingEnabled = false
     private var runtime: Runtime?
     private var sessionLoadCount = 0
     private var generatedAudioURLs: Set<URL> = []
@@ -129,6 +131,16 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
         self.assets = assets
         self.outputDirectory = outputDirectory
         self.fileManager = fileManager
+    }
+
+    /// Keeps full-item generation running while the app is backgrounded without
+    /// exceeding iOS's sustained CPU budget for background audio processes.
+    /// Foreground synthesis remains unthrottled so the initial two chunks start
+    /// as quickly as possible.
+    public func setBackgroundInferencePacingEnabled(_ enabled: Bool) {
+        inferencePacingLock.lock()
+        backgroundInferencePacingEnabled = enabled
+        inferencePacingLock.unlock()
     }
 
     public func render(
@@ -157,7 +169,10 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
                         style,
                         synthesisSteps,
                         speed: max(0.7, min(2.0, speed)),
-                        silenceDuration: 0.3
+                        silenceDuration: 0.3,
+                        paceAfterInference: { [weak self] inferenceDuration in
+                            self?.paceBackgroundInference(after: inferenceDuration)
+                        }
                     )
                     let sampleCount = min(
                         generated.wav.count,
@@ -227,5 +242,36 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
         runtime = loaded
         sessionLoadCount += 1
         return loaded
+    }
+
+    private func paceBackgroundInference(after inferenceDuration: TimeInterval) {
+        var remaining = SupertonicInferencePacingPolicy.delay(
+            afterInferenceDuration: inferenceDuration,
+            backgrounded: isBackgroundInferencePacingEnabled
+        )
+        while remaining > 0 {
+            guard isBackgroundInferencePacingEnabled else { return }
+            let interval = min(0.1, remaining)
+            Thread.sleep(forTimeInterval: interval)
+            remaining -= interval
+        }
+    }
+
+    private var isBackgroundInferencePacingEnabled: Bool {
+        inferencePacingLock.lock()
+        defer { inferencePacingLock.unlock() }
+        return backgroundInferencePacingEnabled
+    }
+}
+
+enum SupertonicInferencePacingPolicy {
+    /// ONNX occupied roughly 85% of one CPU in the device termination traces.
+    /// Holding inference work to 65% of wall time leaves margin below iOS's 80%
+    /// sustained-background limit for playback and application bookkeeping.
+    static let backgroundWorkDutyCycle = 0.65
+
+    static func delay(afterInferenceDuration duration: TimeInterval, backgrounded: Bool) -> TimeInterval {
+        guard backgrounded, duration > 0 else { return 0 }
+        return duration * ((1 / backgroundWorkDutyCycle) - 1)
     }
 }
