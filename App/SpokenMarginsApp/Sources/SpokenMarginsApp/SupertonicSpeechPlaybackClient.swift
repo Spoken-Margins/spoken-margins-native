@@ -596,11 +596,23 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 fallbackIsActive,
                 currentTargetId == targetId ? playbackFailure : nil,
                 startedTargetId == targetId,
-                pendingStartTargetId == targetId || pendingAutoplayOffset != nil || !inFlightOffsets.isEmpty
+                pendingStartTargetId == targetId || pendingAutoplayOffset != nil || !inFlightOffsets.isEmpty,
+                currentTargetId == targetId ? transportIntent : nil,
+                currentTargetId == targetId ? player?.timeControlStatus : nil
             )
         }
         if snapshot.0 { return fallback.playbackStartStatus(targetId: targetId) }
         if let failure = snapshot.1 { return .failed(failure) }
+        if observesPlayerLifecycle, snapshot.4 == .playing {
+            switch snapshot.5 {
+            case .playing:
+                return .confirmed
+            case .waitingToPlayAtSpecifiedRate, .paused, nil:
+                return .pending
+            @unknown default:
+                return .pending
+            }
+        }
         if snapshot.2 { return .confirmed }
         return snapshot.3 ? .pending : .confirmed
     }

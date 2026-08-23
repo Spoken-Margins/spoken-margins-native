@@ -800,6 +800,33 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(confirmed.status, .playing)
     }
 
+    func testPendingResumeDoesNotPublishPausedBeforePlaybackConfirms() throws {
+        let audio = RecordingAudioClient()
+        let engine = SessionEngine(
+            profile: phonePlaybackProfile(),
+            repository: InMemorySessionRepository(items: [
+                "item-pill": Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two.", externalReference: nil, status: "ready")
+            ]),
+            audio: audio
+        )
+
+        _ = try engine.startSession(itemId: "item-pill")
+        _ = try engine.pause()
+        audio.startStatus = .pending
+        audio.transportState = .paused
+
+        let starting = try engine.resumePlayback()
+        let stillStarting = try engine.syncPlaybackProgress()
+
+        XCTAssertEqual(starting.status, .starting)
+        XCTAssertEqual(stillStarting.status, .starting)
+
+        audio.startStatus = .confirmed
+        audio.transportState = .playing
+        let confirmed = try engine.syncPlaybackProgress()
+        XCTAssertEqual(confirmed.status, .playing)
+    }
+
     func testPendingPlaybackStartStillPublishesAndPersistsLiveTextPosition() throws {
         let audio = RecordingAudioClient()
         audio.startStatus = .pending
@@ -1078,6 +1105,36 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(interjection.anchor.anchorBefore, "First")
         XCTAssertEqual(interjection.anchor.anchorAfter, "sentence. Second sentence.")
         XCTAssertEqual(transcriber.scheduledInterjectionIds, [interjection.id])
+        XCTAssertEqual(engine.currentSession?.position.charOffset, "First ".count)
+        XCTAssertEqual(audio.playedOffsets.last, "First ".count)
+    }
+
+    func testNativeTextInterjectionsResumeAtExactBoundaryWithoutAccumulatingDrift() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "interjection": ["record_audio"]
+            ]
+        )
+        let text = "First sentence. Second sentence continues. Third sentence."
+        let item = Item(id: "item-exact-resume", title: "Exact Resume", mediaType: "text", text: text, externalReference: nil, status: "ready")
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+        let capturedOffset = "First sentence. ".count
+
+        _ = try engine.startSession(itemId: item.id)
+        for index in 0..<10 {
+            audio.currentOffset = capturedOffset
+            _ = try engine.beginInterjection()
+            _ = try engine.finishInterjection(audioRef: "interjections/exact-\(index).m4a")
+
+            XCTAssertEqual(engine.currentSession?.position.charOffset, capturedOffset)
+            XCTAssertEqual(audio.playedOffsets.last, capturedOffset)
+        }
     }
 
     func testTextInterjectionAnchorUsesFullWordsAndFourSentenceShoulders() throws {
@@ -3277,7 +3334,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(recording.status, .recording)
         XCTAssertLessThan(recording.sourceProgressPercent, 100)
         XCTAssertLessThan(engine.currentSession?.position.charOffset ?? text.count, text.count)
-        XCTAssertEqual(audio.playedOffsets.last, 0)
+        XCTAssertEqual(audio.playedOffsets.last, "One. ".count)
     }
 
     func testPlayTurnPreparesTurnTextInsteadOfReusingItemText() throws {
@@ -3586,13 +3643,15 @@ final class SessionKitCoreTests: XCTestCase {
         audio.currentOffset = 7
         _ = try engine.aiStreamDelta(turnId: "turn-response-stream", content: "First response. Final fragment")
         let active = try engine.activateStreamingTurn(turnId: "turn-response-stream")
+        let stillStarting = try engine.syncPlaybackProgress()
         let observed = try engine.streamingTurnPlaybackStarted(turnId: "turn-response-stream", charOffset: 0)
         _ = try engine.aiJobCompleted(turnId: "turn-response-stream")
         let finished = try engine.finishStreamingTurnPlayback(turnId: "turn-response-stream")
 
         XCTAssertEqual(audio.pauseCount, 1)
         XCTAssertEqual(active.targetId, "turn-response-stream")
-        XCTAssertEqual(active.status, .playing)
+        XCTAssertEqual(active.status, .starting)
+        XCTAssertEqual(stillStarting.status, .starting)
         XCTAssertEqual(observed.status, .playing)
         XCTAssertEqual(finished.status, .paused)
         XCTAssertEqual(finished.phase, .aiResponsePlayback)
@@ -3680,7 +3739,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(interjection.anchor.anchorBefore, "First response.")
         XCTAssertEqual(interjection.anchor.anchorAfter, "Second point has the detail.")
         XCTAssertEqual(engine.currentSession?.position.charOffset, secondSentenceStart)
-        XCTAssertEqual(resumed.status, .playing)
+        XCTAssertEqual(resumed.status, .starting)
         XCTAssertTrue(audio.playedOffsets.isEmpty)
     }
 
@@ -3710,6 +3769,35 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(turn.text, "External response. Second point.")
         XCTAssertEqual(snapshot.phase, .aiResponsePlayback)
         XCTAssertEqual(audio.preparedTexts.last, "Short setup.\n\nExternal response. Second point.")
+    }
+
+    func testImportedAssistantResponseInterjectionResumesAtExactCapturedOffset() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["assistant_turn_tts"],
+                "interjection": ["record_audio"]
+            ]
+        )
+        let item = Item(id: "item-imported-response", title: "Imported Response", mediaType: "text", text: "Source.", externalReference: nil, status: "ready")
+        let session = Session(id: "session-imported-response", itemId: item.id, status: "in_progress", phase: .conversation, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 100, playbackRate: 1)
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.importAssistantResponse(
+            text: "First imported sentence. Second imported sentence continues.",
+            autoPlay: true
+        )
+        let capturedOffset = "First imported sentence. Second".count
+        audio.currentOffset = capturedOffset
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: "interjections/imported-response.m4a")
+
+        XCTAssertEqual(engine.currentSession?.position.charOffset, capturedOffset)
+        XCTAssertEqual(audio.playedOffsets.last, capturedOffset)
     }
 
     func testScopedExportFiltersTargetInterjectionsAndMarkdown() throws {
@@ -4109,7 +4197,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(audio.playedOffsets.last, "Brief intro.\n\nFirst".count)
     }
 
-    func testAssistantInterjectionResumesNearRecordedTurnOffset() throws {
+    func testAssistantInterjectionResumesAtExactRecordedTurnOffset() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
             displayName: "Phone/Tablet Online",
@@ -4128,7 +4216,9 @@ final class SessionKitCoreTests: XCTestCase {
         let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
 
         _ = try engine.playTurn(turnId: turn.id)
-        audio.currentOffset = "Brief intro.\n\nFirst response. Second".count
+        let responseOffset = "First response. Second".count
+        let playbackOffset = "Brief intro.\n\n".count + responseOffset
+        audio.currentOffset = playbackOffset
         _ = try engine.beginInterjection()
         _ = try engine.finishInterjection(audioRef: "interjections/ij-ai-001.m4a")
 
@@ -4137,7 +4227,8 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(interjection.anchor.anchorBefore, "First response. Second")
         XCTAssertEqual(interjection.anchor.anchorAfter, "point has the detail. Third point closes.")
         XCTAssertGreaterThan(interjection.roughPercent, 0)
-        XCTAssertEqual(audio.playedOffsets.last, "Brief intro.\n\nFirst response. ".count)
+        XCTAssertEqual(engine.currentSession?.position.charOffset, responseOffset)
+        XCTAssertEqual(audio.playedOffsets.last, playbackOffset)
     }
 
     func testAssistantTurnExportRehydratesLegacyAnchorsAndUsesContextualLayout() throws {
@@ -4205,7 +4296,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertFalse(markdown.contains("Anchor before:"))
     }
 
-    func testCancelAssistantInterjectionResumesNearRecordedTurnOffsetWithoutSavingInterjection() throws {
+    func testCancelAssistantInterjectionResumesAtExactRecordedTurnOffsetWithoutSavingInterjection() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
             displayName: "Phone/Tablet Online",
@@ -4224,14 +4315,17 @@ final class SessionKitCoreTests: XCTestCase {
         let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
 
         _ = try engine.playTurn(turnId: turn.id)
-        audio.currentOffset = "Brief intro.\n\nFirst response. Second".count
+        let responseOffset = "First response. Second".count
+        let playbackOffset = "Brief intro.\n\n".count + responseOffset
+        audio.currentOffset = playbackOffset
         _ = try engine.beginInterjection()
         let snapshot = try engine.cancelInterjection()
 
         XCTAssertEqual(snapshot.phase, .aiResponsePlayback)
         XCTAssertEqual(snapshot.targetType, TargetType.assistantTurnTTS.rawValue)
         XCTAssertEqual(try repo.loadInterjections(sessionId: session.id).count, 0)
-        XCTAssertEqual(audio.playedOffsets.last, "Brief intro.\n\nFirst response. ".count)
+        XCTAssertEqual(engine.currentSession?.position.charOffset, responseOffset)
+        XCTAssertEqual(audio.playedOffsets.last, playbackOffset)
     }
 
     func testPlaySourceFromBeginningWorksWithoutListeningMap() throws {

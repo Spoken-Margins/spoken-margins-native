@@ -2458,12 +2458,12 @@ final class Gate1AppModel: ObservableObject {
 
     func stopOnDeviceSpeechGeneration() {
         guard let client = speechPlaybackClient as? SupertonicSpeechPlaybackClient else {
-            reportFailure("On-device voice generation is not active for this item.")
+            reportFailure("On-device voice generation is not active for this playback.")
             return
         }
         do {
             guard try client.stopOnDeviceRenderingAndUseSystemSpeech() else {
-                reportFailure("There is no active native-text generation to stop.")
+                reportFailure("There is no active Supertonic generation to stop.")
                 return
             }
             onDeviceSpeechGenerationStatus = RenderedSpeechGenerationState.stopped.rawValue
@@ -5988,9 +5988,20 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var shouldShowOnDeviceSpeechGenerationStatus: Bool {
-        snapshot.targetType == TargetType.itemTextTTS.rawValue
+        Self.supportsOnDeviceSpeechGenerationStatus(targetType: snapshot.targetType)
             && ttsVoiceSelection.supertonicVoice != nil
             && onDeviceSpeechGenerationStatus != RenderedSpeechGenerationState.inactive.rawValue
+    }
+
+    static func supportsOnDeviceSpeechGenerationStatus(targetType: String?) -> Bool {
+        switch targetType {
+        case TargetType.itemTextTTS.rawValue,
+             TargetType.summaryTurnTTS.rawValue,
+             TargetType.assistantTurnTTS.rawValue:
+            return true
+        default:
+            return false
+        }
     }
 
     var canStopOnDeviceSpeechGeneration: Bool {

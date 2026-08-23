@@ -230,6 +230,35 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    func testObservedPlaybackStartRemainsPendingWhilePlayerIsStillPaused() async throws {
+        let template = try makeTestWAV(duration: 0.2)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let starts = PlaybackStartCapture()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer,
+            voice: .m2,
+            speed: 1,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { _, _ in starts.record() },
+            observesPlayerLifecycle: true,
+            fallbackClient: RecordingFallbackAudioClient()
+        )
+        let source = String(repeating: "Each sentence creates another rendered Supertonic chunk for startup. ", count: 8)
+
+        _ = try client.prepareSpeechText(source)
+        try client.play(targetId: "paused-start")
+        for _ in 0..<100 where starts.count == 0 {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        XCTAssertEqual(starts.count, 1)
+        XCTAssertEqual(client.playbackStartStatus(targetId: "paused-start"), .pending)
+        try client.stop()
+    }
+
     func testFullGenerationPersistsPodcastStyleAudioWhilePlaybackIsPaused() async throws {
         let template = try makeTestWAV(duration: 0.1)
         defer { try? FileManager.default.removeItem(at: template) }
