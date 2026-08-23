@@ -319,6 +319,14 @@ public final class SessionEngine {
         guard snapshot.status != .recording else {
             return snapshot
         }
+        if externallyStreamedTurnId == session.currentTargetId {
+            // Streaming speech uses chunk-scoped audio target IDs. Its queue
+            // publishes confirmed start and position observations explicitly,
+            // so reconciling against the turn-scoped target would promote or
+            // demote the UI from an unrelated transport sample.
+            publish(status: snapshot.status, phase: session.phase)
+            return snapshot
+        }
         let playbackCompleted = audio.isPlaybackComplete(targetId: session.currentTargetId)
         let transportState = audio.playbackTransportState(targetId: session.currentTargetId)
         var updated = try syncCurrentPositionFromAudio(session)
@@ -1125,20 +1133,14 @@ public final class SessionEngine {
         snapshot.lastInterjectionAnchorType = anchor.anchorType
         snapshot.lastInterjectionTargetType = targetType
         session.phase = priorPhaseForResume(targetType: targetType)
-        if let item = currentItem, targetType == .item, session.currentTargetType == .itemTextTTS {
-            session.position.charOffset = max(0, previousBoundary(before: session.position.charOffset, unit: "sentence", text: item.text ?? ""))
-            session.completionPercent = percent(for: session.position.charOffset, text: item.text ?? "")
-            session.position.chapterId = chapterId(for: session.position.charOffset)
-        } else if externallyStreamedTurnId != targetId,
-                  let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == targetId }) {
-            let text = generatedTurnNavigationText(for: turn)
-            session.position.charOffset = max(0, previousBoundary(before: session.position.charOffset, unit: "sentence", text: text))
-            session.position.chapterId = turn.chapters?.last(where: { $0.startChar <= session.position.charOffset })?.id
-        }
+        // beginInterjection already captured and persisted the authoritative
+        // source position before pausing. Resume from that position exactly;
+        // applying a second sentence-boundary adjustment here causes backward
+        // drift and can move an exact boundary into the preceding sentence.
         currentSession = session
         try persistSession(session)
         if externallyStreamedTurnId == session.currentTargetId {
-            publish(status: .playing, phase: session.phase)
+            publish(status: .starting, phase: session.phase)
         } else {
             try playCurrentTarget(session)
             publishPlaybackStart(for: session, phase: session.phase)
@@ -1153,24 +1155,15 @@ public final class SessionEngine {
         }
         try recorder.cancelRecording()
         session.phase = priorPhase ?? priorPhaseForResume(targetType: recordingTargetType ?? .item)
-        if let item = currentItem, recordingTargetType ?? .item == .item, session.currentTargetType == .itemTextTTS {
-            session.position.charOffset = max(0, previousBoundary(before: session.position.charOffset, unit: "sentence", text: item.text ?? ""))
-            session.completionPercent = percent(for: session.position.charOffset, text: item.text ?? "")
-            session.position.chapterId = chapterId(for: session.position.charOffset)
-        } else if let targetId = recordingTargetId,
-                  externallyStreamedTurnId != targetId,
-                  let turn = try repository.loadTurns(sessionId: session.id).first(where: { $0.id == targetId }) {
-            let text = generatedTurnNavigationText(for: turn)
-            session.position.charOffset = max(0, previousBoundary(before: session.position.charOffset, unit: "sentence", text: text))
-            session.position.chapterId = turn.chapters?.last(where: { $0.startChar <= session.position.charOffset })?.id
-        }
+        // Cancellation follows the same exact-resume policy as completion.
+        // The captured position is already present in the session.
         recordingAnchor = nil
         recordingTargetType = nil
         recordingTargetId = nil
         currentSession = session
         try persistSession(session)
         if externallyStreamedTurnId == session.currentTargetId {
-            publish(status: .playing, phase: session.phase)
+            publish(status: .starting, phase: session.phase)
         } else {
             try playCurrentTarget(session)
             publishPlaybackStart(for: session, phase: session.phase)
@@ -1301,7 +1294,9 @@ public final class SessionEngine {
         session.phase = phase
         currentSession = session
         try persistSession(session)
-        publish(status: .playing, phase: phase)
+        // The streaming queue has only claimed the turn at this point. Its
+        // speech client may still be rendering or buffering the first chunk.
+        publish(status: .starting, phase: phase)
         return snapshot
     }
 

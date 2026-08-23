@@ -111,6 +111,21 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.isCurrentTimelineChapter(opening))
     }
 
+    func testSupertonicGenerationStatusSupportsNativeAndGeneratedTextTargets() {
+        XCTAssertTrue(Gate1AppModel.supportsOnDeviceSpeechGenerationStatus(
+            targetType: TargetType.itemTextTTS.rawValue
+        ))
+        XCTAssertTrue(Gate1AppModel.supportsOnDeviceSpeechGenerationStatus(
+            targetType: TargetType.summaryTurnTTS.rawValue
+        ))
+        XCTAssertTrue(Gate1AppModel.supportsOnDeviceSpeechGenerationStatus(
+            targetType: TargetType.assistantTurnTTS.rawValue
+        ))
+        XCTAssertFalse(Gate1AppModel.supportsOnDeviceSpeechGenerationStatus(
+            targetType: TargetType.transcriptBackedMedia.rawValue
+        ))
+    }
+
     func testTimelineMarksTheCurrentPreparedAudioChapter() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         let opening = MediaTimelineChapter(
