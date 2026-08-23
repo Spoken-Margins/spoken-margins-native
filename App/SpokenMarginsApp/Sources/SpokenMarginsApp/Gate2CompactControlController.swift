@@ -222,6 +222,7 @@ final class Gate2CompactControlController {
     private(set) var lastCommandOrigin = "none"
     private(set) var lastApplicationCommand = "none"
     private(set) var lastResult = "none"
+    private var importedCommentaryState: (id: String, sender: String, index: Int, count: Int, isPlaying: Bool)?
 
     init(liveActivity: (any Gate2LiveActivityControlling)? = nil) {
         self.liveActivity = liveActivity ?? Gate2LiveActivityController()
@@ -259,6 +260,21 @@ final class Gate2CompactControlController {
         if !drainedCommand {
             publishCurrentSnapshot()
         }
+    }
+
+    func updateImportedCommentary(
+        id: String?,
+        sender: String?,
+        index: Int?,
+        count: Int?,
+        isPlaying: Bool
+    ) {
+        if let id, let sender, let index, let count {
+            importedCommentaryState = (id, sender, index, count, isPlaying)
+        } else {
+            importedCommentaryState = nil
+        }
+        publishCurrentSnapshot()
     }
 
     @discardableResult
@@ -321,8 +337,16 @@ final class Gate2CompactControlController {
     }
 
     private func publish(_ snapshot: CompactControlSnapshot) {
-        liveSpeechNowPlaying.publish(snapshot)
-        liveActivity.publish(snapshot)
+        var enriched = snapshot
+        if let importedCommentaryState {
+            enriched.pendingImportedInterjectionId = importedCommentaryState.id
+            enriched.commentarySenderLabel = importedCommentaryState.sender
+            enriched.commentaryIndex = importedCommentaryState.index
+            enriched.commentaryCount = importedCommentaryState.count
+            enriched.isPlayingImportedCommentary = importedCommentaryState.isPlaying
+        }
+        liveSpeechNowPlaying.publish(enriched)
+        liveActivity.publish(enriched)
     }
 
     private func installQueuedWidgetCommandProcessor() {
@@ -398,6 +422,12 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
             return
         }
         let nextChapter = Gate2LiveActivityPolicy.nextSourceChapter(from: snapshot)
+        var liveCommands = Gate2LiveActivityPolicy.availableCommands(from: snapshot).map(\.rawValue)
+        if snapshot.pendingImportedInterjectionId != nil {
+            liveCommands.append(snapshot.isPlayingImportedCommentary
+                ? Gate2CompactApplicationCommand.stopImportedInterjection
+                : Gate2CompactApplicationCommand.playImportedInterjection)
+        }
         let state = Gate2LiveActivityAttributes.ContentState(
             title: snapshot.title ?? "Spoken Margins",
             chapterTitle: snapshot.chapterTitle ?? "Session",
@@ -407,7 +437,12 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
             phase: snapshot.phase.rawValue,
             progressPercent: snapshot.currentPlaybackProgressPercent,
             isRecording: snapshot.isRecording,
-            availableCommands: Gate2LiveActivityPolicy.availableCommands(from: snapshot).map(\.rawValue)
+            availableCommands: liveCommands,
+            pendingImportedInterjectionId: snapshot.pendingImportedInterjectionId,
+            commentarySenderLabel: snapshot.commentarySenderLabel,
+            commentaryIndex: snapshot.commentaryIndex,
+            commentaryCount: snapshot.commentaryCount,
+            isPlayingImportedCommentary: snapshot.isPlayingImportedCommentary
         )
         activityTask = Task { @MainActor in
             await previousActivityTask?.value

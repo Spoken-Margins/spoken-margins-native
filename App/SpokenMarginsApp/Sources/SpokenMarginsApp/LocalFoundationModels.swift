@@ -8,14 +8,23 @@ import FoundationModels
 
 struct SpokenMarginsFeatureFlags: Equatable, Sendable {
     static let remoteProviderInfoKey = "SMRemoteProviderExperienceEnabled"
+    static let sharingExperienceInfoKey = "SMSharingExperienceEnabled"
 
     let remoteProviderExperienceEnabled: Bool
+    let sharingExperienceEnabled: Bool
+
+    init(remoteProviderExperienceEnabled: Bool, sharingExperienceEnabled: Bool = false) {
+        self.remoteProviderExperienceEnabled = remoteProviderExperienceEnabled
+        self.sharingExperienceEnabled = sharingExperienceEnabled
+    }
 
     static var release: SpokenMarginsFeatureFlags {
         SpokenMarginsFeatureFlags(
             remoteProviderExperienceEnabled: Bundle.main.object(
                 forInfoDictionaryKey: remoteProviderInfoKey
-            ) as? Bool ?? false
+            ) as? Bool ?? false,
+            sharingExperienceEnabled: ProcessInfo.processInfo.environment["SPOKEN_MARGINS_ENABLE_SHARING"] == "1"
+                || (Bundle.main.object(forInfoDictionaryKey: sharingExperienceInfoKey) as? Bool ?? false)
         )
     }
 }

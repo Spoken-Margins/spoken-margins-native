@@ -38,6 +38,11 @@ public struct CompactControlSnapshot: Codable, Equatable, Sendable {
     public var pendingAiJobKind: String?
     public var pendingAiJobStatus: String?
     public var lastUserTurnType: String?
+    public var pendingImportedInterjectionId: String?
+    public var commentarySenderLabel: String?
+    public var commentaryIndex: Int?
+    public var commentaryCount: Int?
+    public var isPlayingImportedCommentary: Bool
     public var exposedCommands: [CompactControlCommand]
     public var availableCommands: [CompactControlCommand]
     public var timeline: [CompactTimelineEntry]
@@ -66,6 +71,11 @@ public struct CompactControlSnapshot: Codable, Equatable, Sendable {
         pendingAiJobKind: String?,
         pendingAiJobStatus: String?,
         lastUserTurnType: String?,
+        pendingImportedInterjectionId: String? = nil,
+        commentarySenderLabel: String? = nil,
+        commentaryIndex: Int? = nil,
+        commentaryCount: Int? = nil,
+        isPlayingImportedCommentary: Bool = false,
         exposedCommands: [CompactControlCommand],
         availableCommands: [CompactControlCommand]? = nil,
         timeline: [CompactTimelineEntry] = [],
@@ -93,6 +103,11 @@ public struct CompactControlSnapshot: Codable, Equatable, Sendable {
         self.pendingAiJobKind = pendingAiJobKind
         self.pendingAiJobStatus = pendingAiJobStatus
         self.lastUserTurnType = lastUserTurnType
+        self.pendingImportedInterjectionId = pendingImportedInterjectionId
+        self.commentarySenderLabel = commentarySenderLabel
+        self.commentaryIndex = commentaryIndex
+        self.commentaryCount = commentaryCount
+        self.isPlayingImportedCommentary = isPlayingImportedCommentary
         self.exposedCommands = exposedCommands
         self.availableCommands = availableCommands ?? exposedCommands
         self.timeline = timeline

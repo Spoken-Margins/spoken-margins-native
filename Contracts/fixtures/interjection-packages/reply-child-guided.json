@@ -1,0 +1,37 @@
+{
+  "schemaVersion": "spoken-margins.interjection-package.v1",
+  "packageId": "package-child-001",
+  "createdAt": "2026-08-22T13:00:00Z",
+  "conversationId": "conversation-article-001",
+  "parentPackageDigests": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+  "contentDigest": null,
+  "source": {
+    "sourceType": "article",
+    "canonicalURL": "https://example.com/article",
+    "title": "A Useful Article"
+  },
+  "interjections": [{
+    "packageScopedId": "reply-001",
+    "createdAt": "2026-08-22T12:50:00Z",
+    "anchor": {
+      "anchorType": "text",
+      "startChar": 240,
+      "endChar": 280,
+      "exactText": "The durable idea that prompted this note."
+    },
+    "representation": {
+      "kind": "text_only",
+      "approvedTranscript": "I am replying to that specific margin.",
+      "provenance": "sender_approved_text_only"
+    },
+    "replyToPackageScopedInterjectionId": "margin-001"
+  }],
+  "senderDisplayLabel": "Another Friend",
+  "suggestedRevealMode": "guided",
+  "redactions": {
+    "rawAudioOmitted": true, "rawTranscriptOmitted": true,
+    "fullSourceTextOmitted": true, "sourceAudioOmitted": true,
+    "diagnosticsOmitted": true, "filesystemPathsOmitted": true,
+    "unrelatedTurnsOmitted": true
+  }
+}

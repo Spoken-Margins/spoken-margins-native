@@ -136,6 +136,39 @@ private struct Gate2LiveActivityView: View {
                     .foregroundStyle(state.isRecording ? .red : .white)
             }
 
+            if let sender = state.commentarySenderLabel,
+               let index = state.commentaryIndex,
+               let count = state.commentaryCount {
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(sender)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                        Text("Interjection \(index) of \(count)")
+                            .font(.caption2)
+                            .foregroundStyle(.white.opacity(0.72))
+                    }
+                    Spacer()
+                    if state.isPlayingImportedCommentary {
+                        CompactActionIntentButton(
+                            command: Gate2CompactApplicationCommand.stopImportedInterjection,
+                            title: "Return to Source",
+                            systemImage: "arrow.uturn.backward"
+                        )
+                    } else {
+                        CompactActionIntentButton(
+                            command: Gate2CompactApplicationCommand.playImportedInterjection,
+                            title: "Listen",
+                            systemImage: "ear"
+                        )
+                    }
+                }
+                .padding(10)
+                .background(Color.white.opacity(0.10))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+
             ProgressView(value: Double(max(0, min(100, state.progressPercent))), total: 100)
                 .tint(.green)
 

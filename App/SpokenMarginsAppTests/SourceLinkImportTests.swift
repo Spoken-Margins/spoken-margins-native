@@ -347,7 +347,7 @@ final class SourceLinkImportTests: XCTestCase {
             audioPlaybackClient: audio,
             recordingClient: NoopRecordingClient(),
             sourceTranscriptionClient: transcriber,
-            interjectionTranscriptionHandler: { _ in "Recorded note." }
+            interjectionTranscriptionHandler: { _ in .init(text: "Recorded note.", segments: []) }
         )
         model.resetAndSeed()
 
@@ -396,7 +396,7 @@ final class SourceLinkImportTests: XCTestCase {
             recordingClient: NoopRecordingClient(),
             sourceTranscriptionClient: sourceTranscriber,
             interjectionTranscriptionHandler: { audioPath in
-                try await interjectionTranscriber.transcribe(audioPath: audioPath)
+                .init(text: try await interjectionTranscriber.transcribe(audioPath: audioPath), segments: [])
             }
         )
         model.resetAndSeed()
@@ -527,7 +527,7 @@ final class SourceLinkImportTests: XCTestCase {
             recordingClient: NoopRecordingClient(),
             sourceTranscriptionClient: ThrowingSourceTranscriptionClient(),
             interjectionTranscriptionHandler: { audioPath in
-                try await transcriber.transcribe(audioPath: audioPath)
+                .init(text: try await transcriber.transcribe(audioPath: audioPath), segments: [])
             }
         )
         model.resetAndSeed()
@@ -578,7 +578,7 @@ final class SourceLinkImportTests: XCTestCase {
             audioPlaybackClient: audio,
             recordingClient: NoopRecordingClient(),
             sourceTranscriptionClient: ThrowingSourceTranscriptionClient(),
-            interjectionTranscriptionHandler: { _ in "Recorded note." }
+            interjectionTranscriptionHandler: { _ in .init(text: "Recorded note.", segments: []) }
         )
         model.resetAndSeed()
 
@@ -1650,6 +1650,18 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(result.selectedCandidate?.showTitle, "The Correct Show")
         XCTAssertEqual(result.selectedCandidate?.audioURL, "https://cdn.example.com/correct.mp3")
         XCTAssertGreaterThanOrEqual(result.selectedCandidate?.confidence ?? 0, 0.78)
+    }
+
+    func testArticleAcquisitionURLNormalizationConvergesSafariReturn() {
+        XCTAssertEqual(
+            Gate1AppModel.normalizedAcquisitionURL("https://www.example.com/story/?utm_source=message#section"),
+            Gate1AppModel.normalizedAcquisitionURL("https://example.com/story")
+        )
+        XCTAssertNotEqual(
+            Gate1AppModel.normalizedAcquisitionURL("https://example.com/story"),
+            Gate1AppModel.normalizedAcquisitionURL("https://example.com/other")
+        )
+        XCTAssertNil(Gate1AppModel.normalizedAcquisitionURL("http://example.com/story"))
     }
 
     private func makePayloadStore() -> SourceLinkHandoffStore {

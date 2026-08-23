@@ -149,10 +149,10 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                     startSession: false
                 )
                 _ = try SourceLinkHandoffStore.appGroup().save(handoff)
-                showSaved("Sent podcast link to Spoken Margins.")
+                openSpokenMarginsToFinish(payloadID: handoff.id)
             case .success(.browserText(let payload)):
                 try saveBrowserText(payload)
-                showSaved("Sent \(payload.source.title) to Spoken Margins.")
+                openSpokenMarginsToFinish(payloadID: payload.id)
             case .failure(let error):
                 throw error
             }
@@ -251,6 +251,22 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         closeButton.isHidden = false
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
             self?.close()
+        }
+    }
+
+    private func openSpokenMarginsToFinish(payloadID: String) {
+        guard let url = URL(string: "spokenmargins://intake/\(payloadID)") else {
+            showError("Saved—Open Spoken Margins to finish.")
+            return
+        }
+        extensionContext?.open(url) { [weak self] accepted in
+            DispatchQueue.main.async {
+                if accepted {
+                    self?.showSaved("Opening Spoken Margins…")
+                } else {
+                    self?.showError("Saved—Open Spoken Margins to finish.")
+                }
+            }
         }
     }
 

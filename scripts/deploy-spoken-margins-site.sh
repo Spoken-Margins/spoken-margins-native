@@ -10,7 +10,7 @@ ssh_key="${SPOKEN_MARGINS_VPS_SSH_KEY:-}"
 site_host="spokenmargins.proximitytoprogress.com"
 web_root="/srv/www/spokenmargins"
 
-if [[ ! -f "${site_directory}/index.html" || ! -f "${site_directory}/privacy/index.html" || ! -f "${site_directory}/support/index.html" || ! -f "${site_directory}/terms/index.html" ]]; then
+if [[ ! -f "${site_directory}/index.html" || ! -f "${site_directory}/share/index.html" || ! -f "${site_directory}/privacy/index.html" || ! -f "${site_directory}/support/index.html" || ! -f "${site_directory}/terms/index.html" ]]; then
   echo "The Site directory is incomplete: ${site_directory}" >&2
   exit 1
 fi
@@ -69,6 +69,7 @@ web_root="$2"
 caddy_config="/etc/caddy/Caddyfile"
 
 test -f "${web_root}/index.html"
+test -f "${web_root}/share/index.html"
 test -f "${web_root}/privacy/index.html"
 test -f "${web_root}/support/index.html"
 test -f "${web_root}/terms/index.html"
@@ -98,7 +99,7 @@ systemctl is-active --quiet caddy
 REMOTE_SCRIPT
 
 echo "Verifying public HTTPS pages."
-for route in / /privacy/ /support/ /terms/; do
+for route in / /share/ /privacy/ /support/ /terms/; do
   if ! status_code="$(curl --silent --location --output /dev/null --write-out '%{http_code}' --max-time 30 --retry 5 --retry-delay 2 --retry-all-errors "https://${site_host}${route}")"; then
     echo "Verification failed: could not reach https://${site_host}${route}." >&2
     exit 1
@@ -108,6 +109,17 @@ for route in / /privacy/ /support/ /terms/; do
     exit 1
   fi
   echo "HTTP 200 https://${site_host}${route}"
+done
+
+for required_url in \
+  "https://testflight.apple.com/join/KjcQaPtR" \
+  "https://${site_host}/privacy/" \
+  "https://${site_host}/terms/" \
+  "https://${site_host}/support/"; do
+  if ! grep -R -Fq "${required_url#https://${site_host}}" "${site_directory}"; then
+    echo "Verification failed: site does not reference ${required_url}." >&2
+    exit 1
+  fi
 done
 
 echo "Spoken Margins support site deployment succeeded."

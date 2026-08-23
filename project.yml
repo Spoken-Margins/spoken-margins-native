@@ -23,6 +23,12 @@ targets:
       - path: App/SpokenMarginsApp/Resources/Legal
         type: folder
         buildPhase: resources
+      - path: App/SpokenMarginsShareExtension/Resources/SourceLinkPreprocessor.js
+        type: file
+        buildPhase: resources
+      - path: App/SpokenMarginsShareExtension/Resources/Defuddle-LICENSE.txt
+        type: file
+        buildPhase: resources
       - path: Contracts/fixtures
         type: folder
       - path: Contracts/traces
@@ -37,6 +43,8 @@ targets:
         product: SessionKitPersistence
       - package: SessionKit
         product: SessionKitAudio
+      - package: SessionKit
+        product: SessionKitSharing
       - package: SessionKit
         product: SessionKitAI
       - package: SessionKit
@@ -69,13 +77,31 @@ targets:
         CFBundleDisplayName: Spoken Margins
         CFBundleShortVersionString: "0.1"
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Spoken Margins Interjection Package
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Owner
+            LSItemContentTypes:
+              - com.spokenmargins.interjection-package
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.spokenmargins.interjection-package
+            UTTypeDescription: Spoken Margins Interjection Package
+            UTTypeConformsTo:
+              - public.data
+              - public.content
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - spokenmargins
+              public.mime-type: application/vnd.spokenmargins.interjection-package+zip
         CFBundleURLTypes:
           - CFBundleURLName: SpokenMarginsCompactControls
             CFBundleURLSchemes:
               - spokenmargins
         LSRequiresIPhoneOS: true
+        LSSupportsOpeningDocumentsInPlace: false
         ITSAppUsesNonExemptEncryption: false
         SMRemoteProviderExperienceEnabled: false
+        SMSharingExperienceEnabled: false
         UILaunchScreen: {}
         NSMicrophoneUsageDescription: Spoken Margins records spoken interjections during listening sessions.
         NSSpeechRecognitionUsageDescription: Spoken Margins may transcribe spoken interjections when enabled.

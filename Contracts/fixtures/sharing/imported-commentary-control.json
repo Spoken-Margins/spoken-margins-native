@@ -1,0 +1,8 @@
+{
+  "pendingImportedInterjectionId": "imported-001",
+  "commentarySenderLabel": "A Friend",
+  "commentaryIndex": 1,
+  "commentaryCount": 3,
+  "isPlayingImportedCommentary": false,
+  "availableCommands": ["playImportedInterjection"]
+}

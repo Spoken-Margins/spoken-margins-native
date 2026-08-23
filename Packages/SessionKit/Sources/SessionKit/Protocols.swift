@@ -9,6 +9,15 @@ public protocol SessionRepository {
     func loadSession(id: String) throws -> Session?
     func saveInterjection(_ interjection: Interjection) throws
     func loadInterjections(sessionId: String) throws -> [Interjection]
+    func saveInterjectionShareRevision(_ revision: InterjectionShareRevision) throws
+    func loadInterjectionShareRevisions(interjectionId: String) throws -> [InterjectionShareRevision]
+    func saveImportedCommentaryLayer(_ layer: ImportedCommentaryLayer) throws
+    func loadImportedCommentaryLayer(id: String) throws -> ImportedCommentaryLayer?
+    func loadImportedCommentaryLayers(itemId: String) throws -> [ImportedCommentaryLayer]
+    func loadAllImportedCommentaryLayers() throws -> [ImportedCommentaryLayer]
+    func loadImportedCommentaryLayer(packageDigest: String) throws -> ImportedCommentaryLayer?
+    func saveImportedCommentaryInterjection(_ interjection: ImportedCommentaryInterjection) throws
+    func loadImportedCommentaryInterjections(layerId: String) throws -> [ImportedCommentaryInterjection]
     func saveTurn(_ turn: ConversationTurn) throws
     func loadTurns(sessionId: String) throws -> [ConversationTurn]
     func saveAIJob(_ job: AIJob) throws

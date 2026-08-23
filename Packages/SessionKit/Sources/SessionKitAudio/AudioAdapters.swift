@@ -2318,8 +2318,13 @@ public final class SystemRecordingClient: RecordingClient {
 }
 
 public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
+    private struct PreparedAudioChunk {
+        var url: URL
+        var offsetMs: Int
+    }
+
     private struct PreparedAudioChunks {
-        var urls: [URL]
+        var chunks: [PreparedAudioChunk]
         var cleanupDirectory: URL?
     }
 
@@ -2332,6 +2337,10 @@ public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
     }
 
     public func transcribe(audioPath: String) async throws -> String {
+        try await transcribeAligned(audioPath: audioPath).text
+    }
+
+    public func transcribeAligned(audioPath: String) async throws -> AlignedInterjectionTranscript {
         #if canImport(Speech)
         let status = await requestAuthorization()
         guard status == .authorized else {
@@ -2344,7 +2353,7 @@ public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
         #if canImport(AVFoundation)
         if #available(iOS 26.0, macOS 26.0, *),
            await longFormSpeechTranscriptionIsSupported() {
-            return try await transcribeLongFormAudio(at: url)
+            return try await transcribeLongFormAudioAligned(at: url)
         }
         #endif
         guard let recognizer = SFSpeechRecognizer(), recognizer.isAvailable else {
@@ -2359,32 +2368,49 @@ public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
                 try? fileManager.removeItem(at: cleanupDirectory)
             }
         }
-        var stitchedTranscript = ""
-        for (chunkIndex, chunkURL) in prepared.urls.enumerated() {
-            var chunkTranscript: String?
+        var stitchedText = ""
+        var stitchedSegments: [AlignedTranscriptSegment] = []
+        for (chunkIndex, chunk) in prepared.chunks.enumerated() {
+            var chunkTranscript: AlignedInterjectionTranscript?
             var lastRecognitionError: Error?
             for attempt in 0..<2 {
                 do {
-                    chunkTranscript = try await recognizeAudio(at: chunkURL, recognizer: recognizer)
+                    chunkTranscript = try await recognizeAudioAligned(at: chunk.url, recognizer: recognizer)
                 } catch {
                     lastRecognitionError = error
                 }
-                if chunkTranscript?.isEmpty == false { break }
+                if chunkTranscript?.text.isEmpty == false { break }
                 if attempt == 0 {
                     try? await Task.sleep(nanoseconds: 200_000_000)
                 }
             }
-            guard let chunkTranscript, !chunkTranscript.isEmpty else {
+            guard let chunkTranscript, !chunkTranscript.text.isEmpty else {
                 if let lastRecognitionError { throw lastRecognitionError }
                 throw SessionKitError.persistenceFailed(
-                    "interjection_audio_chunk_empty(index=\(chunkIndex + 1),count=\(prepared.urls.count))"
+                    "interjection_audio_chunk_empty(index=\(chunkIndex + 1),count=\(prepared.chunks.count))"
                 )
             }
-            stitchedTranscript = stitchedTranscript.isEmpty
-                ? chunkTranscript
-                : "\(stitchedTranscript) \(chunkTranscript)"
+            stitchedText = stitchedText.isEmpty ? chunkTranscript.text : "\(stitchedText) \(chunkTranscript.text)"
+            for segment in chunkTranscript.segments {
+                var alignedSegment = AlignedTranscriptSegment(
+                    id: "seg-\(String(format: "%06d", stitchedSegments.count + 1))",
+                    text: segment.text,
+                    startMs: chunk.offsetMs + segment.startMs,
+                    endMs: chunk.offsetMs + segment.endMs,
+                    confidence: segment.confidence
+                )
+                alignedSegment.recognitionChunkId = "chunk-\(String(format: "%04d", chunkIndex + 1))"
+                alignedSegment.chunkOffsetMs = chunk.offsetMs
+                stitchedSegments.append(alignedSegment)
+            }
         }
-        if !stitchedTranscript.isEmpty { return stitchedTranscript }
+        if !stitchedText.isEmpty {
+            return AlignedInterjectionTranscript(
+                text: stitchedText,
+                localeIdentifier: recognizer.locale.identifier,
+                segments: stitchedSegments
+            )
+        }
         throw SessionKitError.persistenceFailed(Self.emptyTranscriptEvidence(for: url))
         #else
         throw SessionKitError.persistenceFailed("speech_recognition_unavailable")
@@ -2394,19 +2420,45 @@ public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
     #if canImport(Speech)
     #if canImport(AVFoundation)
     @available(iOS 26.0, macOS 26.0, *)
-    private func transcribeLongFormAudio(at url: URL) async throws -> String {
-        var accumulator = SpeechAnalyzerFinalResultAccumulator()
-        for passage in try await transcribeLongFormSpeechFile(at: url) {
-            accumulator.record(passage.text)
-        }
-        guard let transcript = accumulator.normalizedTranscript else {
+    private func transcribeLongFormAudioAligned(at url: URL) async throws -> AlignedInterjectionTranscript {
+        let passages = try await transcribeLongFormSpeechFile(at: url)
+        let transcript = passages.map(\.text).joined(separator: " ")
+            .replacingOccurrences(of: "  ", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !transcript.isEmpty else {
             throw SessionKitError.persistenceFailed("long_form_speech_transcript_empty")
         }
-        return transcript
+        var index = 0
+        let segments = passages.enumerated().flatMap { passageIndex, passage -> [AlignedTranscriptSegment] in
+            let timed = passage.timedText.isEmpty
+                ? [LongFormSpeechTimedText(text: passage.text, startMs: passage.startMs, endMs: passage.endMs)]
+                : passage.timedText
+            return timed.map { timedText in
+                index += 1
+                var alignedSegment = AlignedTranscriptSegment(
+                    id: "seg-\(String(format: "%06d", index))",
+                    text: timedText.text,
+                    startMs: timedText.startMs,
+                    endMs: timedText.endMs,
+                    confidence: nil
+                )
+                alignedSegment.recognitionChunkId = "passage-\(String(format: "%04d", passageIndex + 1))"
+                alignedSegment.chunkOffsetMs = passage.startMs
+                return alignedSegment
+            }
+        }
+        return AlignedInterjectionTranscript(
+            text: transcript,
+            localeIdentifier: Locale.current.identifier,
+            segments: segments
+        )
     }
     #endif
 
-    private func recognizeAudio(at url: URL, recognizer: SFSpeechRecognizer) async throws -> String? {
+    private func recognizeAudioAligned(
+        at url: URL,
+        recognizer: SFSpeechRecognizer
+    ) async throws -> AlignedInterjectionTranscript? {
         let request = makeOnDeviceSpeechRecognitionRequest(url: url)
         return try await withCheckedThrowingContinuation { continuation in
             var didFinish = false
@@ -2416,7 +2468,24 @@ public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
                     didFinish = true
                     let transcript = result.bestTranscription.formattedString
                         .trimmingCharacters(in: .whitespacesAndNewlines)
-                    continuation.resume(returning: transcript.isEmpty ? nil : transcript)
+                    let segments: [AlignedTranscriptSegment] = result.bestTranscription.segments.enumerated().compactMap { index, segment in
+                        let text = segment.substring.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !text.isEmpty else { return nil }
+                        let startMs = max(0, Int((segment.timestamp * 1000).rounded()))
+                        let durationMs = max(1, Int((segment.duration * 1000).rounded()))
+                        return AlignedTranscriptSegment(
+                            id: "seg-\(String(format: "%06d", index + 1))",
+                            text: text,
+                            startMs: startMs,
+                            endMs: startMs + durationMs,
+                            confidence: Double(segment.confidence)
+                        )
+                    }
+                    continuation.resume(returning: transcript.isEmpty ? nil : AlignedInterjectionTranscript(
+                        text: transcript,
+                        localeIdentifier: recognizer.locale.identifier,
+                        segments: segments
+                    ))
                     return
                 }
                 if let error {
@@ -2452,13 +2521,13 @@ public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
             silenceRanges: silenceRanges
         )
         guard ranges.count > 1 else {
-            return PreparedAudioChunks(urls: [url], cleanupDirectory: nil)
+            return PreparedAudioChunks(chunks: [.init(url: url, offsetMs: 0)], cleanupDirectory: nil)
         }
         let directory = fileManager.temporaryDirectory
             .appending(path: "SpokenMarginsInterjectionTranscriptionV3/\(UUID().uuidString)", directoryHint: .isDirectory)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         do {
-            var urls: [URL] = []
+            var chunks: [PreparedAudioChunk] = []
             for (index, range) in ranges.enumerated() {
                 let chunkURL = directory.appending(path: "chunk-\(String(format: "%04d", index)).m4a")
                 try await exportAudioChunk(
@@ -2467,15 +2536,15 @@ public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
                     lengthMs: range.lengthMs,
                     outputURL: chunkURL
                 )
-                urls.append(chunkURL)
+                chunks.append(.init(url: chunkURL, offsetMs: range.startMs))
             }
-            return PreparedAudioChunks(urls: urls, cleanupDirectory: directory)
+            return PreparedAudioChunks(chunks: chunks, cleanupDirectory: directory)
         } catch {
             try? fileManager.removeItem(at: directory)
             throw error
         }
         #else
-        return PreparedAudioChunks(urls: [url], cleanupDirectory: nil)
+        return PreparedAudioChunks(chunks: [.init(url: url, offsetMs: 0)], cleanupDirectory: nil)
         #endif
     }
 

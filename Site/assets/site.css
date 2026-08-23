@@ -9,6 +9,10 @@ h1 { font-size:clamp(40px,8vw,64px); margin:.3em 0 .15em; }
 h2 { font-size:24px; margin-top:2em; }
 p,li { max-width:68ch; }
 a { color:var(--ink); text-decoration-color:var(--accent); text-decoration-thickness:2px; text-underline-offset:3px; }
+.actions { display:flex; flex-wrap:wrap; align-items:center; gap:16px; margin-top:28px; font-family:ui-sans-serif,system-ui; }
+.button { display:inline-block; padding:12px 18px; border-radius:999px; background:var(--ink); color:var(--paper); text-decoration:none; font-weight:700; }
+code { font:.9em ui-monospace,SFMono-Regular,Menlo,monospace; }
+ol { padding-left:1.35em; }
 .lede { font-size:21px; color:var(--muted); }
 .meta { font:14px/1.5 ui-sans-serif, system-ui; color:var(--muted); }
 .card { border:1px solid var(--line); border-radius:14px; padding:22px; margin:28px 0; background:color-mix(in srgb, var(--paper) 88%, white); }

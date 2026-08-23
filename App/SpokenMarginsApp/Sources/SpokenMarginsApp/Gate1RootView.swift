@@ -73,6 +73,19 @@ struct Gate1RootView: View {
             HelpScreen()
                 .environmentObject(model)
         }
+        .sheet(item: $model.articleAcquisition) { acquisition in
+            ArticleAcquisitionView(acquisition: acquisition)
+                .environmentObject(model)
+        }
+        .sheet(isPresented: $model.isSharingInterjectionsPresented) {
+            InterjectionSharingView()
+                .environmentObject(model)
+        }
+        .sheet(isPresented: $model.isSharedInterjectionPackagePresented) {
+            if let packageURL = model.sharedInterjectionPackageURL {
+                SharedInterjectionPackageActivityView(packageURL: packageURL)
+            }
+        }
         .alert("AI Setup Needed", isPresented: $model.isAISetupNeededPresented) {
             Button("Open AI Settings", action: model.openAISettingsFromSummaryPrompt)
             Button("Not Now", role: .cancel) {}
@@ -1089,6 +1102,7 @@ private struct ItemScreen: View {
                     listeningMapTools
                     chapters
                     sessions
+                    importedCommentary
                     actions
                 }
                 .padding(20)
@@ -1406,6 +1420,14 @@ private struct ItemScreen: View {
             }
             .buttonStyle(SecondaryButtonStyle())
             .accessibilityIdentifier("item.export.button")
+            if model.sharingExperienceEnabled {
+                Button(action: model.prepareShareInterjections) {
+                    Label("Share Interjections", systemImage: "person.wave.2")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .disabled(model.selectedItem.interjections.filter { $0.status == "active" }.isEmpty)
+                .accessibilityIdentifier("item.shareInterjections.button")
+            }
             Button {
                 model.copyTargetInterjections(targetType: InterjectionTargetType.item.rawValue, targetId: model.selectedItem.id)
             } label: {
@@ -1414,6 +1436,70 @@ private struct ItemScreen: View {
             .buttonStyle(SecondaryButtonStyle())
             .disabled(model.selectedItem.interjections.filter { $0.targetType == .item }.isEmpty)
             .accessibilityIdentifier("item.copyInterjections.button")
+        }
+    }
+
+    @ViewBuilder
+    private var importedCommentary: some View {
+        if !model.selectedItem.importedCommentaryLayers.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("IMPORTED COMMENTARY")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(AppColors.secondaryText)
+                ForEach(model.selectedItem.importedCommentaryLayers) { layer in
+                    ProductPanel {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(layer.displayLabel?.nilIfEmpty ?? "Unsigned sender")
+                                        .font(.headline)
+                                    Text("Integrity checked · Unsigned sender")
+                                        .font(.caption)
+                                        .foregroundStyle(AppColors.secondaryText)
+                                }
+                                Spacer()
+                                Text("\(model.selectedItem.importedCommentaryInterjections[layer.id]?.count ?? 0)")
+                                    .font(.title3.bold())
+                            }
+
+                            Text(layer.sourceResolutionStatus == .resolved ? "Anchors resolved for this local item." : "Kept as context only; unresolved notes will not cue inline.")
+                                .font(.caption)
+                                .foregroundStyle(AppColors.secondaryText)
+                            if let lineage = layer.lineageStatus, lineage != .root {
+                                Text("Conversation lineage: \(lineage.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)")
+                                    .font(.caption)
+                                    .foregroundStyle(lineage == .missingParent ? AppColors.dangerText : AppColors.secondaryText)
+                            }
+
+                            Toggle("Enabled", isOn: Binding(
+                                get: { layer.isEnabled },
+                                set: { model.setImportedCommentaryLayerEnabled(layer.id, enabled: $0) }
+                            ))
+                            Toggle("Mute cues", isOn: Binding(
+                                get: { layer.isMuted },
+                                set: { model.setImportedCommentaryLayerMuted(layer.id, muted: $0) }
+                            ))
+
+                            Picker("Reveal mode", selection: Binding(
+                                get: { layer.revealMode },
+                                set: { model.setImportedCommentaryRevealMode(layer.id, mode: $0) }
+                            )) {
+                                Text("Fresh").tag(ImportedCommentaryRevealMode.fresh)
+                                Text("Companion").tag(ImportedCommentaryRevealMode.companion)
+                                Text("Guided").tag(ImportedCommentaryRevealMode.guided)
+                            }
+                            .pickerStyle(.segmented)
+
+                            Button(role: .destructive) {
+                                model.deleteImportedCommentaryLayer(layer.id)
+                            } label: {
+                                Label("Delete Imported Commentary", systemImage: "trash")
+                            }
+                            .buttonStyle(SecondaryButtonStyle())
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -1555,6 +1641,7 @@ private struct PlaybackScreen: View {
     private var playbackControls: some View {
         VStack(spacing: 14) {
             playbackHeader
+            importedCommentaryControl
             if isUITesting {
                 gate2CompactValidation
             }
@@ -1569,6 +1656,41 @@ private struct PlaybackScreen: View {
         .background(AppColors.watchBackground)
         .clipShape(RoundedRectangle(cornerRadius: 34))
         .shadow(color: .black.opacity(0.18), radius: 22, y: 12)
+    }
+
+    @ViewBuilder
+    private var importedCommentaryControl: some View {
+        if let playing = model.playingImportedCommentary {
+            VStack(spacing: 8) {
+                Text(playing.senderLabel)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Text("Interjection \(playing.index) of \(playing.count)")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.72))
+                Button("Return to Source", action: model.returnToSourceFromImportedCommentary)
+                    .buttonStyle(PrimaryButtonStyle())
+                    .accessibilityIdentifier("importedCommentary.returnToSource")
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity)
+            .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
+        } else if let pending = model.pendingImportedCommentary {
+            VStack(spacing: 8) {
+                Text(pending.senderLabel)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Text("Interjection \(pending.index) of \(pending.count)")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.72))
+                Button("Listen", action: model.listenToPendingImportedCommentary)
+                    .buttonStyle(PrimaryButtonStyle())
+                    .accessibilityIdentifier("importedCommentary.listen")
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity)
+            .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
+        }
     }
 
     private var playbackHeader: some View {
@@ -3525,7 +3647,7 @@ private func anchorContextText(_ value: String, status: AnchorContextStatus?) ->
     }
 }
 
-private struct ProductPanel<Content: View>: View {
+struct ProductPanel<Content: View>: View {
     let isHighlighted: Bool
     @ViewBuilder let content: Content
 
@@ -3744,6 +3866,7 @@ private func interjectionTargetLabel(_ interjection: Interjection) -> String {
     case .item: return "Source"
     case .assistantTurn: return "AI response"
     case .summaryTurn: return "Interjection summary"
+    case .importedInterjection: return "Imported interjection"
     }
 }
 
@@ -3786,7 +3909,7 @@ private enum AppLinks {
     }
 }
 
-private enum AppColors {
+enum AppColors {
     static let background = dynamicColor(light: (0.96, 0.97, 0.94), dark: (0.07, 0.09, 0.08))
     static let panel = dynamicColor(light: (1.00, 1.00, 1.00), dark: (0.13, 0.16, 0.14))
     static let inputBackground = dynamicColor(light: (0.98, 0.99, 0.97), dark: (0.10, 0.12, 0.11))
@@ -3817,7 +3940,7 @@ private enum AppColors {
     }
 }
 
-private struct PrimaryButtonStyle: ButtonStyle {
+struct PrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.headline)
@@ -3829,7 +3952,7 @@ private struct PrimaryButtonStyle: ButtonStyle {
     }
 }
 
-private struct SecondaryButtonStyle: ButtonStyle {
+struct SecondaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.headline)

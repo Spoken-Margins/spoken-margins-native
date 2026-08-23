@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spokenmargins.local/schemas/interjection-share-revision.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "interjectionId", "itemId", "sessionId", "createdAt", "cleanupPolicyVersion", "approvedTranscript", "decisions", "anchorBefore", "anchorAfter", "status"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "interjectionId": { "type": "string", "minLength": 1 },
+    "itemId": { "type": "string", "minLength": 1 },
+    "sessionId": { "type": "string", "minLength": 1 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "cleanupPolicyVersion": { "const": "cleanup.v1" },
+    "approvedTranscript": { "type": "string", "minLength": 1 },
+    "cleanedAudioPath": { "type": ["string", "null"] },
+    "cleanedAudioDurationMs": { "type": ["integer", "null"], "minimum": 0, "maximum": 600000 },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "kind", "startMs", "endMs", "accepted"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "kind": { "enum": ["filler", "isolated_phrase", "long_pause"] },
+          "startMs": { "type": "integer", "minimum": 0 },
+          "endMs": { "type": "integer", "minimum": 1 },
+          "originalText": { "type": ["string", "null"] },
+          "accepted": { "type": "boolean" }
+        }
+      }
+    },
+    "anchorBefore": { "type": "string", "maxLength": 500 },
+    "anchorAfter": { "type": "string", "maxLength": 500 },
+    "status": { "enum": ["draft", "sender_review_pending", "sender_approved"] }
+  }
+}

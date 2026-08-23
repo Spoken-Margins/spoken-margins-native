@@ -14,6 +14,11 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
         public var progressPercent: Int
         public var isRecording: Bool
         public var availableCommands: [String]
+        public var pendingImportedInterjectionId: String?
+        public var commentarySenderLabel: String?
+        public var commentaryIndex: Int?
+        public var commentaryCount: Int?
+        public var isPlayingImportedCommentary: Bool
 
         private enum CodingKeys: String, CodingKey {
             case title
@@ -25,6 +30,11 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
             case progressPercent
             case isRecording
             case availableCommands
+            case pendingImportedInterjectionId
+            case commentarySenderLabel
+            case commentaryIndex
+            case commentaryCount
+            case isPlayingImportedCommentary
         }
 
         public init(
@@ -36,7 +46,12 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
             phase: String,
             progressPercent: Int,
             isRecording: Bool,
-            availableCommands: [String] = []
+            availableCommands: [String] = [],
+            pendingImportedInterjectionId: String? = nil,
+            commentarySenderLabel: String? = nil,
+            commentaryIndex: Int? = nil,
+            commentaryCount: Int? = nil,
+            isPlayingImportedCommentary: Bool = false
         ) {
             self.title = title
             self.chapterTitle = chapterTitle
@@ -47,6 +62,11 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
             self.progressPercent = progressPercent
             self.isRecording = isRecording
             self.availableCommands = availableCommands
+            self.pendingImportedInterjectionId = pendingImportedInterjectionId
+            self.commentarySenderLabel = commentarySenderLabel
+            self.commentaryIndex = commentaryIndex
+            self.commentaryCount = commentaryCount
+            self.isPlayingImportedCommentary = isPlayingImportedCommentary
         }
 
         public init(from decoder: Decoder) throws {
@@ -60,6 +80,11 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
             progressPercent = try container.decode(Int.self, forKey: .progressPercent)
             isRecording = try container.decode(Bool.self, forKey: .isRecording)
             availableCommands = try container.decodeIfPresent([String].self, forKey: .availableCommands) ?? []
+            pendingImportedInterjectionId = try container.decodeIfPresent(String.self, forKey: .pendingImportedInterjectionId)
+            commentarySenderLabel = try container.decodeIfPresent(String.self, forKey: .commentarySenderLabel)
+            commentaryIndex = try container.decodeIfPresent(Int.self, forKey: .commentaryIndex)
+            commentaryCount = try container.decodeIfPresent(Int.self, forKey: .commentaryCount)
+            isPlayingImportedCommentary = try container.decodeIfPresent(Bool.self, forKey: .isPlayingImportedCommentary) ?? false
         }
     }
 

@@ -247,6 +247,36 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertEqual(state.availableCommands, [])
         XCTAssertNil(state.nextChapterTitle)
         XCTAssertNil(state.nextChapterId)
+        XCTAssertNil(state.pendingImportedInterjectionId)
+        XCTAssertFalse(state.isPlayingImportedCommentary)
+    }
+
+    func testLiveActivityContentStateCarriesImportedCommentaryActions() throws {
+        let state = Gate2LiveActivityAttributes.ContentState(
+            title: "An Episode",
+            chapterTitle: "Opening",
+            status: "paused",
+            phase: "itemPlayback",
+            progressPercent: 20,
+            isRecording: false,
+            availableCommands: [Gate2CompactApplicationCommand.playImportedInterjection],
+            pendingImportedInterjectionId: "imported-1",
+            commentarySenderLabel: "A Friend",
+            commentaryIndex: 1,
+            commentaryCount: 3,
+            isPlayingImportedCommentary: false
+        )
+        let decoded = try JSONDecoder().decode(
+            Gate2LiveActivityAttributes.ContentState.self,
+            from: JSONEncoder().encode(state)
+        )
+        XCTAssertEqual(decoded.pendingImportedInterjectionId, "imported-1")
+        XCTAssertEqual(decoded.commentarySenderLabel, "A Friend")
+        XCTAssertEqual(decoded.commentaryIndex, 1)
+        XCTAssertEqual(decoded.commentaryCount, 3)
+        XCTAssertEqual(decoded.availableCommands, ["playImportedInterjection"])
+        XCTAssertFalse(decoded.isPlayingImportedCommentary)
+        XCTAssertEqual(Gate2CompactApplicationCommand.stopImportedInterjection, "stopImportedInterjection")
     }
 
     func testLiveActivityUsesOpenSpaceForTheFollowingSourceChapter() throws {

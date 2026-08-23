@@ -239,8 +239,13 @@ Examples:
 - `finishInterjection`: requires active recording or delegated active recording.
 - `generateInterjectionSummary`: requires `summarize_interjections` or `defer_ai_jobs`.
 - `submitFollowup`: requires `continue_discussion` or `defer_ai_jobs`.
+- Reviewed sharing on phone/tablet requires `preserve_timed_interjection_transcript`, `deterministic_share_cleanup`, and `export_interjection_package`.
+- Package intake requires `import_interjection_package`; article source creation additionally requires online `visible_article_acquisition`.
+- A local recording targeted to an imported margin requires `reply_to_imported_interjection`.
 
 If a command is unavailable, the client should not show it as active. If invoked anyway, SessionKit returns `invalid_command_for_capability`.
+
+Imported-commentary Listen/Return actions are a typed application-command layer over the canonical source runtime. They are advertised only with a pending imported commentary ID, do not transfer Now Playing ownership, and must preserve an exactly-once source-resume invariant. They are intentionally not accepted by SessionKit trace replay because SessionKit does not own imported attachment audio; app tests cover the queue/Live Activity command matrix and SessionKit traces continue to cover source transport.
 
 ## Connectivity Transitions
 

@@ -135,6 +135,63 @@ public final class SQLiteSessionStore: SessionRepository {
         try loadBySession(kind: "interjection", sessionId: sessionId)
     }
 
+    public func saveInterjectionShareRevision(_ revision: InterjectionShareRevision) throws {
+        try save(
+            kind: "interjection_share_revision",
+            id: revision.id,
+            sessionId: revision.sessionId,
+            itemId: revision.itemId,
+            value: revision
+        )
+    }
+
+    public func loadInterjectionShareRevisions(interjectionId: String) throws -> [InterjectionShareRevision] {
+        let revisions: [InterjectionShareRevision] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at ASC, id ASC;",
+            ["interjection_share_revision"]
+        )
+        return revisions.filter { $0.interjectionId == interjectionId }
+    }
+
+    public func saveImportedCommentaryLayer(_ layer: ImportedCommentaryLayer) throws {
+        try save(kind: "imported_commentary_layer", id: layer.id, sessionId: nil, itemId: layer.itemId, value: layer)
+    }
+
+    public func loadImportedCommentaryLayer(id: String) throws -> ImportedCommentaryLayer? {
+        try loadOptional(kind: "imported_commentary_layer", id: id)
+    }
+
+    public func loadImportedCommentaryLayers(itemId: String) throws -> [ImportedCommentaryLayer] {
+        try loadByItem(kind: "imported_commentary_layer", itemId: itemId)
+    }
+
+    public func loadAllImportedCommentaryLayers() throws -> [ImportedCommentaryLayer] {
+        try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at ASC, id ASC;",
+            ["imported_commentary_layer"]
+        )
+    }
+
+    public func loadImportedCommentaryLayer(packageDigest: String) throws -> ImportedCommentaryLayer? {
+        let layers: [ImportedCommentaryLayer] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at DESC, id DESC;",
+            ["imported_commentary_layer"]
+        )
+        return layers.first { $0.packageDigest == packageDigest }
+    }
+
+    public func saveImportedCommentaryInterjection(_ interjection: ImportedCommentaryInterjection) throws {
+        try save(kind: "imported_commentary_interjection", id: interjection.id, sessionId: nil, itemId: nil, value: interjection)
+    }
+
+    public func loadImportedCommentaryInterjections(layerId: String) throws -> [ImportedCommentaryInterjection] {
+        let interjections: [ImportedCommentaryInterjection] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at ASC, id ASC;",
+            ["imported_commentary_interjection"]
+        )
+        return interjections.filter { $0.layerId == layerId }
+    }
+
     public func saveTurn(_ turn: ConversationTurn) throws {
         try save(kind: "turn", id: turn.id, sessionId: turn.sessionId, itemId: nil, value: turn)
     }

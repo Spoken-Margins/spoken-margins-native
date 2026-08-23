@@ -83,6 +83,8 @@ submitFollowup(input)
 endSession()
 ```
 
+Imported commentary audio remains app-owned rather than a SessionKit playback target. The compact application-command dispatcher registers `playImportedInterjection` and `stopImportedInterjection`. Its versioned snapshot extension carries `pendingImportedInterjectionId`, `commentarySenderLabel`, `commentaryIndex`, `commentaryCount`, and `isPlayingImportedCommentary`. The widget queue may invoke those two IDs only while the matching pending/playing state is published; SessionKit transport commands remain authoritative for the source.
+
 Movement units:
 
 - `chapter`

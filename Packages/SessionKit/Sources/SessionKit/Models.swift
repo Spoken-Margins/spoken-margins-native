@@ -78,6 +78,7 @@ public enum InterjectionTargetType: String, Codable, Equatable, Sendable {
     case item
     case summaryTurn = "summary_turn"
     case assistantTurn = "assistant_turn"
+    case importedInterjection = "imported_interjection"
 }
 
 public enum AnchorType: String, Codable, Equatable, Sendable {
@@ -1012,6 +1013,11 @@ public struct Interjection: Codable, Equatable, Sendable {
     public var displayText: String?
     public var status: String
     public var anchorContextStatus: AnchorContextStatus? = nil
+    /// Word/run timing retained from on-device recognition. Optional so records
+    /// created before sharing support remain decodable without migration.
+    public var alignedTranscript: AlignedInterjectionTranscript? = nil
+    /// Local imported-commentary target when this interjection is a reply.
+    public var replyToImportedInterjectionId: String? = nil
 
     public init(
         id: String,
@@ -1029,7 +1035,9 @@ public struct Interjection: Codable, Equatable, Sendable {
         cleanedTranscript: String?,
         displayText: String?,
         status: String,
-        anchorContextStatus: AnchorContextStatus? = nil
+        anchorContextStatus: AnchorContextStatus? = nil,
+        alignedTranscript: AlignedInterjectionTranscript? = nil,
+        replyToImportedInterjectionId: String? = nil
     ) {
         self.id = id
         self.itemId = itemId
@@ -1047,6 +1055,8 @@ public struct Interjection: Codable, Equatable, Sendable {
         self.displayText = displayText
         self.status = status
         self.anchorContextStatus = anchorContextStatus
+        self.alignedTranscript = alignedTranscript
+        self.replyToImportedInterjectionId = replyToImportedInterjectionId
     }
 }
 

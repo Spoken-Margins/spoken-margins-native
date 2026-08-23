@@ -268,7 +268,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
             recordingClient: NoopRecordingClient(),
-            interjectionTranscriptionHandler: { _ in "A practice note." }
+            interjectionTranscriptionHandler: { _ in .init(text: "A practice note.", segments: []) }
         )
         model.resetOnboardingProgressForTesting()
         defer { model.resetOnboardingProgressForTesting() }
@@ -545,7 +545,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
             recordingClient: NoopRecordingClient(),
-            interjectionTranscriptionHandler: { _ in "Listener note about the opening claim." }
+            interjectionTranscriptionHandler: { _ in .init(text: "Listener note about the opening claim.", segments: []) }
         )
         model.resetAndSeed()
         model.startItem(id: "item-pill")
@@ -840,7 +840,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
             recordingClient: NoopRecordingClient(),
-            interjectionTranscriptionHandler: { _ in "Structure helps me remember the source." },
+            interjectionTranscriptionHandler: { _ in .init(text: "Structure helps me remember the source.", segments: []) },
             featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false),
             localFoundationModelClient: WorkflowFoundationModelStub(
                 availability: .available,
@@ -878,7 +878,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
             recordingClient: NoopRecordingClient(),
-            interjectionTranscriptionHandler: { _ in "I am uncertain whether this premise supports the conclusion." },
+            interjectionTranscriptionHandler: { _ in .init(text: "I am uncertain whether this premise supports the conclusion.", segments: []) },
             featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false),
             localFoundationModelClient: ThrowingWorkflowFoundationModelStub()
         )
@@ -916,7 +916,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
             recordingClient: NoopRecordingClient(),
-            interjectionTranscriptionHandler: { _ in "A newly added listener note." },
+            interjectionTranscriptionHandler: { _ in .init(text: "A newly added listener note.", segments: []) },
             featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false),
             localFoundationModelClient: WorkflowFoundationModelStub(
                 availability: .available,

@@ -1041,7 +1041,10 @@ public final class SessionEngine {
     }
 
     @discardableResult
-    public func beginInterjection() throws -> SessionSnapshot {
+    public func beginInterjection(
+        targetType overrideTargetType: InterjectionTargetType? = nil,
+        targetId overrideTargetId: String? = nil
+    ) throws -> SessionSnapshot {
         try require("beginInterjection", category: "interjection", capabilities: ["record_audio", "delegate_interjection_to_canonical_runtime"])
         guard var session = currentSession else { throw SessionKitError.invalidCommandForState("beginInterjection") }
         let usesNativeMediaClock = session.currentTargetType == .transcriptBackedMedia
@@ -1061,7 +1064,11 @@ public final class SessionEngine {
         currentSession = session
         try persistSession(session)
         priorPhase = session.phase
-        let target = currentInterjectionTarget(for: session)
+        let target = if let overrideTargetType, let overrideTargetId {
+            (type: overrideTargetType, id: overrideTargetId)
+        } else {
+            currentInterjectionTarget(for: session)
+        }
         recordingTargetType = target.type
         recordingTargetId = target.id
         recordingAnchor = buildAnchor(for: session, targetType: target.type, targetId: target.id)
@@ -1248,6 +1255,10 @@ public final class SessionEngine {
             return sourceInterjections.allSatisfy { $0.targetType == .item && $0.targetId == target.id }
         case .assistantTurn, .summaryTurn:
             return sourceInterjections.allSatisfy { $0.targetType != .item && $0.targetId == target.id }
+        case .importedInterjection:
+            // Replies to imported commentary are preserved for package lineage;
+            // they are not folded into the local source/AI summary scopes.
+            return false
         }
     }
 
@@ -1632,6 +1643,21 @@ public final class SessionEngine {
             interjection.transcriptionStatus = "transcribed"
             interjection.cleanedTranscript = nil
             interjection.displayText = transcript
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func transcriptionCompleted(
+        interjectionId: String,
+        alignedTranscript: AlignedInterjectionTranscript
+    ) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId) { interjection in
+            interjection.transcript = alignedTranscript.text
+            interjection.alignedTranscript = alignedTranscript
+            interjection.transcriptionStatus = "transcribed"
+            interjection.cleanedTranscript = nil
+            interjection.displayText = alignedTranscript.text
         }
         return snapshot
     }
@@ -2897,6 +2923,7 @@ public final class SessionEngine {
         case .assistantTurn: return .aiResponsePlayback
         case .summaryTurn: return .summaryPlayback
         case .item: return .itemPlayback
+        case .importedInterjection: return .itemPlayback
         }
     }
 

@@ -8,9 +8,9 @@
   "capabilities": {
     "playback": ["realtime_tts", "prerendered_audio", "native_media", "assistant_turn_tts", "summary_turn_tts"],
     "timeline": ["text_char_offsets", "transcript_segments", "media_time", "chapter_timing", "playback_rate_observation"],
-    "interjection": ["record_audio", "capture_text_anchor", "capture_transcript_anchor", "capture_media_anchor", "capture_turn_anchor"],
+    "interjection": ["record_audio", "capture_text_anchor", "capture_transcript_anchor", "capture_media_anchor", "capture_turn_anchor", "preserve_timed_interjection_transcript", "deterministic_share_cleanup", "reply_to_imported_interjection"],
     "ai": ["cleanup_transcript", "defer_ai_jobs"],
-    "sync": ["canonical_persistence", "import_offline_events", "transfer_prepared_packages"],
+    "sync": ["canonical_persistence", "import_offline_events", "transfer_prepared_packages", "export_interjection_package", "import_interjection_package"],
     "remoteControl": ["display_snapshot", "send_transport_commands", "send_chapter_jump", "send_interjection_commands"]
   },
   "forbiddenCapabilities": ["provider_diagnostics", "generate_listening_map", "summarize_interjections", "continue_discussion"],
