@@ -15,6 +15,7 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
     private struct ScoredAppleCandidate {
         var candidate: LinkResolutionCandidate
         var score: Double
+        var hasConflictingShowEvidence: Bool
     }
 
     private struct EpisodePageMetadata {
@@ -190,7 +191,7 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
 
     private func resolveSpotifyURL(_ url: URL, request: LinkResolutionRequest) throws -> LinkResolutionResult {
         let oEmbedData = try? fetch(spotifyOEmbedURL(for: url))
-        let pageData = try? fetch(url)
+        let pageData = try? fetch(spotifyEmbedURL(for: url))
         guard let evidence = spotifyEpisodeEvidence(oEmbedData: oEmbedData, pageData: pageData) else {
             return needsReview(
                 request: request,
@@ -199,20 +200,30 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
                 reason: "spotify_metadata_unavailable"
             )
         }
-        guard let searchData = try? fetch(appleEpisodeSearchURL(title: evidence.title)),
-              let results = appleSearchResults(from: searchData) else {
-            return needsReview(
+        var accumulatedResults: [[String: Any]] = []
+        var lastResult: LinkResolutionResult?
+        for searchTerm in spotifyAppleSearchTerms(title: evidence.title) {
+            guard let searchData = try? fetch(appleEpisodeSearchURL(title: searchTerm)),
+                  let results = appleSearchResults(from: searchData) else {
+                continue
+            }
+            accumulatedResults = mergingAppleSearchResults(accumulatedResults, with: results)
+            let result = spotifyAppleMatchResult(
                 request: request,
-                provider: "spotify",
-                title: evidence.title,
-                reason: "spotify_episode_not_found_on_apple"
+                spotifyURL: url,
+                evidence: evidence,
+                results: accumulatedResults
             )
+            if result.status == .playable {
+                return result
+            }
+            lastResult = result
         }
-        return spotifyAppleMatchResult(
+        return lastResult ?? needsReview(
             request: request,
-            spotifyURL: url,
-            evidence: evidence,
-            results: results
+            provider: "spotify",
+            title: evidence.title,
+            reason: "spotify_episode_not_found_on_apple"
         )
     }
 
@@ -222,7 +233,7 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         requestTimeoutSeconds: TimeInterval
     ) async throws -> LinkResolutionResult {
         let oEmbedData = try? await fetchAsync(spotifyOEmbedURL(for: url), timeout: requestTimeoutSeconds)
-        let pageData = try? await fetchAsync(url, timeout: requestTimeoutSeconds)
+        let pageData = try? await fetchAsync(spotifyEmbedURL(for: url), timeout: requestTimeoutSeconds)
         guard let evidence = spotifyEpisodeEvidence(oEmbedData: oEmbedData, pageData: pageData) else {
             return needsReview(
                 request: request,
@@ -231,20 +242,32 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
                 reason: "spotify_metadata_unavailable"
             )
         }
-        guard let searchData = try? await fetchAsync(appleEpisodeSearchURL(title: evidence.title), timeout: requestTimeoutSeconds),
-              let results = appleSearchResults(from: searchData) else {
-            return needsReview(
+        var accumulatedResults: [[String: Any]] = []
+        var lastResult: LinkResolutionResult?
+        for searchTerm in spotifyAppleSearchTerms(title: evidence.title) {
+            guard let searchData = try? await fetchAsync(
+                appleEpisodeSearchURL(title: searchTerm),
+                timeout: requestTimeoutSeconds
+            ), let results = appleSearchResults(from: searchData) else {
+                continue
+            }
+            accumulatedResults = mergingAppleSearchResults(accumulatedResults, with: results)
+            let result = spotifyAppleMatchResult(
                 request: request,
-                provider: "spotify",
-                title: evidence.title,
-                reason: "spotify_episode_not_found_on_apple"
+                spotifyURL: url,
+                evidence: evidence,
+                results: accumulatedResults
             )
+            if result.status == .playable {
+                return result
+            }
+            lastResult = result
         }
-        return spotifyAppleMatchResult(
+        return lastResult ?? needsReview(
             request: request,
-            spotifyURL: url,
-            evidence: evidence,
-            results: results
+            provider: "spotify",
+            title: evidence.title,
+            reason: "spotify_episode_not_found_on_apple"
         )
     }
 
@@ -271,7 +294,7 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             if lhs.score == rhs.score { return lhs.candidate.title < rhs.candidate.title }
             return lhs.score > rhs.score
         }
-        if scored.count == 1 {
+        if scored.count == 1, !scored[0].hasConflictingShowEvidence {
             scored[0].score = min(1, scored[0].score + 0.18)
             scored[0].candidate.confidence = scored[0].score
         }
@@ -284,7 +307,9 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             )
         }
         let runnerUp = scored.dropFirst().first?.score ?? 0
-        if best.score >= 0.78, best.score - runnerUp >= 0.08 {
+        if best.score >= 0.78,
+           best.score - runnerUp >= 0.08,
+           !best.hasConflictingShowEvidence {
             return playable(request: request, provider: "spotify", candidate: best.candidate)
         }
         return review(
@@ -302,7 +327,7 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         spotifyURL: URL
     ) -> ScoredAppleCandidate? {
         let title = episode["trackName"] as? String ?? ""
-        let titleScore = textSimilarity(evidence.title, title)
+        let titleScore = episodeTitleSimilarity(evidence.title, title)
         guard titleScore >= 0.55,
               let audioURL = episode["episodeUrl"] as? String else { return nil }
         let showTitle = episode["collectionName"] as? String
@@ -310,8 +335,11 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         let durationMs = (episode["trackTimeMillis"] as? NSNumber)?.intValue
         let publisher = episode["artistName"] as? String
         var score = 0.62 * titleScore
+        var hasConflictingShowEvidence = false
         if let expected = evidence.showTitle, let showTitle {
-            score += 0.18 * textSimilarity(expected, showTitle)
+            let showScore = textSimilarity(expected, showTitle)
+            score += 0.18 * showScore
+            hasConflictingShowEvidence = showScore < 0.35
         }
         if let expected = evidence.publisher, let publisher {
             score += 0.04 * textSimilarity(expected, publisher)
@@ -334,12 +362,26 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             audioURL: audioURL,
             confidence: score
         )
-        return ScoredAppleCandidate(candidate: candidate, score: score)
+        return ScoredAppleCandidate(
+            candidate: candidate,
+            score: score,
+            hasConflictingShowEvidence: hasConflictingShowEvidence
+        )
     }
 
     private func spotifyOEmbedURL(for url: URL) -> URL {
         var components = URLComponents(string: "https://open.spotify.com/oembed")!
         components.queryItems = [URLQueryItem(name: "url", value: url.absoluteString)]
+        return components.url!
+    }
+
+    private func spotifyEmbedURL(for url: URL) -> URL {
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        if !components.path.lowercased().hasPrefix("/embed/") {
+            components.path = "/embed" + components.path
+        }
+        components.query = nil
+        components.fragment = nil
         return components.url!
     }
 
@@ -355,6 +397,26 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         return components.url!
     }
 
+    private func spotifyAppleSearchTerms(title: String) -> [String] {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let withoutEpisodeNumber = removingLeadingEpisodeNumber(from: trimmed)
+        if normalize(trimmed) == normalize(withoutEpisodeNumber) {
+            return [trimmed]
+        }
+        return [trimmed, withoutEpisodeNumber]
+    }
+
+    private func removingLeadingEpisodeNumber(from title: String) -> String {
+        let pattern = #"^\s*(?:(?:episode|ep\.?)\s*)?#?\d{1,6}\s*[.:\-–—]\s*"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return title
+        }
+        let range = NSRange(title.startIndex..<title.endIndex, in: title)
+        let stripped = regex.stringByReplacingMatches(in: title, range: range, withTemplate: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return stripped.isEmpty ? title : stripped
+    }
+
     private func spotifyEpisodeEvidence(oEmbedData: Data?, pageData: Data?) -> EpisodeEvidence? {
         var object: [String: Any] = [:]
         if let oEmbedData,
@@ -362,7 +424,11 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             object = decoded
         }
         let html = pageData.flatMap { String(data: $0, encoding: .utf8) }
-        let rawTitle = (object["title"] as? String) ?? html.flatMap(htmlTitle)
+        let embeddedEntity = html.flatMap(spotifyEmbeddedEntity)
+        let rawTitle = (object["title"] as? String)
+            ?? (embeddedEntity?["title"] as? String)
+            ?? (embeddedEntity?["name"] as? String)
+            ?? html.flatMap(htmlTitle)
         guard let rawTitle else { return nil }
         let title = rawTitle
             .replacingOccurrences(of: " | Podcast on Spotify", with: "")
@@ -371,17 +437,20 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         guard !title.isEmpty else { return nil }
         let showTitle = (object["showTitle"] as? String)
             ?? (object["podcastName"] as? String)
+            ?? (embeddedEntity?["subtitle"] as? String)
             ?? html.flatMap { jsonStringValue(named: "showName", in: $0) }
             ?? html.flatMap { jsonStringValue(named: "podcastName", in: $0) }
         let publisher = (object["publisher"] as? String)
             ?? html.flatMap { jsonStringValue(named: "publisher", in: $0) }
         let publishedAt = (object["releaseDate"] as? String)
             ?? (object["datePublished"] as? String)
+            ?? ((embeddedEntity?["releaseDate"] as? [String: Any])?["isoString"] as? String)
             ?? html.flatMap { jsonStringValue(named: "releaseDate", in: $0) }
             ?? html.flatMap { jsonStringValue(named: "datePublished", in: $0) }
         let objectDuration = (object["durationMs"] as? NSNumber)?.intValue
             ?? (object["duration"] as? NSNumber).map { normalizedDurationMs($0.intValue) }
-        let pageDuration = html.flatMap { jsonNumberValue(named: "durationMs", in: $0) }
+        let pageDuration = (embeddedEntity?["duration"] as? NSNumber)?.intValue
+            ?? html.flatMap { jsonNumberValue(named: "durationMs", in: $0) }
             ?? html.flatMap { jsonNumberValue(named: "duration", in: $0) }.map(normalizedDurationMs)
         return EpisodeEvidence(
             title: title,
@@ -390,6 +459,24 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             publishedAt: publishedAt,
             durationMs: objectDuration ?? pageDuration
         )
+    }
+
+    private func spotifyEmbeddedEntity(in html: String) -> [String: Any]? {
+        let marker = #"<script id="__NEXT_DATA__" type="application/json">"#
+        guard let markerRange = html.range(of: marker, options: [.caseInsensitive]),
+              let endRange = html[markerRange.upperBound...].range(of: "</script>", options: [.caseInsensitive]) else {
+            return nil
+        }
+        let json = String(html[markerRange.upperBound..<endRange.lowerBound])
+        guard let data = json.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let props = root["props"] as? [String: Any],
+              let pageProps = props["pageProps"] as? [String: Any],
+              let state = pageProps["state"] as? [String: Any],
+              let dataObject = state["data"] as? [String: Any] else {
+            return nil
+        }
+        return dataObject["entity"] as? [String: Any]
     }
 
     private func normalizedDurationMs(_ value: Int) -> Int {
@@ -402,6 +489,13 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         guard !left.isEmpty, !right.isEmpty else { return 0 }
         if left == right { return 1 }
         return Double(left.intersection(right).count) / Double(left.union(right).count)
+    }
+
+    private func episodeTitleSimilarity(_ lhs: String, _ rhs: String) -> Double {
+        max(
+            textSimilarity(lhs, rhs),
+            textSimilarity(removingLeadingEpisodeNumber(from: lhs), removingLeadingEpisodeNumber(from: rhs))
+        )
     }
 
     private func dateScore(_ lhs: String?, _ rhs: String?) -> Double {
@@ -427,6 +521,37 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
     private func appleSearchResults(from data: Data) -> [[String: Any]]? {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         return object["results"] as? [[String: Any]]
+    }
+
+    private func mergingAppleSearchResults(
+        _ existing: [[String: Any]],
+        with incoming: [[String: Any]]
+    ) -> [[String: Any]] {
+        var merged = existing
+        var identities = Set(existing.compactMap(appleSearchResultIdentity))
+        for result in incoming {
+            guard let identity = appleSearchResultIdentity(result) else {
+                merged.append(result)
+                continue
+            }
+            if identities.insert(identity).inserted {
+                merged.append(result)
+            }
+        }
+        return merged
+    }
+
+    private func appleSearchResultIdentity(_ result: [String: Any]) -> String? {
+        if let trackId = result["trackId"] as? NSNumber {
+            return "track:\(trackId.stringValue)"
+        }
+        if let trackId = result["trackId"] as? String {
+            return "track:\(trackId)"
+        }
+        if let episodeURL = result["episodeUrl"] as? String {
+            return "audio:\(episodeURL)"
+        }
+        return nil
     }
 
     private func resolveApplePodcastsURLAsync(
