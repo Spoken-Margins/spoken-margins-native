@@ -1615,8 +1615,12 @@ private struct PlaybackScreen: View {
                     ),
                     in: 0...Double(mediaDurationMs) / 1_000,
                     onEditingChanged: { editing in
-                        isScrubbing = editing
-                        if !editing { model.seekMedia(toMediaTimeMs: Int(scrubberSeconds * 1_000)) }
+                        if editing {
+                            isScrubbing = true
+                        } else {
+                            model.seekMedia(toMediaTimeMs: Int(scrubberSeconds * 1_000))
+                            isScrubbing = false
+                        }
                     }
                 )
                 .tint(AppColors.accent)
@@ -1640,8 +1644,12 @@ private struct PlaybackScreen: View {
                     ),
                     in: 0...Double(textLength),
                     onEditingChanged: { editing in
-                        isScrubbing = editing
-                        if !editing { model.seekText(toCharOffset: Int(scrubberTextOffset)) }
+                        if editing {
+                            isScrubbing = true
+                        } else {
+                            model.seekText(toCharOffset: Int(scrubberTextOffset))
+                            isScrubbing = false
+                        }
                     }
                 )
                 .tint(AppColors.accent)

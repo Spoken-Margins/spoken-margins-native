@@ -40,6 +40,13 @@ public final class SessionEngine {
     private var playbackStartPendingTargetId: String?
     private var playbackStartDeadline: Date?
     private var playbackURLOverrides: [String: String] = [:]
+    private var pendingPlaybackPosition: PendingPlaybackPosition?
+
+    private struct PendingPlaybackPosition {
+        var targetId: String
+        var targetType: TargetType
+        var position: Position
+    }
 
     private struct PlaybackPlan {
         var text: String
@@ -205,13 +212,7 @@ public final class SessionEngine {
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("pause")
         }
-        if session.currentTargetType == .itemTextTTS {
-            session = syncSessionPositionFromAudio(session, item: currentItem)
-        } else if session.currentTargetType == .summaryTurnTTS || session.currentTargetType == .assistantTurnTTS {
-            session = try syncGeneratedTurnPositionFromAudio(session)
-        } else if session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia {
-            session = try syncMediaPositionFromAudio(session)
-        }
+        session = try syncCurrentPositionFromAudio(session)
         currentSession = session
         try persistSession(session)
         try audio.pause()
@@ -327,12 +328,16 @@ public final class SessionEngine {
             publish(status: snapshot.status, phase: session.phase)
             return snapshot
         }
-        let playbackCompleted = audio.isPlaybackComplete(targetId: session.currentTargetId)
+        let positionIsPending = hasPendingPlaybackPosition(for: session)
+        let playbackCompleted = positionIsPending ? false : audio.isPlaybackComplete(targetId: session.currentTargetId)
         let transportState = audio.playbackTransportState(targetId: session.currentTargetId)
         var updated = try syncCurrentPositionFromAudio(session)
         if snapshot.status == .starting {
             switch playbackStartStatus(for: session.currentTargetId, attemptId: activePlaybackStartAttemptId ?? playbackStartAttemptId) {
             case .confirmed:
+                // A confirmed start is the first point at which the newly
+                // requested transport position is authoritative.
+                updated = try syncCurrentPositionFromAudio(session)
                 snapshot.status = .playing
             case .pending:
                 // Startup can remain pending while a buffered speech client is
@@ -472,6 +477,7 @@ public final class SessionEngine {
                         migrated = mediaSession(migrated, movedTo: mediaTimeMs)
                         currentSession = migrated
                         try persistSession(migrated)
+                        protectPlaybackPosition(for: migrated)
                         if snapshot.status.isPlaybackActive {
                             try playCurrentTarget(migrated)
                         }
@@ -499,6 +505,7 @@ public final class SessionEngine {
                     migrated = mediaSession(migrated, movedTo: mediaTimeMs)
                     currentSession = migrated
                     try persistSession(migrated)
+                    protectPlaybackPosition(for: migrated)
                     if snapshot.status.isPlaybackActive {
                         try playCurrentTarget(migrated)
                     }
@@ -526,6 +533,7 @@ public final class SessionEngine {
         let updated = mediaSession(session, movedTo: mediaTimeMs)
         currentSession = updated
         try persistSession(updated)
+        protectPlaybackPosition(for: updated)
         if snapshot.status.isPlaybackActive {
             try playCurrentTarget(updated)
             publishPlaybackContinuation(for: updated)
@@ -555,6 +563,7 @@ public final class SessionEngine {
         session.status = "in_progress"
         currentSession = session
         try persistSession(session)
+        protectPlaybackPosition(for: session)
         if session.position.charOffset >= text.count {
             try audio.stop()
             publish(status: .paused, phase: .itemPlayback)
@@ -879,6 +888,7 @@ public final class SessionEngine {
         session.status = "in_progress"
         currentSession = session
         try persistSession(session)
+        protectPlaybackPosition(for: session)
         if snapshot.status.isPlaybackActive, session.position.charOffset < text.count {
             try playCurrentTarget(session)
             publishPlaybackContinuation(for: session)
@@ -919,6 +929,7 @@ public final class SessionEngine {
         }
         currentSession = session
         try persistSession(session)
+        protectPlaybackPosition(for: session)
         if snapshot.status.isPlaybackActive {
             try playCurrentTarget(session)
             publishPlaybackContinuation(for: session)
@@ -942,6 +953,7 @@ public final class SessionEngine {
         updated.position.chapterId = turn.chapters?.last(where: { $0.startChar <= updated.position.charOffset })?.id
         currentSession = updated
         try persistSession(updated)
+        protectPlaybackPosition(for: updated)
         if snapshot.status.isPlaybackActive, updated.position.charOffset < text.count {
             try playCurrentTarget(updated)
             publishPlaybackContinuation(for: updated)
@@ -967,6 +979,7 @@ public final class SessionEngine {
         updated.position.chapterId = turn.chapters?.last(where: { $0.startChar <= updated.position.charOffset })?.id
         currentSession = updated
         try persistSession(updated)
+        protectPlaybackPosition(for: updated)
         if snapshot.status.isPlaybackActive {
             try playCurrentTarget(updated)
             publishPlaybackContinuation(for: updated)
@@ -995,6 +1008,7 @@ public final class SessionEngine {
         session.completionPercent = chapter.percent
         currentSession = session
         try persistSession(session)
+        protectPlaybackPosition(for: session)
         try playCurrentTarget(session)
         publishPlaybackStart(for: session, phase: session.phase)
         return snapshot
@@ -1021,6 +1035,7 @@ public final class SessionEngine {
         session.completionPercent = 0
         currentSession = session
         try persistSession(session)
+        protectPlaybackPosition(for: session)
         try playCurrentTarget(session)
         publishPlaybackStart(for: session, phase: .itemPlayback)
         return snapshot
@@ -1031,6 +1046,7 @@ public final class SessionEngine {
         guard var session = try repository.loadSession(id: sessionId) else {
             throw SessionKitError.invalidCommandForState("inspectSession")
         }
+        pendingPlaybackPosition = nil
         if (session.phase == .finished || session.status == "finished"), session.completionPercent < 100 {
             if session.phase == .finished {
                 session.phase = .itemPlayback
@@ -1038,8 +1054,21 @@ public final class SessionEngine {
             session.status = "in_progress"
             try persistSession(session)
         }
-        currentItem = try repository.loadItem(id: session.itemId)
+        var item = try repository.loadItem(id: session.itemId)
+        item = try discardUnavailableGeneratedTextAudio(from: item)
+        currentItem = item
         currentMap = try repository.loadListeningMap(itemId: session.itemId)
+        if session.currentTargetType == .itemTextTTS,
+           isGeneratedTextMedia(item.media),
+           let timeline = sourceTranscriptTimeline(itemId: item.id),
+           !timeline.segments.isEmpty,
+           !isPartialGeneratedTextMedia(item: item, timeline: timeline) {
+            let mediaTimeMs = mediaTimeMs(forTextOffset: session.position.charOffset, timeline: timeline)
+            session.currentTargetType = .transcriptBackedMedia
+            session.currentTargetId = itemPlaybackTargetId(for: item, targetType: .transcriptBackedMedia)
+            session = mediaSession(session, movedTo: mediaTimeMs)
+            try persistSession(session)
+        }
         if let durationMs = durableMediaDurationMs(for: session) {
             session = try repairMediaPercentages(session, durationMs: durationMs)
         }
@@ -2515,6 +2544,9 @@ public final class SessionEngine {
         switch audio.playbackStartStatus(targetId: targetId) {
         case .confirmed:
             clearPlaybackStartPending()
+            if pendingPlaybackPosition?.targetId == targetId {
+                pendingPlaybackPosition = nil
+            }
             return .confirmed
         case .failed(let message):
             clearPlaybackStartPending()
@@ -2648,13 +2680,17 @@ public final class SessionEngine {
 
     private func playbackPosition(for session: Session) -> PlaybackPosition {
         let audioPosition = audio.currentPlaybackPosition()
+        let protectedPosition = protectedPlaybackPosition(for: session)
+        let positionIsPending = protectedPosition != nil
         switch session.currentTargetType {
         case .itemTextTTS:
             let prefixLength = itemPlaybackPreface().count
             let text = currentItem?.text ?? ""
-            let rawOffset = rawAudioTextOffset()
+            let rawOffset = positionIsPending ? nil : rawAudioTextOffset()
             let isInPreface = rawOffset.map { prefixLength > 0 && $0 <= prefixLength && session.position.chapterId == nil } ?? false
-            let sourceOffset = rawOffset.map { isInPreface ? 0 : itemSourceOffset(forAudioOffset: $0) } ?? session.position.charOffset
+            let sourceOffset = rawOffset.map { isInPreface ? 0 : itemSourceOffset(forAudioOffset: $0) }
+                ?? protectedPosition?.charOffset
+                ?? session.position.charOffset
             let start = max(0, min(sourceOffset, text.count))
             let end = min(text.count, max(start + 1, nextBoundary(after: start, unit: "sentence", text: text)))
             return PlaybackPosition(
@@ -2670,7 +2706,10 @@ public final class SessionEngine {
         case .summaryTurnTTS, .assistantTurnTTS:
             let turn = try? repository.loadTurns(sessionId: session.id).first(where: { $0.id == session.currentTargetId })
             let text = turn.map { generatedTurnNavigationText(for: $0) } ?? ""
-            let audioOffset = rawAudioTextOffset() ?? turn.map { turnAudioOffset(for: $0, responseOffset: session.position.charOffset) } ?? session.position.charOffset
+            let canonicalOffset = protectedPosition?.charOffset ?? session.position.charOffset
+            let audioOffset = (positionIsPending ? nil : rawAudioTextOffset())
+                ?? turn.map { turnAudioOffset(for: $0, responseOffset: canonicalOffset) }
+                ?? canonicalOffset
             let responseOffset = turn.map { turnResponseOffset(for: $0, audioOffset: audioOffset) } ?? session.position.charOffset
             let start = max(0, min(responseOffset, text.count))
             let end = min(text.count, max(start + 1, nextBoundary(after: start, unit: "sentence", text: text)))
@@ -2685,7 +2724,9 @@ public final class SessionEngine {
                 anchorConfidence: .textRange
             )
         case .transcriptBackedMedia, .browserOwnedMedia:
-            let mediaTimeMs = audioPosition?.mediaTimeMs ?? audio.currentMediaTimeMs() ?? session.position.mediaTimeMs
+            let mediaTimeMs = positionIsPending
+                ? protectedPosition?.mediaTimeMs
+                : (audioPosition?.mediaTimeMs ?? audio.currentMediaTimeMs() ?? session.position.mediaTimeMs)
             let durationMs = mediaDurationMs(for: session, position: audioPosition)
             guard let mediaTimeMs else {
                 return PlaybackPosition(
@@ -3261,6 +3302,7 @@ public final class SessionEngine {
             updated.phase = .itemPlayback
             currentSession = updated
             try persistSession(updated)
+            protectPlaybackPosition(for: updated)
             try playCurrentTarget(updated)
             publishPlaybackStart(for: updated, phase: updated.phase)
             return snapshot
@@ -3288,6 +3330,7 @@ public final class SessionEngine {
         currentSession = updated
         lastResolvedMediaAnchor = resolved
         try persistSession(updated)
+        protectPlaybackPosition(for: updated)
         try playCurrentTarget(updated)
         publishPlaybackStart(for: updated, phase: updated.phase)
         return snapshot
@@ -3315,6 +3358,7 @@ public final class SessionEngine {
         }
         let clampedNext = duration.map { max(0, min(next, $0)) } ?? max(0, next)
         updated = mediaSession(updated, movedTo: clampedNext)
+        protectPlaybackPosition(for: updated)
         let reachedEnd = duration.map { $0 > 0 && clampedNext >= $0 } ?? playbackCompleted
         if reachedEnd {
             updated = markPlaybackComplete(updated, item: item(for: updated))
@@ -3358,6 +3402,7 @@ public final class SessionEngine {
         updated = mediaSession(updated, movedTo: previous)
         currentSession = updated
         try persistSession(updated)
+        protectPlaybackPosition(for: updated)
         if snapshot.status.isPlaybackActive {
             try playCurrentTarget(updated)
             publishPlaybackContinuation(for: updated)
@@ -3632,6 +3677,9 @@ public final class SessionEngine {
     }
 
     private func syncCurrentPositionFromAudio(_ session: Session) throws -> Session {
+        guard !hasPendingPlaybackPosition(for: session) else {
+            return session
+        }
         switch session.currentTargetType {
         case .itemTextTTS:
             return syncSessionPositionFromAudio(session, item: currentItem)
@@ -3640,6 +3688,27 @@ public final class SessionEngine {
         case .transcriptBackedMedia, .browserOwnedMedia:
             return try syncMediaPositionFromAudio(session)
         }
+    }
+
+    private func protectPlaybackPosition(for session: Session) {
+        pendingPlaybackPosition = PendingPlaybackPosition(
+            targetId: session.currentTargetId,
+            targetType: session.currentTargetType,
+            position: session.position
+        )
+    }
+
+    private func hasPendingPlaybackPosition(for session: Session) -> Bool {
+        protectedPlaybackPosition(for: session) != nil
+    }
+
+    private func protectedPlaybackPosition(for session: Session) -> Position? {
+        guard let pendingPlaybackPosition else { return nil }
+        guard pendingPlaybackPosition.targetId == session.currentTargetId,
+              pendingPlaybackPosition.targetType == session.currentTargetType else {
+            return nil
+        }
+        return pendingPlaybackPosition.position
     }
 
     private func markPlaybackComplete(_ session: Session, item: Item?) -> Session {
