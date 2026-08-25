@@ -399,7 +399,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     ) {
         self.renderer = renderer
         self.voice = voice
-        self.playbackRate = max(0.7, min(2.0, speed))
+        self.playbackRate = max(0.25, min(2.0, speed))
         self.fallback = fallbackClient ?? SystemSpeechPlaybackClient(
             voiceIdentifier: fallbackVoiceIdentifier,
             speechRate: fallbackRate
@@ -573,7 +573,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     func setPlaybackRate(_ rate: Double) throws {
-        let clamped = Float(max(0.5, min(2.0, rate)))
+        let clamped = Float(max(0.25, min(2.0, rate)))
         let activePlayer = lock.withLock { () -> AVPlayer? in
             playbackRate = clamped
             return transportIntent == .playing ? player : nil
@@ -639,7 +639,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     func playbackTransportState(targetId: String) -> PlaybackTransportState? {
         let snapshot = lock.withLock {
-            (fallbackIsActive, currentTargetId, transportIntent, playbackFailure, playbackComplete, player, !inFlightOffsets.isEmpty)
+            (fallbackIsActive, currentTargetId, transportIntent, playbackFailure, playbackComplete, player)
         }
         if snapshot.0 {
             return fallback.playbackTransportState(targetId: targetId) ?? (snapshot.2 == .paused ? .paused : .playing)
@@ -651,8 +651,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         switch snapshot.5?.timeControlStatus {
         case .playing: return .playing
         case .waitingToPlayAtSpecifiedRate: return .waiting
-        case .paused: return snapshot.6 ? .waiting : .paused
-        case nil: return snapshot.6 ? .waiting : .stopped
+        // A paused or temporarily absent AVPlayer is not a canonical pause
+        // while the transport intent remains playing. This is the normal state
+        // during the deliberate sentence-boundary delay and while the next
+        // rendered chunk is being installed. Reporting `.paused` here stops the
+        // app's canonical progress ticker; the delayed player then starts with
+        // no observation capable of restoring the UI to playing.
+        case .paused, nil: return .waiting
         @unknown default: return nil
         }
     }

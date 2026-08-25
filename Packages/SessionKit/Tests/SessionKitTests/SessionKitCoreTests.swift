@@ -2201,6 +2201,11 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.playbackRate, 1.5)
         XCTAssertEqual(engine.currentSession?.playbackRate, 1.5)
         XCTAssertEqual(audio.playbackRates.last, 1.5)
+
+        let quarterSpeed = try engine.setPlaybackRate(0.25)
+        XCTAssertEqual(quarterSpeed.playbackRate, 0.25)
+        XCTAssertEqual(engine.currentSession?.playbackRate, 0.25)
+        XCTAssertEqual(audio.playbackRates.last, 0.25)
     }
 
     func testRestartPlaybackFromCurrentPositionReplaysTextFromSyncedOffset() throws {
@@ -2579,7 +2584,7 @@ final class SessionKitCoreTests: XCTestCase {
 
         let soughtAgain = try engine.seekMedia(toMediaTimeMs: 2_300)
         XCTAssertEqual(soughtAgain.currentMediaTimeMs, 2_300)
-        audio.reportMediaPosition(1_000)
+        audio.reportMediaPosition(0)
         XCTAssertEqual(try engine.syncPlaybackProgress().currentMediaTimeMs, 2_300)
 
         audio.confirmLatestRequest()
@@ -2587,6 +2592,16 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(confirmed.status, .playing)
         XCTAssertEqual(confirmed.currentMediaTimeMs, 2_300)
         XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 2_300)
+
+        audio.reportMediaPosition(0)
+        let stalePostConfirmationSample = try engine.syncPlaybackProgress()
+        XCTAssertEqual(stalePostConfirmationSample.currentMediaTimeMs, 2_300)
+        XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 2_300)
+
+        audio.reportMediaPosition(2_800)
+        let forwardProgress = try engine.syncPlaybackProgress()
+        XCTAssertEqual(forwardProgress.currentMediaTimeMs, 2_800)
+        XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 2_800)
     }
 
     func testLiveTextSeekKeepsRequestedOffsetWhileSpeechReportsOldOffset() throws {

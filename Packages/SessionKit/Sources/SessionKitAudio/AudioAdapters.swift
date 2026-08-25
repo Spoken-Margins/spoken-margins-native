@@ -664,7 +664,7 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
 
         private static func starterSegments(from segments: [TextAudioSegment], targetDurationMs: Int, speechRate: Float) -> [TextAudioSegment] {
             guard let first = segments.first else { return [] }
-            let rateFactor = max(0.5, min(2.0, Double(speechRate) / 0.5))
+            let rateFactor = max(0.25, min(2.0, Double(speechRate) / 0.5))
             let targetSeconds = max(5.0, Double(targetDurationMs) / 1_000.0)
             let targetCharacters = max(280, min(1_200, Int((targetSeconds * 15.0 * rateFactor).rounded())))
             var selected: [TextAudioSegment] = []
@@ -1268,7 +1268,7 @@ public final class PreparedAudioPlaybackClient: NSObject, AudioPlaybackClient, @
     }
 
     public func setPlaybackRate(_ rate: Double) throws {
-        playbackRate = max(0.5, min(3.0, rate))
+        playbackRate = max(0.25, min(3.0, rate))
         #if canImport(AVFoundation)
         player?.enableRate = true
         if player?.isPlaying == true {
@@ -1561,7 +1561,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     }
 
     public func setPlaybackRate(_ rate: Double) throws {
-        playbackRate = max(0.5, min(3.0, rate))
+        playbackRate = max(0.25, min(3.0, rate))
         #if canImport(AVFoundation)
         if !paused {
             player?.rate = Float(playbackRate)

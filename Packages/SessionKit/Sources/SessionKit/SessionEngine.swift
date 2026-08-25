@@ -2,6 +2,7 @@ import Foundation
 
 public final class SessionEngine {
     private static let textAnchorShoulderSentenceCount = 4
+    private static let mediaClockBackwardToleranceMs = 2_000
     public private(set) var profile: RuntimeCapabilityProfile
     public private(set) var snapshot = SessionSnapshot()
     public private(set) var currentSession: Session?
@@ -582,7 +583,7 @@ public final class SessionEngine {
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("setPlaybackRate")
         }
-        let clamped = max(0.5, min(3.0, rate))
+        let clamped = max(0.25, min(3.0, rate))
         session.playbackRate = clamped
         currentSession = session
         try persistSession(session)
@@ -2724,9 +2725,22 @@ public final class SessionEngine {
                 anchorConfidence: .textRange
             )
         case .transcriptBackedMedia, .browserOwnedMedia:
-            let mediaTimeMs = positionIsPending
-                ? protectedPosition?.mediaTimeMs
-                : (audioPosition?.mediaTimeMs ?? audio.currentMediaTimeMs() ?? session.position.mediaTimeMs)
+            let observedMediaTimeMs = audioPosition?.mediaTimeMs ?? audio.currentMediaTimeMs()
+            let mediaTimeMs: Int?
+            if positionIsPending {
+                mediaTimeMs = protectedPosition?.mediaTimeMs
+            } else if let observedMediaTimeMs,
+                      let canonicalMediaTimeMs = session.position.mediaTimeMs,
+                      observedMediaTimeMs + Self.mediaClockBackwardToleranceMs < canonicalMediaTimeMs {
+                // Transport clocks may briefly publish an obsolete or reset
+                // timestamp after a seek, route rebuild, or interruption. Every
+                // legitimate backward movement enters through a canonical
+                // command first, so an unsolicited backward sample is never
+                // allowed to rewind the session or its scrubber.
+                mediaTimeMs = canonicalMediaTimeMs
+            } else {
+                mediaTimeMs = observedMediaTimeMs ?? session.position.mediaTimeMs
+            }
             let durationMs = mediaDurationMs(for: session, position: audioPosition)
             guard let mediaTimeMs else {
                 return PlaybackPosition(

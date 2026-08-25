@@ -154,6 +154,11 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.snapshot.playbackRate, 1.75, accuracy: 0.001)
         XCTAssertEqual(model.mediaPlaybackRate, 1.75, accuracy: 0.001)
 
+        model.setMediaPlaybackRate(0.33)
+        XCTAssertEqual(model.mediaPlaybackRate, 0.25, accuracy: 0.001)
+        XCTAssertEqual(model.snapshot.playbackRate, 0.25, accuracy: 0.001)
+        model.setMediaPlaybackRate(1.75)
+
         var olderSessionSnapshot = model.snapshot
         olderSessionSnapshot.playbackRate = 1
         model.snapshot = olderSessionSnapshot

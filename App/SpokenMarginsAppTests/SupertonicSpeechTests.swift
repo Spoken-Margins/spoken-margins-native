@@ -192,6 +192,9 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(progress.values.first?.totalChunks, renderCount)
         XCTAssertEqual(progress.values.last?.completedChunks, renderCount)
         XCTAssertEqual(progress.values.last?.percent, 100)
+        for _ in 0..<100 where client.playbackStartStatus(targetId: "prefetch") != .confirmed {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
         XCTAssertEqual(client.playbackStartStatus(targetId: "prefetch"), .confirmed)
         try client.stop()
     }
@@ -343,6 +346,45 @@ final class SupertonicSpeechTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(650))
         XCTAssertGreaterThan(client.debugActiveAudioState().startOffset, secondOffset)
         XCTAssertTrue(fallback.playedOffsets.isEmpty)
+        try client.stop()
+    }
+
+    func testSentenceBoundaryDelayRemainsWaitingInsteadOfReportingUserPause() async throws {
+        let template = try makeTestWAV(duration: 0.1)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let generationReady = expectation(description: "all sentence chunks rendered")
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: CountingAudioSupertonicRenderer(templateURL: template),
+            voice: .m2,
+            speed: 1.75,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            maxCharacters: 120,
+            startupBufferChunkCount: 2,
+            audioSessionActivator: {},
+            audioPlayerStarter: { _, _ in },
+            observesPlayerLifecycle: false,
+            fallbackClient: RecordingFallbackAudioClient(),
+            onGenerationStateChange: { state in
+                if state == .ready { generationReady.fulfill() }
+            }
+        )
+        let source = [
+            "The first rendered sentence contains enough ordinary words to create a distinct audio chunk.",
+            "The second rendered sentence also contains enough ordinary words to exercise the transition delay."
+        ].joined(separator: " ")
+
+        _ = try client.prepareSpeechText(source)
+        try client.play(targetId: "sentence-delay")
+        await fulfillment(of: [generationReady], timeout: 3)
+        for _ in 0..<50 where !client.debugActiveAudioState().hasURL {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+
+        client.debugFinishActiveChunk()
+
+        XCTAssertEqual(client.playbackStartStatus(targetId: "sentence-delay"), .pending)
+        XCTAssertEqual(client.playbackTransportState(targetId: "sentence-delay"), .waiting)
         try client.stop()
     }
 
@@ -508,6 +550,11 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(renderCount, 1)
         XCTAssertEqual(requestedSpeeds, [1.0])
         XCTAssertEqual(client.currentPlaybackPosition()?.playbackRate ?? 0, 1.7, accuracy: 0.001)
+
+        try client.setPlaybackRate(0.25)
+        XCTAssertEqual(client.currentPlaybackPosition()?.playbackRate ?? 0, 0.25, accuracy: 0.001)
+        let quarterSpeedRenderCount = await renderer.renderCount
+        XCTAssertEqual(quarterSpeedRenderCount, 1)
         try client.stop()
     }
 

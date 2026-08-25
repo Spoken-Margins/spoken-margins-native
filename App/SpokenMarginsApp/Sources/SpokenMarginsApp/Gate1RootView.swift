@@ -1418,6 +1418,36 @@ private struct ItemScreen: View {
     }
 }
 
+private struct DiscretePlaybackRateSlider: View {
+    @Binding var value: Double
+    let accessibilityLabel: String
+    let accessibilityValue: String
+    let accessibilityIdentifier: String
+
+    private let rates = stride(from: 0.25, through: 2.0, by: 0.25).map { $0 }
+
+    var body: some View {
+        VStack(spacing: 3) {
+            Slider(value: $value, in: 0.25...2.0, step: 0.25)
+                .accessibilityLabel(accessibilityLabel)
+                .accessibilityValue(accessibilityValue)
+                .accessibilityIdentifier(accessibilityIdentifier)
+            HStack(spacing: 0) {
+                ForEach(Array(rates.enumerated()), id: \.offset) { index, rate in
+                    Capsule()
+                        .fill(rate == 1.0 ? AppColors.accent : Color.secondary.opacity(0.55))
+                        .frame(width: 2, height: rate == 1.0 ? 8 : 5)
+                    if index < rates.count - 1 {
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+            .padding(.horizontal, 14)
+            .accessibilityHidden(true)
+        }
+    }
+}
+
 private struct PlaybackScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -1577,6 +1607,9 @@ private struct PlaybackScreen: View {
                 Text(model.playbackItemHeaderTitle)
                     .font(.title2.weight(.bold))
                     .multilineTextAlignment(.center)
+                    .lineLimit(3)
+                    .minimumScaleFactor(0.85)
+                    .truncationMode(.tail)
                     .foregroundStyle(.white)
             }
             .buttonStyle(.plain)
@@ -1589,6 +1622,8 @@ private struct PlaybackScreen: View {
                     Text(chapterTitle)
                         .font(.subheadline.weight(.semibold))
                         .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .truncationMode(.tail)
                         .foregroundStyle(.white.opacity(0.82))
                 }
                 .buttonStyle(.plain)
@@ -1817,19 +1852,26 @@ private struct PlaybackScreen: View {
             Text(model.compactPlaybackRateDescription)
                 .font(.title2.weight(.bold).monospacedDigit())
             if model.isMediaPlaybackSnapshot {
-                Slider(value: Binding(get: { model.mediaPlaybackRate }, set: { model.setMediaPlaybackRate($0) }), in: 0.75...2.0, step: 0.25)
-                    .accessibilityLabel("Playback speed")
-                    .accessibilityValue(String(format: "%.2f times", model.mediaPlaybackRate))
-                    .accessibilityIdentifier("playback.mediaRate.slider")
+                DiscretePlaybackRateSlider(
+                    value: Binding(get: { model.mediaPlaybackRate }, set: { model.setMediaPlaybackRate($0) }),
+                    accessibilityLabel: "Playback speed",
+                    accessibilityValue: String(format: "%.2f times", model.mediaPlaybackRate),
+                    accessibilityIdentifier: "playback.mediaRate.slider"
+                )
                 Text("Transcript: \(model.sourceTranscriptStatusDescription)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("playback.sourceTranscript.status")
             } else {
-                Slider(value: $model.speechRate, in: 0.35...0.85, step: 0.01)
-                    .accessibilityLabel("Speaking rate")
-                    .accessibilityValue(model.speechRateDescription)
-                    .accessibilityIdentifier("playback.speechRate.slider")
+                DiscretePlaybackRateSlider(
+                    value: Binding(
+                        get: { model.speechPlaybackRateMultiplier },
+                        set: { model.speechRate = $0 * 0.5 }
+                    ),
+                    accessibilityLabel: "Speaking rate",
+                    accessibilityValue: model.speechRateDescription,
+                    accessibilityIdentifier: "playback.speechRate.slider"
+                )
                     .onCompatibleChange(of: model.speechRate) { _ in model.playbackSpeechRateChanged() }
                 Text("Prepared audio: \(model.preparedTextAudioStatusDescription)")
                     .font(.caption)
@@ -2513,10 +2555,15 @@ private struct SettingsScreen: View {
                             Text(model.speechRateDescription)
                                 .foregroundStyle(AppColors.secondaryText)
                         }
-                        Slider(value: $model.speechRate, in: 0.35...0.85, step: 0.01)
-                            .accessibilityLabel("Speaking rate")
-                            .accessibilityValue(model.speechRateDescription)
-                            .accessibilityIdentifier("settings.speechRate.slider")
+                        DiscretePlaybackRateSlider(
+                            value: Binding(
+                                get: { model.speechPlaybackRateMultiplier },
+                                set: { model.speechRate = $0 * 0.5 }
+                            ),
+                            accessibilityLabel: "Speaking rate",
+                            accessibilityValue: model.speechRateDescription,
+                            accessibilityIdentifier: "settings.speechRate.slider"
+                        )
                     }
                     .onCompatibleChange(of: model.speechRate) { _ in
                         model.speechSettingsChanged()

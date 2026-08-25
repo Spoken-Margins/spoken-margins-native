@@ -436,8 +436,17 @@ final class Gate1AppModel: ObservableObject {
     @Published var skipUnit = UserDefaults.standard.string(forKey: "skipUnit") ?? "paragraph"
     @Published var mediaSkipBackSeconds = Gate1AppModel.storedMediaSkipSeconds(forKey: "mediaSkipBackSeconds")
     @Published var mediaSkipForwardSeconds = Gate1AppModel.storedMediaSkipSeconds(forKey: "mediaSkipForwardSeconds")
-    @Published var speechRate = UserDefaults.standard.double(forKey: "speechRate") == 0 ? 0.5 : UserDefaults.standard.double(forKey: "speechRate")
-    @Published var mediaPlaybackRate = UserDefaults.standard.double(forKey: "mediaPlaybackRate") == 0 ? 1.0 : UserDefaults.standard.double(forKey: "mediaPlaybackRate")
+    @Published var speechRate: Double = {
+        let stored = UserDefaults.standard.double(forKey: "speechRate")
+        let rawRate = stored == 0 ? 0.5 : stored
+        let multiplier = max(0.25, min(2.0, ((rawRate / 0.5) * 4).rounded() / 4))
+        return multiplier * 0.5
+    }()
+    @Published var mediaPlaybackRate: Double = {
+        let stored = UserDefaults.standard.double(forKey: "mediaPlaybackRate")
+        let rawRate = stored == 0 ? 1.0 : stored
+        return max(0.25, min(2.0, (rawRate * 4).rounded() / 4))
+    }()
     @Published var podcastCacheLimitGB = PodcastCacheLimitGB(
         rawValue: UserDefaults.standard.integer(forKey: "podcastCacheLimitGB")
     )?.rawValue ?? PodcastCacheLimitGB.defaultValue.rawValue
@@ -3052,7 +3061,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func setMediaPlaybackRate(_ rate: Double) {
-        let clamped = max(0.75, min(2.0, rate))
+        let clamped = max(0.25, min(2.0, (rate * 4).rounded() / 4))
         mediaPlaybackRate = clamped
         UserDefaults.standard.set(clamped, forKey: "mediaPlaybackRate")
         run { engine in
@@ -3098,7 +3107,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func applySupertonicPlaybackRate() {
-        let transportRate = max(0.7, min(2.0, speechRate / 0.5))
+        let transportRate = speechPlaybackRateMultiplier
         do {
             try speechPlaybackClient?.configureSpeechSettings(
                 voiceIdentifier: speechVoiceIdentifier.isEmpty ? nil : speechVoiceIdentifier,
@@ -3126,7 +3135,7 @@ final class Gate1AppModel: ObservableObject {
         case TargetType.itemTextTTS.rawValue,
              TargetType.assistantTurnTTS.rawValue,
              TargetType.summaryTurnTTS.rawValue where ttsVoiceSelection.supertonicVoice != nil:
-            let transportRate = max(0.7, min(2.0, speechRate / 0.5))
+            let transportRate = speechPlaybackRateMultiplier
             return started.playbackRate == transportRate
                 ? started
                 : try engine.setPlaybackRate(transportRate)
@@ -4778,12 +4787,16 @@ final class Gate1AppModel: ObservableObject {
 
     var speechRateDescription: String {
         if ttsVoiceSelection.supertonicVoice != nil {
-            return String(format: "Supertonic %.2fx", max(0.7, min(2.0, speechRate / 0.5)))
+            return String(format: "Supertonic %.2fx", speechPlaybackRateMultiplier)
         }
         if ttsMode == "kokoro", isKokoroDeviceBuild {
             return String(format: "Kokoro %.2fx", max(0.65, min(1.75, speechRate / 0.5)))
         }
-        return String(format: "System %.2f", speechRate)
+        return String(format: "System %.2fx", speechPlaybackRateMultiplier)
+    }
+
+    var speechPlaybackRateMultiplier: Double {
+        max(0.25, min(2.0, ((speechRate / 0.5) * 4).rounded() / 4))
     }
 
     var mediaPlaybackRateDescription: String {
@@ -4794,8 +4807,7 @@ final class Gate1AppModel: ObservableObject {
         if isMediaPlaybackSnapshot {
             return String(format: "%.2f×", mediaPlaybackRate)
         }
-        let effectiveRate = max(0.5, speechRate / 0.5)
-        return String(format: "%.2f×", effectiveRate)
+        return String(format: "%.2f×", speechPlaybackRateMultiplier)
     }
 
     var playbackHeaderTitle: String {
@@ -5381,11 +5393,12 @@ final class Gate1AppModel: ObservableObject {
             if command == .setPlaybackRate,
                let playbackRate {
                 if isMediaPlaybackSnapshot {
-                    mediaPlaybackRate = max(0.75, min(2.0, playbackRate))
+                    mediaPlaybackRate = max(0.25, min(2.0, (playbackRate * 4).rounded() / 4))
                     UserDefaults.standard.set(mediaPlaybackRate, forKey: "mediaPlaybackRate")
                     diagnostics["mediaPlaybackRate"] = String(format: "%.2f", mediaPlaybackRate)
                 } else {
-                    speechRate = max(0.35, min(0.85, playbackRate * 0.5))
+                    let snappedRate = max(0.25, min(2.0, (playbackRate * 4).rounded() / 4))
+                    speechRate = snappedRate * 0.5
                     UserDefaults.standard.set(speechRate, forKey: "speechRate")
                 }
             }
