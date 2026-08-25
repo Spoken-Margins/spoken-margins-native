@@ -1,30 +1,31 @@
 # Staged GitHub feature requests and issue edits
 
-Status: **staged locally; not published to GitHub**  
+Status: **published to GitHub and verified**  
 Target repository: `uncomposed/spoken-margins-native`  
 Prepared: 2026-08-24
+Published and verified: 2026-08-24
 
-This file is the handoff for GitHub writes that could not be completed because the
-connected GitHub integration allowed reads but rejected approval-gated writes. It
-contains eleven ready-to-publish issue creations and five publication-ready edits to existing
-issues. It is intentionally a staging artifact rather than a product specification.
+This file began as the handoff for GitHub writes that could not be completed because
+the connected integration rejected approval-gated writes. Its eleven issue creations
+and five existing-issue edits have now been published. It is retained as an audit
+record rather than a product specification.
 
 ## Publishing order and placeholders
 
 Create the issues in this order and replace each placeholder everywhere in this
 file with the resulting issue number before editing the existing issues:
 
-1. `{{STORAGE_ISSUE}}` — unified offline-storage budget.
-2. `{{DEMAND_WINDOW_PREPARATION_ISSUE}}` — power-aware demand-window TTS preparation.
-3. `{{BACKGROUND_PREPARATION_ISSUE}}` — charging-only background preparation.
-4. `{{WATCH_OFFLINE_ISSUE}}` — untethered Watch playback and interjection sync.
-5. `{{FEED_SUBSCRIPTIONS_ISSUE}}` — local subscriptions and source inbox.
-6. `{{FEED_SUGGESTIONS_ISSUE}}` — engagement-based follow suggestions.
-7. `{{PDF_CHAPTERS_ISSUE}}` — canonical PDF chapters and front matter.
-8. `{{LOCAL_AUDIOBOOK_ISSUE}}` — DRM-free local audiobook intake.
-9. `{{COVERAGE_LEDGER_ISSUE}}` — app-observed listening and reading coverage.
-10. `{{SHARING_AUDIT_ISSUE}}` — reconcile claimed sharing implementation with source.
-11. `{{CLASSROOM_PACKET_PILOT_ISSUE}}` — transport-neutral classroom assignment and return packets.
+1. `#72` — unified offline-storage budget.
+2. `#73` — power-aware demand-window TTS preparation.
+3. `#74` — charging-only background preparation.
+4. `#75` — untethered Watch playback and interjection sync.
+5. `#76` — local subscriptions and source inbox.
+6. `#77` — engagement-based follow suggestions.
+7. `#78` — canonical PDF chapters and front matter.
+8. `#79` — DRM-free local audiobook intake.
+9. `#80` — app-observed listening and reading coverage.
+10. `#81` — reconcile claimed sharing implementation with source.
+11. `#82` — transport-neutral classroom assignment and return packets.
 
 Use the titles and Markdown bodies below verbatim unless the repository has changed
 enough that a stated current-state claim is no longer true. Title prefixes encode
@@ -36,7 +37,7 @@ sixteen affected issues and run the verification checklist at the end of this fi
 
 ---
 
-## Create `{{STORAGE_ISSUE}}`
+## Create `#72`
 
 **Status:** Created as [#72 — Unified offline-storage budget for podcasts,
 prepared text, and Watch packages](https://github.com/uncomposed/spoken-margins-native/issues/72)
@@ -165,7 +166,7 @@ Do not imply that a byte limit is consent to follow, download, import, or prepar
 ## Dependencies and related work
 
 - #64 provides the durable prepared-audio manifest and ownership information this ledger must account for.
-- {{BACKGROUND_PREPARATION_ISSUE}} and {{WATCH_OFFLINE_ISSUE}} should depend on this issue before enabling automatic growth.
+- #74 and #75 should depend on this issue before enabling automatic growth.
 
 ## Non-goals
 
@@ -177,7 +178,10 @@ Do not imply that a byte limit is consent to follow, download, import, or prepar
 
 ---
 
-## Create `{{BACKGROUND_PREPARATION_ISSUE}}`
+## Create `#74`
+
+**Status:** Created as [#74 — [Post-MVP] Charging-only background preparation for native-text audio](https://github.com/uncomposed/spoken-margins-native/issues/74) through
+the GitHub connector on 2026-08-24.
 
 ### Title
 
@@ -199,7 +203,7 @@ This is a best-effort iOS background capability. It must not promise that work w
 - #64 defines durable, resumable prepared native-text audio but currently limits automatic work to the active/newly imported item.
 - The app declares background audio capability, not a `BGProcessingTask` identifier and launch handler.
 - The current render path can persist chunk audio and assemble a complete prepared file, but it does not have a durable OS-scheduled job queue.
-- Existing podcast, rendered-chunk, completed prepared-audio, and Watch-package bytes do not yet share one global storage budget; that work is tracked by {{STORAGE_ISSUE}}.
+- Existing podcast, rendered-chunk, completed prepared-audio, and Watch-package bytes do not yet share one global storage budget; that work is tracked by #72.
 
 ## Product policy
 
@@ -215,7 +219,7 @@ The setting chooses whether work may be scheduled; it does not choose which arbi
 - no listening session for the item is substantially complete (initial threshold: 90%);
 - its render signature is current and the manifest is incomplete;
 - the user has not stopped or excluded the item;
-- required output space can be reserved under {{STORAGE_ISSUE}};
+- required output space can be reserved under #72;
 - device thermal and low-space policy permit another chunk.
 
 An explicit **Prepare Audio** action may override the substantially-complete rule but not storage, integrity, or device-safety rules.
@@ -282,7 +286,7 @@ Keep these layers separate:
 - [ ] Expiration at every representative chunk boundary preserves earlier commits and restarts only the incomplete chunk.
 - [ ] Relaunch/reboot reconstructs jobs from durable state rather than an in-memory task.
 - [ ] Thermal, low-space, stale-signature, deletion, and Stop transitions prevent the next chunk without corrupting committed output.
-- [ ] Storage is reserved and committed through {{STORAGE_ISSUE}}; complete packages cannot grow outside the selected budget.
+- [ ] Storage is reserved and committed through #72; complete packages cannot grow outside the selected budget.
 - [ ] Foreground and background rendering produce the same manifest signature, mappings, checksums, and canonical prepared-media behavior.
 - [ ] Contract validators, SessionKit tests, background-task tests, and iOS device builds pass.
 - [ ] The product owner human-validates opt-in, Stop, charging behavior, overnight progress, and prepared playback on supported physical devices.
@@ -298,8 +302,8 @@ Keep these layers separate:
 ## Dependencies and related work
 
 - Depends on #64 for durable render manifests and atomic chunk commits.
-- Depends on {{STORAGE_ISSUE}} before automatic preparation can be enabled.
-- {{WATCH_OFFLINE_ISSUE}} consumes the completed artifact but should not own the phone renderer.
+- Depends on #72 before automatic preparation can be enabled.
+- #75 consumes the completed artifact but should not own the phone renderer.
 
 ## Non-goals
 
@@ -312,7 +316,10 @@ Keep these layers separate:
 
 ---
 
-## Create `{{WATCH_OFFLINE_ISSUE}}`
+## Create `#75`
+
+**Status:** Created as [#75 — [Post-MVP] Restore untethered Apple Watch playback and interjection sync](https://github.com/uncomposed/spoken-margins-native/issues/75) through
+the GitHub connector on 2026-08-24.
 
 ### Title
 
@@ -334,7 +341,7 @@ The phone should render once. Watch delivery must package the same verified prep
 - The repository contains prior Watch connectivity, package-rendering, playback, and closeout documentation.
 - The current generated project configuration does not expose an active Watch app target and excludes key Watch connectivity/package coordinator sources from the iOS target.
 - Existing package work can inform the implementation, but target wiring, signing, current runtime integration, and end-to-end transfer behavior must be re-audited rather than assumed complete.
-- Watch package files are not currently governed by the same top-level storage budget as phone downloads and prepared text; that dependency is {{STORAGE_ISSUE}}.
+- Watch package files are not currently governed by the same top-level storage budget as phone downloads and prepared text; that dependency is #72.
 
 ## Execution topology
 
@@ -343,7 +350,7 @@ Keep these responsibilities distinct:
 ### Phone preparation
 
 - #64 owns source normalization, Supertonic synthesis, the durable manifest, exact duration, and source-to-media mapping.
-- {{BACKGROUND_PREPARATION_ISSUE}} may schedule that work while charging.
+- #74 may schedule that work while charging.
 - No Watch-specific synthesis output is generated until a complete compatible manifest exists.
 
 ### Watch package assembly
@@ -386,7 +393,7 @@ Package assembly must be atomic and idempotent. A changed source, voice, model, 
 - Restore the Watch app/extension target, schemes, source membership, entitlements, deployment targets, assets, signing relationships, and generated-project configuration.
 - Reconcile dormant Watch code with the current SessionKit contracts instead of reviving obsolete snapshot or command IDs.
 - Define phone deletion, Watch removal, stale package, reinstall, version-skew, and paired-device replacement behavior.
-- Count phone packages and Watch-installed copies separately through {{STORAGE_ISSUE}} while protecting in-flight transfers and unsynced recordings.
+- Count phone packages and Watch-installed copies separately through #72 while protecting in-flight transfers and unsynced recordings.
 
 ## Acceptance criteria
 
@@ -415,8 +422,8 @@ Package assembly must be atomic and idempotent. A changed source, voice, model, 
 ## Dependencies and related work
 
 - Depends on #64 for the canonical prepared representation and source-to-media mapping.
-- Depends on {{STORAGE_ISSUE}} for bounded phone and Watch storage.
-- May consume output scheduled by {{BACKGROUND_PREPARATION_ISSUE}}, but manual phone preparation must also work.
+- Depends on #72 for bounded phone and Watch storage.
+- May consume output scheduled by #74, but manual phone preparation must also work.
 - Preserve the canonical playback-state corrections tracked by #59 and #71.
 
 ## Non-goals
@@ -429,7 +436,10 @@ Package assembly must be atomic and idempotent. A changed source, voice, model, 
 
 ---
 
-## Create `{{FEED_SUBSCRIPTIONS_ISSUE}}`
+## Create `#76`
+
+**Status:** Created as [#76 — [Post-MVP] Local feed subscriptions and “New from Sources” inbox](https://github.com/uncomposed/spoken-margins-native/issues/76) through
+the GitHub connector on 2026-08-24.
 
 ### Title
 
@@ -531,7 +541,7 @@ Keep these concepts separate:
 ## Dependencies and related work
 
 - Reuse the podcast feed-resolution and parsing foundations from #46.
-- {{FEED_SUGGESTIONS_ISSUE}} depends on this issue for the actual follow action and inbox.
+- #77 depends on this issue for the actual follow action and inbox.
 - #49 may pass richer article/feed evidence from a desktop browser but is not required for the local subscription core.
 
 ## Non-goals
@@ -544,7 +554,10 @@ Keep these concepts separate:
 
 ---
 
-## Create `{{FEED_SUGGESTIONS_ISSUE}}`
+## Create `#77`
+
+**Status:** Created as [#77 — [Post-MVP] Engagement-based feed suggestions for podcast and article items](https://github.com/uncomposed/spoken-margins-native/issues/77) through
+the GitHub connector on 2026-08-24.
 
 ### Title
 
@@ -557,7 +570,7 @@ Keep these concepts separate:
 ```markdown
 ## Outcome
 
-When a user is meaningfully engaged with a podcast episode or article, offer a low-friction, local suggestion to follow its source. Accepting the suggestion creates the subscription defined by {{FEED_SUBSCRIPTIONS_ISSUE}}; dismissing it is remembered and frequency-capped.
+When a user is meaningfully engaged with a podcast episode or article, offer a low-friction, local suggestion to follow its source. Accepting the suggestion creates the subscription defined by #76; dismissing it is remembered and frequency-capped.
 
 Interjections are a strong engagement signal, but the system may also use a documented listening-progress threshold so a user does not have to create an interjection merely to see a relevant follow option.
 
@@ -630,7 +643,7 @@ An item becomes prompt-eligible only when all are true:
 
 Present an inline card or compact post-engagement affordance containing the source name and a clear **Follow** action. Provide **Not now** and a durable **Don't suggest this source** path. Do not obscure transport controls or interrupt spoken audio.
 
-Accepting follows the exact displayed feed through {{FEED_SUBSCRIPTIONS_ISSUE}}. It does not import, download, or prepare unseen entries.
+Accepting follows the exact displayed feed through #76. It does not import, download, or prepare unseen entries.
 
 ## Acceptance criteria
 
@@ -657,7 +670,7 @@ Accepting follows the exact displayed feed through {{FEED_SUBSCRIPTIONS_ISSUE}}.
 
 ## Dependencies and related work
 
-- Depends on {{FEED_SUBSCRIPTIONS_ISSUE}} for subscription persistence, refresh, and inbox behavior.
+- Depends on #76 for subscription persistence, refresh, and inbox behavior.
 - Reuses #46 for podcast feed resolution.
 - #49 may supply canonical/feed-link evidence for browser-originated articles.
 
@@ -671,7 +684,7 @@ Accepting follows the exact displayed feed through {{FEED_SUBSCRIPTIONS_ISSUE}}.
 
 ---
 
-## Create `{{DEMAND_WINDOW_PREPARATION_ISSUE}}`
+## Create `#73`
 
 **Status:** Created as [#73 — [Post-MVP] Power-aware demand-window TTS preparation for long-form text and EPUBs](https://github.com/uncomposed/spoken-margins-native/issues/73) through
 the GitHub connector on 2026-08-24.
@@ -694,7 +707,7 @@ Prepare enough synthesized audio to keep long-form text and EPUB playback contin
 - **Canonical source structure:** PDF/Markdown/EPUB chapter and source locations exist independently of rendered audio.
 - **Durable preparation:** #64 owns chunk manifests, atomic commits, invalidation, media-time mapping, and completed prepared media.
 - **Eligibility and horizon:** this issue decides which chunks should render next based on listening demand and device conditions.
-- **Execution topology:** {{BACKGROUND_PREPARATION_ISSUE}} owns opt-in `BGProcessingTask` scheduling and OS expiration/relaunch behavior; this issue's horizon policy also governs foreground work.
+- **Execution topology:** #74 owns opt-in `BGProcessingTask` scheduling and OS expiration/relaunch behavior; this issue's horizon policy also governs foreground work.
 - **Playback:** the active session consumes valid prepared audio when available and exposes an honest buffering/preparing state at an unprepared boundary; it must not silently change voice/runtime.
 
 ## Scheduling policy
@@ -732,8 +745,8 @@ Do not ship an “always render everything” policy under a power-aware name. S
 
 - #64 owns durable prepared media.
 - #61 owns EPUB structure and source-location correctness.
-- {{BACKGROUND_PREPARATION_ISSUE}} owns optional background execution topology.
-- {{STORAGE_ISSUE}} owns byte accounting, reservations, and eviction policy.
+- #74 owns optional background execution topology.
+- #72 owns byte accounting, reservations, and eviction policy.
 
 ## Non-goals
 
@@ -744,7 +757,10 @@ Do not ship an “always render everything” policy under a power-aware name. S
 
 ---
 
-## Create `{{PDF_CHAPTERS_ISSUE}}`
+## Create `#78`
+
+**Status:** Created as [#78 — Preserve canonical PDF chapters and distinguish table of contents/front matter](https://github.com/uncomposed/spoken-margins-native/issues/78) through
+the GitHub connector on 2026-08-24.
 
 ### Title
 
@@ -798,7 +814,10 @@ Implemented on the main working tree with focused package coverage and a generat
 
 ---
 
-## Create `{{LOCAL_AUDIOBOOK_ISSUE}}`
+## Create `#79`
+
+**Status:** Created as [#79 — [Post-MVP] Import DRM-free local audiobooks as native audio](https://github.com/uncomposed/spoken-margins-native/issues/79) through
+the GitHub connector on 2026-08-24.
 
 ### Title
 
@@ -859,7 +878,7 @@ Exercise fixtures across supported containers, metadata encodings, embedded/no c
 ## Dependencies and related work
 
 - #46, #55, and #66 cover direct audio URLs or native-audio defects, but not durable local-file intake.
-- {{STORAGE_ISSUE}} owns global offline byte accounting and eviction policy.
+- #72 owns global offline byte accounting and eviction policy.
 
 ## Non-goals
 
@@ -870,7 +889,10 @@ Exercise fixtures across supported containers, metadata encodings, embedded/no c
 
 ---
 
-## Create `{{COVERAGE_LEDGER_ISSUE}}`
+## Create `#80`
+
+**Status:** Created as [#80 — [Post-MVP] Record app-observed source coverage for listening and in-app reading](https://github.com/uncomposed/spoken-margins-native/issues/80) through
+the GitHub connector on 2026-08-24.
 
 ### Title
 
@@ -988,7 +1010,10 @@ Replay identical event fixtures through clean install, relaunch, and migration p
 
 ---
 
-## Create `{{SHARING_AUDIT_ISSUE}}`
+## Create `#81`
+
+**Status:** Created as [#81 — [Audit] Reconcile claimed interjection-sharing implementation with source](https://github.com/uncomposed/spoken-margins-native/issues/81) through
+the GitHub connector on 2026-08-24.
 
 ### Title
 
@@ -1036,7 +1061,7 @@ Resolve the discrepancy with one evidence-backed result:
 - [ ] Run the contract validators, focused SessionKit tests, and relevant app build at the located/reconciled source.
 - [ ] Exercise export/import with valid, malformed, unsupported-version, wrong-source, duplicate, and tampered fixtures.
 - [ ] Record what is implemented, what is merely verified by automation, and what still requires product-owner validation.
-- [ ] Update downstream dependencies in #70 and {{CLASSROOM_PACKET_PILOT_ISSUE}} to match the result.
+- [ ] Update downstream dependencies in #70 and #82 to match the result.
 
 ## Audit and stopping rule
 
@@ -1053,7 +1078,10 @@ Related: #17, #18, #19, and #70.
 
 ---
 
-## Create `{{CLASSROOM_PACKET_PILOT_ISSUE}}`
+## Create `#82`
+
+**Status:** Created as [#82 — [Post-MVP] Validate transport-neutral classroom assignment and return packets](https://github.com/uncomposed/spoken-margins-native/issues/82) through
+the GitHub connector on 2026-08-24.
 
 ### Title
 
@@ -1101,7 +1129,7 @@ The package must not redistribute copyrighted source content by default. Bundled
 - assignment and source binding;
 - participant-chosen display identity appropriate to a package-only pilot;
 - selected interjections with durable source anchors and required media assets;
-- optional participation receipt from {{COVERAGE_LEDGER_ISSUE}};
+- optional participation receipt from #80;
 - package/schema versions, creation time, and integrity digest;
 - no unrelated library history, raw event ledger, or unselected private interjections.
 
@@ -1129,10 +1157,10 @@ The package must not redistribute copyrighted source content by default. Bundled
 ## Dependencies and related work
 
 - Epic: #70.
-- Blocked by {{SHARING_AUDIT_ISSUE}} and the verified implementation state of #17.
+- Blocked by #81 and the verified implementation state of #17.
 - #18 supplies the imported-participant-layer model; #19 extends it into recursive asynchronous conversation.
 - #14 defines source/content rights boundaries; #27 defines cross-edition anchors.
-- Optional receipts consume {{COVERAGE_LEDGER_ISSUE}} but do not block validating assignment and interjection exchange without telemetry.
+- Optional receipts consume #80 but do not block validating assignment and interjection exchange without telemetry.
 - #22 may add signing later; a package digest does not prove participant identity.
 - #26 and #68 cover synthesis and provenance-aware presentation after the one-way exchange works.
 
@@ -1152,6 +1180,9 @@ Run the same assignment across link-only public content, a changed edition, an u
 
 ## Edit existing issue #64
 
+**Status:** Applied all seven staged edit groups through the GitHub connector on
+2026-08-24; resulting issue update timestamp `2026-08-25T04:04:06Z`.
+
 Issue: [#64 — Durable prepared native-text audio and Lock Screen scrubbing](https://github.com/uncomposed/spoken-margins-native/issues/64)
 
 Apply these exact edits while preserving the rest of the issue body.
@@ -1167,7 +1198,7 @@ Replace:
 With:
 
 ```markdown
-- Count every committed chunk, completed artifact, and retained Watch derivative through the unified offline-storage ledger in {{STORAGE_ISSUE}}. Until that ledger exists, automatic preparation must use a conservative temporary quota that accounts for completed packages as well as chunks; it must not assume podcast download settings bound prepared audio. Lowering a limit must not make the source item unplayable.
+- Count every committed chunk, completed artifact, and retained Watch derivative through the unified offline-storage ledger in #72. Until that ledger exists, automatic preparation must use a conservative temporary quota that accounts for completed packages as well as chunks; it must not assume podcast download settings bound prepared audio. Lowering a limit must not make the source item unplayable.
 ```
 
 ### 2. Insert a scheduling and consumer boundary
@@ -1179,10 +1210,10 @@ Insert this section immediately before `### Thermal scheduling acceptance checks
 
 This issue owns the durable render representation, resumability, foreground/on-demand preparation behavior, and promotion into canonical prepared playback.
 
-- {{BACKGROUND_PREPARATION_ISSUE}} owns opt-in `BGProcessingTask` scheduling while connected to power, durable preparation jobs, expiration handling, and best-effort overnight execution.
-- {{DEMAND_WINDOW_PREPARATION_ISSUE}} owns the eligible-chunk horizon, battery/charging policy, and chapter-jump reprioritization in foreground and background execution.
-- {{WATCH_OFFLINE_ISSUE}} consumes the same completed representation and source-to-media mapping; it must not create a second Watch-specific TTS renderer.
-- {{STORAGE_ISSUE}} owns total byte accounting, reservations, protection reasons, and cross-category eviction.
+- #74 owns opt-in `BGProcessingTask` scheduling while connected to power, durable preparation jobs, expiration handling, and best-effort overnight execution.
+- #73 owns the eligible-chunk horizon, battery/charging policy, and chapter-jump reprioritization in foreground and background execution.
+- #75 consumes the same completed representation and source-to-media mapping; it must not create a second Watch-specific TTS renderer.
+- #72 owns total byte accounting, reservations, protection reasons, and cross-category eviction.
 
 Completion of this issue alone must not be read as permission to sweep the library in the background, exceed a truthful global storage limit, or transfer packages to Watch.
 ```
@@ -1198,7 +1229,7 @@ Replace:
 With:
 
 ```markdown
-- [ ] Every manifest-owned chunk and complete artifact has stable ownership/byte metadata consumable by {{STORAGE_ISSUE}}; eviction, deletion, corrupt-file recovery, and low-space failure leave the source item recoverable.
+- [ ] Every manifest-owned chunk and complete artifact has stable ownership/byte metadata consumable by #72; eviction, deletion, corrupt-file recovery, and low-space failure leave the source item recoverable.
 ```
 
 ### 4. Replace the final related line
@@ -1212,7 +1243,7 @@ Related: #62. Existing prepared-media and rendered-chunk infrastructure should b
 With:
 
 ```markdown
-Related: #61, #62, {{STORAGE_ISSUE}}, {{DEMAND_WINDOW_PREPARATION_ISSUE}}, {{BACKGROUND_PREPARATION_ISSUE}}, and {{WATCH_OFFLINE_ISSUE}}. Existing prepared-media and rendered-chunk infrastructure should be reused rather than introducing a new source category.
+Related: #61, #62, #72, #73, #74, and #75. Existing prepared-media and rendered-chunk infrastructure should be reused rather than introducing a new source category.
 ```
 
 ### 5. Replace the incomplete-playback prioritization bullet
@@ -1226,7 +1257,7 @@ Prioritize enough initial audio for prompt playback, then continue serially with
 With:
 
 ```markdown
-Prioritize enough initial audio for prompt playback. Further serial preparation follows {{DEMAND_WINDOW_PREPARATION_ISSUE}}: normally current plus bounded next-chapter demand on battery, with longer opportunistic preparation only while device conditions permit.
+Prioritize enough initial audio for prompt playback. Further serial preparation follows #73: normally current plus bounded next-chapter demand on battery, with longer opportunistic preparation only while device conditions permit.
 ```
 
 ### 6. Rename and reframe the thermal scheduling section
@@ -1242,7 +1273,7 @@ The renderer should keep Supertonic warm and continue through the eligible item 
 With:
 
 ```markdown
-This issue defines how eligible chunks are rendered and committed durably. It does not require unconditional full-item rendering. Eligibility, preparation horizon, battery/charging behavior, Low Power Mode, and jump reprioritization belong to {{DEMAND_WINDOW_PREPARATION_ISSUE}}.
+This issue defines how eligible chunks are rendered and committed durably. It does not require unconditional full-item rendering. Eligibility, preparation horizon, battery/charging behavior, Low Power Mode, and jump reprioritization belong to #73.
 ```
 
 Reconcile the remaining bullets without weakening these constraints:
@@ -1250,7 +1281,7 @@ Reconcile the remaining bullets without weakening these constraints:
 - At most one resource-intensive item render job runs at a time.
 - The runtime may remain warm only while another currently eligible chunk is ready to start.
 - Thermal checks, Stop, atomic commits, manifest-derived progress, completion-skip behavior, explicit Prepare Audio, storage caps, cancellation, and model release remain required.
-- “Active/newly imported eligible item” does not imply “render the entire item on battery”; {{DEMAND_WINDOW_PREPARATION_ISSUE}} defines the eligible horizon.
+- “Active/newly imported eligible item” does not imply “render the entire item on battery”; #73 defines the eligible horizon.
 
 ### 7. Add demand-horizon acceptance criteria
 
@@ -1259,12 +1290,15 @@ Add these checklist items to `## Acceptance criteria`:
 ```markdown
 - [ ] Durable rendering accepts a changing eligible-chunk horizon without corrupting, deleting, or rerendering compatible committed chunks.
 - [ ] Completion of a durable whole-item representation is optional progress, not a prerequisite for bounded long-form playback.
-- [ ] Tests prove execution obeys the scheduling decision supplied by {{DEMAND_WINDOW_PREPARATION_ISSUE}} rather than independently scheduling every remaining chunk.
+- [ ] Tests prove execution obeys the scheduling decision supplied by #73 rather than independently scheduling every remaining chunk.
 ```
 
 ---
 
 ## Edit existing issue #34
+
+**Status:** Applied through the GitHub connector on 2026-08-24; resulting issue
+update timestamp `2026-08-25T04:03:13Z`.
 
 Issue: [#34 — Remove Kokoro/MLX and evaluate Supertonic as the local TTS path](https://github.com/uncomposed/spoken-margins-native/issues/34)
 
@@ -1350,7 +1384,7 @@ Playback rate is a playback concern and must not invalidate rendered audio. The 
 ## Dependencies and related work
 
 - #64 consumes the canonical Supertonic render identity for durable prepared audio.
-- {{BACKGROUND_PREPARATION_ISSUE}} must use the same identity in foreground and background jobs.
+- #74 must use the same identity in foreground and background jobs.
 
 ## Non-goals
 
@@ -1362,6 +1396,9 @@ Playback rate is a playback concern and must not invalidate rendered audio. The 
 ---
 
 ## Edit existing issue #61
+
+**Status:** Applied through the GitHub connector on 2026-08-24; resulting issue
+update timestamp `2026-08-25T04:03:14Z`.
 
 Issue: [#61 — Support DRM-free EPUBs with canonical chapter playback and interjections](https://github.com/uncomposed/spoken-margins-native/issues/61)
 
@@ -1382,7 +1419,7 @@ Keep EPUB ingestion, canonical structure, and audio preparation as separate laye
 - Chapter jumps reprioritize the selected chapter immediately and discard only obsolete uncommitted work; valid committed audio remains reusable.
 - When external power, Low Power Mode, thermal state, and background execution conditions permit, preparation may extend beyond the normal look-ahead toward the remainder of the book.
 - On battery or under constrained power/thermal conditions, return to the bounded demand window rather than eagerly rendering the entire EPUB.
-- Scheduling policy belongs to {{DEMAND_WINDOW_PREPARATION_ISSUE}}; EPUB structure and interjection correctness must not depend on full-book preparation completing.
+- Scheduling policy belongs to #73; EPUB structure and interjection correctness must not depend on full-book preparation completing.
 
 ## Additional acceptance criteria
 
@@ -1393,7 +1430,7 @@ Keep EPUB ingestion, canonical structure, and audio preparation as separate laye
 - [ ] Plugging in can extend preparation when Low Power Mode and thermal state allow, without changing playback position or duplicating committed audio.
 - [ ] Relaunch reconstructs preparation state from durable manifests and never confuses prepared-media time with canonical EPUB source location.
 
-Related: #64 and {{DEMAND_WINDOW_PREPARATION_ISSUE}}.
+Related: #64 and #73.
 ```
 
 ---
@@ -1503,6 +1540,9 @@ Do not close this issue if the tutorial is still binary-only, if remote refresh 
 
 ## Edit existing issue #70
 
+**Status:** Applied all nine staged edit groups through the GitHub connector on
+2026-08-24; resulting issue update timestamp `2026-08-25T04:03:30Z`.
+
 Issue: [#70 — Classroom assignments, interjection returns, and verifiable listening receipts](https://github.com/uncomposed/spoken-margins-native/issues/70)
 
 The title and body below were re-fetched unchanged on 2026-08-24. Apply these exact
@@ -1537,7 +1577,7 @@ With:
 ```markdown
 Add a **Classroom** experience in which one or more teachers can distribute a source assignment to one or more students. Students may listen in Spoken Margins, read through an instrumented Spoken Margins reading surface, or use a clearly labeled external/self-attested route; they can interject while working and return a reviewable packet containing their selected interjections and source anchors.
 
-An optional higher-trust mode can also return an **app-observed participation receipt** derived from {{COVERAGE_LEDGER_ISSUE}}: a conservative account of supported playback, in-app presentation, and interjection events, with policy-selected user-presence authorization at each interjection. This is evidence about app-observed presentation and payload integrity—not proof of attention, comprehension, legal identity, authorship, or academic honesty.
+An optional higher-trust mode can also return an **app-observed participation receipt** derived from #80: a conservative account of supported playback, in-app presentation, and interjection events, with policy-selected user-presence authorization at each interjection. This is evidence about app-observed presentation and payload integrity—not proof of attention, comprehension, legal identity, authorship, or academic honesty.
 ```
 
 ### 3. Replace Core workflow step 3
@@ -1574,7 +1614,7 @@ With:
 ```markdown
 ### Participation evidence
 
-- versioned source-relative listening and in-app reading observations supplied by {{COVERAGE_LEDGER_ISSUE}}
+- versioned source-relative listening and in-app reading observations supplied by #80
 - listening boundaries including seek/pause/rate changes, replay, interruptions, and declared offline gaps
 - conservative in-app reading presentation intervals; open, navigation, or rapid scroll alone does not establish coverage
 - explicit external/self-attested and unobserved states rather than fabricated reading telemetry
@@ -1609,7 +1649,7 @@ Extend the portable package boundary from #17 with assignment, recipient, submis
 With:
 
 ```markdown
-Implement {{CLASSROOM_PACKET_PILOT_ISSUE}} by extending the verified portable-package boundary from #17 with assignment, source binding, recipient, submission, and attempt lineage. Validate link-based source acquisition and explicit return through Files/share sheet before building a classroom backend. Do not assume #17 is implemented until {{SHARING_AUDIT_ISSUE}} resolves the current source/evidence discrepancy.
+Implement #82 by extending the verified portable-package boundary from #17 with assignment, source binding, recipient, submission, and attempt lineage. Validate link-based source acquisition and explicit return through Files/share sheet before building a classroom backend. Do not assume #17 is implemented until #81 resolves the current source/evidence discrepancy.
 ```
 
 ### 7. Replace the Phase 3 paragraph
@@ -1623,7 +1663,7 @@ Build on the signing spike in #22. Compare packet-only signing with per-interjec
 With:
 
 ```markdown
-Build on the conservative observation ledger in {{COVERAGE_LEDGER_ISSUE}} and the signing spike in #22. Compare an unsigned/minimized receipt, packet-only signing, per-interjection authorization, and append-only signed journey events. Select the least intrusive mechanism that meets the declared classroom policy; a digest or device signature alone must not be presented as student identity.
+Build on the conservative observation ledger in #80 and the signing spike in #22. Compare an unsigned/minimized receipt, packet-only signing, per-interjection authorization, and append-only signed journey events. Select the least intrusive mechanism that meets the declared classroom policy; a digest or device signature alone must not be presented as student identity.
 ```
 
 ### 8. Replace two acceptance criteria
@@ -1670,10 +1710,10 @@ With:
 ```markdown
 ## Dependencies and sequencing
 
-- {{SHARING_AUDIT_ISSUE}} must reconcile whether the #17–#19 sharing layer actually exists in source.
-- {{CLASSROOM_PACKET_PILOT_ISSUE}} validates assignment/return value before accounts or a hosted classroom service.
+- #81 must reconcile whether the #17–#19 sharing layer actually exists in source.
+- #82 validates assignment/return value before accounts or a hosted classroom service.
 - #17 owns reviewed portable interjection packages; #18 owns imported participant layers.
-- {{COVERAGE_LEDGER_ISSUE}} owns listening/in-app-reading observation semantics and optional receipts.
+- #80 owns listening/in-app-reading observation semantics and optional receipts.
 - #22 owns device-key signing and the limits of biometric user-presence authorization.
 - #14 owns source excerpts, attribution, sharing, and retention policy; #27 owns cross-edition anchor behavior.
 - #19 may later support teacher feedback and layered classroom discussion; #26 may synthesize cross-participant patterns. Neither should block one-way assignment and return.
@@ -1683,29 +1723,29 @@ With:
 
 ## Publication verification checklist
 
-- [ ] Search open and closed issues for each proposed title immediately before creation; do not create a duplicate if a materially equivalent issue appeared after this file was staged.
-- [ ] Re-fetch #34, #61, #64, #69, and #70; if any exact-match precondition changed, reconcile the staged edit instead of overwriting newer work.
-- [ ] Create all eleven issues in the declared order and record their canonical numbers/URLs.
-- [ ] Replace every `{{...}}` placeholder in the GitHub bodies with a `#123` issue reference.
-- [ ] Apply all seven numbered patches to #64 without removing unrelated issue history or acceptance criteria.
-- [ ] Replace #34's stale title and body while leaving the issue open.
-- [ ] Append the staged policy/acceptance sections to #61 without replacing its EPUB structure requirements.
-- [ ] Replace #69's title/body while preserving its `enhancement` label and metadata.
-- [ ] Apply all nine numbered patches to #70 without weakening its privacy, authorization, alternatives, or stopping-rule language.
-- [ ] Re-read all sixteen affected issues from GitHub and verify title, state, complete Markdown body, links, and dependency direction.
-- [ ] Confirm #64 owns the durable prepared representation, {{DEMAND_WINDOW_PREPARATION_ISSUE}} owns eligible horizon, {{BACKGROUND_PREPARATION_ISSUE}} owns optional background execution, {{STORAGE_ISSUE}} owns byte policy, and {{WATCH_OFFLINE_ISSUE}} consumes the prepared representation.
-- [ ] Confirm {{FEED_SUBSCRIPTIONS_ISSUE}} owns explicit subscriptions/inbox and {{FEED_SUGGESTIONS_ISSUE}} owns discovery, engagement policy, and prompting.
-- [ ] Confirm {{PDF_CHAPTERS_ISSUE}} remains `implemented`, not `human_validated`, until the product owner accepts the representative PDF flow.
-- [ ] Confirm {{SHARING_AUDIT_ISSUE}} is resolved with source evidence or corrected issue claims before {{CLASSROOM_PACKET_PILOT_ISSUE}} treats #17 as implemented.
-- [ ] Confirm {{COVERAGE_LEDGER_ISSUE}} and #70 say app-observed presentation/participation rather than proof of attention, comprehension, identity, authorship, or academic integrity.
-- [ ] Confirm the classroom pilot is link/package based, excludes a hosted roster/backend, and allows participants to preview and minimize returned data.
-- [ ] Confirm none of the issues equates storage allowance with consent to follow, import, download, or prepare content.
-- [ ] Confirm no issue claims iOS can render while powered off or guarantees an overnight `BGTaskScheduler` launch.
-- [ ] Confirm every implementation issue distinguishes automated verification from product-owner human validation.
-- [ ] Add repository labels only after confirming the labels exist; do not fail issue creation because of an assumed label name.
+- [x] Search open and closed issues for each proposed title immediately before creation; do not create a duplicate if a materially equivalent issue appeared after this file was staged.
+- [x] Re-fetch #34, #61, #64, #69, and #70; if any exact-match precondition changed, reconcile the staged edit instead of overwriting newer work.
+- [x] Create all eleven issues in the declared order and record their canonical numbers/URLs.
+- [x] Replace every `{{...}}` placeholder in the GitHub bodies with a `#123` issue reference.
+- [x] Apply all seven numbered patches to #64 without removing unrelated issue history or acceptance criteria.
+- [x] Replace #34's stale title and body while leaving the issue open.
+- [x] Append the staged policy/acceptance sections to #61 without replacing its EPUB structure requirements.
+- [x] Replace #69's title/body while preserving its `enhancement` label and metadata.
+- [x] Apply all nine numbered patches to #70 without weakening its privacy, authorization, alternatives, or stopping-rule language.
+- [x] Re-read all sixteen affected issues from GitHub and verify title, state, complete Markdown body, links, and dependency direction.
+- [x] Confirm #64 owns the durable prepared representation, #73 owns eligible horizon, #74 owns optional background execution, #72 owns byte policy, and #75 consumes the prepared representation.
+- [x] Confirm #76 owns explicit subscriptions/inbox and #77 owns discovery, engagement policy, and prompting.
+- [x] Confirm #78 remains `implemented`, not `human_validated`, until the product owner accepts the representative PDF flow.
+- [x] Confirm #81 is resolved with source evidence or corrected issue claims before #82 treats #17 as implemented.
+- [x] Confirm #80 and #70 say app-observed presentation/participation rather than proof of attention, comprehension, identity, authorship, or academic integrity.
+- [x] Confirm the classroom pilot is link/package based, excludes a hosted roster/backend, and allows participants to preview and minimize returned data.
+- [x] Confirm none of the issues equates storage allowance with consent to follow, import, download, or prepare content.
+- [x] Confirm no issue claims iOS can render while powered off or guarantees an overnight `BGTaskScheduler` launch.
+- [x] Confirm every implementation issue distinguishes automated verification from product-owner human validation.
+- [x] Add repository labels only after confirming the labels exist; do not fail issue creation because of an assumed label name.
 
 ## Staging completion rule
 
-This staging artifact may be removed only after the eleven new issues and five edits are
-published and the verification checklist has been completed against GitHub. Until
-then, it is the source of truth for the pending write operation.
+The eleven new issues and five edits were published and verified against GitHub.
+Retain this file as the publication audit trail unless the product owner chooses to
+remove it later.
