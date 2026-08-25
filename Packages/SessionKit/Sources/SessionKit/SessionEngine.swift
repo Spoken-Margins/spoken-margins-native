@@ -221,6 +221,23 @@ public final class SessionEngine {
         return snapshot
     }
 
+    /// Reconciles a pause that the active audio client has already applied in
+    /// response to an interruption or route loss. Unlike `pause()`, this does
+    /// not send a second pause command to the client, so interruption-specific
+    /// resume intent remains intact until the system reports how it ended.
+    @discardableResult
+    public func reconcileSystemInitiatedPause() throws -> SessionSnapshot {
+        try requirePlayback("reconcileSystemInitiatedPause")
+        guard var session = currentSession else {
+            throw SessionKitError.invalidCommandForState("reconcileSystemInitiatedPause")
+        }
+        session = try syncCurrentPositionFromAudio(session)
+        currentSession = session
+        try persistSession(session)
+        publish(status: .paused, phase: session.phase)
+        return snapshot
+    }
+
     @discardableResult
     public func resumePlayback() throws -> SessionSnapshot {
         try requirePlayback("resumePlayback")

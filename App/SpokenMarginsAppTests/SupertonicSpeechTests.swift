@@ -1,5 +1,6 @@
 import AVFoundation
 import SessionKit
+import SessionKitAudio
 import SessionKitSupertonic
 import XCTest
 @testable import SpokenMarginsApp
@@ -525,6 +526,44 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    func testStopGenerationPreservesPausedTransportAndForwardsFallbackRate() async throws {
+        let template = try makeTestWAV(duration: 0.5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(
+            templateURL: template,
+            firstRenderDelay: .milliseconds(300)
+        )
+        let fallback = RecordingFallbackAudioClient()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer,
+            voice: .m2,
+            speed: 1,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            audioSessionActivator: {},
+            observesPlayerLifecycle: false,
+            fallbackClient: fallback
+        )
+        let source = String(repeating: "Paused playback must remain remotely recoverable after generation stops. ", count: 8)
+        _ = try client.prepareSpeechText(source)
+        try client.play(targetId: "stop-generation-paused", from: 23)
+        try client.pause()
+
+        XCTAssertTrue(try client.stopOnDeviceRenderingAndUseSystemSpeech())
+        XCTAssertEqual(client.playbackTransportState(targetId: "stop-generation-paused"), .paused)
+        XCTAssertEqual(fallback.playedOffsets, [23])
+        XCTAssertEqual(fallback.pauseCount, 1)
+
+        try client.setPlaybackRate(1.75)
+        XCTAssertEqual(fallback.playbackRates, [1.75])
+        XCTAssertEqual(client.currentPlaybackPosition()?.playbackRate ?? 0, 1.75, accuracy: 0.001)
+
+        try client.play(targetId: "stop-generation-paused", from: 23)
+        XCTAssertEqual(fallback.playedOffsets, [23, 23])
+        XCTAssertEqual(client.playbackTransportState(targetId: "stop-generation-paused"), .playing)
+        try client.stop()
+    }
+
     func testRateChangeUsesTransportWithoutChangingSynthesisOrRestartingRender() async throws {
         let template = try makeTestWAV(duration: 3)
         defer { try? FileManager.default.removeItem(at: template) }
@@ -642,6 +681,100 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(client.playbackStartStatus(targetId: "media-services-reset"), .confirmed)
         let renderCount = await renderer.renderCount
         XCTAssertEqual(renderCount, 1)
+        try client.stop()
+    }
+
+    func testAirPodRouteLossPublishesCanonicalPauseAndRemoteResumeDuringPartialGeneration() async throws {
+        let template = try makeTestWAV(duration: 5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(
+            templateURL: template,
+            renderDelays: [3: .milliseconds(750)]
+        )
+        let notificationCenter = NotificationCenter()
+        let interruptions = PlaybackInterruptionCapture()
+        let progress = GenerationProgressCapture()
+        let fallback = RecordingFallbackAudioClient()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer,
+            voice: .m2,
+            speed: 1,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            audioSessionNotificationCenter: notificationCenter,
+            audioSessionActivator: {},
+            fallbackClient: fallback,
+            interruptionHandler: { interruptions.record($0) },
+            onGenerationProgress: { progress.record($0) }
+        )
+        let source = String(repeating: "A long native text keeps rendering later chunks while the current chunk plays. ", count: 18)
+        let item = Item(
+            id: "route-loss-partial-render",
+            title: "Route loss",
+            mediaType: "text",
+            text: source,
+            externalReference: nil,
+            status: "ready"
+        )
+        let profile = RuntimeCapabilityProfile(
+            id: "route-loss-remote-controls",
+            displayName: "Route loss remote controls",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "remoteControl": ["display_snapshot", "send_transport_commands"],
+                "timeline": ["playback_rate_observation"]
+            ]
+        )
+        let engine = SessionEngine(
+            profile: profile,
+            repository: InMemorySessionRepository(items: [item.id: item]),
+            audio: client
+        )
+
+        _ = try engine.startSession(itemId: item.id)
+        for _ in 0..<100 where engine.snapshot.status != .playing {
+            try? await Task.sleep(for: .milliseconds(20))
+            _ = try engine.syncPlaybackProgress()
+        }
+        XCTAssertEqual(engine.snapshot.status, .playing)
+        XCTAssertTrue(progress.values.contains { $0.completedChunks < $0.totalChunks })
+
+        let dispatcher = CompactControlDispatcher(
+            surfaceProfile: profile,
+            canonicalRuntime: engine,
+            defaultSkipUnit: "paragraph"
+        )
+
+        for cycle in 0..<2 {
+            notificationCenter.post(
+                name: AVAudioSession.routeChangeNotification,
+                object: AVAudioSession.sharedInstance(),
+                userInfo: [
+                    AVAudioSessionRouteChangeReasonKey: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue
+                ]
+            )
+
+            let paused = try engine.reconcileSystemInitiatedPause()
+            XCTAssertEqual(paused.status, .paused)
+            XCTAssertTrue(dispatcher.snapshot().availableCommands.contains(.play))
+            XCTAssertFalse(dispatcher.snapshot().availableCommands.contains(.pause))
+
+            if cycle == 1 {
+                XCTAssertTrue(try client.stopOnDeviceRenderingAndUseSystemSpeech())
+                _ = try engine.syncPlaybackProgress()
+                _ = try dispatcher.dispatch(.setPlaybackRate, playbackRate: 1.5)
+                XCTAssertEqual(fallback.playbackRates, [1.5])
+            }
+
+            _ = try dispatcher.dispatch(.play)
+            for _ in 0..<50 where engine.snapshot.status != .playing {
+                try? await Task.sleep(for: .milliseconds(20))
+                _ = try engine.syncPlaybackProgress()
+            }
+            XCTAssertEqual(engine.snapshot.status, .playing)
+        }
+        XCTAssertEqual(interruptions.values, [.began, .began])
         try client.stop()
     }
 
@@ -853,6 +986,19 @@ private final class GenerationStateCapture: @unchecked Sendable {
     }
 }
 
+private final class PlaybackInterruptionCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recordedValues: [AudioPlaybackInterruptionEvent] = []
+
+    var values: [AudioPlaybackInterruptionEvent] {
+        lock.withLock { recordedValues }
+    }
+
+    func record(_ event: AudioPlaybackInterruptionEvent) {
+        lock.withLock { recordedValues.append(event) }
+    }
+}
+
 private struct FailingSupertonicRenderer: SupertonicRendering {
     func render(
         text: String,
@@ -943,6 +1089,8 @@ private actor CountingAudioSupertonicRenderer: SupertonicRendering {
 private final class RecordingFallbackAudioClient: AudioPlaybackClient, @unchecked Sendable {
     var preparedText = ""
     var playedOffsets: [Int] = []
+    var playbackRates: [Double] = []
+    var pauseCount = 0
     var offset = 0
 
     func prepareSpeechText(_ text: String) throws -> String {
@@ -960,5 +1108,12 @@ private final class RecordingFallbackAudioClient: AudioPlaybackClient, @unchecke
     }
 
     func currentCharOffset() -> Int? { offset }
-    func pause() throws {}
+
+    func setPlaybackRate(_ rate: Double) throws {
+        playbackRates.append(rate)
+    }
+
+    func pause() throws {
+        pauseCount += 1
+    }
 }

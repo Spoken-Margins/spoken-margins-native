@@ -882,6 +882,21 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         speechRate = max(AVSpeechUtteranceMinimumSpeechRate, min(AVSpeechUtteranceMaximumSpeechRate, rate))
     }
 
+    public func setPlaybackRate(_ rate: Double) throws {
+        let multiplier = Float(max(0.25, min(2.0, rate)))
+        speechRate = max(
+            AVSpeechUtteranceMinimumSpeechRate,
+            min(AVSpeechUtteranceMaximumSpeechRate, AVSpeechUtteranceDefaultSpeechRate * multiplier)
+        )
+        #if canImport(AVFoundation)
+        guard synthesizer.isSpeaking,
+              !paused,
+              let targetId = lastTargetId else { return }
+        let restartOffset = currentOffset ?? lastStartOffset
+        try play(targetId: targetId, from: restartOffset)
+        #endif
+    }
+
     public func play(targetId: String) throws {
         try play(targetId: targetId, from: 0)
     }
@@ -1000,6 +1015,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
             targetId: lastTargetId,
             textStart: currentOffset,
             textEnd: end,
+            playbackRate: Double(currentSpeechSettings().rate / AVSpeechUtteranceDefaultSpeechRate),
             anchorConfidence: .textRange
         )
     }

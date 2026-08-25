@@ -2422,9 +2422,22 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         do {
+            if snapshot.status.isPlaybackActive, let engine {
+                snapshot = snapshotReflectingTextAudioPrewarmStatus(
+                    try engine.syncPlaybackProgress(),
+                    itemId: activeItemId
+                )
+            }
             guard try client.stopOnDeviceRenderingAndUseSystemSpeech() else {
                 reportFailure("There is no active Supertonic generation to stop.")
                 return
+            }
+            if let engine {
+                snapshot = snapshotReflectingTextAudioPrewarmStatus(
+                    try engine.syncPlaybackProgress(),
+                    itemId: activeItemId
+                )
+                refreshSelectedItem()
             }
             onDeviceSpeechGenerationStatus = RenderedSpeechGenerationState.stopped.rawValue
             onDeviceSpeechGenerationDelayTask?.cancel()
@@ -6089,6 +6102,11 @@ final class Gate1AppModel: ObservableObject {
                     path: "PreparedSupertonicAudio",
                     directoryHint: .isDirectory
                 ),
+                interruptionHandler: { [weak self] event in
+                    Task { @MainActor [weak self] in
+                        self?.handleSpeechPlaybackInterruption(event)
+                    }
+                },
                 onGenerationStateChange: { [weak self] state in
                     Task { @MainActor [weak self] in
                         self?.updateOnDeviceSpeechGenerationState(state)
@@ -6275,8 +6293,18 @@ final class Gate1AppModel: ObservableObject {
     private func handleMediaPlaybackInterruption(_ event: AudioPlaybackInterruptionEvent) {
         switch event {
         case .began:
-            syncPlaybackProgressForLifecycle()
-            diagnostics["mediaPlaybackInterruption"] = "paused"
+            guard snapshot.status.isPlaybackActive, let engine else {
+                diagnostics["mediaPlaybackInterruption"] = "pause_skipped"
+                return
+            }
+            do {
+                snapshot = try engine.reconcileSystemInitiatedPause()
+                refreshSelectedItem()
+                diagnostics["mediaPlaybackInterruption"] = "paused"
+            } catch {
+                diagnostics["mediaPlaybackInterruption"] = "pause_failed:\(error.localizedDescription)"
+                reportWarning("Playback could not be paused cleanly after the audio route changed.")
+            }
         case .endedShouldResume:
             guard snapshot.status == .paused, let engine else {
                 diagnostics["mediaPlaybackInterruption"] = "resume_skipped"
@@ -6288,6 +6316,37 @@ final class Gate1AppModel: ObservableObject {
                 diagnostics["mediaPlaybackInterruption"] = "resumed"
             } catch {
                 diagnostics["mediaPlaybackInterruption"] = "resume_failed:\(error.localizedDescription)"
+                reportWarning("Playback paused after the interruption. Tap Play to resume.")
+            }
+        }
+    }
+
+    private func handleSpeechPlaybackInterruption(_ event: AudioPlaybackInterruptionEvent) {
+        switch event {
+        case .began:
+            guard snapshot.status.isPlaybackActive, let engine else {
+                diagnostics["speechPlaybackInterruption"] = "pause_skipped"
+                return
+            }
+            do {
+                snapshot = try engine.reconcileSystemInitiatedPause()
+                refreshSelectedItem()
+                diagnostics["speechPlaybackInterruption"] = "paused"
+            } catch {
+                diagnostics["speechPlaybackInterruption"] = "pause_failed:\(error.localizedDescription)"
+                reportWarning("Playback could not be paused cleanly after the audio route changed.")
+            }
+        case .endedShouldResume:
+            guard snapshot.status == .paused, let engine else {
+                diagnostics["speechPlaybackInterruption"] = "resume_skipped"
+                return
+            }
+            do {
+                snapshot = try engine.resumePlayback()
+                refreshSelectedItem()
+                diagnostics["speechPlaybackInterruption"] = "resumed"
+            } catch {
+                diagnostics["speechPlaybackInterruption"] = "resume_failed:\(error.localizedDescription)"
                 reportWarning("Playback paused after the interruption. Tap Play to resume.")
             }
         }

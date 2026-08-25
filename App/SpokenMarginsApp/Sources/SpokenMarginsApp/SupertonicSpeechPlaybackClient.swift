@@ -292,6 +292,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     typealias GenerationStateHandler = @Sendable (RenderedSpeechGenerationState) -> Void
     typealias GenerationProgressHandler = @Sendable (RenderedSpeechGenerationProgress) -> Void
     typealias PreparedAudioHandler = @Sendable (_ itemId: String, _ prepared: PreparedTextAudio) -> Void
+    typealias InterruptionHandler = @Sendable (AudioPlaybackInterruptionEvent) -> Void
 
     private struct RenderRequest: Sendable {
         var generation: UUID
@@ -330,6 +331,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let onGenerationStateChange: GenerationStateHandler?
     private let onGenerationProgress: GenerationProgressHandler?
     private let onPreparedAudio: PreparedAudioHandler?
+    private let interruptionHandler: InterruptionHandler?
     private let preparedAudioDirectory: URL?
     private let audioSessionNotificationCenter: NotificationCenter
     private let audioSessionActivator: (@Sendable () throws -> Void)?
@@ -376,6 +378,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private var failedRenderReasons: [Int: String] = [:]
     private var preparedAudioAssemblyStarted = false
     private var generationState = RenderedSpeechGenerationState.inactive
+    private var shouldResumeAfterInterruption = false
 
     init(
         renderer: any SupertonicRendering,
@@ -392,6 +395,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         audioPlayerStarter: (@Sendable (AVPlayer, Float) -> Void)? = nil,
         observesPlayerLifecycle: Bool = true,
         fallbackClient: AudioPlaybackClient? = nil,
+        interruptionHandler: InterruptionHandler? = nil,
         onGenerationStateChange: GenerationStateHandler? = nil,
         onGenerationProgress: GenerationProgressHandler? = nil,
         onPreparedAudio: PreparedAudioHandler? = nil,
@@ -409,6 +413,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.audioSessionActivator = audioSessionActivator
         self.audioPlayerStarter = audioPlayerStarter
         self.observesPlayerLifecycle = observesPlayerLifecycle
+        self.interruptionHandler = interruptionHandler
         self.maxCharacters = maxCharacters
         self.startupBufferChunkCount = max(1, startupBufferChunkCount)
         self.preparedAudioDirectory = preparedAudioDirectory
@@ -451,7 +456,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     func play(targetId: String, from charOffset: Int) throws {
         try activateAudioSession()
         let usesStoppedGeneration = lock.withLock {
-            generationDisabledTargetIds.contains(targetId)
+            shouldResumeAfterInterruption = false
+            return generationDisabledTargetIds.contains(targetId)
                 || (fallbackIsActive && currentTargetId == targetId)
         }
         if usesStoppedGeneration {
@@ -574,12 +580,14 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     func setPlaybackRate(_ rate: Double) throws {
         let clamped = Float(max(0.25, min(2.0, rate)))
-        let activePlayer = lock.withLock { () -> AVPlayer? in
+        let state = lock.withLock { () -> (usesFallback: Bool, activePlayer: AVPlayer?) in
             playbackRate = clamped
-            return transportIntent == .playing ? player : nil
+            return (fallbackIsActive, transportIntent == .playing ? player : nil)
         }
-        if activePlayer?.timeControlStatus == .playing {
-            activePlayer?.rate = clamped
+        if state.usesFallback {
+            try fallback.setPlaybackRate(Double(clamped))
+        } else if state.activePlayer?.timeControlStatus == .playing {
+            state.activePlayer?.rate = clamped
         }
     }
 
@@ -628,6 +636,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     func pause() throws {
         let snapshot = lock.withLock { () -> (Bool, AVPlayer?) in
             transportIntent = .paused
+            shouldResumeAfterInterruption = false
             return (fallbackIsActive, player)
         }
         if snapshot.0 {
@@ -686,6 +695,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             startedTargetId = nil
             playbackFailure = nil
             transportIntent = .stopped
+            shouldResumeAfterInterruption = false
             generationDisabledTargetIds.removeAll()
             generationPlan.removeAll()
             generationRenderOrder.removeAll()
@@ -748,6 +758,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             initialPlaybackOffset = nil
             initialRequestedSpokenOffset = nil
             preparedAudioAssemblyStarted = false
+            shouldResumeAfterInterruption = false
             return Array(urls)
         }
         for url in discarded { discardAudio(url) }
@@ -1424,8 +1435,18 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             queue: .main
         ) { [weak self] notification in
             guard let typeValue = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
-                  AVAudioSession.InterruptionType(rawValue: typeValue) == .began else { return }
-            self?.pauseForSystemInterruption()
+                  let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
+            switch type {
+            case .began:
+                self?.pauseForSystemInterruption(allowsAutomaticResume: true)
+            case .ended:
+                let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+                self?.finishSystemInterruption(
+                    shouldResume: AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume)
+                )
+            @unknown default:
+                break
+            }
         })
         audioSessionObservers.append(center.addObserver(
             forName: AVAudioSession.routeChangeNotification,
@@ -1434,7 +1455,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         ) { [weak self] notification in
             guard let reasonValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
                   AVAudioSession.RouteChangeReason(rawValue: reasonValue) == .oldDeviceUnavailable else { return }
-            self?.pauseForSystemInterruption()
+            self?.pauseForSystemInterruption(allowsAutomaticResume: false)
         })
         audioSessionObservers.append(center.addObserver(
             forName: AVAudioSession.mediaServicesWereResetNotification,
@@ -1446,13 +1467,29 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         #endif
     }
 
-    private func pauseForSystemInterruption() {
-        let activePlayer = lock.withLock { () -> AVPlayer? in
-            guard transportIntent == .playing else { return nil }
+    private func pauseForSystemInterruption(allowsAutomaticResume: Bool) {
+        let state = lock.withLock { () -> (didPause: Bool, usesFallback: Bool, activePlayer: AVPlayer?) in
+            guard transportIntent == .playing else { return (false, false, nil) }
             transportIntent = .paused
-            return player
+            shouldResumeAfterInterruption = allowsAutomaticResume
+            return (true, fallbackIsActive, player)
         }
-        activePlayer?.pause()
+        guard state.didPause else { return }
+        if state.usesFallback {
+            try? fallback.pause()
+        } else {
+            state.activePlayer?.pause()
+        }
+        interruptionHandler?(.began)
+    }
+
+    private func finishSystemInterruption(shouldResume: Bool) {
+        let requestsResume = lock.withLock { () -> Bool in
+            defer { shouldResumeAfterInterruption = false }
+            return shouldResumeAfterInterruption && shouldResume
+        }
+        guard requestsResume else { return }
+        interruptionHandler?(.endedShouldResume)
     }
 
     private func markMediaServicesReset() {
@@ -1462,6 +1499,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             player?.replaceCurrentItem(with: nil)
             player = nil
             transportIntent = .paused
+            shouldResumeAfterInterruption = false
             playbackFailure = nil
             pendingStartTargetId = nil
             startedTargetId = nil

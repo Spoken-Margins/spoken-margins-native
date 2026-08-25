@@ -11,6 +11,22 @@ import AVFoundation
 #endif
 
 final class SessionKitCoreTests: XCTestCase {
+    #if canImport(AVFoundation)
+    func testSystemSpeechPlaybackRateReportsEffectiveTransportMultiplier() throws {
+        let client = SystemSpeechPlaybackClient(
+            voiceIdentifier: nil,
+            speechRate: AVSpeechUtteranceDefaultSpeechRate
+        )
+        _ = try client.prepareSpeechText("System speech should retain an observable playback rate.")
+        try client.play(targetId: "system-rate", from: 0)
+
+        try client.setPlaybackRate(1.5)
+
+        XCTAssertEqual(client.currentPlaybackPosition()?.playbackRate ?? 0, 1.5, accuracy: 0.001)
+        try client.stop()
+    }
+    #endif
+
     func testAudioInterruptionResumePolicyOnlyResumesUntouchedPlayingAudio() {
         var policy = AudioPlaybackInterruptionResumePolicy()
 
@@ -798,6 +814,31 @@ final class SessionKitCoreTests: XCTestCase {
         audio.startStatus = .confirmed
         let confirmed = try engine.syncPlaybackProgress()
         XCTAssertEqual(confirmed.status, .playing)
+    }
+
+    func testSystemInitiatedPauseReconcilesPendingStartWithoutRepause() throws {
+        let audio = RecordingAudioClient()
+        audio.startStatus = .pending
+        let engine = SessionEngine(
+            profile: phonePlaybackProfile(),
+            repository: InMemorySessionRepository(items: [
+                "item-route-loss": Item(
+                    id: "item-route-loss",
+                    title: "Route loss",
+                    mediaType: "text",
+                    text: "Playback is still preparing.",
+                    externalReference: nil,
+                    status: "ready"
+                )
+            ]),
+            audio: audio
+        )
+
+        XCTAssertEqual(try engine.startSession(itemId: "item-route-loss").status, .starting)
+        let paused = try engine.reconcileSystemInitiatedPause()
+
+        XCTAssertEqual(paused.status, .paused)
+        XCTAssertEqual(audio.pauseCount, 0, "The audio client already applied the system pause")
     }
 
     func testPendingResumeDoesNotPublishPausedBeforePlaybackConfirms() throws {
