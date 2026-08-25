@@ -5,6 +5,28 @@ import XCTest
 
 @MainActor
 final class MediaPlaybackInterruptionTests: XCTestCase {
+    func testLoadedPlayerDurationReplacesUnderestimatedFeedDuration() async throws {
+        let audioURL = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+        let client = AVPlayerStreamPlaybackClient()
+        try client.configureMediaContext(PlaybackMediaContext(
+            itemId: "duration-correction",
+            targetType: .transcriptBackedMedia,
+            targetId: "duration-correction-audio",
+            title: "Duration correction",
+            playbackURL: audioURL.absoluteString,
+            durationMs: 1_000
+        ))
+
+        try client.play(targetId: "duration-correction-audio", fromMediaTimeMs: 0)
+        for _ in 0..<100 where client.currentPlaybackDurationMs() != 3_000 {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+
+        XCTAssertEqual(client.currentPlaybackDurationMs(), 3_000)
+        try client.stop()
+    }
+
     func testPreparedTextMediaPublishesCanonicalPauseAndConditionalResumeIntent() async throws {
         let audioURL = try makeTestWAV(duration: 2)
         defer { try? FileManager.default.removeItem(at: audioURL) }

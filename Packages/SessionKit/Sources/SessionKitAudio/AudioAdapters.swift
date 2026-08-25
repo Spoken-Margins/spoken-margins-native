@@ -1725,6 +1725,20 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     }
 
     private func durationMs(for targetId: String) -> Int? {
+        #if canImport(AVFoundation)
+        // Publisher/feed duration is useful before AVPlayer has loaded the
+        // asset, but it is only metadata. Once the active player exposes a
+        // finite duration, that transport observation is authoritative and
+        // must be allowed to replace an underestimated cached value.
+        if activeTargetId == targetId,
+           let duration = player?.currentItem?.duration.seconds,
+           duration.isFinite,
+           duration > 0 {
+            let observedMs = Int((duration * 1_000).rounded())
+            knownDurations[targetId] = observedMs
+            return observedMs
+        }
+        #endif
         if let known = knownDurations[targetId] {
             return known
         }
@@ -1732,16 +1746,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             knownDurations[targetId] = durationMs
             return durationMs
         }
-        #if canImport(AVFoundation)
-        guard let duration = player?.currentItem?.duration.seconds, duration.isFinite, duration > 0 else {
-            return nil
-        }
-        let ms = Int((duration * 1000).rounded())
-        knownDurations[targetId] = ms
-        return ms
-        #else
         return nil
-        #endif
     }
 
     #if canImport(AVFoundation)

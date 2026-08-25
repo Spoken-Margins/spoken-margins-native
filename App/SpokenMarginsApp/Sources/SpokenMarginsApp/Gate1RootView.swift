@@ -1130,7 +1130,9 @@ private struct ItemScreen: View {
                 .foregroundStyle(AppColors.secondaryText)
             Text(model.selectedItem.title)
                 .font(.system(size: 38, weight: .bold))
-                .minimumScaleFactor(0.7)
+                .lineLimit(4)
+                .minimumScaleFactor(14.0 / 38.0)
+                .truncationMode(.tail)
             if !model.selectedItem.externalReference.isEmpty {
                 Text(model.selectedItem.externalReference)
                     .font(.footnote)
@@ -1662,7 +1664,7 @@ private struct PlaybackScreen: View {
                 .accessibilityLabel("Playback position")
                 .accessibilityValue("\(formatPlaybackTime(Int(scrubberSeconds * 1_000))) of \(formatPlaybackTime(mediaDurationMs))")
                 .accessibilityIdentifier("playback.scrubber")
-                Text("−\(formatPlaybackTime(max(0, mediaDurationMs - Int(scrubberDisplaySeconds * 1_000))))")
+                Text("−\(formatPlaybackTime(displayMediaRemainingMs))")
                     .frame(minWidth: 42, alignment: .leading)
             }
             .font(.caption.monospacedDigit())
@@ -2051,6 +2053,15 @@ private struct PlaybackScreen: View {
 
     private var scrubberDisplaySeconds: Double {
         isScrubbing ? scrubberSeconds : Double(model.snapshot.currentMediaTimeMs ?? 0) / 1_000
+    }
+
+    private var displayMediaRemainingMs: Int {
+        let remainingMs = max(0, mediaDurationMs - Int(scrubberDisplaySeconds * 1_000))
+        guard !isScrubbing, model.snapshot.status.isPlaybackActive else { return remainingMs }
+        // Millisecond truncation must not claim zero time remains while the
+        // canonical transport is still active. Completion will publish paused
+        // and allow the terminal 0:00 state.
+        return max(1_000, remainingMs)
     }
 
     private var textLength: Int {

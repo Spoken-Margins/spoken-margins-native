@@ -1682,6 +1682,35 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(repo.items[item.id]?.media?.durationMs, 900_000)
     }
 
+    func testObservedPlayerDurationCorrectsUnderestimatedFeedDurationAndPercentages() throws {
+        let item = Item(
+            id: "item-source-short-feed-duration",
+            title: "Podcast With Short Feed Duration",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/episode",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(
+                sourceType: .remoteStream,
+                url: "https://cdn.example.com/episode.mp3",
+                durationMs: 600_000
+            )
+        )
+        let audio = RecordingAudioClient()
+        audio.currentDurationMs = 900_000
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: phonePlaybackProfile(), repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentMediaTimeValue = 600_000
+        let corrected = try engine.syncPlaybackProgress()
+
+        XCTAssertEqual(corrected.currentPlaybackDurationMs, 900_000)
+        XCTAssertEqual(corrected.currentPlaybackProgressPercent, 66)
+        XCTAssertEqual(repo.items[item.id]?.media?.durationMs, 900_000)
+    }
+
     func testTwentyFiveMinuteMediaPositionSurvivesInterjectionDismissAndResume() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",

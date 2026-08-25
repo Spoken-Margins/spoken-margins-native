@@ -18,6 +18,7 @@ enum PDFStructuredTextExtractor {
     }
 
     private struct OutlineHeading {
+        var id: Int
         var title: String
         var level: Int
         var pageIndex: Int
@@ -48,25 +49,33 @@ enum PDFStructuredTextExtractor {
         }
 
         let bodySize = inferredBodyPointSize(from: allLines)
-        let outlineByTitle = Dictionary(grouping: outline, by: { normalized($0.title) })
-        var insertedOutlineTitles = Set<String>()
+        var insertedOutlineHeadingIDs = Set<Int>()
         var output: [String] = []
 
         for (pageIndex, pageLines) in pages.enumerated() {
-            let unmatchedPageOutline = outline.filter { heading in
-                heading.pageIndex == pageIndex && !pageLines.contains(where: { normalized($0.text) == normalized(heading.title) })
+            let pageOutline = outline.filter { $0.pageIndex == pageIndex }
+            let tableOfContentsLines = tableOfContentsLineIndices(
+                in: pageLines,
+                pageIndex: pageIndex,
+                outline: outline
+            )
+            let unmatchedPageOutline = pageOutline.filter { heading in
+                !pageLines.contains(where: { normalized($0.text) == normalized(heading.title) })
             }
             for heading in unmatchedPageOutline {
                 appendHeading(heading.title, level: heading.level, to: &output)
-                insertedOutlineTitles.insert(normalized(heading.title))
+                insertedOutlineHeadingIDs.insert(heading.id)
             }
 
-            for line in pageLines {
+            for (lineIndex, line) in pageLines.enumerated() {
                 let key = normalized(line.text)
-                if let heading = outlineByTitle[key]?.first {
-                    if insertedOutlineTitles.insert(key).inserted {
-                        appendHeading(line.text, level: heading.level, to: &output)
-                    }
+                if tableOfContentsLines.contains(lineIndex) {
+                    appendParagraph(line.text, to: &output)
+                } else if let heading = pageOutline.first(where: {
+                    !insertedOutlineHeadingIDs.contains($0.id) && normalized($0.title) == key
+                }) {
+                    insertedOutlineHeadingIDs.insert(heading.id)
+                    appendHeading(line.text, level: heading.level, to: &output)
                 } else if isVisualHeading(line, bodySize: bodySize) {
                     appendHeading(line.text, level: visualHeadingLevel(line, bodySize: bodySize), to: &output)
                 } else {
@@ -150,6 +159,65 @@ enum PDFStructuredTextExtractor {
         return 3
     }
 
+    private static func tableOfContentsLineIndices(
+        in lines: [TextLine],
+        pageIndex: Int,
+        outline: [OutlineHeading]
+    ) -> Set<Int> {
+        let contentsTitleIndices = lines.indices.filter { isTableOfContentsTitle(lines[$0].text) }
+        let firstContentsTitle = contentsTitleIndices.first
+        let offDestinationOutlineMatches = lines.indices.filter { lineIndex in
+            let title = normalized(lines[lineIndex].text)
+            return outline.contains { heading in
+                heading.pageIndex != pageIndex && normalized(heading.title) == title
+            }
+        }
+        let contentsEntries = lines.indices.filter { lineIndex in
+            guard firstContentsTitle.map({ lineIndex > $0 }) ?? true else { return false }
+            return looksLikeTableOfContentsEntry(lines[lineIndex].text)
+        }
+        let pageReferencedEntries = lines.indices.filter { lineIndex in
+            guard firstContentsTitle.map({ lineIndex > $0 }) ?? true else { return false }
+            return looksLikePageReferencedTableOfContentsEntry(lines[lineIndex].text)
+        }
+
+        let hasEnoughEvidence = !contentsTitleIndices.isEmpty
+            || offDestinationOutlineMatches.count >= 3
+            || pageReferencedEntries.count >= 4
+        guard hasEnoughEvidence else { return [] }
+
+        var result = Set(contentsTitleIndices)
+        result.formUnion(offDestinationOutlineMatches)
+        if let firstContentsTitle {
+            result.formUnion(contentsEntries.filter { $0 > firstContentsTitle })
+        } else {
+            result.formUnion(pageReferencedEntries)
+        }
+        return result
+    }
+
+    private static func isTableOfContentsTitle(_ value: String) -> Bool {
+        let key = normalized(value)
+        return key == "contents" || key == "tableofcontents"
+    }
+
+    private static func looksLikeTableOfContentsEntry(_ value: String) -> Bool {
+        if looksLikePageReferencedTableOfContentsEntry(value) {
+            return true
+        }
+        let text = cleaned(value)
+        return text.range(
+            of: #"(?i)^(?:chapter\s+)?(?:\d+|[ivxlcdm]+)\s*(?:[.):-]|[-–—])\s*\S+"#,
+            options: .regularExpression
+        ) != nil
+    }
+
+    private static func looksLikePageReferencedTableOfContentsEntry(_ value: String) -> Bool {
+        let text = cleaned(value)
+        return text.range(of: #"(?:\.{2,}|…+)\s*\d{0,4}$"#, options: .regularExpression) != nil
+            || text.range(of: #"^\S.+\s+\d{1,4}$"#, options: .regularExpression) != nil
+    }
+
     private static func outlineHeadings(in document: PDFDocument) -> [OutlineHeading] {
         guard let root = document.outlineRoot else { return [] }
         var result: [OutlineHeading] = []
@@ -169,6 +237,7 @@ enum PDFStructuredTextExtractor {
                !title.isEmpty,
                let page = child.destination?.page {
                 result.append(OutlineHeading(
+                    id: result.count,
                     title: title,
                     level: min(6, max(1, level)),
                     pageIndex: document.index(for: page)

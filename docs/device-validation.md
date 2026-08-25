@@ -21,6 +21,7 @@ Use this when installing the iOS build on a real phone and testing against the l
 - Install the iOS app on the phone.
 - Allow microphone and local-network permissions when prompted.
 - Create or import an item.
+- Import a text-based anthology PDF with a title/author page, a table of contents, and more than 12 destination-backed chapters. Confirm the Timeline contains one `Front Matter` entry followed by every chapter exactly once, and that selecting the first story starts at its body rather than at the title or contents pages.
 - Start playback.
 - Confirm James and Lily use bundled Supertonic output, system fallback uses the selected iOS voice, and both routes work through the speaker and AirPods.
 - Measure Supertonic cold first audio (target ≤3 s), warm first audio (target ≤1 s), and sustained real-time factor (target ≤0.5).

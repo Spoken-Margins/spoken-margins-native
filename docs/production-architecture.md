@@ -103,6 +103,8 @@ Native-audio transcripts created for this work are internal derived data. They a
 
 Publisher podcast chapters bypass model generation. RSS resolution carries typed chapter links and collections into the canonical import result. Podcasting 2.0 JSON outranks inline Podlove Simple Chapters; after local audio is available, AVFoundation embedded chapter metadata outranks timestamped-description heuristics. Podcasts without publisher chapters remain mapless in the default MVP. Chapter JSON is size/count bounded, silent `toc: false` markers are not exposed, chapter artwork and related URLs are not fetched, and timestamps are resolved by app code rather than a model.
 
+Text-backed imports distinguish adaptive listening structure from canonical document structure. Markdown uses an adaptive map that may merge or split sections for listening length. Text-based PDFs preserve every detected canonical heading without a fixed chapter-count ceiling. A PDF outline destination is authoritative over an earlier same-title occurrence in a table of contents; contents and other nonempty material before the first destination-backed chapter remain navigable as `Front Matter` instead of being folded into chapter one.
+
 ## Storage Direction
 
 SQLite should be the production source of truth.

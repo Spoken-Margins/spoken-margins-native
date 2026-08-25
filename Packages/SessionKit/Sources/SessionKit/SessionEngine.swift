@@ -2854,7 +2854,14 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("importBrowserText")
         }
         let itemId = handoff.itemId ?? browserTextItemId(title: title, url: handoff.source.url)
-        let deterministicMap = parsedMarkdown?.deterministicListeningMap(itemId: itemId)
+        let sourceExtension = URL(string: handoff.source.url)?.pathExtension.lowercased()
+        let mapPolicy: DeterministicListeningMapPolicy = handoff.captureMode == .markdownFile && sourceExtension == "pdf"
+            ? .canonicalHeadings
+            : .adaptiveListeningSections
+        let deterministicMap = parsedMarkdown?.deterministicListeningMap(
+            itemId: itemId,
+            policy: mapPolicy
+        )
         let source = parsedMarkdown?.source ?? handoff.source.url
         let item = Item(
             id: itemId,
@@ -3654,8 +3661,15 @@ public final class SessionEngine {
     private func persistObservedMediaDuration(_ durationMs: Int, for session: Session) throws {
         guard durationMs > 0,
               var item = item(for: session),
-              var media = item.media,
-              (media.durationMs ?? 0) <= 0 else {
+              var media = item.media else {
+            return
+        }
+        // Feed duration is provisional. Persist a materially different player
+        // observation so future sessions and saved interjection percentages do
+        // not remain anchored to stale publisher metadata. Ignore sub-second
+        // container rounding to avoid rewriting the item every progress tick.
+        if let existingDurationMs = media.durationMs,
+           abs(existingDurationMs - durationMs) < 1_000 {
             return
         }
         media.durationMs = durationMs

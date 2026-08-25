@@ -1,5 +1,10 @@
 import Foundation
 
+public enum DeterministicListeningMapPolicy: Equatable, Sendable {
+    case adaptiveListeningSections
+    case canonicalHeadings
+}
+
 public struct ParsedObsidianMarkdown: Equatable, Sendable {
     private static let minimumChapterCount = 5
     private static let targetMaximumChapterCount = 10
@@ -21,20 +26,45 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
     public let metadata: [String: String]
     public let headings: [ParsedMarkdownHeading]
 
-    public func deterministicListeningMap(itemId: String) -> ListeningMap? {
+    public func deterministicListeningMap(
+        itemId: String,
+        policy: DeterministicListeningMapPolicy = .adaptiveListeningSections
+    ) -> ListeningMap? {
         guard !headings.isEmpty, !text.isEmpty else { return nil }
         let ordered = normalizedContentHeadings()
         guard !ordered.isEmpty else { return nil }
-        let selected = headingsAtUsefulDepth(from: ordered)
-        var drafts = selected.enumerated().map { index, heading in
+        let selected: [ParsedMarkdownHeading]
+        switch policy {
+        case .adaptiveListeningSections:
+            selected = headingsAtUsefulDepth(from: ordered)
+        case .canonicalHeadings:
+            selected = ordered
+        }
+
+        var drafts: [DraftChapter] = []
+        if policy == .canonicalHeadings,
+           let firstHeading = selected.first,
+           firstHeading.startChar > 0,
+           !String(text.prefix(firstHeading.startChar)).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            drafts.append(DraftChapter(
+                title: "Front Matter",
+                level: 1,
+                startChar: 0,
+                endChar: firstHeading.startChar
+            ))
+        }
+
+        drafts.append(contentsOf: selected.enumerated().map { index, heading in
             DraftChapter(
                 title: heading.title,
                 level: heading.level,
-                startChar: index == 0 ? 0 : heading.startChar,
+                startChar: policy == .adaptiveListeningSections && index == 0 ? 0 : heading.startChar,
                 endChar: index + 1 < selected.count ? selected[index + 1].startChar : text.count
             )
+        })
+        if policy == .adaptiveListeningSections {
+            normalizeChapterCountAndDuration(&drafts)
         }
-        normalizeChapterCountAndDuration(&drafts)
         let chapters = drafts.enumerated().map { index, draft in
             return Chapter(
                 id: "ch-markdown-\(String(format: "%02d", index + 1))-\(Self.slug(draft.title))",
@@ -47,9 +77,17 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
         return ListeningMap(
             id: "map-\(itemId)-markdown",
             itemId: itemId,
-            overview: "Structured into \(chapters.count) listening chapter\(chapters.count == 1 ? "" : "s") from the Markdown hierarchy in \(title).",
+            overview: listeningMapOverview(chapterCount: chapters.count, policy: policy),
             chapters: chapters
         )
+    }
+
+    private func listeningMapOverview(
+        chapterCount: Int,
+        policy: DeterministicListeningMapPolicy
+    ) -> String {
+        let structure = policy == .canonicalHeadings ? "canonical document headings" : "the Markdown hierarchy"
+        return "Structured into \(chapterCount) listening chapter\(chapterCount == 1 ? "" : "s") from \(structure) in \(title)."
     }
 
     private func normalizedContentHeadings() -> [ParsedMarkdownHeading] {

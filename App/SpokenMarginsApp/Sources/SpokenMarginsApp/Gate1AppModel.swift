@@ -1617,7 +1617,13 @@ final class Gate1AppModel: ObservableObject {
             do {
                 let raw = try importableText(from: request.url)
                 let parsed = try ObsidianMarkdownParser.parse(fileName: request.url.lastPathComponent, contents: raw)
-                let deterministicMap = parsed.deterministicListeningMap(itemId: request.itemId)
+                let mapPolicy: DeterministicListeningMapPolicy = request.url.pathExtension.lowercased() == "pdf"
+                    ? .canonicalHeadings
+                    : .adaptiveListeningSections
+                let deterministicMap = parsed.deterministicListeningMap(
+                    itemId: request.itemId,
+                    policy: mapPolicy
+                )
                 let item = Item(
                     id: request.itemId,
                     title: parsed.title,
