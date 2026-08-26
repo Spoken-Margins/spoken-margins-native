@@ -6,6 +6,16 @@ This repository uses a single-agent workflow by default. An agent should work en
 
 Parallel-agent rules are archived in `docs/parallel-agent-workflow-archive.md`. Do not use that workflow unless the product owner explicitly names a steward, gate agents, allowed files, forbidden files, and merge order.
 
+## Release Lane Routing
+
+Before creating a branch or changing implementation code, read `docs/release-lanes.md`. It is the authoritative source for active branch purposes, authorized issue scope, merge direction, and queued work.
+
+- Work only on an issue authorized for the current release lane.
+- Do not create an issue-specific or dependency-specific branch when the work belongs to an existing release lane.
+- Treat branches not listed as active in `docs/release-lanes.md` as historical and read-only unless the product owner explicitly reactivates one.
+- If a request conflicts with the recorded lane, issue scope, or merge direction, state the conflict and ask whether the product owner intends to change the release plan. Do not silently reinterpret the request or invent another branch.
+- An explicit product-owner change to the release plan is authoritative. Update `docs/release-lanes.md` before implementation so later human and agent work sees the same decision.
+
 ## Human Validation Rule
 
 Only the product owner validates product flows.
