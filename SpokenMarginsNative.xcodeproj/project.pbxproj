@@ -17,6 +17,7 @@
 		10EB3EE7BFFE8CD6C4A94FA8 /* Gate2CompactControlController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01F3F544C01C06FED3A5DF17 /* Gate2CompactControlController.swift */; };
 		127BAF3DE1236BB4E5677282 /* AddArticleShortcutIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 658B2F9486630D76E2155406 /* AddArticleShortcutIntent.swift */; };
 		13EE069509FADAFD7C7B5184 /* Gate2CompactCommandQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3CB7F6850A2AD331ACAB8CE /* Gate2CompactCommandQueue.swift */; };
+		1449DAE504C4645E3B43C84C /* StreamingSpeechQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 993C4712CB9FB906A7799DBE /* StreamingSpeechQueueTests.swift */; };
 		1AECEF8BC97857E45970DFC3 /* Gate5BrowserTextHandoffStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA90E6688F6CDFA1AA5BBA78 /* Gate5BrowserTextHandoffStore.swift */; };
 		1E20763D4CA558FD8B76CD9C /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 9C04490FD2910E2E07A5CA40 /* PrivacyInfo.xcprivacy */; };
 		1F5964C90E38F45B26E43C14 /* PDFStructuredTextExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C7193F1683777E83C876BF6 /* PDFStructuredTextExtractor.swift */; };
@@ -194,6 +195,7 @@
 		9028714E249043B12F2CD95D /* SpokenMarginsAppUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = SpokenMarginsAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		932001F7F4C13B1FBA9BC128 /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
 		968283859946C995CD8FA20C /* popup.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = popup.html; sourceTree = "<group>"; };
+		993C4712CB9FB906A7799DBE /* StreamingSpeechQueueTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingSpeechQueueTests.swift; sourceTree = "<group>"; };
 		9AC0CEE299A474FCA1DE58BE /* popup.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = popup.js; sourceTree = "<group>"; };
 		9C04490FD2910E2E07A5CA40 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		9FEFBCF337DFC7DB102DAD5B /* SpokenMarginsApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = SpokenMarginsApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -422,6 +424,7 @@
 				6832D3C21EF217C605FF3A2D /* SessionMarkdownFileWriterTests.swift */,
 				BBD0F5894DD6C23AA6F999E6 /* SourceLinkImportTests.swift */,
 				0CC7D97FA0710D0845D16CFE /* SpokenMarginsTermsTests.swift */,
+				993C4712CB9FB906A7799DBE /* StreamingSpeechQueueTests.swift */,
 				1D6C701BA62F6D79A4C8A178 /* SupertonicSpeechTests.swift */,
 			);
 			name = SpokenMarginsAppTests;
@@ -848,6 +851,7 @@
 				A2AF5B9F364DB791BFADF693 /* SessionMarkdownFileWriterTests.swift in Sources */,
 				64DBF59250A264118426066B /* SourceLinkImportTests.swift in Sources */,
 				723FD524FC3FBA82AABEF5C4 /* SpokenMarginsTermsTests.swift in Sources */,
+				1449DAE504C4645E3B43C84C /* StreamingSpeechQueueTests.swift in Sources */,
 				C952235E078B051615069C2E /* SupertonicSpeechTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -907,7 +911,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsGate2Widget/SpokenMarginsGate2Widget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 21;
 				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsGate2Widget/Info.plist;
@@ -931,7 +935,7 @@
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsApp/SpokenMarginsApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 21;
 				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				INFOPLIST_FILE = App/SpokenMarginsApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Spoken Margins";
@@ -954,7 +958,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsShareExtension/SpokenMarginsShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 21;
 				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsShareExtension/Info.plist;
@@ -994,7 +998,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsGate2Widget/SpokenMarginsGate2Widget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 21;
 				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsGate2Widget/Info.plist;
@@ -1018,7 +1022,7 @@
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsApp/SpokenMarginsApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 21;
 				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				INFOPLIST_FILE = App/SpokenMarginsApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Spoken Margins";
@@ -1138,7 +1142,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsShareExtension/SpokenMarginsShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 21;
 				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsShareExtension/Info.plist;
@@ -1234,7 +1238,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsBrowserTextExtension/SpokenMarginsBrowserTextExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 21;
 				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsBrowserTextExtension/Info.plist;
@@ -1256,7 +1260,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsBrowserTextExtension/SpokenMarginsBrowserTextExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 21;
 				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsBrowserTextExtension/Info.plist;

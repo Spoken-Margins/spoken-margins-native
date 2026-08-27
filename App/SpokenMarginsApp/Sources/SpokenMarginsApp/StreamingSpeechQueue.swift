@@ -128,9 +128,29 @@ final class StreamingSpeechQueue {
                 do {
                     _ = try self.speech.prepareSpeechText(unit.text)
                     try self.speech.play(targetId: targetId)
-                    self.onPlaybackObservation?(
-                        PlaybackObservation(event: .started, turnId: unit.turnId, charOffset: unit.startOffset)
-                    )
+                    var playbackStarted = false
+                    while !Task.isCancelled,
+                          workerGeneration == self.generation,
+                          !self.isPausedForInterjection,
+                          !playbackStarted {
+                        switch self.speech.playbackStartStatus(targetId: targetId) {
+                        case .confirmed:
+                            playbackStarted = true
+                            self.onPlaybackObservation?(
+                                PlaybackObservation(event: .started, turnId: unit.turnId, charOffset: unit.startOffset)
+                            )
+                        case .pending:
+                            try? await Task.sleep(for: .milliseconds(50))
+                        case .failed:
+                            throw SessionKitError.invalidCommandForState("streaming_speech_start_failed")
+                        }
+                    }
+                    guard playbackStarted else {
+                        if self.current == unit {
+                            self.current = nil
+                        }
+                        break
+                    }
                     while !Task.isCancelled,
                           workerGeneration == self.generation,
                           !self.isPausedForInterjection,

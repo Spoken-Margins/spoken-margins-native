@@ -299,6 +299,31 @@ final class Gate1FlowUITests: XCTestCase {
         )
         XCTAssertTrue(app.buttons["sourceLink.candidate.0"].exists)
         XCTAssertTrue(app.buttons["sourceLink.candidate.1"].exists)
+
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(element("sourceLink.url.field").waitForExistence(timeout: 4))
+        app.buttons["Close"].tap()
+        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 4))
+
+        let seededStart = app.buttons["queue.start.item-pill"]
+        XCTAssertTrue(seededStart.waitForExistence(timeout: 4))
+        seededStart.tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 4))
+        app.buttons["playback.home.button"].tap()
+
+        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 4))
+        let miniPlayer = element("miniPlayer.bar")
+        XCTAssertTrue(miniPlayer.waitForExistence(timeout: 4))
+        XCTAssertEqual(app.keyboards.count, 0, "The source-link field kept keyboard focus after the picker closed.")
+
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.exists)
+        let bottomGap = window.frame.maxY - miniPlayer.frame.maxY
+        XCTAssertLessThan(
+            bottomGap,
+            96,
+            "The mini-player remained displaced by a stale keyboard safe-area (bottom gap: \(bottomGap))."
+        )
     }
 
     func testDiagnosticsCopyShowsLocalConfirmation() throws {

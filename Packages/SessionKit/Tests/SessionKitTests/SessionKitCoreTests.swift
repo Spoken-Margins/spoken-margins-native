@@ -11,6 +11,55 @@ import AVFoundation
 #endif
 
 final class SessionKitCoreTests: XCTestCase {
+    func testMediaSeekLifecycleTreatsDeclinedCurrentSeekAsTerminal() {
+        var lifecycle = MediaSeekLifecycle()
+        let generation = lifecycle.begin(targetId: "episode", mediaTimeMs: 120_000)
+
+        // AVPlayer's `finished == false` is terminal for this generation. The
+        // adapter gives the still-current intent one bounded replacement seek.
+        let retry = lifecycle.finish(generation: generation, targetId: "episode", completed: false)
+        guard case .retry(let replacement) = retry else {
+            return XCTFail("Expected one bounded retry for a declined current seek")
+        }
+        XCTAssertEqual(replacement.mediaTimeMs, 120_000)
+        XCTAssertEqual(replacement.retryCount, 1)
+        XCTAssertEqual(lifecycle.pending, replacement)
+
+        XCTAssertEqual(
+            lifecycle.finish(generation: replacement.generation, targetId: "episode", completed: false),
+            .failed(replacement)
+        )
+        XCTAssertNil(lifecycle.pending)
+    }
+
+    func testMediaSeekLifecycleIgnoresSupersededSeekCompletion() {
+        var lifecycle = MediaSeekLifecycle()
+        let first = lifecycle.begin(targetId: "episode", mediaTimeMs: 120_000)
+        let second = lifecycle.begin(targetId: "episode", mediaTimeMs: 240_000)
+
+        XCTAssertEqual(lifecycle.finish(generation: first, targetId: "episode", completed: false), .ignored)
+        XCTAssertEqual(lifecycle.pending?.generation, second)
+        XCTAssertEqual(lifecycle.pending?.mediaTimeMs, 240_000)
+        XCTAssertEqual(lifecycle.finish(generation: second, targetId: "episode", completed: true), .completed)
+        XCTAssertNil(lifecycle.pending)
+    }
+
+    #if canImport(AVFoundation)
+    func testSystemSpeechPlaybackRateReportsEffectiveTransportMultiplier() throws {
+        let client = SystemSpeechPlaybackClient(
+            voiceIdentifier: nil,
+            speechRate: AVSpeechUtteranceDefaultSpeechRate
+        )
+        _ = try client.prepareSpeechText("System speech should retain an observable playback rate.")
+        try client.play(targetId: "system-rate", from: 0)
+
+        try client.setPlaybackRate(1.5)
+
+        XCTAssertEqual(client.currentPlaybackPosition()?.playbackRate ?? 0, 1.5, accuracy: 0.001)
+        try client.stop()
+    }
+    #endif
+
     func testAudioInterruptionResumePolicyOnlyResumesUntouchedPlayingAudio() {
         var policy = AudioPlaybackInterruptionResumePolicy()
 
@@ -454,8 +503,20 @@ final class SessionKitCoreTests: XCTestCase {
 
         XCTAssertEqual(map.chapters.count, 2)
         XCTAssertEqual(map.chapters.first?.title, "Main argument")
-        XCTAssertEqual(map.chapters.last?.title, "Main argument — continued")
+        XCTAssertEqual(map.chapters.last?.title, "Main argument — part 2")
         XCTAssertEqual(map.chapters.first?.endChar, map.chapters.last?.startChar)
+    }
+
+    func testDeterministicListeningMapNumbersRepeatedSplitsWithoutRecursiveLabels() throws {
+        let body = Array(repeating: "substantive", count: 11_000).joined(separator: " ")
+        let markdown = "---\ntitle: Long Chapter\n---\n\n## Chapter Text\n\n\(body)"
+
+        let parsed = try ObsidianMarkdownParser.parse(fileName: "long-chapter.md", contents: markdown)
+        let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "item-long-chapter"))
+
+        XCTAssertEqual(map.chapters.count, 10)
+        XCTAssertEqual(map.chapters.map(\.title), ["Chapter Text"] + (2...10).map { "Chapter Text — part \($0)" })
+        XCTAssertFalse(map.chapters.contains { $0.title.contains("continued — continued") })
     }
 
     func testCapabilityGateRejectsUnsupportedCommand() throws {
@@ -800,6 +861,58 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(confirmed.status, .playing)
     }
 
+    func testSystemInitiatedPauseReconcilesPendingStartWithoutRepause() throws {
+        let audio = RecordingAudioClient()
+        audio.startStatus = .pending
+        let engine = SessionEngine(
+            profile: phonePlaybackProfile(),
+            repository: InMemorySessionRepository(items: [
+                "item-route-loss": Item(
+                    id: "item-route-loss",
+                    title: "Route loss",
+                    mediaType: "text",
+                    text: "Playback is still preparing.",
+                    externalReference: nil,
+                    status: "ready"
+                )
+            ]),
+            audio: audio
+        )
+
+        XCTAssertEqual(try engine.startSession(itemId: "item-route-loss").status, .starting)
+        let paused = try engine.reconcileSystemInitiatedPause()
+
+        XCTAssertEqual(paused.status, .paused)
+        XCTAssertEqual(audio.pauseCount, 0, "The audio client already applied the system pause")
+    }
+
+    func testPendingResumeDoesNotPublishPausedBeforePlaybackConfirms() throws {
+        let audio = RecordingAudioClient()
+        let engine = SessionEngine(
+            profile: phonePlaybackProfile(),
+            repository: InMemorySessionRepository(items: [
+                "item-pill": Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two.", externalReference: nil, status: "ready")
+            ]),
+            audio: audio
+        )
+
+        _ = try engine.startSession(itemId: "item-pill")
+        _ = try engine.pause()
+        audio.startStatus = .pending
+        audio.transportState = .paused
+
+        let starting = try engine.resumePlayback()
+        let stillStarting = try engine.syncPlaybackProgress()
+
+        XCTAssertEqual(starting.status, .starting)
+        XCTAssertEqual(stillStarting.status, .starting)
+
+        audio.startStatus = .confirmed
+        audio.transportState = .playing
+        let confirmed = try engine.syncPlaybackProgress()
+        XCTAssertEqual(confirmed.status, .playing)
+    }
+
     func testPendingPlaybackStartStillPublishesAndPersistsLiveTextPosition() throws {
         let audio = RecordingAudioClient()
         audio.startStatus = .pending
@@ -1078,6 +1191,36 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(interjection.anchor.anchorBefore, "First")
         XCTAssertEqual(interjection.anchor.anchorAfter, "sentence. Second sentence.")
         XCTAssertEqual(transcriber.scheduledInterjectionIds, [interjection.id])
+        XCTAssertEqual(engine.currentSession?.position.charOffset, "First ".count)
+        XCTAssertEqual(audio.playedOffsets.last, "First ".count)
+    }
+
+    func testNativeTextInterjectionsResumeAtExactBoundaryWithoutAccumulatingDrift() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "interjection": ["record_audio"]
+            ]
+        )
+        let text = "First sentence. Second sentence continues. Third sentence."
+        let item = Item(id: "item-exact-resume", title: "Exact Resume", mediaType: "text", text: text, externalReference: nil, status: "ready")
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+        let capturedOffset = "First sentence. ".count
+
+        _ = try engine.startSession(itemId: item.id)
+        for index in 0..<10 {
+            audio.currentOffset = capturedOffset
+            _ = try engine.beginInterjection()
+            _ = try engine.finishInterjection(audioRef: "interjections/exact-\(index).m4a")
+
+            XCTAssertEqual(engine.currentSession?.position.charOffset, capturedOffset)
+            XCTAssertEqual(audio.playedOffsets.last, capturedOffset)
+        }
     }
 
     func testTextInterjectionAnchorUsesFullWordsAndFourSentenceShoulders() throws {
@@ -1538,6 +1681,82 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(audio.playedOffsets.last, 124_250)
     }
 
+    func testRecordingInterjectionRejectsTimelineNavigationAndPreservesMediaAnchor() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["native_media", "assistant_turn_tts"],
+                "timeline": ["chapter_timing"],
+                "interjection": ["record_audio", "capture_media_anchor"]
+            ]
+        )
+        let item = Item(
+            id: "item-recording-navigation-guard",
+            title: "Guarded Podcast",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/guarded",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(
+                sourceType: .remoteStream,
+                url: "https://cdn.example.com/guarded.mp3",
+                durationMs: 900_000
+            )
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentMediaTimeValue = 124_250
+        let recording = try engine.beginInterjection()
+        let playCountWhileRecording = audio.playedTargets.count
+
+        for _ in 0..<3 {
+            XCTAssertThrowsError(try engine.playSourceFromBeginning()) { error in
+                XCTAssertEqual(error as? SessionKitError, .invalidCommandForState("playSourceFromBeginning"))
+            }
+        }
+        XCTAssertThrowsError(try engine.jumpToChapter(chapterId: "chapter-ignored")) { error in
+            XCTAssertEqual(error as? SessionKitError, .invalidCommandForState("jumpToChapter"))
+        }
+        XCTAssertThrowsError(try engine.playTurn(turnId: "turn-ignored")) { error in
+            XCTAssertEqual(error as? SessionKitError, .invalidCommandForState("playTurn"))
+        }
+        XCTAssertThrowsError(try engine.jumpToTurnChapter(turnId: "turn-ignored", chapterId: "chapter-ignored")) { error in
+            XCTAssertEqual(error as? SessionKitError, .invalidCommandForState("jumpToTurnChapter"))
+        }
+        XCTAssertThrowsError(try engine.seekMedia(toMediaTimeMs: 0)) { error in
+            XCTAssertEqual(error as? SessionKitError, .invalidCommandForState("seekMedia"))
+        }
+        XCTAssertThrowsError(try engine.togglePlayPause()) { error in
+            XCTAssertEqual(error as? SessionKitError, .invalidCommandForState("togglePlayPause"))
+        }
+        XCTAssertThrowsError(try engine.resumePlayback()) { error in
+            XCTAssertEqual(error as? SessionKitError, .invalidCommandForState("resumePlayback"))
+        }
+        XCTAssertThrowsError(try engine.stopPlayback()) { error in
+            XCTAssertEqual(error as? SessionKitError, .invalidCommandForState("stopPlayback"))
+        }
+
+        XCTAssertEqual(recording.status, .recording)
+        XCTAssertEqual(engine.snapshot.status, .recording)
+        XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 124_250)
+        XCTAssertEqual(audio.currentMediaTimeValue, 124_250)
+        XCTAssertEqual(audio.playedTargets.count, playCountWhileRecording)
+
+        let resumed = try engine.finishInterjection(audioRef: "interjections/guarded.m4a")
+        let sessionID = try XCTUnwrap(engine.currentSession?.id)
+        let saved = try XCTUnwrap(try repo.loadInterjections(sessionId: sessionID).first)
+        XCTAssertEqual(saved.anchor.mediaTimeMs, 124_250)
+        XCTAssertEqual(resumed.status, .playing)
+        XCTAssertEqual(resumed.currentMediaTimeMs, 124_250)
+        XCTAssertEqual(audio.playedOffsets.last, 124_250)
+    }
+
     func testInspectSessionRepairsMediaPercentagesFromDurableTimestamps() throws {
         let item = Item(
             id: "item-source-repair",
@@ -1625,6 +1844,35 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(repo.items[item.id]?.media?.durationMs, 900_000)
     }
 
+    func testObservedPlayerDurationCorrectsUnderestimatedFeedDurationAndPercentages() throws {
+        let item = Item(
+            id: "item-source-short-feed-duration",
+            title: "Podcast With Short Feed Duration",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/episode",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(
+                sourceType: .remoteStream,
+                url: "https://cdn.example.com/episode.mp3",
+                durationMs: 600_000
+            )
+        )
+        let audio = RecordingAudioClient()
+        audio.currentDurationMs = 900_000
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: phonePlaybackProfile(), repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentMediaTimeValue = 600_000
+        let corrected = try engine.syncPlaybackProgress()
+
+        XCTAssertEqual(corrected.currentPlaybackDurationMs, 900_000)
+        XCTAssertEqual(corrected.currentPlaybackProgressPercent, 66)
+        XCTAssertEqual(repo.items[item.id]?.media?.durationMs, 900_000)
+    }
+
     func testTwentyFiveMinuteMediaPositionSurvivesInterjectionDismissAndResume() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
@@ -1677,6 +1925,66 @@ final class SessionKitCoreTests: XCTestCase {
         let resumed = try engine.resumePlayback()
         XCTAssertEqual(resumed.status, .playing)
         XCTAssertEqual(audio.playedOffsets.last, 1_500_000)
+    }
+
+    func testRepeatedMediaSeekInterjectionResumeCyclesKeepOneAdvancingClock() throws {
+        let durationMs = 1_800_000
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["native_media"],
+                "interjection": ["record_audio", "capture_media_anchor"]
+            ]
+        )
+        let item = Item(
+            id: "item-repeated-media-cycles",
+            title: "Repeated Media Cycles",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/repeated-cycles",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(
+                sourceType: .remoteStream,
+                url: "https://cdn.example.com/repeated-cycles.mp3",
+                durationMs: durationMs
+            )
+        )
+        let audio = RecordingAudioClient()
+        audio.currentDurationMs = durationMs
+        let repository = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repository, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        for index in 0..<10 {
+            let requested = 120_000 + (index * 120_000)
+            _ = try engine.seekMedia(toMediaTimeMs: requested)
+
+            let beforeInterjection = requested + 30_000
+            audio.currentMediaTimeValue = beforeInterjection
+            let advanced = try engine.syncPlaybackProgress()
+            XCTAssertEqual(advanced.currentMediaTimeMs, beforeInterjection)
+
+            let recording = try engine.beginInterjection()
+            XCTAssertEqual(recording.currentMediaTimeMs, beforeInterjection)
+            let resumed = try engine.finishInterjection(audioRef: "interjections/cycle-\(index).m4a")
+            XCTAssertEqual(resumed.currentMediaTimeMs, beforeInterjection)
+            XCTAssertEqual(audio.playedOffsets.last, beforeInterjection)
+
+            audio.currentMediaTimeValue = beforeInterjection + 12_000
+            let postResume = try engine.syncPlaybackProgress()
+            XCTAssertEqual(postResume.currentMediaTimeMs, beforeInterjection + 12_000)
+            XCTAssertEqual(postResume.currentPlaybackDurationMs, durationMs)
+        }
+
+        audio.currentMediaTimeValue = durationMs - 120_000
+        let nearEnd = try engine.syncPlaybackProgress()
+        XCTAssertEqual(nearEnd.currentMediaTimeMs, durationMs - 120_000)
+        let observedDurationMs = try XCTUnwrap(nearEnd.currentPlaybackDurationMs)
+        let observedMediaTimeMs = try XCTUnwrap(nearEnd.currentMediaTimeMs)
+        XCTAssertEqual(observedDurationMs - observedMediaTimeMs, 120_000)
     }
 
     func testSourceWindowContextUpdatesMediaInterjectionAnchorWithoutChangingNoteTranscript() throws {
@@ -2144,6 +2452,11 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.playbackRate, 1.5)
         XCTAssertEqual(engine.currentSession?.playbackRate, 1.5)
         XCTAssertEqual(audio.playbackRates.last, 1.5)
+
+        let quarterSpeed = try engine.setPlaybackRate(0.25)
+        XCTAssertEqual(quarterSpeed.playbackRate, 0.25)
+        XCTAssertEqual(engine.currentSession?.playbackRate, 0.25)
+        XCTAssertEqual(audio.playbackRates.last, 0.25)
     }
 
     func testRestartPlaybackFromCurrentPositionReplaysTextFromSyncedOffset() throws {
@@ -2362,6 +2675,230 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(engine.currentSession?.currentTargetType, .transcriptBackedMedia)
         XCTAssertEqual(audio.playedTargets.last, "file:///tmp/live-to-media.caf")
         XCTAssertEqual(audio.playedOffsets.last, 1_000)
+    }
+
+    func testInspectSessionPromotesRestoredLiveTextToCompletePreparedAudio() throws {
+        let audioFile = FileManager.default.temporaryDirectory
+            .appending(path: "restored-prepared-\(UUID().uuidString).caf")
+        try Data().write(to: audioFile)
+        defer { try? FileManager.default.removeItem(at: audioFile) }
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts", "prerendered_audio", "native_media"],
+                "timeline": ["transcript_segments", "media_time", "chapter_timing"]
+            ]
+        )
+        let text = "First sentence. Second sentence."
+        let item = Item(
+            id: "item-restored-prepared",
+            title: "Restored Prepared",
+            mediaType: "text",
+            text: text,
+            externalReference: nil,
+            status: "ready",
+            media: ItemMedia(
+                sourceType: .generatedTTSPrerendered,
+                url: audioFile.absoluteString,
+                durationMs: 2_300,
+                nativeMediaId: audioFile.absoluteString
+            ),
+            transcriptId: "generated-transcript-item-restored-prepared"
+        )
+        let session = Session(
+            id: "session-restored-prepared",
+            itemId: item.id,
+            status: "in_progress",
+            phase: .itemPlayback,
+            currentTargetType: .itemTextTTS,
+            currentTargetId: item.id,
+            position: Position(charOffset: 16, chapterId: "ch-tts-2"),
+            completionPercent: 50,
+            playbackRate: 1.25
+        )
+        let timeline = SourceTranscriptTimeline(
+            id: "generated-transcript-item-restored-prepared",
+            itemId: item.id,
+            createdAt: Date(),
+            timeline: TranscriptTimeline(
+                segments: [
+                    MediaTimelineSegment(id: "tts-1", startMs: 0, endMs: 1_000, startChar: 0, endChar: 15, text: "First sentence."),
+                    MediaTimelineSegment(id: "tts-2", startMs: 1_000, endMs: 2_300, startChar: 16, endChar: text.count, text: "Second sentence.")
+                ],
+                chapters: [
+                    MediaTimelineChapter(id: "ch-tts-1", title: "First", startMs: 0, transcriptSegmentId: "tts-1"),
+                    MediaTimelineChapter(id: "ch-tts-2", title: "Second", startMs: 1_000, transcriptSegmentId: "tts-2")
+                ],
+                durationMs: 2_300
+            )
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session])
+        try repo.saveTranscriptTimeline(timeline)
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        let inspected = try engine.inspectSession(sessionId: session.id)
+
+        XCTAssertEqual(inspected.status, .paused)
+        XCTAssertEqual(inspected.targetType, TargetType.transcriptBackedMedia.rawValue)
+        XCTAssertEqual(inspected.targetId, audioFile.absoluteString)
+        XCTAssertEqual(inspected.currentMediaTimeMs, 1_000)
+        XCTAssertEqual(inspected.playbackRate, 1.25)
+        XCTAssertEqual(engine.currentSession?.position.charOffset, 16)
+        XCTAssertEqual(try repo.loadSession(id: session.id)?.currentTargetType, .transcriptBackedMedia)
+
+        let resumed = try engine.resumePlayback()
+        XCTAssertEqual(resumed.currentMediaTimeMs, 1_000)
+        XCTAssertEqual(audio.playedTargets.last, audioFile.absoluteString)
+        XCTAssertEqual(audio.playedOffsets.last, 1_000)
+    }
+
+    func testMediaChapterJumpKeepsRequestedPositionWhileTransportReportsOldPosition() throws {
+        let audioFile = FileManager.default.temporaryDirectory
+            .appending(path: "delayed-media-seek-\(UUID().uuidString).caf")
+        try Data().write(to: audioFile)
+        defer { try? FileManager.default.removeItem(at: audioFile) }
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["prerendered_audio", "native_media"],
+                "timeline": ["transcript_segments", "media_time", "chapter_timing"]
+            ]
+        )
+        let text = "First sentence. Second sentence. Third sentence."
+        let item = Item(
+            id: "item-delayed-media-seek",
+            title: "Delayed Media Seek",
+            mediaType: "text",
+            text: text,
+            externalReference: nil,
+            status: "ready",
+            media: ItemMedia(
+                sourceType: .generatedTTSPrerendered,
+                url: audioFile.absoluteString,
+                durationMs: 3_600,
+                nativeMediaId: audioFile.absoluteString
+            ),
+            transcriptId: "generated-transcript-item-delayed-media-seek"
+        )
+        let timeline = SourceTranscriptTimeline(
+            id: "generated-transcript-item-delayed-media-seek",
+            itemId: item.id,
+            createdAt: Date(),
+            timeline: TranscriptTimeline(
+                segments: [
+                    MediaTimelineSegment(id: "tts-1", startMs: 0, endMs: 1_000, startChar: 0, endChar: 15, text: "First sentence."),
+                    MediaTimelineSegment(id: "tts-2", startMs: 1_000, endMs: 2_300, startChar: 16, endChar: 32, text: "Second sentence."),
+                    MediaTimelineSegment(id: "tts-3", startMs: 2_300, endMs: 3_600, startChar: 33, endChar: text.count, text: "Third sentence.")
+                ],
+                chapters: [
+                    MediaTimelineChapter(id: "ch-tts-1", title: "First", startMs: 0, transcriptSegmentId: "tts-1"),
+                    MediaTimelineChapter(id: "ch-tts-2", title: "Second", startMs: 1_000, transcriptSegmentId: "tts-2"),
+                    MediaTimelineChapter(id: "ch-tts-3", title: "Third", startMs: 2_300, transcriptSegmentId: "tts-3")
+                ],
+                durationMs: 3_600
+            )
+        )
+        let audio = DelayedPositionAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        try repo.saveTranscriptTimeline(timeline)
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.confirmLatestRequest()
+        _ = try engine.syncPlaybackProgress()
+        audio.reportMediaPosition(400)
+        _ = try engine.syncPlaybackProgress()
+
+        let jumped = try engine.jumpToChapter(chapterId: "ch-tts-2")
+        XCTAssertEqual(audio.requestedMediaPositions.last, 1_000)
+        XCTAssertEqual(jumped.status, .starting)
+        XCTAssertEqual(jumped.currentMediaTimeMs, 1_000)
+        XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 1_000)
+
+        let whileOldTransportPositionRemains = try engine.syncPlaybackProgress()
+        XCTAssertEqual(whileOldTransportPositionRemains.currentMediaTimeMs, 1_000)
+        XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 1_000)
+
+        let pausedBeforeSeekConfirmation = try engine.pause()
+        XCTAssertEqual(pausedBeforeSeekConfirmation.status, .paused)
+        XCTAssertEqual(pausedBeforeSeekConfirmation.currentMediaTimeMs, 1_000)
+        XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 1_000)
+
+        let resumedFromRequestedPosition = try engine.resumePlayback()
+        XCTAssertEqual(resumedFromRequestedPosition.status, .starting)
+        XCTAssertEqual(audio.requestedMediaPositions.last, 1_000)
+
+        let soughtAgain = try engine.seekMedia(toMediaTimeMs: 2_300)
+        XCTAssertEqual(soughtAgain.currentMediaTimeMs, 2_300)
+        audio.reportMediaPosition(0)
+        XCTAssertEqual(try engine.syncPlaybackProgress().currentMediaTimeMs, 2_300)
+
+        audio.confirmLatestRequest()
+        let confirmed = try engine.syncPlaybackProgress()
+        XCTAssertEqual(confirmed.status, .playing)
+        XCTAssertEqual(confirmed.currentMediaTimeMs, 2_300)
+        XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 2_300)
+
+        audio.reportMediaPosition(0)
+        let stalePostConfirmationSample = try engine.syncPlaybackProgress()
+        XCTAssertEqual(stalePostConfirmationSample.currentMediaTimeMs, 2_300)
+        XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 2_300)
+
+        audio.reportMediaPosition(2_800)
+        let forwardProgress = try engine.syncPlaybackProgress()
+        XCTAssertEqual(forwardProgress.currentMediaTimeMs, 2_800)
+        XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 2_800)
+    }
+
+    func testLiveTextSeekKeepsRequestedOffsetWhileSpeechReportsOldOffset() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"]
+            ]
+        )
+        let text = "First sentence. Second sentence. Third sentence."
+        let item = Item(
+            id: "item-delayed-text-seek",
+            title: "Delayed Text Seek",
+            mediaType: "text",
+            text: text,
+            externalReference: nil,
+            status: "ready"
+        )
+        let audio = DelayedPositionAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.confirmLatestRequest()
+        _ = try engine.syncPlaybackProgress()
+        audio.reportTextPosition(6)
+        _ = try engine.syncPlaybackProgress()
+
+        let requestedOffset = 32
+        let sought = try engine.seekText(toCharOffset: requestedOffset)
+        XCTAssertEqual(audio.requestedTextPositions.last, requestedOffset)
+        XCTAssertEqual(sought.status, .starting)
+        XCTAssertEqual(sought.currentTextStart, requestedOffset)
+        XCTAssertEqual(engine.currentSession?.position.charOffset, requestedOffset)
+
+        let whileOldSpeechPositionRemains = try engine.syncPlaybackProgress()
+        XCTAssertEqual(whileOldSpeechPositionRemains.currentTextStart, requestedOffset)
+        XCTAssertEqual(engine.currentSession?.position.charOffset, requestedOffset)
+
+        audio.confirmLatestRequest()
+        let confirmed = try engine.syncPlaybackProgress()
+        XCTAssertEqual(confirmed.status, .playing)
+        XCTAssertEqual(confirmed.currentTextStart, requestedOffset)
+        XCTAssertEqual(engine.currentSession?.position.charOffset, requestedOffset)
     }
 
     func testPreparedTextAudioAttachmentReplacesStarterMediaWithoutLosingPlayhead() throws {
@@ -3277,7 +3814,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(recording.status, .recording)
         XCTAssertLessThan(recording.sourceProgressPercent, 100)
         XCTAssertLessThan(engine.currentSession?.position.charOffset ?? text.count, text.count)
-        XCTAssertEqual(audio.playedOffsets.last, 0)
+        XCTAssertEqual(audio.playedOffsets.last, "One. ".count)
     }
 
     func testPlayTurnPreparesTurnTextInsteadOfReusingItemText() throws {
@@ -3586,13 +4123,15 @@ final class SessionKitCoreTests: XCTestCase {
         audio.currentOffset = 7
         _ = try engine.aiStreamDelta(turnId: "turn-response-stream", content: "First response. Final fragment")
         let active = try engine.activateStreamingTurn(turnId: "turn-response-stream")
+        let stillStarting = try engine.syncPlaybackProgress()
         let observed = try engine.streamingTurnPlaybackStarted(turnId: "turn-response-stream", charOffset: 0)
         _ = try engine.aiJobCompleted(turnId: "turn-response-stream")
         let finished = try engine.finishStreamingTurnPlayback(turnId: "turn-response-stream")
 
         XCTAssertEqual(audio.pauseCount, 1)
         XCTAssertEqual(active.targetId, "turn-response-stream")
-        XCTAssertEqual(active.status, .playing)
+        XCTAssertEqual(active.status, .starting)
+        XCTAssertEqual(stillStarting.status, .starting)
         XCTAssertEqual(observed.status, .playing)
         XCTAssertEqual(finished.status, .paused)
         XCTAssertEqual(finished.phase, .aiResponsePlayback)
@@ -3680,7 +4219,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(interjection.anchor.anchorBefore, "First response.")
         XCTAssertEqual(interjection.anchor.anchorAfter, "Second point has the detail.")
         XCTAssertEqual(engine.currentSession?.position.charOffset, secondSentenceStart)
-        XCTAssertEqual(resumed.status, .playing)
+        XCTAssertEqual(resumed.status, .starting)
         XCTAssertTrue(audio.playedOffsets.isEmpty)
     }
 
@@ -3710,6 +4249,35 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(turn.text, "External response. Second point.")
         XCTAssertEqual(snapshot.phase, .aiResponsePlayback)
         XCTAssertEqual(audio.preparedTexts.last, "Short setup.\n\nExternal response. Second point.")
+    }
+
+    func testImportedAssistantResponseInterjectionResumesAtExactCapturedOffset() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["assistant_turn_tts"],
+                "interjection": ["record_audio"]
+            ]
+        )
+        let item = Item(id: "item-imported-response", title: "Imported Response", mediaType: "text", text: "Source.", externalReference: nil, status: "ready")
+        let session = Session(id: "session-imported-response", itemId: item.id, status: "in_progress", phase: .conversation, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 100, playbackRate: 1)
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.importAssistantResponse(
+            text: "First imported sentence. Second imported sentence continues.",
+            autoPlay: true
+        )
+        let capturedOffset = "First imported sentence. Second".count
+        audio.currentOffset = capturedOffset
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: "interjections/imported-response.m4a")
+
+        XCTAssertEqual(engine.currentSession?.position.charOffset, capturedOffset)
+        XCTAssertEqual(audio.playedOffsets.last, capturedOffset)
     }
 
     func testScopedExportFiltersTargetInterjectionsAndMarkdown() throws {
@@ -4109,7 +4677,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(audio.playedOffsets.last, "Brief intro.\n\nFirst".count)
     }
 
-    func testAssistantInterjectionResumesNearRecordedTurnOffset() throws {
+    func testAssistantInterjectionResumesAtExactRecordedTurnOffset() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
             displayName: "Phone/Tablet Online",
@@ -4128,7 +4696,9 @@ final class SessionKitCoreTests: XCTestCase {
         let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
 
         _ = try engine.playTurn(turnId: turn.id)
-        audio.currentOffset = "Brief intro.\n\nFirst response. Second".count
+        let responseOffset = "First response. Second".count
+        let playbackOffset = "Brief intro.\n\n".count + responseOffset
+        audio.currentOffset = playbackOffset
         _ = try engine.beginInterjection()
         _ = try engine.finishInterjection(audioRef: "interjections/ij-ai-001.m4a")
 
@@ -4137,7 +4707,8 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(interjection.anchor.anchorBefore, "First response. Second")
         XCTAssertEqual(interjection.anchor.anchorAfter, "point has the detail. Third point closes.")
         XCTAssertGreaterThan(interjection.roughPercent, 0)
-        XCTAssertEqual(audio.playedOffsets.last, "Brief intro.\n\nFirst response. ".count)
+        XCTAssertEqual(engine.currentSession?.position.charOffset, responseOffset)
+        XCTAssertEqual(audio.playedOffsets.last, playbackOffset)
     }
 
     func testAssistantTurnExportRehydratesLegacyAnchorsAndUsesContextualLayout() throws {
@@ -4205,7 +4776,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertFalse(markdown.contains("Anchor before:"))
     }
 
-    func testCancelAssistantInterjectionResumesNearRecordedTurnOffsetWithoutSavingInterjection() throws {
+    func testCancelAssistantInterjectionResumesAtExactRecordedTurnOffsetWithoutSavingInterjection() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
             displayName: "Phone/Tablet Online",
@@ -4224,14 +4795,17 @@ final class SessionKitCoreTests: XCTestCase {
         let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
 
         _ = try engine.playTurn(turnId: turn.id)
-        audio.currentOffset = "Brief intro.\n\nFirst response. Second".count
+        let responseOffset = "First response. Second".count
+        let playbackOffset = "Brief intro.\n\n".count + responseOffset
+        audio.currentOffset = playbackOffset
         _ = try engine.beginInterjection()
         let snapshot = try engine.cancelInterjection()
 
         XCTAssertEqual(snapshot.phase, .aiResponsePlayback)
         XCTAssertEqual(snapshot.targetType, TargetType.assistantTurnTTS.rawValue)
         XCTAssertEqual(try repo.loadInterjections(sessionId: session.id).count, 0)
-        XCTAssertEqual(audio.playedOffsets.last, "Brief intro.\n\nFirst response. ".count)
+        XCTAssertEqual(engine.currentSession?.position.charOffset, responseOffset)
+        XCTAssertEqual(audio.playedOffsets.last, playbackOffset)
     }
 
     func testPlaySourceFromBeginningWorksWithoutListeningMap() throws {
@@ -4538,6 +5112,121 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(audio.playedOffsets.last, 42_000)
         XCTAssertEqual(audio.mediaContexts.last??.sourceURL, remote)
         XCTAssertEqual(audio.mediaContexts.last??.playbackURL, local)
+    }
+}
+
+private final class DelayedPositionAudioClient: AudioPlaybackClient {
+    private enum Request {
+        case text(targetId: String, offset: Int)
+        case media(targetId: String, timeMs: Int)
+    }
+
+    private var latestRequest: Request?
+    private var observedTextPosition: Int?
+    private var observedMediaPosition: Int?
+    private var activeTargetId: String?
+    private var startStatus = PlaybackStartStatus.pending
+    private var playbackRate = 1.0
+
+    private(set) var requestedTextPositions: [Int] = []
+    private(set) var requestedMediaPositions: [Int] = []
+
+    func prepareSpeechText(_ text: String) throws -> String {
+        SpeechTextNormalizer.normalize(text)
+    }
+
+    func play(targetId: String) throws {
+        try play(targetId: targetId, from: 0)
+    }
+
+    func play(targetId: String, from charOffset: Int) throws {
+        activeTargetId = targetId
+        latestRequest = .text(targetId: targetId, offset: charOffset)
+        requestedTextPositions.append(charOffset)
+        startStatus = .pending
+    }
+
+    func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {
+        activeTargetId = targetId
+        latestRequest = .media(targetId: targetId, timeMs: mediaTimeMs)
+        requestedMediaPositions.append(mediaTimeMs)
+        startStatus = .pending
+    }
+
+    func reportTextPosition(_ offset: Int) {
+        observedTextPosition = offset
+        observedMediaPosition = nil
+    }
+
+    func reportMediaPosition(_ mediaTimeMs: Int) {
+        observedMediaPosition = mediaTimeMs
+        observedTextPosition = nil
+    }
+
+    func confirmLatestRequest() {
+        switch latestRequest {
+        case .text(_, let offset):
+            observedTextPosition = offset
+            observedMediaPosition = nil
+        case .media(_, let timeMs):
+            observedMediaPosition = timeMs
+            observedTextPosition = nil
+        case nil:
+            break
+        }
+        startStatus = .confirmed
+    }
+
+    func currentPlaybackPosition() -> PlaybackPosition? {
+        if let observedMediaPosition {
+            return PlaybackPosition(
+                targetId: activeTargetId,
+                mediaTimeMs: observedMediaPosition,
+                playbackRate: playbackRate,
+                anchorConfidence: .mediaTime
+            )
+        }
+        if let observedTextPosition {
+            return PlaybackPosition(
+                targetId: activeTargetId,
+                textStart: observedTextPosition,
+                textEnd: observedTextPosition + 1,
+                playbackRate: playbackRate,
+                anchorConfidence: .textRange
+            )
+        }
+        return nil
+    }
+
+    func currentCharOffset() -> Int? { observedTextPosition }
+    func currentMediaTimeMs() -> Int? { observedMediaPosition }
+
+    func playbackStartStatus(targetId: String) -> PlaybackStartStatus {
+        guard activeTargetId == targetId else { return .pending }
+        return startStatus
+    }
+
+    func playbackTransportState(targetId: String) -> PlaybackTransportState? {
+        guard activeTargetId == targetId else { return .stopped }
+        switch startStatus {
+        case .confirmed: return .playing
+        case .pending: return .waiting
+        case .failed: return .failed
+        }
+    }
+
+    func setPlaybackRate(_ rate: Double) throws {
+        playbackRate = rate
+    }
+
+    func pause() throws {
+        startStatus = .pending
+    }
+
+    func stop() throws {
+        activeTargetId = nil
+        latestRequest = nil
+        startStatus = .pending
     }
 }
 

@@ -154,6 +154,11 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.snapshot.playbackRate, 1.75, accuracy: 0.001)
         XCTAssertEqual(model.mediaPlaybackRate, 1.75, accuracy: 0.001)
 
+        model.setMediaPlaybackRate(0.33)
+        XCTAssertEqual(model.mediaPlaybackRate, 0.25, accuracy: 0.001)
+        XCTAssertEqual(model.snapshot.playbackRate, 0.25, accuracy: 0.001)
+        model.setMediaPlaybackRate(1.75)
+
         var olderSessionSnapshot = model.snapshot
         olderSessionSnapshot.playbackRate = 1
         model.snapshot = olderSessionSnapshot
@@ -1650,6 +1655,97 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(result.selectedCandidate?.showTitle, "The Correct Show")
         XCTAssertEqual(result.selectedCandidate?.audioURL, "https://cdn.example.com/correct.mp3")
         XCTAssertGreaterThanOrEqual(result.selectedCandidate?.confidence ?? 0, 0.78)
+    }
+
+    func testPublicResolverRetriesSpotifyEpisodeNumberTitleWithoutPrefix() throws {
+        let oEmbed = #"{"title":"895: Label Maker!"}"#
+        let spotifyEmbedPage = #"""
+        <html><body>
+          <script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"state":{"data":{"entity":{"type":"episode","name":"895: Label Maker!","title":"895: Label Maker!","subtitle":"This American Life","releaseDate":{"isoString":"2026-08-17T00:00:00Z"},"duration":3464385}}}}}}</script>
+        </body></html>
+        """#
+        let appleMatch = #"""
+        {
+          "resultCount": 1,
+          "results": [{
+            "wrapperType": "podcastEpisode",
+            "kind": "podcast-episode",
+            "trackId": 1000783492833,
+            "trackName": "Label Maker!",
+            "collectionName": "This American Life",
+            "trackViewUrl": "https://podcasts.apple.com/us/podcast/this-american-life/id201671138?i=1000783492833",
+            "episodeUrl": "https://cdn.example.com/label-maker.mp3",
+            "trackTimeMillis": 3576000,
+            "releaseDate": "2026-08-17T00:00:00Z"
+          }]
+        }
+        """#
+        let request = LinkResolutionRequest(
+            id: "request-spotify-numbered-title",
+            inputURL: "https://open.spotify.com/episode/labelmaker123",
+            sourceSurface: "paste",
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+
+        let result = try PublicPodcastLinkResolver(fetch: { url in
+            if url.path == "/oembed" {
+                return Data(oEmbed.utf8)
+            }
+            if url.path == "/embed/episode/labelmaker123" {
+                return Data(spotifyEmbedPage.utf8)
+            }
+            let searchTerm = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?
+                .first(where: { $0.name == "term" })?
+                .value
+            switch searchTerm {
+            case "895: Label Maker!":
+                return Data(#"{"resultCount":0,"results":[]}"#.utf8)
+            case "Label Maker!":
+                return Data(appleMatch.utf8)
+            default:
+                XCTFail("Unexpected resolver URL: \(url)")
+                return Data()
+            }
+        }).resolve(request)
+
+        XCTAssertEqual(result.status, .playable)
+        XCTAssertEqual(result.selectedCandidate?.title, "Label Maker!")
+        XCTAssertEqual(result.selectedCandidate?.showTitle, "This American Life")
+        XCTAssertEqual(result.selectedCandidate?.audioURL, "https://cdn.example.com/label-maker.mp3")
+        XCTAssertGreaterThanOrEqual(result.selectedCandidate?.confidence ?? 0, 0.78)
+    }
+
+    func testPublicResolverDoesNotAutoSelectExactTitleFromConflictingShow() throws {
+        let oEmbed = #"{"title":"Shared Episode","showTitle":"Expected Show"}"#
+        let appleSearch = #"""
+        {
+          "resultCount": 1,
+          "results": [{
+            "wrapperType": "podcastEpisode",
+            "trackName": "Shared Episode",
+            "collectionName": "Different Show",
+            "episodeUrl": "https://cdn.example.com/different-show.mp3"
+          }]
+        }
+        """#
+        let request = LinkResolutionRequest(
+            id: "request-spotify-conflicting-show",
+            inputURL: "https://open.spotify.com/episode/conflict123",
+            sourceSurface: "paste",
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+
+        let result = try PublicPodcastLinkResolver(fetch: { url in
+            if url.path == "/oembed" { return Data(oEmbed.utf8) }
+            if url.host?.contains("spotify.com") == true { return Data() }
+            return Data(appleSearch.utf8)
+        }).resolve(request)
+
+        XCTAssertEqual(result.status, .needsReview)
+        XCTAssertNil(result.selectedCandidate)
+        XCTAssertEqual(result.candidates.map(\.showTitle), ["Different Show"])
+        XCTAssertEqual(result.failureReason, "spotify_episode_match_ambiguous")
     }
 
     private func makePayloadStore() -> SourceLinkHandoffStore {

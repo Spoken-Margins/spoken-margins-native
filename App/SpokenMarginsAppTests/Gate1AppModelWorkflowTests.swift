@@ -3,10 +3,38 @@ import XCTest
 @testable import SpokenMarginsApp
 #if canImport(UIKit)
 import UIKit
+import PDFKit
 #endif
 
 @MainActor
 final class Gate1AppModelWorkflowTests: XCTestCase {
+    func testPlaybackScrubStateKeepsGestureValueAuthoritativeUntilCommit() {
+        var state = PlaybackScrubState()
+        let range = 0.0...3_600.0
+
+        // SwiftUI may deliver the binding write before onEditingChanged(true).
+        state.updateFromGesture(1_500, range: range)
+        state.begin(at: 120, range: range)
+
+        XCTAssertTrue(state.isEditing)
+        XCTAssertEqual(state.displayedValue(canonicalValue: 121, range: range), 1_500)
+
+        state.updateFromGesture(1_620, range: range)
+        XCTAssertEqual(state.displayedValue(canonicalValue: 122, range: range), 1_620)
+
+        state.finish()
+        XCTAssertFalse(state.isEditing)
+        XCTAssertEqual(state.displayedValue(canonicalValue: 1_621, range: range), 1_621)
+    }
+
+    func testPlaybackScrubStateClampsGestureToCanonicalDuration() {
+        var state = PlaybackScrubState()
+        let range = 0.0...900.0
+
+        state.updateFromGesture(1_200, range: range)
+        XCTAssertEqual(state.displayedValue(canonicalValue: 0, range: range), 900)
+    }
+
     func testPlaybackHeaderKeepsTheItemTitleUnprefixedWhenItIsNotAChapter() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.selectedItem = ItemDetailState(title: "Why Apple Is Heading Into a Pivotal Moment")
@@ -109,6 +137,21 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.snapshot.chapterTitle = opening.title
 
         XCTAssertFalse(model.isCurrentTimelineChapter(opening))
+    }
+
+    func testSupertonicGenerationStatusSupportsNativeAndGeneratedTextTargets() {
+        XCTAssertTrue(Gate1AppModel.supportsOnDeviceSpeechGenerationStatus(
+            targetType: TargetType.itemTextTTS.rawValue
+        ))
+        XCTAssertTrue(Gate1AppModel.supportsOnDeviceSpeechGenerationStatus(
+            targetType: TargetType.summaryTurnTTS.rawValue
+        ))
+        XCTAssertTrue(Gate1AppModel.supportsOnDeviceSpeechGenerationStatus(
+            targetType: TargetType.assistantTurnTTS.rawValue
+        ))
+        XCTAssertFalse(Gate1AppModel.supportsOnDeviceSpeechGenerationStatus(
+            targetType: TargetType.transcriptBackedMedia.rawValue
+        ))
     }
 
     func testTimelineMarksTheCurrentPreparedAudioChapter() {
@@ -1414,6 +1457,76 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.title, "A Structured Report")
         XCTAssertEqual(model.selectedItem.chapters.map(\.title), ["Context", "Evidence", "Tradeoffs", "Recommendations", "Conclusion"])
         XCTAssertEqual(model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.status, "Ready to listen")
+    }
+
+    func testPDFOutlineDestinationsBypassContentsEntriesAndPreserveMoreThanTwelveChapters() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "spoken-margins-pdf-contents-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appending(path: "Collected Stories.pdf")
+        let storyTitles = (1...20).map { "Story \($0)" }
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        try renderer.writePDF(to: file) { context in
+            context.beginPage()
+            ("Collected Stories" as NSString).draw(
+                at: CGPoint(x: 40, y: 35),
+                withAttributes: [.font: UIFont.boldSystemFont(ofSize: 26)]
+            )
+            ("Edited by Example Author" as NSString).draw(
+                at: CGPoint(x: 40, y: 78),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 12)]
+            )
+            ("Contents" as NSString).draw(
+                at: CGPoint(x: 40, y: 110),
+                withAttributes: [.font: UIFont.boldSystemFont(ofSize: 18)]
+            )
+            for (index, title) in storyTitles.enumerated() {
+                (title as NSString).draw(
+                    at: CGPoint(x: 55, y: 145 + CGFloat(index * 23)),
+                    withAttributes: [.font: UIFont.boldSystemFont(ofSize: 12)]
+                )
+            }
+
+            for title in storyTitles {
+                context.beginPage()
+                (title as NSString).draw(
+                    at: CGPoint(x: 40, y: 40),
+                    withAttributes: [.font: UIFont.boldSystemFont(ofSize: 20)]
+                )
+                ("This is the readable body of \(title), with enough ordinary prose to establish the document body font size." as NSString).draw(
+                    at: CGPoint(x: 40, y: 85),
+                    withAttributes: [.font: UIFont.systemFont(ofSize: 12)]
+                )
+            }
+        }
+
+        let document = try XCTUnwrap(PDFDocument(url: file))
+        let outlineRoot = PDFOutline()
+        for (index, title) in storyTitles.enumerated() {
+            let page = try XCTUnwrap(document.page(at: index + 1))
+            let child = PDFOutline()
+            child.label = title
+            child.destination = PDFDestination(page: page, at: CGPoint(x: 40, y: 740))
+            outlineRoot.insertChild(child, at: outlineRoot.numberOfChildren)
+        }
+        document.outlineRoot = outlineRoot
+        XCTAssertTrue(document.write(to: file))
+
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.importObsidianMarkdownFiles(urls: [file])
+        try await waitFor("PDF contents import to finish") {
+            !model.isImportingSources
+        }
+
+        XCTAssertEqual(model.selectedItem.chapters.count, 21)
+        XCTAssertEqual(model.selectedItem.chapters.map(\.title), ["Front Matter"] + storyTitles)
+        XCTAssertGreaterThan(model.selectedItem.chapters[1].startChar, 0)
+        XCTAssertFalse(model.selectedItem.chapters.contains(where: { $0.title == "Contents" }))
+        XCTAssertTrue(zip(model.selectedItem.chapters, model.selectedItem.chapters.dropFirst()).allSatisfy {
+            $0.endChar == $1.startChar
+        })
     }
     #endif
 

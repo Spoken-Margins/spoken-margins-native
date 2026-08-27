@@ -664,7 +664,7 @@ public final class SystemTextAudioPreparationClient: NSObject, TextAudioPreparat
 
         private static func starterSegments(from segments: [TextAudioSegment], targetDurationMs: Int, speechRate: Float) -> [TextAudioSegment] {
             guard let first = segments.first else { return [] }
-            let rateFactor = max(0.5, min(2.0, Double(speechRate) / 0.5))
+            let rateFactor = max(0.25, min(2.0, Double(speechRate) / 0.5))
             let targetSeconds = max(5.0, Double(targetDurationMs) / 1_000.0)
             let targetCharacters = max(280, min(1_200, Int((targetSeconds * 15.0 * rateFactor).rounded())))
             var selected: [TextAudioSegment] = []
@@ -882,6 +882,21 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         speechRate = max(AVSpeechUtteranceMinimumSpeechRate, min(AVSpeechUtteranceMaximumSpeechRate, rate))
     }
 
+    public func setPlaybackRate(_ rate: Double) throws {
+        let multiplier = Float(max(0.25, min(2.0, rate)))
+        speechRate = max(
+            AVSpeechUtteranceMinimumSpeechRate,
+            min(AVSpeechUtteranceMaximumSpeechRate, AVSpeechUtteranceDefaultSpeechRate * multiplier)
+        )
+        #if canImport(AVFoundation)
+        guard synthesizer.isSpeaking,
+              !paused,
+              let targetId = lastTargetId else { return }
+        let restartOffset = currentOffset ?? lastStartOffset
+        try play(targetId: targetId, from: restartOffset)
+        #endif
+    }
+
     public func play(targetId: String) throws {
         try play(targetId: targetId, from: 0)
     }
@@ -1000,6 +1015,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
             targetId: lastTargetId,
             textStart: currentOffset,
             textEnd: end,
+            playbackRate: Double(currentSpeechSettings().rate / AVSpeechUtteranceDefaultSpeechRate),
             anchorConfidence: .textRange
         )
     }
@@ -1268,7 +1284,7 @@ public final class PreparedAudioPlaybackClient: NSObject, AudioPlaybackClient, @
     }
 
     public func setPlaybackRate(_ rate: Double) throws {
-        playbackRate = max(0.5, min(3.0, rate))
+        playbackRate = max(0.25, min(3.0, rate))
         #if canImport(AVFoundation)
         player?.enableRate = true
         if player?.isPlaying == true {
@@ -1395,6 +1411,66 @@ struct AudioPlaybackInterruptionResumePolicy: Equatable {
     }
 }
 
+struct MediaSeekLifecycle: Equatable {
+    struct Pending: Equatable {
+        var generation: Int
+        var targetId: String
+        var mediaTimeMs: Int
+        var retryCount: Int
+    }
+
+    enum Resolution: Equatable {
+        case ignored
+        case completed
+        case retry(Pending)
+        case failed(Pending)
+    }
+
+    private(set) var generation = 0
+    private(set) var pending: Pending?
+
+    mutating func begin(targetId: String, mediaTimeMs: Int) -> Int {
+        generation += 1
+        pending = Pending(
+            generation: generation,
+            targetId: targetId,
+            mediaTimeMs: max(0, mediaTimeMs),
+            retryCount: 0
+        )
+        return generation
+    }
+
+    mutating func finish(generation: Int, targetId: String, completed: Bool) -> Resolution {
+        guard let current = pending,
+              current.generation == generation,
+              current.targetId == targetId else {
+            return .ignored
+        }
+        guard !completed else {
+            pending = nil
+            return .completed
+        }
+        guard current.retryCount == 0 else {
+            pending = nil
+            return .failed(current)
+        }
+        self.generation += 1
+        let retry = Pending(
+            generation: self.generation,
+            targetId: current.targetId,
+            mediaTimeMs: current.mediaTimeMs,
+            retryCount: 1
+        )
+        pending = retry
+        return .retry(retry)
+    }
+
+    mutating func invalidate() {
+        generation += 1
+        pending = nil
+    }
+}
+
 public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked Sendable {
     #if canImport(AVFoundation)
     private var player: AVPlayer?
@@ -1412,12 +1488,15 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private var completedTargetId: String?
     private var playbackComplete = false
     private var lastRequestedMediaTimeMs = 0
+    private var mediaSeekLifecycle = MediaSeekLifecycle()
+    private var mediaSeekFailure: String?
     private var knownDurations: [String: Int] = [:]
     private var playbackRate: Double = 1
     private var paused = true
     private var interruptionResumePolicy = AudioPlaybackInterruptionResumePolicy()
     private var preferredSkipBackSeconds: Int
     private var preferredSkipForwardSeconds: Int
+
     #if canImport(MediaPlayer) && os(iOS)
     private var remoteCommandTargets: [(command: MPRemoteCommand, target: Any)] = []
     #endif
@@ -1519,11 +1598,14 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         #endif
         let seconds = max(0, Double(mediaTimeMs) / 1000)
         lastRequestedMediaTimeMs = max(0, mediaTimeMs)
+        let seekGeneration = beginMediaSeek(targetId: targetId, mediaTimeMs: lastRequestedMediaTimeMs)
         playbackComplete = false
         completedTargetId = nil
         let time = CMTime(seconds: seconds, preferredTimescale: 600)
         paused = false
-        player?.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+        player?.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
+            self?.finishMediaSeek(generation: seekGeneration, targetId: targetId, finished: finished)
+        }
         player?.play()
         player?.rate = Float(playbackRate)
         publishNowPlaying(isPlaying: true)
@@ -1537,8 +1619,12 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         let seconds = max(0, Double(mediaTimeMs) / 1000)
         lastRequestedMediaTimeMs = max(0, mediaTimeMs)
         guard let player else { return }
+        guard let activeTargetId else { return }
+        let seekGeneration = beginMediaSeek(targetId: activeTargetId, mediaTimeMs: lastRequestedMediaTimeMs)
         let time = CMTime(seconds: seconds, preferredTimescale: 600)
-        player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+        player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
+            self?.finishMediaSeek(generation: seekGeneration, targetId: activeTargetId, finished: finished)
+        }
         publishNowPlaying(isPlaying: !paused)
         #else
         lastRequestedMediaTimeMs = max(0, mediaTimeMs)
@@ -1546,7 +1632,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     }
 
     public func setPlaybackRate(_ rate: Double) throws {
-        playbackRate = max(0.5, min(3.0, rate))
+        playbackRate = max(0.25, min(3.0, rate))
         #if canImport(AVFoundation)
         if !paused {
             player?.rate = Float(playbackRate)
@@ -1576,6 +1662,10 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     }
 
     public func currentMediaTimeMs() -> Int? {
+        if let pendingMediaSeek = mediaSeekLifecycle.pending,
+           pendingMediaSeek.targetId == activeTargetId {
+            return pendingMediaSeek.mediaTimeMs
+        }
         #if canImport(AVFoundation)
         guard let player else { return lastRequestedMediaTimeMs }
         let seconds = player.currentTime().seconds
@@ -1597,6 +1687,12 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     public func playbackStartStatus(targetId: String) -> PlaybackStartStatus {
         guard activeTargetId == targetId else { return .pending }
+        if let mediaSeekFailure {
+            return .failed(mediaSeekFailure)
+        }
+        if mediaSeekLifecycle.pending?.targetId == targetId {
+            return .pending
+        }
         #if canImport(AVFoundation)
         if let error = player?.currentItem?.error {
             return .failed(error.localizedDescription)
@@ -1620,6 +1716,12 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     public func playbackTransportState(targetId: String) -> PlaybackTransportState? {
         guard activeTargetId == targetId else { return .stopped }
+        if mediaSeekFailure != nil {
+            return .failed
+        }
+        if mediaSeekLifecycle.pending?.targetId == targetId {
+            return .waiting
+        }
         #if canImport(AVFoundation)
         if player?.currentItem?.error != nil {
             return .failed
@@ -1656,15 +1758,17 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     public func stop() throws {
         #if canImport(AVFoundation)
         interruptionResumePolicy.cancelAutomaticResume()
+        invalidatePendingMediaSeek()
         player?.pause()
         removePlayerStateObserver()
-        player = nil
         removeCompletionObserver()
         removeTimeObserver()
+        player = nil
         activeTargetId = nil
         activePlaybackURL = nil
         completedTargetId = nil
         playbackComplete = false
+        mediaSeekFailure = nil
         paused = true
         clearNowPlaying()
         #if os(iOS) || os(watchOS)
@@ -1673,7 +1777,75 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         #endif
     }
 
+    private func beginMediaSeek(targetId: String, mediaTimeMs: Int) -> Int {
+        mediaSeekFailure = nil
+        return mediaSeekLifecycle.begin(targetId: targetId, mediaTimeMs: mediaTimeMs)
+    }
+
+    private func finishMediaSeek(generation: Int, targetId: String, finished: Bool) {
+        // AVPlayer calls the completion handler once for both completed and
+        // interrupted seeks. A false result is terminal for this generation;
+        // retaining it as pending forever freezes every derived progress
+        // surface at the requested time even if audible playback continues.
+        let resolution = mediaSeekLifecycle.finish(
+            generation: generation,
+            targetId: targetId,
+            completed: finished
+        )
+        switch resolution {
+        case .ignored:
+            return
+        case .completed:
+            mediaSeekFailure = nil
+        case .retry(let retry):
+            guard let player else {
+                mediaSeekLifecycle.invalidate()
+                mediaSeekFailure = "media_seek_player_unavailable"
+                publishNowPlaying(isPlaying: !paused)
+                return
+            }
+            let time = CMTime(
+                seconds: Double(retry.mediaTimeMs) / 1_000,
+                preferredTimescale: 600
+            )
+            player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
+                self?.finishMediaSeek(
+                    generation: retry.generation,
+                    targetId: retry.targetId,
+                    finished: finished
+                )
+            }
+            return
+        case .failed:
+            if let seconds = player?.currentTime().seconds,
+               seconds.isFinite {
+                lastRequestedMediaTimeMs = max(0, Int((seconds * 1_000).rounded()))
+            }
+            mediaSeekFailure = "media_seek_not_completed"
+        }
+        publishNowPlaying(isPlaying: !paused)
+    }
+
+    private func invalidatePendingMediaSeek() {
+        mediaSeekLifecycle.invalidate()
+        mediaSeekFailure = nil
+    }
+
     private func durationMs(for targetId: String) -> Int? {
+        #if canImport(AVFoundation)
+        // Publisher/feed duration is useful before AVPlayer has loaded the
+        // asset, but it is only metadata. Once the active player exposes a
+        // finite duration, that transport observation is authoritative and
+        // must be allowed to replace an underestimated cached value.
+        if activeTargetId == targetId,
+           let duration = player?.currentItem?.duration.seconds,
+           duration.isFinite,
+           duration > 0 {
+            let observedMs = Int((duration * 1_000).rounded())
+            knownDurations[targetId] = observedMs
+            return observedMs
+        }
+        #endif
         if let known = knownDurations[targetId] {
             return known
         }
@@ -1681,16 +1853,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             knownDurations[targetId] = durationMs
             return durationMs
         }
-        #if canImport(AVFoundation)
-        guard let duration = player?.currentItem?.duration.seconds, duration.isFinite, duration > 0 else {
-            return nil
-        }
-        let ms = Int((duration * 1000).rounded())
-        knownDurations[targetId] = ms
-        return ms
-        #else
         return nil
-        #endif
     }
 
     #if canImport(AVFoundation)
@@ -1750,7 +1913,9 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     private func removeTimeObserver() {
         guard let timeObserverToken else { return }
-        player?.removeTimeObserver(timeObserverToken)
+        if let player {
+            player.removeTimeObserver(timeObserverToken)
+        }
         self.timeObserverToken = nil
     }
 
