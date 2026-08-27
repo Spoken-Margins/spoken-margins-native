@@ -5,6 +5,9 @@ public final class InMemorySessionRepository: SessionRepository {
     public var mapsByItemId: [String: ListeningMap]
     public var sessions: [String: Session]
     public var interjections: [String: Interjection]
+    public var interjectionShareRevisions: [String: InterjectionShareRevision]
+    public var importedCommentaryLayers: [String: ImportedCommentaryLayer]
+    public var importedCommentaryInterjections: [String: ImportedCommentaryInterjection]
     public var turns: [String: ConversationTurn]
     public var aiJobs: [String: AIJob]
     public var watchPackages: [String: WatchAudioPackage]
@@ -20,6 +23,9 @@ public final class InMemorySessionRepository: SessionRepository {
         mapsByItemId: [String: ListeningMap] = [:],
         sessions: [String: Session] = [:],
         interjections: [String: Interjection] = [:],
+        interjectionShareRevisions: [String: InterjectionShareRevision] = [:],
+        importedCommentaryLayers: [String: ImportedCommentaryLayer] = [:],
+        importedCommentaryInterjections: [String: ImportedCommentaryInterjection] = [:],
         turns: [String: ConversationTurn] = [:],
         aiJobs: [String: AIJob] = [:],
         watchPackages: [String: WatchAudioPackage] = [:],
@@ -34,6 +40,9 @@ public final class InMemorySessionRepository: SessionRepository {
         self.mapsByItemId = mapsByItemId
         self.sessions = sessions
         self.interjections = interjections
+        self.interjectionShareRevisions = interjectionShareRevisions
+        self.importedCommentaryLayers = importedCommentaryLayers
+        self.importedCommentaryInterjections = importedCommentaryInterjections
         self.turns = turns
         self.aiJobs = aiJobs
         self.watchPackages = watchPackages
@@ -76,6 +85,60 @@ public final class InMemorySessionRepository: SessionRepository {
 
     public func loadInterjections(sessionId: String) throws -> [Interjection] {
         interjections.values.filter { $0.sessionId == sessionId }.sorted { $0.createdAt < $1.createdAt }
+    }
+
+    public func saveInterjectionShareRevision(_ revision: InterjectionShareRevision) throws {
+        interjectionShareRevisions[revision.id] = revision
+    }
+
+    public func loadInterjectionShareRevisions(interjectionId: String) throws -> [InterjectionShareRevision] {
+        interjectionShareRevisions.values
+            .filter { $0.interjectionId == interjectionId }
+            .sorted { lhs, rhs in
+                lhs.createdAt == rhs.createdAt ? lhs.id < rhs.id : lhs.createdAt < rhs.createdAt
+            }
+    }
+
+    public func importCommentaryLayer(
+        _ layer: ImportedCommentaryLayer,
+        interjections newInterjections: [ImportedCommentaryInterjection]
+    ) throws -> ImportedCommentaryImportDisposition {
+        if let existing = importedCommentaryLayers.values.first(where: { $0.packageDigest == layer.packageDigest }) {
+            return .duplicate(existingLayerId: existing.id)
+        }
+        guard importedCommentaryLayers[layer.id] == nil,
+              newInterjections.allSatisfy({ importedCommentaryInterjections[$0.id] == nil }) else {
+            throw SessionKitError.persistenceFailed("imported_commentary_local_id_conflict")
+        }
+        importedCommentaryLayers[layer.id] = layer
+        for interjection in newInterjections {
+            importedCommentaryInterjections[interjection.id] = interjection
+        }
+        return .imported(layerId: layer.id, interjectionIds: newInterjections.map(\.id))
+    }
+
+    public func loadImportedCommentaryLayer(id: String) throws -> ImportedCommentaryLayer? {
+        importedCommentaryLayers[id]
+    }
+
+    public func loadImportedCommentaryLayer(packageDigest: String) throws -> ImportedCommentaryLayer? {
+        importedCommentaryLayers.values.first { $0.packageDigest == packageDigest }
+    }
+
+    public func loadImportedCommentaryLayers(itemId: String) throws -> [ImportedCommentaryLayer] {
+        importedCommentaryLayers.values
+            .filter { $0.itemId == itemId }
+            .sorted { lhs, rhs in
+                lhs.importedAt == rhs.importedAt ? lhs.id < rhs.id : lhs.importedAt < rhs.importedAt
+            }
+    }
+
+    public func loadImportedCommentaryInterjections(layerId: String) throws -> [ImportedCommentaryInterjection] {
+        importedCommentaryInterjections.values
+            .filter { $0.layerId == layerId }
+            .sorted { lhs, rhs in
+                lhs.createdAt == rhs.createdAt ? lhs.id < rhs.id : lhs.createdAt < rhs.createdAt
+            }
     }
 
     public func saveTurn(_ turn: ConversationTurn) throws {
