@@ -129,7 +129,7 @@ final class SQLiteSessionStoreSafetyTests: XCTestCase {
         laterTurn.text = "Later session response."
         try store.saveTurn(laterTurn)
 
-        XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: path), 4)
+        XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: path), 5)
         XCTAssertEqual(try store.loadTurns(sessionId: "session-one").map(\.text), ["Existing response."])
         XCTAssertEqual(try store.loadTurns(sessionId: "session-two").map(\.text), ["Later session response."])
     }

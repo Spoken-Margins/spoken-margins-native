@@ -331,6 +331,7 @@ public struct PlaybackPosition: Codable, Equatable, Sendable {
     public var textEnd: Int?
     public var transcriptSegmentId: String?
     public var chapterId: String?
+    public var sourceLocator: SourceLocator?
     public var playbackRate: Double
     public var anchorConfidence: AnchorConfidence
 
@@ -344,6 +345,7 @@ public struct PlaybackPosition: Codable, Equatable, Sendable {
         textEnd: Int? = nil,
         transcriptSegmentId: String? = nil,
         chapterId: String? = nil,
+        sourceLocator: SourceLocator? = nil,
         playbackRate: Double = 1,
         anchorConfidence: AnchorConfidence = .localFallback
     ) {
@@ -356,6 +358,7 @@ public struct PlaybackPosition: Codable, Equatable, Sendable {
         self.textEnd = textEnd
         self.transcriptSegmentId = transcriptSegmentId
         self.chapterId = chapterId
+        self.sourceLocator = sourceLocator
         self.playbackRate = playbackRate
         self.anchorConfidence = anchorConfidence
     }
@@ -454,6 +457,9 @@ public struct Item: Codable, Equatable, Sendable {
     public var transcriptId: String?
     public var status: String
     public var deletedAt: Date?
+    public var author: String?
+    public var sourceTitle: String?
+    public var createdAt: Date?
 
     public init(
         id: String,
@@ -465,7 +471,10 @@ public struct Item: Codable, Equatable, Sendable {
         externalReferenceType: String? = nil,
         media: ItemMedia? = nil,
         transcriptId: String? = nil,
-        deletedAt: Date? = nil
+        deletedAt: Date? = nil,
+        author: String? = nil,
+        sourceTitle: String? = nil,
+        createdAt: Date? = nil
     ) {
         self.id = id
         self.title = title
@@ -477,6 +486,9 @@ public struct Item: Codable, Equatable, Sendable {
         self.transcriptId = transcriptId
         self.status = status
         self.deletedAt = deletedAt
+        self.author = author
+        self.sourceTitle = sourceTitle
+        self.createdAt = createdAt
     }
 }
 
@@ -598,14 +610,16 @@ public struct MediaTimelineSegment: Codable, Equatable, Sendable {
     public var startChar: Int?
     public var endChar: Int?
     public var text: String
+    public var sourceLocator: SourceLocator?
 
-    public init(id: String, startMs: Int, endMs: Int, startChar: Int? = nil, endChar: Int? = nil, text: String) {
+    public init(id: String, startMs: Int, endMs: Int, startChar: Int? = nil, endChar: Int? = nil, text: String, sourceLocator: SourceLocator? = nil) {
         self.id = id
         self.startMs = startMs
         self.endMs = endMs
         self.startChar = startChar
         self.endChar = endChar
         self.text = text
+        self.sourceLocator = sourceLocator
     }
 }
 
@@ -946,12 +960,14 @@ public struct Position: Codable, Equatable, Sendable {
     public var mediaTimeMs: Int?
     public var segmentIndex: Int?
     public var chapterId: String?
+    public var sourceLocator: SourceLocator?
 
-    public init(charOffset: Int = 0, mediaTimeMs: Int? = nil, segmentIndex: Int? = nil, chapterId: String? = nil) {
+    public init(charOffset: Int = 0, mediaTimeMs: Int? = nil, segmentIndex: Int? = nil, chapterId: String? = nil, sourceLocator: SourceLocator? = nil) {
         self.charOffset = charOffset
         self.mediaTimeMs = mediaTimeMs
         self.segmentIndex = segmentIndex
         self.chapterId = chapterId
+        self.sourceLocator = sourceLocator
     }
 }
 
@@ -965,6 +981,7 @@ public struct Anchor: Codable, Equatable, Sendable {
     public var playbackRateObserved: Double
     public var transcriptSegmentId: String?
     public var turnSegmentIndex: Int?
+    public var sourceLocator: SourceLocator?
 
     public init(
         anchorType: AnchorType,
@@ -975,7 +992,8 @@ public struct Anchor: Codable, Equatable, Sendable {
         mediaTimeMs: Int? = nil,
         playbackRateObserved: Double = 1,
         transcriptSegmentId: String? = nil,
-        turnSegmentIndex: Int? = nil
+        turnSegmentIndex: Int? = nil,
+        sourceLocator: SourceLocator? = nil
     ) {
         self.anchorType = anchorType
         self.startChar = startChar
@@ -986,6 +1004,7 @@ public struct Anchor: Codable, Equatable, Sendable {
         self.playbackRateObserved = playbackRateObserved
         self.transcriptSegmentId = transcriptSegmentId
         self.turnSegmentIndex = turnSegmentIndex
+        self.sourceLocator = sourceLocator
     }
 }
 

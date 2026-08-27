@@ -1,0 +1,1 @@
+{"schemaVersion":"offline-storage-ledger.v1","budget":{"limitBytes":5368709120},"assets":[{"id":"book","category":"audiobook","relativePath":"Audiobooks/book.m4b","byteCount":6000000000,"isReproducible":false,"integrity":"valid","isRedundant":false,"protections":["imported_audiobook"]}],"reservations":[]}

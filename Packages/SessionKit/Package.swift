@@ -13,12 +13,18 @@ let package = Package(
         .library(name: "SessionKitPersistence", targets: ["SessionKitPersistence"]),
         .library(name: "SessionKitAudio", targets: ["SessionKitAudio"]),
         .library(name: "SessionKitAI", targets: ["SessionKitAI"]),
-        .library(name: "SessionKitSupertonic", targets: ["SessionKitSupertonic"])
+        .library(name: "SessionKitSupertonic", targets: ["SessionKitSupertonic"]),
+        .library(name: "SessionKitEPUB", targets: ["SessionKitEPUB"]),
+        .library(name: "SessionKitFeeds", targets: ["SessionKitFeeds"])
     ],
     dependencies: [
         .package(
             url: "https://github.com/microsoft/onnxruntime-swift-package-manager.git",
             exact: "1.24.2"
+        ),
+        .package(
+            url: "https://github.com/weichsel/ZIPFoundation.git",
+            exact: "0.9.20"
         )
     ],
     targets: [
@@ -45,9 +51,24 @@ let package = Package(
                 )
             ]
         ),
+        .target(
+            name: "SessionKitEPUB",
+            dependencies: [
+                "SessionKit",
+                .product(name: "ZIPFoundation", package: "ZIPFoundation")
+            ]
+        ),
+        .target(
+            name: "SessionKitFeeds",
+            dependencies: ["SessionKit"]
+        ),
         .testTarget(
             name: "SessionKitTests",
-            dependencies: ["SessionKit", "SessionKitPersistence", "SessionKitAudio", "SessionKitAI", "SessionKitSupertonic"]
+            dependencies: [
+                "SessionKit", "SessionKitPersistence", "SessionKitAudio", "SessionKitAI",
+                "SessionKitSupertonic", "SessionKitEPUB", "SessionKitFeeds",
+                .product(name: "ZIPFoundation", package: "ZIPFoundation")
+            ]
         ),
         .testTarget(
             name: "SessionKitTraceTests",

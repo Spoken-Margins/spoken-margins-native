@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["schemaVersion", "subscription", "entries"],
+  "properties": {
+    "schemaVersion": {"const": "followed-source.v1"},
+    "subscription": {"type": "object", "required": ["id", "source", "state"], "properties": {"id": {"type": "string"}, "state": {"enum": ["active", "muted"]}, "source": {"type": "object", "required": ["id", "kind", "canonicalURL", "host"], "properties": {"id": {"type": "string"}, "kind": {"enum": ["podcast_feed", "article_feed", "website"]}, "canonicalURL": {"type": "string", "format": "uri"}, "host": {"type": "string"}}, "additionalProperties": true}}, "additionalProperties": true},
+    "entries": {"type": "array", "maxItems": 200, "items": {"type": "object", "required": ["id", "subscriptionId", "canonicalURL", "title", "state"], "properties": {"id": {"type": "string"}, "subscriptionId": {"type": "string"}, "canonicalURL": {"type": "string", "format": "uri"}, "title": {"type": "string"}, "state": {"enum": ["unseen", "seen", "dismissed", "imported"]}}, "additionalProperties": true}}
+  },
+  "additionalProperties": false
+}

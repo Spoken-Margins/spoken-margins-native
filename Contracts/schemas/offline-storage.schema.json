@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["schemaVersion", "budget", "assets", "reservations"],
+  "properties": {
+    "schemaVersion": {"const": "offline-storage-ledger.v1"},
+    "budget": {"type": "object", "required": ["limitBytes"], "properties": {"limitBytes": {"type": "integer", "minimum": 0}}, "additionalProperties": false},
+    "assets": {"type": "array", "items": {"type": "object", "required": ["id", "category", "relativePath", "byteCount", "isReproducible", "integrity", "isRedundant", "protections"], "properties": {"id": {"type": "string"}, "category": {"enum": ["prepared_audio", "prepared_chunk", "podcast", "guided_tour", "audiobook", "interjection", "recording", "source_document", "dormant_watch_package"]}, "relativePath": {"type": "string"}, "byteCount": {"type": "integer", "minimum": 0}, "isReproducible": {"type": "boolean"}, "integrity": {"enum": ["valid", "stale", "corrupt"]}, "isRedundant": {"type": "boolean"}, "protections": {"type": "array", "items": {"type": "string"}}}, "additionalProperties": true}},
+    "reservations": {"type": "array", "items": {"type": "object"}}
+  },
+  "additionalProperties": false
+}

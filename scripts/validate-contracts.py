@@ -25,6 +25,11 @@ PATH_SCHEMA_RULES = [
     ("fixtures/audio/*.json", "audio-asset.schema.json"),
     ("fixtures/link-resolution/*.json", "link-resolution-fixture.schema.json"),
     ("fixtures/transcripts/*.json", "transcript.schema.json"),
+    ("fixtures/canonical-sources/*.json", "canonical-source.schema.json"),
+    ("fixtures/prepared-audio/*.json", "prepared-audio-manifest.schema.json"),
+    ("fixtures/offline-storage/*.json", "offline-storage.schema.json"),
+    ("fixtures/followed-sources/*.json", "followed-source.schema.json"),
+    ("fixtures/presentation/*.json", "app-presentation.schema.json"),
     ("traces/*.json", "session-trace.schema.json"),
 ]
 

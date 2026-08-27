@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["schemaVersion", "id", "itemId", "sourcePackageId", "signature", "state", "plannedChunkCount", "chunks"],
+  "properties": {
+    "schemaVersion": {"const": "prepared-audio-manifest.v1"},
+    "id": {"type": "string"}, "itemId": {"type": "string"}, "sourcePackageId": {"type": "string"},
+    "state": {"enum": ["not_prepared", "preparing", "paused_for_thermal", "ready_offline", "needs_repreparation", "stopped", "failed"]},
+    "plannedChunkCount": {"type": "integer", "minimum": 0},
+    "signature": {
+      "type": "object",
+      "required": ["schemaVersion", "engine", "modelRevision", "assetManifestHash", "voiceStyleHash", "synthesisParametersHash", "normalizationVersion", "chunkingVersion", "manifestVersion", "digest"],
+      "properties": {"schemaVersion": {"const": "tts-render-signature.v1"}, "engine": {"type": "string"}, "modelRevision": {"type": "string"}, "assetManifestHash": {"type": "string"}, "voiceStyleHash": {"type": "string"}, "synthesisParametersHash": {"type": "string"}, "normalizationVersion": {"type": "string"}, "chunkingVersion": {"type": "string"}, "manifestVersion": {"type": "string"}, "digest": {"type": "string"}},
+      "additionalProperties": false
+    },
+    "chunks": {"type": "array", "items": {"type": "object", "required": ["id", "index", "relativePath", "byteCount", "checksumSHA256", "durationMs", "sourceRange"], "properties": {"id": {"type": "string"}, "index": {"type": "integer", "minimum": 0}, "relativePath": {"type": "string"}, "byteCount": {"type": "integer", "minimum": 0}, "checksumSHA256": {"type": "string"}, "durationMs": {"type": "integer", "minimum": 0}, "sourceRange": {"type": "object"}}, "additionalProperties": true}},
+    "artifact": {"type": ["object", "null"]}
+  },
+  "additionalProperties": true
+}

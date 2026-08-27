@@ -8,6 +8,20 @@ public enum AudioAssetAvailability: String, Codable, Equatable, Sendable {
     case missing
 }
 
+public struct AudioAssetChapter: Codable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var title: String
+    public var startMs: Int
+    public var endMs: Int?
+
+    public init(id: String, title: String, startMs: Int, endMs: Int? = nil) {
+        self.id = id
+        self.title = title
+        self.startMs = max(0, startMs)
+        self.endMs = endMs
+    }
+}
+
 /// A transport asset is intentionally separate from an Item's canonical remote source.
 public struct AudioAsset: Codable, Equatable, Sendable, Identifiable {
     public var schemaVersion: String
@@ -20,6 +34,9 @@ public struct AudioAsset: Codable, Equatable, Sendable, Identifiable {
     public var durationMs: Int?
     public var codec: String?
     public var voiceId: String?
+    public var title: String?
+    public var subtitle: String?
+    public var chapters: [AudioAssetChapter]
     public var createdAt: Date
 
     public init(
@@ -32,6 +49,9 @@ public struct AudioAsset: Codable, Equatable, Sendable, Identifiable {
         durationMs: Int? = nil,
         codec: String? = nil,
         voiceId: String? = nil,
+        title: String? = nil,
+        subtitle: String? = nil,
+        chapters: [AudioAssetChapter] = [],
         createdAt: Date = Date()
     ) {
         schemaVersion = "audio-asset.v1"
@@ -44,6 +64,9 @@ public struct AudioAsset: Codable, Equatable, Sendable, Identifiable {
         self.durationMs = durationMs
         self.codec = codec
         self.voiceId = voiceId
+        self.title = title
+        self.subtitle = subtitle
+        self.chapters = chapters
         self.createdAt = createdAt
     }
 }

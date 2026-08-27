@@ -2,8 +2,8 @@ import Foundation
 import SessionKit
 import SQLite3
 
-public final class SQLiteSessionStore: SessionRepository {
-    public static let currentSchemaVersion = 4
+public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
+    public static let currentSchemaVersion = 5
     private static let sessionScopedRecordKinds: Set<String> = ["interjection", "turn", "ai_job"]
     private var db: OpaquePointer?
     private let encoder = JSONEncoder()
@@ -32,7 +32,7 @@ public final class SQLiteSessionStore: SessionRepository {
         );
         """)
         let existingVersion = try metadataValue(forKey: "schema_version").flatMap(Int.init)
-        guard existingVersion.map({ [1, 2, 3, Self.currentSchemaVersion].contains($0) }) ?? true else {
+        guard existingVersion.map({ [1, 2, 3, 4, Self.currentSchemaVersion].contains($0) }) ?? true else {
             throw SessionKitError.persistenceFailed("unsupported_schema_version:\(existingVersion ?? -1)")
         }
         try execute("""
@@ -237,6 +237,125 @@ public final class SQLiteSessionStore: SessionRepository {
 
     public func deletePodcastDownload(id: String) throws {
         try deleteRecord(kind: "podcast_download", id: id)
+    }
+
+    public func saveCanonicalSource(_ source: CanonicalSourcePackage) throws {
+        try withTransaction {
+            try deleteRecords(kind: "canonical_source", itemId: source.itemId)
+            try save(kind: "canonical_source", id: source.id, sessionId: nil, itemId: source.itemId, value: source)
+        }
+    }
+
+    public func loadCanonicalSource(itemId: String) throws -> CanonicalSourcePackage? {
+        let values: [CanonicalSourcePackage] = try loadByItem(kind: "canonical_source", itemId: itemId)
+        return values.last
+    }
+
+    public func publishImportedSource(item: Item, canonicalSource: CanonicalSourcePackage?, audioAsset: AudioAsset?, ownedAsset: OwnedOfflineAsset) throws {
+        try withTransaction {
+            try saveItem(item)
+            if let canonicalSource {
+                try deleteRecords(kind: "canonical_source", itemId: item.id)
+                try save(kind: "canonical_source", id: canonicalSource.id, sessionId: nil, itemId: item.id, value: canonicalSource)
+            }
+            if let audioAsset { try saveAudioAsset(audioAsset) }
+            try saveOwnedOfflineAsset(ownedAsset)
+        }
+    }
+
+    public func savePreparedAudioManifest(_ manifest: PreparedAudioManifest) throws {
+        try save(kind: "prepared_audio_manifest", id: manifest.id, sessionId: nil, itemId: manifest.itemId, value: manifest)
+    }
+
+    public func loadPreparedAudioManifest(id: String) throws -> PreparedAudioManifest? {
+        try loadOptional(kind: "prepared_audio_manifest", id: id)
+    }
+
+    public func loadPreparedAudioManifests(itemId: String) throws -> [PreparedAudioManifest] {
+        try loadByItem(kind: "prepared_audio_manifest", itemId: itemId)
+    }
+
+    public func deletePreparedAudioManifest(id: String) throws { try deleteRecord(kind: "prepared_audio_manifest", id: id) }
+
+    public func saveAudioPreparationJob(_ job: AudioPreparationJob) throws {
+        try save(kind: "audio_preparation_job", id: job.id, sessionId: nil, itemId: job.itemId, value: job)
+    }
+
+    public func loadAudioPreparationJobs() throws -> [AudioPreparationJob] {
+        try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at, id;", ["audio_preparation_job"])
+    }
+
+    public func deleteAudioPreparationJob(id: String) throws { try deleteRecord(kind: "audio_preparation_job", id: id) }
+
+    public func saveOfflineStorageBudget(_ budget: OfflineStorageBudget) throws {
+        try save(kind: "offline_storage_budget", id: "default", sessionId: nil, itemId: nil, value: budget)
+    }
+
+    public func loadOfflineStorageBudget() throws -> OfflineStorageBudget {
+        try loadOptional(kind: "offline_storage_budget", id: "default") ?? OfflineStorageBudget()
+    }
+
+    public func saveOwnedOfflineAsset(_ asset: OwnedOfflineAsset) throws {
+        try save(kind: "owned_offline_asset", id: asset.id, sessionId: nil, itemId: asset.itemId, value: asset)
+    }
+
+    public func loadOwnedOfflineAssets() throws -> [OwnedOfflineAsset] {
+        try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at, id;", ["owned_offline_asset"])
+    }
+
+    public func deleteOwnedOfflineAsset(id: String) throws { try deleteRecord(kind: "owned_offline_asset", id: id) }
+
+    public func saveOfflineStorageReservation(_ reservation: OfflineStorageReservation) throws {
+        try save(kind: "offline_storage_reservation", id: reservation.id, sessionId: nil, itemId: nil, value: reservation)
+    }
+
+    public func loadOfflineStorageReservations() throws -> [OfflineStorageReservation] {
+        try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at, id;", ["offline_storage_reservation"])
+    }
+
+    public func deleteOfflineStorageReservation(id: String) throws { try deleteRecord(kind: "offline_storage_reservation", id: id) }
+
+    public func saveFeedSubscription(_ subscription: FeedSubscription) throws {
+        try save(kind: "feed_subscription", id: subscription.id, sessionId: nil, itemId: nil, value: subscription)
+    }
+
+    public func loadFeedSubscriptions() throws -> [FeedSubscription] {
+        try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at DESC, id;", ["feed_subscription"])
+    }
+
+    public func deleteFeedSubscription(id: String) throws {
+        let entries: [FeedEntry] = try loadFeedEntries(subscriptionId: id)
+        try withTransaction {
+            for entry in entries where entry.state != .imported { try deleteRecord(kind: "feed_entry", id: entry.id) }
+            try deleteRecord(kind: "feed_subscription", id: id)
+        }
+    }
+
+    public func saveFeedEntry(_ entry: FeedEntry) throws {
+        try save(kind: "feed_entry", id: entry.id, sessionId: nil, itemId: nil, value: entry)
+    }
+
+    public func loadFeedEntries(subscriptionId: String?) throws -> [FeedEntry] {
+        let entries: [FeedEntry] = try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at DESC, id;", ["feed_entry"])
+        return entries.filter { subscriptionId == nil || $0.subscriptionId == subscriptionId }
+    }
+
+    public func deleteFeedEntry(id: String) throws { try deleteRecord(kind: "feed_entry", id: id) }
+
+    public func saveFeedRefreshState(_ state: FeedRefreshState) throws {
+        try save(kind: "feed_refresh_state", id: state.subscriptionId, sessionId: nil, itemId: nil, value: state)
+    }
+
+    public func loadFeedRefreshState(subscriptionId: String) throws -> FeedRefreshState? {
+        try loadOptional(kind: "feed_refresh_state", id: subscriptionId)
+    }
+
+    public func saveSourceSuggestionDecision(_ decision: SourceSuggestionDecision) throws {
+        try save(kind: "source_suggestion_decision", id: decision.sourceId, sessionId: nil, itemId: nil, value: decision)
+    }
+
+    public func loadSourceSuggestionDecision(sourceId: String) throws -> SourceSuggestionDecision? {
+        try loadOptional(kind: "source_suggestion_decision", id: sourceId)
     }
 
     public func seed(item: Item) throws {

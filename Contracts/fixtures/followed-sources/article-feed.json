@@ -1,0 +1,1 @@
+{"schemaVersion":"followed-source.v1","subscription":{"id":"subscription-source","source":{"id":"source","kind":"article_feed","canonicalURL":"https://example.com/feed.json","host":"example.com"},"state":"active"},"entries":[{"id":"entry-1","subscriptionId":"subscription-source","canonicalURL":"https://example.com/article","title":"Article","state":"unseen"}]}

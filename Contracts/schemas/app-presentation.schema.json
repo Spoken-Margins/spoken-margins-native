@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["schemaVersion", "libraryQuery", "sleepTimer", "onboardingRoutes"],
+  "properties": {
+    "schemaVersion": {"const": "app-presentation.v1"},
+    "libraryQuery": {"type": "object", "required": ["query", "contentType", "listeningState", "offlineState", "sort"], "properties": {"query": {"type": "string"}, "contentType": {"enum": ["all", "text", "pdf", "epub", "article", "podcast", "audiobook"]}, "listeningState": {"enum": ["all", "unplayed", "in_progress", "completed"]}, "offlineState": {"enum": ["all", "preparing", "ready_offline", "needs_repreparation", "online_only"]}, "sort": {"enum": ["recently_added", "recently_listened", "title", "progress"]}}, "additionalProperties": false},
+    "sleepTimer": {"type": "object", "required": ["state"], "properties": {"state": {"enum": ["inactive", "armed", "expiry_deferred"]}, "mode": {"enum": ["minutes_15", "minutes_30", "minutes_45", "minutes_60", "end_of_chapter", null]}}, "additionalProperties": true},
+    "onboardingRoutes": {"type": "array", "uniqueItems": true, "items": {"enum": ["add_pdf", "paste_text", "add_webpage", "add_podcast", "import_epub", "import_audiobook"]}}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spokenmargins.local/schemas/canonical-source.schema.json",
+  "type": "object",
+  "required": ["schemaVersion", "id", "itemId", "sourceDocumentId", "format", "title", "navigation", "segments"],
+  "properties": {
+    "schemaVersion": {"const": "canonical-source.v1"},
+    "id": {"type": "string", "minLength": 1},
+    "itemId": {"type": "string", "minLength": 1},
+    "sourceDocumentId": {"type": "string", "minLength": 1},
+    "format": {"enum": ["plain_text", "markdown", "pdf", "epub", "article"]},
+    "title": {"type": "string", "minLength": 1},
+    "navigation": {"type": "array", "items": {"$ref": "#/$defs/navigation"}},
+    "segments": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/segment"}}
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "locator": {
+      "type": "object",
+      "required": ["documentId", "segmentId", "utf8Start", "utf8End"],
+      "properties": {
+        "documentId": {"type": "string", "minLength": 1},
+        "spineItemId": {"type": ["string", "null"]},
+        "segmentId": {"type": "string", "minLength": 1},
+        "utf8Start": {"type": "integer", "minimum": 0},
+        "utf8End": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "segment": {
+      "type": "object", "required": ["id", "text", "locator"],
+      "properties": {"id": {"type": "string"}, "text": {"type": "string"}, "locator": {"$ref": "#/$defs/locator"}},
+      "additionalProperties": false
+    },
+    "navigation": {
+      "type": "object", "required": ["id", "title", "children"],
+      "properties": {"id": {"type": "string"}, "title": {"type": "string"}, "locator": {"oneOf": [{"$ref": "#/$defs/locator"}, {"type": "null"}]}, "children": {"type": "array", "items": {"$ref": "#/$defs/navigation"}}},
+      "additionalProperties": false
+    }
+  }
+}
