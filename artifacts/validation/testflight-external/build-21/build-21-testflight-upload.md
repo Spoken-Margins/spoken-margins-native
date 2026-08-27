@@ -1,6 +1,6 @@
 # Build 21 TestFlight Upload And Product-Owner Handoff
 
-Status: uploaded successfully and processing in App Store Connect; not yet confirmed in an internal group, submitted for Beta App Review, or `human_validated`.
+Status: uploaded successfully, processed by App Store Connect, and available to the internal `Margins` group; not yet added to `External Beta`, submitted for Beta App Review, or `human_validated`.
 
 ## Candidate
 
@@ -39,6 +39,9 @@ Status: uploaded successfully and processing in App Store Connect; not yet confi
 - Archived identity: version 0.1 (21), arm64, iOS 18.0 minimum.
 - App and embedded `onnxruntime.framework` strict signature verification: pass.
 - Xcode upload: `Upload succeeded`; uploaded package entered App Store Connect processing.
+- App Store Connect processing: complete; Build 21 reports `Ready to Submit`.
+- Internal distribution: automatically available to the `Margins` group with six testers.
+- Build 20 audit: an earlier 0.1 (20) upload from 2026-08-24 already existed and is superseded; it remains internal-only and must not be submitted externally.
 
 The known upstream `onnxruntime.framework` dSYM warning remains: UUID `3B3AEB41-DBE1-313C-BB3B-88FAF0A9E45E` has no matching dSYM in the archive. The application upload and export succeeded; crashes inside that framework may have limited symbolication.
 
