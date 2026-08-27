@@ -15,7 +15,8 @@ If a GitHub label, issue comment, local branch name, older planning document, or
 - Largest distributed audience: TestFlight Build 19, version 0.1 (19).
 - Released source commit: `738c743e202f5e700f4d6975adee52862f63c69f`.
 - Upload evidence: `artifacts/validation/testflight-external/build-19/build-19-testflight-upload.md`.
-- `main` represents the released runtime. Governance- or evidence-only commits may follow the released source commit, but unreleased runtime changes must not remain on `main`.
+- Accepted integration baseline: TestFlight triage fixes through `22788cb96a6763d186a607961ee229c5b01d6156` have been accepted into `main` by explicit product-owner direction. Their automated evidence is `verified`; this record does not invent physical-device validation or claim that a later build has reached the largest distributed audience.
+- `main` represents the released runtime plus explicitly accepted release-integration changes. Governance- or evidence-only commits may follow the released source commit; runtime changes may enter `main` only through a recorded product-owner release decision.
 - When a later build reaches the largest distributed audience, update this section in the same change that advances the release lanes.
 
 ## Active Branches
@@ -24,10 +25,10 @@ Only these branches are active development lanes:
 
 | Branch | Role | Current authorized scope | Merge target |
 | --- | --- | --- | --- |
-| `main` | Released runtime and repository governance | Documentation, validation evidence, and runtime changes already distributed to the largest TestFlight audience | N/A |
-| `codex/testflight-triage` | Rapid fixes for reproducible behavior already shipped from `main` | Issues #83, #85, and #84 in that order, plus later product-owner-approved TestFlight regressions | `main` |
+| `main` | Released and accepted integration runtime plus repository governance | Documentation, validation evidence, distributed runtime, and product-owner-accepted release integration | N/A |
+| `codex/testflight-triage` | Idle rapid-fix lane, currently aligned with the accepted integration baseline | No active issue; a later reproducible TestFlight regression requires explicit admission | `main` |
 | `codex/sharing-next` | Next major numbered feature release | Sharing foundation issues #17, #18, #67, and #68; audit reconciliation #81; then co-op replies #19 | `main` when the numbered sharing release is accepted |
-| `codex/quality-of-life-next` | Later numbered quality-of-life release | Initially only prepared core audio issues #34 and #64 | `main` when a bounded quality-of-life release is accepted |
+| `codex/quality-of-life-next` | Next numbered quality-of-life release | Complete non-Watch program: #34, #64, #72, #73, #61, #79, #74, #69, #76, #77, #86, and #87 in the ordered phases below | `main` when the complete numbered quality-of-life release is accepted |
 
 All other local and remote branches are historical and read-only. Their commits may be inspected or deliberately extracted, but work must not resume directly on them without a product-owner plan change. In particular, `codex/sharingV1` is source material for reconciliation into `codex/sharing-next`; it is not an active integration branch.
 
@@ -94,27 +95,26 @@ These issues form one end-to-end boundary: prepare, preview, export, import, and
 
 ## Quality-of-Life Lane
 
-`codex/quality-of-life-next` is a release lane for bounded improvements. It is not permission to implement every issue listed below.
+`codex/quality-of-life-next` delivers one numbered non-Watch quality-of-life release. All work remains a per-issue or tightly complementary issue-group commit series on this single branch; do not create issue-specific persistent branches.
 
-### Active phase
+### Authorized ordered program
 
-- #34: remove residual Kokoro/MLX code and formalize Supertonic render identity.
-- #64: durable prepared native-text audio and Lock Screen scrubbing.
+1. **Prepared core — #34 and #64.** Remove reachable Kokoro/MLX runtime and configuration, establish exact Supertonic render identity, durable prepared-audio manifests and chunks, typed recovery/cancellation state, source-to-media mapping, complete offline media, and truthful Lock Screen duration/scrubbing.
+2. **Offline lifecycle — #72 and #73.** Establish one storage ledger and budget, reservations, protections, deterministic eviction, adoption, and an injected power/thermal/storage-aware preparation horizon.
+3. **Books and local audio — #61 and #79.** Add canonical DRM-free EPUB ingestion and app-owned audiobook import without conflating authored source structure, playable media, or offline ownership.
+4. **Charging preparation — #74.** Add opt-in charging-only `BGProcessingTask` execution using the same durable jobs, manifests, storage reservations, and renderer as foreground work.
+5. **Guided onboarding and followed sources — #69, #76, and #77.** Add bounded remotely configurable onboarding, shared feed parsing/discovery, explicit subscriptions and inbox state, readable-page import, and suggestion decisions. Issue #69 includes the EPUB and audiobook routes shipped in this release.
+6. **Library comfort and sleep timer — #86 and #87.** Add metadata-only search, typed filters/sorts, and session-scoped timed/end-of-chapter sleep modes.
+7. **Single-release integration.** Keep unfinished paths unexposed, deploy and validate the production onboarding manifest/audio, update specifications/evidence/legal/diagnostics, and prepare the product-owner handoff only after the complete non-Watch program is implemented and verified.
 
-Together these form the prepared core audio boundary. The lane must establish stable render identity, durable manifests/chunks, source-to-media mapping, cancellation, invalidation, and recovery before dependent offline features begin.
+Each phase may begin only when its dependency invariants have focused automated evidence. Background preparation must remain disabled until durable manifests and the storage ledger are verified. The release stops if partial audio advertises a complete scrubber, rendering can exceed reservations, EPUB structure is flattened, foreground/background output diverges, following imports automatically, remote onboarding introduces executable routes, or Watch runtime work appears in the diff.
 
-### Queued candidates — not authorized for implementation
+### Explicitly out of scope
 
-- #61: DRM-free EPUB ingestion.
-- #69: remotely configurable guided-podcast onboarding.
-- #72: unified offline-storage budget.
-- #73: power-aware demand-window preparation.
-- #74: charging-only background preparation.
 - #75: untethered Apple Watch playback and interjection sync.
-- #76 and #77: local source following, inbox, and engagement suggestions.
-- #79: DRM-free audiobook import.
+- Any new Watch playback, transfer, rendering, connectivity, or synchronization work.
 
-The product owner must explicitly promote a queued candidate into the active phase and update this document before implementation. Background execution and Watch work are product quality-of-life outcomes but technically high-risk integration work; the lane name does not lower their verification requirements.
+Existing dormant Watch artifacts may be counted by the storage ledger, but this authorization does not permit changing or enabling Watch runtime code. Issue #75 remains queued for a later product-owner release decision.
 
 ## Work-In-Progress And Branch Creation Rules
 
