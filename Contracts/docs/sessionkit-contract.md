@@ -251,6 +251,26 @@ Interjection audio, raw transcript, cleaned transcript, and user-visible display
 
 Destructive actions require explicit intent. Removing or replacing one representation must not silently delete the others.
 
+### Reviewed Sharing Foundation
+
+Sharing uses immutable reviewed revisions rather than modifying a private `Interjection`. A revision records the sender-approved transcript, optional cleaned-audio reference, deterministic cleanup decisions, and at most 500 characters of context on either side of the anchor. Draft and review-pending revisions cannot be packaged.
+
+`spoken-margins.interjection-package.v1` is a data-minimized, integrity-checked transport contract. Its manifest contains only source identity, bounded anchor evidence, explicitly selected reviewed representations, and redaction assertions. Raw captures, unselected representations, complete source text or audio, diagnostics, filesystem paths, and unrelated turns are not package fields. Cleaned audio uses archive-relative `audio/*.m4a` paths; local source paths are never serialized.
+
+The content digest covers the canonical sorted-key manifest with a null digest plus each sorted audio path, byte digest, and byte count. Digest success means **integrity checked, unsigned sender**; it is not identity authentication. Malformed archives or JSON, unknown fields, unsafe entries, unsupported schema versions, missing privacy assertions, attachment mismatches, and digest mismatches are rejected before import.
+
+Recipient imports persist `ImportedCommentaryLayer` and `ImportedCommentaryInterjection` records separately from local captures. Package and package-scoped IDs are provenance only; recipient-local IDs are the primary keys. The verified package digest is the idempotency key, and a repeated import returns a stable duplicate result without adding records.
+
+Article resolution distinguishes resolved, ambiguous, wrong-source, and context-only outcomes. Only a verified range, unique exact quote, or unique normalized quote is resolved by this foundation. Presentation, playback ownership, co-op replies, accounts, transport, and external enablement are separate work.
+
+Contract fixture registration:
+
+| Fixture family | Schema | Expected result |
+| --- | --- | --- |
+| `fixtures/interjection-packages/*.json` | `interjection-package.schema.json` | valid |
+| `fixtures/sharing/cleanup-revision.json` | `interjection-share-revision.schema.json` | valid |
+| `fixtures/invalid/interjection-packages/*.json` | `interjection-package.schema.json` | invalid; the validator fails if one passes |
+
 ## Snapshot
 
 Every command publishes a snapshot for compact surfaces.

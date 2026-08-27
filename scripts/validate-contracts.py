@@ -18,6 +18,8 @@ PATH_SCHEMA_RULES = [
     ("fixtures/maps/*.json", "listening-map.schema.json"),
     ("fixtures/sessions/*.json", "session.schema.json"),
     ("fixtures/interjections/*.json", "interjection.schema.json"),
+    ("fixtures/interjection-packages/*.json", "interjection-package.schema.json"),
+    ("fixtures/sharing/cleanup-revision.json", "interjection-share-revision.schema.json"),
     ("fixtures/turns/*.json", "conversation-turn.schema.json", "array"),
     ("fixtures/exports/*.json", "session-export.schema.json"),
     ("fixtures/watch/offline-package.json", "watch-audio-package.schema.json"),
@@ -26,6 +28,10 @@ PATH_SCHEMA_RULES = [
     ("fixtures/link-resolution/*.json", "link-resolution-fixture.schema.json"),
     ("fixtures/transcripts/*.json", "transcript.schema.json"),
     ("traces/*.json", "session-trace.schema.json"),
+]
+
+NEGATIVE_PATH_SCHEMA_RULES = [
+    ("fixtures/invalid/interjection-packages/*.json", "interjection-package.schema.json"),
 ]
 
 
@@ -83,6 +89,15 @@ def main() -> int:
             errors.extend(validate_file(path, schema_path, mode))
             if pattern == "traces/*.json":
                 errors.extend(validate_trace_references(path))
+
+    for pattern, schema_name in NEGATIVE_PATH_SCHEMA_RULES:
+        schema_path = SCHEMAS / schema_name
+        paths = sorted(CONTRACTS.glob(pattern))
+        if not paths:
+            errors.append(f"{pattern}: negative fixture family has no fixtures")
+        for path in paths:
+            if not validate_file(path, schema_path):
+                errors.append(f"{path}: negative fixture unexpectedly passed {schema_name}")
 
     if errors:
         for error in errors:

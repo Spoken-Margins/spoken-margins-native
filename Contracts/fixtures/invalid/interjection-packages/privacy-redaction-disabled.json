@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "spoken-margins.interjection-package.v1",
+  "packageId": "unsafe-package",
+  "createdAt": "2026-08-22T12:00:00Z",
+  "conversationId": "unsafe-conversation",
+  "parentPackageDigests": [],
+  "contentDigest": null,
+  "source": {
+    "sourceType": "article",
+    "canonicalURL": "https://example.com/article",
+    "title": "Unsafe package"
+  },
+  "interjections": [
+    {
+      "packageScopedId": "margin-001",
+      "createdAt": "2026-08-22T11:30:00Z",
+      "anchor": { "anchorType": "text" },
+      "representation": {
+        "kind": "text_only",
+        "approvedTranscript": "Reviewed text.",
+        "provenance": "sender_approved_text_only"
+      }
+    }
+  ],
+  "suggestedRevealMode": "companion",
+  "redactions": {
+    "rawAudioOmitted": true,
+    "rawTranscriptOmitted": true,
+    "fullSourceTextOmitted": true,
+    "sourceAudioOmitted": true,
+    "diagnosticsOmitted": false,
+    "filesystemPathsOmitted": true,
+    "unrelatedTurnsOmitted": true,
+    "privateRepresentationsOmitted": true
+  }
+}
