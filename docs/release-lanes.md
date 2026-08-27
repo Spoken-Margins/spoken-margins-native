@@ -16,6 +16,7 @@ If a GitHub label, issue comment, local branch name, older planning document, or
 - Released source commit: `738c743e202f5e700f4d6975adee52862f63c69f`.
 - Upload evidence: `artifacts/validation/testflight-external/build-19/build-19-testflight-upload.md`.
 - Accepted integration baseline: TestFlight triage fixes through `22788cb96a6763d186a607961ee229c5b01d6156` have been accepted into `main` by explicit product-owner direction. Their automated evidence is `verified`; this record does not invent physical-device validation or claim that a later build has reached the largest distributed audience.
+- Next distribution candidate: version 0.1 (21) from the accepted `main` runtime. Build 20 is intentionally skipped and must not be uploaded. Build 21 is reserved for the accepted TestFlight hotfix line; the quality-of-life candidate advances from its provisional local Build 21 evidence to Build 22 before upload.
 - `main` represents the released runtime plus explicitly accepted release-integration changes. Governance- or evidence-only commits may follow the released source commit; runtime changes may enter `main` only through a recorded product-owner release decision.
 - When a later build reaches the largest distributed audience, update this section in the same change that advances the release lanes.
 
@@ -63,7 +64,7 @@ Rules:
 4. Focused regression evidence can be added without claiming product-owner validation.
 5. The change can be described in the next TestFlight handoff with exact in-scope and out-of-scope behavior.
 
-Issue #83 is the current active triage item. After its existing implementation work is preserved, #85 is the next bounded regression target; #84 follows as a separate diagnosis and correction unless failing evidence proves the two issues share one root cause. Issues #56, #71, and #78 already have implementation on the post-Build-19 line and remain human-validation work unless new failures require additional changes.
+There is no current active triage implementation item. The accepted post-Build-19 fixes through `22788cb` include the bounded playback, recording-continuity, scrubbing, transport, PDF, and podcast-resolution corrections previously tracked through issues #56, #71, #78, #83, #84, and #85. They remain product-owner validation work in Build 21 unless new failing evidence justifies another admitted triage change.
 
 For each TestFlight cycle:
 
@@ -96,6 +97,8 @@ These issues form one end-to-end boundary: prepare, preview, export, import, and
 ## Quality-of-Life Lane
 
 `codex/quality-of-life-next` delivers one numbered non-Watch quality-of-life release. All work remains a per-issue or tightly complementary issue-group commit series on this single branch; do not create issue-specific persistent branches.
+
+Its next TestFlight candidate is Build 22. Earlier Build 21 references on the branch describe local automated evidence only and are superseded because the product owner reserved Build 21 for the accepted hotfix distribution.
 
 ### Authorized ordered program
 
