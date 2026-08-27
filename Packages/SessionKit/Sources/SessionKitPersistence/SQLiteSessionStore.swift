@@ -6,13 +6,19 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     public static let currentSchemaVersion = 5
     private static let sessionScopedRecordKinds: Set<String> = ["interjection", "turn", "ai_job"]
     private var db: OpaquePointer?
+    private let connectionLock = NSRecursiveLock()
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
     public init(path: String) throws {
         encoder.dateEncodingStrategy = .iso8601
         decoder.dateDecodingStrategy = .iso8601
-        guard sqlite3_open(path, &db) == SQLITE_OK else {
+        guard sqlite3_open_v2(
+            path,
+            &db,
+            SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
+            nil
+        ) == SQLITE_OK else {
             throw SessionKitError.persistenceFailed("sqlite_open")
         }
         try migrate()
@@ -23,9 +29,10 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     }
 
     public func migrate() throws {
-        try execute("PRAGMA journal_mode=WAL;")
-        try execute("PRAGMA synchronous=NORMAL;")
-        try execute("""
+        try withConnectionLock {
+            try execute("PRAGMA journal_mode=WAL;")
+            try execute("PRAGMA synchronous=NORMAL;")
+            try execute("""
         CREATE TABLE IF NOT EXISTS metadata (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
@@ -64,7 +71,8 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         if let existingVersion, existingVersion < 4 {
             try migrateSessionScopedRecordKeys()
         }
-        try setMetadataValue("\(Self.currentSchemaVersion)", forKey: "schema_version")
+            try setMetadataValue("\(Self.currentSchemaVersion)", forKey: "schema_version")
+        }
     }
 
     public func reset() throws {
@@ -75,15 +83,17 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     }
 
     public func quarantinedRecordCount() throws -> Int {
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM quarantined_records;", -1, &statement, nil) == SQLITE_OK else {
-            throw SessionKitError.persistenceFailed("prepare_quarantine_count")
+        try withConnectionLock {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM quarantined_records;", -1, &statement, nil) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_quarantine_count")
+            }
+            defer { if statement != nil { sqlite3_finalize(statement) } }
+            guard sqlite3_step(statement) == SQLITE_ROW else {
+                throw SessionKitError.persistenceFailed("step_quarantine_count")
+            }
+            return Int(sqlite3_column_int64(statement, 0))
         }
-        defer { if statement != nil { sqlite3_finalize(statement) } }
-        guard sqlite3_step(statement) == SQLITE_ROW else {
-            throw SessionKitError.persistenceFailed("step_quarantine_count")
-        }
-        return Int(sqlite3_column_int64(statement, 0))
     }
 
     public func loadItem(id: String) throws -> Item {
@@ -398,16 +408,18 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     }
 
     public func deleteItem(id: String) throws {
-        var statement: OpaquePointer?
-        let sql = "DELETE FROM records WHERE item_id = ? OR (kind = 'item' AND id = ?);"
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw SessionKitError.persistenceFailed("prepare_delete_item")
-        }
-        defer { if statement != nil { sqlite3_finalize(statement) } }
-        bind(statement, index: 1, value: id)
-        bind(statement, index: 2, value: id)
-        guard sqlite3_step(statement) == SQLITE_DONE else {
-            throw SessionKitError.persistenceFailed("step_delete_item")
+        try withConnectionLock {
+            var statement: OpaquePointer?
+            let sql = "DELETE FROM records WHERE item_id = ? OR (kind = 'item' AND id = ?);"
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_delete_item")
+            }
+            defer { if statement != nil { sqlite3_finalize(statement) } }
+            bind(statement, index: 1, value: id)
+            bind(statement, index: 2, value: id)
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                throw SessionKitError.persistenceFailed("step_delete_item")
+            }
         }
     }
 
@@ -425,59 +437,65 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     }
 
     private func deleteRecords(kind: String, itemId: String) throws {
-        var statement: OpaquePointer?
-        let sql = "DELETE FROM records WHERE kind = ? AND item_id = ?;"
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw SessionKitError.persistenceFailed("prepare_delete_records")
-        }
-        defer { sqlite3_finalize(statement) }
-        bind(statement, index: 1, value: kind)
-        bind(statement, index: 2, value: itemId)
-        guard sqlite3_step(statement) == SQLITE_DONE else {
-            throw SessionKitError.persistenceFailed("step_delete_records")
+        try withConnectionLock {
+            var statement: OpaquePointer?
+            let sql = "DELETE FROM records WHERE kind = ? AND item_id = ?;"
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_delete_records")
+            }
+            defer { sqlite3_finalize(statement) }
+            bind(statement, index: 1, value: kind)
+            bind(statement, index: 2, value: itemId)
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                throw SessionKitError.persistenceFailed("step_delete_records")
+            }
         }
     }
 
     private func deleteRecord(kind: String, id: String) throws {
-        var statement: OpaquePointer?
-        let sql = "DELETE FROM records WHERE kind = ? AND id = ?;"
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw SessionKitError.persistenceFailed("prepare_delete_record")
-        }
-        defer { sqlite3_finalize(statement) }
-        bind(statement, index: 1, value: kind)
-        bind(statement, index: 2, value: id)
-        guard sqlite3_step(statement) == SQLITE_DONE else {
-            throw SessionKitError.persistenceFailed("step_delete_record")
+        try withConnectionLock {
+            var statement: OpaquePointer?
+            let sql = "DELETE FROM records WHERE kind = ? AND id = ?;"
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_delete_record")
+            }
+            defer { sqlite3_finalize(statement) }
+            bind(statement, index: 1, value: kind)
+            bind(statement, index: 2, value: id)
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                throw SessionKitError.persistenceFailed("step_delete_record")
+            }
         }
     }
 
     private func save<T: Encodable>(kind: String, id: String, sessionId: String?, itemId: String?, value: T) throws {
-        let data = try encoder.encode(value)
-        guard let payload = String(data: data, encoding: .utf8) else {
-            throw SessionKitError.persistenceFailed("json_encoding")
-        }
-        var statement: OpaquePointer?
-        let sql = """
-        INSERT INTO records(kind, id, session_id, item_id, payload)
-        VALUES(?, ?, ?, ?, ?)
-        ON CONFLICT(kind, id) DO UPDATE SET
-            session_id = excluded.session_id,
-            item_id = excluded.item_id,
-            payload = excluded.payload,
-            updated_at = CURRENT_TIMESTAMP;
-        """
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw SessionKitError.persistenceFailed("prepare_save")
-        }
-        defer { sqlite3_finalize(statement) }
-        bind(statement, index: 1, value: kind)
-        bind(statement, index: 2, value: storageID(kind: kind, id: id, sessionId: sessionId))
-        bind(statement, index: 3, value: sessionId)
-        bind(statement, index: 4, value: itemId)
-        bind(statement, index: 5, value: payload)
-        guard sqlite3_step(statement) == SQLITE_DONE else {
-            throw SessionKitError.persistenceFailed("step_save")
+        try withConnectionLock {
+            let data = try encoder.encode(value)
+            guard let payload = String(data: data, encoding: .utf8) else {
+                throw SessionKitError.persistenceFailed("json_encoding")
+            }
+            var statement: OpaquePointer?
+            let sql = """
+            INSERT INTO records(kind, id, session_id, item_id, payload)
+            VALUES(?, ?, ?, ?, ?)
+            ON CONFLICT(kind, id) DO UPDATE SET
+                session_id = excluded.session_id,
+                item_id = excluded.item_id,
+                payload = excluded.payload,
+                updated_at = CURRENT_TIMESTAMP;
+            """
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_save")
+            }
+            defer { sqlite3_finalize(statement) }
+            bind(statement, index: 1, value: kind)
+            bind(statement, index: 2, value: storageID(kind: kind, id: id, sessionId: sessionId))
+            bind(statement, index: 3, value: sessionId)
+            bind(statement, index: 4, value: itemId)
+            bind(statement, index: 5, value: payload)
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                throw SessionKitError.persistenceFailed("step_save")
+            }
         }
     }
 
@@ -502,40 +520,42 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     }
 
     private func query<T: Decodable>(_ sql: String, _ values: [String]) throws -> [T] {
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw SessionKitError.persistenceFailed("prepare_query")
-        }
-        defer { if statement != nil { sqlite3_finalize(statement) } }
-        for (index, value) in values.enumerated() {
-            bind(statement, index: Int32(index + 1), value: value)
-        }
-        var decoded: [T] = []
-        var corrupt: [(kind: String, id: String, payload: String, error: String)] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
-            guard let rawKind = sqlite3_column_text(statement, 0),
-                  let rawID = sqlite3_column_text(statement, 1),
-                  let raw = sqlite3_column_text(statement, 2) else { continue }
-            let kind = String(cString: rawKind)
-            let id = String(cString: rawID)
-            let payload = String(cString: raw)
-            guard let data = payload.data(using: .utf8) else { continue }
-            do {
-                decoded.append(try decoder.decode(T.self, from: data))
-            } catch {
-                corrupt.append((kind: kind, id: id, payload: payload, error: String(describing: error)))
+        try withConnectionLock {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_query")
             }
-        }
-        sqlite3_finalize(statement)
-        statement = nil
-        if !corrupt.isEmpty {
-            try withTransaction {
-                for record in corrupt {
-                    try quarantine(kind: record.kind, id: record.id, payload: record.payload, error: record.error)
+            defer { if statement != nil { sqlite3_finalize(statement) } }
+            for (index, value) in values.enumerated() {
+                bind(statement, index: Int32(index + 1), value: value)
+            }
+            var decoded: [T] = []
+            var corrupt: [(kind: String, id: String, payload: String, error: String)] = []
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard let rawKind = sqlite3_column_text(statement, 0),
+                      let rawID = sqlite3_column_text(statement, 1),
+                      let raw = sqlite3_column_text(statement, 2) else { continue }
+                let kind = String(cString: rawKind)
+                let id = String(cString: rawID)
+                let payload = String(cString: raw)
+                guard let data = payload.data(using: .utf8) else { continue }
+                do {
+                    decoded.append(try decoder.decode(T.self, from: data))
+                } catch {
+                    corrupt.append((kind: kind, id: id, payload: payload, error: String(describing: error)))
                 }
             }
+            sqlite3_finalize(statement)
+            statement = nil
+            if !corrupt.isEmpty {
+                try withTransaction {
+                    for record in corrupt {
+                        try quarantine(kind: record.kind, id: record.id, payload: record.payload, error: record.error)
+                    }
+                }
+            }
+            return decoded
         }
-        return decoded
     }
 
     private static func isNewerSession(_ lhs: Session, _ rhs: Session) -> Bool {
@@ -704,14 +724,16 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     }
 
     private func withTransaction<T>(_ operation: () throws -> T) throws -> T {
-        try execute("BEGIN IMMEDIATE TRANSACTION;")
-        do {
-            let result = try operation()
-            try execute("COMMIT;")
-            return result
-        } catch {
-            try? execute("ROLLBACK;")
-            throw error
+        try withConnectionLock {
+            try execute("BEGIN IMMEDIATE TRANSACTION;")
+            do {
+                let result = try operation()
+                try execute("COMMIT;")
+                return result
+            } catch {
+                try? execute("ROLLBACK;")
+                throw error
+            }
         }
     }
 
@@ -742,12 +764,20 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     }
 
     private func execute(_ sql: String) throws {
-        var error: UnsafeMutablePointer<CChar>?
-        guard sqlite3_exec(db, sql, nil, nil, &error) == SQLITE_OK else {
-            let message = error.map { String(cString: $0) } ?? "unknown"
-            sqlite3_free(error)
-            throw SessionKitError.persistenceFailed(message)
+        try withConnectionLock {
+            var error: UnsafeMutablePointer<CChar>?
+            guard sqlite3_exec(db, sql, nil, nil, &error) == SQLITE_OK else {
+                let message = error.map { String(cString: $0) } ?? "unknown"
+                sqlite3_free(error)
+                throw SessionKitError.persistenceFailed(message)
+            }
         }
+    }
+
+    private func withConnectionLock<T>(_ operation: () throws -> T) rethrows -> T {
+        connectionLock.lock()
+        defer { connectionLock.unlock() }
+        return try operation()
     }
 
     private func bind(_ statement: OpaquePointer?, index: Int32, value: String?) {

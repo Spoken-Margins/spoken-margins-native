@@ -2,6 +2,29 @@ import XCTest
 @testable import SessionKit
 
 final class CanonicalDocumentMapTests: XCTestCase {
+    func testCanonicalHeadingPolicyDoesNotInventFrontMatterForDocumentTitleAlone() throws {
+        let parsed = try ObsidianMarkdownParser.parse(
+            fileName: "Structured Report.md",
+            contents: """
+            # A Structured Report
+
+            ## Context
+            Context body.
+
+            ## Evidence
+            Evidence body.
+            """
+        )
+
+        let map = try XCTUnwrap(parsed.deterministicListeningMap(
+            itemId: "item-structured-report",
+            policy: .canonicalHeadings
+        ))
+
+        XCTAssertEqual(map.chapters.map(\.title), ["Context", "Evidence"])
+        XCTAssertEqual(map.chapters.first?.startChar, 0)
+    }
+
     func testCanonicalHeadingPolicyPreservesFrontMatterAndAllTwentyChapters() throws {
         let expectedTitles = (1...20).map { "Story \($0)" }
         var markdown = """

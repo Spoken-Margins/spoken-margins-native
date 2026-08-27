@@ -46,11 +46,15 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
             selected = ordered
         }
 
+        let canonicalPrefix = selected.first.map {
+            String(text.prefix($0.startChar)).trimmingCharacters(in: .whitespacesAndNewlines)
+        } ?? ""
+        let hasAuthoredFrontMatter = policy == .canonicalHeadings
+            && !canonicalPrefix.isEmpty
+            && Self.normalizedTitle(canonicalPrefix) != Self.normalizedTitle(title)
+
         var drafts: [DraftChapter] = []
-        if policy == .canonicalHeadings,
-           let firstHeading = selected.first,
-           firstHeading.startChar > 0,
-           !String(text.prefix(firstHeading.startChar)).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if hasAuthoredFrontMatter, let firstHeading = selected.first {
             drafts.append(DraftChapter(
                 baseTitle: "Front Matter",
                 partNumber: 1,
@@ -65,7 +69,9 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
                 baseTitle: heading.title,
                 partNumber: 1,
                 level: heading.level,
-                startChar: policy == .adaptiveListeningSections && index == 0 ? 0 : heading.startChar,
+                startChar: index == 0 && (policy == .adaptiveListeningSections || !hasAuthoredFrontMatter)
+                    ? 0
+                    : heading.startChar,
                 endChar: index + 1 < selected.count ? selected[index + 1].startChar : text.count
             )
         })

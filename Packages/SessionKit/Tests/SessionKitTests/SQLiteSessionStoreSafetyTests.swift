@@ -5,6 +5,34 @@ import XCTest
 import SessionKitPersistence
 
 final class SQLiteSessionStoreSafetyTests: XCTestCase {
+    func testConcurrentReadsAndWritesShareOneConnectionSafely() async throws {
+        let store = try SQLiteSessionStore(path: temporaryDatabasePath())
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for worker in 0..<12 {
+                group.addTask {
+                    for iteration in 0..<40 {
+                        let id = "asset-\(worker)-\(iteration)"
+                        try store.saveOwnedOfflineAsset(
+                            OwnedOfflineAsset(
+                                id: id,
+                                category: .preparedChunk,
+                                relativePath: id,
+                                byteCount: 1,
+                                isReproducible: true
+                            )
+                        )
+                        _ = try store.loadOwnedOfflineAssets()
+                        _ = try store.listItems()
+                    }
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        XCTAssertEqual(try store.loadOwnedOfflineAssets().count, 480)
+    }
+
     func testStoreWritesCurrentSchemaVersion() throws {
         let path = temporaryDatabasePath()
         _ = try SQLiteSessionStore(path: path)
