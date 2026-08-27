@@ -1,6 +1,6 @@
 # Spoken Margins Tester Walkthrough Video Guide
 
-> Historical walkthrough: runtime exclusions and screenshots in this guide predate Build 21. Use the Build 21 quality-of-life handoff for current validation scope.
+> Historical walkthrough: runtime exclusions and screenshots in this guide predate Build 22. Use the Build 22 quality-of-life handoff for current validation scope.
 
 Prepared against Spoken Margins 0.1 (build 9) and the active Recovery MVP on
 July 24, 2026.

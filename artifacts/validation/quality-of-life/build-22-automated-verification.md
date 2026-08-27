@@ -1,4 +1,4 @@
-# Build 21 Non-Watch Quality-of-Life Handoff
+# Build 22 Non-Watch Quality-of-Life Handoff
 
 Status: `implemented` and locally `verified`; not `human_validated` and not yet a
 shippable release candidate because the production onboarding endpoint is not
@@ -6,7 +6,7 @@ deployed.
 
 ## Candidate
 
-- Version/build: Spoken Margins 0.1 (21)
+- Version/build: Spoken Margins 0.1 (22)
 - Branch: `codex/quality-of-life-next`
 - Runtime SHA: `dcad5f08b15bca5b28051a17b804cddd8954f77e`
 - Supported devices: iPhone and iPad on iOS/iPadOS 18.0 or later

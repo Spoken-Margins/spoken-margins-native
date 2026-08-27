@@ -12,7 +12,7 @@ SessionKit must also be capability-aware. Every command is evaluated against the
 
 ### Quality-of-Life Typed Layers
 
-Build 21 keeps five persistence and presentation layers distinct:
+Build 22 keeps five persistence and presentation layers distinct:
 
 - `CanonicalSourcePackage` stores authored source structure, nested navigation, deterministic speakable segments, and UTF-8 `SourceLocator` ranges. It is not a Listening Map or an audio manifest.
 - `PreparedAudioManifest` stores a `TTSRenderSignature`, committed chunks, completion artifact, typed preparation state, and durable preparation job. Playback rate is not part of render identity.

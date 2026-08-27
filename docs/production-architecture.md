@@ -1,6 +1,6 @@
 # Spoken Margins Production Architecture
 
-The Build 21 non-Watch quality-of-life layers and their audit boundaries are documented in `docs/quality-of-life-release.md`. That document supplements this architecture without changing or enabling the excluded Watch runtime.
+The Build 22 non-Watch quality-of-life layers and their audit boundaries are documented in `docs/quality-of-life-release.md`. That document supplements this architecture without changing or enabling the excluded Watch runtime.
 
 ## Purpose
 

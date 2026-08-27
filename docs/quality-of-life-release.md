@@ -2,7 +2,7 @@
 
 ## Scope and Architecture
 
-Build 21 on `codex/quality-of-life-next` implements issues #34, #64, #61, #69, #72–#74, #76–#77, #79, #86, and #87. Issue #75 and all new Watch playback, transfer, render, connectivity, and synchronization work remain excluded.
+Build 22 on `codex/quality-of-life-next` implements issues #34, #64, #61, #69, #72–#74, #76–#77, #79, #86, and #87. Issue #75 and all new Watch playback, transfer, render, connectivity, and synchronization work remain excluded.
 
 The release is deliberately layered:
 

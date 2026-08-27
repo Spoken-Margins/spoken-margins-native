@@ -1,6 +1,6 @@
 # Gate 1 Implementation Status
 
-> Historical evidence: this document records the earlier Gate 1 state. References to Kokoro/MLX describe retired experimental code and do not describe an available runtime after Build 21.
+> Historical evidence: this document records the earlier Gate 1 state. References to Kokoro/MLX describe retired experimental code and do not describe an available runtime after Build 22.
 
 ## Completed In This Repository
 

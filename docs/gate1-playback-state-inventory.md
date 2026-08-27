@@ -1,6 +1,6 @@
 # Gate 1 Playback State Inventory
 
-> Historical evidence: this inventory predates the Build 21 prepared-audio architecture. Kokoro/MLX references below describe retired experimental code only.
+> Historical evidence: this inventory predates the Build 22 prepared-audio architecture. Kokoro/MLX references below describe retired experimental code only.
 
 This inventory records the current Gate 1 playback behavior that should be preserved while the playback state model is cleaned up. If a future formal state machine disagrees with this behavior, treat that as a review point rather than assuming either side is automatically correct.
 

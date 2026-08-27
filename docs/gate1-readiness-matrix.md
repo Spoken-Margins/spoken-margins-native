@@ -1,6 +1,6 @@
 # Gate 1 Readiness Matrix
 
-> Historical evidence: this matrix predates Build 21. Its Kokoro/MLX references are retained only to explain the earlier gate and are not current build guidance.
+> Historical evidence: this matrix predates Build 22. Its Kokoro/MLX references are retained only to explain the earlier gate and are not current build guidance.
 
 Date: 2026-06-15
 
