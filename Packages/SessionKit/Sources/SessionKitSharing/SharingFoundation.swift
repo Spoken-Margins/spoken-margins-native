@@ -61,11 +61,10 @@ public enum InterjectionPackageBuilder {
     public static func prepare(
         packageId: String,
         createdAt: Date,
-        conversationId: String,
         source: SharedSourceIdentity,
         selections: [ReviewedInterjectionSelection],
         senderDisplayLabel: String? = nil,
-        suggestedRevealMode: ImportedCommentaryRevealMode = .companion
+        suggestedRevealMode: ImportedCommentaryRevealMode? = nil
     ) throws -> PreparedInterjectionPackage {
         let scopedIds = selections.map(\.packageScopedId)
         if let duplicate = Dictionary(grouping: scopedIds, by: { $0 }).first(where: { $0.value.count > 1 })?.key {
@@ -127,7 +126,6 @@ public enum InterjectionPackageBuilder {
             manifest: InterjectionPackageManifest(
                 packageId: packageId,
                 createdAt: createdAt,
-                conversationId: conversationId,
                 source: source,
                 interjections: records,
                 senderDisplayLabel: senderDisplayLabel,
@@ -142,9 +140,10 @@ public enum InterjectionPackageImporter {
     public typealias LocalIDProvider = (_ kind: String, _ packageScopedID: String) -> String
 
     public static func importPackage(
-        _ contents: InterjectionPackageArchiveContents,
+        _ contents: VerifiedInterjectionPackage,
         itemId: String? = nil,
-        sourceResolutionStatus: ImportedSourceResolutionStatus = .pending,
+        localSource: SharedSourceIdentity? = nil,
+        sourceText: String? = nil,
         importedAt: Date = Date(),
         repository: SessionRepository,
         makeLocalID: LocalIDProvider = defaultLocalID
@@ -153,6 +152,9 @@ public enum InterjectionPackageImporter {
         guard let digest = manifest.contentDigest else {
             throw InterjectionPackagePreparationError.missingVerifiedDigest
         }
+        let sourceResolution = localSource.map {
+            ImportedSourceResolver.resolve(package: manifest, against: $0, sourceText: sourceText)
+        } ?? ImportedSourceResolver.pending(package: manifest)
         let layerID = makeLocalID("layer", manifest.packageId)
         let packageIDs = Set([manifest.packageId] + manifest.interjections.map(\.packageScopedId))
         guard !layerID.isEmpty, !packageIDs.contains(layerID) else {
@@ -175,7 +177,9 @@ public enum InterjectionPackageImporter {
                 anchorEvidence: record.anchor,
                 approvedTranscript: record.representation.approvedTranscript,
                 audioPath: record.representation.audioPath.flatMap { contents.extractedAudioURLs[$0]?.path },
-                audioDurationMs: record.representation.audioDurationMs
+                audioDurationMs: record.representation.audioDurationMs,
+                resolution: sourceResolution.anchorsByPackageScopedId[record.packageScopedId]
+                    ?? ImportedAnchorResolution(evidenceClass: .unresolved)
             ))
         }
         let layer = ImportedCommentaryLayer(
@@ -183,13 +187,13 @@ public enum InterjectionPackageImporter {
             itemId: itemId,
             packageDigest: digest,
             packageId: manifest.packageId,
-            conversationId: manifest.conversationId,
-            parentPackageDigests: manifest.parentPackageDigests,
             sourceIdentity: manifest.source,
             displayLabel: manifest.senderDisplayLabel,
+            suggestedRevealMode: manifest.suggestedRevealMode,
             importedAt: importedAt,
-            sourceResolutionStatus: sourceResolutionStatus,
-            revealMode: manifest.suggestedRevealMode
+            sourceResolutionStatus: sourceResolution.status,
+            isEnabled: false,
+            revealMode: nil
         )
         return try repository.importCommentaryLayer(layer, interjections: importedInterjections)
     }

@@ -5,7 +5,7 @@ public final class InMemorySessionRepository: SessionRepository {
     public var mapsByItemId: [String: ListeningMap]
     public var sessions: [String: Session]
     public var interjections: [String: Interjection]
-    public var interjectionShareRevisions: [String: InterjectionShareRevision]
+    public private(set) var interjectionShareRevisions: [String: InterjectionShareRevision]
     public var importedCommentaryLayers: [String: ImportedCommentaryLayer]
     public var importedCommentaryInterjections: [String: ImportedCommentaryInterjection]
     public var turns: [String: ConversationTurn]
@@ -88,6 +88,12 @@ public final class InMemorySessionRepository: SessionRepository {
     }
 
     public func saveInterjectionShareRevision(_ revision: InterjectionShareRevision) throws {
+        if let existing = interjectionShareRevisions[revision.id] {
+            guard existing == revision else {
+                throw SessionKitError.persistenceFailed("interjection_share_revision_immutable_conflict")
+            }
+            return
+        }
         interjectionShareRevisions[revision.id] = revision
     }
 

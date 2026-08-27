@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "spoken-margins.interjection-package.v1",
+  "packageId": "private-url-package",
+  "createdAt": "2026-08-22T12:00:00Z",
+  "contentDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+  "source": {
+    "sourceType": "article",
+    "canonicalURL": "https://example.com/article",
+    "originalURL": "file:///private/Library/secret.html",
+    "title": "Private path must not cross the package boundary"
+  },
+  "interjections": [
+    {
+      "packageScopedId": "margin-001",
+      "createdAt": "2026-08-22T11:30:00Z",
+      "anchor": { "anchorType": "text" },
+      "representation": {
+        "kind": "text_only",
+        "approvedTranscript": "Reviewed text.",
+        "provenance": "sender_approved_text_only"
+      }
+    }
+  ],
+  "redactions": {
+    "rawAudioOmitted": true,
+    "rawTranscriptOmitted": true,
+    "fullSourceTextOmitted": true,
+    "sourceAudioOmitted": true,
+    "diagnosticsOmitted": true,
+    "filesystemPathsOmitted": true,
+    "unrelatedTurnsOmitted": true,
+    "privateRepresentationsOmitted": true
+  }
+}

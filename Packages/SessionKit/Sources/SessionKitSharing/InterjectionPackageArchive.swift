@@ -2,8 +2,8 @@ import CryptoKit
 import Foundation
 import SessionKit
 import ZIPFoundation
-#if canImport(AVFoundation)
-import AVFoundation
+#if canImport(AudioToolbox)
+import AudioToolbox
 #endif
 
 public enum InterjectionPackageArchiveError: Error, Equatable, LocalizedError {
@@ -16,6 +16,7 @@ public enum InterjectionPackageArchiveError: Error, Equatable, LocalizedError {
     case unsupportedSchema(String)
     case invalidManifest(String)
     case invalidDigest
+    case invalidAudio(String)
     case audioTooLarge(String)
     case audioTooLong(String)
     case excessiveCompression(String)
@@ -31,6 +32,7 @@ public enum InterjectionPackageArchiveError: Error, Equatable, LocalizedError {
         case .unsupportedSchema(let schema): return "This package version is not supported: \(schema)."
         case .invalidManifest(let reason): return "The package manifest is invalid: \(reason)."
         case .invalidDigest: return "The package changed after it was exported."
+        case .invalidAudio(let path): return "An interjection audio file is unreadable: \(path)."
         case .audioTooLarge(let path): return "An interjection audio file is too large: \(path)."
         case .audioTooLong(let path): return "An interjection audio file is longer than 10 minutes: \(path)."
         case .excessiveCompression(let path): return "The package has an unsafe compression ratio: \(path)."
@@ -38,11 +40,13 @@ public enum InterjectionPackageArchiveError: Error, Equatable, LocalizedError {
     }
 }
 
-public struct InterjectionPackageArchiveContents: Sendable {
+/// A package value that can only be created by a successful archive read. Public
+/// consumers can inspect it, but cannot forge the verification boundary.
+public struct VerifiedInterjectionPackage: Sendable {
     public let manifest: InterjectionPackageManifest
     public let extractedAudioURLs: [String: URL]
 
-    public init(manifest: InterjectionPackageManifest, extractedAudioURLs: [String: URL]) {
+    init(manifest: InterjectionPackageManifest, extractedAudioURLs: [String: URL]) {
         self.manifest = manifest
         self.extractedAudioURLs = extractedAudioURLs
     }
@@ -69,39 +73,44 @@ public enum InterjectionPackageArchive {
         var manifest = inputManifest
         try validateManifestBoundary(manifest, requireDigest: false)
         let audioData = try loadExportAudio(manifest: manifest, audioFiles: audioFiles)
-        manifest.contentDigest = digest(manifest: manifest, audioData: audioData)
+        let previewData = Data(previewMarkdown(manifest).utf8)
+        manifest.contentDigest = try digest(
+            manifest: manifest,
+            previewData: previewData,
+            audioData: audioData
+        )
         let manifestData = try encodeManifest(manifest)
         guard manifestData.count <= maximumManifestBytes else {
             throw InterjectionPackageArchiveError.manifestTooLarge
         }
-        let previewData = Data(previewMarkdown(manifest).utf8)
-
-        if FileManager.default.fileExists(atPath: destinationURL.path) {
-            try FileManager.default.removeItem(at: destinationURL)
-        }
+        let parentDirectory = destinationURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(
-            at: destinationURL.deletingLastPathComponent(),
+            at: parentDirectory,
             withIntermediateDirectories: true
         )
-        let archive = try Archive(url: destinationURL, accessMode: .create)
+        let stagedURL = parentDirectory.appendingPathComponent(
+            ".\(destinationURL.lastPathComponent).export-\(UUID().uuidString).tmp"
+        )
+        defer { try? FileManager.default.removeItem(at: stagedURL) }
+        let archive = try Archive(url: stagedURL, accessMode: .create)
         try add(manifestData, path: "manifest.json", to: archive, compression: .deflate)
         try add(previewData, path: "preview.md", to: archive, compression: .deflate)
         for path in audioData.keys.sorted() {
             guard let data = audioData[path] else { continue }
             try add(data, path: path, to: archive, compression: .none)
         }
-        let fileSize = try destinationURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-        guard UInt64(fileSize) <= maximumPackageBytes else {
-            try? FileManager.default.removeItem(at: destinationURL)
+        let fileSize = try stagedURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        guard UInt64(max(0, fileSize)) <= maximumPackageBytes else {
             throw InterjectionPackageArchiveError.packageTooLarge
         }
+        try commitStagedItem(stagedURL, to: destinationURL)
         return manifest
     }
 
     public static func read(
         from packageURL: URL,
         extractingAudioTo destinationDirectory: URL
-    ) throws -> InterjectionPackageArchiveContents {
+    ) throws -> VerifiedInterjectionPackage {
         let fileSize = try packageURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         guard UInt64(max(0, fileSize)) <= maximumPackageBytes else {
             throw InterjectionPackageArchiveError.packageTooLarge
@@ -123,10 +132,11 @@ public enum InterjectionPackageArchive {
             guard entry.type == .file, isAllowed(path: entry.path) else {
                 throw InterjectionPackageArchiveError.invalidEntry(entry.path)
             }
-            totalUncompressed += entry.uncompressedSize
-            guard totalUncompressed <= maximumPackageBytes else {
+            let (nextTotal, overflowed) = totalUncompressed.addingReportingOverflow(entry.uncompressedSize)
+            guard !overflowed, nextTotal <= maximumPackageBytes else {
                 throw InterjectionPackageArchiveError.packageTooLarge
             }
+            totalUncompressed = nextTotal
             if entry.path == "manifest.json", entry.uncompressedSize > maximumManifestBytes {
                 throw InterjectionPackageArchiveError.manifestTooLarge
             }
@@ -169,26 +179,39 @@ public enum InterjectionPackageArchive {
         let audioData = Dictionary(uniqueKeysWithValues: actualAudioPaths.compactMap { path in
             entryData[path].map { (path, $0) }
         })
-        guard manifest.contentDigest == digest(manifest: manifest, audioData: audioData) else {
+        guard let previewData = entryData["preview.md"] else {
+            throw InterjectionPackageArchiveError.invalidManifest("preview is absent")
+        }
+        guard manifest.contentDigest == (try digest(
+            manifest: manifest,
+            previewData: previewData,
+            audioData: audioData
+        )) else {
             throw InterjectionPackageArchiveError.invalidDigest
         }
+        guard previewData == Data(previewMarkdown(manifest).utf8) else {
+            throw InterjectionPackageArchiveError.invalidManifest("preview does not match manifest")
+        }
 
-        try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
-        var audioURLs: [String: URL] = [:]
+        let parentDirectory = destinationDirectory.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: parentDirectory, withIntermediateDirectories: true)
+        let stagedDirectory = parentDirectory.appendingPathComponent(
+            ".\(destinationDirectory.lastPathComponent).import-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: stagedDirectory) }
+        try FileManager.default.createDirectory(at: stagedDirectory, withIntermediateDirectories: true)
         for path in actualAudioPaths.sorted() {
             guard let data = audioData[path] else { continue }
-            let destination = destinationDirectory.appendingPathComponent(URL(fileURLWithPath: path).lastPathComponent)
-            try data.write(to: destination, options: [.atomic])
-            #if canImport(AVFoundation)
-            let measuredDuration = CMTimeGetSeconds(AVURLAsset(url: destination).duration)
-            if measuredDuration.isFinite, measuredDuration > 600 {
-                try? FileManager.default.removeItem(at: destination)
-                throw InterjectionPackageArchiveError.audioTooLong(path)
-            }
-            #endif
-            audioURLs[path] = destination
+            let stagedAudio = stagedDirectory.appendingPathComponent(URL(fileURLWithPath: path).lastPathComponent)
+            try data.write(to: stagedAudio, options: [.atomic])
+            try validateAudio(at: stagedAudio, archivePath: path)
         }
-        return InterjectionPackageArchiveContents(manifest: manifest, extractedAudioURLs: audioURLs)
+        try commitStagedItem(stagedDirectory, to: destinationDirectory)
+        let audioURLs = Dictionary(uniqueKeysWithValues: actualAudioPaths.map { path in
+            (path, destinationDirectory.appendingPathComponent(URL(fileURLWithPath: path).lastPathComponent))
+        })
+        return VerifiedInterjectionPackage(manifest: manifest, extractedAudioURLs: audioURLs)
     }
 
     public static func encodeManifest(_ manifest: InterjectionPackageManifest) throws -> Data {
@@ -252,6 +275,7 @@ public enum InterjectionPackageArchive {
             guard UInt64(max(0, values.fileSize ?? 0)) <= maximumAudioBytes else {
                 throw InterjectionPackageArchiveError.audioTooLarge(path)
             }
+            try validateAudio(at: url, archivePath: path)
             result[path] = try Data(contentsOf: url, options: [.mappedIfSafe])
         }
         return result
@@ -265,23 +289,35 @@ public enum InterjectionPackageArchive {
             throw InterjectionPackageArchiveError.unsupportedSchema(manifest.schemaVersion)
         }
         guard (1...200).contains(manifest.packageId.count),
-              (1...200).contains(manifest.conversationId.count),
-              (1...500).contains(manifest.source.title.count),
-              URL(string: manifest.source.canonicalURL)?.scheme?.lowercased() == "https",
               !manifest.interjections.isEmpty,
               manifest.interjections.count <= maximumInterjections else {
             throw InterjectionPackageArchiveError.invalidManifest("required package fields are absent or out of bounds")
+        }
+        if let digest = manifest.contentDigest, !isSHA256(digest) {
+            throw InterjectionPackageArchiveError.invalidManifest("content digest is invalid")
+        }
+        if let senderDisplayLabel = manifest.senderDisplayLabel, senderDisplayLabel.count > 120 {
+            throw InterjectionPackageArchiveError.invalidManifest("sender display label is out of bounds")
+        }
+        let source = manifest.source
+        guard validHTTPSURL(source.canonicalURL),
+              source.originalURL.map(validHTTPSURL) ?? true,
+              source.enclosureURL.map(validHTTPSURL) ?? true,
+              (1...500).contains(source.title.count),
+              !source.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              optionalLength(source.author, maximum: 300),
+              optionalLength(source.publisher, maximum: 300),
+              optionalLength(source.showTitle, maximum: 500),
+              optionalLength(source.episodeGUID, maximum: 1_000),
+              optionalLength(source.publishedAt, maximum: 100),
+              source.durationMs.map({ $0 >= 0 }) ?? true else {
+            throw InterjectionPackageArchiveError.invalidManifest("source fields are absent or out of bounds")
         }
         guard manifest.redactions.provesDefaultMinimization else {
             throw InterjectionPackageArchiveError.invalidManifest("required redactions are not asserted")
         }
         if requireDigest, !isSHA256(manifest.contentDigest) {
             throw InterjectionPackageArchiveError.invalidManifest("content digest is absent")
-        }
-        guard manifest.parentPackageDigests.count <= 20,
-              Set(manifest.parentPackageDigests).count == manifest.parentPackageDigests.count,
-              manifest.parentPackageDigests.allSatisfy({ isSHA256($0) }) else {
-            throw InterjectionPackageArchiveError.invalidManifest("parent package digests are invalid")
         }
         for digest in [manifest.source.normalizedContentSHA256, manifest.source.exactEditionSHA256].compactMap({ $0 }) {
             guard isSHA256(digest) else {
@@ -294,12 +330,20 @@ public enum InterjectionPackageArchive {
         }
         for record in manifest.interjections {
             let representation = record.representation
+            let anchor = record.anchor
             guard (1...200).contains(record.packageScopedId.count),
                   !representation.approvedTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   representation.approvedTranscript.count <= 50_000,
-                  (record.anchor.exactText?.count ?? 0) <= BoundedAnchorContext.maximumExactTextCharacters,
-                  (record.anchor.prefix?.count ?? 0) <= BoundedAnchorContext.maximumCharactersPerSide,
-                  (record.anchor.suffix?.count ?? 0) <= BoundedAnchorContext.maximumCharactersPerSide else {
+                  optionalNonnegative(anchor.startChar),
+                  optionalNonnegative(anchor.endChar),
+                  validCharacterRange(start: anchor.startChar, end: anchor.endChar),
+                  optionalLength(anchor.exactText, maximum: BoundedAnchorContext.maximumExactTextCharacters),
+                  optionalLength(anchor.prefix, maximum: BoundedAnchorContext.maximumCharactersPerSide),
+                  optionalLength(anchor.suffix, maximum: BoundedAnchorContext.maximumCharactersPerSide),
+                  optionalNonnegative(anchor.mediaTimeMs),
+                  anchor.roughPercent.map({ (0...100).contains($0) }) ?? true,
+                  optionalLength(anchor.transcriptSegmentId, maximum: 300),
+                  optionalLength(anchor.chapterTitle, maximum: 500) else {
                 throw InterjectionPackageArchiveError.invalidManifest("an interjection field is absent or out of bounds")
             }
             switch representation.kind {
@@ -329,7 +373,7 @@ public enum InterjectionPackageArchive {
         }
         try rejectUnknownKeys(
             root,
-            allowed: ["schemaVersion", "packageId", "createdAt", "conversationId", "parentPackageDigests", "contentDigest", "source", "interjections", "senderDisplayLabel", "suggestedRevealMode", "redactions"],
+            allowed: ["schemaVersion", "packageId", "createdAt", "contentDigest", "source", "interjections", "senderDisplayLabel", "suggestedRevealMode", "redactions"],
             context: "manifest"
         )
         guard let source = root["source"] as? [String: Any],
@@ -385,24 +429,109 @@ public enum InterjectionPackageArchive {
 
     private static func digest(
         manifest: InterjectionPackageManifest,
+        previewData: Data,
         audioData: [String: Data]
-    ) -> String {
+    ) throws -> String {
         var unsigned = manifest
         unsigned.contentDigest = nil
         var hasher = SHA256()
-        if let data = try? encodeManifest(unsigned) {
-            hasher.update(data: data)
-        }
+        hasher.update(data: try encodeManifest(unsigned))
+        updateDigest(&hasher, path: "preview.md", data: previewData)
         for path in audioData.keys.sorted() {
             guard let data = audioData[path] else { continue }
-            hasher.update(data: Data(path.utf8))
-            hasher.update(data: Data([0]))
-            hasher.update(data: Data(SHA256.hash(data: data)))
-            hasher.update(data: Data([0]))
-            hasher.update(data: Data(String(data.count).utf8))
-            hasher.update(data: Data([0]))
+            updateDigest(&hasher, path: path, data: data)
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func updateDigest(_ hasher: inout SHA256, path: String, data: Data) {
+        hasher.update(data: Data(path.utf8))
+        hasher.update(data: Data([0]))
+        hasher.update(data: Data(SHA256.hash(data: data)))
+        hasher.update(data: Data([0]))
+        hasher.update(data: Data(String(data.count).utf8))
+        hasher.update(data: Data([0]))
+    }
+
+    private static func commitStagedItem(_ stagedURL: URL, to destinationURL: URL) throws {
+        let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: destinationURL.path) {
+            _ = try fileManager.replaceItemAt(
+                destinationURL,
+                withItemAt: stagedURL,
+                backupItemName: nil,
+                options: [.usingNewMetadataOnly]
+            )
+        } else {
+            try fileManager.moveItem(at: stagedURL, to: destinationURL)
+        }
+    }
+
+    private static func validateAudio(at url: URL, archivePath: String) throws {
+        #if canImport(AudioToolbox)
+        var audioFile: AudioFileID?
+        guard AudioFileOpenURL(url as CFURL, .readPermission, 0, &audioFile) == noErr,
+              let audioFile else {
+            throw InterjectionPackageArchiveError.invalidAudio(archivePath)
+        }
+        defer { AudioFileClose(audioFile) }
+        var fileType: AudioFileTypeID = 0
+        var fileTypeSize = UInt32(MemoryLayout<AudioFileTypeID>.size)
+        guard AudioFileGetProperty(
+            audioFile,
+            kAudioFilePropertyFileFormat,
+            &fileTypeSize,
+            &fileType
+        ) == noErr,
+              fileType == kAudioFileM4AType || fileType == kAudioFileMPEG4Type else {
+            throw InterjectionPackageArchiveError.invalidAudio(archivePath)
+        }
+        var duration = 0.0
+        var propertySize = UInt32(MemoryLayout<Double>.size)
+        guard AudioFileGetProperty(
+            audioFile,
+            kAudioFilePropertyEstimatedDuration,
+            &propertySize,
+            &duration
+        ) == noErr,
+              duration.isFinite,
+              duration > 0 else {
+            throw InterjectionPackageArchiveError.invalidAudio(archivePath)
+        }
+        guard duration <= 600 else {
+            throw InterjectionPackageArchiveError.audioTooLong(archivePath)
+        }
+        #else
+        let prefix = try Data(contentsOf: url, options: [.mappedIfSafe]).prefix(12)
+        guard prefix.count == 12,
+              String(decoding: prefix.dropFirst(4).prefix(4), as: UTF8.self) == "ftyp" else {
+            throw InterjectionPackageArchiveError.invalidAudio(archivePath)
+        }
+        #endif
+    }
+
+    private static func validHTTPSURL(_ value: String) -> Bool {
+        guard let components = URLComponents(string: value) else { return false }
+        return components.scheme?.lowercased() == "https"
+            && !(components.host?.isEmpty ?? true)
+            && components.user == nil
+            && components.password == nil
+            && value.rangeOfCharacter(from: .whitespacesAndNewlines) == nil
+            && !value.contains("<")
+            && !value.contains(">")
+    }
+
+    private static func optionalLength(_ value: String?, maximum: Int) -> Bool {
+        value.map { $0.count <= maximum } ?? true
+    }
+
+    private static func optionalNonnegative(_ value: Int?) -> Bool {
+        value.map { $0 >= 0 } ?? true
+    }
+
+    private static func validCharacterRange(start: Int?, end: Int?) -> Bool {
+        guard let start, let end else { return true }
+        return end >= start
     }
 
     private static func add(
@@ -433,7 +562,10 @@ public enum InterjectionPackageArchive {
         guard path.hasPrefix("audio/"), path.hasSuffix(".m4a"), !path.contains("..") else { return false }
         let component = String(path.dropFirst("audio/".count).dropLast(".m4a".count))
         return !component.isEmpty && component.unicodeScalars.allSatisfy {
-            CharacterSet.alphanumerics.contains($0) || "._-".unicodeScalars.contains($0)
+            (UInt32(65)...UInt32(90)).contains($0.value)
+                || (UInt32(97)...UInt32(122)).contains($0.value)
+                || (UInt32(48)...UInt32(57)).contains($0.value)
+                || "._-".unicodeScalars.contains($0)
         }
     }
 
@@ -442,14 +574,17 @@ public enum InterjectionPackageArchive {
         return value.allSatisfy { $0.isHexDigit && !$0.isUppercase }
     }
 
-    private static func previewMarkdown(_ manifest: InterjectionPackageManifest) -> String {
-        let sender = manifest.senderDisplayLabel?.trimmingCharacters(in: .whitespacesAndNewlines)
+    public static func previewMarkdown(_ manifest: InterjectionPackageManifest) -> String {
+        let sender = manifest.senderDisplayLabel?
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
         var lines = [
             "# Spoken Margins",
             "",
-            "\(sender?.isEmpty == false ? sender! : "Someone") shared \(manifest.interjections.count) reviewed interjection\(manifest.interjections.count == 1 ? "" : "s") about **\(manifest.source.title)**.",
+            "\(markdownEscaped(sender?.isEmpty == false ? sender! : "Someone")) shared \(manifest.interjections.count) reviewed interjection\(manifest.interjections.count == 1 ? "" : "s") about **\(markdownEscaped(manifest.source.title))**.",
             "",
-            manifest.source.canonicalURL,
+            "<\(manifest.source.canonicalURL)>",
             "",
             "The source text or source audio is not included.",
             ""
@@ -457,9 +592,17 @@ public enum InterjectionPackageArchive {
         for (index, interjection) in manifest.interjections.enumerated() {
             lines.append("## Interjection \(index + 1)")
             lines.append("")
-            lines.append(interjection.representation.approvedTranscript)
+            lines.append(markdownEscaped(interjection.representation.approvedTranscript))
             lines.append("")
         }
         return lines.joined(separator: "\n")
+    }
+
+    private static func markdownEscaped(_ value: String) -> String {
+        let escapable = CharacterSet(charactersIn: #"\`*_{}[]<>()#+-!|>"#)
+        return value.unicodeScalars.reduce(into: "") { result, scalar in
+            if escapable.contains(scalar) { result.append("\\") }
+            result.unicodeScalars.append(scalar)
+        }
     }
 }

@@ -3,8 +3,19 @@ import Foundation
 import SessionKit
 
 public enum PortableArticleAnchorResolver {
+    private static let normalizationLocale = Locale(identifier: "en_US_POSIX")
+
     public static func normalizedContentSHA256(_ text: String) -> String {
         SHA256.hash(data: Data(normalizedText(text).utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+
+    /// Exact-edition hashes are over the unmodified UTF-8 source string whose
+    /// character offsets were captured. Normalized hashes identify similar
+    /// editions but are never sufficient evidence for reusing raw offsets.
+    public static func exactEditionSHA256(_ text: String) -> String {
+        SHA256.hash(data: Data(text.utf8))
             .map { String(format: "%02x", $0) }
             .joined()
     }
@@ -12,15 +23,16 @@ public enum PortableArticleAnchorResolver {
     public static func resolve(
         anchor: PortableAnchorEvidence,
         in sourceText: String,
-        expectedContentSHA256: String?
+        expectedExactEditionSHA256: String?
     ) -> ImportedAnchorResolution {
-        if let expectedContentSHA256,
-           expectedContentSHA256 == normalizedContentSHA256(sourceText),
+        if let expectedExactEditionSHA256,
+           expectedExactEditionSHA256 == exactEditionSHA256(sourceText),
            let start = anchor.startChar,
            let end = anchor.endChar,
            start >= 0,
            end > start,
-           end <= sourceText.count {
+           end <= sourceText.count,
+           exactTextMatchesOffsets(anchor: anchor, in: sourceText, start: start, end: end) {
             return ImportedAnchorResolution(
                 evidenceClass: .articleTextVerified,
                 localStartChar: start,
@@ -77,6 +89,18 @@ public enum PortableArticleAnchorResolver {
             localEndChar: text.distance(from: text.startIndex, to: range.upperBound),
             confidence: confidence
         )
+    }
+
+    private static func exactTextMatchesOffsets(
+        anchor: PortableAnchorEvidence,
+        in sourceText: String,
+        start: Int,
+        end: Int
+    ) -> Bool {
+        guard let exactText = anchor.exactText else { return true }
+        let lower = sourceText.index(sourceText.startIndex, offsetBy: start)
+        let upper = sourceText.index(sourceText.startIndex, offsetBy: end)
+        return sourceText[lower..<upper] == exactText
     }
 
     private static func uniqueContextWinner(
@@ -154,46 +178,70 @@ public enum PortableArticleAnchorResolver {
         return expression.matches(in: text, range: fullRange).compactMap { match in
             guard let range = Range(match.range, in: text) else { return nil }
             let value = text[range]
-                .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-                .lowercased()
+                .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: normalizationLocale)
+                .lowercased(with: normalizationLocale)
             return (value, range)
         }
     }
 
     private static func normalizedText(_ text: String) -> String {
-        text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: normalizationLocale)
             .replacingOccurrences(of: #"[^\p{L}\p{N}]+"#, with: " ", options: .regularExpression)
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
+            .lowercased(with: normalizationLocale)
     }
 }
 
 public enum ImportedSourceResolver {
+    public static func pending(
+        package: InterjectionPackageManifest
+    ) -> ImportedPackageSourceResolution {
+        result(
+            status: .pending,
+            package: package,
+            evidenceClass: .unresolved
+        )
+    }
+
     public static func resolve(
         package: InterjectionPackageManifest,
         against localSource: SharedSourceIdentity,
         sourceText: String?
-    ) -> ImportedSourceResolutionStatus {
+    ) -> ImportedPackageSourceResolution {
         guard sourcesCanRepresentSameWork(package.source, localSource) else {
-            return .wrongSource
+            return result(status: .wrongSource, package: package, evidenceClass: .unresolved)
         }
         guard package.source.sourceType == .article, let sourceText else {
-            return .contextOnly
+            return result(status: .contextOnly, package: package, evidenceClass: .unresolved)
         }
-        let resolutions = package.interjections.map {
-            PortableArticleAnchorResolver.resolve(
-                anchor: $0.anchor,
+        let resolutions = Dictionary(uniqueKeysWithValues: package.interjections.map { record in
+            (record.packageScopedId, PortableArticleAnchorResolver.resolve(
+                anchor: record.anchor,
                 in: sourceText,
-                expectedContentSHA256: package.source.normalizedContentSHA256
-            )
+                expectedExactEditionSHA256: package.source.exactEditionSHA256
+            ))
+        })
+        if resolutions.values.contains(where: \.isAmbiguous) {
+            return ImportedPackageSourceResolution(status: .ambiguous, anchorsByPackageScopedId: resolutions)
         }
-        if resolutions.contains(where: \.isAmbiguous) {
-            return .ambiguous
-        }
-        return resolutions.allSatisfy { $0.evidenceClass == .articleTextVerified }
-            ? .resolved
-            : .contextOnly
+        let status: ImportedSourceResolutionStatus = resolutions.values.allSatisfy {
+            $0.evidenceClass == .articleTextVerified
+        } ? .resolved : .contextOnly
+        return ImportedPackageSourceResolution(status: status, anchorsByPackageScopedId: resolutions)
+    }
+
+    private static func result(
+        status: ImportedSourceResolutionStatus,
+        package: InterjectionPackageManifest,
+        evidenceClass: AnchorResolutionEvidenceClass
+    ) -> ImportedPackageSourceResolution {
+        ImportedPackageSourceResolution(
+            status: status,
+            anchorsByPackageScopedId: Dictionary(uniqueKeysWithValues: package.interjections.map {
+                ($0.packageScopedId, ImportedAnchorResolution(evidenceClass: evidenceClass))
+            })
+        )
     }
 
     private static func sourcesCanRepresentSameWork(
@@ -202,8 +250,14 @@ public enum ImportedSourceResolver {
     ) -> Bool {
         guard packageSource.sourceType == localSource.sourceType else { return false }
         if let packageEdition = packageSource.exactEditionSHA256,
-           let localEdition = localSource.exactEditionSHA256 {
-            return packageEdition == localEdition
+           let localEdition = localSource.exactEditionSHA256,
+           packageEdition == localEdition {
+            return true
+        }
+        if let packageContent = packageSource.normalizedContentSHA256,
+           let localContent = localSource.normalizedContentSHA256,
+           packageContent == localContent {
+            return true
         }
         if packageSource.sourceType == .podcast,
            let packageGUID = packageSource.episodeGUID,

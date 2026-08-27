@@ -2,9 +2,7 @@
   "schemaVersion": "spoken-margins.interjection-package.v1",
   "packageId": "package-podcast-001",
   "createdAt": "2026-08-22T12:00:00Z",
-  "conversationId": "conversation-podcast-001",
-  "parentPackageDigests": [],
-  "contentDigest": null,
+  "contentDigest": "1111111111111111111111111111111111111111111111111111111111111111",
   "source": {
     "sourceType": "podcast",
     "canonicalURL": "https://example.com/podcast/episode-1",

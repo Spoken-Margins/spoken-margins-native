@@ -136,13 +136,25 @@ public final class SQLiteSessionStore: SessionRepository {
     }
 
     public func saveInterjectionShareRevision(_ revision: InterjectionShareRevision) throws {
-        try save(
-            kind: "interjection_share_revision",
-            id: revision.id,
-            sessionId: revision.sessionId,
-            itemId: revision.itemId,
-            value: revision
-        )
+        try withTransaction {
+            let existing: InterjectionShareRevision? = try loadOptional(
+                kind: "interjection_share_revision",
+                id: revision.id
+            )
+            if let existing {
+                guard try encoder.encode(existing) == encoder.encode(revision) else {
+                    throw SessionKitError.persistenceFailed("interjection_share_revision_immutable_conflict")
+                }
+                return
+            }
+            try save(
+                kind: "interjection_share_revision",
+                id: revision.id,
+                sessionId: revision.sessionId,
+                itemId: revision.itemId,
+                value: revision
+            )
+        }
     }
 
     public func loadInterjectionShareRevisions(interjectionId: String) throws -> [InterjectionShareRevision] {

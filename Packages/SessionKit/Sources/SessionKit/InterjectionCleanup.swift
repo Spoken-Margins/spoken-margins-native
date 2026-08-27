@@ -51,6 +51,7 @@ public enum DeterministicInterjectionCleanup {
     public static let retainedPauseMs = 250
     public static let fillerPaddingMs = 40
     public static let isolatedPhraseBoundaryMs = 250
+    private static let normalizationLocale = Locale(identifier: "en_US_POSIX")
 
     private static let unambiguousFillers: Set<String> = [
         "um", "uhm", "uh", "ah", "ahh", "er", "erm"
@@ -141,6 +142,19 @@ public enum DeterministicInterjectionCleanup {
             .filter { !removedIndices.contains($0.offset) }
             .map { $0.element.text }
         let cleaned = normalizeTranscriptSpacing(retainedText.joined(separator: " "))
+        if cleaned.isEmpty {
+            decisions = decisions.map { decision in
+                guard decision.accepted, decision.kind != .longPause else { return decision }
+                return InterjectionCleanupDecision(
+                    id: decision.id,
+                    kind: decision.kind,
+                    startMs: decision.startMs,
+                    endMs: decision.endMs,
+                    originalText: decision.originalText,
+                    accepted: false
+                )
+            }
+        }
         return InterjectionCleanupResult(
             cleanedTranscript: cleaned.isEmpty ? transcript.text : cleaned,
             decisions: decisions.sorted { lhs, rhs in
@@ -173,12 +187,12 @@ public enum DeterministicInterjectionCleanup {
     }
 
     private static func normalizedLexeme(_ text: String) -> String {
-        text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: normalizationLocale)
             .unicodeScalars
             .filter(CharacterSet.alphanumerics.contains)
             .map(String.init)
             .joined()
-            .lowercased()
+            .lowercased(with: normalizationLocale)
     }
 
     private static func isIsolatedPhrase(

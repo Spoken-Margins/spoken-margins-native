@@ -299,6 +299,22 @@ public struct ImportedAnchorResolution: Codable, Equatable, Sendable {
     }
 }
 
+/// Source resolution is recorded per imported note. The aggregate layer status is
+/// derived from these results so a layer cannot claim to be resolved while its
+/// individual anchors remain unresolved.
+public struct ImportedPackageSourceResolution: Codable, Equatable, Sendable {
+    public let status: ImportedSourceResolutionStatus
+    public let anchorsByPackageScopedId: [String: ImportedAnchorResolution]
+
+    public init(
+        status: ImportedSourceResolutionStatus,
+        anchorsByPackageScopedId: [String: ImportedAnchorResolution]
+    ) {
+        self.status = status
+        self.anchorsByPackageScopedId = anchorsByPackageScopedId
+    }
+}
+
 /// Imported commentary is persisted independently from private, locally captured
 /// interjections. `id` is always recipient-local; `packageDigest` is the idempotency key.
 public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiable {
@@ -306,16 +322,15 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
     public var itemId: String?
     public let packageDigest: String
     public let packageId: String
-    public let conversationId: String
-    public let parentPackageDigests: [String]
     public let sourceIdentity: SharedSourceIdentity
     public let displayLabel: String?
+    public let suggestedRevealMode: ImportedCommentaryRevealMode?
     public let importedAt: Date
     public let integrityStatus: ImportedCommentaryIntegrityStatus
     public var sourceResolutionStatus: ImportedSourceResolutionStatus
     public var isEnabled: Bool
     public var isMuted: Bool
-    public var revealMode: ImportedCommentaryRevealMode
+    public var revealMode: ImportedCommentaryRevealMode?
     public var deletedAt: Date?
 
     public init(
@@ -323,26 +338,24 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
         itemId: String? = nil,
         packageDigest: String,
         packageId: String,
-        conversationId: String,
-        parentPackageDigests: [String] = [],
         sourceIdentity: SharedSourceIdentity,
         displayLabel: String? = nil,
+        suggestedRevealMode: ImportedCommentaryRevealMode? = nil,
         importedAt: Date,
         integrityStatus: ImportedCommentaryIntegrityStatus = .integrityCheckedUnsigned,
         sourceResolutionStatus: ImportedSourceResolutionStatus = .pending,
-        isEnabled: Bool = true,
+        isEnabled: Bool = false,
         isMuted: Bool = false,
-        revealMode: ImportedCommentaryRevealMode = .companion,
+        revealMode: ImportedCommentaryRevealMode? = nil,
         deletedAt: Date? = nil
     ) {
         self.id = id
         self.itemId = itemId
         self.packageDigest = packageDigest
         self.packageId = packageId
-        self.conversationId = conversationId
-        self.parentPackageDigests = parentPackageDigests
         self.sourceIdentity = sourceIdentity
         self.displayLabel = displayLabel
+        self.suggestedRevealMode = suggestedRevealMode
         self.importedAt = importedAt
         self.integrityStatus = integrityStatus
         self.sourceResolutionStatus = sourceResolutionStatus
@@ -492,33 +505,27 @@ public struct InterjectionPackageManifest: Codable, Equatable, Sendable {
     public let schemaVersion: String
     public let packageId: String
     public let createdAt: Date
-    public let conversationId: String
-    public let parentPackageDigests: [String]
     public var contentDigest: String?
     public let source: SharedSourceIdentity
     public let interjections: [SharedInterjectionPackageRecord]
     public let senderDisplayLabel: String?
-    public let suggestedRevealMode: ImportedCommentaryRevealMode
+    public let suggestedRevealMode: ImportedCommentaryRevealMode?
     public let redactions: InterjectionPackageRedactions
 
     public init(
         schemaVersion: String = "spoken-margins.interjection-package.v1",
         packageId: String,
         createdAt: Date,
-        conversationId: String,
-        parentPackageDigests: [String] = [],
         contentDigest: String? = nil,
         source: SharedSourceIdentity,
         interjections: [SharedInterjectionPackageRecord],
         senderDisplayLabel: String? = nil,
-        suggestedRevealMode: ImportedCommentaryRevealMode = .companion,
+        suggestedRevealMode: ImportedCommentaryRevealMode? = nil,
         redactions: InterjectionPackageRedactions = .init()
     ) {
         self.schemaVersion = schemaVersion
         self.packageId = packageId
         self.createdAt = createdAt
-        self.conversationId = conversationId
-        self.parentPackageDigests = parentPackageDigests
         self.contentDigest = contentDigest
         self.source = source
         self.interjections = interjections

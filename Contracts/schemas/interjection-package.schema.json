@@ -8,30 +8,16 @@
     "schemaVersion",
     "packageId",
     "createdAt",
-    "conversationId",
-    "parentPackageDigests",
+    "contentDigest",
     "source",
     "interjections",
-    "suggestedRevealMode",
     "redactions"
   ],
   "properties": {
     "schemaVersion": { "const": "spoken-margins.interjection-package.v1" },
     "packageId": { "type": "string", "minLength": 1, "maxLength": 200 },
     "createdAt": { "type": "string", "format": "date-time" },
-    "conversationId": { "type": "string", "minLength": 1, "maxLength": 200 },
-    "parentPackageDigests": {
-      "type": "array",
-      "maxItems": 20,
-      "uniqueItems": true,
-      "items": { "$ref": "#/$defs/sha256" }
-    },
-    "contentDigest": {
-      "anyOf": [
-        { "$ref": "#/$defs/sha256" },
-        { "type": "null" }
-      ]
-    },
+    "contentDigest": { "$ref": "#/$defs/sha256" },
     "senderDisplayLabel": { "type": ["string", "null"], "maxLength": 120 },
     "suggestedRevealMode": { "enum": ["fresh", "companion", "guided"] },
     "source": { "$ref": "#/$defs/source" },
@@ -45,20 +31,31 @@
   },
   "$defs": {
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "httpsURL": { "type": "string", "format": "uri", "pattern": "^[hH][tT][tT][pP][sS]://" },
     "source": {
       "type": "object",
       "additionalProperties": false,
       "required": ["sourceType", "canonicalURL", "title"],
       "properties": {
         "sourceType": { "enum": ["article", "podcast", "other"] },
-        "canonicalURL": { "type": "string", "format": "uri", "pattern": "^https://" },
-        "originalURL": { "type": ["string", "null"], "format": "uri" },
+        "canonicalURL": { "$ref": "#/$defs/httpsURL" },
+        "originalURL": {
+          "anyOf": [
+            { "$ref": "#/$defs/httpsURL" },
+            { "type": "null" }
+          ]
+        },
         "title": { "type": "string", "minLength": 1, "maxLength": 500 },
         "author": { "type": ["string", "null"], "maxLength": 300 },
         "publisher": { "type": ["string", "null"], "maxLength": 300 },
         "showTitle": { "type": ["string", "null"], "maxLength": 500 },
         "episodeGUID": { "type": ["string", "null"], "maxLength": 1000 },
-        "enclosureURL": { "type": ["string", "null"], "format": "uri" },
+        "enclosureURL": {
+          "anyOf": [
+            { "$ref": "#/$defs/httpsURL" },
+            { "type": "null" }
+          ]
+        },
         "publishedAt": { "type": ["string", "null"], "maxLength": 100 },
         "durationMs": { "type": ["integer", "null"], "minimum": 0 },
         "normalizedContentSHA256": {
