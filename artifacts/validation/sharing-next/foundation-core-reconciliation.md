@@ -80,7 +80,7 @@ The following table accounts for the historical branch diff inspected with `git 
 | `Packages/SessionKit/Sources/SessionKitSharing/InterjectionPackageArchive.swift` | Reused and hardened | Strict JSON shape, deterministic digest/archive, archive bounds, explicit malformed/unsupported/tampered outcomes, no reply fields. |
 | `Packages/SessionKit/Sources/SessionKitSharing/PortableArticleAnchorResolver.swift` | Reused and extended | Conservative quote resolver plus distinct wrong-source/ambiguous/context-only aggregate status. |
 | `Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests.swift` | Rejected as edit target | Existing core suite was run unchanged; focused sharing evidence lives separately. |
-| `Packages/SessionKit/Tests/SessionKitTests/SharingTests.swift` | Rewritten and expanded | Fifteen tests cover the packet’s positive and falsification requirements using stable fixtures. |
+| `Packages/SessionKit/Tests/SessionKitTests/SharingTests.swift` | Rewritten and expanded | The initial fifteen tests covered the packet’s positive and falsification requirements; the post-foundation review below expands this to 24. |
 | `Site/assets/site.css` | Rejected | Site is explicitly forbidden/unrelated. |
 | `Site/index.html` | Rejected | Site is explicitly forbidden/unrelated. |
 | `Site/share/index.html` | Rejected | Hosted share landing page is out of scope. |
@@ -91,7 +91,7 @@ The following table accounts for the historical branch diff inspected with `git 
 | `scripts/deploy-spoken-margins-site.sh` | Rejected | Hosted deployment is unrelated and forbidden. |
 | `scripts/validate-contracts.py` | Reused and extended | Registered valid package/revision fixtures and negative fixture family; validation fails if a negative fixture unexpectedly passes. |
 
-New current-only files are `SharingFoundation.swift` (reviewed builder/import service) and two negative fixtures (`unsupported-schema.json`, `privacy-redaction-disabled.json`). They close packet requirements that the historical implementation did not fully cover.
+At the initial foundation checkpoint, new current-only files were `SharingFoundation.swift` (reviewed builder/import service) and two negative fixtures (`unsupported-schema.json`, `privacy-redaction-disabled.json`). The post-foundation review adds the private-file-URL fixture recorded below.
 
 ## Implemented
 
@@ -104,7 +104,7 @@ New current-only files are `SharingFoundation.swift` (reviewed builder/import se
 
 ## Verified
 
-- Both valid fixture families pass their schemas, both negative fixtures fail their schema as expected, and the validator would fail if a negative fixture passed.
+- Both valid fixture families pass their schemas, all three negative fixtures fail their schema as expected, and the validator would fail if a negative fixture passed.
 - Identical manifest/audio input produces an identical digest and byte-identical archive; round-trip restores the verified manifest and selected audio.
 - Hostile test packages distinguish malformed archive, malformed JSON, unsupported schema, tampered digest, and missing privacy proof.
 - Text cleanup removes an aligned `um` but preserves `umbrella`; semantic “you know” is retained; an individual proposed edit can be restored without changing the private input.
@@ -121,7 +121,7 @@ New current-only files are `SharingFoundation.swift` (reviewed builder/import se
 - #67: cleaned-audio waveform rendering/preview, recipient-specific podcast/transcript placement, and broader held-out anchor benchmarks.
 - #68: all accessible, provenance-aware Timeline presentation.
 - #81: app-level and product-owner flow validation after the above integrations; package-level historical reconciliation is complete.
-- #19: reply targets, child/reply fixture, parent resolution, forks, and recursive conversation behavior. `parentPackageDigests` is stored only as opaque provenance by this core.
+- #19: reply targets, child/reply fixture, parent resolution, forks, and recursive conversation behavior. The hardened one-way v1 contract deliberately contains no conversation or parent-package fields, so this foundation does not freeze #19 semantics.
 - Trust/rights: the digest is unsigned integrity only. External distribution remains blocked on the separate rights/provenance and sender-trust decisions.
 
 ## Rejected
@@ -202,13 +202,64 @@ Result:
 - App build: not applicable. No app, project, extension, widget, or generated-project file changed, and the app does not consume `SessionKitSharing` in this disabled package-only slice.
 - Broad UI routes: not run, as directed for this package-level slice.
 
-The first non-incremental compile emitted one non-failing deprecation warning for synchronous `AVURLAsset.duration` inspection in the archive safety check. The final required build and tests passed. Migrating archive media inspection to async `AVAsset.load(.duration)` should accompany future app integration rather than introducing an asynchronous app API in this isolated core.
+The first non-incremental compile emitted one non-failing deprecation warning for synchronous `AVURLAsset.duration` inspection in the archive safety check. The post-foundation hardening replaced that inspection with synchronous `AudioToolbox` container and duration validation; the final hardening build emitted no corresponding warning.
+
+## Post-foundation hardening review
+
+The product owner asked for the implemented foundation and external suggestions to be reviewed, then authorized proceeding with the corrections. This pass started clean on `codex/sharing-next` at `e48aac57b27b9d3d19831e3dcfa99df969befc81` and produced implementation commit `1e2981f` (`Harden sharing package and import boundaries`). `main` remained `9dedf3b`; no accepted `main` change required merging. The TestFlight-triage worktree and all forbidden app/playback/project surfaces remained untouched.
+
+The review separated resources (schema, archive, domain records, persistence), mechanisms (verification, policy selection, anchor resolution, atomic replacement), actors (sender, recipient, local repository), failure modes, and evidence. The prior failure mode was treating a package-shaped public value or sender suggestion as authority. The hardening rule is now: archive verification mints a capability; sender fields remain evidence; recipient state controls activation; and aggregate status must be derivable from note-level evidence.
+
+### Implemented corrections
+
+- Archive verification is unforgeable outside `SessionKitSharing`: only successful `read` creates `VerifiedInterjectionPackage`, and import accepts only that type.
+- Sender reveal suggestions are stored separately. Imports are disabled with no active reveal mode until recipient policy chooses one.
+- Article offsets require an exact-edition SHA-256 over the unmodified UTF-8 source plus any supplied exact-text range match. Normalized equality can identify the same work but never authorizes raw offsets; same-work/different-edition text falls back to quote resolution.
+- Per-note anchor results are persisted and the layer result is derived from them. Callers can no longer inject an aggregate status while notes remain unresolved.
+- Exported manifests require a digest, optional source URLs are HTTPS-only, runtime bounds mirror the schema’s field limits, and a private-file-URL negative fixture is registered.
+- The v1 one-way manifest no longer includes conversation or parent-package fields; reply semantics remain deferred to #19.
+- The digest now covers generated `preview.md`; preview text escapes untrusted Markdown. M4A/MP4 container and duration are validated, and archive-size arithmetic rejects overflow.
+- Export and extraction use staged same-directory replacement. Existing destinations survive invalid audio or other pre-commit failure, while successful replacement removes stale contents.
+- Cleanup uses a fixed POSIX locale. If every speech segment is filler, the transcript is retained and speech-removal decisions become unaccepted.
+- Share-revision IDs are insert-only in memory and SQLite: an identical replay is idempotent and conflicting content fails with `interjection_share_revision_immutable_conflict`.
+
+### Falsification and omission checks
+
+The focused suite compares the accepted behavior with the rejected alternatives: forged package-shaped input is absent from the public initializer surface; sender suggestion does not activate a layer; normalized hash collision does not reuse offsets; different exact editions of the same canonical work do not become wrong-source; aggregate status agrees with persisted note results; fake audio cannot replace an export or partially replace an extraction destination; preview Markdown cannot introduce unescaped image/HTML syntax; all-filler cleanup does not claim deleted speech; and a revision ID cannot be overwritten.
+
+Implementation-path audit from `e48aac5` through `1e2981f` shows only contracts/docs, sharing fixtures, SessionKit sharing/domain/persistence files, and focused tests; this reconciliation document is the only additional evidence path. No app UI, playback, `SessionEngine`, audio adapter, project, widget, Watch, site, triage, QoL, or #19 reply file changed. The stopping rule remains any need to touch those surfaces, choose an unapproved trust/rights policy, or produce a confidently wrong/partially committed import; none fired.
+
+### Hardening verification
+
+```text
+git diff --check
+./scripts/bootstrap-python-tools.sh
+.venv/bin/python scripts/validate-contracts.py
+.venv/bin/python scripts/validate-surface-contracts.py
+swift build --build-tests --package-path Packages/SessionKit
+swift test --package-path Packages/SessionKit --filter SharingTests
+swift test --package-path Packages/SessionKit
+```
+
+Result:
+
+- `git diff --check`: PASS.
+- Python bootstrap: PASS.
+- Contract validator: PASS (`Validated 22 Supertonic files. Contract validation passed.`).
+- Surface validator: PASS.
+- SessionKit test build: PASS.
+- Focused `SharingTests`: PASS, 24 tests, 0 failures.
+- Full SessionKit suite: PASS, 174 tests, 0 failures (138 core, 24 sharing, 5 SQLite safety, 4 Supertonic, 3 trace replay).
+- App build: not applicable; no app, extension, project, signing, package-integration consumer, or generated-project file changed.
+- Human validation: not requested or performed.
 
 ## Local commits and repository mutation
 
 - `745a891` — `Add sharing package contracts and fixtures`
 - `56b15cf` — `Add sharing package and imported-layer core`
-- This evidence file is committed separately after verification.
+- `e48aac5` — `Record sharing foundation reconciliation evidence`
+- `1e2981f` — `Harden sharing package and import boundaries`
+- This hardening evidence update is committed separately after verification.
 
 No push, merge, pull request, issue close, GitHub mutation, external deployment, or app enablement occurred.
 
