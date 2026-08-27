@@ -1,5 +1,7 @@
 # Staged GitHub feature requests and issue edits
 
+> Historical issue specifications: completed issue descriptions intentionally retain the problem statements and removal criteria that led to the current implementation. They do not advertise retired runtimes as available product features.
+
 Status: **published to GitHub and verified**  
 Target repository: `uncomposed/spoken-margins-native`  
 Prepared: 2026-08-24

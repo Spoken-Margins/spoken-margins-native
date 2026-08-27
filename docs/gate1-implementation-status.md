@@ -1,5 +1,7 @@
 # Gate 1 Implementation Status
 
+> Historical evidence: this document records the earlier Gate 1 state. References to Kokoro/MLX describe retired experimental code and do not describe an available runtime after Build 21.
+
 ## Completed In This Repository
 
 - Added `Packages/SessionKit` as a Swift package with separate core, persistence, audio, and AI targets.

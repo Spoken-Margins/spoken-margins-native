@@ -230,6 +230,14 @@ Initial migration:
 - create required indexes
 - create metadata table with schema version
 
+### Current SQLite Version: 5
+
+Version 5 adds restartable JSON-backed records for canonical sources, prepared-audio manifests and jobs, the unified offline-storage budget/ledger/reservations, followed sources and inbox state, refresh diagnostics, and source-suggestion decisions. It also persists the additional item metadata and audio chapter fields required by library organization and local audiobook import.
+
+Adoption is idempotent: existing podcast audio, render caches, completed prepared audio, interjections, imported audiobooks, guided-tour files, and dormant Watch packages are inserted by stable path-derived identity. Dormant Watch artifacts are counted and protected, but this migration does not enable or modify Watch runtime behavior.
+
+Every file-producing path must reserve bytes before writing, atomically publish only validated output, and replace the reservation with an owned asset whose byte count cannot exceed the reservation. A failed or interrupted writer releases its reservation and removes temporary output. Automatic eviction is limited to reproducible, unprotected assets in deterministic order.
+
 ## Fixture Seeding
 
 The native test target should load JSON fixtures and insert them through repository APIs, not direct SQL.

@@ -17,7 +17,7 @@ The active recovery boundary is:
 - deterministic native-text Listening Maps, publisher podcast chapters, and AI-handoff export
 - pasted-assistant-response import, playback, and interjection without an embedded third-party AI provider
 
-OpenAI and other third-party AI providers, API-key settings, remote Discuss, AI-generated Listening Maps, Watch, standalone Home Screen widgets, Kokoro/MLX, bundled Piper, and dedicated car behavior are not part of the active release. The WidgetKit extension remains only because ActivityKit requires it to host the listening Live Activity.
+OpenAI and other third-party AI providers, API-key settings, remote Discuss, AI-generated Listening Maps, new Watch playback/sync work, standalone Home Screen widgets, bundled Piper, and dedicated car behavior are not part of the active release. Supertonic is the supported local neural TTS runtime; legacy Kokoro/MLX runtime code is no longer shipped. The WidgetKit extension remains only because ActivityKit requires it to host the listening Live Activity.
 
 The former iOS 16.7 compatibility app was retired by product-owner decision on 2026-08-10. The repository now has one supported iOS app and one release boundary: iOS 18+. See [the legacy retirement record](docs/legacy-ios16-target.md).
 

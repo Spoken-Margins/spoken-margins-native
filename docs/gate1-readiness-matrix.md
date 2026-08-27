@@ -1,5 +1,7 @@
 # Gate 1 Readiness Matrix
 
+> Historical evidence: this matrix predates Build 21. Its Kokoro/MLX references are retained only to explain the earlier gate and are not current build guidance.
+
 Date: 2026-06-15
 
 This matrix is an adversarial readiness check for Gate 1: Phone/Tablet Core Session. It is derived from `docs/product-validation-plan.md`, `docs/prototype-spec.md`, and `docs/sessionkit-contract.md`.

@@ -10,6 +10,18 @@ SessionKit must also be capability-aware. Every command is evaluated against the
 
 ## Core Concepts
 
+### Quality-of-Life Typed Layers
+
+Build 21 keeps five persistence and presentation layers distinct:
+
+- `CanonicalSourcePackage` stores authored source structure, nested navigation, deterministic speakable segments, and UTF-8 `SourceLocator` ranges. It is not a Listening Map or an audio manifest.
+- `PreparedAudioManifest` stores a `TTSRenderSignature`, committed chunks, completion artifact, typed preparation state, and durable preparation job. Playback rate is not part of render identity.
+- `OfflineStorageBudget`, `OwnedOfflineAsset`, and `OfflineStorageReservation` account for ownership and eviction independently from playable `AudioAsset` records.
+- `SourceIdentity`, `FeedSubscription`, `FeedEntry`, refresh state, and suggestion decisions represent discovery and following. Engagement never implies subscription or import.
+- `LibraryQuery`, `SleepTimerState`, and `OnboardingRoute` are closed app-presentation types. Remote onboarding data can select only compiled routes.
+
+Playback positions, anchors, and timeline segments may carry an optional `SourceLocator`. Decoding remains backward compatible with legacy character offsets. New persisted locators use stable document/spine/segment identifiers and UTF-8 byte ranges; legacy adapters remain at API boundaries.
+
 ### Item
 
 An item is durable content the user wants to listen to or discuss.

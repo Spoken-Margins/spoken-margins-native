@@ -1,5 +1,7 @@
 # Gate 4 Watch Untethered Closeout
 
+> Historical Watch evidence: this document is read-only for the non-Watch quality-of-life release. Any Kokoro reference describes an earlier renderer option and is not a current runtime claim.
+
 Gate 4 now has an end-to-end app foundation for untethered Watch playback:
 
 - iPhone publishes a package library over WatchConnectivity.
