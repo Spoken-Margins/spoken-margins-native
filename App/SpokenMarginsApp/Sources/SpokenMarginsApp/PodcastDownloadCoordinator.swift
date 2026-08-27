@@ -41,23 +41,30 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     var onLocalAssetReady: ((String, URL) -> Void)?
 
     private let store: SQLiteSessionStore
+    private let ledger: OfflineStorageLedger
     private let directory: URL
     private let monitor = NWPathMonitor()
     private let monitorQueue = DispatchQueue(label: "com.spokenmargins.podcast-network")
     private var cacheLimit: PodcastCacheLimitGB
     private var activeItemId: String?
     private var activeTaskItemIds: Set<String> = []
+    private var reservationsByItemId: [String: OfflineStorageReservation] = [:]
     private var userInitiatedTaskIds: Set<Int> = []
     private var session: URLSession!
 
     init(
         store: SQLiteSessionStore,
+        ledger: OfflineStorageLedger? = nil,
         applicationSupportDirectory: URL,
         cacheLimit: PodcastCacheLimitGB,
         monitorsNetwork: Bool = true,
         usesBackgroundSession: Bool = true
     ) throws {
         self.store = store
+        self.ledger = ledger ?? OfflineStorageLedger(
+            repository: store,
+            rootDirectory: applicationSupportDirectory
+        )
         self.cacheLimit = cacheLimit
         directory = applicationSupportDirectory.appending(path: "PodcastAudio", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -110,6 +117,13 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     func shutdown() {
         monitor.cancel()
         session.invalidateAndCancel()
+        let reservations = Array(reservationsByItemId.values)
+        reservationsByItemId.removeAll()
+        Task {
+            for reservation in reservations {
+                try? await ledger.release(reservationId: reservation.id)
+            }
+        }
     }
 
     func status(itemId: String) -> PodcastDownloadState? { recordsByItemId[itemId]?.state }
@@ -290,27 +304,59 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
             fail(record, reason: "The podcast audio URL is invalid.")
             return
         }
-        var record = record
-        if record.remoteURL != url.absoluteString {
-            record.remoteURL = url.absoluteString
-        }
-        var request = URLRequest(url: url)
-        request.allowsCellularAccess = userInitiated
-        if #available(iOS 13.0, macOS 10.15, *) {
-            request.allowsExpensiveNetworkAccess = userInitiated
-            request.allowsConstrainedNetworkAccess = userInitiated
-        }
-        let task = session.downloadTask(with: request)
-        task.taskDescription = record.itemId
         activeTaskItemIds.insert(record.itemId)
-        if userInitiated { userInitiatedTaskIds.insert(task.taskIdentifier) }
         var updated = record
+        updated.remoteURL = url.absoluteString
         updated.state = .downloading
         updated.bytesWritten = 0
         updated.expectedBytes = nil
         updated.failureReason = nil
         persist(updated)
-        task.resume()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let length = try await self.expectedContentLength(at: url, userInitiated: userInitiated)
+                let reservation = try await self.ledger.reserve(
+                    ownerId: "podcast-download-\(record.itemId)",
+                    byteCount: length,
+                    lifetime: 24 * 60 * 60
+                )
+                guard self.activeTaskItemIds.contains(record.itemId) else {
+                    try? await self.ledger.release(reservationId: reservation.id)
+                    return
+                }
+                self.reservationsByItemId[record.itemId] = reservation
+                var request = URLRequest(url: url)
+                request.allowsCellularAccess = userInitiated
+                if #available(iOS 13.0, macOS 10.15, *) {
+                    request.allowsExpensiveNetworkAccess = userInitiated
+                    request.allowsConstrainedNetworkAccess = userInitiated
+                }
+                let task = self.session.downloadTask(with: request)
+                task.taskDescription = record.itemId
+                if userInitiated { self.userInitiatedTaskIds.insert(task.taskIdentifier) }
+                var reserved = updated
+                reserved.expectedBytes = length
+                self.persist(reserved)
+                task.resume()
+            } catch {
+                self.activeTaskItemIds.remove(record.itemId)
+                self.fail(updated, reason: error.localizedDescription)
+            }
+        }
+    }
+
+    private func expectedContentLength(at url: URL, userInitiated: Bool) async throws -> Int64 {
+        var request = URLRequest(url: url)
+        request.httpMethod = "HEAD"
+        request.allowsCellularAccess = userInitiated
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse,
+              (200..<400).contains(http.statusCode),
+              http.expectedContentLength > 0 else {
+            throw CocoaError(.fileReadUnknown)
+        }
+        return http.expectedContentLength
     }
 
     private func persist(_ record: PodcastDownloadRecord) {
@@ -347,6 +393,7 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     private func evict(_ record: PodcastDownloadRecord) {
         if let url = localURL(for: record) { try? FileManager.default.removeItem(at: url) }
         try? store.deleteAudioAsset(id: "podcast-local-\(record.itemId)")
+        try? store.deleteOwnedOfflineAsset(id: "podcast-offline-\(record.itemId)")
         var updated = record
         updated.state = .evicted
         updated.localRelativePath = nil
@@ -411,22 +458,43 @@ extension PodcastDownloadCoordinator: URLSessionDownloadDelegate {
             try mutableDestination.setResourceValues(resourceValues)
             Task { @MainActor [weak self] in
                 guard let self, var record = self.recordsByItemId[itemId] else { return }
-                record.state = .availableOffline
-                record.localRelativePath = destination.lastPathComponent
-                record.bytesWritten = Int64(fileSize)
-                record.expectedBytes = Int64(fileSize)
-                record.failureReason = nil
-                self.persist(record)
-                let asset = AudioAsset(
-                    id: "podcast-local-\(itemId)",
-                    itemId: itemId,
-                    audioSourceType: .nativeMediaFile,
-                    availability: .localPhone,
-                    filePath: destination.lastPathComponent
-                )
-                try? self.store.saveAudioAsset(asset)
-                self.onLocalAssetReady?(itemId, destination)
-                self.enforceCacheLimit()
+                guard let reservation = self.reservationsByItemId.removeValue(forKey: itemId) else {
+                    try? FileManager.default.removeItem(at: destination)
+                    self.fail(record, reason: "Offline storage was not reserved before download.")
+                    return
+                }
+                do {
+                    try await self.ledger.commit(
+                        reservationId: reservation.id,
+                        asset: OwnedOfflineAsset(
+                            id: "podcast-offline-\(itemId)",
+                            itemId: itemId,
+                            category: .podcast,
+                            relativePath: "PodcastAudio/\(destination.lastPathComponent)",
+                            byteCount: Int64(fileSize),
+                            isReproducible: true
+                        )
+                    )
+                    record.state = .availableOffline
+                    record.localRelativePath = destination.lastPathComponent
+                    record.bytesWritten = Int64(fileSize)
+                    record.expectedBytes = Int64(fileSize)
+                    record.failureReason = nil
+                    self.persist(record)
+                    let asset = AudioAsset(
+                        id: "podcast-local-\(itemId)",
+                        itemId: itemId,
+                        audioSourceType: .nativeMediaFile,
+                        availability: .localPhone,
+                        filePath: destination.lastPathComponent
+                    )
+                    try self.store.saveAudioAsset(asset)
+                    self.onLocalAssetReady?(itemId, destination)
+                } catch {
+                    try? FileManager.default.removeItem(at: destination)
+                    try? await self.ledger.release(reservationId: reservation.id)
+                    self.fail(record, reason: error.localizedDescription)
+                }
             }
         } catch {
             Task { @MainActor [weak self] in
@@ -473,6 +541,9 @@ extension PodcastDownloadCoordinator: URLSessionTaskDelegate {
             self.activeTaskItemIds.remove(itemId)
             defer { self.userInitiatedTaskIds.remove(task.taskIdentifier) }
             guard let error else { return }
+            if let reservation = self.reservationsByItemId.removeValue(forKey: itemId) {
+                try? await self.ledger.release(reservationId: reservation.id)
+            }
             if let record = self.recordsByItemId[itemId],
                record.state != .downloading,
                self.networkTransport == .wifi,

@@ -53,6 +53,11 @@ struct RenderedSpeechGenerationProgress: Equatable, Sendable {
     }
 }
 
+struct PreparedChunkLookupResult: Sendable {
+    var audioURL: URL
+    var duration: TimeInterval
+}
+
 struct RenderedSpeechSourceSlice: Equatable, Sendable {
     var text: String
     var sourceLength: Int
@@ -292,6 +297,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     typealias GenerationStateHandler = @Sendable (RenderedSpeechGenerationState) -> Void
     typealias GenerationProgressHandler = @Sendable (RenderedSpeechGenerationProgress) -> Void
     typealias PreparedAudioHandler = @Sendable (_ itemId: String, _ prepared: PreparedTextAudio) -> Void
+    typealias PreparationPlanHandler = @Sendable (_ itemId: String, _ sourceText: String, _ plan: [PreparedChunkPlan]) -> Void
+    typealias PreparedChunkHandler = @Sendable (_ itemId: String, _ sourceText: String, _ plan: PreparedChunkPlan, _ audioURL: URL, _ durationMs: Int) -> Void
+    typealias PreparedChunkLookup = @Sendable (_ itemId: String, _ plan: PreparedChunkPlan) async -> PreparedChunkLookupResult?
     typealias InterruptionHandler = @Sendable (AudioPlaybackInterruptionEvent) -> Void
 
     private struct RenderRequest: Sendable {
@@ -356,6 +364,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let onGenerationStateChange: GenerationStateHandler?
     private let onGenerationProgress: GenerationProgressHandler?
     private let onPreparedAudio: PreparedAudioHandler?
+    private let preparedChunkLookup: PreparedChunkLookup?
+    private let onPreparationPlan: PreparationPlanHandler?
+    private let onPreparedChunk: PreparedChunkHandler?
     private let interruptionHandler: InterruptionHandler?
     private let preparedAudioDirectory: URL?
     private let audioSessionNotificationCenter: NotificationCenter
@@ -424,6 +435,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         interruptionHandler: InterruptionHandler? = nil,
         onGenerationStateChange: GenerationStateHandler? = nil,
         onGenerationProgress: GenerationProgressHandler? = nil,
+        onPreparationPlan: PreparationPlanHandler? = nil,
+        onPreparedChunk: PreparedChunkHandler? = nil,
+        preparedChunkLookup: PreparedChunkLookup? = nil,
         onPreparedAudio: PreparedAudioHandler? = nil,
         onFallback: FallbackHandler? = nil
     ) {
@@ -445,6 +459,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.preparedAudioDirectory = preparedAudioDirectory
         self.onGenerationStateChange = onGenerationStateChange
         self.onGenerationProgress = onGenerationProgress
+        self.onPreparationPlan = onPreparationPlan
+        self.onPreparedChunk = onPreparedChunk
+        self.preparedChunkLookup = preparedChunkLookup
         self.onPreparedAudio = onPreparedAudio
         self.onFallback = onFallback
         super.init()
@@ -934,6 +951,18 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             initialRequestedSpokenOffset = spokenOffset
             currentStartOffset = spokenOffset
         }
+        onPreparationPlan?(
+            targetId,
+            activeSourceText,
+            plan.enumerated().map { index, request in
+                PreparedChunkPlan(
+                    index: index,
+                    startOffset: request.startOffset,
+                    sourceLength: request.sourceLength,
+                    text: request.text
+                )
+            }
+        )
         reportGenerationProgress(completedChunks: 0, totalChunks: plan.count)
         return playbackRequest
     }
@@ -996,7 +1025,26 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             do {
                 try Task.checkCancellation()
                 let result: SupertonicNarrationResult
-                if let cached = self?.diskCache?.cachedAudio(
+                let chunkPlan = self?.lock.withLock { () -> PreparedChunkPlan? in
+                    guard let self,
+                          let index = self.generationPlan.firstIndex(where: { $0.startOffset == request.startOffset }) else { return nil }
+                    return PreparedChunkPlan(
+                        index: index,
+                        startOffset: request.startOffset,
+                        sourceLength: request.sourceLength,
+                        text: request.text
+                    )
+                }
+                if let chunkPlan,
+                   let recovered = await self?.preparedChunkLookup?(request.targetId, chunkPlan) {
+                    result = SupertonicNarrationResult(
+                        audioURL: recovered.audioURL,
+                        duration: recovered.duration,
+                        sampleRate: 0,
+                        renderDuration: 0,
+                        sessionLoadCount: 0
+                    )
+                } else if let cached = self?.diskCache?.cachedAudio(
                     text: request.text,
                     voice: voice,
                     language: "en",
@@ -1125,6 +1173,24 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         if let autoplay = action.autoplay {
             playRenderedAudio(autoplay.url, duration: autoplay.duration, request: autoplay.request)
+        }
+        let chunkPlan = lock.withLock { () -> PreparedChunkPlan? in
+            guard let index = generationPlan.firstIndex(where: { $0.startOffset == request.startOffset }) else { return nil }
+            return PreparedChunkPlan(
+                index: index,
+                startOffset: request.startOffset,
+                sourceLength: request.sourceLength,
+                text: request.text
+            )
+        }
+        if let chunkPlan {
+            onPreparedChunk?(
+                request.targetId,
+                lock.withLock { activeSourceText },
+                chunkPlan,
+                result.audioURL,
+                Int((result.duration * 1_000).rounded())
+            )
         }
         reportGenerationProgress(
             completedChunks: action.completedChunks,
@@ -1309,7 +1375,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         let voice = voice
         Task.detached(priority: .utility) { [weak self] in
             do {
-                let prepared = try SupertonicPreparedAudioAssembler.assemble(
+                let prepared = try await SupertonicPreparedAudioAssembler.assemble(
                     itemId: snapshot.targetId,
                     sourceText: snapshot.sourceText,
                     projection: snapshot.projection,

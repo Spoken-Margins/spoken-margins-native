@@ -21,7 +21,7 @@ enum SupertonicPreparedAudioAssembler {
         chunks: [SupertonicPreparedChunk],
         outputDirectory: URL,
         fileManager: FileManager = .default
-    ) throws -> PreparedTextAudio {
+    ) async throws -> PreparedTextAudio {
         let ordered = chunks.sorted { $0.startOffset < $1.startOffset }
         guard !ordered.isEmpty else {
             throw SessionKitError.persistenceFailed("supertonic_prepared_audio_empty")
@@ -34,17 +34,64 @@ enum SupertonicPreparedAudioAssembler {
 
         let signature = signatureFor(sourceText: sourceText, voice: voice)
         let baseName = "\(safePathComponent(itemId))-\(signature)"
-        let destination = outputDirectory.appending(path: "\(baseName).caf")
-        let temporary = outputDirectory.appending(path: "\(baseName)-\(UUID().uuidString).tmp.caf")
-        defer { try? fileManager.removeItem(at: temporary) }
+        let destination = outputDirectory.appending(path: "\(baseName).m4a")
+        let pcmTemporary = outputDirectory.appending(path: "\(baseName)-\(UUID().uuidString).tmp.caf")
+        let encodedTemporary = outputDirectory.appending(path: "\(baseName)-\(UUID().uuidString).tmp.m4a")
+        defer {
+            try? fileManager.removeItem(at: pcmTemporary)
+            try? fileManager.removeItem(at: encodedTemporary)
+        }
 
-        let firstInput = try AVAudioFile(forReading: ordered[0].audioURL)
-        let output = try AVAudioFile(forWriting: temporary, settings: firstInput.processingFormat.settings)
+        let assembled = try writePCM(
+            chunks: ordered,
+            projection: projection,
+            destination: pcmTemporary
+        )
+        guard let exporter = AVAssetExportSession(
+            asset: AVURLAsset(url: pcmTemporary),
+            presetName: AVAssetExportPresetAppleM4A
+        ) else {
+            throw SessionKitError.persistenceFailed("supertonic_m4a_export_unavailable")
+        }
+        try await exporter.export(to: encodedTemporary, as: .m4a)
+        if fileManager.fileExists(atPath: destination.path) {
+            try fileManager.removeItem(at: destination)
+        }
+        try fileManager.moveItem(at: encodedTemporary, to: destination)
+        var audio = destination
+        var audioValues = URLResourceValues()
+        audioValues.isExcludedFromBackup = true
+        try? audio.setResourceValues(audioValues)
+
+        let durationMs = assembled.durationMs
+        let timeline = TranscriptTimeline(
+            segments: assembled.timelineSegments,
+            chapters: chapters(from: assembled.timelineSegments),
+            durationMs: durationMs
+        )
+        return PreparedTextAudio(
+            normalizedText: sourceText,
+            media: ItemMedia(
+                sourceType: .generatedTTSPrerendered,
+                url: destination.absoluteString,
+                durationMs: durationMs,
+                nativeMediaId: destination.absoluteString
+            ),
+            timeline: timeline
+        )
+    }
+
+    private static func writePCM(
+        chunks: [SupertonicPreparedChunk],
+        projection: NormalizedSpeechText,
+        destination: URL
+    ) throws -> (durationMs: Int, timelineSegments: [MediaTimelineSegment]) {
+        let firstInput = try AVAudioFile(forReading: chunks[0].audioURL)
+        let output = try AVAudioFile(forWriting: destination, settings: firstInput.processingFormat.settings)
         let outputFormat = output.processingFormat
         var cursorFrames: AVAudioFramePosition = 0
         var timelineSegments: [MediaTimelineSegment] = []
-
-        for (index, chunk) in ordered.enumerated() {
+        for (index, chunk) in chunks.enumerated() {
             let input = try AVAudioFile(forReading: chunk.audioURL)
             guard input.processingFormat == outputFormat else {
                 throw SessionKitError.persistenceFailed("supertonic_chunk_audio_format_mismatch")
@@ -58,9 +105,7 @@ enum SupertonicPreparedAudioAssembler {
                 startMs: startMs,
                 endMs: endMs,
                 startChar: projection.sourceOffset(atSpokenCharacterOffset: chunk.startOffset),
-                endChar: projection.sourceOffset(
-                    atSpokenCharacterOffset: chunk.startOffset + chunk.sourceLength
-                ),
+                endChar: projection.sourceOffset(atSpokenCharacterOffset: chunk.startOffset + chunk.sourceLength),
                 text: chunk.text
             ))
             if chunk.boundary.transitionDelay > 0 {
@@ -71,31 +116,9 @@ enum SupertonicPreparedAudioAssembler {
                 )
             }
         }
-
-        if fileManager.fileExists(atPath: destination.path) {
-            try fileManager.removeItem(at: destination)
-        }
-        try fileManager.moveItem(at: temporary, to: destination)
-        var audio = destination
-        var audioValues = URLResourceValues()
-        audioValues.isExcludedFromBackup = true
-        try? audio.setResourceValues(audioValues)
-
-        let durationMs = max(1, milliseconds(cursorFrames, sampleRate: outputFormat.sampleRate))
-        let timeline = TranscriptTimeline(
-            segments: timelineSegments,
-            chapters: chapters(from: timelineSegments),
-            durationMs: durationMs
-        )
-        return PreparedTextAudio(
-            normalizedText: sourceText,
-            media: ItemMedia(
-                sourceType: .generatedTTSPrerendered,
-                url: destination.absoluteString,
-                durationMs: durationMs,
-                nativeMediaId: destination.absoluteString
-            ),
-            timeline: timeline
+        return (
+            max(1, milliseconds(cursorFrames, sampleRate: outputFormat.sampleRate)),
+            timelineSegments
         )
     }
 
