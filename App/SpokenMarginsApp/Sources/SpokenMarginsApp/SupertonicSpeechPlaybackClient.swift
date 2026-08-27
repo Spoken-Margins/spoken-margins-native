@@ -309,6 +309,31 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         var request: RenderRequest
     }
 
+    private final class RenderTaskControl: @unchecked Sendable {
+        private let lock = NSLock()
+        private var task: Task<Void, Never>?
+        private var cancelled = false
+
+        func install(_ task: Task<Void, Never>) {
+            lock.lock()
+            if cancelled {
+                lock.unlock()
+                task.cancel()
+            } else {
+                self.task = task
+                lock.unlock()
+            }
+        }
+
+        func cancel() {
+            lock.lock()
+            cancelled = true
+            let task = task
+            lock.unlock()
+            task?.cancel()
+        }
+    }
+
     private enum TransportIntent: Equatable {
         case stopped
         case playing
@@ -379,6 +404,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private var preparedAudioAssemblyStarted = false
     private var generationState = RenderedSpeechGenerationState.inactive
     private var shouldResumeAfterInterruption = false
+    private var activeRenderControl: RenderTaskControl?
 
     init(
         renderer: any SupertonicRendering,
@@ -673,8 +699,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     func stop() throws {
         removePlaybackEndObserver()
-        let discarded = lock.withLock { () -> [URL] in
+        let stopped = lock.withLock { () -> (urls: [URL], renderControl: RenderTaskControl?) in
             generation = UUID()
+            let renderControl = activeRenderControl
+            activeRenderControl = nil
             player?.pause()
             player?.replaceCurrentItem(with: nil)
             player = nil
@@ -704,9 +732,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             initialRequestedSpokenOffset = nil
             failedRenderReasons.removeAll()
             preparedAudioAssemblyStarted = false
-            return Array(urls)
+            return (Array(urls), renderControl)
         }
-        for url in discarded { discardAudio(url) }
+        stopped.renderControl?.cancel()
+        for url in stopped.urls { discardAudio(url) }
         try fallback.stop()
         reportGenerationState(.inactive)
     }
@@ -729,8 +758,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         _ = try fallback.prepareSpeechText(lock.withLock { preparedSourceText })
         let spokenOffset = spokenOffset(forSourceOffset: offset)
         removePlaybackEndObserver()
-        let discarded = lock.withLock { () -> [URL] in
+        let stopped = lock.withLock { () -> (urls: [URL], renderControl: RenderTaskControl?) in
             generation = UUID()
+            let renderControl = activeRenderControl
+            activeRenderControl = nil
             generationDisabledTargetIds.insert(targetId)
             player?.pause()
             player?.replaceCurrentItem(with: nil)
@@ -759,9 +790,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             initialRequestedSpokenOffset = nil
             preparedAudioAssemblyStarted = false
             shouldResumeAfterInterruption = false
-            return Array(urls)
+            return (Array(urls), renderControl)
         }
-        for url in discarded { discardAudio(url) }
+        stopped.renderControl?.cancel()
+        for url in stopped.urls { discardAudio(url) }
 
         try fallback.play(targetId: targetId, from: offset)
         if state.1 == .paused {
@@ -838,10 +870,17 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     private func nextRequest(targetId: String, fromSpokenOffset spokenOffset: Int) -> RenderRequest? {
         removePlaybackEndObserver()
-        let snapshot = lock.withLock { () -> (String, UUID, [URL]) in
+        let snapshot = lock.withLock { () -> (
+            source: String,
+            generation: UUID,
+            urls: [URL],
+            renderControl: RenderTaskControl?
+        ) in
             let source = preparedSpeechProjection.text
             generation = UUID()
             let nextGeneration = generation
+            let renderControl = activeRenderControl
+            activeRenderControl = nil
             player?.pause()
             player?.replaceCurrentItem(with: nil)
             player = nil
@@ -871,10 +910,15 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             generationResults.removeAll()
             failedRenderReasons.removeAll()
             preparedAudioAssemblyStarted = false
-            return (source, nextGeneration, Array(urls))
+            return (source, nextGeneration, Array(urls), renderControl)
         }
-        for url in snapshot.2 { discardAudio(url) }
-        let plan = renderPlan(targetId: targetId, generation: snapshot.1, source: snapshot.0)
+        snapshot.renderControl?.cancel()
+        for url in snapshot.urls { discardAudio(url) }
+        let plan = renderPlan(
+            targetId: targetId,
+            generation: snapshot.generation,
+            source: snapshot.source
+        )
         guard !plan.isEmpty else { return nil }
         let playbackIndex = plan.lastIndex {
             $0.startOffset <= spokenOffset
@@ -937,17 +981,20 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     private func enqueueRender(_ request: RenderRequest, shouldPlayWhenReady: Bool = true) {
+        let control = RenderTaskControl()
         let shouldStart = lock.withLock { () -> Bool in
             if renderedCache[request.startOffset] != nil || inFlightOffsets.contains(request.startOffset) {
                 return false
             }
             inFlightOffsets.insert(request.startOffset)
+            activeRenderControl = control
             return true
         }
         guard shouldStart else { return }
         reportGenerationState(.rendering)
-        Task { [weak self, renderer, voice] in
+        let task = Task { [weak self, renderer, voice] in
             do {
+                try Task.checkCancellation()
                 let result: SupertonicNarrationResult
                 if let cached = self?.diskCache?.cachedAudio(
                     text: request.text,
@@ -987,6 +1034,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                         shouldPlayWhenReady: shouldPlayWhenReady
                     )
                 }
+            } catch is CancellationError {
+                await MainActor.run {
+                    self?.renderCancelled(request: request)
+                }
             } catch {
                 await MainActor.run {
                     self?.renderFailed(
@@ -995,6 +1046,17 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                         reason: "supertonic_render_failed:\(type(of: error))"
                     )
                 }
+            }
+        }
+        control.install(task)
+    }
+
+    private func renderCancelled(request: RenderRequest) {
+        lock.withLock {
+            guard generation == request.generation else { return }
+            inFlightOffsets.remove(request.startOffset)
+            if pendingAutoplayOffset == request.startOffset {
+                pendingAutoplayOffset = nil
             }
         }
     }
@@ -1012,8 +1074,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             totalChunks: Int,
             complete: Bool
         ) in
-            inFlightOffsets.remove(request.startOffset)
             guard generation == request.generation else { return (false, nil, nil, 0, 0, false) }
+            inFlightOffsets.remove(request.startOffset)
             let cached = CachedAudio(url: result.audioURL, duration: result.duration, request: request)
             generationResults[request.startOffset] = SupertonicPreparedChunk(
                 startOffset: request.startOffset,
@@ -1083,17 +1145,22 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         shouldPlayWhenReady: Bool,
         reason: String
     ) {
-        let shouldFallback = lock.withLock { () -> Bool in
+        let outcome = lock.withLock { () -> (isCurrent: Bool, shouldFallback: Bool) in
+            let isCurrent = generation == request.generation
+            guard isCurrent else { return (false, false) }
             inFlightOffsets.remove(request.startOffset)
             let awaited = pendingAutoplayOffset == request.startOffset
             if awaited { pendingAutoplayOffset = nil }
             failedRenderReasons[request.startOffset] = reason
-            return generation == request.generation
-                && transportIntent == .playing
-                && (shouldPlayWhenReady || awaited || startedTargetId == nil)
+            return (
+                true,
+                transportIntent == .playing
+                    && (shouldPlayWhenReady || awaited || startedTargetId == nil)
+            )
         }
+        guard outcome.isCurrent else { return }
         reportGenerationState(.stopped)
-        guard shouldFallback else { return }
+        guard outcome.shouldFallback else { return }
         let sourceOffset = currentCharOffset()
             ?? sourceOffset(forSpokenOffset: request.startOffset)
         activateSystemFallback(
@@ -1494,7 +1561,25 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     private func markMediaServicesReset() {
         removePlaybackEndObserver()
-        let interrupted = lock.withLock { () -> (URL, TimeInterval, String, Int, UUID)? in
+        let reset = lock.withLock { () -> (
+            didPause: Bool,
+            interrupted: (url: URL, duration: TimeInterval, targetId: String, chunkStart: Int, generation: UUID)?
+        ) in
+            let didPause = transportIntent == .playing
+            if let player, activeAudioDuration > 0, currentChunkLength > 0 {
+                let fraction = max(0, min(1, playerTime(player) / activeAudioDuration))
+                let observedOffset = currentStartOffset + Int(
+                    (Double(currentChunkLength) * fraction).rounded(.down)
+                )
+                // AVAudioSession can reset while a rendered chunk is playing.
+                // Preserve the last observable intra-chunk position before the
+                // player item is detached; otherwise the next lifecycle sync
+                // sees only the chunk start and can overwrite canonical progress.
+                initialRequestedSpokenOffset = min(
+                    preparedSpeechProjection.text.count,
+                    max(currentStartOffset, initialRequestedSpokenOffset ?? currentStartOffset, observedOffset)
+                )
+            }
             player?.pause()
             player?.replaceCurrentItem(with: nil)
             player = nil
@@ -1505,33 +1590,38 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             startedTargetId = nil
             guard let url = activeAudioURL,
                   activeAudioDuration > 0,
-                  let targetId = currentTargetId else { return nil }
+                  let targetId = currentTargetId else { return (didPause, nil) }
             let value = (url, activeAudioDuration, targetId, currentStartOffset, generation)
             activeAudioURL = nil
             activeAudioDuration = 0
-            return value
+            return (didPause, value)
         }
-        guard let interrupted else { return }
+        guard let interrupted = reset.interrupted else {
+            if reset.didPause { interruptionHandler?(.began) }
+            return
+        }
         guard let request = renderRequest(
-                targetId: interrupted.2,
-                startOffset: interrupted.3,
-                generation: interrupted.4
+                targetId: interrupted.targetId,
+                startOffset: interrupted.chunkStart,
+                generation: interrupted.generation
               ) else {
-            discardAudio(interrupted.0)
+            discardAudio(interrupted.url)
+            if reset.didPause { interruptionHandler?(.began) }
             return
         }
         let retained = lock.withLock { () -> Bool in
-            guard generation == interrupted.4,
-                  currentTargetId == interrupted.2,
+            guard generation == interrupted.generation,
+                  currentTargetId == interrupted.targetId,
                   transportIntent == .paused else { return false }
-            renderedCache[interrupted.3] = CachedAudio(
-                url: interrupted.0,
-                duration: interrupted.1,
+            renderedCache[interrupted.chunkStart] = CachedAudio(
+                url: interrupted.url,
+                duration: interrupted.duration,
                 request: request
             )
             return true
         }
-        if !retained { discardAudio(interrupted.0) }
+        if !retained { discardAudio(interrupted.url) }
+        if reset.didPause { interruptionHandler?(.began) }
     }
 }
 

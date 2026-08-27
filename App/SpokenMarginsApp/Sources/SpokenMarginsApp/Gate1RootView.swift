@@ -624,9 +624,7 @@ private struct HomeScreen: View {
                         .toolbar {
                             ToolbarItem(placement: .topBarTrailing) {
                                 Button("Close") {
-                                    suppressSourceLinkBlurSubmission = focusedField == .sourceLink
-                                    focusedField = nil
-                                    isAddSourcePresented = false
+                                    dismissAddSource()
                                 }
                             }
                         }
@@ -642,7 +640,7 @@ private struct HomeScreen: View {
                     .onAppear { model.resetSourceLinkImportState() }
                     .onCompatibleChange(of: model.sourceLinkImportState) { state in
                         if state == "success" {
-                            isAddSourcePresented = false
+                            dismissAddSource()
                         }
                     }
                 }
@@ -663,6 +661,14 @@ private struct HomeScreen: View {
             } message: { item in
                 Text("\(item.title) can be restored from Settings.")
             }
+            .onCompatibleChange(of: model.sourceLinkCandidateReview?.request.inputURL) { reviewURL in
+                if reviewURL != nil {
+                    resignSourceInputFocus()
+                }
+            }
+            .onDisappear {
+                resignSourceInputFocus()
+            }
         }
     }
 
@@ -671,9 +677,7 @@ private struct HomeScreen: View {
             get: { isAddSourcePresented || model.sourceLinkCandidateReview != nil },
             set: { isPresented in
                 guard !isPresented else { return }
-                suppressSourceLinkBlurSubmission = focusedField == .sourceLink
-                focusedField = nil
-                isAddSourcePresented = false
+                dismissAddSource()
                 if model.sourceLinkCandidateReview != nil {
                     model.cancelSourceLinkCandidateReview()
                 }
@@ -704,7 +708,7 @@ private struct HomeScreen: View {
             switch request {
             case .obsidianFiles:
                 model.importObsidianMarkdownFiles(urls: urls)
-                isAddSourcePresented = false
+                dismissAddSource()
             case .quickFolder:
                 if let url = urls.first {
                     model.configureQuickAccessFolder(url: url)
@@ -715,6 +719,18 @@ private struct HomeScreen: View {
         case .failure(let error):
             model.reportImportFailure(error)
         }
+    }
+
+    private func resignSourceInputFocus() {
+        if focusedField == .sourceLink {
+            suppressSourceLinkBlurSubmission = true
+        }
+        focusedField = nil
+    }
+
+    private func dismissAddSource() {
+        resignSourceInputFocus()
+        isAddSourcePresented = false
     }
 
     private var header: some View {
@@ -1450,15 +1466,45 @@ private struct DiscretePlaybackRateSlider: View {
     }
 }
 
+struct PlaybackScrubState: Equatable {
+    private(set) var draftValue = 0.0
+    private(set) var isEditing = false
+
+    mutating func begin(at canonicalValue: Double, range: ClosedRange<Double>) {
+        guard !isEditing else { return }
+        draftValue = Self.clamped(canonicalValue, to: range)
+        isEditing = true
+    }
+
+    mutating func updateFromGesture(_ value: Double, range: ClosedRange<Double>) {
+        // The binding setter may run before Slider's editing callback. Claim
+        // gesture ownership here so a simultaneous playback tick cannot snap
+        // the thumb back to the transport position.
+        isEditing = true
+        draftValue = Self.clamped(value, to: range)
+    }
+
+    mutating func finish() {
+        isEditing = false
+    }
+
+    func displayedValue(canonicalValue: Double, range: ClosedRange<Double>) -> Double {
+        Self.clamped(isEditing ? draftValue : canonicalValue, to: range)
+    }
+
+    private static func clamped(_ value: Double, to range: ClosedRange<Double>) -> Double {
+        max(range.lowerBound, min(value, range.upperBound))
+    }
+}
+
 private struct PlaybackScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var followUp = ""
     @State private var selectedInterjection: Interjection?
     @State private var isPastingAssistantResponse = false
-    @State private var scrubberSeconds = 0.0
-    @State private var scrubberTextOffset = 0.0
-    @State private var isScrubbing = false
+    @State private var mediaScrubState = PlaybackScrubState()
+    @State private var textScrubState = PlaybackScrubState()
     @State private var isPlaybackRatePresented = false
     @State private var isSourceTextPresented = false
     @State private var sourceTextOffsetAtPresentation = 0
@@ -1564,18 +1610,6 @@ private struct PlaybackScreen: View {
                     currentOffset: sourceTextOffsetAtPresentation
                 )
             }
-            .onAppear {
-                scrubberSeconds = Double(model.snapshot.currentMediaTimeMs ?? 0) / 1_000
-                scrubberTextOffset = Double(model.snapshot.currentTextStart ?? 0)
-            }
-            .onCompatibleChange(of: model.snapshot.currentMediaTimeMs) { mediaTimeMs in
-                guard !isScrubbing else { return }
-                scrubberSeconds = Double(mediaTimeMs ?? 0) / 1_000
-            }
-            .onCompatibleChange(of: model.snapshot.currentTextStart) { textOffset in
-                guard !isScrubbing else { return }
-                scrubberTextOffset = Double(textOffset ?? 0)
-            }
         }
     }
 
@@ -1647,23 +1681,28 @@ private struct PlaybackScreen: View {
                     .accessibilityIdentifier("playback.progress.label")
                 Slider(
                     value: Binding(
-                        get: { isScrubbing ? scrubberSeconds : Double(model.snapshot.currentMediaTimeMs ?? 0) / 1_000 },
-                        set: { scrubberSeconds = $0 }
+                        get: { mediaScrubState.displayedValue(canonicalValue: canonicalMediaSeconds, range: mediaScrubRange) },
+                        set: { mediaScrubState.updateFromGesture($0, range: mediaScrubRange) }
                     ),
-                    in: 0...Double(mediaDurationMs) / 1_000,
+                    in: mediaScrubRange,
                     onEditingChanged: { editing in
                         if editing {
-                            isScrubbing = true
+                            mediaScrubState.begin(at: canonicalMediaSeconds, range: mediaScrubRange)
                         } else {
-                            model.seekMedia(toMediaTimeMs: Int(scrubberSeconds * 1_000))
-                            isScrubbing = false
+                            let targetSeconds = mediaScrubState.displayedValue(
+                                canonicalValue: canonicalMediaSeconds,
+                                range: mediaScrubRange
+                            )
+                            model.seekMedia(toMediaTimeMs: Int((targetSeconds * 1_000).rounded()))
+                            mediaScrubState.finish()
                         }
                     }
                 )
                 .tint(AppColors.accent)
                 .accessibilityLabel("Playback position")
-                .accessibilityValue("\(formatPlaybackTime(Int(scrubberSeconds * 1_000))) of \(formatPlaybackTime(mediaDurationMs))")
+                .accessibilityValue("\(formatPlaybackTime(Int(scrubberDisplaySeconds * 1_000))) of \(formatPlaybackTime(mediaDurationMs))")
                 .accessibilityIdentifier("playback.scrubber")
+                .disabled(model.snapshot.isRecording)
                 Text("−\(formatPlaybackTime(displayMediaRemainingMs))")
                     .frame(minWidth: 42, alignment: .leading)
             }
@@ -1676,16 +1715,20 @@ private struct PlaybackScreen: View {
                     .accessibilityIdentifier("playback.progress.label")
                 Slider(
                     value: Binding(
-                        get: { isScrubbing ? scrubberTextOffset : Double(model.snapshot.currentTextStart ?? 0) },
-                        set: { scrubberTextOffset = $0 }
+                        get: { textScrubState.displayedValue(canonicalValue: canonicalTextOffset, range: textScrubRange) },
+                        set: { textScrubState.updateFromGesture($0, range: textScrubRange) }
                     ),
-                    in: 0...Double(textLength),
+                    in: textScrubRange,
                     onEditingChanged: { editing in
                         if editing {
-                            isScrubbing = true
+                            textScrubState.begin(at: canonicalTextOffset, range: textScrubRange)
                         } else {
-                            model.seekText(toCharOffset: Int(scrubberTextOffset))
-                            isScrubbing = false
+                            let targetOffset = textScrubState.displayedValue(
+                                canonicalValue: canonicalTextOffset,
+                                range: textScrubRange
+                            )
+                            model.seekText(toCharOffset: Int(targetOffset.rounded()))
+                            textScrubState.finish()
                         }
                     }
                 )
@@ -1693,6 +1736,7 @@ private struct PlaybackScreen: View {
                 .accessibilityLabel("Playback position")
                 .accessibilityValue("\(textScrubberPercent) percent")
                 .accessibilityIdentifier("playback.scrubber")
+                .disabled(model.snapshot.isRecording)
                 Text("100%")
                     .frame(minWidth: 34, alignment: .leading)
             }
@@ -1759,6 +1803,7 @@ private struct PlaybackScreen: View {
             .accessibilityLabel(model.isMediaPlaybackSnapshot ? "Forward \(model.mediaSkipForwardSeconds) seconds" : "Next \(model.skipUnit)")
             .accessibilityIdentifier("playback.forward.button")
         }
+        .disabled(model.snapshot.isRecording)
     }
 
     private var playbackRateControl: some View {
@@ -2051,13 +2096,21 @@ private struct PlaybackScreen: View {
         max(0, model.snapshot.currentPlaybackDurationMs ?? 0)
     }
 
+    private var canonicalMediaSeconds: Double {
+        Double(model.snapshot.currentMediaTimeMs ?? 0) / 1_000
+    }
+
+    private var mediaScrubRange: ClosedRange<Double> {
+        0...Double(mediaDurationMs) / 1_000
+    }
+
     private var scrubberDisplaySeconds: Double {
-        isScrubbing ? scrubberSeconds : Double(model.snapshot.currentMediaTimeMs ?? 0) / 1_000
+        mediaScrubState.displayedValue(canonicalValue: canonicalMediaSeconds, range: mediaScrubRange)
     }
 
     private var displayMediaRemainingMs: Int {
         let remainingMs = max(0, mediaDurationMs - Int(scrubberDisplaySeconds * 1_000))
-        guard !isScrubbing, model.snapshot.status.isPlaybackActive else { return remainingMs }
+        guard !mediaScrubState.isEditing, model.snapshot.status.isPlaybackActive else { return remainingMs }
         // Millisecond truncation must not claim zero time remains while the
         // canonical transport is still active. Completion will publish paused
         // and allow the terminal 0:00 state.
@@ -2068,9 +2121,17 @@ private struct PlaybackScreen: View {
         model.selectedItem.text.count
     }
 
+    private var canonicalTextOffset: Double {
+        Double(model.snapshot.currentTextStart ?? 0)
+    }
+
+    private var textScrubRange: ClosedRange<Double> {
+        0...Double(textLength)
+    }
+
     private var textScrubberPercent: Int {
         guard textLength > 0 else { return 0 }
-        let offset = isScrubbing ? scrubberTextOffset : Double(model.snapshot.currentTextStart ?? 0)
+        let offset = textScrubState.displayedValue(canonicalValue: canonicalTextOffset, range: textScrubRange)
         return max(0, min(100, Int((offset / Double(textLength) * 100).rounded())))
     }
 
@@ -2167,6 +2228,7 @@ private struct PlaybackScreen: View {
                 }
             }
         }
+        .disabled(model.snapshot.isRecording)
         .accessibilityIdentifier("timeline.section")
         .id("playback.timeline")
     }

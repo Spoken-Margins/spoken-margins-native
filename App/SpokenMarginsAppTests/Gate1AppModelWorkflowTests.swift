@@ -8,6 +8,33 @@ import PDFKit
 
 @MainActor
 final class Gate1AppModelWorkflowTests: XCTestCase {
+    func testPlaybackScrubStateKeepsGestureValueAuthoritativeUntilCommit() {
+        var state = PlaybackScrubState()
+        let range = 0.0...3_600.0
+
+        // SwiftUI may deliver the binding write before onEditingChanged(true).
+        state.updateFromGesture(1_500, range: range)
+        state.begin(at: 120, range: range)
+
+        XCTAssertTrue(state.isEditing)
+        XCTAssertEqual(state.displayedValue(canonicalValue: 121, range: range), 1_500)
+
+        state.updateFromGesture(1_620, range: range)
+        XCTAssertEqual(state.displayedValue(canonicalValue: 122, range: range), 1_620)
+
+        state.finish()
+        XCTAssertFalse(state.isEditing)
+        XCTAssertEqual(state.displayedValue(canonicalValue: 1_621, range: range), 1_621)
+    }
+
+    func testPlaybackScrubStateClampsGestureToCanonicalDuration() {
+        var state = PlaybackScrubState()
+        let range = 0.0...900.0
+
+        state.updateFromGesture(1_200, range: range)
+        XCTAssertEqual(state.displayedValue(canonicalValue: 0, range: range), 900)
+    }
+
     func testPlaybackHeaderKeepsTheItemTitleUnprefixedWhenItIsNotAChapter() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.selectedItem = ItemDetailState(title: "Why Apple Is Heading Into a Pivotal Moment")

@@ -101,6 +101,23 @@ public enum SupertonicNarrationError: Error, LocalizedError, Equatable {
 /// A serial, reusable Supertonic runtime. The four ONNX sessions are loaded lazily
 /// and retained across chunks until `unload()` is called.
 public final class SupertonicNarrationRenderer: @unchecked Sendable {
+    private final class RenderCancellationToken: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cancelled = false
+
+        var isCancelled: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return cancelled
+        }
+
+        func cancel() {
+            lock.lock()
+            cancelled = true
+            lock.unlock()
+        }
+    }
+
     private final class Runtime {
         let environment: ORTEnv
         let textToSpeech: TextToSpeech
@@ -157,49 +174,56 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
         }
         try Task.checkCancellation()
 
-        return try await withCheckedThrowingContinuation { continuation in
-            renderQueue.async { [self] in
-                do {
-                    let startedAt = Date()
-                    let runtime = try loadRuntimeIfNeeded()
-                    let style = try loadVoiceStyle([assets.voiceStyleURL(for: voice).path], verbose: false)
-                    let generated = try runtime.textToSpeech.call(
-                        normalized,
-                        language,
-                        style,
-                        synthesisSteps,
-                        speed: max(0.7, min(2.0, speed)),
-                        silenceDuration: 0.3,
-                        paceAfterInference: { [weak self] inferenceDuration in
-                            self?.paceBackgroundInference(after: inferenceDuration)
+        let cancellation = RenderCancellationToken()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                renderQueue.async { [self] in
+                    do {
+                        guard !cancellation.isCancelled else { throw CancellationError() }
+                        let startedAt = Date()
+                        let runtime = try loadRuntimeIfNeeded()
+                        let style = try loadVoiceStyle([assets.voiceStyleURL(for: voice).path], verbose: false)
+                        let generated = try runtime.textToSpeech.call(
+                            normalized,
+                            language,
+                            style,
+                            synthesisSteps,
+                            speed: max(0.7, min(2.0, speed)),
+                            silenceDuration: 0.3,
+                            paceAfterInference: { [weak self] inferenceDuration in
+                                self?.paceBackgroundInference(after: inferenceDuration)
+                            }
+                        )
+                        guard !cancellation.isCancelled else { throw CancellationError() }
+                        let sampleCount = min(
+                            generated.wav.count,
+                            max(0, Int(Float(runtime.textToSpeech.sampleRate) * generated.duration))
+                        )
+                        guard sampleCount > 0 else { throw SupertonicNarrationError.emptyAudio }
+                        let samples = Array(generated.wav.prefix(sampleCount))
+                        guard samples.allSatisfy(\.isFinite) else {
+                            throw SupertonicNarrationError.unsafeAudio("non_finite_samples")
                         }
-                    )
-                    let sampleCount = min(
-                        generated.wav.count,
-                        max(0, Int(Float(runtime.textToSpeech.sampleRate) * generated.duration))
-                    )
-                    guard sampleCount > 0 else { throw SupertonicNarrationError.emptyAudio }
-                    let samples = Array(generated.wav.prefix(sampleCount))
-                    guard samples.allSatisfy(\.isFinite) else {
-                        throw SupertonicNarrationError.unsafeAudio("non_finite_samples")
+                        guard samples.lazy.map({ abs($0) }).max() ?? 0 > 0.000_001 else {
+                            throw SupertonicNarrationError.unsafeAudio("silent_output")
+                        }
+                        let audioURL = outputDirectory.appending(path: "supertonic-\(UUID().uuidString).wav")
+                        try writeWavFile(audioURL.path, samples, runtime.textToSpeech.sampleRate)
+                        generatedAudioURLs.insert(audioURL)
+                        continuation.resume(returning: SupertonicNarrationResult(
+                            audioURL: audioURL,
+                            duration: TimeInterval(generated.duration),
+                            sampleRate: runtime.textToSpeech.sampleRate,
+                            renderDuration: Date().timeIntervalSince(startedAt),
+                            sessionLoadCount: sessionLoadCount
+                        ))
+                    } catch {
+                        continuation.resume(throwing: error)
                     }
-                    guard samples.lazy.map({ abs($0) }).max() ?? 0 > 0.000_001 else {
-                        throw SupertonicNarrationError.unsafeAudio("silent_output")
-                    }
-                    let audioURL = outputDirectory.appending(path: "supertonic-\(UUID().uuidString).wav")
-                    try writeWavFile(audioURL.path, samples, runtime.textToSpeech.sampleRate)
-                    generatedAudioURLs.insert(audioURL)
-                    continuation.resume(returning: SupertonicNarrationResult(
-                        audioURL: audioURL,
-                        duration: TimeInterval(generated.duration),
-                        sampleRate: runtime.textToSpeech.sampleRate,
-                        renderDuration: Date().timeIntervalSince(startedAt),
-                        sessionLoadCount: sessionLoadCount
-                    ))
-                } catch {
-                    continuation.resume(throwing: error)
                 }
             }
+        } onCancel: {
+            cancellation.cancel()
         }
     }
 

@@ -25,7 +25,7 @@ Only these branches are active development lanes:
 | Branch | Role | Current authorized scope | Merge target |
 | --- | --- | --- | --- |
 | `main` | Released runtime and repository governance | Documentation, validation evidence, and runtime changes already distributed to the largest TestFlight audience | N/A |
-| `codex/testflight-triage` | Rapid fixes for reproducible behavior already shipped from `main` | Issue #83 and later product-owner-approved TestFlight regressions | `main` |
+| `codex/testflight-triage` | Rapid fixes for reproducible behavior already shipped from `main` | Issues #83, #85, and #84 in that order, plus later product-owner-approved TestFlight regressions | `main` |
 | `codex/sharing-next` | Next major numbered feature release | Sharing foundation issues #17, #18, #67, and #68; audit reconciliation #81; then co-op replies #19 | `main` when the numbered sharing release is accepted |
 | `codex/quality-of-life-next` | Later numbered quality-of-life release | Initially only prepared core audio issues #34 and #64 | `main` when a bounded quality-of-life release is accepted |
 
@@ -62,7 +62,7 @@ Rules:
 4. Focused regression evidence can be added without claiming product-owner validation.
 5. The change can be described in the next TestFlight handoff with exact in-scope and out-of-scope behavior.
 
-Issue #83 is the current active triage item. Issues #56, #71, and #78 already have implementation on the post-Build-19 line and remain human-validation work unless new failures require additional changes.
+Issue #83 is the current active triage item. After its existing implementation work is preserved, #85 is the next bounded regression target; #84 follows as a separate diagnosis and correction unless failing evidence proves the two issues share one root cause. Issues #56, #71, and #78 already have implementation on the post-Build-19 line and remain human-validation work unless new failures require additional changes.
 
 For each TestFlight cycle:
 

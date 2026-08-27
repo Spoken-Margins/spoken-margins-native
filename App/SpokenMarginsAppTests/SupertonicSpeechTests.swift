@@ -427,7 +427,7 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
-    func testGenerationTokenDiscardsStaleRenderAfterReplay() async throws {
+    func testGenerationTokenCancelsStaleRenderAfterReplay() async throws {
         let template = try makeTestWAV(duration: 0.5)
         defer { try? FileManager.default.removeItem(at: template) }
         let renderer = CountingAudioSupertonicRenderer(templateURL: template, firstRenderDelay: .milliseconds(120))
@@ -444,8 +444,53 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.play(targetId: "generation", from: 0)
         try client.play(targetId: "generation", from: 12)
 
-        let discarded = await waitForDiscardCount(renderer, minimum: 1)
-        XCTAssertGreaterThanOrEqual(discarded, 1)
+        for _ in 0..<100 where !client.debugActiveAudioState().hasURL {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        let renderCount = await renderer.renderCount
+        let discardCount = await renderer.discardCount
+        XCTAssertGreaterThanOrEqual(renderCount, 2)
+        XCTAssertEqual(discardCount, 0, "A cancelled obsolete render should not produce audio to discard")
+        XCTAssertTrue(client.debugActiveAudioState().hasURL)
+        try client.stop()
+    }
+
+    func testSeekingCancelsObsoleteRenderBeforeStartingReplacementGeneration() async throws {
+        let template = try makeTestWAV(duration: 0.5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CancellationAwareSupertonicRenderer(templateURL: template)
+        let fallback = RecordingFallbackAudioClient()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer,
+            voice: .m2,
+            speed: 1,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            maxCharacters: 1_000,
+            audioSessionActivator: {},
+            audioPlayerStarter: { _, _ in },
+            observesPlayerLifecycle: false,
+            fallbackClient: fallback
+        )
+        let source = String(
+            repeating: "A stable sentence supports repeated navigation without obsolete inference. ",
+            count: 6
+        )
+        _ = try client.prepareSpeechText(source)
+        try client.play(targetId: "seek-cancellation", from: 0)
+        for _ in 0..<50 where await renderer.startedCount == 0 {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+
+        try client.play(targetId: "seek-cancellation", from: source.count / 2)
+        for _ in 0..<100 where !client.debugActiveAudioState().hasURL {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+
+        let cancelledCount = await renderer.cancelledCount
+        XCTAssertEqual(cancelledCount, 1)
+        XCTAssertTrue(fallback.playedOffsets.isEmpty)
+        XCTAssertTrue(client.debugActiveAudioState().hasURL)
         try client.stop()
     }
 
@@ -681,6 +726,78 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(client.playbackStartStatus(targetId: "media-services-reset"), .confirmed)
         let renderCount = await renderer.renderCount
         XCTAssertEqual(renderCount, 1)
+        try client.stop()
+    }
+
+    func testMediaServicesResetCheckpointsIntraChunkProgressBeforeCanonicalPause() async throws {
+        let template = try makeTestWAV(duration: 5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let notificationCenter = NotificationCenter()
+        let interruptions = PlaybackInterruptionCapture()
+        let source = "A rendered native text chunk must keep its precise listening position when media services disappear."
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer,
+            voice: .m2,
+            speed: 1,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            audioSessionNotificationCenter: notificationCenter,
+            audioSessionActivator: {},
+            audioPlayerStarter: { player, _ in
+                player.seek(
+                    to: CMTime(seconds: 2.5, preferredTimescale: 600),
+                    toleranceBefore: .zero,
+                    toleranceAfter: .zero
+                )
+            },
+            observesPlayerLifecycle: false,
+            fallbackClient: RecordingFallbackAudioClient(),
+            interruptionHandler: { interruptions.record($0) }
+        )
+        let item = Item(
+            id: "media-services-reset-progress",
+            title: "Media reset checkpoint",
+            mediaType: "text",
+            text: source,
+            externalReference: nil,
+            status: "ready"
+        )
+        let profile = RuntimeCapabilityProfile(
+            id: "media-reset-checkpoint",
+            displayName: "Media reset checkpoint",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"]
+            ]
+        )
+        let repository = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repository, audio: client)
+        _ = try engine.startSession(itemId: item.id)
+        for _ in 0..<50 where (client.currentCharOffset() ?? 0) == 0 {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        let checkpoint = try XCTUnwrap(client.currentCharOffset())
+        XCTAssertGreaterThan(checkpoint, 0)
+        XCTAssertLessThan(checkpoint, source.count)
+
+        notificationCenter.post(
+            name: AVAudioSession.mediaServicesWereResetNotification,
+            object: AVAudioSession.sharedInstance()
+        )
+        try? await Task.sleep(for: .milliseconds(50))
+        let paused = try engine.reconcileSystemInitiatedPause()
+        let sessionID = try XCTUnwrap(paused.sessionId)
+        let persisted = try XCTUnwrap(repository.loadSession(id: sessionID))
+
+        XCTAssertEqual(client.currentRecoveryCharOffset(), checkpoint)
+        XCTAssertEqual(client.currentCharOffset(), checkpoint)
+        XCTAssertEqual(client.playbackTransportState(targetId: item.id), .paused)
+        XCTAssertEqual(paused.status, .paused)
+        XCTAssertEqual(persisted.position.charOffset, checkpoint)
+        XCTAssertGreaterThan(persisted.completionPercent, 0)
+        XCTAssertEqual(interruptions.values, [.began])
+        XCTAssertEqual(client.debugRenderedCacheOffsets(), [0])
         try client.stop()
     }
 
@@ -1082,6 +1199,49 @@ private actor CountingAudioSupertonicRenderer: SupertonicRendering {
 
     func discardGeneratedAudio(at url: URL) async {
         discardCount += 1
+        try? FileManager.default.removeItem(at: url)
+    }
+}
+
+private actor CancellationAwareSupertonicRenderer: SupertonicRendering {
+    let templateURL: URL
+    private(set) var startedCount = 0
+    private(set) var cancelledCount = 0
+
+    init(templateURL: URL) {
+        self.templateURL = templateURL
+    }
+
+    func render(
+        text: String,
+        voice: SupertonicVoiceID,
+        language: String,
+        speed: Float,
+        synthesisSteps: Int
+    ) async throws -> SupertonicNarrationResult {
+        startedCount += 1
+        if startedCount == 1 {
+            do {
+                try await Task.sleep(for: .seconds(5))
+            } catch {
+                cancelledCount += 1
+                throw error
+            }
+        }
+        let url = FileManager.default.temporaryDirectory
+            .appending(path: "cancellation-aware-render-\(UUID().uuidString).wav")
+        try FileManager.default.copyItem(at: templateURL, to: url)
+        let audio = try AVAudioFile(forReading: url)
+        return SupertonicNarrationResult(
+            audioURL: url,
+            duration: Double(audio.length) / audio.processingFormat.sampleRate,
+            sampleRate: Int(audio.processingFormat.sampleRate.rounded()),
+            renderDuration: 0.01,
+            sessionLoadCount: 1
+        )
+    }
+
+    func discardGeneratedAudio(at url: URL) async {
         try? FileManager.default.removeItem(at: url)
     }
 }

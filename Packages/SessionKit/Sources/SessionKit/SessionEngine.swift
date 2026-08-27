@@ -201,6 +201,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func togglePlayPause() throws -> SessionSnapshot {
+        try requireNavigationAllowed("togglePlayPause")
         if snapshot.status.isPlaybackActive {
             return try pause()
         }
@@ -209,6 +210,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func pause() throws -> SessionSnapshot {
+        try requireNavigationAllowed("pause")
         try requirePlayback("pause")
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("pause")
@@ -240,6 +242,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func resumePlayback() throws -> SessionSnapshot {
+        try requireNavigationAllowed("resumePlayback")
         try requirePlayback("resumePlayback")
         guard let session = currentSession else {
             throw SessionKitError.invalidCommandForState("resumePlayback")
@@ -251,6 +254,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func restartPlaybackFromCurrentPosition() throws -> SessionSnapshot {
+        try requireNavigationAllowed("restartPlaybackFromCurrentPosition")
         try requirePlayback("restartPlaybackFromCurrentPosition")
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("restartPlaybackFromCurrentPosition")
@@ -319,6 +323,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func stopPlayback() throws -> SessionSnapshot {
+        try requireNavigationAllowed("stopPlayback")
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("stopPlayback")
         }
@@ -543,6 +548,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func seekMedia(toMediaTimeMs mediaTimeMs: Int) throws -> SessionSnapshot {
+        try requireNavigationAllowed("seekMedia")
         try requirePlayback("seekMedia")
         guard let session = currentSession,
               session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia else {
@@ -564,6 +570,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func seekText(toCharOffset charOffset: Int) throws -> SessionSnapshot {
+        try requireNavigationAllowed("seekText")
         try requirePlayback("seekText")
         guard var session = currentSession,
               session.currentTargetType == .itemTextTTS,
@@ -874,6 +881,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func skipForward(unit: String, minimumDistance: Int) throws -> SessionSnapshot {
+        try requireNavigationAllowed("skipForward")
         try requirePlayback("skipForward")
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("skipForward")
@@ -920,6 +928,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func skipBack(unit: String) throws -> SessionSnapshot {
+        try requireNavigationAllowed("skipBack")
         try requirePlayback("skipBack")
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("skipBack")
@@ -1009,6 +1018,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func jumpToChapter(chapterId: String) throws -> SessionSnapshot {
+        try requireNavigationAllowed("jumpToChapter")
         try require("jumpToChapter", category: "timeline", capabilities: ["chapter_timing"])
         try requirePlayback("jumpToChapter")
         if let session = currentSession,
@@ -1034,6 +1044,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func playSourceFromBeginning() throws -> SessionSnapshot {
+        try requireNavigationAllowed("playSourceFromBeginning")
         try requirePlayback("playSourceFromBeginning")
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("playSourceFromBeginning")
@@ -1293,6 +1304,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func playTurn(turnId: String) throws -> SessionSnapshot {
+        try requireNavigationAllowed("playTurn")
         externallyStreamedTurnId = nil
         var session = try resolveSession(nil)
         let turns = try repository.loadTurns(sessionId: session.id)
@@ -1409,6 +1421,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func jumpToTurnChapter(turnId: String, chapterId: String) throws -> SessionSnapshot {
+        try requireNavigationAllowed("jumpToTurnChapter")
         var session = try resolveSession(nil)
         let turns = try repository.loadTurns(sessionId: session.id)
         guard let turn = turns.first(where: { $0.id == turnId }),
@@ -2849,6 +2862,12 @@ public final class SessionEngine {
         guard profile.hasAny("playback", ["realtime_tts", "prerendered_audio", "native_media", "assistant_turn_tts", "summary_turn_tts"])
             || profile.has("remoteControl", "send_transport_commands") else {
             throw SessionKitError.invalidCommandForCapability(command)
+        }
+    }
+
+    private func requireNavigationAllowed(_ command: String) throws {
+        guard snapshot.status != .recording else {
+            throw SessionKitError.invalidCommandForState(command)
         }
     }
 

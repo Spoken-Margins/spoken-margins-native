@@ -14,10 +14,15 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
     private static let maximumChapterWords = estimatedWordsPerMinute * 6
 
     private struct DraftChapter {
-        var title: String
+        var baseTitle: String
+        var partNumber: Int
         var level: Int
         var startChar: Int
         var endChar: Int
+
+        var title: String {
+            partNumber == 1 ? baseTitle : "\(baseTitle) — part \(partNumber)"
+        }
     }
 
     public let title: String
@@ -47,7 +52,8 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
            firstHeading.startChar > 0,
            !String(text.prefix(firstHeading.startChar)).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             drafts.append(DraftChapter(
-                title: "Front Matter",
+                baseTitle: "Front Matter",
+                partNumber: 1,
                 level: 1,
                 startChar: 0,
                 endChar: firstHeading.startChar
@@ -56,7 +62,8 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
 
         drafts.append(contentsOf: selected.enumerated().map { index, heading in
             DraftChapter(
-                title: heading.title,
+                baseTitle: heading.title,
+                partNumber: 1,
                 level: heading.level,
                 startChar: policy == .adaptiveListeningSections && index == 0 ? 0 : heading.startChar,
                 endChar: index + 1 < selected.count ? selected[index + 1].startChar : text.count
@@ -135,7 +142,8 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
             let original = drafts[longIndex]
             drafts[longIndex].endChar = split
             drafts.insert(DraftChapter(
-                title: "\(original.title) — continued",
+                baseTitle: original.baseTitle,
+                partNumber: original.partNumber + 1,
                 level: original.level,
                 startChar: split,
                 endChar: original.endChar

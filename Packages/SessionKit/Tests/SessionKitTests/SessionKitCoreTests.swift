@@ -11,6 +11,39 @@ import AVFoundation
 #endif
 
 final class SessionKitCoreTests: XCTestCase {
+    func testMediaSeekLifecycleTreatsDeclinedCurrentSeekAsTerminal() {
+        var lifecycle = MediaSeekLifecycle()
+        let generation = lifecycle.begin(targetId: "episode", mediaTimeMs: 120_000)
+
+        // AVPlayer's `finished == false` is terminal for this generation. The
+        // adapter gives the still-current intent one bounded replacement seek.
+        let retry = lifecycle.finish(generation: generation, targetId: "episode", completed: false)
+        guard case .retry(let replacement) = retry else {
+            return XCTFail("Expected one bounded retry for a declined current seek")
+        }
+        XCTAssertEqual(replacement.mediaTimeMs, 120_000)
+        XCTAssertEqual(replacement.retryCount, 1)
+        XCTAssertEqual(lifecycle.pending, replacement)
+
+        XCTAssertEqual(
+            lifecycle.finish(generation: replacement.generation, targetId: "episode", completed: false),
+            .failed(replacement)
+        )
+        XCTAssertNil(lifecycle.pending)
+    }
+
+    func testMediaSeekLifecycleIgnoresSupersededSeekCompletion() {
+        var lifecycle = MediaSeekLifecycle()
+        let first = lifecycle.begin(targetId: "episode", mediaTimeMs: 120_000)
+        let second = lifecycle.begin(targetId: "episode", mediaTimeMs: 240_000)
+
+        XCTAssertEqual(lifecycle.finish(generation: first, targetId: "episode", completed: false), .ignored)
+        XCTAssertEqual(lifecycle.pending?.generation, second)
+        XCTAssertEqual(lifecycle.pending?.mediaTimeMs, 240_000)
+        XCTAssertEqual(lifecycle.finish(generation: second, targetId: "episode", completed: true), .completed)
+        XCTAssertNil(lifecycle.pending)
+    }
+
     #if canImport(AVFoundation)
     func testSystemSpeechPlaybackRateReportsEffectiveTransportMultiplier() throws {
         let client = SystemSpeechPlaybackClient(
@@ -470,8 +503,20 @@ final class SessionKitCoreTests: XCTestCase {
 
         XCTAssertEqual(map.chapters.count, 2)
         XCTAssertEqual(map.chapters.first?.title, "Main argument")
-        XCTAssertEqual(map.chapters.last?.title, "Main argument — continued")
+        XCTAssertEqual(map.chapters.last?.title, "Main argument — part 2")
         XCTAssertEqual(map.chapters.first?.endChar, map.chapters.last?.startChar)
+    }
+
+    func testDeterministicListeningMapNumbersRepeatedSplitsWithoutRecursiveLabels() throws {
+        let body = Array(repeating: "substantive", count: 11_000).joined(separator: " ")
+        let markdown = "---\ntitle: Long Chapter\n---\n\n## Chapter Text\n\n\(body)"
+
+        let parsed = try ObsidianMarkdownParser.parse(fileName: "long-chapter.md", contents: markdown)
+        let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "item-long-chapter"))
+
+        XCTAssertEqual(map.chapters.count, 10)
+        XCTAssertEqual(map.chapters.map(\.title), ["Chapter Text"] + (2...10).map { "Chapter Text — part \($0)" })
+        XCTAssertFalse(map.chapters.contains { $0.title.contains("continued — continued") })
     }
 
     func testCapabilityGateRejectsUnsupportedCommand() throws {
@@ -1636,6 +1681,82 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(audio.playedOffsets.last, 124_250)
     }
 
+    func testRecordingInterjectionRejectsTimelineNavigationAndPreservesMediaAnchor() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["native_media", "assistant_turn_tts"],
+                "timeline": ["chapter_timing"],
+                "interjection": ["record_audio", "capture_media_anchor"]
+            ]
+        )
+        let item = Item(
+            id: "item-recording-navigation-guard",
+            title: "Guarded Podcast",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/guarded",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(
+                sourceType: .remoteStream,
+                url: "https://cdn.example.com/guarded.mp3",
+                durationMs: 900_000
+            )
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentMediaTimeValue = 124_250
+        let recording = try engine.beginInterjection()
+        let playCountWhileRecording = audio.playedTargets.count
+
+        for _ in 0..<3 {
+            XCTAssertThrowsError(try engine.playSourceFromBeginning()) { error in
+                XCTAssertEqual(error as? SessionKitError, .invalidCommandForState("playSourceFromBeginning"))
+            }
+        }
+        XCTAssertThrowsError(try engine.jumpToChapter(chapterId: "chapter-ignored")) { error in
+            XCTAssertEqual(error as? SessionKitError, .invalidCommandForState("jumpToChapter"))
+        }
+        XCTAssertThrowsError(try engine.playTurn(turnId: "turn-ignored")) { error in
+            XCTAssertEqual(error as? SessionKitError, .invalidCommandForState("playTurn"))
+        }
+        XCTAssertThrowsError(try engine.jumpToTurnChapter(turnId: "turn-ignored", chapterId: "chapter-ignored")) { error in
+            XCTAssertEqual(error as? SessionKitError, .invalidCommandForState("jumpToTurnChapter"))
+        }
+        XCTAssertThrowsError(try engine.seekMedia(toMediaTimeMs: 0)) { error in
+            XCTAssertEqual(error as? SessionKitError, .invalidCommandForState("seekMedia"))
+        }
+        XCTAssertThrowsError(try engine.togglePlayPause()) { error in
+            XCTAssertEqual(error as? SessionKitError, .invalidCommandForState("togglePlayPause"))
+        }
+        XCTAssertThrowsError(try engine.resumePlayback()) { error in
+            XCTAssertEqual(error as? SessionKitError, .invalidCommandForState("resumePlayback"))
+        }
+        XCTAssertThrowsError(try engine.stopPlayback()) { error in
+            XCTAssertEqual(error as? SessionKitError, .invalidCommandForState("stopPlayback"))
+        }
+
+        XCTAssertEqual(recording.status, .recording)
+        XCTAssertEqual(engine.snapshot.status, .recording)
+        XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 124_250)
+        XCTAssertEqual(audio.currentMediaTimeValue, 124_250)
+        XCTAssertEqual(audio.playedTargets.count, playCountWhileRecording)
+
+        let resumed = try engine.finishInterjection(audioRef: "interjections/guarded.m4a")
+        let sessionID = try XCTUnwrap(engine.currentSession?.id)
+        let saved = try XCTUnwrap(try repo.loadInterjections(sessionId: sessionID).first)
+        XCTAssertEqual(saved.anchor.mediaTimeMs, 124_250)
+        XCTAssertEqual(resumed.status, .playing)
+        XCTAssertEqual(resumed.currentMediaTimeMs, 124_250)
+        XCTAssertEqual(audio.playedOffsets.last, 124_250)
+    }
+
     func testInspectSessionRepairsMediaPercentagesFromDurableTimestamps() throws {
         let item = Item(
             id: "item-source-repair",
@@ -1804,6 +1925,66 @@ final class SessionKitCoreTests: XCTestCase {
         let resumed = try engine.resumePlayback()
         XCTAssertEqual(resumed.status, .playing)
         XCTAssertEqual(audio.playedOffsets.last, 1_500_000)
+    }
+
+    func testRepeatedMediaSeekInterjectionResumeCyclesKeepOneAdvancingClock() throws {
+        let durationMs = 1_800_000
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["native_media"],
+                "interjection": ["record_audio", "capture_media_anchor"]
+            ]
+        )
+        let item = Item(
+            id: "item-repeated-media-cycles",
+            title: "Repeated Media Cycles",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/repeated-cycles",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(
+                sourceType: .remoteStream,
+                url: "https://cdn.example.com/repeated-cycles.mp3",
+                durationMs: durationMs
+            )
+        )
+        let audio = RecordingAudioClient()
+        audio.currentDurationMs = durationMs
+        let repository = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repository, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        for index in 0..<10 {
+            let requested = 120_000 + (index * 120_000)
+            _ = try engine.seekMedia(toMediaTimeMs: requested)
+
+            let beforeInterjection = requested + 30_000
+            audio.currentMediaTimeValue = beforeInterjection
+            let advanced = try engine.syncPlaybackProgress()
+            XCTAssertEqual(advanced.currentMediaTimeMs, beforeInterjection)
+
+            let recording = try engine.beginInterjection()
+            XCTAssertEqual(recording.currentMediaTimeMs, beforeInterjection)
+            let resumed = try engine.finishInterjection(audioRef: "interjections/cycle-\(index).m4a")
+            XCTAssertEqual(resumed.currentMediaTimeMs, beforeInterjection)
+            XCTAssertEqual(audio.playedOffsets.last, beforeInterjection)
+
+            audio.currentMediaTimeValue = beforeInterjection + 12_000
+            let postResume = try engine.syncPlaybackProgress()
+            XCTAssertEqual(postResume.currentMediaTimeMs, beforeInterjection + 12_000)
+            XCTAssertEqual(postResume.currentPlaybackDurationMs, durationMs)
+        }
+
+        audio.currentMediaTimeValue = durationMs - 120_000
+        let nearEnd = try engine.syncPlaybackProgress()
+        XCTAssertEqual(nearEnd.currentMediaTimeMs, durationMs - 120_000)
+        let observedDurationMs = try XCTUnwrap(nearEnd.currentPlaybackDurationMs)
+        let observedMediaTimeMs = try XCTUnwrap(nearEnd.currentMediaTimeMs)
+        XCTAssertEqual(observedDurationMs - observedMediaTimeMs, 120_000)
     }
 
     func testSourceWindowContextUpdatesMediaInterjectionAnchorWithoutChangingNoteTranscript() throws {
