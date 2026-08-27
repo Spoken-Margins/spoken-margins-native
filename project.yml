@@ -23,6 +23,10 @@ targets:
       - path: App/SpokenMarginsApp/Resources/Legal
         type: folder
         buildPhase: resources
+      - path: App/SharedResources/browserTextCapture.js
+        buildPhase: resources
+      - path: App/SharedResources/Defuddle-LICENSE.txt
+        buildPhase: resources
       - path: Contracts/fixtures
         type: folder
       - path: Contracts/traces
@@ -41,12 +45,16 @@ targets:
         product: SessionKitAI
       - package: SessionKit
         product: SessionKitSupertonic
+      - package: SessionKit
+        product: SessionKitEPUB
+      - package: SessionKit
+        product: SessionKitFeeds
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsApp/SpokenMarginsApp.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "20"
+        CURRENT_PROJECT_VERSION: "21"
         DEVELOPMENT_TEAM: J8SWC6J3VY
         INFOPLIST_FILE: App/SpokenMarginsApp/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Spoken Margins
@@ -82,6 +90,9 @@ targets:
         NSSupportsLiveActivities: true
         UIBackgroundModes:
           - audio
+          - processing
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.spokenmargins.native.audio-preparation
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationPortraitUpsideDown
@@ -105,7 +116,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.gate2widget
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsGate2Widget/SpokenMarginsGate2Widget.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "20"
+        CURRENT_PROJECT_VERSION: "21"
         DEVELOPMENT_TEAM: J8SWC6J3VY
         ENABLE_DEBUG_DYLIB: NO
         MARKETING_VERSION: "0.1"
@@ -124,12 +135,16 @@ targets:
     sources:
       - path: App/SpokenMarginsBrowserTextExtension/Sources
       - path: App/SpokenMarginsBrowserTextExtension/Resources
+      - path: App/SharedResources/browserTextCapture.js
+        buildPhase: resources
+      - path: App/SharedResources/Defuddle-LICENSE.txt
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.browsertext
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsBrowserTextExtension/SpokenMarginsBrowserTextExtension.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "20"
+        CURRENT_PROJECT_VERSION: "21"
         DEVELOPMENT_TEAM: J8SWC6J3VY
         ENABLE_DEBUG_DYLIB: NO
         INFOPLIST_FILE: App/SpokenMarginsBrowserTextExtension/Info.plist
@@ -154,7 +169,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.share
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsShareExtension/SpokenMarginsShareExtension.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "20"
+        CURRENT_PROJECT_VERSION: "21"
         DEVELOPMENT_TEAM: J8SWC6J3VY
         ENABLE_DEBUG_DYLIB: NO
         INFOPLIST_FILE: App/SpokenMarginsShareExtension/Info.plist
@@ -208,6 +223,10 @@ targets:
         product: SessionKit
       - package: SessionKit
         product: SessionKitAudio
+      - package: SessionKit
+        product: SessionKitEPUB
+      - package: SessionKit
+        product: SessionKitFeeds
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES

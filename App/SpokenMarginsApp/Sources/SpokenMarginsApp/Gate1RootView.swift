@@ -549,10 +549,13 @@ private struct HomeScreen: View {
         case title
         case text
         case sourceLink
+        case followedSource
     }
 
     private enum FileImportRequest {
         case obsidianFiles
+        case epub
+        case audiobook
         case quickFolder
     }
 
@@ -564,6 +567,7 @@ private struct HomeScreen: View {
                     if model.shouldShowOnboardingCard {
                         onboardingCard
                     }
+                    followedSources
                     queue
                 }
                 .padding(20)
@@ -672,6 +676,123 @@ private struct HomeScreen: View {
         }
     }
 
+    private var followedSources: some View {
+        ProductPanel {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Label("New from Sources", systemImage: "tray.full")
+                        .font(.headline)
+                    Spacer()
+                    Button { model.refreshFollowedSources() } label: {
+                        if model.isRefreshingFollowedSources { ProgressView() } else { Image(systemName: "arrow.clockwise") }
+                    }
+                    .buttonStyle(IconButtonStyle())
+                    .disabled(model.isRefreshingFollowedSources)
+                    .accessibilityLabel("Refresh followed sources")
+                }
+                HStack {
+                    TextField("HTTPS feed URL", text: $model.followedSourceURL)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.URL)
+                        .focused($focusedField, equals: .followedSource)
+                        .accessibilityIdentifier("sources.follow.url")
+                    Button("Follow", action: model.followSource)
+                        .buttonStyle(SecondaryButtonStyle())
+                        .disabled(model.followedSourceURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityIdentifier("sources.follow.button")
+                }
+                if !model.followedSourceCandidates.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Choose a feed").font(.subheadline.weight(.semibold))
+                        ForEach(model.followedSourceCandidates) { candidate in
+                            Button {
+                                model.followSourceCandidate(candidate)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(candidate.source.title ?? candidate.source.host)
+                                    Text(candidate.source.canonicalURL)
+                                        .font(.caption2)
+                                        .foregroundStyle(AppColors.secondaryText)
+                                        .lineLimit(1)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .buttonStyle(SecondaryButtonStyle())
+                        }
+                        Button("Cancel", action: model.cancelFollowSourceCandidates)
+                            .font(.caption)
+                    }
+                }
+                if !model.sourceFollowSuggestionCandidates.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Keep up with this source?").font(.subheadline.weight(.semibold))
+                        Text("Following only adds future entries to this inbox. Nothing is imported, downloaded, or prepared automatically.")
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                        ForEach(model.sourceFollowSuggestionCandidates) { candidate in
+                            Button("Follow \(candidate.source.title ?? candidate.source.host)") {
+                                model.acceptSourceFollowSuggestion(candidate)
+                            }
+                            .buttonStyle(SecondaryButtonStyle())
+                        }
+                        HStack {
+                            Button("Not now", action: model.deferSourceFollowSuggestion)
+                            Button("Don't suggest", role: .destructive, action: model.rejectSourceFollowSuggestion)
+                        }
+                        .font(.caption)
+                    }
+                    .padding(10)
+                    .background(AppColors.watchControl.opacity(0.35))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+                if model.followedSourceEntries.isEmpty {
+                    Text("Following a source only fills this inbox. It never imports, downloads, or prepares an entry automatically.")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                } else {
+                    ForEach(model.followedSourceEntries.prefix(8)) { entry in
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(entry.title).font(.subheadline.weight(.semibold))
+                            if let author = entry.author { Text(author).font(.caption).foregroundStyle(AppColors.secondaryText) }
+                            HStack {
+                                Button {
+                                    model.importFollowedSourceEntry(entry)
+                                } label: {
+                                    if model.importingFollowedSourceEntryIds.contains(entry.id) {
+                                        ProgressView()
+                                    } else {
+                                        Text("Import")
+                                    }
+                                }
+                                .disabled(model.importingFollowedSourceEntryIds.contains(entry.id))
+                                .accessibilityIdentifier("sources.entry.import.\(entry.id)")
+                                if let url = URL(string: entry.canonicalURL) {
+                                    Link("Open", destination: url)
+                                }
+                                Button("Dismiss") { model.dismissFollowedSourceEntry(id: entry.id) }
+                                Spacer()
+                            }
+                            .font(.caption)
+                        }
+                        .accessibilityIdentifier("sources.entry.\(entry.id)")
+                    }
+                }
+                if !model.feedSubscriptions.isEmpty {
+                    Menu("Manage Sources") {
+                        ForEach(model.feedSubscriptions) { subscription in
+                            Button(subscription.state == .muted ? "Unmute \(subscription.source.title ?? subscription.source.host)" : "Mute \(subscription.source.title ?? subscription.source.host)") {
+                                model.toggleMuteSource(id: subscription.id)
+                            }
+                            Button("Unfollow \(subscription.source.title ?? subscription.source.host)", role: .destructive) {
+                                model.unfollowSource(id: subscription.id)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private var sourceModalIsPresented: Binding<Bool> {
         Binding(
             get: { isAddSourcePresented || model.sourceLinkCandidateReview != nil },
@@ -689,6 +810,10 @@ private struct HomeScreen: View {
         switch activeFileImportRequest {
         case .quickFolder:
             return [.folder]
+        case .epub:
+            return [UTType(filenameExtension: "epub") ?? .data]
+        case .audiobook:
+            return [.mp3, .mpeg4Audio, .mpeg4Movie, UTType(filenameExtension: "m4b") ?? .audio]
         case .obsidianFiles, .none:
             return [UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText, .plainText, .pdf]
         }
@@ -713,6 +838,10 @@ private struct HomeScreen: View {
                 if let url = urls.first {
                     model.configureQuickAccessFolder(url: url)
                 }
+            case .epub:
+                if let url = urls.first { model.importEPUBFile(url: url); dismissAddSource() }
+            case .audiobook:
+                if let url = urls.first { model.importAudiobookFile(url: url); dismissAddSource() }
             case .none:
                 model.reportImportFailure(FileImportPresentationError.missingRequest)
             }
@@ -919,6 +1048,25 @@ private struct HomeScreen: View {
         }
         .buttonStyle(SecondaryButtonStyle())
         .accessibilityIdentifier("obsidian.import.button")
+        HStack {
+            Button {
+                focusedField = nil
+                presentFileImporter(.epub)
+            } label: {
+                Label("Import EPUB", systemImage: "book.closed")
+            }
+            .buttonStyle(SecondaryButtonStyle())
+            .accessibilityIdentifier("epub.import.button")
+
+            Button {
+                focusedField = nil
+                presentFileImporter(.audiobook)
+            } label: {
+                Label("Import Audiobook", systemImage: "headphones")
+            }
+            .buttonStyle(SecondaryButtonStyle())
+            .accessibilityIdentifier("audiobook.import.button")
+        }
     }
 
     private func isValidSourceLink(_ value: String) -> Bool {
@@ -1012,6 +1160,33 @@ private struct HomeScreen: View {
                     .font(.headline)
                 Spacer()
             }
+            if !model.libraryItems.isEmpty {
+                TextField("Search title, source, or author", text: $model.libraryQuery.query)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("library.search.field")
+                HStack {
+                    Menu("Filter") {
+                        Picker("Content Type", selection: $model.libraryQuery.contentType) {
+                            ForEach(LibraryContentTypeFilter.allCases, id: \.self) { Text($0.rawValue.replacingOccurrences(of: "_", with: " ").capitalized).tag($0) }
+                        }
+                        Picker("Listening", selection: $model.libraryQuery.listeningState) {
+                            ForEach(LibraryListeningStateFilter.allCases, id: \.self) { Text($0.rawValue.replacingOccurrences(of: "_", with: " ").capitalized).tag($0) }
+                        }
+                        Picker("Offline", selection: $model.libraryQuery.offlineState) {
+                            ForEach(LibraryOfflineStateFilter.allCases, id: \.self) { Text($0.rawValue.replacingOccurrences(of: "_", with: " ").capitalized).tag($0) }
+                        }
+                    }
+                    .accessibilityIdentifier("library.filter.menu")
+                    Menu("Sort") {
+                        Picker("Sort", selection: $model.libraryQuery.sort) {
+                            ForEach(LibrarySort.allCases, id: \.self) { Text($0.rawValue.replacingOccurrences(of: "_", with: " ").capitalized).tag($0) }
+                        }
+                    }
+                    .accessibilityIdentifier("library.sort.menu")
+                    Spacer()
+                }
+                .onCompatibleChange(of: model.libraryQuery) { _ in model.libraryQueryChanged() }
+            }
             if model.libraryItems.isEmpty {
                 ProductPanel {
                     VStack(alignment: .leading, spacing: 14) {
@@ -1032,7 +1207,10 @@ private struct HomeScreen: View {
                     }
                 }
             } else {
-                ForEach(model.libraryItems) { item in
+                if model.visibleLibraryItems.isEmpty {
+                    ProductPanel { Text("No library items match these filters.").foregroundStyle(AppColors.secondaryText) }
+                }
+                ForEach(model.visibleLibraryItems) { item in
                     ProductPanel {
                         HStack(spacing: 12) {
                             Button {
@@ -1506,6 +1684,7 @@ private struct PlaybackScreen: View {
     @State private var mediaScrubState = PlaybackScrubState()
     @State private var textScrubState = PlaybackScrubState()
     @State private var isPlaybackRatePresented = false
+    @State private var isSleepTimerPresented = false
     @State private var isSourceTextPresented = false
     @State private var sourceTextOffsetAtPresentation = 0
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
@@ -1833,6 +2012,19 @@ private struct PlaybackScreen: View {
             Spacer()
 
             Button {
+                isSleepTimerPresented = true
+            } label: {
+                PlaybackControlLabel(title: model.sleepTimerDescription, systemImage: "moon.zzz")
+                    .font(.subheadline.weight(.semibold).monospacedDigit())
+            }
+            .accessibilityLabel(model.sleepTimerDescription)
+            .accessibilityIdentifier("playback.sleepTimer.button")
+            .popover(isPresented: $isSleepTimerPresented, arrowEdge: .top) {
+                sleepTimerPopover
+                    .presentationCompactAdaptation(.popover)
+            }
+
+            Button {
                 isPlaybackRatePresented = true
             } label: {
                 PlaybackControlLabel(title: model.compactPlaybackRateDescription, systemImage: "speedometer")
@@ -1882,6 +2074,11 @@ private struct PlaybackScreen: View {
                         .tint(.red)
                         .accessibilityHint("Continues playback with the iOS system voice")
                         .accessibilityIdentifier("playback.onDeviceGeneration.stop")
+                } else if model.canRetryOnDeviceSpeechGeneration {
+                    Button("Retry", action: model.retryOnDeviceSpeechGeneration)
+                        .font(.caption.weight(.bold))
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("playback.onDeviceGeneration.retry")
                 }
             }
             .padding(12)
@@ -1935,6 +2132,36 @@ private struct PlaybackScreen: View {
         }
         .padding(20)
         .frame(minWidth: 280, idealWidth: 320)
+    }
+
+    private var sleepTimerPopover: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Sleep Timer").font(.headline)
+            if model.sleepTimerIsActive {
+                Text(model.sleepTimerDescription).font(.title2.weight(.bold).monospacedDigit())
+                HStack {
+                    Button("Extend 15 Minutes", action: model.extendSleepTimerBy15Minutes)
+                        .buttonStyle(SecondaryButtonStyle())
+                    Button("Cancel", role: .destructive, action: model.cancelSleepTimer)
+                        .buttonStyle(LightButtonStyle())
+                }
+            }
+            ForEach([SleepTimerMode.minutes15, .minutes30, .minutes45, .minutes60], id: \.self) { mode in
+                Button(mode.rawValue.replacingOccurrences(of: "minutes_", with: "") + " Minutes") {
+                    model.armSleepTimer(mode)
+                    isSleepTimerPresented = false
+                }
+                .buttonStyle(SecondaryButtonStyle())
+            }
+            Button("End of Chapter") {
+                model.armSleepTimer(.endOfChapter)
+                isSleepTimerPresented = false
+            }
+            .buttonStyle(SecondaryButtonStyle())
+            .disabled(!model.canUseEndOfChapterSleepTimer)
+        }
+        .padding(20)
+        .frame(minWidth: 300)
     }
 
     @ViewBuilder
@@ -2641,19 +2868,6 @@ private struct SettingsScreen: View {
                     .onCompatibleChange(of: model.speechRate) { _ in
                         model.speechSettingsChanged()
                     }
-                    Picker("Rendered Speech Cache", selection: $model.renderedSpeechCacheLimitMB) {
-                        ForEach(Gate1AppModel.supportedRenderedSpeechCacheLimitsMB, id: \.self) { megabytes in
-                            Text(megabytes >= 1_024 ? "\(megabytes / 1_024) GB" : "\(megabytes) MB")
-                                .tag(megabytes)
-                        }
-                    }
-                    .accessibilityIdentifier("settings.renderedSpeechCache.picker")
-                    .onCompatibleChange(of: model.renderedSpeechCacheLimitMB) { _ in
-                        model.renderedSpeechCacheLimitChanged()
-                    }
-                    Text("Rendered native-text speech is reused until this least-recently-used cache exceeds the selected limit.")
-                        .font(.caption)
-                        .foregroundStyle(AppColors.secondaryText)
                     VStack(alignment: .leading, spacing: 10) {
                         Button {
                             model.previewSpokenContentVoice()
@@ -2709,21 +2923,33 @@ private struct SettingsScreen: View {
                         model.mediaSkipSettingsChanged()
                     }
                 }
-                Section("Podcast Downloads") {
-                    Picker("Cache Limit", selection: $model.podcastCacheLimitGB) {
-                        ForEach(Gate1AppModel.supportedPodcastCacheLimitsGB, id: \.self) { gigabytes in
+                Section("Offline Storage") {
+                    Picker("Storage Budget", selection: $model.offlineStorageLimitGB) {
+                        ForEach(OfflineStorageBudget.allowedGigabytes, id: \.self) { gigabytes in
                             Text("\(gigabytes) GB").tag(gigabytes)
                         }
                     }
-                    .accessibilityIdentifier("settings.podcastCacheLimit.picker")
-                    .onCompatibleChange(of: model.podcastCacheLimitGB) { _ in
-                        model.podcastCacheLimitChanged()
+                    .accessibilityIdentifier("settings.offlineStorageBudget.picker")
+                    .onCompatibleChange(of: model.offlineStorageLimitGB) { _ in
+                        model.offlineStorageBudgetChanged()
                     }
-                    Text("Episodes stream immediately. Complete episodes download automatically on Wi-Fi and the least recently played files are removed when this limit is exceeded.")
+                    Text(model.offlineStorageUsageDescription)
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
-                    Button("Clear Downloaded Episodes", role: .destructive, action: model.clearPodcastDownloads)
-                        .accessibilityIdentifier("settings.clearPodcastDownloads.button")
+                    Picker("Automatic Audio Preparation", selection: $model.automaticAudioPreparationPolicy) {
+                        ForEach(AutomaticAudioPreparationPolicy.allCases, id: \.self) { policy in
+                            Text(policy.displayName).tag(policy)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.automaticAudioPreparation.picker")
+                    .onCompatibleChange(of: model.automaticAudioPreparationPolicy) { _ in
+                        model.automaticAudioPreparationPolicyChanged()
+                    }
+                    Text("While Charging uses durable jobs and pauses before the next chunk when power, thermal, or storage safety changes. Completion timing is not guaranteed.")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                    Button("Clear Reproducible Offline Audio", role: .destructive, action: model.clearReproducibleOfflineAudio)
+                        .accessibilityIdentifier("settings.clearReproducibleOfflineAudio.button")
                 }
                 Section("Recently Deleted") {
                     if model.recentlyDeletedItems.isEmpty {

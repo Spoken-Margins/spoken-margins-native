@@ -8,6 +8,52 @@ import PDFKit
 
 @MainActor
 final class Gate1AppModelWorkflowTests: XCTestCase {
+    func testTimedSleepTimerUsesWallClockAndStaysArmedWhilePaused() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.snapshot.status = .paused
+        model.armSleepTimer(.minutes15)
+        guard case .armed(let mode, let deadline?, _) = model.sleepTimerState else {
+            return XCTFail("Expected armed sleep timer")
+        }
+        model.reconcileSleepTimer(now: deadline.addingTimeInterval(-60))
+        XCTAssertEqual(mode, .minutes15)
+        XCTAssertEqual(model.sleepTimerRemainingSeconds, 60)
+        XCTAssertTrue(model.sleepTimerIsActive)
+        model.cancelSleepTimer()
+    }
+
+    func testSleepTimerExpiryDefersThroughInterjectionRecording() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.armSleepTimer(.minutes15)
+        guard case .armed(_, let deadline?, _) = model.sleepTimerState else {
+            return XCTFail("Expected armed sleep timer")
+        }
+        model.snapshot.isRecording = true
+        model.reconcileSleepTimer(now: deadline.addingTimeInterval(1))
+        XCTAssertEqual(model.sleepTimerState, .expiryDeferred(mode: .minutes15))
+
+        model.snapshot.isRecording = false
+        model.reconcileSleepTimer(now: deadline.addingTimeInterval(2))
+        XCTAssertEqual(model.sleepTimerState, .inactive)
+    }
+
+    func testEndOfChapterSleepTimerIsUnavailableForMaplessAndLastChapterPositions() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        XCTAssertFalse(model.canUseEndOfChapterSleepTimer)
+        model.selectedItem = ItemDetailState(
+            id: "audio",
+            title: "Audio",
+            mediaChapters: [
+                MediaTimelineChapter(id: "one", title: "One", startMs: 0, transcriptSegmentId: "one"),
+                MediaTimelineChapter(id: "two", title: "Two", startMs: 10_000, transcriptSegmentId: "two")
+            ]
+        )
+        model.snapshot.currentMediaTimeMs = 1_000
+        XCTAssertTrue(model.canUseEndOfChapterSleepTimer)
+        model.snapshot.currentMediaTimeMs = 10_000
+        XCTAssertFalse(model.canUseEndOfChapterSleepTimer)
+    }
+
     func testPlaybackScrubStateKeepsGestureValueAuthoritativeUntilCommit() {
         var state = PlaybackScrubState()
         let range = 0.0...3_600.0

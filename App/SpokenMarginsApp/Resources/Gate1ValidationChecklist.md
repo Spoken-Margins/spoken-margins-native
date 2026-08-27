@@ -47,7 +47,7 @@ Runtime profiles exercised: phone-tablet-online, phone-tablet-offline
 ## Known Issues
 
 - Signed device installation still requires local team/provisioning configuration.
-- AVFoundation recording and Speech transcription need attached device evidence before product-owner validation. Kokoro/Metal is deferred from Gate 1.
+- AVFoundation recording and Speech transcription need attached-device evidence before product-owner validation.
 - Real OpenAI-compatible provider calls are wired in app settings but still need device/provider evidence.
 
 Product-owner result:

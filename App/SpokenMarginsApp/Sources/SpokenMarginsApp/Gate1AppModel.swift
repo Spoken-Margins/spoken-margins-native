@@ -4,9 +4,6 @@ import SessionKit
 import SessionKitAI
 import SessionKitAudio
 import SessionKitSupertonic
-#if KOKORO_DEVICE && !targetEnvironment(simulator)
-import SessionKitKokoro
-#endif
 import SessionKitPersistence
 #if canImport(UIKit)
 import UIKit
@@ -47,6 +44,12 @@ struct LibraryItemRow: Identifiable, Hashable {
     let canDelete: Bool
     let hasContinuationSession: Bool
     let continuationProgressPercent: Int?
+    let mediaType: String
+    let sourceTitle: String?
+    let author: String?
+    let offlineState: LibraryOfflineStateFilter
+    let addedAt: Date?
+    let lastListenedAt: Date?
 
     init(
         id: String,
@@ -54,7 +57,13 @@ struct LibraryItemRow: Identifiable, Hashable {
         status: String,
         canDelete: Bool,
         hasContinuationSession: Bool = false,
-        continuationProgressPercent: Int? = nil
+        continuationProgressPercent: Int? = nil,
+        mediaType: String = "text",
+        sourceTitle: String? = nil,
+        author: String? = nil,
+        offlineState: LibraryOfflineStateFilter = .onlineOnly,
+        addedAt: Date? = nil,
+        lastListenedAt: Date? = nil
     ) {
         self.id = id
         self.title = title
@@ -62,6 +71,12 @@ struct LibraryItemRow: Identifiable, Hashable {
         self.canDelete = canDelete
         self.hasContinuationSession = hasContinuationSession
         self.continuationProgressPercent = continuationProgressPercent
+        self.mediaType = mediaType
+        self.sourceTitle = sourceTitle
+        self.author = author
+        self.offlineState = offlineState
+        self.addedAt = addedAt
+        self.lastListenedAt = lastListenedAt
     }
 }
 
@@ -343,10 +358,13 @@ private struct UITestingAmbiguousSourceLinkResolver: LinkResolutionClient {
 @MainActor
 final class Gate1AppModel: ObservableObject {
     static let welcomeSampleItemId = "item-spoken-margins-overview"
+    static let guidedOnboardingItemId = "guided-onboarding"
     private static let welcomeSampleSeedVersion = 2
     private static let welcomeSampleSeedVersionKey = "welcomeSampleSeedVersion"
     private static let onboardingStepsKey = "onboardingCompletedStepsV1"
     private static let guidedOnboardingStageKey = "guidedOnboardingStageV1"
+    private static let guidedOnboardingSeedVersionKey = "guidedOnboardingSeedVersion"
+    private static let guidedOnboardingTombstoneKey = "guidedOnboardingTombstone"
     private static let onboardingCardDismissedKey = "onboardingCardDismissedV1"
     private static let supertonicTTSMigrationKey = "supertonicTTSMigrationV1"
     private static let supertonicVoicePendingTermsKey = "supertonicVoicePendingTermsV1"
@@ -392,6 +410,14 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var retryingInterjectionTranscriptionIds: Set<String> = []
     @Published private(set) var playingInterjectionAudioId: String?
     @Published var libraryItems: [LibraryItemRow] = []
+    @Published var libraryQuery = LibraryQuery(
+        contentType: LibraryContentTypeFilter(rawValue: UserDefaults.standard.string(forKey: "libraryContentTypeFilter") ?? "") ?? .all,
+        listeningState: LibraryListeningStateFilter(rawValue: UserDefaults.standard.string(forKey: "libraryListeningStateFilter") ?? "") ?? .all,
+        offlineState: LibraryOfflineStateFilter(rawValue: UserDefaults.standard.string(forKey: "libraryOfflineStateFilter") ?? "") ?? .all,
+        sort: LibrarySort(rawValue: UserDefaults.standard.string(forKey: "librarySort") ?? "") ?? .recentlyAdded
+    )
+    @Published private(set) var sleepTimerState: SleepTimerState = .inactive
+    @Published private(set) var sleepTimerRemainingSeconds: Int?
     @Published var recentlyDeletedItems: [LibraryItemRow] = []
     @Published var trashUndo: TrashUndoState?
     @Published var selectedItem = ItemDetailState()
@@ -422,6 +448,13 @@ final class Gate1AppModel: ObservableObject {
     @Published var importTitle = ""
     @Published var importText = ""
     @Published var sourceLinkURL = ""
+    @Published var followedSourceURL = ""
+    @Published private(set) var followedSourceCandidates: [SourceCandidateEvidence] = []
+    @Published private(set) var sourceFollowSuggestionCandidates: [SourceCandidateEvidence] = []
+    @Published private(set) var followedSourceEntries: [FeedEntry] = []
+    @Published private(set) var feedSubscriptions: [FeedSubscription] = []
+    @Published private(set) var isRefreshingFollowedSources = false
+    @Published private(set) var importingFollowedSourceEntryIds: Set<String> = []
     @Published var isResolvingSourceLink = false
     @Published var sourceLinkCandidateReview: SourceLinkCandidateReviewState?
     @Published private(set) var sourceLinkImportState = "idle"
@@ -451,6 +484,13 @@ final class Gate1AppModel: ObservableObject {
         rawValue: UserDefaults.standard.integer(forKey: "podcastCacheLimitGB")
     )?.rawValue ?? PodcastCacheLimitGB.defaultValue.rawValue
     @Published var renderedSpeechCacheLimitMB = Gate1AppModel.storedRenderedSpeechCacheLimitMB()
+    @Published var offlineStorageLimitGB = OfflineStorageBudget.allowedGigabytes.contains(
+        UserDefaults.standard.integer(forKey: "offlineStorageLimitGB")
+    ) ? UserDefaults.standard.integer(forKey: "offlineStorageLimitGB") : 5
+    @Published private(set) var offlineStorageUsageDescription = "Calculating…"
+    @Published var automaticAudioPreparationPolicy = AutomaticAudioPreparationPolicy(
+        rawValue: UserDefaults.standard.string(forKey: "automaticAudioPreparationPolicy") ?? ""
+    ) ?? .off
     @Published private(set) var podcastDownloadRecords: [String: PodcastDownloadRecord] = [:]
     @Published var preparedTextAudioStatus = "Not started"
     @Published private(set) var onDeviceSpeechGenerationStatus = RenderedSpeechGenerationState.inactive.rawValue
@@ -467,14 +507,9 @@ final class Gate1AppModel: ObservableObject {
         rawValue: UserDefaults.standard.string(forKey: "ttsVoiceSelection") ?? ""
     ) ?? .james
     @Published var ttsMode = UserDefaults.standard.string(forKey: "ttsMode") ?? "supertonic"
-    @Published var kokoroVoiceName = UserDefaults.standard.string(forKey: "kokoroVoiceName") ?? "am_echo"
-    @Published var kokoroChunkCharacters = min(140, max(80, UserDefaults.standard.double(forKey: "kokoroChunkCharacters") == 0 ? 110 : UserDefaults.standard.double(forKey: "kokoroChunkCharacters")))
-    @Published var kokoroStatus = "Not checked"
     @Published var piperVoiceId = UserDefaults.standard.string(forKey: "piperVoiceId") ?? ""
     @Published var piperVoiceOptions: [PiperVoiceOption] = []
     @Published var piperStatus = "Not checked"
-    @Published var isRenderingKokoroPreview = false
-    @Published var isRunningKokoroMemoryCheck = false
     @Published var isRenderingSupertonicPreview = false
     #if SPOKEN_MARGINS_WATCH
     @Published var isRenderingWatchPackage = false
@@ -515,6 +550,8 @@ final class Gate1AppModel: ObservableObject {
     private let streamingSpeechQueue = StreamingSpeechQueue()
     private var speechPlaybackClient: AudioPlaybackClient?
     private var supertonicRenderer: SupertonicNarrationRenderer?
+    private var preparedAudioCoordinator: PreparedAudioCoordinator?
+    private var currentSupertonicRenderSignature: TTSRenderSignature?
     private var renderedSpeechDiskCache: RenderedSpeechDiskCache?
     private let sourceLinkResolver: LinkResolutionClient?
     private let sourceLinkHandoffStore: SourceLinkHandoffStore?
@@ -522,6 +559,12 @@ final class Gate1AppModel: ObservableObject {
     private let audioPlaybackClientOverride: AudioPlaybackClient?
     private var mediaPlaybackClient: AVPlayerStreamPlaybackClient?
     private var podcastDownloadCoordinator: PodcastDownloadCoordinator?
+    private var offlineStorageLedger: OfflineStorageLedger?
+    private var localSourceImporter: LocalSourceImporter?
+    private var followedSourceCoordinator: FollowedSourceCoordinator?
+    private let readablePageExtractor = AppOwnedReadablePageExtractor()
+    private var sourceSuggestionChecks: Set<String> = []
+    private var guidedOnboardingCoordinator: GuidedOnboardingCoordinator?
     private let recordingClientOverride: RecordingClient?
     private let forcePreparedTextGate: Bool
     private let sourceTranscriptionClient: SourceTranscriptionClient
@@ -534,6 +577,7 @@ final class Gate1AppModel: ObservableObject {
     private var activeItemId = "item-pill"
     private var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-5.6"
     private var playbackProgressTask: Task<Void, Never>?
+    private var sleepTimerTask: Task<Void, Never>?
     private var onDeviceSpeechGenerationDelayTask: Task<Void, Never>?
     private var trashUndoDismissTask: Task<Void, Never>?
     #if canImport(UIKit) && os(iOS)
@@ -570,7 +614,6 @@ final class Gate1AppModel: ObservableObject {
     private let batchExportFolderBookmarkKey = "batchExportFolderBookmark"
     #if canImport(AVFoundation)
     private let speechPreviewSynthesizer = AVSpeechSynthesizer()
-    private var kokoroPreviewPlayer: AVAudioPlayer?
     private var supertonicPreviewPlayer: AVAudioPlayer?
     private var supertonicPreviewURL: URL?
     #endif
@@ -826,6 +869,11 @@ final class Gate1AppModel: ObservableObject {
         streamingSpeechQueue.onPlaybackObservation = { [weak self] observation in
             self?.applyStreamingSpeechObservation(observation)
         }
+        #if canImport(BackgroundTasks) && canImport(UIKit)
+        AudioPreparationBackgroundController.shared.install { [weak self] in
+            await self?.performBackgroundAudioPreparationPass() ?? false
+        }
+        #endif
     }
 
     private func migrateTTSSettingsIfNeeded() {
@@ -835,8 +883,8 @@ final class Gate1AppModel: ObservableObject {
             return
         }
 
-        // This is intentionally a one-way pre-1.0 migration. Legacy Piper,
-        // Kokoro, and system-only modes all move to the bundled default voice;
+        // This is intentionally a one-way pre-1.0 migration. Legacy experimental
+        // and system-only modes all move to the bundled default voice;
         // the prior Apple voice identifier remains available for fallback.
         ttsVoiceSelection = .james
         ttsMode = "supertonic"
@@ -1271,6 +1319,15 @@ final class Gate1AppModel: ObservableObject {
                 diagnostics["welcomeSample"] = "seeded:v\(Self.welcomeSampleSeedVersion)"
             }
             if !CommandLine.arguments.contains("--ui-testing"),
+               !UserDefaults.standard.bool(forKey: Self.guidedOnboardingTombstoneKey),
+               UserDefaults.standard.integer(forKey: Self.guidedOnboardingSeedVersionKey) < 1,
+               !(try store.listItems()).contains(where: { $0.id == Self.guidedOnboardingItemId }) {
+                try store.saveItem(Self.makeBundledGuidedOnboardingItem())
+                UserDefaults.standard.set(1, forKey: Self.guidedOnboardingSeedVersionKey)
+                rows = try loadLibraryRows(store: store)
+                diagnostics["guidedOnboardingItem"] = "bundled_fallback_seeded"
+            }
+            if !CommandLine.arguments.contains("--ui-testing"),
                storedWelcomeSampleVersion < Self.welcomeSampleSeedVersion {
                 UserDefaults.standard.set(
                     Self.welcomeSampleSeedVersion,
@@ -1348,6 +1405,22 @@ final class Gate1AppModel: ObservableObject {
         libraryIsEmpty && storedVersion < welcomeSampleSeedVersion && !isUITesting
     }
 
+    private static func makeBundledGuidedOnboardingItem() -> Item {
+        Item(
+            id: guidedOnboardingItemId,
+            title: "Guided Tour: Add and Prepare Sources",
+            mediaType: "guided_tour",
+            text: """
+            Welcome to Spoken Margins. Add text, PDF, a readable webpage, or a podcast from Add Source. You can also import a DRM-free EPUB or an MP3, M4A, M4B, or audio-bearing MP4 audiobook. Native text and EPUB chapters can be prepared for offline listening. Preparation progress, storage use, retry, and cancellation stay visible; changing playback speed does not regenerate prepared audio. Followed sources appear in New from Sources and never import until you choose an entry. Use the sleep timer for a timed pause or the end of the current chapter.
+            """,
+            externalReference: "bundled://guided-onboarding.v1",
+            status: "ready",
+            externalReferenceType: "guided_onboarding",
+            sourceTitle: "Spoken Margins",
+            createdAt: Date()
+        )
+    }
+
     func handleAppBecameActive() {
         supertonicRenderer?.setBackgroundInferencePacingEnabled(false)
         let refreshedAvailability = localFoundationModelClient.availability()
@@ -1359,6 +1432,77 @@ final class Gate1AppModel: ObservableObject {
         syncPlaybackProgressForLifecycle()
         gate2CompactControls.reconcileLiveActivities()
         importPendingSourceLinkHandoffs()
+        scheduleAutomaticAudioPreparationIfNeeded()
+        refreshFollowedSources(force: false)
+    }
+
+    func automaticAudioPreparationPolicyChanged() {
+        UserDefaults.standard.set(
+            automaticAudioPreparationPolicy.rawValue,
+            forKey: "automaticAudioPreparationPolicy"
+        )
+        diagnostics["automaticAudioPreparation"] = automaticAudioPreparationPolicy.rawValue
+        scheduleAutomaticAudioPreparationIfNeeded()
+    }
+
+    func offlineStorageBudgetChanged() {
+        guard OfflineStorageBudget.allowedGigabytes.contains(offlineStorageLimitGB) else {
+            offlineStorageLimitGB = 5
+            return
+        }
+        UserDefaults.standard.set(offlineStorageLimitGB, forKey: "offlineStorageLimitGB")
+        podcastCacheLimitGB = offlineStorageLimitGB
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let store = try self.requireStore()
+                try store.saveOfflineStorageBudget(OfflineStorageBudget(
+                    limitBytes: Int64(self.offlineStorageLimitGB) * 1_024 * 1_024 * 1_024
+                ))
+                self.tryRefreshOfflineStorageUsage()
+            } catch {
+                self.reportFailure(error, context: "Offline storage budget update failed")
+            }
+        }
+    }
+
+    func clearReproducibleOfflineAudio() {
+        guard let ledger = offlineStorageLedger else { return }
+        Task { [weak self] in
+            do {
+                let bytes = try await ledger.clearReproducibleAssets(in: [.preparedAudio, .preparedChunk, .podcast, .guidedTour])
+                await MainActor.run {
+                    self?.reportConfirmation("Cleared \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)) of reproducible offline audio.")
+                    self?.tryRefreshOfflineStorageUsage()
+                }
+            } catch {
+                await MainActor.run { self?.reportFailure(error, context: "Offline audio clear failed") }
+            }
+        }
+    }
+
+    private func tryRefreshOfflineStorageUsage() {
+        guard let ledger = offlineStorageLedger else { return }
+        Task { [weak self] in
+            let usage = try? await ledger.categoryUsage()
+            let total = usage?.values.reduce(0, +) ?? 0
+            let protected = (try? self?.store?.loadOwnedOfflineAssets())?
+                .filter { !$0.protections.isEmpty }
+                .reduce(Int64(0)) { $0 + $1.byteCount } ?? 0
+            await MainActor.run {
+                self?.offlineStorageUsageDescription = "\(ByteCountFormatter.string(fromByteCount: total, countStyle: .file)) used · \(ByteCountFormatter.string(fromByteCount: protected, countStyle: .file)) protected"
+            }
+        }
+    }
+
+    private func scheduleAutomaticAudioPreparationIfNeeded() {
+        #if canImport(BackgroundTasks) && canImport(UIKit)
+        let enabled = automaticAudioPreparationPolicy == .whileCharging
+        Task { [weak self] in
+            if enabled { await self?.enqueueAutomaticAudioPreparationJobs() }
+            AudioPreparationBackgroundController.shared.submitIfEnabled(enabled)
+        }
+        #endif
     }
 
     func handleApplicationWillTerminate() {
@@ -1481,7 +1625,7 @@ final class Gate1AppModel: ObservableObject {
 
         ## Load your own sources
 
-        Return Home and tap Add Source. Paste text and choose Add and Listen; paste a podcast, RSS, or public audio link and choose Add Link and Listen; or choose Import Text or PDF Files to upload Markdown, plain-text, or text-based PDF files. In Safari, enable Spoken Margins Text under Manage Extensions to capture selected text or a readable article, or run the Add Article to Spoken Margins Shortcut from Safari’s Share menu. You can also share a PDF, Markdown file, or text file directly to Spoken Margins.
+        Return Home and tap Add Source. Paste text and choose Add and Listen; paste a podcast, RSS, or public audio link and choose Add Link and Listen; choose Import Text or PDF Files; import a DRM-free EPUB; or import an MP3, M4A, M4B, or audio-bearing MP4 audiobook. In Safari, enable Spoken Margins Text under Manage Extensions to capture selected text or a readable article, or run the Add Article to Spoken Margins Shortcut from Safari’s Share menu. You can also share a PDF, Markdown file, or text file directly to Spoken Margins.
 
         ## Keep what matters
 
@@ -1563,6 +1707,45 @@ final class Gate1AppModel: ObservableObject {
 
     func importObsidianMarkdownFiles(urls: [URL]) {
         beginObsidianMarkdownImport(urls: urls, securityScopedURLs: urls)
+    }
+
+    func importEPUBFile(url: URL) {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let importer = try self.requireLocalSourceImporter()
+                let item = try await importer.importEPUB(from: url)
+                guard let store = self.store else { return }
+                self.libraryItems = try self.loadLibraryRows(store: store)
+                self.selectedItem = try self.loadItemDetail(id: item.id, store: store)
+                self.activeItemId = item.id
+                self.markOnboardingSteps([.addedOwnSource, .addedFromFiles])
+                self.scheduleTextAudioPrewarmIfNeeded(itemId: item.id)
+                self.screen = .item
+                self.reportConfirmation("Imported \(item.title).")
+            } catch {
+                self.reportFailure(error, context: "EPUB import failed")
+            }
+        }
+    }
+
+    func importAudiobookFile(url: URL) {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let importer = try self.requireLocalSourceImporter()
+                let item = try await importer.importAudiobook(from: url)
+                guard let store = self.store else { return }
+                self.libraryItems = try self.loadLibraryRows(store: store)
+                self.selectedItem = try self.loadItemDetail(id: item.id, store: store)
+                self.activeItemId = item.id
+                self.markOnboardingSteps([.addedOwnSource, .addedFromFiles])
+                self.screen = .item
+                self.reportConfirmation("Imported \(item.title).")
+            } catch {
+                self.reportFailure(error, context: "Audiobook import failed")
+            }
+        }
     }
 
     var isImportingSources: Bool {
@@ -2228,64 +2411,6 @@ final class Gate1AppModel: ObservableObject {
         reportFailure(error, context: "File import failed")
     }
 
-    func importKokoroAssets(urls: [URL]) {
-        guard !urls.isEmpty else {
-            reportFailure("No Kokoro asset files were selected.")
-            return
-        }
-
-        do {
-            let assetsDirectory = try kokoroAssetsDirectory()
-            try FileManager.default.createDirectory(at: assetsDirectory, withIntermediateDirectories: true)
-
-            var copiedModel = false
-            var copiedVoices = false
-            var ignored: [String] = []
-
-            for url in urls {
-                let didAccess = url.startAccessingSecurityScopedResource()
-                defer {
-                    if didAccess {
-                        url.stopAccessingSecurityScopedResource()
-                    }
-                }
-
-                let lowercasedName = url.lastPathComponent.lowercased()
-                let destinationName: String?
-                if lowercasedName == "kokoro-v1_0.safetensors" || url.pathExtension.lowercased() == "safetensors" {
-                    destinationName = "kokoro-v1_0.safetensors"
-                } else if lowercasedName == "voices.npz" || url.pathExtension.lowercased() == "npz" {
-                    destinationName = "voices.npz"
-                } else {
-                    destinationName = nil
-                }
-
-                guard let destinationName else {
-                    ignored.append(url.lastPathComponent)
-                    continue
-                }
-
-                let destinationURL = assetsDirectory.appending(path: destinationName)
-                if FileManager.default.fileExists(atPath: destinationURL.path) {
-                    try FileManager.default.removeItem(at: destinationURL)
-                }
-                try FileManager.default.copyItem(at: url, to: destinationURL)
-                copiedModel = copiedModel || destinationName == "kokoro-v1_0.safetensors"
-                copiedVoices = copiedVoices || destinationName == "voices.npz"
-            }
-
-            refreshKokoroAssetStatus()
-            let ignoredSuffix = ignored.isEmpty ? "" : " Ignored: \(ignored.joined(separator: ", "))."
-            if copiedModel || copiedVoices {
-                reportConfirmation("Imported Kokoro asset\(copiedModel && copiedVoices ? "s" : "").\(ignoredSuffix)")
-            } else {
-                reportFailure("No Kokoro assets were imported. Select kokoro-v1_0.safetensors and voices.npz.\(ignoredSuffix)")
-            }
-        } catch {
-            reportFailure(error, context: "Kokoro asset import failed")
-        }
-    }
-
     func importPiperVoiceAssets(urls: [URL]) {
         guard !urls.isEmpty else {
             reportFailure("No Piper voice files were selected.")
@@ -2416,6 +2541,120 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    var sleepTimerIsActive: Bool {
+        if case .inactive = sleepTimerState { return false }
+        return true
+    }
+
+    var sleepTimerDescription: String {
+        switch sleepTimerState {
+        case .inactive: return "Sleep Timer"
+        case .armed(let mode, _, _):
+            if mode == .endOfChapter { return "End of Chapter" }
+            guard let seconds = sleepTimerRemainingSeconds else { return "Sleep Timer" }
+            return String(format: "%d:%02d", seconds / 60, seconds % 60)
+        case .expiryDeferred: return "Pauses after recording"
+        }
+    }
+
+    var canUseEndOfChapterSleepTimer: Bool {
+        endOfChapterTarget() != nil
+    }
+
+    func armSleepTimer(_ mode: SleepTimerMode) {
+        let deadline: Date?
+        let chapterId: String?
+        switch mode {
+        case .minutes15: deadline = Date().addingTimeInterval(15 * 60); chapterId = nil
+        case .minutes30: deadline = Date().addingTimeInterval(30 * 60); chapterId = nil
+        case .minutes45: deadline = Date().addingTimeInterval(45 * 60); chapterId = nil
+        case .minutes60: deadline = Date().addingTimeInterval(60 * 60); chapterId = nil
+        case .endOfChapter:
+            guard let target = endOfChapterTarget() else { return }
+            deadline = nil
+            chapterId = target.chapterId
+        }
+        sleepTimerState = .armed(mode: mode, deadline: deadline, chapterId: chapterId)
+        startSleepTimerTicker()
+        reconcileSleepTimer(now: Date())
+    }
+
+    func extendSleepTimerBy15Minutes() {
+        let now = Date()
+        let deadline: Date
+        switch sleepTimerState {
+        case .armed(_, let current?, _): deadline = max(current, now).addingTimeInterval(15 * 60)
+        case .expiryDeferred: deadline = now.addingTimeInterval(15 * 60)
+        case .inactive, .armed(_, nil, _): deadline = now.addingTimeInterval(15 * 60)
+        }
+        sleepTimerState = .armed(mode: .minutes15, deadline: deadline, chapterId: nil)
+        startSleepTimerTicker()
+        reconcileSleepTimer(now: now)
+    }
+
+    func cancelSleepTimer() {
+        sleepTimerTask?.cancel()
+        sleepTimerTask = nil
+        sleepTimerState = .inactive
+        sleepTimerRemainingSeconds = nil
+    }
+
+    private func startSleepTimerTicker() {
+        sleepTimerTask?.cancel()
+        sleepTimerTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                self.reconcileSleepTimer(now: Date())
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+    }
+
+    func reconcileSleepTimer(now: Date) {
+        switch sleepTimerState {
+        case .inactive:
+            sleepTimerRemainingSeconds = nil
+        case .expiryDeferred(let mode):
+            sleepTimerRemainingSeconds = 0
+            if !snapshot.isRecording { expireSleepTimer(mode: mode) }
+        case .armed(let mode, let deadline, let chapterId):
+            if let deadline {
+                let remaining = max(0, Int(ceil(deadline.timeIntervalSince(now))))
+                sleepTimerRemainingSeconds = remaining
+                if remaining == 0 { requestSleepTimerExpiry(mode: mode) }
+            } else if mode == .endOfChapter,
+                      let target = endOfChapterTarget(chapterId: chapterId),
+                      (snapshot.currentMediaTimeMs ?? 0) >= target.endMs {
+                requestSleepTimerExpiry(mode: mode)
+            }
+        }
+    }
+
+    private func requestSleepTimerExpiry(mode: SleepTimerMode) {
+        if snapshot.isRecording {
+            sleepTimerState = .expiryDeferred(mode: mode)
+        } else {
+            expireSleepTimer(mode: mode)
+        }
+    }
+
+    private func expireSleepTimer(mode: SleepTimerMode) {
+        if snapshot.status.isPlaybackActive { pause() }
+        cancelSleepTimer()
+        reportConfirmation(mode == .endOfChapter ? "Paused at the end of the chapter." : "Sleep timer paused playback.")
+    }
+
+    private func endOfChapterTarget(chapterId: String? = nil) -> (chapterId: String, endMs: Int)? {
+        let chapters = selectedItem.mediaChapters.sorted { $0.startMs < $1.startMs }
+        guard chapters.count > 1 else { return nil }
+        let currentMs = snapshot.currentMediaTimeMs ?? 0
+        let index: Int
+        if let chapterId, let exact = chapters.firstIndex(where: { $0.id == chapterId }) { index = exact }
+        else { index = chapters.lastIndex(where: { $0.startMs <= currentMs }) ?? 0 }
+        guard chapters.indices.contains(index + 1) else { return nil }
+        return (chapters[index].id, chapters[index + 1].startMs)
+    }
+
     func stopOnDeviceSpeechGeneration() {
         guard let client = speechPlaybackClient as? SupertonicSpeechPlaybackClient else {
             reportFailure("On-device voice generation is not active for this playback.")
@@ -2431,6 +2670,13 @@ final class Gate1AppModel: ObservableObject {
             guard try client.stopOnDeviceRenderingAndUseSystemSpeech() else {
                 reportFailure("There is no active Supertonic generation to stop.")
                 return
+            }
+            if let coordinator = preparedAudioCoordinator,
+               let signature = currentSupertonicRenderSignature {
+                let itemId = activeItemId
+                Task {
+                    try? await coordinator.stop(itemId: itemId, signature: signature)
+                }
             }
             if let engine {
                 snapshot = snapshotReflectingTextAudioPrewarmStatus(
@@ -2688,6 +2934,74 @@ final class Gate1AppModel: ObservableObject {
         screen = .home
     }
 
+    var visibleLibraryItems: [LibraryItemRow] {
+        let normalizedQuery = libraryQuery.query.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let filtered = libraryItems.filter { row in
+            let metadataMatch: Bool
+            if normalizedQuery.isEmpty {
+                metadataMatch = true
+            } else {
+                metadataMatch = [row.title, row.sourceTitle, row.author]
+                    .compactMap { $0 }
+                    .map { $0.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current) }
+                    .contains { $0.localizedStandardContains(normalizedQuery) }
+            }
+            let contentMatch = libraryQuery.contentType == .all || libraryContentType(for: row) == libraryQuery.contentType
+            let listeningMatch: Bool
+            switch libraryQuery.listeningState {
+            case .all: listeningMatch = true
+            case .unplayed: listeningMatch = row.continuationProgressPercent == nil || row.continuationProgressPercent == 0
+            case .inProgress: listeningMatch = (row.continuationProgressPercent ?? 0) > 0 && (row.continuationProgressPercent ?? 0) < 100
+            case .completed: listeningMatch = (row.continuationProgressPercent ?? 0) >= 100
+            }
+            let offlineMatch = libraryQuery.offlineState == .all || row.offlineState == libraryQuery.offlineState
+            return metadataMatch && contentMatch && listeningMatch && offlineMatch
+        }
+        return filtered.sorted { lhs, rhs in
+            let ordered: ComparisonResult
+            switch libraryQuery.sort {
+            case .recentlyAdded:
+                ordered = compareDates(lhs.addedAt, rhs.addedAt)
+            case .recentlyListened:
+                ordered = compareDates(lhs.lastListenedAt, rhs.lastListenedAt)
+            case .title:
+                ordered = lhs.title.localizedStandardCompare(rhs.title)
+            case .progress:
+                let left = lhs.continuationProgressPercent ?? 0
+                let right = rhs.continuationProgressPercent ?? 0
+                ordered = left == right ? .orderedSame : (left > right ? .orderedAscending : .orderedDescending)
+            }
+            return ordered == .orderedSame ? lhs.id < rhs.id : ordered == .orderedAscending
+        }
+    }
+
+    func libraryQueryChanged() {
+        let persisted = libraryQuery.persistedSelection
+        UserDefaults.standard.set(persisted.contentType.rawValue, forKey: "libraryContentTypeFilter")
+        UserDefaults.standard.set(persisted.listeningState.rawValue, forKey: "libraryListeningStateFilter")
+        UserDefaults.standard.set(persisted.offlineState.rawValue, forKey: "libraryOfflineStateFilter")
+        UserDefaults.standard.set(persisted.sort.rawValue, forKey: "librarySort")
+    }
+
+    private func libraryContentType(for row: LibraryItemRow) -> LibraryContentTypeFilter {
+        switch row.mediaType.lowercased() {
+        case "pdf": return .pdf
+        case "epub": return .epub
+        case "article", TargetType.browserOwnedMedia.rawValue: return .article
+        case "podcast", TargetType.transcriptBackedMedia.rawValue: return .podcast
+        case "audiobook": return .audiobook
+        default: return .text
+        }
+    }
+
+    private func compareDates(_ lhs: Date?, _ rhs: Date?) -> ComparisonResult {
+        let left = lhs ?? .distantPast
+        let right = rhs ?? .distantPast
+        if left == right { return .orderedSame }
+        return left > right ? .orderedAscending : .orderedDescending
+    }
+
     func openSettings() {
         screen = .settings
     }
@@ -2800,6 +3114,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func startNewSession(id: String) {
+        cancelSleepTimer()
         stopSpeechPreviews()
         streamingSpeechQueue.stopAndClear()
         if hasActiveSession, let engine {
@@ -2844,6 +3159,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func resumeSession(_ session: Session) {
+        cancelSleepTimer()
         guard !requireTermsDecisionBeforePlayback(.resumeSession(session.id)) else { return }
         stopSpeechPreviews()
         do {
@@ -2887,6 +3203,9 @@ final class Gate1AppModel: ObservableObject {
         do {
             let store = try requireStore()
             let item = try store.loadItem(id: id)
+            if id == Self.guidedOnboardingItemId {
+                UserDefaults.standard.set(true, forKey: Self.guidedOnboardingTombstoneKey)
+            }
             if snapshot.itemId == id {
                 _ = try? engine?.stopPlayback()
             }
@@ -3048,11 +3367,7 @@ final class Gate1AppModel: ObservableObject {
         synchronizeStreamingSpeechAnchorIfNeeded()
         run { engine in
             let unit = skipUnitForCurrentTarget()
-            if ttsMode == "kokoro" {
-                snapshot = try engine.skipForward(unit: unit, minimumDistance: kokoroSkipForwardMinimumDistance)
-            } else {
-                snapshot = try engine.skipForward(unit: unit)
-            }
+            snapshot = try engine.skipForward(unit: unit)
             streamingSpeechQueue.relinquishToCanonicalPlayback()
             refreshSelectedItem()
             reportSuccess("Skipped forward.")
@@ -4202,9 +4517,7 @@ final class Gate1AppModel: ObservableObject {
         UserDefaults.standard.set(speechVoiceIdentifier, forKey: "speechVoiceIdentifier")
         UserDefaults.standard.set(ttsVoiceSelection.rawValue, forKey: "ttsVoiceSelection")
         UserDefaults.standard.set(ttsMode, forKey: "ttsMode")
-        UserDefaults.standard.set(kokoroVoiceName, forKey: "kokoroVoiceName")
         UserDefaults.standard.set(piperVoiceId, forKey: "piperVoiceId")
-        UserDefaults.standard.set(kokoroChunkCharacters, forKey: "kokoroChunkCharacters")
         UserDefaults.standard.set(renderedSpeechCacheLimitMB, forKey: "renderedSpeechCacheLimitMB")
         let keychainStatus = KeychainStore.save(providerAPIKey, service: "SpokenMargins", account: "OpenAICompatibleAPIKey")
         guard keychainStatus == errSecSuccess else {
@@ -4226,12 +4539,9 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["speechVoice"] = speechVoiceDescription
         diagnostics["ttsVoiceSelection"] = ttsVoiceSelection.rawValue
         diagnostics["ttsMode"] = ttsMode
-        diagnostics["kokoroVoice"] = kokoroVoiceName
         diagnostics["piperVoice"] = piperVoiceId.isEmpty ? "none" : piperVoiceId
         diagnostics["piperStatus"] = piperStatus
-        diagnostics["kokoroCacheLimitMB"] = String(kokoroCacheLimitMB)
         diagnostics["renderedSpeechCacheLimitMB"] = String(renderedSpeechCacheLimitMB)
-        diagnostics["kokoroChunkCharacters"] = String(format: "%.0f", kokoroChunkCharacters)
         diagnostics["apiKeyConfigured"] = providerAPIKey.isEmpty ? "false" : "true"
         if rebuildEngineForCurrentSettings() {
             screen = .settings
@@ -4245,21 +4555,16 @@ final class Gate1AppModel: ObservableObject {
         UserDefaults.standard.set(speechVoiceIdentifier, forKey: "speechVoiceIdentifier")
         UserDefaults.standard.set(ttsVoiceSelection.rawValue, forKey: "ttsVoiceSelection")
         UserDefaults.standard.set(ttsMode, forKey: "ttsMode")
-        UserDefaults.standard.set(kokoroVoiceName, forKey: "kokoroVoiceName")
         UserDefaults.standard.set(piperVoiceId, forKey: "piperVoiceId")
-        UserDefaults.standard.set(kokoroChunkCharacters, forKey: "kokoroChunkCharacters")
         UserDefaults.standard.set(renderedSpeechCacheLimitMB, forKey: "renderedSpeechCacheLimitMB")
         cancelTextAudioPrewarmTasks()
         diagnostics["speechRate"] = String(format: "%.2f", speechRate)
         diagnostics["speechVoice"] = speechVoiceDescription
         diagnostics["ttsVoiceSelection"] = ttsVoiceSelection.rawValue
         diagnostics["ttsMode"] = ttsMode
-        diagnostics["kokoroVoice"] = kokoroVoiceName
         diagnostics["piperVoice"] = piperVoiceId.isEmpty ? "none" : piperVoiceId
         diagnostics["piperStatus"] = piperStatus
-        diagnostics["kokoroCacheLimitMB"] = String(kokoroCacheLimitMB)
         diagnostics["renderedSpeechCacheLimitMB"] = String(renderedSpeechCacheLimitMB)
-        diagnostics["kokoroChunkCharacters"] = String(format: "%.0f", kokoroChunkCharacters)
         diagnostics["speechTranscriptionEngine"] = systemSpeechTranscriptionEngineDescription()
     }
 
@@ -4388,35 +4693,6 @@ final class Gate1AppModel: ObservableObject {
         previewSpeech(label: "assistive technology settings", mode: .assistiveTechnology)
     }
 
-    func refreshKokoroAssetStatus() {
-        #if KOKORO_DEVICE && !targetEnvironment(simulator)
-        do {
-            let applicationSupportURL = try applicationSupportDirectory()
-            let assets = KokoroNarrationRenderer.installedAssets(applicationSupportDirectory: applicationSupportURL)
-            let hasModel = assets.modelURL != nil
-            let hasVoices = assets.voicesURL != nil
-            diagnostics["kokoroModel"] = hasModel ? "installed" : "missing"
-            diagnostics["kokoroVoices"] = hasVoices ? "installed" : "missing"
-            if hasModel && hasVoices {
-                kokoroStatus = "Assets installed."
-            } else if hasModel {
-                kokoroStatus = "Model installed; voices.npz missing."
-            } else if hasVoices {
-                kokoroStatus = "Voices installed; kokoro-v1_0.safetensors missing."
-            } else {
-                kokoroStatus = "Import kokoro-v1_0.safetensors and voices.npz."
-            }
-            diagnostics["kokoroStatus"] = kokoroStatus
-        } catch {
-            kokoroStatus = "Asset check failed: \(error.localizedDescription)"
-            diagnostics["kokoroStatus"] = kokoroStatus
-        }
-        #else
-        kokoroStatus = "Kokoro renderer is not linked in this build."
-        diagnostics["kokoroStatus"] = kokoroStatus
-        #endif
-    }
-
     func refreshPiperVoiceStatus() {
         do {
             piperVoiceOptions = try discoverPiperVoiceOptions()
@@ -4444,219 +4720,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func previewKokoroVoice() {
-        guard !isRenderingKokoroPreview else { return }
-        saveSpeechSettings()
-        isRenderingKokoroPreview = true
-        kokoroStatus = "Preparing Kokoro preview..."
-        diagnostics["kokoroStatus"] = kokoroStatus
-
-        let voiceName = kokoroVoiceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "am_echo" : kokoroVoiceName
-        let cacheLimitBytes = kokoroCacheLimitBytes
-        let kokoroSpeed = Float(speechRate / 0.5)
-        let itemId = selectedItem.id.isEmpty ? activeItemId : selectedItem.id
-        let sourceText = "Spoken Margins Kokoro preview. This is a short on-device voice test."
-
-        Task.detached { [voiceName, cacheLimitBytes, kokoroSpeed, itemId, sourceText] in
-            #if KOKORO_DEVICE && !targetEnvironment(simulator) && canImport(AVFoundation)
-            do {
-                guard KokoroNarrationRenderer.isRuntimeSupported else {
-                    throw KokoroNarrationError.unavailableOnSimulator
-                }
-                let applicationSupportURL = try FileManager.default.url(
-                    for: .applicationSupportDirectory,
-                    in: .userDomainMask,
-                    appropriateFor: nil,
-                    create: true
-                )
-                let assets = KokoroNarrationRenderer.installedAssets(applicationSupportDirectory: applicationSupportURL)
-                guard let modelURL = assets.modelURL else {
-                    throw KokoroNarrationError.missingModel
-                }
-                guard let voicesURL = assets.voicesURL else {
-                    throw KokoroNarrationError.missingVoices
-                }
-                await MainActor.run {
-                    self.kokoroStatus = "Kokoro assets found. Rendering short preview..."
-                    self.diagnostics["kokoroStatus"] = self.kokoroStatus
-                }
-                let cachesURL = try FileManager.default.url(
-                    for: .cachesDirectory,
-                    in: .userDomainMask,
-                    appropriateFor: nil,
-                    create: true
-                )
-                let outputDirectory = cachesURL.appending(path: "KokoroPreview", directoryHint: .isDirectory)
-                let configured = KokoroNarrationRenderer.configureMemoryForDiagnostics(cacheLimitBytes: cacheLimitBytes)
-                NSLog("SpokenMargins Kokoro preview memory configured %@", configured.description)
-                let renderer = try KokoroNarrationRenderer(
-                    modelURL: modelURL,
-                    voicesURL: voicesURL,
-                    outputDirectory: outputDirectory
-                )
-                let before = KokoroNarrationRenderer.memorySnapshot()
-                let result = try renderer.render(
-                    text: sourceText,
-                    itemId: itemId,
-                    chunkId: "preview",
-                    voiceName: voiceName,
-                    speed: kokoroSpeed
-                )
-                let after = KokoroNarrationRenderer.memorySnapshot()
-                let final = KokoroNarrationRenderer.clearMemoryCache()
-                NSLog("SpokenMargins Kokoro preview memory before=%@ after=%@ final=%@", before.description, after.description, final.description)
-                await MainActor.run {
-                    do {
-                        self.kokoroStatus = "Kokoro rendered. Starting playback..."
-                        self.diagnostics["kokoroStatus"] = self.kokoroStatus
-                        self.diagnostics["kokoroMemory.preview.configured"] = configured.description
-                        self.diagnostics["kokoroMemory.preview.before"] = before.description
-                        self.diagnostics["kokoroMemory.preview.after"] = after.description
-                        self.diagnostics["kokoroMemory.preview.final"] = final.description
-                        try self.playKokoroPreview(url: result.audioURL)
-                        self.kokoroStatus = "Rendered \(String(format: "%.1f", result.duration))s with \(voiceName)"
-                        self.diagnostics["kokoroStatus"] = self.kokoroStatus
-                        self.diagnostics["lastSpeechPreview"] = "Kokoro \(voiceName)"
-                        self.reportSuccess("Previewing Kokoro \(voiceName).")
-                    } catch {
-                        self.kokoroStatus = "Playback failed: \(error.localizedDescription)"
-                        self.diagnostics["kokoroStatus"] = self.kokoroStatus
-                        self.reportFailure(error, context: "Kokoro preview playback failed")
-                    }
-                    self.isRenderingKokoroPreview = false
-                }
-            } catch {
-                await MainActor.run {
-                    self.kokoroStatus = error.localizedDescription
-                    self.diagnostics["kokoroStatus"] = self.kokoroStatus
-                    self.isRenderingKokoroPreview = false
-                    self.reportFailure(error, context: "Kokoro preview failed")
-                }
-            }
-            #else
-            await MainActor.run {
-                self.kokoroStatus = "Kokoro renderer is not linked in this build."
-                self.diagnostics["kokoroStatus"] = self.kokoroStatus
-                self.isRenderingKokoroPreview = false
-                self.reportFailure("Kokoro renderer is not linked in this build.")
-            }
-            #endif
-        }
-    }
-
-    func runKokoroMemoryCheck() {
-        guard !isRunningKokoroMemoryCheck else { return }
-        saveSpeechSettings()
-        isRunningKokoroMemoryCheck = true
-        kokoroStatus = "Starting Kokoro memory check..."
-        diagnostics["kokoroStatus"] = kokoroStatus
-
-        let voiceName = kokoroVoiceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "am_echo" : kokoroVoiceName
-        let cacheLimitBytes = kokoroCacheLimitBytes
-        let itemId = selectedItem.id.isEmpty ? activeItemId : selectedItem.id
-        let sourceText = "Spoken Margins Kokoro memory check. This renders twice without playback."
-
-        Task.detached { [voiceName, cacheLimitBytes, itemId, sourceText] in
-            #if KOKORO_DEVICE && !targetEnvironment(simulator)
-            do {
-                guard KokoroNarrationRenderer.isRuntimeSupported else {
-                    throw KokoroNarrationError.unavailableOnSimulator
-                }
-                let applicationSupportURL = try FileManager.default.url(
-                    for: .applicationSupportDirectory,
-                    in: .userDomainMask,
-                    appropriateFor: nil,
-                    create: true
-                )
-                let assets = KokoroNarrationRenderer.installedAssets(applicationSupportDirectory: applicationSupportURL)
-                guard let modelURL = assets.modelURL else {
-                    throw KokoroNarrationError.missingModel
-                }
-                guard let voicesURL = assets.voicesURL else {
-                    throw KokoroNarrationError.missingVoices
-                }
-                let cachesURL = try FileManager.default.url(
-                    for: .cachesDirectory,
-                    in: .userDomainMask,
-                    appropriateFor: nil,
-                    create: true
-                )
-                let outputDirectory = cachesURL.appending(path: "KokoroMemoryCheck", directoryHint: .isDirectory)
-                let configured = KokoroNarrationRenderer.configureMemoryForDiagnostics(cacheLimitBytes: cacheLimitBytes)
-                NSLog("SpokenMargins Kokoro memory check configured %@", configured.description)
-                await MainActor.run {
-                    self.kokoroStatus = "Memory check configured: \(configured)"
-                    self.diagnostics["kokoroMemory.configured"] = configured.description
-                    self.diagnostics["kokoroStatus"] = self.kokoroStatus
-                }
-
-                let renderer = try KokoroNarrationRenderer(
-                    modelURL: modelURL,
-                    voicesURL: voicesURL,
-                    outputDirectory: outputDirectory
-                )
-
-                await MainActor.run {
-                    self.kokoroStatus = "Memory check rendering pass 1 of 2..."
-                    self.diagnostics["kokoroStatus"] = self.kokoroStatus
-                }
-                let first = try renderer.render(
-                    text: sourceText,
-                    itemId: itemId,
-                    chunkId: "memory-check-1",
-                    voiceName: voiceName,
-                    speed: 1.0
-                )
-                let afterFirst = KokoroNarrationRenderer.memorySnapshot()
-                await MainActor.run {
-                    self.kokoroStatus = "Pass 1 rendered \(String(format: "%.1f", first.duration))s. Clearing cache..."
-                    self.diagnostics["kokoroMemory.afterFirst"] = afterFirst.description
-                    self.diagnostics["kokoroStatus"] = self.kokoroStatus
-                }
-
-                let afterClear = KokoroNarrationRenderer.clearMemoryCache()
-                await MainActor.run {
-                    self.kokoroStatus = "Memory check rendering pass 2 of 2..."
-                    self.diagnostics["kokoroMemory.afterClear"] = afterClear.description
-                    self.diagnostics["kokoroStatus"] = self.kokoroStatus
-                }
-                let second = try renderer.render(
-                    text: sourceText,
-                    itemId: itemId,
-                    chunkId: "memory-check-2",
-                    voiceName: voiceName,
-                    speed: 1.0
-                )
-                let afterSecond = KokoroNarrationRenderer.memorySnapshot()
-                let final = KokoroNarrationRenderer.clearMemoryCache()
-
-                await MainActor.run {
-                    self.kokoroStatus = "Memory check passed. Passes: \(String(format: "%.1f", first.duration))s, \(String(format: "%.1f", second.duration))s. Final \(final)"
-                    self.diagnostics["kokoroMemory.afterSecond"] = afterSecond.description
-                    self.diagnostics["kokoroMemory.final"] = final.description
-                    self.diagnostics["kokoroStatus"] = self.kokoroStatus
-                    self.isRunningKokoroMemoryCheck = false
-                    self.reportSuccess("Kokoro memory check completed.")
-                }
-            } catch {
-                await MainActor.run {
-                    self.kokoroStatus = "Memory check failed: \(error.localizedDescription)"
-                    self.diagnostics["kokoroStatus"] = self.kokoroStatus
-                    self.isRunningKokoroMemoryCheck = false
-                    self.reportFailure(error, context: "Kokoro memory check failed")
-                }
-            }
-            #else
-            await MainActor.run {
-                self.kokoroStatus = "Kokoro renderer is not linked in this build."
-                self.diagnostics["kokoroStatus"] = self.kokoroStatus
-                self.isRunningKokoroMemoryCheck = false
-                self.reportFailure("Kokoro renderer is not linked in this build.")
-            }
-            #endif
-        }
-    }
-
     func runtimeProfileChanged() {
         diagnostics["runtimeProfile"] = selectedProfileId
         if rebuildEngineForCurrentSettings() {
@@ -4676,12 +4739,9 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["speechRate"] = String(format: "%.2f", speechRate)
         diagnostics["speechVoice"] = speechVoiceDescription
         diagnostics["ttsMode"] = ttsMode
-        diagnostics["kokoroVoice"] = kokoroVoiceName
         diagnostics["piperVoice"] = piperVoiceId.isEmpty ? "none" : piperVoiceId
         diagnostics["piperStatus"] = piperStatus
-        diagnostics["kokoroCacheLimitMB"] = String(kokoroCacheLimitMB)
         diagnostics["renderedSpeechCacheLimitMB"] = String(renderedSpeechCacheLimitMB)
-        diagnostics["kokoroChunkCharacters"] = String(format: "%.0f", kokoroChunkCharacters)
     }
 
     func probeProvider() {
@@ -4807,9 +4867,6 @@ final class Gate1AppModel: ObservableObject {
     var speechRateDescription: String {
         if ttsVoiceSelection.supertonicVoice != nil {
             return String(format: "Supertonic %.2fx", speechPlaybackRateMultiplier)
-        }
-        if ttsMode == "kokoro", isKokoroDeviceBuild {
-            return String(format: "Kokoro %.2fx", max(0.65, min(1.75, speechRate / 0.5)))
         }
         return String(format: "System %.2fx", speechPlaybackRateMultiplier)
     }
@@ -4963,6 +5020,31 @@ final class Gate1AppModel: ObservableObject {
         onDeviceSpeechGenerationStatus == RenderedSpeechGenerationState.rendering.rawValue
     }
 
+    var canRetryOnDeviceSpeechGeneration: Bool {
+        onDeviceSpeechGenerationStatus == RenderedSpeechGenerationState.stopped.rawValue
+            || preparedTextAudioStatus == "failed"
+    }
+
+    func retryOnDeviceSpeechGeneration() {
+        guard let coordinator = preparedAudioCoordinator,
+              let signature = currentSupertonicRenderSignature else {
+            reportFailure("Prepared audio retry is unavailable until a Supertonic voice is selected.")
+            return
+        }
+        let itemId = activeItemId
+        Task { [weak self] in
+            do {
+                try await coordinator.retry(itemId: itemId, signature: signature)
+                self?.onDeviceSpeechGenerationStatus = RenderedSpeechGenerationState.inactive.rawValue
+                self?.preparedTextAudioStatus = "preparing"
+                self?.diagnostics["onDeviceSpeechGeneration"] = "retry_queued"
+                self?.reportConfirmation("Prepared audio retry is queued for the next safe playback start.")
+            } catch {
+                self?.reportFailure(error, context: "Prepared audio retry failed")
+            }
+        }
+    }
+
     var onDeviceSpeechGenerationStatusDescription: String {
         switch onDeviceSpeechGenerationStatus {
         case RenderedSpeechGenerationState.rendering.rawValue:
@@ -5017,30 +5099,6 @@ final class Gate1AppModel: ObservableObject {
 
     var sourceTranscriptStatusDescription: String {
         humanReadableStatus(sourceTranscriptStatus)
-    }
-
-    var isKokoroDeviceBuild: Bool {
-        #if KOKORO_DEVICE && !targetEnvironment(simulator)
-        true
-        #else
-        false
-        #endif
-    }
-
-    var kokoroCacheLimitBytes: Int {
-        kokoroCacheLimitMB * 1024 * 1024
-    }
-
-    var kokoroCacheLimitMB: Int {
-        256
-    }
-
-    var kokoroChunkCharacterLimit: Int {
-        Int(max(80, min(140, kokoroChunkCharacters)).rounded())
-    }
-
-    var kokoroSkipForwardMinimumDistance: Int {
-        max(220, kokoroChunkCharacterLimit * 2)
     }
 
     private func humanReadableStatus(_ status: String) -> String {
@@ -5513,7 +5571,6 @@ final class Gate1AppModel: ObservableObject {
     private func previewSpeech(label: String, mode: AppSpeechPreviewMode) {
         #if canImport(AVFoundation)
         do {
-            kokoroPreviewPlayer?.stop()
             if speechPreviewSynthesizer.isSpeaking {
                 speechPreviewSynthesizer.stopSpeaking(at: .immediate)
             }
@@ -5551,7 +5608,6 @@ final class Gate1AppModel: ObservableObject {
         if speechPreviewSynthesizer.isSpeaking {
             speechPreviewSynthesizer.stopSpeaking(at: .immediate)
         }
-        kokoroPreviewPlayer?.stop()
         supertonicPreviewPlayer?.stop()
     }
 
@@ -5572,18 +5628,6 @@ final class Gate1AppModel: ObservableObject {
         supertonicPreviewURL = url
     }
 
-    private func playKokoroPreview(url: URL) throws {
-        if speechPreviewSynthesizer.isSpeaking {
-            speechPreviewSynthesizer.stopSpeaking(at: .immediate)
-        }
-        #if os(iOS)
-        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
-        try AVAudioSession.sharedInstance().setActive(true)
-        #endif
-        kokoroPreviewPlayer = try AVAudioPlayer(contentsOf: url)
-        kokoroPreviewPlayer?.prepareToPlay()
-        kokoroPreviewPlayer?.play()
-    }
     #else
     private func stopSpeechPreviews() {}
     #endif
@@ -5595,10 +5639,6 @@ final class Gate1AppModel: ObservableObject {
             appropriateFor: nil,
             create: true
         )
-    }
-
-    private func kokoroAssetsDirectory() throws -> URL {
-        try applicationSupportDirectory().appending(path: "Kokoro", directoryHint: .isDirectory)
     }
 
     private func piperAssetsDirectory() throws -> URL {
@@ -5779,7 +5819,6 @@ final class Gate1AppModel: ObservableObject {
     private func makeTextAudioPreparationClient() throws -> TextAudioPreparationClient? {
         guard audioPlaybackClientOverride == nil else { return nil }
         guard ttsVoiceSelection == .system else { return nil }
-        guard ttsMode != "kokoro" else { return nil }
         guard ttsMode != "piper" else { return nil }
         #if canImport(AVFoundation)
         diagnostics["sessionTextAudio"] = "System generated audio"
@@ -5799,7 +5838,7 @@ final class Gate1AppModel: ObservableObject {
         // devices. Only an explicitly injected preparation job may pre-render in
         // the background; production playback must stay on the immediate path.
         guard ttsVoiceSelection == .system else { return }
-        guard let prewarmHandler = preparedTextAudioPrewarmHandler, ttsMode != "kokoro" else { return }
+        guard let prewarmHandler = preparedTextAudioPrewarmHandler else { return }
         guard ttsMode != "piper" else { return }
         guard textAudioPrewarmTasks[itemId] == nil else { return }
         do {
@@ -6025,7 +6064,6 @@ final class Gate1AppModel: ObservableObject {
     private func shouldGatePreparedTextPlayback(for item: Item) -> Bool {
         guard (audioPlaybackClientOverride == nil || forcePreparedTextGate),
               ttsVoiceSelection == .system,
-              ttsMode != "kokoro",
               !liveSpeechFallbackItemIds.contains(item.id),
               shouldPrewarmTextAudio(for: item) else {
             return false
@@ -6076,6 +6114,20 @@ final class Gate1AppModel: ObservableObject {
         if let voice = ttsVoiceSelection.supertonicVoice {
             let renderer = try makeSupertonicRenderer()
             let supportDirectory = try applicationSupportDirectory()
+            guard let store else { throw SessionKitError.persistenceFailed("prepared_audio_store_unavailable") }
+            guard let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else {
+                throw SupertonicNarrationError.missingAsset("Supertonic")
+            }
+            let signature = try SupertonicRenderIdentity.make(
+                assets: SupertonicAssetLocation(rootURL: resourceRoot),
+                voice: voice
+            )
+            let coordinator = PreparedAudioCoordinator(
+                repository: store,
+                rootDirectory: supportDirectory.appending(path: "PreparedAudio", directoryHint: .isDirectory)
+            )
+            preparedAudioCoordinator = coordinator
+            currentSupertonicRenderSignature = signature
             let diskCache: RenderedSpeechDiskCache
             if let renderedSpeechDiskCache {
                 renderedSpeechDiskCache.setLimitBytes(renderedSpeechCacheLimitMB * 1024 * 1024)
@@ -6117,6 +6169,31 @@ final class Gate1AppModel: ObservableObject {
                         self?.updateOnDeviceSpeechGenerationProgress(progress)
                     }
                 },
+                onPreparationPlan: { itemId, sourceText, plan in
+                    Task {
+                        _ = try? await coordinator.begin(
+                            itemId: itemId,
+                            sourceText: sourceText,
+                            signature: signature,
+                            plan: plan
+                        )
+                    }
+                },
+                onPreparedChunk: { itemId, sourceText, plan, audioURL, durationMs in
+                    Task {
+                        try? await coordinator.commit(
+                            itemId: itemId,
+                            signature: signature,
+                            plan: plan,
+                            sourceText: sourceText,
+                            audioURL: audioURL,
+                            durationMs: durationMs
+                        )
+                    }
+                },
+                preparedChunkLookup: { itemId, plan in
+                    try? await coordinator.committedChunk(itemId: itemId, signature: signature, plan: plan)
+                },
                 onPreparedAudio: { [weak self] itemId, prepared in
                     Task { @MainActor [weak self] in
                         guard let self else { return }
@@ -6134,8 +6211,11 @@ final class Gate1AppModel: ObservableObject {
                             itemId: itemId,
                             preparedStatus: "ready",
                             diagnosticStatus: "supertonic_full_ready",
-                            replaceActivePlayback: true
+                            replaceActivePlayback: false
                         )
+                        if attached {
+                            try? await coordinator.complete(itemId: itemId, signature: signature, prepared: canonical)
+                        }
                         if attached, let renderer = self.supertonicRenderer {
                             Task { [weak self] in
                                 await renderer.unload(removingGeneratedAudio: false)
@@ -6160,27 +6240,6 @@ final class Gate1AppModel: ObservableObject {
                 }
             )
         }
-        #if KOKORO_DEVICE && !targetEnvironment(simulator) && canImport(AVFoundation)
-        if ttsMode == "kokoro" {
-            let supportDirectory = try applicationSupportDirectory()
-            let cachesDirectory = try FileManager.default.url(
-                for: .cachesDirectory,
-                in: .userDomainMask,
-                appropriateFor: nil,
-                create: true
-            )
-            diagnostics["sessionTTS"] = "Kokoro bounded pre-render"
-            let speech = KokoroSpeechPlaybackClient(
-                applicationSupportDirectory: supportDirectory,
-                outputDirectory: cachesDirectory.appending(path: "KokoroPlayback", directoryHint: .isDirectory),
-                voiceName: kokoroVoiceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "am_echo" : kokoroVoiceName,
-                speed: Float(speechRate / 0.5),
-                cacheLimitBytes: kokoroCacheLimitBytes,
-                maxCharacters: kokoroChunkCharacterLimit
-            )
-            return speech
-        }
-        #endif
         diagnostics["sessionTTS"] = "System speech"
         return SystemSpeechPlaybackClient(
             voiceIdentifier: selectedVoice.isEmpty ? nil : selectedVoice,
@@ -6366,14 +6425,32 @@ final class Gate1AppModel: ObservableObject {
 
     private func loadLibraryRows(store: SQLiteSessionStore) throws -> [LibraryItemRow] {
         try store.listItems().map { item in
-            let continuation = Self.preferredContinuationSession(in: try store.loadSessions(itemId: item.id))
+            let sessions = try store.loadSessions(itemId: item.id)
+            let continuation = Self.preferredContinuationSession(in: sessions)
+            let manifests = try store.loadPreparedAudioManifests(itemId: item.id)
+            let offlineState: LibraryOfflineStateFilter
+            if let state = manifests.last?.state {
+                switch state {
+                case .preparing, .pausedForThermal: offlineState = .preparing
+                case .readyOffline: offlineState = .readyOffline
+                case .needsRepreparation, .failed, .stopped: offlineState = .needsRepreparation
+                case .notPrepared: offlineState = .onlineOnly
+                }
+            } else if item.media?.sourceType == .nativeMediaFile { offlineState = .readyOffline }
+            else { offlineState = .onlineOnly }
             return LibraryItemRow(
                 id: item.id,
                 title: item.title,
                 status: libraryStatusLabel(for: item),
                 canDelete: true,
                 hasContinuationSession: continuation != nil,
-                continuationProgressPercent: continuation?.completionPercent
+                continuationProgressPercent: continuation?.completionPercent,
+                mediaType: item.mediaType,
+                sourceTitle: item.sourceTitle ?? item.externalReference,
+                author: item.author,
+                offlineState: offlineState,
+                addedAt: item.createdAt,
+                lastListenedAt: sessions.compactMap { $0.updatedAt ?? $0.createdAt }.max()
             )
         }
     }
@@ -8180,6 +8257,7 @@ final class Gate1AppModel: ObservableObject {
         guard let store, !activeItemId.isEmpty else { return }
         if let detail = try? loadItemDetail(id: activeItemId, store: store) {
             selectedItem = detail
+            offerFollowSuggestionIfEligible(itemId: activeItemId, store: store)
         }
     }
 
@@ -8336,10 +8414,15 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func configurePodcastDownloads(store: SQLiteSessionStore) throws {
+        try configureOfflineServices(store: store)
         podcastDownloadCoordinator?.shutdown()
         let limit = PodcastCacheLimitGB(rawValue: podcastCacheLimitGB) ?? .defaultValue
         let coordinator = try PodcastDownloadCoordinator(
             store: store,
+            ledger: offlineStorageLedger ?? OfflineStorageLedger(
+                repository: store,
+                rootDirectory: try applicationSupportDirectory()
+            ),
             applicationSupportDirectory: try applicationSupportDirectory(),
             cacheLimit: limit,
             monitorsNetwork: !Self.isRunningUnitTests,
@@ -8356,6 +8439,551 @@ final class Gate1AppModel: ObservableObject {
         podcastDownloadCoordinator = coordinator
         podcastDownloadRecords = coordinator.recordsByItemId
         diagnostics["podcastCacheLimitGB"] = "\(limit.rawValue)"
+    }
+
+    private func enqueueAutomaticAudioPreparationJobs() async {
+        guard automaticAudioPreparationPolicy == .whileCharging,
+              hasAcceptedCurrentTerms,
+              let voice = ttsVoiceSelection.supertonicVoice else { return }
+        do {
+            let store = try requireStore()
+            let support = try applicationSupportDirectory()
+            guard let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else { return }
+            let signature = try SupertonicRenderIdentity.make(
+                assets: SupertonicAssetLocation(rootURL: resourceRoot),
+                voice: voice
+            )
+            let coordinator = preparedAudioCoordinator ?? PreparedAudioCoordinator(
+                repository: store,
+                rootDirectory: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
+            )
+            preparedAudioCoordinator = coordinator
+            currentSupertonicRenderSignature = signature
+            for row in libraryItems {
+                guard let item = try? store.loadItem(id: row.id),
+                      let text = item.text,
+                      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                let plan = Self.preparedChunkPlan(for: text)
+                guard !plan.isEmpty else { continue }
+                let manifest = try await coordinator.begin(
+                    itemId: item.id,
+                    sourceText: text,
+                    signature: signature,
+                    plan: plan
+                )
+                guard manifest.state != .readyOffline else { continue }
+                var job = (try store.loadAudioPreparationJobs()).first(where: { $0.manifestId == manifest.id })
+                    ?? AudioPreparationJob(id: "job-\(manifest.id)", itemId: item.id, manifestId: manifest.id, policy: .whileCharging)
+                job.policy = .whileCharging
+                job.isCancelled = false
+                try store.saveAudioPreparationJob(job)
+            }
+            diagnostics["automaticAudioPreparationQueue"] = "queued"
+        } catch {
+            diagnostics["automaticAudioPreparationQueue"] = "failed:\(error.localizedDescription)"
+        }
+    }
+
+    private func performBackgroundAudioPreparationPass() async -> Bool {
+        guard automaticAudioPreparationPolicy == .whileCharging,
+              !ProcessInfo.processInfo.isLowPowerModeEnabled,
+              ProcessInfo.processInfo.thermalState != .serious,
+              ProcessInfo.processInfo.thermalState != .critical,
+              hasAcceptedCurrentTerms,
+              let voice = ttsVoiceSelection.supertonicVoice else { return false }
+        do {
+            try Task.checkCancellation()
+            let store = try requireStore()
+            guard var job = try store.loadAudioPreparationJobs()
+                .filter({ !$0.isCancelled })
+                .sorted(by: { $0.requestedAt < $1.requestedAt })
+                .first,
+                  var manifest = try store.loadPreparedAudioManifest(id: job.manifestId),
+                  let item = try? store.loadItem(id: job.itemId),
+                  let sourceText = item.text else { return false }
+            let support = try applicationSupportDirectory()
+            guard let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else { return true }
+            let assets = SupertonicAssetLocation(rootURL: resourceRoot)
+            let signature = try SupertonicRenderIdentity.make(assets: assets, voice: voice)
+            guard manifest.signature == signature else {
+                manifest.state = .needsRepreparation
+                manifest.updatedAt = Date()
+                try store.savePreparedAudioManifest(manifest)
+                try store.deleteAudioPreparationJob(id: job.id)
+                return !(try store.loadAudioPreparationJobs()).isEmpty
+            }
+            let plan = Self.preparedChunkPlan(for: sourceText)
+            let completedIndexes = Set(manifest.chunks.map(\.index))
+            guard let next = plan.first(where: { !completedIndexes.contains($0.index) }) else {
+                try store.deleteAudioPreparationJob(id: job.id)
+                return !(try store.loadAudioPreparationJobs()).isEmpty
+            }
+            let ledger = offlineStorageLedger ?? OfflineStorageLedger(repository: store, rootDirectory: support)
+            offlineStorageLedger = ledger
+            let coordinator = preparedAudioCoordinator ?? PreparedAudioCoordinator(
+                repository: store,
+                rootDirectory: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
+            )
+            preparedAudioCoordinator = coordinator
+            let reservation = try await ledger.reserve(
+                ownerId: "prepared-chunk-\(manifest.id)-\(next.index)",
+                byteCount: 64 * 1_024 * 1_024
+            )
+            let renderer = try makeSupertonicRenderer()
+            renderer.setBackgroundInferencePacingEnabled(true)
+            defer { renderer.setBackgroundInferencePacingEnabled(false) }
+            let rendered: SupertonicNarrationResult
+            do {
+                try Task.checkCancellation()
+                rendered = try await renderer.render(
+                    text: next.text,
+                    voice: voice,
+                    language: "en",
+                    speed: 1,
+                    synthesisSteps: 8
+                )
+                try Task.checkCancellation()
+                try await coordinator.commit(
+                    itemId: item.id,
+                    signature: signature,
+                    plan: next,
+                    sourceText: sourceText,
+                    audioURL: rendered.audioURL,
+                    durationMs: Int((rendered.duration * 1_000).rounded())
+                )
+            } catch {
+                try? await ledger.release(reservationId: reservation.id)
+                throw error
+            }
+            guard let updated = try store.loadPreparedAudioManifest(id: manifest.id),
+                  let committed = updated.chunks.first(where: { $0.index == next.index }) else {
+                try? await ledger.release(reservationId: reservation.id)
+                return true
+            }
+            try await ledger.commit(
+                reservationId: reservation.id,
+                asset: OwnedOfflineAsset(
+                    id: committed.id,
+                    itemId: item.id,
+                    category: .preparedChunk,
+                    relativePath: "PreparedAudio/\(committed.relativePath)",
+                    byteCount: committed.byteCount,
+                    checksumSHA256: committed.checksumSHA256,
+                    isReproducible: true
+                )
+            )
+            job.nextChunkIndex = updated.chunks.count
+            try store.saveAudioPreparationJob(job)
+            if updated.chunks.count == plan.count {
+                try await finishBackgroundPreparedAudio(
+                    item: item,
+                    sourceText: sourceText,
+                    voice: voice,
+                    signature: signature,
+                    manifest: updated,
+                    plan: plan,
+                    store: store,
+                    ledger: ledger,
+                    coordinator: coordinator,
+                    support: support
+                )
+            }
+            let hasMore = !(try store.loadAudioPreparationJobs()).filter { !$0.isCancelled }.isEmpty
+            diagnostics["backgroundAudioPreparation"] = hasMore ? "chunk_committed" : "complete"
+            return hasMore
+        } catch is CancellationError {
+            diagnostics["backgroundAudioPreparation"] = "expired"
+            return true
+        } catch {
+            diagnostics["backgroundAudioPreparation"] = "paused:\(error.localizedDescription)"
+            return true
+        }
+    }
+
+    private func finishBackgroundPreparedAudio(
+        item: Item,
+        sourceText: String,
+        voice: SupertonicVoiceID,
+        signature: TTSRenderSignature,
+        manifest: PreparedAudioManifest,
+        plan: [PreparedChunkPlan],
+        store: SQLiteSessionStore,
+        ledger: OfflineStorageLedger,
+        coordinator: PreparedAudioCoordinator,
+        support: URL
+    ) async throws {
+        let byIndex = Dictionary(uniqueKeysWithValues: manifest.chunks.map { ($0.index, $0) })
+        let chunks = try plan.map { entry -> SupertonicPreparedChunk in
+            guard let committed = byIndex[entry.index] else {
+                throw SessionKitError.persistenceFailed("prepared_chunk_missing")
+            }
+            let slice = RenderedSpeechChunker.sourceSlice(
+                from: SpeechTextNormalizer.normalize(sourceText),
+                startOffset: entry.startOffset,
+                maxCharacters: 240
+            )
+            return SupertonicPreparedChunk(
+                startOffset: entry.startOffset,
+                sourceLength: entry.sourceLength,
+                text: entry.text,
+                boundary: slice.boundary,
+                audioURL: support.appending(path: "PreparedAudio/\(committed.relativePath)")
+            )
+        }
+        let assemblyReservation = try await ledger.reserve(
+            ownerId: "prepared-artifact-\(manifest.id)",
+            byteCount: max(1, manifest.chunks.reduce(0) { $0 + $1.byteCount })
+        )
+        do {
+            let prepared = try await SupertonicPreparedAudioAssembler.assemble(
+                itemId: item.id,
+                sourceText: sourceText,
+                projection: SpeechTextNormalizer.normalizeWithSourceOffsets(sourceText),
+                voice: voice,
+                chunks: chunks,
+                outputDirectory: support.appending(path: "PreparedSupertonicAudio", directoryHint: .isDirectory)
+            )
+            guard attachPreparedTextAudio(prepared, itemId: item.id, replaceActivePlayback: false),
+                  let rawURL = prepared.media.url,
+                  let url = URL(string: rawURL) else {
+                throw SessionKitError.persistenceFailed("prepared_audio_attach_failed")
+            }
+            try await coordinator.complete(itemId: item.id, signature: signature, prepared: prepared)
+            let values = try url.resourceValues(forKeys: [.fileSizeKey])
+            let relative = String(url.standardizedFileURL.path.dropFirst(support.standardizedFileURL.path.count + 1))
+            try await ledger.commit(
+                reservationId: assemblyReservation.id,
+                asset: OwnedOfflineAsset(
+                    id: "prepared-artifact-\(manifest.id)",
+                    itemId: item.id,
+                    category: .preparedAudio,
+                    relativePath: relative,
+                    byteCount: Int64(values.fileSize ?? 0),
+                    isReproducible: true
+                )
+            )
+            for var asset in try store.loadOwnedOfflineAssets() where asset.itemId == item.id && asset.category == .preparedChunk {
+                asset.isRedundant = true
+                try store.saveOwnedOfflineAsset(asset)
+            }
+        } catch {
+            try? await ledger.release(reservationId: assemblyReservation.id)
+            throw error
+        }
+    }
+
+    private nonisolated static func preparedChunkPlan(for sourceText: String) -> [PreparedChunkPlan] {
+        let normalized = SpeechTextNormalizer.normalize(sourceText)
+        var result: [PreparedChunkPlan] = []
+        var offset = 0
+        while offset < normalized.count {
+            let slice = RenderedSpeechChunker.sourceSlice(from: normalized, startOffset: offset, maxCharacters: 240)
+            guard !slice.text.isEmpty, slice.sourceLength > 0 else { break }
+            result.append(PreparedChunkPlan(
+                index: result.count,
+                startOffset: offset,
+                sourceLength: slice.sourceLength,
+                text: slice.text
+            ))
+            offset += slice.sourceLength
+        }
+        return result
+    }
+
+    private func configureOfflineServices(store: SQLiteSessionStore) throws {
+        let support = try applicationSupportDirectory()
+        let ledger = OfflineStorageLedger(repository: store, rootDirectory: support)
+        offlineStorageLedger = ledger
+        localSourceImporter = LocalSourceImporter(
+            repository: store,
+            ledger: ledger,
+            applicationSupportDirectory: support
+        )
+        followedSourceCoordinator = FollowedSourceCoordinator(repository: store)
+        guidedOnboardingCoordinator = GuidedOnboardingCoordinator(
+            directory: support.appending(path: "GuidedOnboarding", directoryHint: .isDirectory),
+            ledger: ledger
+        )
+        Task {
+            try? await ledger.adoptExistingAssets()
+            let ledgerBytes = try? await ledger.inventoryBytes()
+            let filesystemBytes = await ledger.directFilesystemBytes()
+            await MainActor.run { [weak self] in
+                self?.diagnostics["offlineLedgerBytes"] = "\(ledgerBytes ?? 0)"
+                self?.diagnostics["offlineFilesystemBytes"] = "\(filesystemBytes)"
+                self?.tryRefreshOfflineStorageUsage()
+            }
+            await self.refreshFollowedSources(force: false)
+            await self.refreshGuidedOnboardingContent()
+        }
+    }
+
+    private func refreshGuidedOnboardingContent() async {
+        guard !UserDefaults.standard.bool(forKey: Self.guidedOnboardingTombstoneKey),
+              let coordinator = guidedOnboardingCoordinator,
+              let store else { return }
+        do {
+            let payload = try await coordinator.refresh()
+            let priorChecksum = UserDefaults.standard.string(forKey: "guidedOnboardingAudioChecksum")
+            var item = (try? store.loadItem(id: Self.guidedOnboardingItemId)) ?? Self.makeBundledGuidedOnboardingItem()
+            item.title = payload.manifest.title
+            item.sourceTitle = "Spoken Margins"
+            item.media = ItemMedia(
+                sourceType: .nativeMediaFile,
+                url: payload.audioURL.absoluteString,
+                nativeMediaId: "guided-onboarding-audio"
+            )
+            try store.saveItem(item)
+            try store.saveAudioAsset(AudioAsset(
+                id: "guided-onboarding-audio",
+                itemId: item.id,
+                audioSourceType: .nativeMediaFile,
+                availability: .localPhone,
+                url: payload.audioURL.absoluteString,
+                title: payload.manifest.title
+            ))
+            UserDefaults.standard.set(payload.manifest.audioChecksumSHA256, forKey: "guidedOnboardingAudioChecksum")
+            if payload.audioChanged, priorChecksum != nil, snapshot.itemId == item.id {
+                _ = try? engine?.stopPlayback()
+                snapshot = SessionSnapshot()
+                diagnostics["guidedOnboardingProgress"] = "reset_for_audio_change"
+            }
+            try refreshLibraryRows(store: store)
+            diagnostics["guidedOnboardingRemote"] = "ready:v\(payload.manifest.contentVersion)"
+        } catch {
+            diagnostics["guidedOnboardingRemote"] = "fallback:\(String(describing: type(of: error)))"
+        }
+    }
+
+    func followSource() {
+        let value = followedSourceURL
+        guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let store = try self.requireStore()
+                let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
+                self.followedSourceCoordinator = coordinator
+                let candidates = try await coordinator.discover(urlString: value)
+                self.diagnostics["followedSourceNetworkHosts"] = await coordinator.contactedHosts.sorted().joined(separator: ",")
+                guard candidates.count == 1, let candidate = candidates.first else {
+                    self.followedSourceCandidates = candidates
+                    self.reportConfirmation("Choose which feed to follow.")
+                    return
+                }
+                _ = try await coordinator.follow(candidate: candidate)
+                self.followedSourceCandidates = []
+                self.followedSourceURL = ""
+                await self.refreshFollowedSources(force: true)
+                self.reportConfirmation("Source followed. New entries stay in the inbox until you import them.")
+            } catch {
+                self.reportFailure(error, context: "Follow source failed")
+            }
+        }
+    }
+
+    func followSourceCandidate(_ candidate: SourceCandidateEvidence) {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let store = try self.requireStore()
+                let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
+                self.followedSourceCoordinator = coordinator
+                _ = try await coordinator.follow(candidate: candidate)
+                self.followedSourceCandidates = []
+                self.followedSourceURL = ""
+                await self.refreshFollowedSources(force: true)
+                self.reportConfirmation("Source followed. New entries stay in the inbox until you import them.")
+            } catch {
+                self.reportFailure(error, context: "Follow source failed")
+            }
+        }
+    }
+
+    func cancelFollowSourceCandidates() {
+        followedSourceCandidates = []
+    }
+
+    private func offerFollowSuggestionIfEligible(itemId: String, store: SQLiteSessionStore) {
+        guard !sourceSuggestionChecks.contains(itemId),
+              sourceFollowSuggestionCandidates.isEmpty,
+              let item = try? store.loadItem(id: itemId),
+              let reference = item.externalReference,
+              let url = URL(string: reference),
+              url.scheme?.lowercased() == "https" else { return }
+        let progress = libraryItems.first(where: { $0.id == itemId })?.continuationProgressPercent ?? 0
+        guard progress >= 25 || !selectedItem.interjections.isEmpty else { return }
+        sourceSuggestionChecks.insert(itemId)
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
+                self.followedSourceCoordinator = coordinator
+                let subscribed = Set((try store.loadFeedSubscriptions()).map { $0.source.id })
+                let candidates = try await coordinator.discover(urlString: url.absoluteString)
+                    .filter { !subscribed.contains($0.source.id) }
+                let now = Date()
+                let eligible = try candidates.filter { candidate in
+                    guard let decision = try store.loadSourceSuggestionDecision(sourceId: candidate.source.id) else { return true }
+                    if decision.decision == .accepted || decision.decision == .neverSuggest { return false }
+                    if let suppressUntil = decision.suppressUntil, suppressUntil > now { return false }
+                    if let lastPromptAt = decision.lastPromptAt,
+                       now.timeIntervalSince(lastPromptAt) < 30 * 24 * 60 * 60 { return false }
+                    return true
+                }
+                guard !eligible.isEmpty else { return }
+                for candidate in eligible {
+                    try store.saveSourceSuggestionDecision(SourceSuggestionDecision(
+                        id: "suggestion-\(candidate.source.id)",
+                        sourceId: candidate.source.id,
+                        decision: .prompted,
+                        decidedAt: now,
+                        lastPromptAt: now
+                    ))
+                }
+                self.sourceFollowSuggestionCandidates = eligible
+                self.diagnostics["sourceFollowSuggestion"] = "offered:\(eligible.count)"
+            } catch {
+                self.diagnostics["sourceFollowSuggestion"] = "unavailable:\(String(describing: type(of: error)))"
+            }
+        }
+    }
+
+    func acceptSourceFollowSuggestion(_ candidate: SourceCandidateEvidence) {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let store = try self.requireStore()
+                let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
+                self.followedSourceCoordinator = coordinator
+                _ = try await coordinator.follow(candidate: candidate)
+                try store.saveSourceSuggestionDecision(SourceSuggestionDecision(
+                    id: "suggestion-\(candidate.source.id)",
+                    sourceId: candidate.source.id,
+                    decision: .accepted,
+                    lastPromptAt: Date()
+                ))
+                self.sourceFollowSuggestionCandidates = []
+                await self.refreshFollowedSources(force: true)
+                self.reportConfirmation("Following \(candidate.source.title ?? candidate.source.host).")
+            } catch {
+                self.reportFailure(error, context: "Follow suggestion failed")
+            }
+        }
+    }
+
+    func deferSourceFollowSuggestion() {
+        persistSourceFollowSuggestionDecision(.notNow, suppressFor: 14 * 24 * 60 * 60)
+    }
+
+    func rejectSourceFollowSuggestion() {
+        persistSourceFollowSuggestionDecision(.neverSuggest, suppressFor: nil)
+    }
+
+    private func persistSourceFollowSuggestionDecision(_ decision: SourceSuggestionDecisionKind, suppressFor interval: TimeInterval?) {
+        guard let store else { return }
+        let now = Date()
+        for candidate in sourceFollowSuggestionCandidates {
+            let prior = try? store.loadSourceSuggestionDecision(sourceId: candidate.source.id)
+            try? store.saveSourceSuggestionDecision(SourceSuggestionDecision(
+                id: "suggestion-\(candidate.source.id)",
+                sourceId: candidate.source.id,
+                decision: decision,
+                decidedAt: now,
+                suppressUntil: interval.map { now.addingTimeInterval($0) },
+                lastPromptAt: prior?.lastPromptAt ?? now
+            ))
+        }
+        sourceFollowSuggestionCandidates = []
+    }
+
+    func refreshFollowedSources(force: Bool = true) {
+        Task { [weak self] in await self?.refreshFollowedSources(force: force) }
+    }
+
+    private func refreshFollowedSources(force: Bool) async {
+        guard !isRefreshingFollowedSources else { return }
+        isRefreshingFollowedSources = true
+        defer { isRefreshingFollowedSources = false }
+        do {
+            let store = try requireStore()
+            let coordinator = followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
+            followedSourceCoordinator = coordinator
+            await coordinator.refreshStale(force: force)
+            feedSubscriptions = try store.loadFeedSubscriptions()
+            followedSourceEntries = try await coordinator.entries()
+            diagnostics["followedSourceCount"] = "\(feedSubscriptions.count)"
+            diagnostics["followedSourceEntryCount"] = "\(followedSourceEntries.count)"
+        } catch {
+            diagnostics["followedSourceRefresh"] = "failed:\(String(describing: type(of: error)))"
+        }
+    }
+
+    func dismissFollowedSourceEntry(id: String) {
+        guard let coordinator = followedSourceCoordinator else { return }
+        Task { [weak self] in
+            try? await coordinator.setEntryState(id: id, state: .dismissed)
+            await self?.refreshFollowedSources(force: false)
+        }
+    }
+
+    func importFollowedSourceEntry(_ entry: FeedEntry) {
+        guard importingFollowedSourceEntryIds.insert(entry.id).inserted else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.importingFollowedSourceEntryIds.remove(entry.id) }
+            do {
+                guard let url = URL(string: entry.canonicalURL), url.scheme?.lowercased() == "https" else {
+                    throw ReadablePageExtractionError.invalidURL
+                }
+                let subscription = self.feedSubscriptions.first { $0.id == entry.subscriptionId }
+                let imported: Bool
+                if subscription?.source.kind == .podcastFeed {
+                    imported = await self.importSourceLinkAsync(
+                        urlString: url.absoluteString,
+                        sourceSurface: "followed_source",
+                        startSession: false
+                    )
+                } else {
+                    let handoff = try await self.readablePageExtractor.extract(url: url)
+                    self.diagnostics["followedArticleNetworkHosts"] = self.readablePageExtractor.contactedHosts.joined(separator: ",")
+                    imported = self.importBrowserText(handoff)
+                }
+                guard imported else { return }
+                try await self.followedSourceCoordinator?.setEntryState(id: entry.id, state: .imported)
+                await self.refreshFollowedSources(force: false)
+                self.reportConfirmation("Imported \(entry.title) into the library.")
+            } catch {
+                self.reportFailure(error, context: "Source entry import failed")
+            }
+        }
+    }
+
+    func unfollowSource(id: String) {
+        guard let coordinator = followedSourceCoordinator else { return }
+        Task { [weak self] in
+            try? await coordinator.unfollow(subscriptionId: id)
+            await self?.refreshFollowedSources(force: false)
+        }
+    }
+
+    func toggleMuteSource(id: String) {
+        guard let coordinator = followedSourceCoordinator,
+              let subscription = feedSubscriptions.first(where: { $0.id == id }) else { return }
+        Task { [weak self] in
+            try? await coordinator.setMuted(subscriptionId: id, muted: subscription.state != .muted)
+            await self?.refreshFollowedSources(force: false)
+        }
+    }
+
+    private func requireLocalSourceImporter() throws -> LocalSourceImporter {
+        if let localSourceImporter { return localSourceImporter }
+        let store = try requireStore()
+        try configureOfflineServices(store: store)
+        guard let localSourceImporter else {
+            throw SessionKitError.persistenceFailed("local_source_importer_unavailable")
+        }
+        return localSourceImporter
     }
 
     func podcastLocalAssetDidBecomeReady(itemId: String, url: URL) {
@@ -8600,590 +9228,6 @@ private enum ManualListeningMapError: Error, CustomStringConvertible {
         case .jsonParseFailed(let error):
             return "manual_map_json_parse_failed:\(error)"
         }
-    }
-}
-
-#if KOKORO_DEVICE && !targetEnvironment(simulator) && canImport(AVFoundation)
-private final class KokoroSpeechPlaybackClient: NSObject, AudioPlaybackClient, AVAudioPlayerDelegate, @unchecked Sendable {
-    private let fallback = SystemSpeechPlaybackClient()
-    private let applicationSupportDirectory: URL
-    private let outputDirectory: URL
-    private let voiceName: String
-    private let speed: Float
-    private let cacheLimitBytes: Int
-    private let maxCharacters: Int
-    private let renderQueue = DispatchQueue(label: "spoken-margins.kokoro.playback", qos: .userInitiated)
-    private let lock = NSLock()
-
-    private var preparedSourceText = ""
-    private var player: AVAudioPlayer?
-    private var generation = UUID()
-    private var currentTargetId: String?
-    private var currentStartOffset = 0
-    private var currentChunkLength = 0
-    private var currentChunkBoundary = KokoroChunkBoundary.hard
-    private var fallbackIsActive = false
-    private var completedTargetId: String?
-    private var playbackComplete = false
-    private var pendingStartTargetId: String?
-    private var startedTargetId: String?
-    private var playbackFailure: String?
-    private var renderedCache: [Int: URL] = [:]
-    private var inFlightOffsets = Set<Int>()
-    private var pendingAutoplayOffset: Int?
-    private var appIsActive = true
-    #if canImport(UIKit)
-    private var activityObservers: [NSObjectProtocol] = []
-    #endif
-
-    init(
-        applicationSupportDirectory: URL,
-        outputDirectory: URL,
-        voiceName: String,
-        speed: Float,
-        cacheLimitBytes: Int,
-        maxCharacters: Int = 360
-    ) {
-        self.applicationSupportDirectory = applicationSupportDirectory
-        self.outputDirectory = outputDirectory
-        self.voiceName = voiceName
-        self.speed = max(0.65, min(1.75, speed))
-        self.cacheLimitBytes = cacheLimitBytes
-        self.maxCharacters = maxCharacters
-        super.init()
-        configureAppActivityObservers()
-    }
-
-    deinit {
-        #if canImport(UIKit)
-        for observer in activityObservers {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        #endif
-    }
-
-    func prepareSpeechText(_ text: String) throws -> String {
-        lock.lock()
-        preparedSourceText = text
-        lock.unlock()
-        return SpeechTextNormalizer.normalize(text)
-    }
-
-    func play(targetId: String) throws {
-        try play(targetId: targetId, from: 0)
-    }
-
-    func play(targetId: String, from charOffset: Int) throws {
-        guard let request = nextRequest(targetId: targetId, from: charOffset) else {
-            markPlaybackFailure(targetId: targetId, reason: "kokoro_playback_text_empty")
-            throw SessionKitError.invalidCommandForState("kokoro_playback_text_empty")
-        }
-        enqueueRender(request)
-    }
-
-    func currentCharOffset() -> Int? {
-        lock.lock()
-        let isFallbackActive = fallbackIsActive
-        lock.unlock()
-        if isFallbackActive {
-            return fallback.currentCharOffset()
-        }
-        lock.lock()
-        let start = currentStartOffset
-        let length = currentChunkLength
-        let localPlayer = player
-        lock.unlock()
-        guard let localPlayer, localPlayer.duration > 0, length > 0 else {
-            return start
-        }
-        let fraction = max(0, min(1, localPlayer.currentTime / localPlayer.duration))
-        return start + Int((Double(length) * fraction).rounded(.down))
-    }
-
-    func isPlaybackComplete(targetId: String) -> Bool {
-        lock.lock()
-        let isFallbackActive = fallbackIsActive
-        let isComplete = playbackComplete && completedTargetId == targetId
-        lock.unlock()
-        if isFallbackActive {
-            return fallback.isPlaybackComplete(targetId: targetId)
-        }
-        return isComplete
-    }
-
-    func pause() throws {
-        player?.pause()
-        try fallback.pause()
-    }
-
-    func stop() throws {
-        lock.lock()
-        generation = UUID()
-        player?.stop()
-        player = nil
-        fallbackIsActive = false
-        renderedCache.removeAll()
-        inFlightOffsets.removeAll()
-        pendingAutoplayOffset = nil
-        completedTargetId = nil
-        playbackComplete = false
-        pendingStartTargetId = nil
-        startedTargetId = nil
-        playbackFailure = nil
-        lock.unlock()
-        try fallback.stop()
-    }
-
-    func playbackStartStatus(targetId: String) -> PlaybackStartStatus {
-        lock.lock()
-        let failed = currentTargetId == targetId ? playbackFailure : nil
-        let isStarted = startedTargetId == targetId || (currentTargetId == targetId && player != nil)
-        let isPending = pendingStartTargetId == targetId || pendingAutoplayOffset != nil || !inFlightOffsets.isEmpty
-        lock.unlock()
-        if let failed {
-            return .failed(failed)
-        }
-        if isStarted {
-            return .confirmed
-        }
-        return isPending ? .pending : .confirmed
-    }
-
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        guard flag else { return }
-        lock.lock()
-        let nextOffset = currentStartOffset + max(1, currentChunkLength)
-        let targetId = currentTargetId
-        let sourceCount = preparedSourceText.count
-        let cachedURL = renderedCache.removeValue(forKey: nextOffset)
-        let transitionDelay = currentChunkBoundary.transitionDelay
-        let requestId = generation
-        lock.unlock()
-        guard let targetId,
-              nextOffset < sourceCount,
-              let request = renderRequest(targetId: targetId, startOffset: nextOffset, id: requestId) else {
-            lock.lock()
-            currentStartOffset = sourceCount
-            currentChunkLength = 0
-            completedTargetId = targetId
-            playbackComplete = true
-            lock.unlock()
-            return
-        }
-        if let cachedURL {
-            playRenderedAudio(cachedURL, request: request, delay: transitionDelay)
-        } else {
-            lock.lock()
-            pendingAutoplayOffset = nextOffset
-            lock.unlock()
-            enqueueRender(request, shouldPlayWhenReady: false)
-        }
-    }
-
-    private struct RenderRequest: Sendable {
-        var id: UUID
-        var targetId: String
-        var startOffset: Int
-        var sourceLength: Int
-        var text: String
-        var boundary: KokoroChunkBoundary
-    }
-
-    private func nextRequest(targetId: String, from charOffset: Int) -> RenderRequest? {
-        lock.lock()
-        let source = preparedSourceText
-        generation = UUID()
-        let requestId = generation
-        player?.stop()
-        player = nil
-        fallbackIsActive = false
-        renderedCache.removeAll()
-        inFlightOffsets.removeAll()
-        pendingAutoplayOffset = nil
-        completedTargetId = nil
-        playbackComplete = false
-        pendingStartTargetId = targetId
-        startedTargetId = nil
-        playbackFailure = nil
-        currentTargetId = targetId
-        lock.unlock()
-
-        return renderRequest(targetId: targetId, startOffset: charOffset, id: requestId, source: source)
-    }
-
-    private func renderRequest(targetId: String, startOffset: Int, id: UUID, source: String? = nil) -> RenderRequest? {
-        let source = source ?? currentPreparedSourceText()
-        guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        let clampedOffset = max(0, min(startOffset, source.count))
-        guard clampedOffset < source.count else { return nil }
-        let slice = kokoroSourceSlice(from: source, startOffset: clampedOffset, maxCharacters: maxCharacters)
-        guard !slice.text.isEmpty, slice.sourceLength > 0 else { return nil }
-        return RenderRequest(
-            id: id,
-            targetId: targetId,
-            startOffset: clampedOffset,
-            sourceLength: slice.sourceLength,
-            text: slice.text,
-            boundary: slice.boundary
-        )
-    }
-
-    private func currentPreparedSourceText() -> String {
-        lock.lock()
-        let source = preparedSourceText
-        lock.unlock()
-        return source
-    }
-
-    private func enqueueRender(_ request: RenderRequest, shouldPlayWhenReady: Bool = true) {
-        guard canSubmitKokoroRender() else {
-            markPlaybackFailureIfRequired(request: request, shouldPlayWhenReady: shouldPlayWhenReady, reason: "kokoro_render_unavailable")
-            renderFailed(request: request)
-            return
-        }
-        lock.lock()
-        if renderedCache[request.startOffset] != nil || inFlightOffsets.contains(request.startOffset) {
-            if !shouldPlayWhenReady {
-                lock.unlock()
-                return
-            }
-        }
-        inFlightOffsets.insert(request.startOffset)
-        lock.unlock()
-
-        renderQueue.async { [weak self, applicationSupportDirectory, outputDirectory, voiceName, speed, cacheLimitBytes] in
-            guard let self else { return }
-            guard self.canSubmitKokoroRender() else {
-                DispatchQueue.main.async {
-                    self.markPlaybackFailureIfRequired(request: request, shouldPlayWhenReady: shouldPlayWhenReady, reason: "kokoro_render_unavailable")
-                    self.renderFailed(request: request)
-                }
-                return
-            }
-            do {
-                let assets = KokoroNarrationRenderer.installedAssets(applicationSupportDirectory: applicationSupportDirectory)
-                guard let modelURL = assets.modelURL else { throw KokoroNarrationError.missingModel }
-                guard let voicesURL = assets.voicesURL else { throw KokoroNarrationError.missingVoices }
-                let configured = KokoroNarrationRenderer.configureMemoryForDiagnostics(cacheLimitBytes: cacheLimitBytes)
-                let before = KokoroNarrationRenderer.memorySnapshot()
-                let preview = request.text
-                    .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-                    .prefix(120)
-                NSLog(
-                    "SpokenMargins Kokoro render start target=%@ offset=%d chars=%d boundary=%@ configured=%@ before=%@ text=\"%@\"",
-                    request.targetId,
-                    request.startOffset,
-                    request.sourceLength,
-                    request.boundary.rawValue,
-                    configured.description,
-                    before.description,
-                    String(preview)
-                )
-                let renderer = try KokoroNarrationRenderer(
-                    modelURL: modelURL,
-                    voicesURL: voicesURL,
-                    outputDirectory: outputDirectory
-                )
-                guard self.canSubmitKokoroRender() else {
-                    DispatchQueue.main.async {
-                        self.markPlaybackFailureIfRequired(request: request, shouldPlayWhenReady: shouldPlayWhenReady, reason: "kokoro_render_unavailable")
-                        self.renderFailed(request: request)
-                    }
-                    return
-                }
-                let renderSpeed = Self.currentKokoroSpeed(defaultSpeed: speed)
-                let result = try renderer.render(
-                    text: request.text,
-                    itemId: request.targetId,
-                    chunkId: "offset-\(request.startOffset)",
-                    voiceName: voiceName,
-                    speed: renderSpeed
-                )
-                let after = KokoroNarrationRenderer.memorySnapshot()
-                let final = KokoroNarrationRenderer.clearMemoryCache()
-                NSLog(
-                    "SpokenMargins Kokoro render finish target=%@ offset=%d duration=%.2f tokens=%d speed=%.2f after=%@ final=%@",
-                    request.targetId,
-                    request.startOffset,
-                    result.duration,
-                    result.tokenCount,
-                    renderSpeed,
-                    after.description,
-                    final.description
-                )
-                DispatchQueue.main.async {
-                    self.renderCompleted(audioURL: result.audioURL, request: request, shouldPlayWhenReady: shouldPlayWhenReady)
-                }
-            } catch {
-                let final = KokoroNarrationRenderer.clearMemoryCache()
-                NSLog(
-                    "SpokenMargins Kokoro render failed target=%@ offset=%d error=%@ final=%@",
-                    request.targetId,
-                    request.startOffset,
-                    error.localizedDescription,
-                    final.description
-                )
-                DispatchQueue.main.async {
-                    self.markPlaybackFailureIfRequired(request: request, shouldPlayWhenReady: shouldPlayWhenReady, reason: "kokoro_render_failed")
-                    self.renderFailed(request: request)
-                }
-            }
-        }
-    }
-
-    private func renderCompleted(audioURL: URL, request: RenderRequest, shouldPlayWhenReady: Bool) {
-        lock.lock()
-        inFlightOffsets.remove(request.startOffset)
-        guard generation == request.id else {
-            lock.unlock()
-            return
-        }
-        let shouldAutoplay = shouldPlayWhenReady || pendingAutoplayOffset == request.startOffset
-        if shouldAutoplay {
-            pendingAutoplayOffset = nil
-        } else {
-            renderedCache[request.startOffset] = audioURL
-        }
-        lock.unlock()
-
-        if shouldAutoplay {
-            playRenderedAudio(audioURL, request: request)
-        }
-    }
-
-    private func renderFailed(request: RenderRequest) {
-        lock.lock()
-        inFlightOffsets.remove(request.startOffset)
-        if pendingAutoplayOffset == request.startOffset {
-            pendingAutoplayOffset = nil
-        }
-        lock.unlock()
-    }
-
-    private func playRenderedAudio(_ audioURL: URL, request: RenderRequest, delay: TimeInterval = 0) {
-        lock.lock()
-        guard generation == request.id else {
-            lock.unlock()
-            return
-        }
-        lock.unlock()
-        do {
-            try fallback.stop()
-            #if os(iOS)
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
-            try AVAudioSession.sharedInstance().setActive(true)
-            #endif
-            let nextPlayer = try AVAudioPlayer(contentsOf: audioURL)
-            nextPlayer.delegate = self
-            nextPlayer.prepareToPlay()
-            lock.lock()
-            player = nextPlayer
-            currentTargetId = request.targetId
-            currentStartOffset = request.startOffset
-            currentChunkLength = request.sourceLength
-            currentChunkBoundary = request.boundary
-            fallbackIsActive = false
-            pendingStartTargetId = nil
-            startedTargetId = request.targetId
-            playbackFailure = nil
-            lock.unlock()
-            if delay > 0 {
-                nextPlayer.play(atTime: nextPlayer.deviceCurrentTime + delay)
-            } else {
-                nextPlayer.play()
-            }
-            prefetchNextChunk(after: request)
-        } catch {
-            markPlaybackFailure(request: request, reason: "kokoro_playback_failed")
-        }
-    }
-
-    private func prefetchNextChunk(after request: RenderRequest) {
-        let nextOffset = request.startOffset + max(1, request.sourceLength)
-        lock.lock()
-        let sourceCount = preparedSourceText.count
-        let targetId = currentTargetId
-        let currentGeneration = generation
-        lock.unlock()
-        guard currentGeneration == request.id,
-              let targetId,
-              nextOffset < sourceCount,
-              let nextRequest = renderRequest(targetId: targetId, startOffset: nextOffset, id: currentGeneration) else {
-            return
-        }
-        enqueueRender(nextRequest, shouldPlayWhenReady: false)
-    }
-
-    private func configureAppActivityObservers() {
-        #if canImport(UIKit)
-        let center = NotificationCenter.default
-        activityObservers.append(center.addObserver(
-            forName: UIApplication.didBecomeActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.setAppIsActive(true)
-        })
-        activityObservers.append(center.addObserver(
-            forName: UIApplication.willResignActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.setAppIsActive(false)
-        })
-        activityObservers.append(center.addObserver(
-            forName: UIApplication.didEnterBackgroundNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.setAppIsActive(false)
-        })
-        #endif
-    }
-
-    private func setAppIsActive(_ isActive: Bool) {
-        lock.lock()
-        appIsActive = isActive
-        if !isActive {
-            renderedCache.removeAll()
-            inFlightOffsets.removeAll()
-            pendingAutoplayOffset = nil
-        }
-        lock.unlock()
-    }
-
-    private func canSubmitKokoroRender() -> Bool {
-        lock.lock()
-        let isActive = appIsActive
-        lock.unlock()
-        return isActive
-    }
-
-    private static func currentKokoroSpeed(defaultSpeed: Float) -> Float {
-        let storedRate = UserDefaults.standard.double(forKey: "speechRate")
-        guard storedRate > 0 else { return defaultSpeed }
-        return Float(max(0.65, min(1.75, storedRate / 0.5)))
-    }
-
-    private func markPlaybackFailure(request: RenderRequest, reason: String) {
-        lock.lock()
-        guard generation == request.id else {
-            lock.unlock()
-            return
-        }
-        currentTargetId = request.targetId
-        currentStartOffset = request.startOffset
-        currentChunkLength = 0
-        fallbackIsActive = false
-        pendingStartTargetId = nil
-        startedTargetId = nil
-        playbackFailure = reason
-        lock.unlock()
-    }
-
-    private func markPlaybackFailureIfRequired(request: RenderRequest, shouldPlayWhenReady: Bool, reason: String) {
-        lock.lock()
-        let isAwaitedAutoplay = pendingAutoplayOffset == request.startOffset
-        lock.unlock()
-        guard shouldPlayWhenReady || isAwaitedAutoplay else { return }
-        markPlaybackFailure(request: request, reason: reason)
-    }
-
-    private func markPlaybackFailure(targetId: String, reason: String) {
-        lock.lock()
-        currentTargetId = targetId
-        currentChunkLength = 0
-        fallbackIsActive = false
-        pendingStartTargetId = nil
-        startedTargetId = nil
-        playbackFailure = reason
-        lock.unlock()
-    }
-}
-#endif
-
-private enum KokoroChunkBoundary: String, Sendable {
-    case sentence
-    case comma
-    case whitespace
-    case hard
-
-    var transitionDelay: TimeInterval {
-        switch self {
-        case .sentence:
-            return 0.12
-        case .comma:
-            return 0.05
-        case .whitespace, .hard:
-            return 0
-        }
-    }
-}
-
-private struct KokoroSourceSlice: Sendable {
-    var text: String
-    var sourceLength: Int
-    var boundary: KokoroChunkBoundary
-}
-
-private func kokoroRenderChunk(from text: String, maxCharacters: Int = 360) -> String {
-    let trimmed = SpeechTextNormalizer.normalize(text)
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-    guard trimmed.count > maxCharacters else { return trimmed }
-
-    let hardLimit = trimmed.index(trimmed.startIndex, offsetBy: maxCharacters)
-    let prefix = String(trimmed[..<hardLimit])
-    return kokoroSelectChunkPrefix(prefix, maxCharacters: maxCharacters).text
-}
-
-private func kokoroSourceSlice(from source: String, startOffset: Int, maxCharacters: Int) -> KokoroSourceSlice {
-    let clampedOffset = max(0, min(startOffset, source.count))
-    let start = source.index(source.startIndex, offsetBy: clampedOffset)
-    let remainingLength = source.distance(from: start, to: source.endIndex)
-    let length = min(maxCharacters, remainingLength)
-    let hardEnd = source.index(start, offsetBy: length)
-    let prefix = String(source[start..<hardEnd])
-    let selected = kokoroSelectChunkPrefix(prefix, maxCharacters: maxCharacters)
-    return KokoroSourceSlice(
-        text: selected.text,
-        sourceLength: max(0, selected.sourceLength),
-        boundary: selected.boundary
-    )
-}
-
-private func kokoroSelectChunkPrefix(_ prefix: String, maxCharacters: Int) -> KokoroSourceSlice {
-    let minimumUsefulLength = min(80, max(24, maxCharacters / 3))
-    let sentenceCharacters = CharacterSet(charactersIn: ".!?\n;:")
-    if let sentence = kokoroBoundary(in: prefix, characters: sentenceCharacters, includeBoundary: true, minimumUsefulLength: minimumUsefulLength) {
-        return sentence.withBoundary(.sentence)
-    }
-
-    if let comma = kokoroBoundary(in: prefix, characters: CharacterSet(charactersIn: ","), includeBoundary: true, minimumUsefulLength: minimumUsefulLength) {
-        return comma.withBoundary(.comma)
-    }
-
-    if let whitespace = kokoroBoundary(in: prefix, characters: .whitespacesAndNewlines, includeBoundary: false, minimumUsefulLength: minimumUsefulLength) {
-        return whitespace.withBoundary(.whitespace)
-    }
-
-    let normalized = SpeechTextNormalizer.normalize(prefix).trimmingCharacters(in: .whitespacesAndNewlines)
-    return KokoroSourceSlice(text: normalized, sourceLength: prefix.count, boundary: .hard)
-}
-
-private func kokoroBoundary(in prefix: String, characters: CharacterSet, includeBoundary: Bool, minimumUsefulLength: Int) -> KokoroSourceSlice? {
-    guard let range = prefix.rangeOfCharacter(from: characters, options: .backwards) else { return nil }
-    let end = includeBoundary ? range.upperBound : range.lowerBound
-    guard prefix.distance(from: prefix.startIndex, to: end) >= minimumUsefulLength else { return nil }
-    let selected = String(prefix[..<end])
-    let normalized = SpeechTextNormalizer.normalize(selected).trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !normalized.isEmpty else { return nil }
-    let sourceLength = prefix.distance(from: prefix.startIndex, to: range.upperBound)
-    return KokoroSourceSlice(text: normalized, sourceLength: sourceLength, boundary: .hard)
-}
-
-private extension KokoroSourceSlice {
-    func withBoundary(_ boundary: KokoroChunkBoundary) -> KokoroSourceSlice {
-        KokoroSourceSlice(text: text, sourceLength: sourceLength, boundary: boundary)
     }
 }
 
