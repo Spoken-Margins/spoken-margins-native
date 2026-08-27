@@ -1,5 +1,6 @@
 import Foundation
 import SessionKit
+import SessionKitFeeds
 
 struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
     typealias Fetch = @Sendable (URL) throws -> Data
@@ -756,11 +757,7 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
 
     private func resolveRSSFeed(_ url: URL, request: LinkResolutionRequest, expectedTitle: String?, expectedURL: String?) throws -> LinkResolutionResult? {
         let data = try fetch(url)
-        guard let text = String(data: data, encoding: .utf8),
-              text.range(of: "<rss", options: [.caseInsensitive]) != nil ||
-              text.range(of: "<feed", options: [.caseInsensitive]) != nil else {
-            return nil
-        }
+        guard (try? FeedParser().parse(data: data)) != nil else { return nil }
         let parser = RSSFeedParser()
         let items = parser.parse(data: data)
         guard !items.isEmpty else {
@@ -796,11 +793,7 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         requestTimeoutSeconds: TimeInterval
     ) async throws -> LinkResolutionResult? {
         let data = try await fetchAsync(url, timeout: requestTimeoutSeconds)
-        guard let text = String(data: data, encoding: .utf8),
-              text.range(of: "<rss", options: [.caseInsensitive]) != nil ||
-              text.range(of: "<feed", options: [.caseInsensitive]) != nil else {
-            return nil
-        }
+        guard (try? FeedParser().parse(data: data)) != nil else { return nil }
         let parser = RSSFeedParser()
         let items = parser.parse(data: data)
         guard !items.isEmpty else {
