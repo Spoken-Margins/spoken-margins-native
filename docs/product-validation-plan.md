@@ -85,20 +85,25 @@ Goal: make sure product validation itself is possible.
 
 ## Gate 1: Phone/Tablet Core Session
 
-Goal: validate the core Spoken Margins interaction loop on the canonical runtime.
+Goal: validate the private Spoken Margins experience and core interaction loop on the canonical runtime.
 
 ### In Scope
 
-- text item import or creation
-- Listening Map load/generation
-- mapless session
+- adaptive Library, Sources, and Margins destinations on iPhone and iPad
+- typed Add Source routes for link/podcast, pasted text, document/book, audiobook, and Quick Folder
+- explicit follow-versus-import behavior
+- two-item starter onboarding, skip, replay, and seeded-item ownership evidence
+- Library resume priority, search, filter, sort, and recoverable deletion
+- nested Listening Map navigation and mapless sessions
 - app-owned TTS
 - TTS URL cleanup
 - chapter navigation
 - skip back/forward
-- interjection recording
+- persistent mini-player with distinct open and play/pause actions
+- exclusive interjection recording with no navigation escape
 - rollback/resume
 - multiple interjections in one session
+- local Margins aggregation and Timeline provenance
 - interjection summary
 - summary playback
 - interjection into summary
@@ -106,38 +111,38 @@ Goal: validate the core Spoken Margins interaction loop on the canonical runtime
 - AI discussion response
 - interjection into AI response
 - retryable AI failure
-- offline degraded behavior
+- offline degraded behavior, preparation truth, and protected-storage handling
 - session-isolated export
 
 ### Validation Flow
 
-1. Create or import a text item that contains at least one long URL and one Markdown link.
-2. Start playback and confirm URLs are not spoken while source text remains intact.
-3. Jump between Listening Map chapters.
-4. Skip back and forward repeatedly and judge whether movement feels predictable.
-5. Record at least five interjections during source playback.
-6. Confirm playback resumes from enough context after each interjection.
-7. Generate an interjection summary.
-8. Listen to the summary.
-9. Interject into the summary.
-10. Add an addendum or follow-up.
-11. Continue discussion with AI.
-12. Interject into the AI response.
-13. Simulate provider failure or offline mode and confirm pending AI work is recoverable.
-14. Export the session and confirm another session's notes do not leak in.
+1. Reset the app, choose each starter item in turn, and confirm Skip and replay remain available without counting either starter as user-added content.
+2. Import representative link/podcast, pasted-text, document/book, audiobook, and Quick Folder content; confirm imports do not replace active playback.
+3. Follow a source and confirm following alone does not import, download, or prepare an entry.
+4. Resume an unfinished item from Library and confirm it is not duplicated in the compact list.
+5. Start playback, move among all three destinations, and confirm the persistent mini-player opens Now Playing and controls playback through separate actions.
+6. Confirm URLs are not spoken while source text remains intact, then navigate nested chapters and a mapless item.
+7. Skip and scrub repeatedly, including partial prepared audio, and confirm movement and readiness remain truthful.
+8. Begin recording from each root destination; confirm navigation, session replacement, and unrelated controls are unavailable until Finish or Cancel.
+9. Record multiple Margins, open them from the cross-item Margins destination and Timeline, and confirm their item/session anchors and provenance remain correct.
+10. Generate and play an eligible interjection summary, interject into it, and add an addendum or follow-up.
+11. Simulate offline, transcription, preparation, and low-storage failures; confirm work is preserved, protected assets are not clearable, and recovery is understandable.
+12. Export the session and confirm another session's notes do not leak in.
 
 ### Pass Criteria
 
 - The interaction loop feels natural enough for a real article.
-- Navigation does not feel erratic.
+- Library, Sources, and Margins remain distinct and navigation never changes the active session implicitly.
+- Recording cannot escape or mutate its immutable session/anchor context.
 - Interjections remain anchored and recoverable.
-- AI failure does not lose user work.
+- Failures and offline state do not lose user work or overstate readiness.
+- Provenance remains understandable without relying on color.
 - Export is useful and session-scoped.
 
 ### Out Of Scope
 
 - watch-only playback
-- browser capture
+- reviewed sharing packages, recipient preview, imported people, and co-op replies
 - YouTube/media capture
 - car controls
 

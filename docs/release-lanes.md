@@ -30,6 +30,7 @@ Only these branches are active development lanes:
 | `codex/testflight-triage` | Idle rapid-fix lane, currently aligned with the accepted integration baseline | No active issue; a later reproducible TestFlight regression requires explicit admission | `main` |
 | `codex/sharing-next` | Next major numbered feature release | Sharing foundation issues #17, #18, #67, and #68; audit reconciliation #81; then co-op replies #19 | `main` when the numbered sharing release is accepted |
 | `codex/quality-of-life-next` | Next numbered quality-of-life release | Complete non-Watch program: #34, #64, #72, #73, #61, #79, #74, #69, #76, #77, #86, and #87 in the ordered phases below | `main` when the complete numbered quality-of-life release is accepted |
+| `codex/experience-overhaul` | Temporary private-experience integration branch | Native Library, Sources, and local Margins shell; typed intake; item, playback, recording, Timeline, onboarding, and storage presentation over the verified quality-of-life runtime | `codex/quality-of-life-next`, then delete the temporary branch after integration |
 
 All other local and remote branches are historical and read-only. Their commits may be inspected or deliberately extracted, but work must not resume directly on them without a product-owner plan change. In particular, `codex/sharingV1` is source material for reconciliation into `codex/sharing-next`; it is not an active integration branch.
 
@@ -42,14 +43,17 @@ codex/testflight-triage ───────────────► main
 
 main ──────────────────────────────────► codex/sharing-next
 main ──────────────────────────────────► codex/quality-of-life-next
+codex/quality-of-life-next ────────────► codex/experience-overhaul
 
 codex/sharing-next ────────────────────► main  (numbered release only)
+codex/experience-overhaul ─────────────► codex/quality-of-life-next  (temporary integration only)
 codex/quality-of-life-next ────────────► main  (bounded release only)
 ```
 
 Rules:
 
 - Never merge `codex/sharing-next` directly into `codex/quality-of-life-next`, or the reverse.
+- Never merge `codex/sharing-next` into `codex/experience-overhaul`; the overhaul may consume only the quality-of-life line and changes authored directly for its bounded private experience.
 - After a TestFlight triage release reaches `main`, merge `main` into both feature lanes before further integration work.
 - Do not move unreleased runtime work from a feature lane into triage merely to make it ship sooner.
 - Dependency ordering inside a lane is represented by issue state, commits, tests, and feature flags—not additional persistent branches.
@@ -118,6 +122,26 @@ Each phase may begin only when its dependency invariants have focused automated 
 - Any new Watch playback, transfer, rendering, connectivity, or synchronization work.
 
 Existing dormant Watch artifacts may be counted by the storage ledger, but this authorization does not permit changing or enabling Watch runtime code. Issue #75 remains queued for a later product-owner release decision.
+
+## Temporary Experience Overhaul Lane
+
+The product owner authorized `codex/experience-overhaul` on 2026-08-28 as a bounded temporary integration branch from `codex/quality-of-life-next`. Its purpose is to recompose the already implemented private quality-of-life capabilities into a scalable native experience without importing the sharing lane or changing SessionKit contracts.
+
+Authorized scope:
+
+- adaptive Library, Sources, and local Margins destinations;
+- app-layer navigation and presentation models;
+- typed intake routing over existing import handlers;
+- item detail, Now Playing, guarded recording, local Timeline provenance, onboarding, and offline-storage presentation;
+- semantic design tokens, accessibility behavior, focused regressions, validation evidence, and the product/spec updates required by this direction.
+
+Explicitly excluded:
+
+- reviewed sharing packages, imported people, recipient preview, co-op replies, or any other `codex/sharing-next` runtime;
+- Watch, new SessionKit commands or snapshot/schema fields, publisher-artwork dependencies, account/profile concepts, remote execution, and speculative disabled controls;
+- distribution or a claim of `human_validated` status without a separate product-owner decision and hands-on validation.
+
+The branch merges only into `codex/quality-of-life-next`. Delete it after that integration; it must not become a persistent release lane. If its scope needs sharing or Watch work, stop and amend this document before implementation.
 
 ## Work-In-Progress And Branch Creation Rules
 
