@@ -115,6 +115,21 @@ actor OfflineStorageLedger {
         try repository.loadOwnedOfflineAssets().reduce(0) { $0 + $1.byteCount }
     }
 
+    /// Enforces a newly lowered or migrated budget immediately. Imported and
+    /// recorded user assets remain non-evictable; the returned value is any
+    /// residual overage that cannot be reclaimed safely.
+    func enforceBudget(now: Date = Date()) throws -> Int64 {
+        let budget = try repository.loadOfflineStorageBudget()
+        let assets = try repository.loadOwnedOfflineAssets()
+        let reservations = try repository.loadOfflineStorageReservations()
+        let used = OfflineStoragePlanner.usageBytes(assets: assets, reservations: reservations, now: now)
+        let deficit = max(0, used - budget.limitBytes)
+        guard deficit > 0 else { return 0 }
+        let plan = OfflineStoragePlanner.evictionPlan(requiredBytes: deficit, assets: assets)
+        try execute(plan: plan, assets: assets)
+        return max(0, deficit - plan.reclaimableBytes)
+    }
+
     func directFilesystemBytes() -> Int64 {
         guard let enumerator = fileManager.enumerator(
             at: rootDirectory,

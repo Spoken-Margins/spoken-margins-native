@@ -2489,7 +2489,10 @@ public final class SessionEngine {
                 url: candidate.audioURL,
                 durationMs: candidate.durationMs
             ),
-            transcriptId: nil
+            transcriptId: nil,
+            sourceTitle: candidate.showTitle ?? candidate.sourceLink.title,
+            sourceURL: candidate.sourceLink.role == "canonical_feed" ? candidate.sourceLink.url : nil,
+            createdAt: request.createdAt
         )
     }
 
@@ -2906,7 +2909,8 @@ public final class SessionEngine {
             text: text,
             externalReference: source,
             status: deterministicMap == nil ? "needs_listening_map" : "ready",
-            externalReferenceType: handoff.captureMode == .markdownFile || handoff.captureMode == .plainTextFile ? "file" : "url"
+            externalReferenceType: handoff.captureMode == .markdownFile || handoff.captureMode == .plainTextFile ? "file" : "url",
+            createdAt: Date()
         )
         return (item, deterministicMap)
     }

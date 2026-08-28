@@ -155,8 +155,8 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.mediaPlaybackRate, 1.75, accuracy: 0.001)
 
         model.setMediaPlaybackRate(0.33)
-        XCTAssertEqual(model.mediaPlaybackRate, 0.25, accuracy: 0.001)
-        XCTAssertEqual(model.snapshot.playbackRate, 0.25, accuracy: 0.001)
+        XCTAssertEqual(model.mediaPlaybackRate, 0.5, accuracy: 0.001)
+        XCTAssertEqual(model.snapshot.playbackRate, 0.5, accuracy: 0.001)
         model.setMediaPlaybackRate(1.75)
 
         var olderSessionSnapshot = model.snapshot
@@ -1271,6 +1271,30 @@ final class SourceLinkImportTests: XCTestCase {
 
         XCTAssertEqual(result.status, .playable)
         XCTAssertEqual(result.selectedCandidate?.audioURL, "https://traffic.example.net/APPLEEPISODE123")
+    }
+
+    func testPublicResolverRecoversCanonicalFeedForExistingAppleEpisode() throws {
+        let lookup = """
+        {
+          "resultCount": 1,
+          "results": [{
+            "wrapperType": "track",
+            "kind": "podcast",
+            "trackId": 123456,
+            "feedUrl": "https://feeds.example.com/apple-show.xml"
+          }]
+        }
+        """
+        let episodeURL = try XCTUnwrap(URL(string: "https://podcasts.apple.com/us/podcast/show/id123456?i=999"))
+        let resolver = PublicPodcastLinkResolver(fetch: { url in
+            XCTAssertTrue(url.absoluteString.contains("itunes.apple.com/lookup"))
+            return Data(lookup.utf8)
+        })
+
+        XCTAssertEqual(
+            try resolver.canonicalFeedURL(for: episodeURL)?.absoluteString,
+            "https://feeds.example.com/apple-show.xml"
+        )
     }
 
     func testPublicResolverFallsBackToApplePageStreamWhenLookupIsEmpty() throws {

@@ -4,7 +4,7 @@
 
 Spoken Margins is a personal conversational listening app. A complete daily-driver loop imports an article or podcast from the user's preferred discovery surface, plays it with native audio or the user's installed iOS voice, preserves play/pause/back/forward behavior, captures an anchored interjection, optionally summarizes eligible interjections on device, supports publisher podcast chapters and deterministic native-text Listening Maps, and exports the complete exchange for another chatbot.
 
-The phone app is library-first. Source intake lives behind Add Source and continues to support pasted text, links, files, and a configured quick folder without occupying the primary library surface. A new production library contains one clearly identified Welcome to Spoken Margins item that doubles as a replayable guided tour; it is not treated as user-owned content.
+The phone app is library-first. Source setup lives behind Add Source and continues to support pasted text, links, files, and a configured quick folder. The Home Quick Add feed combines explicit followed-source entries with eligible files discovered in that user-selected folder; neither kind enters the library until the user chooses Import. A new production library contains one clearly identified Welcome to Spoken Margins item that doubles as a replayable guided tour; it is not treated as user-owned content.
 
 ## Onboarding
 

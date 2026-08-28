@@ -580,13 +580,6 @@ private final class Gate2LiveSpeechNowPlayingController {
         }
         let nowPlayingCenter = MPNowPlayingInfoCenter.default()
         nowPlayingCenter.nowPlayingInfo = info
-        if snapshot.status.isPlaybackActive {
-            nowPlayingCenter.playbackState = .playing
-        } else if snapshot.status == .paused {
-            nowPlayingCenter.playbackState = .paused
-        } else {
-            nowPlayingCenter.playbackState = .stopped
-        }
         ownsNowPlayingInfo = true
         if let audioSessionFailure {
             status = "live_speech_audio_session_failed:\(audioSessionFailure)"
@@ -612,7 +605,7 @@ private final class Gate2LiveSpeechNowPlayingController {
         center.stopCommand.isEnabled = availability.canStop
         center.changePlaybackPositionCommand.isEnabled = availability.canSeek
         center.changePlaybackRateCommand.isEnabled = availability.canSetPlaybackRate
-        center.changePlaybackRateCommand.supportedPlaybackRates = [0.75, 1.0, 1.25, 1.5, 2.0]
+        center.changePlaybackRateCommand.supportedPlaybackRates = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
         #endif
     }
 
@@ -620,7 +613,6 @@ private final class Gate2LiveSpeechNowPlayingController {
         #if canImport(MediaPlayer)
         if ownsNowPlayingInfo {
             let nowPlayingCenter = MPNowPlayingInfoCenter.default()
-            nowPlayingCenter.playbackState = .stopped
             nowPlayingCenter.nowPlayingInfo = nil
         }
         uninstallRemoteCommandHandlers()
@@ -633,7 +625,7 @@ private final class Gate2LiveSpeechNowPlayingController {
         #if canImport(MediaPlayer)
         guard remoteCommandTargets.isEmpty else { return }
         let center = MPRemoteCommandCenter.shared()
-        center.changePlaybackRateCommand.supportedPlaybackRates = [0.75, 1.0, 1.25, 1.5, 2.0]
+        center.changePlaybackRateCommand.supportedPlaybackRates = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
         center.skipBackwardCommand.preferredIntervals = [15]
         center.skipForwardCommand.preferredIntervals = [15]
         register(center.playCommand, command: .play, detail: "none")

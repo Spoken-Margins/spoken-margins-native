@@ -206,9 +206,10 @@ public final class InMemorySessionRepository: SessionRepository, @unchecked Send
     public func saveCanonicalSource(_ source: CanonicalSourcePackage) throws { canonicalSources[source.itemId] = source }
     public func loadCanonicalSource(itemId: String) throws -> CanonicalSourcePackage? { canonicalSources[itemId] }
 
-    public func publishImportedSource(item: Item, canonicalSource: CanonicalSourcePackage?, audioAsset: AudioAsset?, ownedAsset: OwnedOfflineAsset) throws {
+    public func publishImportedSource(item: Item, canonicalSource: CanonicalSourcePackage?, listeningMap: ListeningMap?, audioAsset: AudioAsset?, ownedAsset: OwnedOfflineAsset) throws {
         items[item.id] = item
         if let canonicalSource { canonicalSources[item.id] = canonicalSource }
+        if let listeningMap { mapsByItemId[item.id] = listeningMap }
         if let audioAsset { audioAssets[audioAsset.id] = audioAsset }
         ownedOfflineAssets[ownedAsset.id] = ownedAsset
     }

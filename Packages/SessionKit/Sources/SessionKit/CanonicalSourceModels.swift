@@ -94,6 +94,56 @@ public struct CanonicalSourcePackage: Codable, Equatable, Sendable, Identifiable
         self.segments = segments
         self.createdAt = createdAt
     }
+
+    /// Projects authored navigation into the legacy character-offset map used by
+    /// the current item and playback surfaces. The canonical package remains the
+    /// source of truth; this map is a derived navigation index.
+    public func derivedListeningMap() -> ListeningMap? {
+        let flattened = navigation.flatMap(Self.flattenedNavigation)
+            .compactMap { node -> (node: CanonicalNavigationNode, start: Int)? in
+                guard let locator = node.locator else { return nil }
+                return (node, LegacySourceOffsetAdapter.characterOffset(for: locator, in: segmentsText))
+            }
+            .sorted {
+                if $0.start != $1.start { return $0.start < $1.start }
+                return $0.node.id < $1.node.id
+            }
+
+        var unique: [(node: CanonicalNavigationNode, start: Int)] = []
+        for entry in flattened where unique.last?.start != entry.start {
+            unique.append(entry)
+        }
+        guard !unique.isEmpty else { return nil }
+
+        let textLength = segmentsText.count
+        let chapters = unique.enumerated().map { index, entry in
+            let end = index + 1 < unique.count ? unique[index + 1].start : textLength
+            let percent = textLength > 0
+                ? Int((Double(entry.start) / Double(textLength) * 100).rounded())
+                : 0
+            return Chapter(
+                id: entry.node.id,
+                title: entry.node.title,
+                startChar: entry.start,
+                endChar: max(entry.start, end),
+                percent: max(0, min(100, percent))
+            )
+        }
+        return ListeningMap(
+            id: "canonical-navigation-\(itemId)",
+            itemId: itemId,
+            overview: "Authored navigation from \(title).",
+            chapters: chapters
+        )
+    }
+
+    private var segmentsText: String {
+        segments.map(\.text).joined(separator: "\n\n")
+    }
+
+    private static func flattenedNavigation(_ node: CanonicalNavigationNode) -> [CanonicalNavigationNode] {
+        node.children.isEmpty ? [node] : node.children.flatMap(flattenedNavigation)
+    }
 }
 
 public enum LegacySourceOffsetAdapter {

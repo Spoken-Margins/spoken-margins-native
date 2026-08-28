@@ -6,6 +6,7 @@ import SessionKitEPUB
 
 enum LocalSourceImportError: Error, LocalizedError, Equatable {
     case unsupportedType
+    case unsupportedURL
     case protectedContent
     case zeroDuration
     case duplicate
@@ -14,6 +15,7 @@ enum LocalSourceImportError: Error, LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .unsupportedType: return "Choose a DRM-free EPUB, MP3, M4A, M4B, or audio-bearing MP4 file."
+        case .unsupportedURL: return "Choose a local file from Files. Web links and provider placeholders cannot be imported as files."
         case .protectedContent: return "This file is protected and cannot be imported."
         case .zeroDuration: return "This audio file has no playable duration."
         case .duplicate: return "This audio file is already in the library."
@@ -41,6 +43,7 @@ actor LocalSourceImporter {
     }
 
     func importEPUB(from sourceURL: URL) async throws -> Item {
+        guard sourceURL.isFileURL else { throw LocalSourceImportError.unsupportedURL }
         guard sourceURL.pathExtension.lowercased() == "epub" else { throw LocalSourceImportError.unsupportedType }
         let size = try fileSize(sourceURL)
         let reservation = try await ledger.reserve(ownerId: "epub-import-\(UUID().uuidString)", byteCount: size)
@@ -51,6 +54,7 @@ actor LocalSourceImporter {
         let temporary = directory.appending(path: ".\(itemId).\(UUID().uuidString).tmp.epub")
         do {
             try copySecurityScoped(sourceURL, to: temporary)
+            guard try fileSize(temporary) == size else { throw LocalSourceImportError.interruptedCopy }
             let parser = EPUBParser()
             let parsed = try parser.parse(url: temporary, itemId: itemId, sourceDocumentId: "document-\(itemId)")
             try fileManager.moveItem(at: temporary, to: destination)
@@ -76,7 +80,13 @@ actor LocalSourceImporter {
                 checksumSHA256: checksum,
                 isReproducible: false
             )
-            try repository.publishImportedSource(item: item, canonicalSource: parsed.package, audioAsset: nil, ownedAsset: owned)
+            try repository.publishImportedSource(
+                item: item,
+                canonicalSource: parsed.package,
+                listeningMap: parsed.package.derivedListeningMap(),
+                audioAsset: nil,
+                ownedAsset: owned
+            )
             try await ledger.release(reservationId: reservation.id)
             return item
         } catch {
@@ -88,6 +98,7 @@ actor LocalSourceImporter {
     }
 
     func importAudiobook(from sourceURL: URL) async throws -> Item {
+        guard sourceURL.isFileURL else { throw LocalSourceImportError.unsupportedURL }
         let allowed = ["mp3", "m4a", "m4b", "mp4"]
         let ext = sourceURL.pathExtension.lowercased()
         guard allowed.contains(ext) else { throw LocalSourceImportError.unsupportedType }
@@ -100,6 +111,7 @@ actor LocalSourceImporter {
         let temporary = directory.appending(path: ".\(itemId).\(UUID().uuidString).tmp.\(ext)")
         do {
             try copySecurityScoped(sourceURL, to: temporary)
+            guard try fileSize(temporary) == size else { throw LocalSourceImportError.interruptedCopy }
             let checksum = try fingerprint(temporary)
             guard !(try repository.loadOwnedOfflineAssets()).contains(where: { $0.category == .audiobook && $0.checksumSHA256 == checksum }) else {
                 throw LocalSourceImportError.duplicate
@@ -155,7 +167,7 @@ actor LocalSourceImporter {
                 isReproducible: false,
                 protections: [.importedAudiobook]
             )
-            try repository.publishImportedSource(item: item, canonicalSource: nil, audioAsset: audio, ownedAsset: owned)
+            try repository.publishImportedSource(item: item, canonicalSource: nil, listeningMap: nil, audioAsset: audio, ownedAsset: owned)
             try await ledger.release(reservationId: reservation.id)
             return item
         } catch {
@@ -188,17 +200,48 @@ actor LocalSourceImporter {
         try await AVMetadataItem.metadataItems(from: metadata, withKey: key, keySpace: .common).first?.load(.stringValue)
     }
 
-    private func copySecurityScoped(_ source: URL, to destination: URL) throws {
+    func copySecurityScoped(_ source: URL, to destination: URL) throws {
         let accessed = source.startAccessingSecurityScopedResource()
         defer { if accessed { source.stopAccessingSecurityScopedResource() } }
-        try fileManager.copyItem(at: source, to: destination)
+        var coordinationError: NSError?
+        var copyError: Error?
+        NSFileCoordinator().coordinate(
+            readingItemAt: source,
+            options: .withoutChanges,
+            error: &coordinationError
+        ) { coordinatedURL in
+            do {
+                try fileManager.copyItem(at: coordinatedURL, to: destination)
+            } catch {
+                copyError = error
+            }
+        }
+        if let coordinationError { throw coordinationError }
+        if let copyError { throw copyError }
         guard fileManager.fileExists(atPath: destination.path) else { throw LocalSourceImportError.interruptedCopy }
     }
 
-    private func fileSize(_ url: URL) throws -> Int64 {
+    func fileSize(_ url: URL) throws -> Int64 {
         let accessed = url.startAccessingSecurityScopedResource()
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-        return Int64(try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
+        var coordinationError: NSError?
+        var result: Result<Int64, Error>?
+        NSFileCoordinator().coordinate(
+            readingItemAt: url,
+            options: .withoutChanges,
+            error: &coordinationError
+        ) { coordinatedURL in
+            result = Result {
+                let values = try coordinatedURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+                guard values.isRegularFile == true, let size = values.fileSize, size > 0 else {
+                    throw LocalSourceImportError.interruptedCopy
+                }
+                return Int64(size)
+            }
+        }
+        if let coordinationError { throw coordinationError }
+        guard let result else { throw LocalSourceImportError.interruptedCopy }
+        return try result.get()
     }
 
     private func fingerprint(_ url: URL) throws -> String {

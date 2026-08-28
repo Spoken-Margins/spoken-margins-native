@@ -544,12 +544,14 @@ private struct HomeScreen: View {
     @State private var pendingTrashItem: LibraryItemRow?
     @State private var suppressSourceLinkBlurSubmission = false
     @State private var previousFocusedField: Field?
+    @State private var isQuickAddExpanded = false
 
     private enum Field {
         case title
         case text
         case sourceLink
         case followedSource
+        case librarySearch
     }
 
     private enum FileImportRequest {
@@ -562,7 +564,7 @@ private struct HomeScreen: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
+                LazyVStack(alignment: .leading, spacing: 22) {
                     header
                     if model.shouldShowOnboardingCard {
                         onboardingCard
@@ -680,15 +682,16 @@ private struct HomeScreen: View {
         ProductPanel {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Label("New from Sources", systemImage: "tray.full")
+                    Label("Quick Add", systemImage: "tray.full")
                         .font(.headline)
                     Spacer()
-                    Button { model.refreshFollowedSources() } label: {
-                        if model.isRefreshingFollowedSources { ProgressView() } else { Image(systemName: "arrow.clockwise") }
+                    Button { model.refreshQuickAddFeed() } label: {
+                        if model.isRefreshingQuickAddFeed { ProgressView() } else { Image(systemName: "arrow.clockwise") }
                     }
                     .buttonStyle(IconButtonStyle())
-                    .disabled(model.isRefreshingFollowedSources)
-                    .accessibilityLabel("Refresh followed sources")
+                    .disabled(model.isRefreshingQuickAddFeed)
+                    .accessibilityLabel("Refresh Quick Add")
+                    .accessibilityIdentifier("quickAdd.refresh.button")
                 }
                 HStack {
                     TextField("HTTPS feed URL", text: $model.followedSourceURL)
@@ -723,58 +726,28 @@ private struct HomeScreen: View {
                             .font(.caption)
                     }
                 }
-                if !model.sourceFollowSuggestionCandidates.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Keep up with this source?").font(.subheadline.weight(.semibold))
-                        Text("Following only adds future entries to this inbox. Nothing is imported, downloaded, or prepared automatically.")
-                            .font(.caption)
-                            .foregroundStyle(AppColors.secondaryText)
-                        ForEach(model.sourceFollowSuggestionCandidates) { candidate in
-                            Button("Follow \(candidate.source.title ?? candidate.source.host)") {
-                                model.acceptSourceFollowSuggestion(candidate)
-                            }
-                            .buttonStyle(SecondaryButtonStyle())
-                        }
-                        HStack {
-                            Button("Not now", action: model.deferSourceFollowSuggestion)
-                            Button("Don't suggest", role: .destructive, action: model.rejectSourceFollowSuggestion)
-                        }
+                SourceFollowSuggestionCard()
+                if model.hasQuickAccessFolder {
+                    Label("Quick Folder · \(model.quickAccessFolderName)", systemImage: "folder")
                         .font(.caption)
-                    }
-                    .padding(10)
-                    .background(AppColors.watchControl.opacity(0.35))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .foregroundStyle(AppColors.secondaryText)
+                        .accessibilityIdentifier("quickAdd.folder.source")
                 }
-                if model.followedSourceEntries.isEmpty {
-                    Text("Following a source only fills this inbox. It never imports, downloads, or prepares an entry automatically.")
+                let quickAddCandidates = model.quickAddCandidates
+                if quickAddCandidates.isEmpty {
+                    Text("Follow a source or choose a Quick Folder. New feed entries and eligible folder files appear here, but nothing imports until you choose it.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
                 } else {
-                    ForEach(model.followedSourceEntries.prefix(8)) { entry in
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(entry.title).font(.subheadline.weight(.semibold))
-                            if let author = entry.author { Text(author).font(.caption).foregroundStyle(AppColors.secondaryText) }
-                            HStack {
-                                Button {
-                                    model.importFollowedSourceEntry(entry)
-                                } label: {
-                                    if model.importingFollowedSourceEntryIds.contains(entry.id) {
-                                        ProgressView()
-                                    } else {
-                                        Text("Import")
-                                    }
-                                }
-                                .disabled(model.importingFollowedSourceEntryIds.contains(entry.id))
-                                .accessibilityIdentifier("sources.entry.import.\(entry.id)")
-                                if let url = URL(string: entry.canonicalURL) {
-                                    Link("Open", destination: url)
-                                }
-                                Button("Dismiss") { model.dismissFollowedSourceEntry(id: entry.id) }
-                                Spacer()
-                            }
-                            .font(.caption)
+                    ForEach(quickAddCandidates.prefix(isQuickAddExpanded ? quickAddCandidates.count : 3)) { candidate in
+                        quickAddCandidateRow(candidate)
+                    }
+                    if quickAddCandidates.count > 3 {
+                        Button(isQuickAddExpanded ? "Show Less" : "Show \(quickAddCandidates.count - 3) More") {
+                            withAnimation { isQuickAddExpanded.toggle() }
                         }
-                        .accessibilityIdentifier("sources.entry.\(entry.id)")
+                        .font(.caption.weight(.semibold))
+                        .accessibilityIdentifier("quickAdd.expand.button")
                     }
                 }
                 if !model.feedSubscriptions.isEmpty {
@@ -790,6 +763,92 @@ private struct HomeScreen: View {
                     }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func quickAddCandidateRow(_ candidate: QuickAddCandidate) -> some View {
+        switch candidate {
+        case .localFile(let file):
+            QuickAddSwipeRow(
+                onImport: { model.importQuickAccessFile(file) },
+                onDismiss: { model.dismissQuickAccessFile(file) }
+            ) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Button {
+                        model.importQuickAccessFile(file, openWhenFinished: true)
+                    } label: {
+                        Text(file.name)
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(model.isImportingSources)
+                    .accessibilityHint("Imports and opens this item")
+                    Text("\(model.quickAccessFolderName) · \(file.modifiedAtDescription)")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                    HStack {
+                        Button {
+                            model.importQuickAccessFile(file)
+                        } label: {
+                            if model.isImportingSources {
+                                ProgressView()
+                            } else {
+                                Text("Import")
+                            }
+                        }
+                        .disabled(model.isImportingSources)
+                        .accessibilityIdentifier("quickAdd.folder.import.\(file.id)")
+                        Label("Quick Folder", systemImage: "folder")
+                            .foregroundStyle(AppColors.secondaryText)
+                        Spacer()
+                    }
+                    .font(.caption)
+                }
+            }
+            .accessibilityIdentifier("quickAdd.folder.\(file.id)")
+        case .followedSource(let entry):
+            QuickAddSwipeRow(
+                onImport: { model.importFollowedSourceEntry(entry) },
+                onDismiss: { model.dismissFollowedSourceEntry(id: entry.id) }
+            ) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Button {
+                        model.importFollowedSourceEntry(entry, openWhenFinished: true)
+                    } label: {
+                        Text(entry.title)
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(model.importingFollowedSourceEntryIds.contains(entry.id))
+                    .accessibilityHint("Imports and opens this item")
+                    if let author = entry.author { Text(author).font(.caption).foregroundStyle(AppColors.secondaryText) }
+                    HStack {
+                        Button {
+                            model.importFollowedSourceEntry(entry)
+                        } label: {
+                            if model.importingFollowedSourceEntryIds.contains(entry.id) {
+                                ProgressView()
+                            } else {
+                                Text("Import")
+                            }
+                        }
+                        .disabled(model.importingFollowedSourceEntryIds.contains(entry.id))
+                        .accessibilityIdentifier("sources.entry.import.\(entry.id)")
+                        if let url = URL(string: entry.canonicalURL) {
+                            Link("Open", destination: url)
+                        }
+                        Button("Dismiss") { model.dismissFollowedSourceEntry(id: entry.id) }
+                        Spacer()
+                    }
+                    .font(.caption)
+                }
+            }
+            .accessibilityIdentifier("sources.entry.\(entry.id)")
         }
     }
 
@@ -1154,7 +1213,7 @@ private struct HomeScreen: View {
     }
 
     private var queue: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        LazyVStack(alignment: .leading, spacing: 12) {
             HStack {
                 Label("Your Library", systemImage: "music.note.list")
                     .font(.headline)
@@ -1163,9 +1222,12 @@ private struct HomeScreen: View {
             if !model.libraryItems.isEmpty {
                 TextField("Search title, source, or author", text: $model.libraryQuery.query)
                     .textFieldStyle(.roundedBorder)
+                    .focused($focusedField, equals: .librarySearch)
+                    .submitLabel(.done)
+                    .onSubmit { focusedField = nil }
                     .accessibilityIdentifier("library.search.field")
                 HStack {
-                    Menu("Filter") {
+                    Menu(model.libraryFilterDescription) {
                         Picker("Content Type", selection: $model.libraryQuery.contentType) {
                             ForEach(LibraryContentTypeFilter.allCases, id: \.self) { Text($0.rawValue.replacingOccurrences(of: "_", with: " ").capitalized).tag($0) }
                         }
@@ -1177,7 +1239,7 @@ private struct HomeScreen: View {
                         }
                     }
                     .accessibilityIdentifier("library.filter.menu")
-                    Menu("Sort") {
+                    Menu(model.librarySortDescription) {
                         Picker("Sort", selection: $model.libraryQuery.sort) {
                             ForEach(LibrarySort.allCases, id: \.self) { Text($0.rawValue.replacingOccurrences(of: "_", with: " ").capitalized).tag($0) }
                         }
@@ -1207,10 +1269,11 @@ private struct HomeScreen: View {
                     }
                 }
             } else {
-                if model.visibleLibraryItems.isEmpty {
+                let visibleLibraryItems = model.visibleLibraryItems
+                if visibleLibraryItems.isEmpty {
                     ProductPanel { Text("No library items match these filters.").foregroundStyle(AppColors.secondaryText) }
                 }
-                ForEach(model.visibleLibraryItems) { item in
+                ForEach(visibleLibraryItems) { item in
                     ProductPanel {
                         HStack(spacing: 12) {
                             Button {
@@ -1266,6 +1329,57 @@ private struct HomeScreen: View {
     }
 }
 
+private struct QuickAddSwipeRow<Content: View>: View {
+    let onImport: () -> Void
+    let onDismiss: () -> Void
+    @ViewBuilder let content: () -> Content
+
+    @GestureState private var horizontalDrag: CGFloat = 0
+
+    var body: some View {
+        ZStack {
+            HStack {
+                Label("Import", systemImage: "square.and.arrow.down")
+                    .foregroundStyle(.white)
+                Spacer()
+                Label("Dismiss", systemImage: "xmark")
+                    .foregroundStyle(.white)
+            }
+            .font(.caption.weight(.bold))
+            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity, minHeight: 72)
+            .background(horizontalDrag >= 0 ? AppColors.green : Color.red)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .opacity(abs(horizontalDrag) < 8 ? 0 : 1)
+
+            content()
+                .padding(.vertical, 6)
+                .padding(.horizontal, 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(AppColors.panel)
+                .offset(x: horizontalDrag)
+        }
+        .contentShape(Rectangle())
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 20)
+                .updating($horizontalDrag) { value, state, _ in
+                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                    state = max(-120, min(120, value.translation.width))
+                }
+                .onEnded { value in
+                    guard abs(value.translation.width) > abs(value.translation.height),
+                          abs(value.translation.width) >= 72 else { return }
+                    if value.translation.width > 0 {
+                        onImport()
+                    } else {
+                        onDismiss()
+                    }
+                }
+        )
+        .accessibilityHint("Swipe right to import, or swipe left to dismiss")
+    }
+}
+
 private struct ItemScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @State private var showsManualListeningMapEditor = false
@@ -1277,6 +1391,8 @@ private struct ItemScreen: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     detailHeader
+                    SourceFollowSuggestionCard()
+                    ManualSourceFollowButton()
                     if !model.selectedItem.overview.isEmpty {
                         overview
                     }
@@ -1620,11 +1736,11 @@ private struct DiscretePlaybackRateSlider: View {
     let accessibilityValue: String
     let accessibilityIdentifier: String
 
-    private let rates = stride(from: 0.25, through: 2.0, by: 0.25).map { $0 }
+    private let rates = Gate1AppModel.supportedPlaybackRates
 
     var body: some View {
         VStack(spacing: 3) {
-            Slider(value: $value, in: 0.25...2.0, step: 0.25)
+            Slider(value: $value, in: 0.5...2.0, step: 0.25)
                 .accessibilityLabel(accessibilityLabel)
                 .accessibilityValue(accessibilityValue)
                 .accessibilityIdentifier(accessibilityIdentifier)
@@ -1683,7 +1799,6 @@ private struct PlaybackScreen: View {
     @State private var isPastingAssistantResponse = false
     @State private var mediaScrubState = PlaybackScrubState()
     @State private var textScrubState = PlaybackScrubState()
-    @State private var isPlaybackRatePresented = false
     @State private var isSleepTimerPresented = false
     @State private var isSourceTextPresented = false
     @State private var sourceTextOffsetAtPresentation = 0
@@ -1702,6 +1817,8 @@ private struct PlaybackScreen: View {
                                 }
                             }
                         }
+                        SourceFollowSuggestionCard(appearance: .playback)
+                        ManualSourceFollowButton(appearance: .playback)
                         Group {
                             if horizontalSizeClass == .regular {
                                 HStack(alignment: .top, spacing: 24) {
@@ -2003,7 +2120,11 @@ private struct PlaybackScreen: View {
                     sourceTextOffsetAtPresentation = model.snapshot.currentTextStart ?? 0
                     isSourceTextPresented = true
                 } label: {
-                    PlaybackControlLabel(title: "Text", systemImage: "doc.plaintext")
+                    if usesVerbosePlaybackActions {
+                        PlaybackControlLabel(title: "Text", systemImage: "doc.plaintext")
+                    } else {
+                        Image(systemName: "doc.plaintext")
+                    }
                 }
                 .accessibilityLabel("View native source text")
                 .accessibilityIdentifier("playback.sourceText.button")
@@ -2014,8 +2135,12 @@ private struct PlaybackScreen: View {
             Button {
                 isSleepTimerPresented = true
             } label: {
-                PlaybackControlLabel(title: model.sleepTimerDescription, systemImage: "moon.zzz")
-                    .font(.subheadline.weight(.semibold).monospacedDigit())
+                if usesVerbosePlaybackActions {
+                    PlaybackControlLabel(title: model.sleepTimerDescription, systemImage: "moon.zzz")
+                        .font(.subheadline.weight(.semibold).monospacedDigit())
+                } else {
+                    Image(systemName: "moon.zzz")
+                }
             }
             .accessibilityLabel(model.sleepTimerDescription)
             .accessibilityIdentifier("playback.sleepTimer.button")
@@ -2025,17 +2150,29 @@ private struct PlaybackScreen: View {
             }
 
             Button {
-                isPlaybackRatePresented = true
+                model.cyclePlaybackRate()
             } label: {
-                PlaybackControlLabel(title: model.compactPlaybackRateDescription, systemImage: "speedometer")
-                    .font(.subheadline.weight(.semibold).monospacedDigit())
+                if usesVerbosePlaybackActions {
+                    PlaybackControlLabel(title: model.compactPlaybackRateDescription, systemImage: "speedometer")
+                        .font(.subheadline.weight(.semibold).monospacedDigit())
+                } else {
+                    Image(systemName: "speedometer")
+                }
             }
             .accessibilityLabel("Playback speed, \(model.compactPlaybackRateDescription)")
-            .accessibilityHint("Opens playback speed controls")
+            .accessibilityHint("Advances to the next playback speed")
             .accessibilityIdentifier("playback.rate.button")
-            .popover(isPresented: $isPlaybackRatePresented, arrowEdge: .top) {
-                playbackRatePopover
-                    .presentationCompactAdaptation(.popover)
+            .contextMenu {
+                ForEach(Gate1AppModel.supportedPlaybackRates, id: \.self) { rate in
+                    Button(String(format: "%.2f×", rate)) {
+                        if model.isMediaPlaybackSnapshot {
+                            model.setMediaPlaybackRate(rate)
+                        } else {
+                            model.speechRate = rate * 0.5
+                            model.playbackSpeechRateChanged()
+                        }
+                    }
+                }
             }
         }
         .font(.caption.weight(.semibold))
@@ -2627,6 +2764,85 @@ private struct PlaybackScreen: View {
             }
         }
         .accessibilityIdentifier("conversation.section")
+    }
+}
+
+private struct SourceFollowSuggestionCard: View {
+    fileprivate enum Appearance: Equatable {
+        case standard
+        case playback
+    }
+
+    @EnvironmentObject private var model: Gate1AppModel
+    var appearance: Appearance = .standard
+
+    var body: some View {
+        if !model.sourceFollowSuggestionCandidates.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Keep up with this source?", systemImage: "dot.radiowaves.left.and.right")
+                    .font(.headline)
+                Text("Following only adds future entries to your source inbox. Nothing is imported, downloaded, or prepared automatically.")
+                    .font(.caption)
+                    .foregroundStyle(secondaryColor)
+                ForEach(model.sourceFollowSuggestionCandidates) { candidate in
+                    Button("Follow \(candidate.source.title ?? candidate.source.host)") {
+                        model.acceptSourceFollowSuggestion(candidate)
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .accessibilityIdentifier("source.followSuggestion.accept.\(candidate.id)")
+                }
+                HStack {
+                    Button("Not now", action: model.deferSourceFollowSuggestion)
+                        .accessibilityIdentifier("source.followSuggestion.notNow")
+                    Button("Don't suggest", role: .destructive, action: model.rejectSourceFollowSuggestion)
+                        .accessibilityIdentifier("source.followSuggestion.never")
+                }
+                .font(.caption)
+            }
+            .padding(appearance == .playback ? 16 : 10)
+            .frame(maxWidth: appearance == .playback ? 430 : .infinity, alignment: .leading)
+            .foregroundStyle(foregroundColor)
+            .background(backgroundColor)
+            .clipShape(RoundedRectangle(cornerRadius: appearance == .playback ? 18 : 12))
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("source.followSuggestion.card")
+        }
+    }
+
+    private var foregroundColor: Color {
+        appearance == .playback ? .white : AppColors.text
+    }
+
+    private var secondaryColor: Color {
+        appearance == .playback ? AppColors.watchSecondary : AppColors.secondaryText
+    }
+
+    private var backgroundColor: Color {
+        appearance == .playback ? AppColors.watchBackground : AppColors.watchControl.opacity(0.35)
+    }
+}
+
+private struct ManualSourceFollowButton: View {
+    @EnvironmentObject private var model: Gate1AppModel
+    var appearance: SourceFollowSuggestionCard.Appearance = .standard
+
+    var body: some View {
+        if model.canManuallyFollowSelectedSource {
+            Button(action: model.followSelectedSource) {
+                HStack {
+                    if model.isFollowingSelectedSource {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "dot.radiowaves.left.and.right")
+                    }
+                    Text(model.isFollowingSelectedSource ? "Following Podcast…" : "Follow Podcast")
+                }
+                .frame(maxWidth: appearance == .playback ? 430 : .infinity)
+            }
+            .buttonStyle(SecondaryButtonStyle())
+            .disabled(model.isFollowingSelectedSource)
+            .accessibilityIdentifier("source.followCurrent.button")
+        }
     }
 }
 

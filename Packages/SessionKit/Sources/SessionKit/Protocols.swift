@@ -51,7 +51,7 @@ public protocol CanonicalSourceRepository {
 }
 
 public protocol LocalImportRepository {
-    func publishImportedSource(item: Item, canonicalSource: CanonicalSourcePackage?, audioAsset: AudioAsset?, ownedAsset: OwnedOfflineAsset) throws
+    func publishImportedSource(item: Item, canonicalSource: CanonicalSourcePackage?, listeningMap: ListeningMap?, audioAsset: AudioAsset?, ownedAsset: OwnedOfflineAsset) throws
 }
 
 public protocol PreparedAudioRepository {

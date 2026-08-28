@@ -31,9 +31,10 @@ public enum OfflineAssetIntegrity: String, Codable, Equatable, Sendable {
 
 public struct OfflineStorageBudget: Codable, Equatable, Sendable {
     public static let allowedGigabytes = [1, 2, 5, 10, 20]
+    public static let bytesPerGigabyte: Int64 = 1_000_000_000
     public var limitBytes: Int64
 
-    public init(limitBytes: Int64 = 5 * 1_024 * 1_024 * 1_024) {
+    public init(limitBytes: Int64 = 5 * bytesPerGigabyte) {
         self.limitBytes = max(0, limitBytes)
     }
 }

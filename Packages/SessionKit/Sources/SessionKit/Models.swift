@@ -459,6 +459,7 @@ public struct Item: Codable, Equatable, Sendable {
     public var deletedAt: Date?
     public var author: String?
     public var sourceTitle: String?
+    public var sourceURL: String?
     public var createdAt: Date?
 
     public init(
@@ -474,6 +475,7 @@ public struct Item: Codable, Equatable, Sendable {
         deletedAt: Date? = nil,
         author: String? = nil,
         sourceTitle: String? = nil,
+        sourceURL: String? = nil,
         createdAt: Date? = nil
     ) {
         self.id = id
@@ -488,6 +490,7 @@ public struct Item: Codable, Equatable, Sendable {
         self.deletedAt = deletedAt
         self.author = author
         self.sourceTitle = sourceTitle
+        self.sourceURL = sourceURL
         self.createdAt = createdAt
     }
 }

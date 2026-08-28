@@ -47,9 +47,12 @@ struct LibraryItemRow: Identifiable, Hashable {
     let mediaType: String
     let sourceTitle: String?
     let author: String?
+    let sourceReference: String?
+    let sourceReferenceType: String?
     let offlineState: LibraryOfflineStateFilter
     let addedAt: Date?
     let lastListenedAt: Date?
+    let storageRecencyRank: Int
 
     init(
         id: String,
@@ -61,9 +64,12 @@ struct LibraryItemRow: Identifiable, Hashable {
         mediaType: String = "text",
         sourceTitle: String? = nil,
         author: String? = nil,
+        sourceReference: String? = nil,
+        sourceReferenceType: String? = nil,
         offlineState: LibraryOfflineStateFilter = .onlineOnly,
         addedAt: Date? = nil,
-        lastListenedAt: Date? = nil
+        lastListenedAt: Date? = nil,
+        storageRecencyRank: Int = .max
     ) {
         self.id = id
         self.title = title
@@ -74,9 +80,12 @@ struct LibraryItemRow: Identifiable, Hashable {
         self.mediaType = mediaType
         self.sourceTitle = sourceTitle
         self.author = author
+        self.sourceReference = sourceReference
+        self.sourceReferenceType = sourceReferenceType
         self.offlineState = offlineState
         self.addedAt = addedAt
         self.lastListenedAt = lastListenedAt
+        self.storageRecencyRank = storageRecencyRank
     }
 }
 
@@ -241,7 +250,31 @@ struct QuickAccessFile: Identifiable, Hashable, Sendable {
     let id: String
     let name: String
     let relativePath: String
+    let modifiedAt: Date
     let modifiedAtDescription: String
+
+    var dismissalKey: String {
+        "\(id)|\(Int(modifiedAt.timeIntervalSince1970))"
+    }
+}
+
+enum QuickAddCandidate: Identifiable, Sendable {
+    case localFile(QuickAccessFile)
+    case followedSource(FeedEntry)
+
+    var id: String {
+        switch self {
+        case .localFile(let file): "local-file:\(file.id)"
+        case .followedSource(let entry): "followed-source:\(entry.id)"
+        }
+    }
+
+    fileprivate var sortDate: Date {
+        switch self {
+        case .localFile(let file): file.modifiedAt
+        case .followedSource(let entry): entry.publishedAt ?? .distantPast
+        }
+    }
 }
 
 private struct ObsidianImportRequest: Sendable {
@@ -273,14 +306,14 @@ private enum SourceFileImportError: LocalizedError {
     }
 }
 
-private struct QuickAccessFileCandidate: Sendable {
+struct QuickAccessFileCandidate: Sendable {
     let id: String
     let name: String
     let relativePath: String
     let modifiedAt: Date
 }
 
-private struct QuickAccessFolderScan: Sendable {
+struct QuickAccessFolderScan: Sendable {
     let files: [QuickAccessFileCandidate]
     let errorDescription: String?
 }
@@ -366,9 +399,11 @@ final class Gate1AppModel: ObservableObject {
     private static let guidedOnboardingSeedVersionKey = "guidedOnboardingSeedVersion"
     private static let guidedOnboardingTombstoneKey = "guidedOnboardingTombstone"
     private static let onboardingCardDismissedKey = "onboardingCardDismissedV1"
+    private static let dismissedQuickAccessFilesKey = "dismissedQuickAccessFilesV1"
     private static let supertonicTTSMigrationKey = "supertonicTTSMigrationV1"
     private static let supertonicVoicePendingTermsKey = "supertonicVoicePendingTermsV1"
     static let exportPreviewCharacterLimit = 24_000
+    nonisolated static let supportedPlaybackRates: [Double] = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
     private static var isRunningUnitTests: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     }
@@ -441,6 +476,9 @@ final class Gate1AppModel: ObservableObject {
     }
     @Published var quickAccessFolderName = UserDefaults.standard.string(forKey: "quickAccessFolderName") ?? "No folder selected"
     @Published var quickAccessRecentFiles: [QuickAccessFile] = []
+    @Published private(set) var dismissedQuickAccessFileKeys = Set(
+        UserDefaults.standard.stringArray(forKey: Gate1AppModel.dismissedQuickAccessFilesKey) ?? []
+    )
     @Published private(set) var sourceImportProgressMessage: String?
     @Published private(set) var isRefreshingQuickAccessFolder = false
     @Published var importInbox: [ImportInboxEntry] = []
@@ -455,6 +493,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var feedSubscriptions: [FeedSubscription] = []
     @Published private(set) var isRefreshingFollowedSources = false
     @Published private(set) var importingFollowedSourceEntryIds: Set<String> = []
+    @Published private(set) var isFollowingSelectedSource = false
     @Published var isResolvingSourceLink = false
     @Published var sourceLinkCandidateReview: SourceLinkCandidateReviewState?
     @Published private(set) var sourceLinkImportState = "idle"
@@ -472,13 +511,13 @@ final class Gate1AppModel: ObservableObject {
     @Published var speechRate: Double = {
         let stored = UserDefaults.standard.double(forKey: "speechRate")
         let rawRate = stored == 0 ? 0.5 : stored
-        let multiplier = max(0.25, min(2.0, ((rawRate / 0.5) * 4).rounded() / 4))
+        let multiplier = max(0.5, min(2.0, ((rawRate / 0.5) * 4).rounded() / 4))
         return multiplier * 0.5
     }()
     @Published var mediaPlaybackRate: Double = {
         let stored = UserDefaults.standard.double(forKey: "mediaPlaybackRate")
         let rawRate = stored == 0 ? 1.0 : stored
-        return max(0.25, min(2.0, (rawRate * 4).rounded() / 4))
+        return max(0.5, min(2.0, (rawRate * 4).rounded() / 4))
     }()
     @Published var podcastCacheLimitGB = PodcastCacheLimitGB(
         rawValue: UserDefaults.standard.integer(forKey: "podcastCacheLimitGB")
@@ -1174,6 +1213,7 @@ final class Gate1AppModel: ObservableObject {
                         self.synchronizeStreamingSpeechAnchorIfNeeded()
                         let previousStatus = self.snapshot.status
                         let previousTargetId = self.snapshot.targetId
+                        let previousEngagementProgress = self.snapshot.currentPlaybackProgressPercent
                         let updated = self.snapshotReflectingTextAudioPrewarmStatus(
                             try engine.syncPlaybackProgress(),
                             itemId: self.activeItemId
@@ -1188,6 +1228,12 @@ final class Gate1AppModel: ObservableObject {
                         }
                         if updated != self.snapshot {
                             self.snapshot = updated
+                        }
+                        if previousEngagementProgress < 25,
+                           updated.currentPlaybackProgressPercent >= 25,
+                           let itemId = updated.itemId,
+                           let store = self.store {
+                            self.offerFollowSuggestionIfEligible(itemId: itemId, store: store)
                         }
                         let playedPendingTurn = self.playPendingTurnIfReady(completedCurrentAudio: completedCurrentAudio)
                         if completedCurrentAudio && !playedPendingTurn {
@@ -1323,6 +1369,7 @@ final class Gate1AppModel: ObservableObject {
                UserDefaults.standard.integer(forKey: Self.guidedOnboardingSeedVersionKey) < 1,
                !(try store.listItems()).contains(where: { $0.id == Self.guidedOnboardingItemId }) {
                 try store.saveItem(Self.makeBundledGuidedOnboardingItem())
+                try store.saveListeningMap(Self.makeBundledGuidedOnboardingMap())
                 UserDefaults.standard.set(1, forKey: Self.guidedOnboardingSeedVersionKey)
                 rows = try loadLibraryRows(store: store)
                 diagnostics["guidedOnboardingItem"] = "bundled_fallback_seeded"
@@ -1421,6 +1468,24 @@ final class Gate1AppModel: ObservableObject {
         )
     }
 
+    private static func makeBundledGuidedOnboardingMap() -> ListeningMap {
+        let textLength = makeBundledGuidedOnboardingItem().text?.count ?? 0
+        return ListeningMap(
+            id: "map-guided-onboarding",
+            itemId: guidedOnboardingItemId,
+            overview: "Practice listening, interjecting, reviewing the timeline, and exporting a session.",
+            chapters: [
+                Chapter(
+                    id: "guided-onboarding-core-loop",
+                    title: "The Core Loop",
+                    startChar: 0,
+                    endChar: textLength,
+                    percent: 0
+                )
+            ]
+        )
+    }
+
     func handleAppBecameActive() {
         supertonicRenderer?.setBackgroundInferencePacingEnabled(false)
         let refreshedAvailability = localFoundationModelClient.availability()
@@ -1433,7 +1498,7 @@ final class Gate1AppModel: ObservableObject {
         gate2CompactControls.reconcileLiveActivities()
         importPendingSourceLinkHandoffs()
         scheduleAutomaticAudioPreparationIfNeeded()
-        refreshFollowedSources(force: false)
+        refreshQuickAddFeed(force: false)
     }
 
     func automaticAudioPreparationPolicyChanged() {
@@ -1457,8 +1522,9 @@ final class Gate1AppModel: ObservableObject {
             do {
                 let store = try self.requireStore()
                 try store.saveOfflineStorageBudget(OfflineStorageBudget(
-                    limitBytes: Int64(self.offlineStorageLimitGB) * 1_024 * 1_024 * 1_024
+                    limitBytes: Int64(self.offlineStorageLimitGB) * OfflineStorageBudget.bytesPerGigabyte
                 ))
+                _ = try await self.offlineStorageLedger?.enforceBudget()
                 self.tryRefreshOfflineStorageUsage()
             } catch {
                 self.reportFailure(error, context: "Offline storage budget update failed")
@@ -1486,11 +1552,18 @@ final class Gate1AppModel: ObservableObject {
         Task { [weak self] in
             let usage = try? await ledger.categoryUsage()
             let total = usage?.values.reduce(0, +) ?? 0
-            let protected = (try? self?.store?.loadOwnedOfflineAssets())?
-                .filter { !$0.protections.isEmpty }
-                .reduce(Int64(0)) { $0 + $1.byteCount } ?? 0
+            let assets = (try? self?.store?.loadOwnedOfflineAssets()) ?? []
+            let kept = assets
+                .filter { !$0.isAutomaticallyEvictable }
+                .reduce(Int64(0)) { $0 + $1.byteCount }
+            let limit = (try? self?.store?.loadOfflineStorageBudget().limitBytes)
+                ?? Int64(self?.offlineStorageLimitGB ?? 5) * OfflineStorageBudget.bytesPerGigabyte
+            let overage = max(0, total - limit)
             await MainActor.run {
-                self?.offlineStorageUsageDescription = "\(ByteCountFormatter.string(fromByteCount: total, countStyle: .file)) used · \(ByteCountFormatter.string(fromByteCount: protected, countStyle: .file)) protected"
+                let base = "\(ByteCountFormatter.string(fromByteCount: total, countStyle: .decimal)) of \(ByteCountFormatter.string(fromByteCount: limit, countStyle: .decimal)) used · \(ByteCountFormatter.string(fromByteCount: kept, countStyle: .decimal)) kept"
+                self?.offlineStorageUsageDescription = overage > 0
+                    ? "\(base) · \(ByteCountFormatter.string(fromByteCount: overage, countStyle: .decimal)) over budget"
+                    : base
             }
         }
     }
@@ -1573,11 +1646,14 @@ final class Gate1AppModel: ObservableObject {
     func startGuidedOnboarding() {
         do {
             let store = try requireStore()
-            if !(try store.listItems()).contains(where: { $0.id == Self.welcomeSampleItemId }) {
-                let (item, map) = try makeAppOverviewSample()
-                try store.saveItem(item)
-                try store.saveListeningMap(map)
+            if !(try store.listItems()).contains(where: { $0.id == Self.guidedOnboardingItemId }) {
+                try store.saveItem(Self.makeBundledGuidedOnboardingItem())
+                try store.saveListeningMap(Self.makeBundledGuidedOnboardingMap())
+                UserDefaults.standard.set(1, forKey: Self.guidedOnboardingSeedVersionKey)
+                UserDefaults.standard.removeObject(forKey: Self.guidedOnboardingTombstoneKey)
                 try refreshLibraryRows(store: store)
+            } else if try store.loadListeningMap(itemId: Self.guidedOnboardingItemId) == nil {
+                try store.saveListeningMap(Self.makeBundledGuidedOnboardingMap())
             }
             if engine == nil {
                 installEngine(try makeEngine(store: store))
@@ -1595,7 +1671,7 @@ final class Gate1AppModel: ObservableObject {
             } else {
                 setGuidedOnboardingStage(.complete)
             }
-            startItem(id: Self.welcomeSampleItemId)
+            startItem(id: Self.guidedOnboardingItemId)
         } catch {
             reportFailure(error, context: "Guided tour setup failed")
         }
@@ -1752,10 +1828,98 @@ final class Gate1AppModel: ObservableObject {
         sourceImportProgressMessage != nil
     }
 
+    var quickAddCandidates: [QuickAddCandidate] {
+        Self.quickAddCandidates(
+            folderFiles: quickAccessRecentFiles,
+            followedEntries: followedSourceEntries,
+            subscriptions: feedSubscriptions,
+            libraryItems: libraryItems,
+            dismissedFileKeys: dismissedQuickAccessFileKeys
+        )
+    }
+
+    var hasQuickAccessFolder: Bool {
+        UserDefaults.standard.data(forKey: quickAccessFolderBookmarkKey) != nil
+    }
+
+    var isRefreshingQuickAddFeed: Bool {
+        isRefreshingQuickAccessFolder || isRefreshingFollowedSources
+    }
+
+    nonisolated static func quickAddCandidates(
+        folderFiles: [QuickAccessFile],
+        followedEntries: [FeedEntry],
+        subscriptions: [FeedSubscription] = [],
+        libraryItems: [LibraryItemRow] = [],
+        dismissedFileKeys: Set<String> = []
+    ) -> [QuickAddCandidate] {
+        let importedURLs = Set(libraryItems.compactMap { normalizedQuickAddURL($0.sourceReference) })
+        let importedEpisodeKeys = Set(libraryItems.map {
+            quickAddEpisodeKey(title: $0.title, sourceTitle: $0.sourceTitle)
+        })
+        let sourceTitles = Dictionary(uniqueKeysWithValues: subscriptions.map {
+            ($0.id, $0.source.title ?? $0.source.host)
+        })
+        let eligibleFiles = folderFiles.filter { !dismissedFileKeys.contains($0.dismissalKey) }
+        let eligibleEntries = followedEntries.filter { entry in
+            if let normalizedURL = normalizedQuickAddURL(entry.canonicalURL), importedURLs.contains(normalizedURL) {
+                return false
+            }
+            let episodeKey = quickAddEpisodeKey(
+                title: entry.title,
+                sourceTitle: sourceTitles[entry.subscriptionId]
+            )
+            return !importedEpisodeKeys.contains(episodeKey)
+        }
+        return (eligibleFiles.map(QuickAddCandidate.localFile)
+            + eligibleEntries.map(QuickAddCandidate.followedSource))
+            .sorted {
+                if $0.sortDate != $1.sortDate {
+                    return $0.sortDate > $1.sortDate
+                }
+                return $0.id < $1.id
+            }
+    }
+
+    private nonisolated static func normalizedQuickAddURL(_ rawValue: String?) -> String? {
+        guard let rawValue,
+              var components = URLComponents(string: rawValue.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let scheme = components.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              components.host != nil else { return nil }
+        components.scheme = scheme
+        components.host = components.host?.lowercased()
+        components.fragment = nil
+        if components.path.count > 1, components.path.hasSuffix("/") {
+            components.path.removeLast()
+        }
+        return components.string
+    }
+
+    private nonisolated static func quickAddEpisodeKey(title: String, sourceTitle: String?) -> String {
+        [sourceTitle ?? "", title]
+            .map {
+                $0.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+                    .replacingOccurrences(of: #"[^a-z0-9]+"#, with: " ", options: .regularExpression)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            .joined(separator: "|")
+    }
+
+    func dismissQuickAccessFile(_ file: QuickAccessFile) {
+        dismissedQuickAccessFileKeys.insert(file.dismissalKey)
+        UserDefaults.standard.set(
+            dismissedQuickAccessFileKeys.sorted(),
+            forKey: Self.dismissedQuickAccessFilesKey
+        )
+    }
+
     private func beginObsidianMarkdownImport(
         urls: [URL],
         securityScopedURLs: [URL],
-        refreshQuickFolderWhenFinished: Bool = false
+        refreshQuickFolderWhenFinished: Bool = false,
+        openImportedItemWhenFinished: Bool = false,
+        quickAccessFileToDismiss: QuickAccessFile? = nil
     ) {
         guard !urls.isEmpty else {
             reportFailure("Choose at least one Markdown, text, or PDF file to import.")
@@ -1789,7 +1953,12 @@ final class Gate1AppModel: ObservableObject {
                 }
             }
             guard let self else { return }
-            self.completeObsidianMarkdownImport(batch, refreshQuickFolderWhenFinished: refreshQuickFolderWhenFinished)
+            self.completeObsidianMarkdownImport(
+                batch,
+                refreshQuickFolderWhenFinished: refreshQuickFolderWhenFinished,
+                openImportedItemWhenFinished: openImportedItemWhenFinished,
+                quickAccessFileToDismiss: quickAccessFileToDismiss
+            )
         }
     }
 
@@ -1810,11 +1979,12 @@ final class Gate1AppModel: ObservableObject {
                 let item = Item(
                     id: request.itemId,
                     title: parsed.title,
-                    mediaType: "text",
+                    mediaType: request.url.pathExtension.lowercased() == "pdf" ? "pdf" : "text",
                     text: parsed.text,
                     externalReference: parsed.source ?? request.url.lastPathComponent,
                     status: deterministicMap == nil ? "needs_listening_map" : "ready",
-                    externalReferenceType: "file"
+                    externalReferenceType: "file",
+                    createdAt: Date()
                 )
                 prepared.append(PreparedObsidianImport(item: item, listeningMap: deterministicMap))
             } catch {
@@ -1841,7 +2011,9 @@ final class Gate1AppModel: ObservableObject {
 
     private func completeObsidianMarkdownImport(
         _ batch: ObsidianImportBatch,
-        refreshQuickFolderWhenFinished: Bool
+        refreshQuickFolderWhenFinished: Bool,
+        openImportedItemWhenFinished: Bool,
+        quickAccessFileToDismiss: QuickAccessFile?
     ) {
         defer {
             sourceImportTask = nil
@@ -1876,7 +2048,11 @@ final class Gate1AppModel: ObservableObject {
                 installEngine(try makeEngine(store: store))
             }
             libraryItems = try loadLibraryRows(store: store)
-            if preservesActiveSession {
+            if openImportedItemWhenFinished, let item = imported.first {
+                activeItemId = item.id
+                selectedItem = try loadItemDetail(id: item.id, store: store)
+                screen = .item
+            } else if preservesActiveSession {
                 activeItemId = preservedActiveItemId
                 if !preservedSelectedItemId.isEmpty {
                     selectedItem = try loadItemDetail(id: preservedSelectedItemId, store: store)
@@ -1885,6 +2061,9 @@ final class Gate1AppModel: ObservableObject {
                 activeItemId = imported.first?.id ?? activeItemId
                 selectedItem = try loadItemDetail(id: activeItemId, store: store)
                 screen = .home
+            }
+            if let quickAccessFileToDismiss {
+                dismissQuickAccessFile(quickAccessFileToDismiss)
             }
             imported.forEach { scheduleTextAudioPrewarmIfNeeded(itemId: $0.id) }
             diagnostics["lastObsidianImportCount"] = "\(imported.count)"
@@ -2324,6 +2503,7 @@ final class Gate1AppModel: ObservableObject {
                     id: entry.id,
                     name: entry.name,
                     relativePath: entry.relativePath,
+                    modifiedAt: entry.modifiedAt,
                     modifiedAtDescription: formatter.localizedString(for: entry.modifiedAt, relativeTo: Date())
                 )
             }
@@ -2333,7 +2513,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private nonisolated static func scanQuickAccessFolder(_ folderURL: URL) -> QuickAccessFolderScan {
+    nonisolated static func scanQuickAccessFolder(_ folderURL: URL) -> QuickAccessFolderScan {
         do {
             let files = try FileManager.default.contentsOfDirectory(
                 at: folderURL,
@@ -2353,7 +2533,7 @@ final class Gate1AppModel: ObservableObject {
                 )
             }
             return QuickAccessFolderScan(
-                files: Array(supported.sorted { $0.modifiedAt > $1.modifiedAt }.prefix(2)),
+                files: Array(supported.sorted { $0.modifiedAt > $1.modifiedAt }.prefix(8)),
                 errorDescription: nil
             )
         } catch {
@@ -2361,7 +2541,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func importQuickAccessFile(_ file: QuickAccessFile) {
+    func importQuickAccessFile(_ file: QuickAccessFile, openWhenFinished: Bool = false) {
         guard let folderURL = resolvedQuickAccessFolderURL() else {
             reportFailure("Choose a quick folder before importing recent files.")
             return
@@ -2370,8 +2550,15 @@ final class Gate1AppModel: ObservableObject {
         beginObsidianMarkdownImport(
             urls: [fileURL],
             securityScopedURLs: [folderURL],
-            refreshQuickFolderWhenFinished: true
+            refreshQuickFolderWhenFinished: true,
+            openImportedItemWhenFinished: openWhenFinished,
+            quickAccessFileToDismiss: file
         )
+    }
+
+    func refreshQuickAddFeed(force: Bool = true) {
+        refreshQuickAccessFolder()
+        refreshFollowedSources(force: force)
     }
 
     @discardableResult
@@ -2962,7 +3149,13 @@ final class Gate1AppModel: ObservableObject {
             let ordered: ComparisonResult
             switch libraryQuery.sort {
             case .recentlyAdded:
-                ordered = compareDates(lhs.addedAt, rhs.addedAt)
+                if lhs.addedAt != nil, rhs.addedAt != nil {
+                    ordered = compareDates(lhs.addedAt, rhs.addedAt)
+                } else if lhs.storageRecencyRank != rhs.storageRecencyRank {
+                    ordered = lhs.storageRecencyRank < rhs.storageRecencyRank ? .orderedAscending : .orderedDescending
+                } else {
+                    ordered = compareDates(lhs.addedAt, rhs.addedAt)
+                }
             case .recentlyListened:
                 ordered = compareDates(lhs.lastListenedAt, rhs.lastListenedAt)
             case .title:
@@ -2984,14 +3177,42 @@ final class Gate1AppModel: ObservableObject {
         UserDefaults.standard.set(persisted.sort.rawValue, forKey: "librarySort")
     }
 
+    var libraryFilterDescription: String {
+        var selections: [String] = []
+        if libraryQuery.contentType != .all {
+            selections.append(Self.displayName(libraryQuery.contentType.rawValue))
+        }
+        if libraryQuery.listeningState != .all {
+            selections.append(Self.displayName(libraryQuery.listeningState.rawValue))
+        }
+        if libraryQuery.offlineState != .all {
+            selections.append(Self.displayName(libraryQuery.offlineState.rawValue))
+        }
+        return selections.isEmpty ? "Filter" : selections.joined(separator: " · ")
+    }
+
+    var librarySortDescription: String {
+        Self.displayName(libraryQuery.sort.rawValue)
+    }
+
+    private nonisolated static func displayName(_ rawValue: String) -> String {
+        switch rawValue {
+        case "pdf": return "PDF"
+        case "epub": return "EPUB"
+        default: return rawValue.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
     private func libraryContentType(for row: LibraryItemRow) -> LibraryContentTypeFilter {
+        if row.sourceReference?.lowercased().contains(".pdf") == true { return .pdf }
         switch row.mediaType.lowercased() {
         case "pdf": return .pdf
         case "epub": return .epub
         case "article", TargetType.browserOwnedMedia.rawValue: return .article
         case "podcast", TargetType.transcriptBackedMedia.rawValue: return .podcast
         case "audiobook": return .audiobook
-        default: return .text
+        default:
+            return row.sourceReferenceType == "url" ? .article : .text
         }
     }
 
@@ -3021,6 +3242,7 @@ final class Gate1AppModel: ObservableObject {
             activeItemId = itemId
             if let detail = try? loadItemDetail(id: itemId, store: store) {
                 selectedItem = detail
+                offerFollowSuggestionIfEligible(itemId: itemId, store: store)
             }
         }
         screen = .playback
@@ -3094,6 +3316,7 @@ final class Gate1AppModel: ObservableObject {
             scheduleTextAudioPrewarmIfNeeded(itemId: id)
             listeningMapJSON = ""
             screen = .item
+            offerFollowSuggestionIfEligible(itemId: id, store: store)
             reportSuccess("Opened \(selectedItem.title).")
         } catch {
             reportFailure(error, context: "Open item failed")
@@ -3395,7 +3618,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func setMediaPlaybackRate(_ rate: Double) {
-        let clamped = max(0.25, min(2.0, (rate * 4).rounded() / 4))
+        let clamped = max(0.5, min(2.0, (rate * 4).rounded() / 4))
         mediaPlaybackRate = clamped
         UserDefaults.standard.set(clamped, forKey: "mediaPlaybackRate")
         run { engine in
@@ -3408,8 +3631,22 @@ final class Gate1AppModel: ObservableObject {
     func seekMedia(toMediaTimeMs mediaTimeMs: Int) {
         run { engine in
             snapshot = try engine.seekMedia(toMediaTimeMs: mediaTimeMs)
-            refreshSelectedItem()
         }
+    }
+
+    func cyclePlaybackRate() {
+        let current = isMediaPlaybackSnapshot ? mediaPlaybackRate : speechPlaybackRateMultiplier
+        let next = Self.nextPlaybackRate(after: current)
+        if isMediaPlaybackSnapshot {
+            setMediaPlaybackRate(next)
+        } else {
+            speechRate = next * 0.5
+            playbackSpeechRateChanged()
+        }
+    }
+
+    nonisolated static func nextPlaybackRate(after current: Double) -> Double {
+        supportedPlaybackRates.first(where: { $0 > current + 0.001 }) ?? supportedPlaybackRates[0]
     }
 
     func seekText(toCharOffset charOffset: Int) {
@@ -4872,7 +5109,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var speechPlaybackRateMultiplier: Double {
-        max(0.25, min(2.0, ((speechRate / 0.5) * 4).rounded() / 4))
+        max(0.5, min(2.0, ((speechRate / 0.5) * 4).rounded() / 4))
     }
 
     var mediaPlaybackRateDescription: String {
@@ -5447,6 +5684,9 @@ final class Gate1AppModel: ObservableObject {
         let canonicalTransportCommands: Set<CompactControlCommand> = [
             .play, .pause, .togglePlayPause, .skipBack, .skipForward, .jumpToChapter
         ]
+        let normalizedPlaybackRate = command == .setPlaybackRate
+            ? playbackRate.map { max(0.5, min(2.0, ($0 * 4).rounded() / 4)) }
+            : playbackRate
         if command == .beginInterjection || canonicalTransportCommands.contains(command) {
             synchronizeStreamingSpeechAnchorIfNeeded()
         }
@@ -5459,7 +5699,7 @@ final class Gate1AppModel: ObservableObject {
                 chapterId: chapterId,
                 unit: compactSkipUnit(for: command),
                 mediaTimeMs: mediaTimeMs,
-                playbackRate: playbackRate,
+                playbackRate: normalizedPlaybackRate,
                 origin: origin
             )
             if let engine {
@@ -5468,14 +5708,13 @@ final class Gate1AppModel: ObservableObject {
                 updateGate2CompactState()
             }
             if command == .setPlaybackRate,
-               let playbackRate {
+               let playbackRate = normalizedPlaybackRate {
                 if isMediaPlaybackSnapshot {
-                    mediaPlaybackRate = max(0.25, min(2.0, (playbackRate * 4).rounded() / 4))
+                    mediaPlaybackRate = playbackRate
                     UserDefaults.standard.set(mediaPlaybackRate, forKey: "mediaPlaybackRate")
                     diagnostics["mediaPlaybackRate"] = String(format: "%.2f", mediaPlaybackRate)
                 } else {
-                    let snappedRate = max(0.25, min(2.0, (playbackRate * 4).rounded() / 4))
-                    speechRate = snappedRate * 0.5
+                    speechRate = playbackRate * 0.5
                     UserDefaults.standard.set(speechRate, forKey: "speechRate")
                 }
             }
@@ -6424,7 +6663,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func loadLibraryRows(store: SQLiteSessionStore) throws -> [LibraryItemRow] {
-        try store.listItems().map { item in
+        try store.listItems().enumerated().map { storageRank, item in
             let sessions = try store.loadSessions(itemId: item.id)
             let continuation = Self.preferredContinuationSession(in: sessions)
             let manifests = try store.loadPreparedAudioManifests(itemId: item.id)
@@ -6448,9 +6687,12 @@ final class Gate1AppModel: ObservableObject {
                 mediaType: item.mediaType,
                 sourceTitle: item.sourceTitle ?? item.externalReference,
                 author: item.author,
+                sourceReference: item.externalReference,
+                sourceReferenceType: item.externalReferenceType,
                 offlineState: offlineState,
                 addedAt: item.createdAt,
-                lastListenedAt: sessions.compactMap { $0.updatedAt ?? $0.createdAt }.max()
+                lastListenedAt: sessions.compactMap { $0.updatedAt ?? $0.createdAt }.max(),
+                storageRecencyRank: storageRank
             )
         }
     }
@@ -8319,7 +8561,13 @@ final class Gate1AppModel: ObservableObject {
 
     private func loadItemDetail(id: String, store: SQLiteSessionStore) throws -> ItemDetailState {
         let item = try store.loadItem(id: id)
-        let map = try store.loadListeningMap(itemId: id)
+        var map = try store.loadListeningMap(itemId: id)
+        if map == nil,
+           let canonicalSource = try store.loadCanonicalSource(itemId: id),
+           let derivedMap = canonicalSource.derivedListeningMap() {
+            try store.saveListeningMap(derivedMap)
+            map = derivedMap
+        }
         let mediaTimeline = try store.loadTranscriptTimeline(itemId: id)?.timeline
         let mediaChapters = mediaTimeline?.chapters ?? []
         let sessions = try store.loadSessions(itemId: id)
@@ -8705,12 +8953,17 @@ final class Gate1AppModel: ObservableObject {
             ledger: ledger
         )
         Task {
+            try? store.saveOfflineStorageBudget(OfflineStorageBudget(
+                limitBytes: Int64(self.offlineStorageLimitGB) * OfflineStorageBudget.bytesPerGigabyte
+            ))
             try? await ledger.adoptExistingAssets()
+            let residualOverage = try? await ledger.enforceBudget()
             let ledgerBytes = try? await ledger.inventoryBytes()
             let filesystemBytes = await ledger.directFilesystemBytes()
             await MainActor.run { [weak self] in
                 self?.diagnostics["offlineLedgerBytes"] = "\(ledgerBytes ?? 0)"
                 self?.diagnostics["offlineFilesystemBytes"] = "\(filesystemBytes)"
+                self?.diagnostics["offlineResidualOverageBytes"] = "\(residualOverage ?? 0)"
                 self?.tryRefreshOfflineStorageUsage()
             }
             await self.refreshFollowedSources(force: false)
@@ -8741,6 +8994,22 @@ final class Gate1AppModel: ObservableObject {
                 availability: .localPhone,
                 url: payload.audioURL.absoluteString,
                 title: payload.manifest.title
+            ))
+            try store.saveTranscriptTimeline(SourceTranscriptTimeline(
+                id: "timeline-guided-onboarding",
+                itemId: item.id,
+                createdAt: Date(),
+                timeline: TranscriptTimeline(
+                    segments: [],
+                    chapters: [
+                        MediaTimelineChapter(
+                            id: "guided-onboarding-core-loop",
+                            title: "The Core Loop",
+                            startMs: 0,
+                            transcriptSegmentId: "guided-onboarding-core-loop"
+                        )
+                    ]
+                )
             ))
             UserDefaults.standard.set(payload.manifest.audioChecksumSHA256, forKey: "guidedOnboardingAudioChecksum")
             if payload.audioChanged, priorChecksum != nil, snapshot.itemId == item.id {
@@ -8804,24 +9073,94 @@ final class Gate1AppModel: ObservableObject {
         followedSourceCandidates = []
     }
 
+    var canManuallyFollowSelectedSource: Bool {
+        guard sourceFollowSuggestionCandidates.isEmpty,
+              let row = libraryItems.first(where: { $0.id == selectedItem.id }),
+              ["podcast", TargetType.transcriptBackedMedia.rawValue].contains(row.mediaType.lowercased()) else {
+            return false
+        }
+        let sourceTitle = row.sourceTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !feedSubscriptions.contains { subscription in
+            guard let sourceTitle, !sourceTitle.isEmpty else { return false }
+            return (subscription.source.title ?? subscription.source.host)
+                .caseInsensitiveCompare(sourceTitle) == .orderedSame
+        }
+    }
+
+    func followSelectedSource() {
+        guard !isFollowingSelectedSource, let store else { return }
+        let itemId = selectedItem.id
+        isFollowingSelectedSource = true
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.isFollowingSelectedSource = false }
+            do {
+                let item = try store.loadItem(id: itemId)
+                guard let reference = item.sourceURL ?? item.externalReference,
+                      let preferredURL = URL(string: reference),
+                      preferredURL.scheme?.lowercased() == "https" else {
+                    throw FollowedSourceError.invalidURL
+                }
+                let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
+                self.followedSourceCoordinator = coordinator
+                guard let candidate = try await self.discoverFollowCandidates(
+                    item: item,
+                    preferredURL: preferredURL,
+                    coordinator: coordinator
+                ).first else {
+                    throw FollowedSourceError.noFeedCandidates
+                }
+                let subscribed = Set((try store.loadFeedSubscriptions()).map { $0.source.id })
+                if !subscribed.contains(candidate.source.id) {
+                    _ = try await coordinator.follow(candidate: candidate)
+                }
+                if item.sourceURL == nil {
+                    var updated = item
+                    updated.sourceURL = candidate.source.canonicalURL
+                    updated.sourceTitle = updated.sourceTitle ?? candidate.source.title
+                    try store.saveItem(updated)
+                }
+                await self.refreshFollowedSources(force: true)
+                self.reportConfirmation("Following \(candidate.source.title ?? candidate.source.host).")
+            } catch {
+                self.reportFailure(error, context: "Follow source failed")
+            }
+        }
+    }
+
     private func offerFollowSuggestionIfEligible(itemId: String, store: SQLiteSessionStore) {
         guard !sourceSuggestionChecks.contains(itemId),
               sourceFollowSuggestionCandidates.isEmpty,
               let item = try? store.loadItem(id: itemId),
-              let reference = item.externalReference,
+              let reference = item.sourceURL ?? item.externalReference,
               let url = URL(string: reference),
               url.scheme?.lowercased() == "https" else { return }
-        let progress = libraryItems.first(where: { $0.id == itemId })?.continuationProgressPercent ?? 0
+        let progress = Self.sourceSuggestionEngagementProgress(
+            itemId: itemId,
+            persistedProgress: libraryItems.first(where: { $0.id == itemId })?.continuationProgressPercent,
+            snapshot: snapshot
+        )
         guard progress >= 25 || !selectedItem.interjections.isEmpty else { return }
         sourceSuggestionChecks.insert(itemId)
         Task { [weak self] in
             guard let self else { return }
+            defer { self.sourceSuggestionChecks.remove(itemId) }
             do {
                 let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
                 self.followedSourceCoordinator = coordinator
                 let subscribed = Set((try store.loadFeedSubscriptions()).map { $0.source.id })
-                let candidates = try await coordinator.discover(urlString: url.absoluteString)
+                let candidates = try await self.discoverFollowCandidates(
+                    item: item,
+                    preferredURL: url,
+                    coordinator: coordinator
+                )
                     .filter { !subscribed.contains($0.source.id) }
+                if item.sourceURL == nil, let discoveredSource = candidates.first?.source {
+                    var updatedItem = item
+                    updatedItem.sourceURL = discoveredSource.canonicalURL
+                    updatedItem.sourceTitle = updatedItem.sourceTitle ?? discoveredSource.title
+                    try store.saveItem(updatedItem)
+                }
                 let now = Date()
                 let eligible = try candidates.filter { candidate in
                     guard let decision = try store.loadSourceSuggestionDecision(sourceId: candidate.source.id) else { return true }
@@ -8847,6 +9186,36 @@ final class Gate1AppModel: ObservableObject {
                 self.diagnostics["sourceFollowSuggestion"] = "unavailable:\(String(describing: type(of: error)))"
             }
         }
+    }
+
+    private func discoverFollowCandidates(
+        item: Item,
+        preferredURL: URL,
+        coordinator: FollowedSourceCoordinator
+    ) async throws -> [SourceCandidateEvidence] {
+        do {
+            return try await coordinator.discover(urlString: preferredURL.absoluteString)
+        } catch {
+            guard item.sourceURL == nil,
+                  let originalReference = item.externalReference,
+                  let originalURL = URL(string: originalReference),
+                  originalURL.scheme?.lowercased() == "https" else { throw error }
+            let resolver = PublicPodcastLinkResolver()
+            let canonicalFeed = try await Task.detached {
+                try resolver.canonicalFeedURL(for: originalURL)
+            }.value
+            guard let canonicalFeed else { throw error }
+            return try await coordinator.discover(urlString: canonicalFeed.absoluteString)
+        }
+    }
+
+    nonisolated static func sourceSuggestionEngagementProgress(
+        itemId: String,
+        persistedProgress: Int?,
+        snapshot: SessionSnapshot
+    ) -> Int {
+        let liveProgress = snapshot.itemId == itemId ? snapshot.currentPlaybackProgressPercent : 0
+        return max(persistedProgress ?? 0, liveProgress)
     }
 
     func acceptSourceFollowSuggestion(_ candidate: SourceCandidateEvidence) {
@@ -8927,7 +9296,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func importFollowedSourceEntry(_ entry: FeedEntry) {
+    func importFollowedSourceEntry(_ entry: FeedEntry, openWhenFinished: Bool = false) {
         guard importingFollowedSourceEntryIds.insert(entry.id).inserted else { return }
         Task { [weak self] in
             guard let self else { return }
@@ -8939,15 +9308,34 @@ final class Gate1AppModel: ObservableObject {
                 let subscription = self.feedSubscriptions.first { $0.id == entry.subscriptionId }
                 let imported: Bool
                 if subscription?.source.kind == .podcastFeed {
-                    imported = await self.importSourceLinkAsync(
-                        urlString: url.absoluteString,
-                        sourceSurface: "followed_source",
-                        startSession: false
-                    )
+                    if openWhenFinished {
+                        imported = await self.importSourceLinkAsync(
+                            urlString: url.absoluteString,
+                            sourceSurface: "followed_source",
+                            startSession: false
+                        )
+                    } else {
+                        try await self.importSourceLinkInBackground(SourceLinkHandoff(
+                            id: "quick-add-\(entry.id)",
+                            inputURL: url.absoluteString,
+                            sourceSurface: "followed_source",
+                            startSession: false
+                        ))
+                        imported = true
+                    }
                 } else {
                     let handoff = try await self.readablePageExtractor.extract(url: url)
                     self.diagnostics["followedArticleNetworkHosts"] = self.readablePageExtractor.contactedHosts.joined(separator: ",")
-                    imported = self.importBrowserText(handoff)
+                    if openWhenFinished {
+                        imported = self.importBrowserText(handoff)
+                    } else {
+                        let store = try self.requireStore()
+                        let backgroundEngine = try self.makeEngine(store: store)
+                        _ = try backgroundEngine.importBrowserText(handoff)
+                        self.libraryItems = try self.loadLibraryRows(store: store)
+                        self.markOnboardingSteps([.addedOwnSource])
+                        imported = true
+                    }
                 }
                 guard imported else { return }
                 try await self.followedSourceCoordinator?.setEntryState(id: entry.id, state: .imported)

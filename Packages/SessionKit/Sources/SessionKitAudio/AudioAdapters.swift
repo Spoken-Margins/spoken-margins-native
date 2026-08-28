@@ -1603,7 +1603,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         completedTargetId = nil
         let time = CMTime(seconds: seconds, preferredTimescale: 600)
         paused = false
-        player?.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
+        let tolerance = CMTime(seconds: 0.25, preferredTimescale: 600)
+        player?.seek(to: time, toleranceBefore: tolerance, toleranceAfter: tolerance) { [weak self] finished in
             self?.finishMediaSeek(generation: seekGeneration, targetId: targetId, finished: finished)
         }
         player?.play()
@@ -1622,7 +1623,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         guard let activeTargetId else { return }
         let seekGeneration = beginMediaSeek(targetId: activeTargetId, mediaTimeMs: lastRequestedMediaTimeMs)
         let time = CMTime(seconds: seconds, preferredTimescale: 600)
-        player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
+        let tolerance = CMTime(seconds: 0.25, preferredTimescale: 600)
+        player.seek(to: time, toleranceBefore: tolerance, toleranceAfter: tolerance) { [weak self] finished in
             self?.finishMediaSeek(generation: seekGeneration, targetId: activeTargetId, finished: finished)
         }
         publishNowPlaying(isPlaying: !paused)
@@ -1808,7 +1810,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
                 seconds: Double(retry.mediaTimeMs) / 1_000,
                 preferredTimescale: 600
             )
-            player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
+            let tolerance = CMTime(seconds: 0.25, preferredTimescale: 600)
+            player.seek(to: time, toleranceBefore: tolerance, toleranceAfter: tolerance) { [weak self] finished in
                 self?.finishMediaSeek(
                     generation: retry.generation,
                     targetId: retry.targetId,
@@ -2029,7 +2032,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
         center.skipBackwardCommand.preferredIntervals = [NSNumber(value: preferredSkipBackSeconds)]
         center.skipForwardCommand.preferredIntervals = [NSNumber(value: preferredSkipForwardSeconds)]
-        center.changePlaybackRateCommand.supportedPlaybackRates = [0.75, 1.0, 1.25, 1.5, 2.0]
+        center.changePlaybackRateCommand.supportedPlaybackRates = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
         configureRemoteCommandAvailability(canSeek: false)
 
         register(center.playCommand) { [weak self] _ in

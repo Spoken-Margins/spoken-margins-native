@@ -23,6 +23,7 @@
       }
     },
     "externalReference": { "type": ["string", "null"] },
+    "sourceURL": { "type": ["string", "null"], "format": "uri" },
     "externalReferenceType": { "enum": ["obsidian", "url", "plain", "none"] },
     "createdAt": { "type": "string", "format": "date-time" },
     "updatedAt": { "type": "string", "format": "date-time" },

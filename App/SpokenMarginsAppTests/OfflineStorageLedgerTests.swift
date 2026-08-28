@@ -47,12 +47,85 @@ final class OfflineStorageLedgerTests: XCTestCase {
         XCTAssertEqual(trackedBytes, 4)
     }
 
-    private struct Fixture { let root: URL; let ledger: OfflineStorageLedger }
+    func testLocalSourceImporterCoordinatesFileSizeAndCopy() async throws {
+        let fixture = try makeFixture(limit: 1_000_000)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let source = fixture.root.appending(path: "provider-source.epub")
+        let destination = fixture.root.appending(path: "provider-copy.epub")
+        let contents = Data("provider-backed bytes".utf8)
+        try contents.write(to: source)
+        let importer = LocalSourceImporter(
+            repository: fixture.repository,
+            ledger: fixture.ledger,
+            applicationSupportDirectory: fixture.root
+        )
+
+        let size = try await importer.fileSize(source)
+        try await importer.copySecurityScoped(source, to: destination)
+
+        XCTAssertEqual(size, Int64(contents.count))
+        XCTAssertEqual(try Data(contentsOf: destination), contents)
+    }
+
+    func testEPUBImporterRejectsNonFileURLBeforeLoading() async throws {
+        let fixture = try makeFixture(limit: 1_000_000)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let importer = LocalSourceImporter(
+            repository: fixture.repository,
+            ledger: fixture.ledger,
+            applicationSupportDirectory: fixture.root
+        )
+
+        do {
+            _ = try await importer.importEPUB(from: XCTUnwrap(URL(string: "https://example.com/book.epub")))
+            XCTFail("Expected non-file URL rejection")
+        } catch let error as LocalSourceImportError {
+            XCTAssertEqual(error, .unsupportedURL)
+        }
+    }
+
+    func testBudgetUsesDecimalGigabytesMatchingSettingsLabel() {
+        XCTAssertEqual(OfflineStorageBudget.bytesPerGigabyte, 1_000_000_000)
+        XCTAssertEqual(OfflineStorageBudget().limitBytes, 5_000_000_000)
+    }
+
+    func testLoweredBudgetImmediatelyEvictsReproducibleAssets() async throws {
+        let fixture = try makeFixture(limit: 5)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let audio = fixture.root.appending(path: "PodcastAudio", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: audio, withIntermediateDirectories: true)
+        try Data(repeating: 1, count: 7).write(to: audio.appending(path: "episode.m4a"))
+        try fixture.repository.saveOwnedOfflineAsset(OwnedOfflineAsset(
+            id: "episode",
+            category: .podcast,
+            relativePath: "PodcastAudio/episode.m4a",
+            byteCount: 7,
+            isReproducible: true
+        ))
+
+        let residual = try await fixture.ledger.enforceBudget()
+        let inventory = try await fixture.ledger.inventoryBytes()
+
+        XCTAssertEqual(residual, 0)
+        XCTAssertEqual(inventory, 0)
+    }
+
+    private struct Fixture {
+        let root: URL
+        let repository: InMemorySessionRepository
+        let ledger: OfflineStorageLedger
+    }
+
     private func makeFixture(limit: Int64) throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "offline-ledger-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let repository = InMemorySessionRepository()
         try repository.saveOfflineStorageBudget(OfflineStorageBudget(limitBytes: limit))
-        return Fixture(root: root, ledger: OfflineStorageLedger(repository: repository, rootDirectory: root))
+        return Fixture(
+            root: root,
+            repository: repository,
+            ledger: OfflineStorageLedger(repository: repository, rootDirectory: root)
+        )
     }
+
 }

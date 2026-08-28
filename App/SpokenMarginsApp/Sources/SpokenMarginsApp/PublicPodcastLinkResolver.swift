@@ -35,6 +35,26 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         self.fetch = fetch
     }
 
+    func canonicalFeedURL(for url: URL) throws -> URL? {
+        guard url.scheme?.lowercased() == "https" else { return nil }
+        if isApplePodcastsURL(url), let showId = appleShowId(in: url) {
+            let data = try fetch(appleLookupURL(showId: showId))
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let results = object["results"] as? [[String: Any]] else { return nil }
+            return appleFeedURL(in: results)
+        }
+        let request = LinkResolutionRequest(
+            id: "canonical-feed-lookup",
+            inputURL: url.absoluteString,
+            sourceSurface: "follow_suggestion",
+            createdAt: Date()
+        )
+        let result = try resolve(request)
+        return ([result.selectedCandidate].compactMap { $0 } + result.candidates)
+            .first { $0.sourceLink.role == "canonical_feed" }
+            .flatMap { URL(string: $0.sourceLink.url) }
+    }
+
     func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult {
         let trimmed = request.inputURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed), url.scheme?.lowercased() == "https" else {

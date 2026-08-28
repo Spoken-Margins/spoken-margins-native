@@ -1379,10 +1379,21 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(item.title, "Episode Title")
         XCTAssertEqual(item.mediaType, TargetType.transcriptBackedMedia.rawValue)
         XCTAssertEqual(item.externalReference, request.inputURL)
+        XCTAssertEqual(item.sourceTitle, "Example Show")
+        XCTAssertEqual(item.sourceURL, "https://feeds.example.com/show.xml")
         XCTAssertEqual(item.externalReferenceType, "url")
         XCTAssertEqual(item.media?.sourceType, .remoteStream)
         XCTAssertEqual(item.media?.url, "https://cdn.example.com/episode.mp3")
         XCTAssertEqual(item.media?.durationMs, 1_800_000)
+    }
+
+    func testLegacyItemWithoutCanonicalSourceURLStillDecodes() throws {
+        let data = Data(#"{"id":"legacy","title":"Legacy","mediaType":"text","status":"ready"}"#.utf8)
+
+        let item = try JSONDecoder().decode(Item.self, from: data)
+
+        XCTAssertEqual(item.id, "legacy")
+        XCTAssertNil(item.sourceURL)
     }
 
     func testPodcastPublisherChaptersUsePrecedencePersistAndNavigateWithoutTranscript() throws {

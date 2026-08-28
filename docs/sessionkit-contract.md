@@ -26,6 +26,8 @@ Playback positions, anchors, and timeline segments may carry an optional `Source
 
 An item is durable content the user wants to listen to or discuss.
 
+For resolved feed-backed content, `externalReference` identifies the imported episode or article while optional `sourceURL` identifies the canonical followable feed. These targets must not be conflated.
+
 Item media types:
 
 - `text`

@@ -18,15 +18,15 @@ These layers are persisted through focused repository protocols implemented by b
 
 - Supertonic prepared chunks survive relaunch, are checksum-validated before reuse, and begin playback only after two committed chunks. Partial media never advertises a fabricated complete duration. A complete AAC/M4A artifact is attached through the canonical media route only at a safe playback boundary.
 - Render identity includes the Supertonic model revision, model assets, voice style, synthesis parameters, normalization/chunking versions, and manifest version. Playback speed is intentionally absent. Legacy Kokoro selections migrate to James without changing an active session.
-- Offline Storage defaults to 5 GB with 1/2/5/10/20 GB choices. Every implemented writer reserves capacity, and imported audiobooks, recordings, interjections, Recently Deleted items, active work, and dormant Watch transfers are protected from automatic eviction.
-- EPUB import uses ZIPFoundation 0.9.20 and rejects protected/encrypted, malformed, traversing, excessive, or empty packages before publication. Authored nested navigation remains separate from Listening Maps and prepared audio.
+- Offline Storage defaults to a decimal 5 GB with 1/2/5/10/20 GB choices. Every implemented writer reserves capacity. Lowering the budget immediately evicts reproducible assets, while imported audiobooks, recordings, interjections, Recently Deleted items, active work, and dormant Watch transfers remain protected and any irreducible overage is shown explicitly.
+- EPUB import uses ZIPFoundation 0.9.20 and rejects protected/encrypted, malformed, traversing, excessive, or empty packages before publication. Authored nested navigation remains canonical; a derived leaf-chapter Listening Map exposes that structure in item detail without replacing the authored package model.
 - Audiobook import accepts MP3, M4A, M4B, and audio-bearing MP4, validates AVFoundation playability/duration/protection, fingerprints duplicates, preserves embedded chapters, and publishes item/media/storage ownership atomically.
 - Charging preparation is opt-in (`Off` by default; `While Charging` only), uses one registered `BGProcessingTaskRequest`, disables networking, reconstructs durable jobs, and commits at most the next safe chunk before reevaluating power, thermal, identity, deletion, and space.
-- Guided onboarding accepts only HTTPS data from the production host, enforces manifest/audio bounds and checksums, exposes only compiled route IDs, caches last-known-good content, and retains a bundled playable text fallback.
-- Followed sources support bounded RSS, Atom, and JSON Feed parsing, conditional refresh, HTML alternate-feed discovery, four same-origin heuristics, a chooser for multiple feeds, explicit inbox import, mute/unfollow semantics, and durable suggestion suppression. Following never imports, downloads, or prepares entries.
+- Guided onboarding accepts only HTTPS data from the production host, enforces manifest/audio bounds and checksums, exposes only compiled route IDs, caches last-known-good content, and retains a bundled playable text fallback. Starting the tour always opens the guided-onboarding item and seeds its chapter timeline when needed.
+- Quick Add combines bounded RSS, Atom, and JSON Feed entries with eligible Markdown, plain-text, and text-based PDF files from the user-selected Quick Folder. It shows three candidates until expanded, excludes imported episodes by canonical URL or source/title identity, and remembers dismissed file revisions. Tapping a title imports and opens; the Import button imports in place; directional swipes import or dismiss. Feed refresh and foreground activation rescan both sources. Followed sources retain conditional refresh, HTML alternate-feed discovery, four same-origin heuristics, a chooser for multiple feeds, mute/unfollow semantics, and durable suggestion suppression; following or selecting a folder never imports, downloads, or prepares entries by itself.
 - Article inbox imports use an app-owned nonpersistent WebKit data store and the pinned bundled Defuddle capture script. Remote scripts and subresources are blocked.
-- Library search is metadata-only and case/diacritic insensitive. Typed content/listening/offline filters and deterministic sort choices persist; the query does not.
-- Sleep timers support 15/30/45/60 minutes and End of Chapter, display a countdown, extend/cancel, use wall-clock deadlines, remain armed through manual pause/backgrounding, defer expiry through recording, and cancel on item/session replacement or process termination.
+- Library search is metadata-only and case/diacritic insensitive. Typed content/listening/offline filters and deterministic sort choices persist; the query does not. The controls expose their active filter and sort labels, legacy items use storage recency when an import timestamp is absent, and new imports always receive a creation timestamp.
+- Sleep timers support 15/30/45/60 minutes and End of Chapter, display a countdown, extend/cancel, use wall-clock deadlines, remain armed through manual pause/backgrounding, defer expiry through recording, and cancel on item/session replacement or process termination. Compact playback hides text labels. Playback speed cycles by tapping through 0.5x, 0.75x, 1x, 1.25x, 1.5x, 1.75x, and 2x; 0.25x is not offered.
 
 ## Audit and Falsification
 
@@ -37,6 +37,9 @@ The release must stop if any of these checks fail:
 - valid committed chunks are rerendered after reconstruction;
 - source locator/media time mappings are non-monotonic;
 - EPUB nested navigation is flattened or unsafe content publishes partially;
+- an imported or previously listened-to episode reappears in Quick Add;
+- Recently Added places a newly imported item below older content;
+- an evictable asset remains above a lowered storage budget without an explicit residual-overage explanation;
 - foreground/background preparation differs for the same render signature;
 - a follow action imports or downloads content without another explicit user action;
 - remote onboarding introduces a route outside `OnboardingRoute`;

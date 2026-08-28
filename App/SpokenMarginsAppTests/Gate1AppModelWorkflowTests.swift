@@ -365,7 +365,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         model.startGuidedOnboarding()
 
-        XCTAssertEqual(model.selectedItem.id, Gate1AppModel.welcomeSampleItemId)
+        XCTAssertEqual(model.selectedItem.id, Gate1AppModel.guidedOnboardingItemId)
         XCTAssertEqual(model.screen, .playback)
         XCTAssertEqual(model.guidedOnboardingStage, .practiceInterjection)
         XCTAssertFalse(model.isOnboardingStepComplete(.firstInterjection))
@@ -1609,6 +1609,185 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.itemId, "item-pill")
         XCTAssertEqual(model.selectedItem.id, "item-pill")
         XCTAssertNotNil(model.libraryItems.first(where: { $0.title == "Long Import" }))
+    }
+
+    func testSourceSuggestionEngagementUsesLivePlaybackProgressBeforeLibraryRefresh() {
+        var snapshot = SessionSnapshot()
+        snapshot.itemId = "active-item"
+        snapshot.currentPlaybackProgressPercent = 31
+
+        XCTAssertEqual(
+            Gate1AppModel.sourceSuggestionEngagementProgress(
+                itemId: "active-item",
+                persistedProgress: 4,
+                snapshot: snapshot
+            ),
+            31
+        )
+        XCTAssertEqual(
+            Gate1AppModel.sourceSuggestionEngagementProgress(
+                itemId: "different-item",
+                persistedProgress: 18,
+                snapshot: snapshot
+            ),
+            18
+        )
+    }
+
+    func testQuickFolderScanOffersOnlyImportableTextAndPDFFiles() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "spoken-margins-quick-add-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        for name in ["Notes.md", "Draft.markdown", "Excerpt.txt", "Paper.pdf", "Cover.jpg"] {
+            try "content".write(to: directory.appending(path: name), atomically: true, encoding: .utf8)
+        }
+
+        let scan = Gate1AppModel.scanQuickAccessFolder(directory)
+
+        XCTAssertNil(scan.errorDescription)
+        XCTAssertEqual(Set(scan.files.map(\.relativePath)), ["Notes.md", "Draft.markdown", "Excerpt.txt", "Paper.pdf"])
+    }
+
+    func testQuickAddFeedCombinesFolderFilesAndFollowedEntriesByRecency() {
+        let olderFile = QuickAccessFile(
+            id: "older.md",
+            name: "Older",
+            relativePath: "older.md",
+            modifiedAt: Date(timeIntervalSince1970: 100),
+            modifiedAtDescription: "2h ago"
+        )
+        let newerEntry = FeedEntry(
+            id: "episode",
+            subscriptionId: "show",
+            canonicalURL: "https://example.com/episode",
+            title: "New Episode",
+            publishedAt: Date(timeIntervalSince1970: 200)
+        )
+
+        let candidates = Gate1AppModel.quickAddCandidates(
+            folderFiles: [olderFile],
+            followedEntries: [newerEntry]
+        )
+
+        XCTAssertEqual(candidates.map(\.id), ["followed-source:episode", "local-file:older.md"])
+    }
+
+    func testQuickAddFeedExcludesImportedEpisodeAndDismissedFolderRevision() {
+        let file = QuickAccessFile(
+            id: "notes.md",
+            name: "Notes",
+            relativePath: "notes.md",
+            modifiedAt: Date(timeIntervalSince1970: 100),
+            modifiedAtDescription: "now"
+        )
+        let subscription = FeedSubscription(
+            id: "show",
+            source: SourceIdentity(
+                id: "source-show",
+                kind: .podcastFeed,
+                canonicalURL: "https://example.com/feed.xml",
+                host: "example.com",
+                title: "The Show"
+            )
+        )
+        let entry = FeedEntry(
+            id: "episode",
+            subscriptionId: subscription.id,
+            canonicalURL: "https://example.com/feed-entry",
+            title: "Already Heard"
+        )
+        let imported = LibraryItemRow(
+            id: "imported",
+            title: "Already Heard",
+            status: "Ready",
+            canDelete: true,
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            sourceTitle: "The Show",
+            sourceReference: "https://podcasts.apple.com/episode"
+        )
+
+        let candidates = Gate1AppModel.quickAddCandidates(
+            folderFiles: [file],
+            followedEntries: [entry],
+            subscriptions: [subscription],
+            libraryItems: [imported],
+            dismissedFileKeys: [file.dismissalKey]
+        )
+
+        XCTAssertTrue(candidates.isEmpty)
+    }
+
+    func testLibraryFiltersInferLegacyPDFAndExposeActiveSelections() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.libraryItems = [
+            LibraryItemRow(
+                id: "paper",
+                title: "Paper",
+                status: "Ready",
+                canDelete: true,
+                mediaType: "text",
+                sourceReference: "file:///Documents/paper.pdf",
+                sourceReferenceType: "file"
+            )
+        ]
+        model.libraryQuery.contentType = .pdf
+        model.libraryQuery.listeningState = .unplayed
+        model.libraryQuery.sort = .recentlyListened
+
+        XCTAssertEqual(model.visibleLibraryItems.map(\.id), ["paper"])
+        XCTAssertEqual(model.libraryFilterDescription, "PDF · Unplayed")
+        XCTAssertEqual(model.librarySortDescription, "Recently Listened")
+    }
+
+    func testRecentlyAddedUsesStorageRecencyWhenLegacyTimestampIsMissing() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.libraryItems = [
+            LibraryItemRow(
+                id: "new-legacy",
+                title: "New Legacy",
+                status: "Ready",
+                canDelete: true,
+                addedAt: nil,
+                storageRecencyRank: 0
+            ),
+            LibraryItemRow(
+                id: "older-dated",
+                title: "Older Dated",
+                status: "Ready",
+                canDelete: true,
+                addedAt: Date(timeIntervalSince1970: 10),
+                storageRecencyRank: 1
+            )
+        ]
+        model.libraryQuery.sort = .recentlyAdded
+
+        XCTAssertEqual(model.visibleLibraryItems.map(\.id), ["new-legacy", "older-dated"])
+    }
+
+    func testPlaybackRateCycleOmitsQuarterSpeedAndWraps() {
+        XCTAssertEqual(Gate1AppModel.nextPlaybackRate(after: 0.25), 0.5)
+        XCTAssertEqual(Gate1AppModel.nextPlaybackRate(after: 1), 1.25)
+        XCTAssertEqual(Gate1AppModel.nextPlaybackRate(after: 2), 0.5)
+        XCTAssertFalse(Gate1AppModel.supportedPlaybackRates.contains(0.25))
+    }
+
+    func testPodcastItemExposesManualFollow() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.selectedItem = ItemDetailState(id: "episode", title: "An Episode", isNativeAudio: true)
+        model.libraryItems = [
+            LibraryItemRow(
+                id: "episode",
+                title: "An Episode",
+                status: "Ready",
+                canDelete: true,
+                mediaType: "podcast",
+                sourceTitle: "The Show"
+            )
+        ]
+
+        XCTAssertTrue(model.canManuallyFollowSelectedSource)
     }
 
     private func waitFor(

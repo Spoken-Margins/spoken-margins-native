@@ -261,12 +261,16 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         return values.last
     }
 
-    public func publishImportedSource(item: Item, canonicalSource: CanonicalSourcePackage?, audioAsset: AudioAsset?, ownedAsset: OwnedOfflineAsset) throws {
+    public func publishImportedSource(item: Item, canonicalSource: CanonicalSourcePackage?, listeningMap: ListeningMap?, audioAsset: AudioAsset?, ownedAsset: OwnedOfflineAsset) throws {
         try withTransaction {
             try saveItem(item)
             if let canonicalSource {
                 try deleteRecords(kind: "canonical_source", itemId: item.id)
                 try save(kind: "canonical_source", id: canonicalSource.id, sessionId: nil, itemId: item.id, value: canonicalSource)
+            }
+            if let listeningMap {
+                try deleteRecords(kind: "listening_map", itemId: item.id)
+                try save(kind: "listening_map", id: listeningMap.id, sessionId: nil, itemId: item.id, value: listeningMap)
             }
             if let audioAsset { try saveAudioAsset(audioAsset) }
             try saveOwnedOfflineAsset(ownedAsset)
