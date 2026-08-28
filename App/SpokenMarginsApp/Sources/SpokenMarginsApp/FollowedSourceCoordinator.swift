@@ -7,6 +7,7 @@ enum FollowedSourceError: Error, LocalizedError {
     case invalidURL
     case insecureURL
     case responseTooLarge
+    case htmlResponseTooLarge
     case invalidResponse
     case noFeedCandidates
 
@@ -14,7 +15,8 @@ enum FollowedSourceError: Error, LocalizedError {
         switch self {
         case .invalidURL: "Enter a valid feed URL."
         case .insecureURL: "Followed sources must use HTTPS."
-        case .responseTooLarge: "The feed exceeds the 2 MB safety limit."
+        case .responseTooLarge: "The feed exceeds the 16 MB safety limit."
+        case .htmlResponseTooLarge: "The source website exceeds the 1 MB discovery limit. Try its RSS feed URL directly."
         case .invalidResponse: "The source did not return a supported feed."
         case .noFeedCandidates: "No RSS, Atom, or JSON Feed was found for this website."
         }
@@ -22,7 +24,8 @@ enum FollowedSourceError: Error, LocalizedError {
 }
 
 actor FollowedSourceCoordinator {
-    private static let maximumFeedBytes = 2 * 1_024 * 1_024
+    private static let maximumFeedBytes = FeedParserLimits.defaultMaximumBytes
+    static let maximumRetainedSuggestionsPerFeed = 25
     private let repository: any SessionRepository
     private let session: URLSession
     private let parser = FeedParser()
@@ -201,7 +204,7 @@ actor FollowedSourceCoordinator {
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw FollowedSourceError.invalidResponse
         }
-        guard data.count <= 1 * 1_024 * 1_024 else { throw FollowedSourceError.responseTooLarge }
+        guard data.count <= 1 * 1_024 * 1_024 else { throw FollowedSourceError.htmlResponseTooLarge }
         return String(decoding: data, as: UTF8.self)
     }
 
@@ -228,9 +231,27 @@ actor FollowedSourceCoordinator {
     }
 
     private func save(entries: [ParsedFeedItem], subscription: FeedSubscription) throws {
-        let existing = Dictionary(uniqueKeysWithValues: try repository.loadFeedEntries(subscriptionId: subscription.id).map { ($0.id, $0) })
-        for item in entries.prefix(200) {
-            let id = "entry-\(Self.digest(subscription.id + "\u{1f}" + item.id))"
+        let existingEntries = try repository.loadFeedEntries(subscriptionId: subscription.id)
+        let existing = Dictionary(uniqueKeysWithValues: existingEntries.map { ($0.id, $0) })
+        let retainedItems = entries.enumerated()
+            .sorted { lhs, rhs in
+                switch (lhs.element.publishedAt, rhs.element.publishedAt) {
+                case let (left?, right?) where left != right:
+                    return left > right
+                case (_?, nil):
+                    return true
+                case (nil, _?):
+                    return false
+                default:
+                    return lhs.offset < rhs.offset
+                }
+            }
+            .prefix(Self.maximumRetainedSuggestionsPerFeed)
+            .map { $0.element }
+        let retainedIDs = Set(retainedItems.map { Self.entryID(subscriptionID: subscription.id, itemID: $0.id) })
+
+        for item in retainedItems {
+            let id = Self.entryID(subscriptionID: subscription.id, itemID: item.id)
             try repository.saveFeedEntry(FeedEntry(
                 id: id,
                 subscriptionId: subscription.id,
@@ -242,6 +263,17 @@ actor FollowedSourceCoordinator {
                 state: existing[id]?.state ?? .unseen
             ))
         }
+
+        for entry in existingEntries where !retainedIDs.contains(entry.id) {
+            // Imported and dismissed entries are suppression tombstones, not Quick Add
+            // suggestions. Keep them so an older episode cannot reappear later.
+            guard entry.state == .unseen || entry.state == .seen else { continue }
+            try repository.deleteFeedEntry(id: entry.id)
+        }
+    }
+
+    private static func entryID(subscriptionID: String, itemID: String) -> String {
+        "entry-\(digest(subscriptionID + "\u{1f}" + itemID))"
     }
 
     private static func digest(_ value: String) -> String {

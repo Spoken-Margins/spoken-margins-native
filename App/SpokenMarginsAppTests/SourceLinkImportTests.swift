@@ -17,6 +17,58 @@ final class SourceLinkImportTests: XCTestCase {
         try super.tearDownWithError()
     }
 
+    func testFollowedSourceAcceptsLargeFeedAndRetainsOnlyNewestTwentyFiveSuggestions() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [LargePodcastFeedURLProtocol.self]
+        let repository = InMemorySessionRepository()
+        let coordinator = FollowedSourceCoordinator(
+            repository: repository,
+            session: URLSession(configuration: configuration)
+        )
+
+        let subscription = try await coordinator.follow(urlString: "https://example.com/feed.json")
+
+        XCTAssertEqual(subscription.source.kind, .podcastFeed)
+        XCTAssertEqual(subscription.source.title, "Large Podcast")
+        var entries = try repository.loadFeedEntries(subscriptionId: subscription.id)
+        XCTAssertEqual(entries.count, FollowedSourceCoordinator.maximumRetainedSuggestionsPerFeed)
+        XCTAssertEqual(Set(entries.map(\.title)), Set((6...30).map { "Episode \($0)" }))
+
+        try repository.saveFeedEntry(FeedEntry(
+            id: "legacy-unseen",
+            subscriptionId: subscription.id,
+            canonicalURL: "https://example.com/episodes/legacy-unseen",
+            title: "Legacy Unseen",
+            publishedAt: .distantPast,
+            state: .unseen
+        ))
+        try repository.saveFeedEntry(FeedEntry(
+            id: "legacy-dismissed",
+            subscriptionId: subscription.id,
+            canonicalURL: "https://example.com/episodes/legacy-dismissed",
+            title: "Legacy Dismissed",
+            publishedAt: .distantPast,
+            state: .dismissed
+        ))
+        try repository.saveFeedEntry(FeedEntry(
+            id: "legacy-imported",
+            subscriptionId: subscription.id,
+            canonicalURL: "https://example.com/episodes/legacy-imported",
+            title: "Legacy Imported",
+            publishedAt: .distantPast,
+            state: .imported
+        ))
+
+        _ = try await coordinator.follow(urlString: "https://example.com/feed.json")
+
+        entries = try repository.loadFeedEntries(subscriptionId: subscription.id)
+        XCTAssertFalse(entries.contains(where: { $0.id == "legacy-unseen" }))
+        XCTAssertTrue(entries.contains(where: { $0.id == "legacy-dismissed" }))
+        XCTAssertTrue(entries.contains(where: { $0.id == "legacy-imported" }))
+        let visibleEntries = try await coordinator.entries()
+        XCTAssertEqual(visibleEntries.count, FollowedSourceCoordinator.maximumRetainedSuggestionsPerFeed)
+    }
+
     func testSourceLinkURLParsesHandoff() throws {
         let handoff = SourceLinkHandoff(
             id: "source-link-url-test",
@@ -1821,6 +1873,52 @@ private struct StaticAppLinkResolver: LinkResolutionClient {
             failureReason: result.failureReason
         )
     }
+}
+
+private final class LargePodcastFeedURLProtocol: URLProtocol, @unchecked Sendable {
+    private static let feedData: Data = {
+        let padding = String(repeating: "x", count: 2 * 1_024 * 1_024 + 1)
+        let items = (1...30).map { day in
+            let paddedDay = String(format: "%02d", day)
+            return """
+            {"id":"episode-\(day)","url":"https://example.com/episodes/\(day)","title":"Episode \(day)","date_published":"2026-08-\(paddedDay)T12:00:00Z","attachments":[
+            {"url":"https://cdn.example.com/episode-\(day).mp3","mime_type":"audio/mpeg"}]}
+            """
+        }.joined(separator: ",")
+        return Data("""
+        {"version":"https://jsonfeed.org/version/1.1","title":"Large Podcast","padding":"\(padding)","items":[
+        \(items)]}
+        """.utf8)
+    }()
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "example.com"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let url = request.url,
+              let response = HTTPURLResponse(
+                url: url,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: [
+                    "Content-Type": "application/feed+json",
+                    "Content-Length": "\(Self.feedData.count)"
+                ]
+              ) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Self.feedData)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }
 
 private final class CountingAppLinkResolver: LinkResolutionClient {

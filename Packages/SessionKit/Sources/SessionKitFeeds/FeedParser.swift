@@ -2,11 +2,13 @@ import Foundation
 import SessionKit
 
 public struct FeedParserLimits: Equatable, Sendable {
+    public static let defaultMaximumBytes = 16 * 1_024 * 1_024
+
     public var maximumBytes: Int
     public var maximumEntries: Int
     public var maximumXMLDepth: Int
 
-    public init(maximumBytes: Int = 2 * 1_024 * 1_024, maximumEntries: Int = 200, maximumXMLDepth: Int = 64) {
+    public init(maximumBytes: Int = FeedParserLimits.defaultMaximumBytes, maximumEntries: Int = 200, maximumXMLDepth: Int = 64) {
         self.maximumBytes = maximumBytes
         self.maximumEntries = maximumEntries
         self.maximumXMLDepth = maximumXMLDepth
@@ -41,7 +43,7 @@ public enum FeedParserError: Error, LocalizedError, Equatable {
 
     public var errorDescription: String? {
         switch self {
-        case .responseTooLarge: return "The feed exceeds the 2 MB safety limit."
+        case .responseTooLarge: return "The feed exceeds the 16 MB safety limit."
         case .malformed: return "The feed is malformed."
         case .tooDeep: return "The feed XML nesting exceeds the safety limit."
         case .unsupported: return "The response is not RSS, Atom, or JSON Feed."

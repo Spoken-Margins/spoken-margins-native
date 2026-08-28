@@ -114,6 +114,27 @@ final class QualityOfLifeModelsTests: XCTestCase {
         XCTAssertEqual(parsed.items[0].summary, "Hello & goodbye")
     }
 
+    func testDefaultFeedLimitAcceptsLegitimateFeedLargerThanTwoMegabytes() throws {
+        let padding = String(repeating: "x", count: 2 * 1_024 * 1_024 + 1)
+        let data = Data("""
+        {"version":"https://jsonfeed.org/version/1.1","title":"Large Podcast","padding":"\(padding)","items":[
+        {"id":"1","url":"https://example.com/1","title":"Episode One"}]}
+        """.utf8)
+
+        let parsed = try FeedParser().parse(data: data)
+
+        XCTAssertEqual(parsed.title, "Large Podcast")
+        XCTAssertEqual(parsed.items.map(\.title), ["Episode One"])
+    }
+
+    func testDefaultFeedLimitStillRejectsResponsesAboveSixteenMegabytes() {
+        let data = Data(repeating: 0x20, count: FeedParserLimits.defaultMaximumBytes + 1)
+
+        XCTAssertThrowsError(try FeedParser().parse(data: data)) { error in
+            XCTAssertEqual(error as? FeedParserError, .responseTooLarge)
+        }
+    }
+
     private func signatureFixture() -> TTSRenderSignature {
         TTSRenderSignature(
             engine: "supertonic", modelRevision: "3", assetManifestHash: "a",

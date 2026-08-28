@@ -780,32 +780,21 @@ private struct HomeScreen: View {
                     } label: {
                         Text(file.name)
                             .font(.subheadline.weight(.semibold))
+                            .lineLimit(3)
+                            .truncationMode(.tail)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .disabled(model.isImportingSources)
                     .accessibilityHint("Imports and opens this item")
-                    Text("\(model.quickAccessFolderName) · \(file.modifiedAtDescription)")
-                        .font(.caption)
-                        .foregroundStyle(AppColors.secondaryText)
-                    HStack {
-                        Button {
-                            model.importQuickAccessFile(file)
-                        } label: {
-                            if model.isImportingSources {
-                                ProgressView()
-                            } else {
-                                Text("Import")
-                            }
-                        }
-                        .disabled(model.isImportingSources)
-                        .accessibilityIdentifier("quickAdd.folder.import.\(file.id)")
-                        Label("Quick Folder", systemImage: "folder")
-                            .foregroundStyle(AppColors.secondaryText)
-                        Spacer()
-                    }
-                    .font(.caption)
+                    quickAddMetadataLine(
+                        method: "Quick Folder",
+                        source: model.quickAccessFolderName,
+                        time: file.modifiedAtDescription,
+                        systemImage: "folder",
+                        isImporting: model.isImportingSources
+                    )
                 }
             }
             .accessibilityIdentifier("quickAdd.folder.\(file.id)")
@@ -820,36 +809,70 @@ private struct HomeScreen: View {
                     } label: {
                         Text(entry.title)
                             .font(.subheadline.weight(.semibold))
+                            .lineLimit(3)
+                            .truncationMode(.tail)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .disabled(model.importingFollowedSourceEntryIds.contains(entry.id))
                     .accessibilityHint("Imports and opens this item")
-                    if let author = entry.author { Text(author).font(.caption).foregroundStyle(AppColors.secondaryText) }
-                    HStack {
-                        Button {
-                            model.importFollowedSourceEntry(entry)
-                        } label: {
-                            if model.importingFollowedSourceEntryIds.contains(entry.id) {
-                                ProgressView()
-                            } else {
-                                Text("Import")
-                            }
-                        }
-                        .disabled(model.importingFollowedSourceEntryIds.contains(entry.id))
-                        .accessibilityIdentifier("sources.entry.import.\(entry.id)")
-                        if let url = URL(string: entry.canonicalURL) {
-                            Link("Open", destination: url)
-                        }
-                        Button("Dismiss") { model.dismissFollowedSourceEntry(id: entry.id) }
-                        Spacer()
-                    }
-                    .font(.caption)
+                    quickAddMetadataLine(
+                        method: "Followed Feed",
+                        source: followedSourceName(for: entry),
+                        time: entry.publishedAt.map(relativeDateDescription),
+                        systemImage: "dot.radiowaves.left.and.right",
+                        isImporting: model.importingFollowedSourceEntryIds.contains(entry.id)
+                    )
                 }
             }
             .accessibilityIdentifier("sources.entry.\(entry.id)")
         }
+    }
+
+    private func followedSourceName(for entry: FeedEntry) -> String {
+        if let source = model.feedSubscriptions.first(where: { $0.id == entry.subscriptionId })?.source {
+            return source.title ?? source.host
+        }
+        return URL(string: entry.canonicalURL)?.host ?? entry.author ?? "Source"
+    }
+
+    private func relativeDateDescription(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    private func quickAddMetadataLine(
+        method: String,
+        source: String?,
+        time: String?,
+        systemImage: String,
+        isImporting: Bool
+    ) -> some View {
+        let description = [method, source, time]
+            .compactMap { value in
+                guard let value, !value.isEmpty else { return nil }
+                return value
+            }
+            .joined(separator: " · ")
+
+        return HStack(spacing: 6) {
+            Image(systemName: systemImage)
+            Text(description)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 8)
+            if isImporting {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: "arrow.left.and.right")
+                    .accessibilityHidden(true)
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(AppColors.secondaryText)
     }
 
     private var sourceModalIsPresented: Binding<Bool> {
@@ -1227,7 +1250,7 @@ private struct HomeScreen: View {
                     .onSubmit { focusedField = nil }
                     .accessibilityIdentifier("library.search.field")
                 HStack {
-                    Menu(model.libraryFilterDescription) {
+                    Menu {
                         Picker("Content Type", selection: $model.libraryQuery.contentType) {
                             ForEach(LibraryContentTypeFilter.allCases, id: \.self) { Text($0.rawValue.replacingOccurrences(of: "_", with: " ").capitalized).tag($0) }
                         }
@@ -1237,7 +1260,12 @@ private struct HomeScreen: View {
                         Picker("Offline", selection: $model.libraryQuery.offlineState) {
                             ForEach(LibraryOfflineStateFilter.allCases, id: \.self) { Text($0.rawValue.replacingOccurrences(of: "_", with: " ").capitalized).tag($0) }
                         }
+                    } label: {
+                        Text(model.libraryFilterDescription)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                     }
+                    .transaction { $0.animation = nil }
                     .accessibilityIdentifier("library.filter.menu")
                     Menu(model.librarySortDescription) {
                         Picker("Sort", selection: $model.libraryQuery.sort) {
@@ -1377,6 +1405,8 @@ private struct QuickAddSwipeRow<Content: View>: View {
                 }
         )
         .accessibilityHint("Swipe right to import, or swipe left to dismiss")
+        .accessibilityAction(named: "Import") { onImport() }
+        .accessibilityAction(named: "Dismiss") { onDismiss() }
     }
 }
 
@@ -2145,7 +2175,9 @@ private struct PlaybackScreen: View {
                     PlaybackControlLabel(title: model.compactPlaybackRateDescription, systemImage: "speedometer")
                         .font(.subheadline.weight(.semibold).monospacedDigit())
                 } else {
-                    Image(systemName: "speedometer")
+                    Text(model.compactPlaybackRateDescription)
+                        .font(.subheadline.weight(.semibold).monospacedDigit())
+                        .fixedSize(horizontal: true, vertical: false)
                 }
             }
             .accessibilityLabel("Playback speed, \(model.compactPlaybackRateDescription)")
