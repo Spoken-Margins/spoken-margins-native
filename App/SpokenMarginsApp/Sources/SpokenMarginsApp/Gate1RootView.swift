@@ -18,15 +18,16 @@ struct Gate1RootView: View {
                 case .home:
                     ExperienceRootTabs(navigation: $navigation)
                 case .item:
-                    ItemScreen()
+                    ExperienceItemDetailScreen()
                 case .playback:
                     PlaybackScreen()
                 case .timeline:
-                    ExperienceTimelineScreen()
+                    ExperienceTimelineRailScreen()
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                 case .settings:
                     SettingsScreen()
                 case .offlineStorage:
-                    ExperienceOfflineStorageScreen()
+                    ExperienceStorageScreen()
                 case .export:
                     ExportScreen()
                 case .batchExport:
@@ -404,22 +405,32 @@ private struct MiniPlayerBar: View {
     @EnvironmentObject private var model: Gate1AppModel
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Button(action: model.openPlayback) {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 6) {
-                        if model.snapshot.isRecording {
-                            Image(systemName: "waveform.circle.fill")
-                                .foregroundStyle(.red)
-                            Text("Recording interjection")
-                        } else {
-                            Text(model.snapshot.chapterTitle ?? model.snapshot.title ?? model.selectedItem.title)
+                HStack(spacing: 11) {
+                    Image(systemName: "waveform")
+                        .font(.headline)
+                        .foregroundStyle(AppColors.evergreen)
+                        .frame(width: 40, height: 40)
+                        .background(AppColors.softGreen, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(model.playbackItemHeaderTitle)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(AppColors.text)
+                            .lineLimit(1)
+                        HStack(spacing: 7) {
+                            if let chapter = model.playbackChapterHeaderTitle {
+                                Text(chapter).lineLimit(1)
+                            }
+                            Text("\(model.displayPlaybackProgressPercent)%")
+                                .monospacedDigit()
                         }
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                        ProgressView(value: Double(model.displayPlaybackProgressPercent), total: 100)
+                            .tint(AppColors.ochre)
                     }
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-                    ProgressView(value: Double(model.displayPlaybackProgressPercent), total: 100)
-                        .tint(AppColors.primaryAction)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
@@ -428,59 +439,48 @@ private struct MiniPlayerBar: View {
             .accessibilityLabel("Open Now Playing")
             .accessibilityIdentifier("miniPlayer.open.button")
 
-            if model.snapshot.isRecording {
-                Button(action: model.finishInterjection) {
-                    Image(systemName: "checkmark")
-                        .frame(width: 44, height: 44)
-                }
-                .buttonStyle(IconButtonStyle())
-                .accessibilityLabel("Finish interjection")
-                .accessibilityIdentifier("miniPlayer.interjection.done")
-                Button(action: model.cancelInterjection) {
-                    Image(systemName: "xmark")
-                        .frame(width: 44, height: 44)
-                }
-                .buttonStyle(IconButtonStyle())
-                .accessibilityLabel("Cancel interjection")
-                .accessibilityIdentifier("miniPlayer.interjection.cancel")
-            } else {
-                Button(action: model.dismissMiniPlayer) {
-                    Image(systemName: "xmark")
-                        .frame(width: 44, height: 44)
-                }
-                .buttonStyle(IconButtonStyle())
-                .accessibilityLabel("Close and save listening session")
-                .accessibilityIdentifier("miniPlayer.close.button")
-                Button(action: model.beginInterjection) {
-                    Image(systemName: "mic.fill")
-                        .frame(width: 44, height: 44)
-                }
-                .buttonStyle(IconButtonStyle())
-                .accessibilityLabel("Record an interjection")
-                .accessibilityIdentifier("miniPlayer.interject.button")
-                Button(action: model.playPause) {
-                    Group {
-                        if model.snapshot.status == .starting {
-                            ProgressView()
-                        } else {
-                            Image(systemName: model.snapshot.status.isPlaybackActive ? "pause.fill" : "play.fill")
-                        }
-                    }
+            Button(action: model.beginInterjection) {
+                Image(systemName: "mic.fill")
+                    .foregroundStyle(AppColors.coral)
                     .frame(width: 44, height: 44)
-                }
-                .buttonStyle(IconButtonStyle())
-                .accessibilityLabel(model.snapshot.status.isPlaybackActive ? "Pause" : "Play")
-                .accessibilityIdentifier("miniPlayer.playPause.button")
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Record an interjection")
+            .accessibilityIdentifier("miniPlayer.interject.button")
+
+            Button(action: model.playPause) {
+                Group {
+                    if model.snapshot.status == .starting {
+                        ProgressView().tint(.white)
+                    } else {
+                        Image(systemName: model.snapshot.status.isPlaybackActive ? "pause.fill" : "play.fill")
+                    }
+                }
+                .foregroundStyle(.white)
+                .frame(width: 46, height: 46)
+                .background(AppColors.evergreen, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(model.snapshot.status.isPlaybackActive ? "Pause" : "Play")
+            .accessibilityIdentifier("miniPlayer.playPause.button")
+
+            Button(action: model.dismissMiniPlayer) {
+                Image(systemName: "xmark")
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(AppColors.secondaryText)
+            .accessibilityLabel("Close and save listening session")
+            .accessibilityIdentifier("miniPlayer.close.button")
         }
-        .padding(.leading, 14)
-        .padding(.trailing, 8)
-        .padding(.vertical, 8)
+        .padding(.leading, 10)
+        .padding(.trailing, 6)
+        .padding(.vertical, 6)
         .foregroundStyle(AppColors.text)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AppColors.border))
-        .shadow(color: .black.opacity(0.12), radius: 12, y: 5)
+        .background(.ultraThickMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(AppColors.evergreen.opacity(0.25)))
+        .shadow(color: .black.opacity(0.14), radius: 18, y: 7)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("miniPlayer.bar")
     }
@@ -1820,41 +1820,54 @@ private struct PlaybackScreen: View {
     @State private var isSleepTimerPresented = false
     @State private var isSourceTextPresented = false
     @State private var sourceTextOffsetAtPresentation = 0
+    @State private var timelinePullTriggered = false
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @FocusState private var followUpFocused: Bool
 
     var body: some View {
         NavigationStack {
             ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(spacing: 20) {
-                        if model.shouldShowGuidedOnboardingCoach {
-                            GuidedOnboardingPlaybackCard {
-                                withAnimation {
-                                    proxy.scrollTo("playback.timeline", anchor: .top)
+                ZStack {
+                    LinearGradient(
+                        colors: [AppColors.watchBackground, AppColors.evergreen.opacity(0.82)],
+                        startPoint: .top,
+                        endPoint: .bottomTrailing
+                    )
+                    .ignoresSafeArea()
+                    ScrollView {
+                        VStack(spacing: 18) {
+                            if model.shouldShowGuidedOnboardingCoach {
+                                GuidedOnboardingPlaybackCard {
+                                    withAnimation {
+                                        proxy.scrollTo("playback.timeline", anchor: .top)
+                                    }
                                 }
                             }
+                            playbackControls
+                            sessionActionDock
                         }
-                        SourceFollowSuggestionCard(appearance: .playback)
-                        ManualSourceFollowButton(appearance: .playback)
-                        Group {
-                            if horizontalSizeClass == .regular {
-                                HStack(alignment: .top, spacing: 24) {
-                                    playbackControls
-                                        .frame(width: 430)
-                                    ExperienceTimelineScreen(isAdjacent: true)
-                                    .frame(maxWidth: 680)
-                                }
-                                .frame(maxWidth: 1160, alignment: .topLeading)
-                            } else {
-                                VStack(spacing: 20) {
-                                    playbackControls
-                                    timelineLaunchCard
-                                }
-                            }
+                        .padding(.horizontal, horizontalSizeClass == .regular ? 36 : 18)
+                        .padding(.vertical, 24)
+                        .frame(maxWidth: 620)
+                        .frame(maxWidth: .infinity)
+                    }
+                    .scrollBounceBehavior(.always)
+                    .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                        TimelinePullPresentation.overscrollDistance(
+                            contentOffsetY: geometry.contentOffset.y,
+                            contentHeight: geometry.contentSize.height,
+                            containerHeight: geometry.containerSize.height,
+                            bottomInset: geometry.contentInsets.bottom
+                        )
+                    } action: { _, distance in
+                        if distance < 1 {
+                            timelinePullTriggered = false
+                        } else if TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: distance),
+                                  !timelinePullTriggered {
+                            timelinePullTriggered = true
+                            openTimeline()
                         }
                     }
-                    .padding(20)
                 }
                 .accessibilityIdentifier("playback.screen")
                 .onCompatibleChange(of: model.guidedOnboardingStage) { stage in
@@ -1865,33 +1878,14 @@ private struct PlaybackScreen: View {
                     }
                 }
             }
+            .toolbarBackground(AppColors.watchBackground.opacity(0.92), for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(action: model.openHome) {
                         Label("Library", systemImage: "books.vertical")
                     }
                     .accessibilityIdentifier("playback.home.button")
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    HStack {
-                        Button(action: model.openHelp) {
-                            Image(systemName: "questionmark.circle")
-                        }
-                        .accessibilityLabel("Help")
-                        .accessibilityIdentifier("playback.help.button")
-                        if horizontalSizeClass != .regular {
-                            Button(action: { model.openTimeline() }) {
-                                Image(systemName: "list.bullet.rectangle")
-                            }
-                            .accessibilityLabel("Open Timeline")
-                            .accessibilityIdentifier("playback.timeline.button")
-                        }
-                        Button(action: model.openExport) {
-                            Image(systemName: "square.and.arrow.up")
-                        }
-                        .disabled(!model.hasActiveSession)
-                        .accessibilityIdentifier("playback.export.button")
-                    }
                 }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
@@ -1918,28 +1912,68 @@ private struct PlaybackScreen: View {
         }
     }
 
-    private var isUITesting: Bool {
-        ProcessInfo.processInfo.arguments.contains("--ui-testing")
-            || ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TESTING"] == "1"
-    }
-
     private var playbackControls: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 20) {
+            Text("NOW PLAYING")
+                .font(.caption.weight(.bold))
+                .tracking(1.4)
+                .foregroundStyle(AppColors.ochre)
             playbackHeader
-            if isUITesting {
-                gate2CompactValidation
-            }
             playbackPosition
             playbackTransport
             playbackRateControl
             onDeviceSpeechGenerationControl
             interjectionControls
         }
-        .padding(18)
-        .frame(maxWidth: 430)
-        .background(AppColors.watchBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 34))
-        .shadow(color: .black.opacity(0.18), radius: 22, y: 12)
+        .padding(.horizontal, horizontalSizeClass == .regular ? 34 : 22)
+        .padding(.vertical, 28)
+        .frame(maxWidth: 560)
+        .background(Color.black.opacity(0.22))
+        .clipShape(RoundedRectangle(cornerRadius: 36, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 36, style: .continuous)
+                .stroke(Color.white.opacity(0.14))
+        }
+        .shadow(color: .black.opacity(0.22), radius: 28, y: 14)
+    }
+
+    private var sessionActionDock: some View {
+        HStack(spacing: 8) {
+            Button(action: model.openCurrentPlaybackItem) {
+                Image(systemName: "doc.text")
+                    .frame(width: 48, height: 48)
+            }
+            .accessibilityLabel("Item")
+            .accessibilityIdentifier("playback.item.button")
+
+            Button(action: openTimeline) {
+                Label("Timeline", systemImage: "list.bullet.rectangle")
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(maxWidth: .infinity, minHeight: 48)
+            }
+            .accessibilityIdentifier("playback.timeline.button")
+
+            Button(action: model.openExport) {
+                Image(systemName: "square.and.arrow.up")
+                    .frame(width: 48, height: 48)
+            }
+            .disabled(!model.hasActiveSession)
+            .accessibilityLabel("Export")
+            .accessibilityIdentifier("playback.export.button")
+        }
+        .font(.subheadline.weight(.semibold))
+        .buttonStyle(.bordered)
+        .tint(.white)
+        .foregroundStyle(.white)
+        .padding(8)
+        .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func openTimeline() {
+        withAnimation(.snappy(duration: 0.34)) {
+            model.openTimeline()
+        }
     }
 
     private var timelineLaunchCard: some View {
@@ -2431,48 +2465,6 @@ private struct PlaybackScreen: View {
                 }
             }
         }
-    }
-
-    private var gate2CompactValidation: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Compact Controls")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(AppColors.watchSecondary)
-            Text(model.gate2CompactSnapshot?.chapterTitle ?? "No compact snapshot")
-                .font(.caption)
-                .foregroundStyle(.white)
-                .accessibilityIdentifier("gate2.compact.chapter")
-                .accessibilityValue(model.snapshot.status.rawValue)
-            HStack(spacing: 8) {
-                Button {
-                    model.dispatchGate2CompactCommand(.skipBack)
-                } label: {
-                    Image(systemName: "gobackward.15")
-                }
-                .buttonStyle(WatchSecondaryButtonStyle())
-                .accessibilityLabel("Compact controls skip back")
-                .accessibilityIdentifier("gate2.compact.back.button")
-
-                Button {
-                    model.dispatchGate2CompactCommand(.togglePlayPause)
-                } label: {
-                    Image(systemName: "playpause")
-                }
-                .buttonStyle(WatchSecondaryButtonStyle())
-                .accessibilityLabel("Compact controls play or pause")
-                .accessibilityIdentifier("gate2.compact.playPause.button")
-
-                Button {
-                    model.dispatchGate2CompactCommand(.skipForward)
-                } label: {
-                    Image(systemName: "goforward.15")
-                }
-                .buttonStyle(WatchSecondaryButtonStyle())
-                .accessibilityLabel("Compact controls skip forward")
-                .accessibilityIdentifier("gate2.compact.forward.button")
-            }
-        }
-        .padding(.top, 8)
     }
 
     private var mediaDurationMs: Int {

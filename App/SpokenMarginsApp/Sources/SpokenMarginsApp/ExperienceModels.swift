@@ -37,6 +37,24 @@ enum AppRoute: Hashable, Sendable {
     case help
 }
 
+enum TimelinePullPresentation {
+    static let activationDistance: CGFloat = 72
+
+    static func overscrollDistance(
+        contentOffsetY: CGFloat,
+        contentHeight: CGFloat,
+        containerHeight: CGFloat,
+        bottomInset: CGFloat
+    ) -> CGFloat {
+        let maximumScrollOffset = max(0, contentHeight + bottomInset - containerHeight)
+        return max(0, contentOffsetY - maximumScrollOffset)
+    }
+
+    static func shouldOpenTimeline(overscrollDistance: CGFloat) -> Bool {
+        overscrollDistance >= activationDistance
+    }
+}
+
 enum AddSourceRoute: String, CaseIterable, Identifiable, Hashable, Sendable {
     case linkOrPodcast
     case pastedText
@@ -75,6 +93,15 @@ enum AddSourceRoute: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .quickFolder: "folder"
         }
     }
+}
+
+enum AddSourcePresentation {
+    static let primaryObjectRoutes: [AddSourceRoute] = [
+        .linkOrPodcast,
+        .pastedText,
+        .documentOrBook,
+        .audiobook
+    ]
 }
 
 /// Scene-local presentation state. Playback and persistence remain in
@@ -189,6 +216,18 @@ enum TimelineProvenance: String, CaseIterable, Hashable, Sendable {
         case .userResponse: "person.crop.circle"
         case .assistantResponse: "sparkles"
         }
+    }
+}
+
+struct TimelineRailSortKey: Comparable, Equatable, Sendable {
+    let position: Int
+    let rank: Int
+    let id: String
+
+    static func < (lhs: TimelineRailSortKey, rhs: TimelineRailSortKey) -> Bool {
+        if lhs.position != rhs.position { return lhs.position < rhs.position }
+        if lhs.rank != rhs.rank { return lhs.rank < rhs.rank }
+        return lhs.id < rhs.id
     }
 }
 

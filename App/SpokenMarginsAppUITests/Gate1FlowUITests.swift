@@ -20,13 +20,11 @@ final class Gate1FlowUITests: XCTestCase {
         seededStart.tap()
 
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
-        XCTAssertTrue(
-            element("timeline.section").exists || element("playback.timeline.adjacent").exists
-        )
+        XCTAssertTrue(scrollToElement("playback.timeline.button").exists)
         openTimelineExperience()
-        XCTAssertTrue(scrollToStaticText("Source").exists)
-        XCTAssertTrue(scrollToStaticText("My Margins").exists)
-        XCTAssertTrue(scrollToStaticText("Reflection").exists)
+        XCTAssertTrue(element("timeline.rail").exists)
+        XCTAssertTrue(scrollToButton(containingLabel: "Source").exists)
+        XCTAssertTrue(scrollToButton(containingLabel: "Assistant response").exists)
         returnToNowPlayingFromTimelineIfNeeded()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
 
@@ -43,13 +41,45 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("miniPlayer.close.button").exists)
         XCTAssertTrue(element("miniPlayer.interject.button").exists)
         XCTAssertTrue(element("miniPlayer.playPause.button").exists)
-        app.buttons["home.settings.button"].tap()
+        openLibrarySettings()
 
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 4))
         XCTAssertTrue(scrollToElement("settings.ai.processing").exists)
         XCTAssertTrue(scrollToElement("settings.ai.releaseBoundary").exists)
         XCTAssertFalse(element("provider.name").exists)
         XCTAssertFalse(element("provider.apiKey.field").exists)
+    }
+
+    func testExperienceOverhaulVisualEvidence() throws {
+        XCTAssertTrue(element("library.screen").waitForExistence(timeout: 8))
+        captureScreen(named: "01-library")
+
+        let seededStart = app.buttons["queue.start.item-pill"]
+        XCTAssertTrue(seededStart.waitForExistence(timeout: 4), app.debugDescription)
+        seededStart.tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
+        captureScreen(named: "02-now-playing")
+
+        openTimelineExperience()
+        captureScreen(named: "03-timeline")
+        returnToNowPlayingFromTimelineIfNeeded()
+        app.buttons["playback.home.button"].tap()
+        XCTAssertTrue(element("library.screen").waitForExistence(timeout: 4))
+        app.buttons["home.addSource.button"].tap()
+        XCTAssertTrue(element("addSource.sheet").waitForExistence(timeout: 4))
+        captureScreen(named: "04-add-source")
+        app.buttons["Close"].tap()
+
+        app.terminate()
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_RECORDING"] = "1"
+        app.launch()
+        XCTAssertTrue(element("library.screen").waitForExistence(timeout: 8))
+        app.buttons["queue.start.item-pill"].tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
+        scrollToElement("playback.interject.button").tap()
+        XCTAssertTrue(element("recording.screen").waitForExistence(timeout: 4))
+        captureScreen(named: "05-recording")
+        element("recording.cancel.button").tap()
     }
 
     func testDeveloperListeningMapJSONCanBeAppliedFromSettings() throws {
@@ -61,7 +91,7 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("item.screen").waitForExistence(timeout: 4))
         app.buttons["item.home.button"].tap()
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 4))
-        app.buttons["home.settings.button"].tap()
+        openLibrarySettings()
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 4))
 
         let editor = scrollToElement("settings.developer.mapJSON.editor")
@@ -98,7 +128,8 @@ final class Gate1FlowUITests: XCTestCase {
         openTimelineExperience()
         let aiChapter = scrollToButton(containingLabel: "Timeline Navigation")
         aiChapter.tap()
-        XCTAssertTrue(app.staticTexts["Timeline Navigation"].waitForExistence(timeout: 4))
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 4))
+        XCTAssertFalse(element("timeline.screen").exists)
     }
 
     func testExportAfterTwoSessionsStaysSessionIsolated() throws {
@@ -135,21 +166,55 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertEqual(secondExport, firstExport, "The second session export accumulated data from the first session")
     }
 
-    func testGate2CompactValidationControlsDelegateTransportCommands() throws {
+    func testNowPlayingDoesNotExposeCompactTestHarnessControls() throws {
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
         let seededStart = app.buttons["queue.start.item-pill"]
         XCTAssertTrue(seededStart.waitForExistence(timeout: 4))
         seededStart.tap()
 
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Compact Controls"].waitForExistence(timeout: 4))
-        XCTAssertFalse(element("gate2.compact.chapter").label.isEmpty)
+        XCTAssertFalse(app.staticTexts["Compact Controls"].exists)
+        XCTAssertFalse(element("gate2.compact.chapter").exists)
+        XCTAssertFalse(element("gate2.compact.playPause.button").exists)
+        app.buttons["playback.forward.button"].tap()
+        app.buttons["playback.back.button"].tap()
+        XCTAssertTrue(element("playback.play.button").exists)
+    }
 
-        app.buttons["gate2.compact.playPause.button"].tap()
-        XCTAssertTrue(element("playback.play.button").waitForExistence(timeout: 4))
+    func testPlaybackPullsIntoTimelineAndReflectionControlsClearTheMiniPlayerAndKeyboard() throws {
+        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
+        let seededStart = app.buttons["queue.start.item-pill"]
+        XCTAssertTrue(seededStart.waitForExistence(timeout: 4))
+        seededStart.tap()
 
-        app.buttons["gate2.compact.forward.button"].tap()
-        XCTAssertTrue(element("gate2.compact.chapter").waitForExistence(timeout: 4))
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
+        let timelineButton = scrollToElement("playback.timeline.button")
+        XCTAssertEqual(timelineButton.label, "Timeline")
+        XCTAssertFalse(timelineButton.label.contains("\n"))
+        XCTAssertTrue(element("playback.export.button").isHittable)
+
+        let playbackScroll = app.scrollViews.firstMatch
+        let pullStart = playbackScroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.78))
+        let pullEnd = playbackScroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08))
+        pullStart.press(forDuration: 0.1, thenDragTo: pullEnd)
+        XCTAssertTrue(element("timeline.screen").waitForExistence(timeout: 4))
+
+        let editor = scrollToElement("timeline.reflection.editor")
+        editor.tap()
+        app.typeText("Keyboard dismissal probe.")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 4))
+        app.buttons["timeline.keyboard.done"].tap()
+        XCTAssertTrue(waitForDisappearance(app.keyboards.firstMatch, timeout: 4))
+
+        let importButton = scrollToElement("timeline.reflection.import.button")
+        XCTAssertTrue(importButton.isHittable, "The floating Now Playing bar covers the import action")
+        captureScreen(named: "timeline-reflection-clearance")
+
+        editor.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 4))
+        app.buttons["timeline.nowPlaying.button"].tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 4))
+        XCTAssertTrue(waitForDisappearance(app.keyboards.firstMatch, timeout: 4))
     }
 
     func testNativeTextPublishesVisibleSimulatorSystemPlaybackState() throws {
@@ -171,12 +236,9 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
         let playPause = app.buttons["playback.play.button"]
         XCTAssertTrue(playPause.waitForExistence(timeout: 8))
-        XCTAssertEqual(playPause.label, "Pause")
-        let compactChapter = element("gate2.compact.chapter")
-        XCTAssertTrue(compactChapter.waitForExistence(timeout: 4))
         let nativePlaybackConfirmed = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value == %@", "playing"),
-            object: compactChapter
+            predicate: NSPredicate(format: "label == %@ AND enabled == true", "Pause"),
+            object: playPause
         )
         XCTAssertEqual(
             XCTWaiter().wait(for: [nativePlaybackConfirmed], timeout: 60),
@@ -264,7 +326,7 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(failure.label.contains("Retry Summary"))
 
         XCTAssertTrue(summarize.waitForExistence(timeout: 4))
-        XCTAssertTrue(summarize.label.contains("Retry Margin Summary"))
+        XCTAssertTrue(summarize.label.contains("Retry summary"))
         XCTAssertTrue(summarize.isEnabled)
         summarize.tap()
 
@@ -300,7 +362,7 @@ final class Gate1FlowUITests: XCTestCase {
         trashConfirmation.buttons["Move to Recently Deleted"].tap()
         XCTAssertTrue(waitForDisappearance(libraryRow, timeout: 4))
 
-        app.buttons["home.settings.button"].tap()
+        openLibrarySettings()
         let delete = scrollToButton(containingLabel: "Delete \(itemTitle) Permanently")
         delete.tap()
         let confirmation = app.alerts["Delete Permanently?"]
@@ -321,8 +383,10 @@ final class Gate1FlowUITests: XCTestCase {
         scrollToElement("addSource.route.documentOrBook").tap()
         XCTAssertTrue(scrollToElement("obsidian.import.button").exists)
         XCTAssertTrue(scrollToElement("epub.import.button").exists)
+        element("addSource.route.back").tap()
         scrollToElement("addSource.route.audiobook").tap()
         XCTAssertTrue(scrollToElement("audiobook.import.button").exists)
+        element("addSource.route.back").tap()
         scrollToElement("addSource.route.quickFolder").tap()
         XCTAssertTrue(scrollToElement("quickFolder.choose.button").exists)
     }
@@ -334,6 +398,7 @@ final class Gate1FlowUITests: XCTestCase {
 
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
         app.buttons["home.addSource.button"].tap()
+        scrollToElement("addSource.route.linkOrPodcast").tap()
         let link = element("sourceLink.url.field")
         XCTAssertTrue(link.waitForExistence(timeout: 4))
         link.tap()
@@ -375,7 +440,7 @@ final class Gate1FlowUITests: XCTestCase {
 
     func testDiagnosticsCopyShowsLocalConfirmation() throws {
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
-        app.buttons["home.settings.button"].tap()
+        openLibrarySettings()
         let copy = scrollToElement("settings.copyDiagnostics.button")
 
         copy.tap()
@@ -395,8 +460,8 @@ final class Gate1FlowUITests: XCTestCase {
 
         tapRoot("Sources")
         XCTAssertTrue(element("sources.screen").waitForExistence(timeout: 4))
-        XCTAssertTrue(app.staticTexts["New from Sources"].exists)
-        XCTAssertTrue(scrollToStaticText(containing: "does not import, download, or prepare").exists)
+        XCTAssertTrue(app.staticTexts["Source inbox"].exists)
+        XCTAssertTrue(scrollToStaticText(containing: "Nothing is imported, downloaded, or prepared").exists)
         XCTAssertTrue(element("miniPlayer.bar").exists)
 
         tapRoot("Margins")
@@ -455,7 +520,7 @@ final class Gate1FlowUITests: XCTestCase {
 
     func testOfflineStorageExplainsProtectionBeforeSafeClear() throws {
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
-        app.buttons["home.settings.button"].tap()
+        openLibrarySettings()
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 4))
 
         scrollToElement("settings.offlineStorage.button").tap()
@@ -471,7 +536,7 @@ final class Gate1FlowUITests: XCTestCase {
             XCTAssertTrue(confirmation.waitForExistence(timeout: 3))
             XCTAssertTrue(
                 confirmation.staticTexts.matching(
-                    NSPredicate(format: "label CONTAINS %@", "protected work will remain")
+                    NSPredicate(format: "label CONTAINS %@", "recordings, Margins, and protected active playback will remain")
                 ).firstMatch.exists
             )
             confirmation.buttons["Cancel"].tap()
@@ -482,12 +547,26 @@ final class Gate1FlowUITests: XCTestCase {
         app.descendants(matching: .any)[identifier]
     }
 
+    private func captureScreen(named name: String) {
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    private func openLibrarySettings() {
+        app.buttons["home.settings.button"].tap()
+        let settings = app.buttons["Settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 2), "Library options did not expose Settings")
+        settings.tap()
+    }
+
     private func openTimelineExperience() {
         if element("playback.timeline.adjacent").exists {
             return
         }
-        let button = app.buttons["playback.timeline.button"]
-        XCTAssertTrue(button.waitForExistence(timeout: 4), "Missing the iPhone Timeline route and iPad adjacent Timeline.")
+        let button = scrollToButton(containingLabel: "Timeline")
+        XCTAssertTrue(button.isHittable, "Missing the iPhone Timeline route and iPad adjacent Timeline.")
         button.tap()
         XCTAssertTrue(element("timeline.screen").waitForExistence(timeout: 4))
     }

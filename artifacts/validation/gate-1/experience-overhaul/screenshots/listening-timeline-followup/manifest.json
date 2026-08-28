@@ -1,0 +1,53 @@
+[
+  {
+    "attachments" : [
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "D362D9AD-5AD6-4AEC-8BC7-EBAF7FE987C0",
+        "deviceName" : "iPhone 16 Pro",
+        "exportedFileName" : "7B1D9D57-2F35-4A34-B468-E5ED5E2A0CDD.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "05-recording_0_99F67719-DD57-484F-864D-50A456F72297.png",
+        "timestamp" : 1787956103.051
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "D362D9AD-5AD6-4AEC-8BC7-EBAF7FE987C0",
+        "deviceName" : "iPhone 16 Pro",
+        "exportedFileName" : "0189DEA7-DAE1-4B6A-9E55-C4EB385C18B8.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "04-add-source_0_549EE83D-FE18-4DC6-B0BA-8DF593E4D356.png",
+        "timestamp" : 1787956093.002
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "D362D9AD-5AD6-4AEC-8BC7-EBAF7FE987C0",
+        "deviceName" : "iPhone 16 Pro",
+        "exportedFileName" : "06D42D7D-AB92-402B-BDB9-16CDA822E9C9.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "03-timeline_0_B95F7E57-D3DA-4120-B434-EFCEFECE34BF.png",
+        "timestamp" : 1787956088.793
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "D362D9AD-5AD6-4AEC-8BC7-EBAF7FE987C0",
+        "deviceName" : "iPhone 16 Pro",
+        "exportedFileName" : "14C15868-80CF-47D8-A239-5CCED93639B7.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "02-now-playing_0_940668D5-A87F-40A3-AA3E-6494839AC5BA.png",
+        "timestamp" : 1787956085.741
+      },
+      {
+        "configurationName" : "Test Scheme Action",
+        "deviceId" : "D362D9AD-5AD6-4AEC-8BC7-EBAF7FE987C0",
+        "deviceName" : "iPhone 16 Pro",
+        "exportedFileName" : "018BB6FA-F931-48BD-9E5A-46506BF87997.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "01-library_0_FF8469A0-C45D-4A6D-B137-BCEE8C3CE564.png",
+        "timestamp" : 1787956082.966
+      }
+    ],
+    "testIdentifier" : "Gate1FlowUITests/testExperienceOverhaulVisualEvidence()",
+    "testIdentifierURL" : "test://com.apple.xcode/SpokenMarginsNative/SpokenMarginsAppUITests/Gate1FlowUITests/testExperienceOverhaulVisualEvidence"
+  }
+]

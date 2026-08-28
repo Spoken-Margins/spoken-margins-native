@@ -410,6 +410,13 @@ final class Gate1AppModel: ObservableObject {
     private static var isRunningUnitTests: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     }
+    private static var supportsSpeechVoiceEnumeration: Bool {
+        #if targetEnvironment(simulator)
+        false
+        #else
+        true
+        #endif
+    }
 
     static func makeApplicationModel() -> Gate1AppModel {
         if ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_RECORDING"] == "1" {
@@ -695,6 +702,12 @@ final class Gate1AppModel: ObservableObject {
     }
     private static func availableSpeechVoiceOptions() -> [SpeechVoiceChoice] {
         #if canImport(AVFoundation)
+        // `AVSpeechSynthesisVoice.speechVoices()` can crash inside the iOS
+        // Simulator's AXSpeech process while XCTest is attaching. The system
+        // default voice still works there, so do not cross that unstable
+        // framework boundary on Simulator. Real devices retain the complete
+        // installed-voice picker.
+        guard supportsSpeechVoiceEnumeration else { return [] }
         return AVSpeechSynthesisVoice.speechVoices()
             .sorted { lhs, rhs in
                 if lhs.language == rhs.language {
@@ -5020,9 +5033,13 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["speechVoiceCount"] = "\(speechVoiceOptions.count)"
         diagnostics["speechVoice"] = speechVoiceDescription
         let selected = speechVoiceIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        diagnostics["speechVoiceAvailability"] = selected.isEmpty || speechVoiceOptions.contains(where: { $0.id == selected })
-            ? "available"
-            : "unavailable"
+        if !Self.supportsSpeechVoiceEnumeration {
+            diagnostics["speechVoiceAvailability"] = "system_default_on_simulator"
+        } else {
+            diagnostics["speechVoiceAvailability"] = selected.isEmpty || speechVoiceOptions.contains(where: { $0.id == selected })
+                ? "available"
+                : "unavailable"
+        }
     }
 
     func speechSettingsChanged() {
@@ -6581,7 +6598,9 @@ final class Gate1AppModel: ObservableObject {
 
     private func makeSpeechPlaybackClient() throws -> AudioPlaybackClient {
         let selectedVoice = speechVoiceIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        let appleVoiceIsAvailable = selectedVoice.isEmpty || Self.availableSpeechVoiceOptions().contains(where: { $0.id == selectedVoice })
+        let appleVoiceIsAvailable = !Self.supportsSpeechVoiceEnumeration
+            || selectedVoice.isEmpty
+            || Self.availableSpeechVoiceOptions().contains(where: { $0.id == selectedVoice })
         if ttsVoiceSelection == .system, !appleVoiceIsAvailable {
             diagnostics["speechVoiceAvailability"] = "unavailable"
             throw SessionKitError.persistenceFailed("selected_speech_voice_unavailable")

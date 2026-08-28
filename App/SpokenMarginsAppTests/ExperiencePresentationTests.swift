@@ -4,6 +4,62 @@ import SessionKitPersistence
 @testable import SpokenMarginsApp
 
 final class ExperiencePresentationTests: XCTestCase {
+    func testTimelinePullRequiresDeliberateBottomOverscroll() {
+        XCTAssertEqual(
+            TimelinePullPresentation.overscrollDistance(
+                contentOffsetY: 540,
+                contentHeight: 1_200,
+                containerHeight: 640,
+                bottomInset: 0
+            ),
+            0
+        )
+        XCTAssertEqual(
+            TimelinePullPresentation.overscrollDistance(
+                contentOffsetY: 650,
+                contentHeight: 1_200,
+                containerHeight: 640,
+                bottomInset: 0
+            ),
+            90
+        )
+        XCTAssertEqual(
+            TimelinePullPresentation.overscrollDistance(
+                contentOffsetY: 0,
+                contentHeight: 500,
+                containerHeight: 640,
+                bottomInset: 0
+            ),
+            0,
+            "Unused viewport space is not overscroll"
+        )
+        XCTAssertFalse(TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: 71))
+        XCTAssertTrue(TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: 72))
+    }
+
+    func testAddSourceStartsWithFourObjectRoutesAndKeepsFolderManagementSecondary() {
+        XCTAssertEqual(
+            AddSourcePresentation.primaryObjectRoutes,
+            [.linkOrPodcast, .pastedText, .documentOrBook, .audiobook]
+        )
+        XCTAssertFalse(AddSourcePresentation.primaryObjectRoutes.contains(.quickFolder))
+    }
+
+    func testTimelineRailOrdersBySourcePositionThenProvenanceRank() {
+        let keys = [
+            TimelineRailSortKey(position: 60, rank: 0, id: "chapter-later"),
+            TimelineRailSortKey(position: 25, rank: 2, id: "assistant"),
+            TimelineRailSortKey(position: 25, rank: 1, id: "margin"),
+            TimelineRailSortKey(position: 25, rank: 0, id: "chapter"),
+            TimelineRailSortKey(position: 0, rank: 0, id: "beginning")
+        ]
+
+        XCTAssertEqual(
+            keys.sorted().map(\.id),
+            ["beginning", "chapter", "margin", "assistant", "chapter-later"]
+        )
+    }
+
     @MainActor
     func testItemDetailRetainsNestedCanonicalNavigation() throws {
         let root = FileManager.default.temporaryDirectory

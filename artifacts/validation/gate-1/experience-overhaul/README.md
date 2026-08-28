@@ -6,12 +6,13 @@ Status: `implemented` and locally `verified`; not `human_validated`. Product-own
 
 - Version/build: Spoken Margins 0.1 (22)
 - Branch: `codex/experience-overhaul`
-- Implementation SHA: `93c9ced93acec8d7a2f18491010bdf6b3a3236d2`
+- Original overhaul SHA: `93c9ced93acec8d7a2f18491010bdf6b3a3236d2`
+- Review-remediation base SHA: `cb2f2a0` (current implementation is an uncommitted working tree)
 - Governance SHA: `aec0928`
 - Based on and merges only into: `codex/quality-of-life-next`
 - Supported deployment: iPhone and iPad on iOS/iPadOS 18.0 or later
-- Automated layout coverage: iPhone 16 Pro and iPad Pro 11-inch (M4), iOS/iPadOS 18.6
-- Final app-unit coverage: iPhone 16e, iOS 18.6
+- Current automated layout coverage: iPhone 16 Pro, iOS 18.6
+- Current app-unit coverage: iPhone 16 Pro, iOS 18.6
 - Physical-device validation: pending
 
 ## In scope
@@ -28,6 +29,8 @@ Status: `implemented` and locally `verified`; not `human_validated`. Product-own
 - App-facing offline-storage ledger with protected/reproducible/reserved/category accounting and safe-clear confirmation
 - Two starter choices, Skip, replay, deletion tombstones, and seeded-item ownership classification
 - Warm native semantic styling with light/dark, accessibility contrast, Dynamic Type, Reduce Motion, VoiceOver labels, and 44-point targets
+- Editorial Library hierarchy and compact grouped rows; focused dark Now Playing cockpit; provenance-shaped chronological Timeline rail; object-first Add Source; guarded full-screen recording; and visual-ledger Storage
+- Simulator-safe system-voice handling that avoids the `AVSpeechSynthesisVoice.speechVoices()` AXSpeech crash while preserving device voice enumeration
 
 ## Out of scope
 
@@ -52,11 +55,12 @@ Status: `implemented` and locally `verified`; not `human_validated`. Product-own
 | --- | --- |
 | Contract validator | Pass |
 | Surface-contract validator | Pass |
-| SessionKit build/test suite | 184 passed, 0 failed |
-| App unit suite on final tree | 284 passed, 0 failed |
-| Supertonic timing falsification rerun | 26 passed, 0 failed |
-| iPhone broad UI routes | 15 passed, 0 failed |
-| iPad broad UI routes | 15 passed, 0 failed |
+| SessionKit build with tests | Pass |
+| App unit suite on current tree | 286 passed, 0 failed |
+| Experience-presentation focus | 15 passed, 0 failed |
+| Listening/Timeline follow-up | 15 presentation tests and 3 adjacent UI routes passed; pull threshold, one-line dock, keyboard dismissal, Back, Export, and reflection clearance covered |
+| iPhone broad UI routes | 14 passed in the broad run; all 3 stale-automation failures fixed and passed in focused reruns (17 routes covered) |
+| Five-screen visual evidence | Pass; Library, Now Playing, Timeline, Add Source, and Recording captured and inspected |
 | Generated-project generic iOS Simulator build | Pass |
 | Generated-project generic iOS device build | Pass |
 | `git diff --check` | Pass |
@@ -64,11 +68,15 @@ Status: `implemented` and locally `verified`; not `human_validated`. Product-own
 
 Final result bundles:
 
-- App units: `/Users/colemiller/Library/Developer/Xcode/DerivedData/SpokenMarginsNative-frwvcspidefdamboxsgsdxxaxbwj/Logs/Test/Test-SpokenMarginsApp-2026.08.28_11-23-51--0500.xcresult`
-- iPhone UI: `/Users/colemiller/Library/Developer/Xcode/DerivedData/SpokenMarginsNative-frwvcspidefdamboxsgsdxxaxbwj/Logs/Test/Test-SpokenMarginsApp-2026.08.28_10-49-45--0500.xcresult`
-- iPad UI: `/Users/colemiller/Library/Developer/Xcode/DerivedData/SpokenMarginsNative-frwvcspidefdamboxsgsdxxaxbwj/Logs/Test/Test-SpokenMarginsApp-2026.08.28_10-58-10--0500.xcresult`
+- App units: `/Users/colemiller/Library/Developer/Xcode/DerivedData/SpokenMarginsNative-frwvcspidefdamboxsgsdxxaxbwj/Logs/Test/Test-SpokenMarginsApp-2026.08.28_15-21-35--0500.xcresult`
+- iPhone broad UI: `/Users/colemiller/Library/Developer/Xcode/DerivedData/SpokenMarginsNative-frwvcspidefdamboxsgsdxxaxbwj/Logs/Test/Test-SpokenMarginsApp-2026.08.28_15-22-18--0500.xcresult`
+- Three broad-run failure reruns: `/Users/colemiller/Library/Developer/Xcode/DerivedData/SpokenMarginsNative-frwvcspidefdamboxsgsdxxaxbwj/Logs/Test/Test-SpokenMarginsApp-2026.08.28_15-34-16--0500.xcresult` and `/Users/colemiller/Library/Developer/Xcode/DerivedData/SpokenMarginsNative-frwvcspidefdamboxsgsdxxaxbwj/Logs/Test/Test-SpokenMarginsApp-2026.08.28_15-37-03--0500.xcresult`
+- Final visual capture: `/Users/colemiller/Library/Developer/Xcode/DerivedData/SpokenMarginsNative-frwvcspidefdamboxsgsdxxaxbwj/Logs/Test/Test-SpokenMarginsApp-2026.08.28_15-19-21--0500.xcresult`
+- Exported visual evidence: `artifacts/validation/gate-1/experience-overhaul/screenshots/visual-evidence-final/`
+- Listening/Timeline UI rerun: `/Users/colemiller/Library/Developer/Xcode/DerivedData/SpokenMarginsNative-frwvcspidefdamboxsgsdxxaxbwj/Logs/Test/Test-SpokenMarginsApp-2026.08.28_17-30-05--0500.xcresult`
+- Listening/Timeline visual evidence: `artifacts/validation/gate-1/experience-overhaul/screenshots/listening-timeline-followup/` and `artifacts/validation/gate-1/experience-overhaul/screenshots/timeline-reflection-clearance/`
 
-One final-tree unit attempt on an unhealthy simulator produced four timing assertions in unchanged Supertonic tests, then the simulator service died during the first isolation attempt. A clean iOS 18.6 simulator passed the entire 26-test class and the complete 284-test suite. The clean full-suite rerun is the stopping evidence; the transient is retained here so later failures can be compared rather than hidden.
+The first broad UI pass found three stale automation assumptions introduced by the redesign: the dock container masked its child action identifiers, and one generated-chapter assertion expected an exact old header string. The accessibility tree and assertions were corrected, then each failure passed in focused reruns. The 14 unaffected broad routes remained green. This is automation evidence, not product-owner acceptance.
 
 ## Experience audit
 
@@ -93,6 +101,7 @@ No automated gate observed any integration stop condition: recording escape, ses
 ## Known issues and limits
 
 - Three pre-existing AVFoundation chapter-loading deprecation warnings remain in `LocalSourceImporters.swift`; builds succeed and the import paths have focused coverage.
+- The iPad broad route suite from the original overhaul was not rerun after this review-remediation pass; adaptive layout still requires current product-owner validation on iPad.
 - Physical-device microphone permission, interruption/relaunch recovery, security-scoped document picking, audio-route behavior, and storage pressure remain product-owner checks.
 - The guided starter has a bundled playable fallback. Deployment and availability of the optional remote onboarding manifest were not changed or revalidated by this branch.
 - Intermittent `DebuggerLLDB.DebuggerVersionStore` host warnings appeared during simulator work and did not fail the final gate.
