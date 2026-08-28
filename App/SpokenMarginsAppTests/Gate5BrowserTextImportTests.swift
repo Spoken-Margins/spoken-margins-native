@@ -254,7 +254,7 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         XCTAssertEqual(model.statusMessage, "Imported browser text from Route Page.")
     }
 
-    func testIncomingBrowserPayloadDoesNotReplacePlaybackScreen() throws {
+    func testIncomingBrowserPayloadDoesNotReplacePlaybackFromLibraryRoot() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("spoken-margins-browser-route-\(UUID().uuidString)", isDirectory: true)
         temporaryDirectories.append(directory)
@@ -277,10 +277,11 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         let activeItemID = try XCTUnwrap(model.libraryItems.first?.id)
         model.startItem(id: activeItemID)
         let sessionID = model.snapshot.sessionId
+        model.openHome()
 
         model.handleIncomingURL(Gate5BrowserTextHandoffURL.url(forPayloadID: payloadID))
 
-        XCTAssertEqual(model.screen, .playback)
+        XCTAssertEqual(model.screen, .home)
         XCTAssertEqual(model.snapshot.sessionId, sessionID)
         XCTAssertEqual(model.snapshot.itemId, activeItemID)
         XCTAssertTrue(model.libraryItems.contains { $0.id == "item-browser-during-playback" })

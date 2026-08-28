@@ -7,27 +7,37 @@ import UIKit
 
 struct Gate1RootView: View {
     @EnvironmentObject private var model: Gate1AppModel
+    @State private var navigation = AppNavigationState()
 
     var body: some View {
         Group {
-            switch model.screen {
-            case .home:
-                HomeScreen()
-            case .item:
-                ItemScreen()
-            case .playback:
-                PlaybackScreen()
-            case .settings:
-                SettingsScreen()
-            case .export:
-                ExportScreen()
-            case .batchExport:
-                BatchExportScreen()
+            if model.snapshot.isRecording {
+                ExperienceRecordingView()
+            } else {
+                switch model.screen {
+                case .home:
+                    ExperienceRootTabs(navigation: $navigation)
+                case .item:
+                    ItemScreen()
+                case .playback:
+                    PlaybackScreen()
+                case .timeline:
+                    ExperienceTimelineScreen()
+                case .settings:
+                    SettingsScreen()
+                case .offlineStorage:
+                    ExperienceOfflineStorageScreen()
+                case .export:
+                    ExportScreen()
+                case .batchExport:
+                    BatchExportScreen()
+                }
             }
         }
         .background(AppColors.background.ignoresSafeArea())
         .safeAreaInset(edge: .top, spacing: 8) {
-            if model.feedbackEvent != nil || model.trashUndo != nil || model.sourceImportProgressMessage != nil || model.legacyLibraryResetNotice != nil {
+            if !model.snapshot.isRecording,
+               model.feedbackEvent != nil || model.trashUndo != nil || model.sourceImportProgressMessage != nil || model.legacyLibraryResetNotice != nil {
                 VStack(spacing: 8) {
                     if let resetNotice = model.legacyLibraryResetNotice {
                         LegacyLibraryResetBanner(message: resetNotice)
@@ -47,13 +57,13 @@ struct Gate1RootView: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 8) {
-            if model.shouldShowMiniPlayer {
+            if !model.snapshot.isRecording && model.shouldShowMiniPlayer {
                 MiniPlayerBar()
                     .padding(.horizontal, 12)
                     .padding(.bottom, 4)
             }
         }
-        .edgeSwipeBack(enabled: model.screen != .home, action: model.openHome)
+        .edgeSwipeBack(enabled: !model.recordingNavigationIsLocked && model.screen != .home, action: model.openHome)
         .onAppear {
             model.bootstrapLibraryIfNeeded()
         }
@@ -1412,7 +1422,6 @@ private struct QuickAddSwipeRow<Content: View>: View {
 
 private struct ItemScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
-    @State private var showsManualListeningMapEditor = false
     @State private var isTrashConfirmationPresented = false
     @State private var isStartNewConfirmationPresented = false
 
@@ -1509,7 +1518,7 @@ private struct ItemScreen: View {
             Pill("\(model.selectedItem.chapters.count) \(model.selectedItem.chapters.count == 1 ? "chapter" : "chapters")")
         }
         if !model.selectedItem.interjections.isEmpty {
-                Pill("\(model.selectedItem.interjections.count) interjections")
+                Pill("\(model.selectedItem.interjections.count) Margins")
         }
     }
 
@@ -1558,35 +1567,6 @@ private struct ItemScreen: View {
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
                 }
-                Button {
-                    showsManualListeningMapEditor.toggle()
-                } label: {
-                    Label(showsManualListeningMapEditor ? "Hide Manual JSON" : "Paste Listening Map JSON", systemImage: "curlybraces")
-                }
-                .buttonStyle(SecondaryButtonStyle())
-                .accessibilityIdentifier("item.toggleMapJSON.button")
-                if showsManualListeningMapEditor {
-                    Text("Listening Map JSON")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(AppColors.secondaryText)
-                    TextEditor(text: $model.listeningMapJSON)
-                        .font(.system(.caption, design: .monospaced))
-                        .frame(minHeight: 130)
-                        .padding(8)
-                        .background(AppColors.inputBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppColors.border))
-                        .accessibilityLabel("Listening Map JSON")
-                        .accessibilityIdentifier("item.mapJSON.editor")
-                    Button {
-                        model.applyListeningMapJSON()
-                    } label: {
-                        Label("Apply Listening Map JSON", systemImage: "checkmark.circle")
-                    }
-                    .buttonStyle(SecondaryButtonStyle())
-                    .disabled(model.listeningMapJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .accessibilityIdentifier("item.applyMap.button")
-                }
             }
         }
     }
@@ -1594,11 +1574,19 @@ private struct ItemScreen: View {
     private var chapters: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("Resolved Chapters", systemImage: "music.note.list")
+                Label("Structure", systemImage: "list.bullet.indent")
                     .font(.headline)
                 Spacer()
             }
-            if model.selectedItem.chapters.isEmpty {
+            if !model.selectedItem.navigation.isEmpty {
+                ProductPanel {
+                    ExperienceCanonicalNavigationTree(
+                        nodes: model.selectedItem.navigation,
+                        chapters: model.selectedItem.chapters,
+                        action: { model.jumpToChapter($0) }
+                    )
+                }
+            } else if model.selectedItem.chapters.isEmpty {
                 ProductPanel {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Mapless playback is available.")
@@ -1854,18 +1842,14 @@ private struct PlaybackScreen: View {
                                 HStack(alignment: .top, spacing: 24) {
                                     playbackControls
                                         .frame(width: 430)
-                                    VStack(spacing: 20) {
-                                        timeline
-                                        conversation
-                                    }
+                                    ExperienceTimelineScreen(isAdjacent: true)
                                     .frame(maxWidth: 680)
                                 }
                                 .frame(maxWidth: 1160, alignment: .topLeading)
                             } else {
                                 VStack(spacing: 20) {
                                     playbackControls
-                                    timeline
-                                    conversation
+                                    timelineLaunchCard
                                 }
                             }
                         }
@@ -1884,7 +1868,7 @@ private struct PlaybackScreen: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(action: model.openHome) {
-                        Label("Home", systemImage: "house")
+                        Label("Library", systemImage: "books.vertical")
                     }
                     .accessibilityIdentifier("playback.home.button")
                 }
@@ -1895,17 +1879,12 @@ private struct PlaybackScreen: View {
                         }
                         .accessibilityLabel("Help")
                         .accessibilityIdentifier("playback.help.button")
-                        if model.snapshot.isRecording {
-                            Button(action: model.finishInterjection) {
-                                Image(systemName: "checkmark")
+                        if horizontalSizeClass != .regular {
+                            Button(action: { model.openTimeline() }) {
+                                Image(systemName: "list.bullet.rectangle")
                             }
-                            .accessibilityLabel("Done Recording")
-                            .accessibilityIdentifier("interjection.toolbar.done")
-                            Button(action: model.cancelInterjection) {
-                                Image(systemName: "xmark")
-                            }
-                            .accessibilityLabel("Cancel Recording")
-                            .accessibilityIdentifier("interjection.toolbar.cancel")
+                            .accessibilityLabel("Open Timeline")
+                            .accessibilityIdentifier("playback.timeline.button")
                         }
                         Button(action: model.openExport) {
                             Image(systemName: "square.and.arrow.up")
@@ -1961,6 +1940,23 @@ private struct PlaybackScreen: View {
         .background(AppColors.watchBackground)
         .clipShape(RoundedRectangle(cornerRadius: 34))
         .shadow(color: .black.opacity(0.18), radius: 22, y: 12)
+    }
+
+    private var timelineLaunchCard: some View {
+        ProductPanel {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Timeline", systemImage: "list.bullet.rectangle")
+                    .font(.system(.title2, design: .serif).weight(.semibold))
+                Text("Review source structure, your Margins, and eligible session reflections without crowding the listening controls.")
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.secondaryText)
+                Button(action: { model.openTimeline() }) {
+                    Label("Open Timeline", systemImage: "arrow.right")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .accessibilityIdentifier("timeline.section")
+            }
+        }
     }
 
     private var playbackHeader: some View {
@@ -2034,7 +2030,9 @@ private struct PlaybackScreen: View {
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(AppColors.watchSecondary)
-        } else if model.snapshot.targetType == TargetType.itemTextTTS.rawValue, textLength > 0 {
+        } else if model.snapshot.targetType == TargetType.itemTextTTS.rawValue,
+                  textLength > 0,
+                  model.canShowFullPlaybackScrubber {
             HStack(spacing: 8) {
                 Text("\(textScrubberPercent)%")
                     .frame(minWidth: 34, alignment: .trailing)
@@ -2788,8 +2786,8 @@ private struct PlaybackScreen: View {
     }
 }
 
-private struct SourceFollowSuggestionCard: View {
-    fileprivate enum Appearance: Equatable {
+struct SourceFollowSuggestionCard: View {
+    enum Appearance: Equatable {
         case standard
         case playback
     }
@@ -3170,6 +3168,15 @@ private struct SettingsScreen: View {
                     }
                 }
                 Section("Offline Storage") {
+                    Button(action: model.openOfflineStorage) {
+                        HStack {
+                            Label("Manage Offline Storage", systemImage: "internaldrive")
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.offlineStorage.button")
                     Picker("Storage Budget", selection: $model.offlineStorageLimitGB) {
                         ForEach(OfflineStorageBudget.allowedGigabytes, id: \.self) { gigabytes in
                             Text("\(gigabytes) GB").tag(gigabytes)
@@ -3194,8 +3201,9 @@ private struct SettingsScreen: View {
                     Text("While Charging uses durable jobs and pauses before the next chunk when power, thermal, or storage safety changes. Completion timing is not guaranteed.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
-                    Button("Clear Reproducible Offline Audio", role: .destructive, action: model.clearReproducibleOfflineAudio)
-                        .accessibilityIdentifier("settings.clearReproducibleOfflineAudio.button")
+                    Text("Use Manage Offline Storage to review protected, reproducible, reserved, and category totals before clearing anything.")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
                 }
                 Section("Recently Deleted") {
                     if model.recentlyDeletedItems.isEmpty {
@@ -3319,6 +3327,21 @@ private struct SettingsScreen: View {
                                 .foregroundStyle(AppColors.secondaryText)
                         }
                     }
+                    Text("Listening Map JSON")
+                        .font(.headline)
+                    Text("Developer diagnostic for \(model.selectedItem.title.isEmpty ? "the selected item" : model.selectedItem.title).")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                    TextEditor(text: $model.listeningMapJSON)
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(minHeight: 130)
+                        .accessibilityLabel("Listening Map JSON")
+                        .accessibilityIdentifier("settings.developer.mapJSON.editor")
+                    Button("Apply Listening Map JSON", systemImage: "checkmark.circle") {
+                        model.applyListeningMapJSON()
+                    }
+                    .disabled(model.listeningMapJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityIdentifier("settings.developer.mapJSON.apply")
                 }
                 #endif
             }
@@ -4386,7 +4409,7 @@ private enum AppLinks {
     }
 }
 
-private enum AppColors {
+enum AppColors {
     static let background = dynamicColor(light: (0.96, 0.97, 0.94), dark: (0.07, 0.09, 0.08))
     static let panel = dynamicColor(light: (1.00, 1.00, 1.00), dark: (0.13, 0.16, 0.14))
     static let inputBackground = dynamicColor(light: (0.98, 0.99, 0.97), dark: (0.10, 0.12, 0.11))
@@ -4404,6 +4427,11 @@ private enum AppColors {
     static let dangerText = dynamicColor(light: (0.55, 0.13, 0.11), dark: (1.00, 0.55, 0.48))
     static let dangerBackground = dynamicColor(light: (0.96, 0.88, 0.86), dark: (0.34, 0.15, 0.13))
     static let interjectText = Color(red: 0.08, green: 0.10, blue: 0.08)
+    static let bone = dynamicColor(light: (0.97, 0.95, 0.89), dark: (0.08, 0.10, 0.09))
+    static let evergreen = dynamicColor(light: (0.08, 0.30, 0.21), dark: (0.48, 0.84, 0.62))
+    static let ochre = dynamicColor(light: (0.76, 0.52, 0.16), dark: (0.94, 0.72, 0.32))
+    static let coral = dynamicColor(light: (0.70, 0.27, 0.20), dark: (1.00, 0.57, 0.48))
+    static let plum = dynamicColor(light: (0.39, 0.24, 0.48), dark: (0.78, 0.62, 0.88))
 
     private static func dynamicColor(light: (Double, Double, Double), dark: (Double, Double, Double)) -> Color {
         #if canImport(UIKit)

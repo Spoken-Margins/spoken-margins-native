@@ -47,6 +47,36 @@ final class OfflineStorageLedgerTests: XCTestCase {
         XCTAssertEqual(trackedBytes, 4)
     }
 
+    func testAdoptionToleratesHistoricalDuplicatePaths() async throws {
+        let fixture = try makeFixture(limit: 100)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let relativePath = "GuidedOnboarding/guided-onboarding-1.m4a"
+        let audio = fixture.root.appending(path: relativePath)
+        try FileManager.default.createDirectory(
+            at: audio.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data([1, 2, 3, 4]).write(to: audio)
+        try fixture.repository.saveOwnedOfflineAsset(OwnedOfflineAsset(
+            id: "guided-legacy",
+            category: .guidedTour,
+            relativePath: relativePath,
+            byteCount: 4,
+            isReproducible: true
+        ))
+        try fixture.repository.saveOwnedOfflineAsset(OwnedOfflineAsset(
+            id: "guided-current",
+            category: .guidedTour,
+            relativePath: relativePath,
+            byteCount: 4,
+            isReproducible: true
+        ))
+
+        try await fixture.ledger.adoptExistingAssets()
+
+        XCTAssertEqual(try fixture.repository.loadOwnedOfflineAssets().count, 2)
+    }
+
     func testLocalSourceImporterCoordinatesFileSizeAndCopy() async throws {
         let fixture = try makeFixture(limit: 1_000_000)
         defer { try? FileManager.default.removeItem(at: fixture.root) }

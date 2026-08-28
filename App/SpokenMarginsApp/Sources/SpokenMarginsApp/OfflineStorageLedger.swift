@@ -99,6 +99,15 @@ actor OfflineStorageLedger {
             .mapValues { $0.reduce(0) { $0 + $1.byteCount } }
     }
 
+    func presentationSnapshot(now: Date = Date()) throws -> OfflineStorageSnapshot {
+        OfflineStorageSnapshot.make(
+            budget: try repository.loadOfflineStorageBudget(),
+            assets: try repository.loadOwnedOfflineAssets(),
+            reservations: try repository.loadOfflineStorageReservations(),
+            now: now
+        )
+    }
+
     func clearReproducibleAssets(in categories: Set<OfflineAssetCategory>) throws -> Int64 {
         let assets = try repository.loadOwnedOfflineAssets()
         var removed: Int64 = 0
@@ -165,7 +174,10 @@ actor OfflineStorageLedger {
             ("GuidedOnboarding", .guidedTour, true, []),
             ("WatchPackages", .dormantWatchPackage, false, [.dormantWatchTransfer])
         ]
-        let existing = Dictionary(uniqueKeysWithValues: try repository.loadOwnedOfflineAssets().map { ($0.relativePath, $0) })
+        // Older builds could record the same physical file under more than one
+        // ledger identifier. Adoption only needs path membership, and must remain
+        // recoverable when those historical duplicates are present.
+        let existingPaths = Set(try repository.loadOwnedOfflineAssets().map(\.relativePath))
         for (name, category, reproducible, protections) in directories {
             let directory = rootDirectory.appending(path: name, directoryHint: .isDirectory)
             guard let enumerator = fileManager.enumerator(
@@ -177,7 +189,7 @@ actor OfflineStorageLedger {
                 guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]),
                       values.isRegularFile == true else { continue }
                 let relative = relativePath(url)
-                if existing[relative] != nil { continue }
+                if existingPaths.contains(relative) { continue }
                 try repository.saveOwnedOfflineAsset(OwnedOfflineAsset(
                     id: "adopted-\(Self.digest(relative))",
                     category: category,

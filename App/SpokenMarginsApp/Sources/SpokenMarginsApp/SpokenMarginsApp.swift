@@ -46,7 +46,7 @@ struct SpokenMarginsApp: App {
     #if canImport(UIKit)
     @UIApplicationDelegateAdaptor(SpokenMarginsAppDelegate.self) private var appDelegate
     #endif
-    @StateObject private var model = Gate1AppModel()
+    @StateObject private var model = Gate1AppModel.makeApplicationModel()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
