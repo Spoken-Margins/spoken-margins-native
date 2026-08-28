@@ -2104,17 +2104,6 @@ private struct PlaybackScreen: View {
 
     private var playbackRateControl: some View {
         HStack(spacing: 10) {
-            Button {
-                usesVerbosePlaybackActions.toggle()
-            } label: {
-                PlaybackControlLabel(
-                    title: usesVerbosePlaybackActions ? "Compact" : "Labels",
-                    systemImage: usesVerbosePlaybackActions ? "rectangle.compress.vertical" : "textformat"
-                )
-            }
-            .accessibilityLabel(usesVerbosePlaybackActions ? "Use compact action buttons" : "Show action labels")
-            .accessibilityIdentifier("playback.actionVerbosity.button")
-
             if model.snapshot.targetType == TargetType.itemTextTTS.rawValue {
                 Button {
                     sourceTextOffsetAtPresentation = model.snapshot.currentTextStart ?? 0
@@ -2951,6 +2940,7 @@ private struct GuidedOnboardingPlaybackCard: View {
 
 private struct SettingsScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
+    @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @FocusState private var focusedField: Field?
     @State private var showsAdvancedAISettings = false
     @State private var showsDeveloperTools = false
@@ -3023,6 +3013,14 @@ private struct SettingsScreen: View {
                 .onCompatibleChange(of: model.summaryModel) { _ in model.settingsValueChanged() }
                 .onCompatibleChange(of: model.conversationModel) { _ in model.settingsValueChanged() }
                 Section("Playback & Voice") {
+                    Picker("Playback Controls", selection: $usesVerbosePlaybackActions) {
+                        Text("Labeled").tag(true)
+                        Text("Compact").tag(false)
+                    }
+                    .accessibilityIdentifier("settings.playbackControlStyle.picker")
+                    Text("Labeled controls show Text, Sleep Timer, and playback speed. Compact controls show icons only.")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
                     Picker("App Voice", selection: $model.ttsVoiceSelection) {
                         ForEach(AppTTSVoiceSelection.allCases) { voice in
                             Text(voice.displayName).tag(voice)
