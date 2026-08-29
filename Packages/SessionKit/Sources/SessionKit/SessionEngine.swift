@@ -1684,9 +1684,38 @@ public final class SessionEngine {
     public func transcriptionCompleted(interjectionId: String, transcript: String) throws -> SessionSnapshot {
         try updateInterjection(interjectionId) { interjection in
             interjection.transcript = transcript
+            interjection.alignedTranscript = nil
             interjection.transcriptionStatus = "transcribed"
             interjection.cleanedTranscript = nil
             interjection.displayText = transcript
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func transcriptionCompleted(
+        interjectionId: String,
+        alignedTranscript: AlignedInterjectionTranscript
+    ) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId) { interjection in
+            interjection.transcript = alignedTranscript.text
+            interjection.alignedTranscript = alignedTranscript
+            interjection.transcriptionStatus = "transcribed"
+            interjection.cleanedTranscript = nil
+            interjection.displayText = alignedTranscript.text
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func podcastAnchorEvidenceCompleted(
+        interjectionId: String,
+        evidence: [CapturedPodcastAnchorEvidence],
+        sourceExactEditionSHA256: String
+    ) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId) { interjection in
+            interjection.podcastAnchorEvidence = evidence
+            interjection.sourceExactEditionSHA256 = sourceExactEditionSHA256
         }
         return snapshot
     }

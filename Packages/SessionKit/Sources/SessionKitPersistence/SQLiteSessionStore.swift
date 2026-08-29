@@ -240,6 +240,27 @@ public final class SQLiteSessionStore: SessionRepository {
         return interjections.filter { $0.layerId == layerId }
     }
 
+    public func saveImportedCommentaryLayer(_ layer: ImportedCommentaryLayer) throws {
+        try save(
+            kind: "imported_commentary_layer",
+            id: layer.id,
+            sessionId: nil,
+            itemId: layer.itemId,
+            value: layer
+        )
+    }
+
+    public func saveImportedCommentaryInterjection(_ interjection: ImportedCommentaryInterjection) throws {
+        let layer = try loadImportedCommentaryLayer(id: interjection.layerId)
+        try save(
+            kind: "imported_commentary_interjection",
+            id: interjection.id,
+            sessionId: nil,
+            itemId: layer?.itemId,
+            value: interjection
+        )
+    }
+
     public func saveTurn(_ turn: ConversationTurn) throws {
         try save(kind: "turn", id: turn.id, sessionId: turn.sessionId, itemId: nil, value: turn)
     }

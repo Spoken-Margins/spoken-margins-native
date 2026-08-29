@@ -79,6 +79,7 @@
         },
         "mimeType": { "enum": ["audio/mp4", "application/vnd.apple.shazam.signature"] },
         "durationMs": { "type": ["integer", "null"], "minimum": 0, "maximum": 600000 },
+        "anchorOffsetMs": { "type": ["integer", "null"], "minimum": -600000, "maximum": 600000 },
         "provenance": { "type": "string", "minLength": 1, "maxLength": 200 },
         "byteCount": { "type": "integer", "minimum": 0, "maximum": 20971520 },
         "sha256": { "$ref": "#/$defs/sha256" }

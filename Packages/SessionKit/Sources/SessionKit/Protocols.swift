@@ -19,6 +19,8 @@ public protocol SessionRepository {
     func loadImportedCommentaryLayer(packageDigest: String) throws -> ImportedCommentaryLayer?
     func loadImportedCommentaryLayers(itemId: String) throws -> [ImportedCommentaryLayer]
     func loadImportedCommentaryInterjections(layerId: String) throws -> [ImportedCommentaryInterjection]
+    func saveImportedCommentaryLayer(_ layer: ImportedCommentaryLayer) throws
+    func saveImportedCommentaryInterjection(_ interjection: ImportedCommentaryInterjection) throws
     func saveTurn(_ turn: ConversationTurn) throws
     func loadTurns(sessionId: String) throws -> [ConversationTurn]
     func saveAIJob(_ job: AIJob) throws

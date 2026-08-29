@@ -347,6 +347,9 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
     public var isMuted: Bool
     public var revealMode: ImportedCommentaryRevealMode?
     public var deletedAt: Date?
+    /// Sender proposals remain inert recipient data until a future explicit
+    /// review flow accepts them into a local Listening Map.
+    public let listeningMapProposals: [PortableListeningMapProposalArtifact]?
 
     public init(
         id: String,
@@ -362,7 +365,8 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
         isEnabled: Bool = false,
         isMuted: Bool = false,
         revealMode: ImportedCommentaryRevealMode? = nil,
-        deletedAt: Date? = nil
+        deletedAt: Date? = nil,
+        listeningMapProposals: [PortableListeningMapProposalArtifact]? = nil
     ) {
         self.id = id
         self.itemId = itemId
@@ -378,6 +382,7 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
         self.isMuted = isMuted
         self.revealMode = revealMode
         self.deletedAt = deletedAt
+        self.listeningMapProposals = listeningMapProposals
     }
 }
 
@@ -390,6 +395,7 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
     public let approvedTranscript: String
     public let audioPath: String?
     public let audioDurationMs: Int?
+    public let podcastAnchorEvidence: [ImportedPodcastAnchorEvidence]?
     public var resolution: ImportedAnchorResolution
 
     public init(
@@ -401,6 +407,7 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
         approvedTranscript: String,
         audioPath: String? = nil,
         audioDurationMs: Int? = nil,
+        podcastAnchorEvidence: [ImportedPodcastAnchorEvidence]? = nil,
         resolution: ImportedAnchorResolution = .init(evidenceClass: .unresolved)
     ) {
         self.id = id
@@ -411,7 +418,20 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
         self.approvedTranscript = approvedTranscript
         self.audioPath = audioPath
         self.audioDurationMs = audioDurationMs
+        self.podcastAnchorEvidence = podcastAnchorEvidence
         self.resolution = resolution
+    }
+}
+
+public struct ImportedPodcastAnchorEvidence: Codable, Equatable, Sendable, Identifiable {
+    public let id: String
+    public let localPath: String
+    public let anchorOffsetMs: Int
+
+    public init(id: String, localPath: String, anchorOffsetMs: Int) {
+        self.id = id
+        self.localPath = localPath
+        self.anchorOffsetMs = anchorOffsetMs
     }
 }
 
@@ -627,6 +647,9 @@ public struct SpokenMarginsAssetDescriptor: Codable, Equatable, Sendable, Identi
     public let path: String
     public let mimeType: String
     public let durationMs: Int?
+    /// Media anchor time relative to the beginning of this evidence clip. This
+    /// may be negative for an evidence flank that begins after the anchor.
+    public let anchorOffsetMs: Int?
     public let provenance: String
     public var byteCount: Int?
     public var sha256: String?
@@ -637,6 +660,7 @@ public struct SpokenMarginsAssetDescriptor: Codable, Equatable, Sendable, Identi
         path: String,
         mimeType: String,
         durationMs: Int? = nil,
+        anchorOffsetMs: Int? = nil,
         provenance: String,
         byteCount: Int? = nil,
         sha256: String? = nil
@@ -646,6 +670,7 @@ public struct SpokenMarginsAssetDescriptor: Codable, Equatable, Sendable, Identi
         self.path = path
         self.mimeType = mimeType
         self.durationMs = durationMs
+        self.anchorOffsetMs = anchorOffsetMs
         self.provenance = provenance
         self.byteCount = byteCount
         self.sha256 = sha256

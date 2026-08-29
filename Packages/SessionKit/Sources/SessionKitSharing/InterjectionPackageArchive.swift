@@ -485,6 +485,8 @@ public enum SpokenMarginsPackageArchive {
             guard validAssetPath(descriptor.path), !descriptor.role.isEmpty, !descriptor.mimeType.isEmpty,
                   descriptor.provenance.count <= 200,
                   descriptor.durationMs.map({ (0...600_000).contains($0) }) ?? true,
+                  descriptor.anchorOffsetMs.map({ (-600_000...600_000).contains($0) }) ?? true,
+                  (descriptor.role != SpokenMarginsAssetRole.acousticSignature || descriptor.anchorOffsetMs != nil),
                   (descriptor.byteCount.map { $0 >= 0 } ?? !requireDigest),
                   (descriptor.sha256.map(isSHA256) ?? !requireDigest) else {
                 throw SpokenMarginsPackageArchiveError.invalidManifest("asset descriptor is invalid")
@@ -614,7 +616,7 @@ public enum SpokenMarginsPackageArchive {
             try rejectUnknownKeys(artifact, allowed: ["id", "kind", "schemaVersion", "path", "required", "byteCount", "sha256"], context: "artifact descriptor")
         }
         for asset in assets {
-            try rejectUnknownKeys(asset, allowed: ["id", "role", "path", "mimeType", "durationMs", "provenance", "byteCount", "sha256"], context: "asset descriptor")
+            try rejectUnknownKeys(asset, allowed: ["id", "role", "path", "mimeType", "durationMs", "anchorOffsetMs", "provenance", "byteCount", "sha256"], context: "asset descriptor")
         }
     }
 

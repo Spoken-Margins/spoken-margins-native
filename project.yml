@@ -38,6 +38,8 @@ targets:
       - package: SessionKit
         product: SessionKitAudio
       - package: SessionKit
+        product: SessionKitSharing
+      - package: SessionKit
         product: SessionKitAI
       - package: SessionKit
         product: SessionKitSupertonic
@@ -73,7 +75,24 @@ targets:
           - CFBundleURLName: SpokenMarginsCompactControls
             CFBundleURLSchemes:
               - spokenmargins
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Spoken Margins Package
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Owner
+            LSItemContentTypes:
+              - com.spokenmargins.package
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.spokenmargins.package
+            UTTypeDescription: Spoken Margins Package
+            UTTypeConformsTo:
+              - public.zip-archive
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - spokenmargins
+              public.mime-type:
+                - application/vnd.spokenmargins.package+zip
         LSRequiresIPhoneOS: true
+        LSSupportsOpeningDocumentsInPlace: true
         ITSAppUsesNonExemptEncryption: false
         SMRemoteProviderExperienceEnabled: false
         UILaunchScreen: {}

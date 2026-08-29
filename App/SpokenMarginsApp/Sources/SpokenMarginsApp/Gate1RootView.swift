@@ -73,6 +73,20 @@ struct Gate1RootView: View {
             HelpScreen()
                 .environmentObject(model)
         }
+        .sheet(isPresented: $model.isSharingInterjectionsPresented) {
+            InterjectionSharingView()
+                .environmentObject(model)
+        }
+        .sheet(isPresented: $model.isSharedSpokenMarginsPackagePresented) {
+            if let packageURL = model.sharedSpokenMarginsPackageURL {
+                SharedSpokenMarginsPackageReadyView(packageURL: packageURL)
+                    .environmentObject(model)
+            }
+        }
+        .sheet(item: $model.spokenMarginsPackageImportReview) { review in
+            SpokenMarginsPackageImportView(review: review)
+                .environmentObject(model)
+        }
         .alert("AI Setup Needed", isPresented: $model.isAISetupNeededPresented) {
             Button("Open AI Settings", action: model.openAISettingsFromSummaryPrompt)
             Button("Not Now", role: .cancel) {}
@@ -1105,6 +1119,7 @@ private struct ItemScreen: View {
                     listeningMapTools
                     chapters
                     sessions
+                    importedCommentary
                     actions
                 }
                 .padding(20)
@@ -1424,6 +1439,12 @@ private struct ItemScreen: View {
             }
             .buttonStyle(SecondaryButtonStyle())
             .accessibilityIdentifier("item.export.button")
+            Button(action: model.prepareShareInterjections) {
+                Label("Share Margins", systemImage: "person.wave.2")
+            }
+            .buttonStyle(SecondaryButtonStyle())
+            .disabled(model.selectedItem.interjections.filter { $0.status == "active" && $0.targetType == .item }.isEmpty)
+            .accessibilityIdentifier("item.shareMargins.button")
             Button {
                 model.copyTargetInterjections(targetType: InterjectionTargetType.item.rawValue, targetId: model.selectedItem.id)
             } label: {
@@ -1433,6 +1454,91 @@ private struct ItemScreen: View {
             .disabled(model.selectedItem.interjections.filter { $0.targetType == .item }.isEmpty)
             .accessibilityIdentifier("item.copyInterjections.button")
         }
+    }
+
+    @ViewBuilder
+    private var importedCommentary: some View {
+        if !model.selectedItem.importedCommentaryLayers.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Shared Margins")
+                    .font(.headline)
+                ForEach(model.selectedItem.importedCommentaryLayers) { layer in
+                    ProductPanel {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(layer.displayLabel?.nilIfEmpty ?? "Unsigned sender")
+                                        .font(.headline)
+                                    Text("Integrity checked · Sender identity unverified")
+                                        .font(.caption)
+                                        .foregroundStyle(AppColors.secondaryText)
+                                }
+                                Spacer()
+                                Text("\(model.selectedItem.importedCommentaryInterjections[layer.id]?.count ?? 0)")
+                                    .font(.title3.bold())
+                            }
+                            Text(importedLayerStatus(layer))
+                                .font(.caption)
+                                .foregroundStyle(layer.sourceResolutionStatus == .ambiguous ? AppColors.dangerText : AppColors.secondaryText)
+
+                            Toggle("Enabled during listening", isOn: Binding(
+                                get: { layer.isEnabled },
+                                set: { model.setImportedCommentaryLayerEnabled(layer.id, enabled: $0) }
+                            ))
+                            Toggle("Mute cue", isOn: Binding(
+                                get: { layer.isMuted },
+                                set: { model.setImportedCommentaryLayerMuted(layer.id, muted: $0) }
+                            ))
+                            Picker("Reveal mode", selection: Binding(
+                                get: { layer.revealMode ?? .companion },
+                                set: { model.setImportedCommentaryRevealMode(layer.id, mode: $0) }
+                            )) {
+                                Text("Fresh").tag(ImportedCommentaryRevealMode.fresh)
+                                Text("Companion").tag(ImportedCommentaryRevealMode.companion)
+                                Text("Guided").tag(ImportedCommentaryRevealMode.guided)
+                            }
+                            .pickerStyle(.segmented)
+
+                            ForEach(model.selectedItem.importedCommentaryInterjections[layer.id] ?? []) { margin in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(margin.approvedTranscript)
+                                        .font(.callout)
+                                    Text(importedAnchorEvidenceLabel(margin.resolution))
+                                        .font(.caption2)
+                                        .foregroundStyle(AppColors.secondaryText)
+                                }
+                            }
+
+                            Button(role: .destructive) {
+                                model.deleteImportedCommentaryLayer(layer.id)
+                            } label: {
+                                Label("Delete Shared Margins", systemImage: "trash")
+                            }
+                            .buttonStyle(SecondaryButtonStyle())
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func importedLayerStatus(_ layer: ImportedCommentaryLayer) -> String {
+        switch layer.sourceResolutionStatus {
+        case .pending: return "Waiting for the recipient podcast download."
+        case .resolved: return "Anchors resolved for this downloaded edition."
+        case .contextOnly: return "Kept for reading; unresolved Margins will not interrupt playback."
+        case .ambiguous: return "Anchor evidence was ambiguous; no automatic placement was made."
+        case .wrongSource: return "This package does not match this source."
+        case .unavailable: return "The referenced passage was not found in this edition."
+        }
+    }
+
+    private func importedAnchorEvidenceLabel(_ resolution: ImportedAnchorResolution) -> String {
+        let label = resolution.evidenceClass.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
+        if let time = resolution.localMediaTimeMs {
+            return "\(label) · \(formatPlaybackTime(time))"
+        }
+        return label
     }
 }
 
@@ -1621,6 +1727,7 @@ private struct PlaybackScreen: View {
     private var playbackControls: some View {
         VStack(spacing: 14) {
             playbackHeader
+            importedCommentaryControl
             if isUITesting {
                 gate2CompactValidation
             }
@@ -1635,6 +1742,49 @@ private struct PlaybackScreen: View {
         .background(AppColors.watchBackground)
         .clipShape(RoundedRectangle(cornerRadius: 34))
         .shadow(color: .black.opacity(0.18), radius: 22, y: 12)
+    }
+
+    @ViewBuilder
+    private var importedCommentaryControl: some View {
+        if let playing = model.playingImportedCommentary {
+            VStack(spacing: 8) {
+                Text(playing.senderLabel)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Text("Shared Margin \(playing.index) of \(playing.count)")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.72))
+                Text(playing.interjection.approvedTranscript)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(3)
+                Button("Return to Source", action: model.returnToSourceFromImportedCommentary)
+                    .buttonStyle(PrimaryButtonStyle())
+                    .accessibilityIdentifier("importedCommentary.returnToSource")
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity)
+            .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
+        } else if let pending = model.pendingImportedCommentary {
+            VStack(spacing: 8) {
+                Text(pending.senderLabel)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Text("Shared Margin \(pending.index) of \(pending.count)")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.72))
+                Text(pending.interjection.approvedTranscript)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(3)
+                Button("Listen", action: model.listenToPendingImportedCommentary)
+                    .buttonStyle(PrimaryButtonStyle())
+                    .accessibilityIdentifier("importedCommentary.listen")
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity)
+            .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
+        }
     }
 
     private var playbackHeader: some View {
@@ -2203,6 +2353,18 @@ private struct PlaybackScreen: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("timeline.interjection.\(interjection.id)")
+                    case .importedCommentary(let layer, let margin, _):
+                        Button {
+                            model.listenToImportedCommentary(layerID: layer.id, interjectionID: margin.id)
+                        } label: {
+                            TimelineRow(
+                                percent: margin.resolution.localMediaTimeMs.map(formatPlaybackTime) ?? "SHR",
+                                title: "Shared Margin · \(layer.displayLabel?.nilIfEmpty ?? "Unsigned sender")",
+                                subtitle: margin.approvedTranscript
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("timeline.importedCommentary.\(margin.id)")
                     case .turn(let turn):
                         Button {
                             model.playTurn(turn, fromTimeline: true)
@@ -2245,6 +2407,16 @@ private struct PlaybackScreen: View {
             sourceHeaderEntries = [.sourceItem]
         }
         let mediaDurationMs = max(1, interjectionMediaDurationMs ?? 1)
+        let importedEntries = model.selectedItem.importedCommentaryLayers
+            .filter { $0.deletedAt == nil }
+            .flatMap { layer in
+                (model.selectedItem.importedCommentaryInterjections[layer.id] ?? []).map { margin in
+                    let percent = margin.resolution.localMediaTimeMs.map {
+                        max(0, min(100, Int((Double($0) / Double(mediaDurationMs) * 100).rounded())))
+                    } ?? margin.anchorEvidence.roughPercent ?? 100
+                    return PlaybackTimelineEntry.importedCommentary(layer, margin, percent)
+                }
+            }
         let sourceEntries = (model.selectedItem.chapters.map { PlaybackTimelineEntry.chapter($0) } +
             visibleMediaChapters.map { chapter in
                 PlaybackTimelineEntry.mediaChapter(
@@ -2254,7 +2426,8 @@ private struct PlaybackScreen: View {
                     )))
                 )
             } +
-            model.selectedItem.interjections.filter { $0.targetType == .item }.map { PlaybackTimelineEntry.interjection($0) }
+            model.selectedItem.interjections.filter { $0.targetType == .item }.map { PlaybackTimelineEntry.interjection($0) } +
+            importedEntries
         )
         .sorted { lhs, rhs in
             let lhsPercent = timelinePercent(for: lhs)
@@ -3447,6 +3620,7 @@ private enum PlaybackTimelineEntry: Identifiable {
     case chapter(Chapter)
     case mediaChapter(MediaTimelineChapter, Int)
     case interjection(Interjection)
+    case importedCommentary(ImportedCommentaryLayer, ImportedCommentaryInterjection, Int)
     case turn(ConversationTurn)
     case turnChapter(ConversationTurn, Chapter)
 
@@ -3457,6 +3631,7 @@ private enum PlaybackTimelineEntry: Identifiable {
         case .chapter(let chapter): return "chapter-\(chapter.id)"
         case .mediaChapter(let chapter, _): return "media-chapter-\(chapter.id)"
         case .interjection(let interjection): return "interjection-\(interjection.id)"
+        case .importedCommentary(_, let margin, _): return "imported-commentary-\(margin.id)"
         case .turn(let turn): return "turn-\(turn.id)"
         case .turnChapter(let turn, let chapter): return "turn-chapter-\(turn.id)-\(chapter.id)"
         }
@@ -3469,6 +3644,7 @@ private enum PlaybackTimelineEntry: Identifiable {
         case .chapter(let chapter): return chapter.percent
         case .mediaChapter(_, let percent): return percent
         case .interjection(let interjection): return interjection.targetType == .item ? interjection.roughPercent : 101
+        case .importedCommentary(_, _, let percent): return percent
         case .turn: return 101
         case .turnChapter: return 101
         }
@@ -3480,14 +3656,18 @@ private enum PlaybackTimelineEntry: Identifiable {
         case .overview: return -1
         case .chapter, .mediaChapter: return 0
         case .interjection(let interjection): return interjection.targetType == .item ? 1 : 4
-        case .turn: return 2
-        case .turnChapter: return 3
+        case .importedCommentary: return 2
+        case .turn: return 3
+        case .turnChapter: return 4
         }
     }
 
     var interjectionMediaTimeMs: Int? {
-        guard case .interjection(let interjection) = self else { return nil }
-        return interjection.anchor.mediaTimeMs
+        switch self {
+        case .interjection(let interjection): return interjection.anchor.mediaTimeMs
+        case .importedCommentary(_, let margin, _): return margin.resolution.localMediaTimeMs
+        default: return nil
+        }
     }
 }
 
@@ -3653,7 +3833,7 @@ private func anchorContextText(_ value: String, status: AnchorContextStatus?) ->
     }
 }
 
-private struct ProductPanel<Content: View>: View {
+struct ProductPanel<Content: View>: View {
     let isHighlighted: Bool
     @ViewBuilder let content: Content
 
@@ -3914,7 +4094,7 @@ private enum AppLinks {
     }
 }
 
-private enum AppColors {
+enum AppColors {
     static let background = dynamicColor(light: (0.96, 0.97, 0.94), dark: (0.07, 0.09, 0.08))
     static let panel = dynamicColor(light: (1.00, 1.00, 1.00), dark: (0.13, 0.16, 0.14))
     static let inputBackground = dynamicColor(light: (0.98, 0.99, 0.97), dark: (0.10, 0.12, 0.11))
@@ -3945,7 +4125,7 @@ private enum AppColors {
     }
 }
 
-private struct PrimaryButtonStyle: ButtonStyle {
+struct PrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.headline)
@@ -3957,7 +4137,7 @@ private struct PrimaryButtonStyle: ButtonStyle {
     }
 }
 
-private struct SecondaryButtonStyle: ButtonStyle {
+struct SecondaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.headline)

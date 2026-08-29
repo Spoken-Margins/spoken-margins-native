@@ -147,6 +147,14 @@ public final class InMemorySessionRepository: SessionRepository {
             }
     }
 
+    public func saveImportedCommentaryLayer(_ layer: ImportedCommentaryLayer) throws {
+        importedCommentaryLayers[layer.id] = layer
+    }
+
+    public func saveImportedCommentaryInterjection(_ interjection: ImportedCommentaryInterjection) throws {
+        importedCommentaryInterjections[interjection.id] = interjection
+    }
+
     public func saveTurn(_ turn: ConversationTurn) throws {
         turns[turn.id] = turn
     }

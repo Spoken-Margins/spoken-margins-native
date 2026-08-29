@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import SessionKit
+@testable import SessionKitAudio
 import SessionKitPersistence
 import SessionKitSharing
 import XCTest
@@ -186,7 +187,18 @@ final class SharingTests: XCTestCase {
         XCTAssertTrue(verified.extractedAssetURLs.isEmpty)
     }
 
-    func testPortableListeningMapProposalRoundTripsButDoesNotActivate() throws {
+    func testPortableListeningMapProposalAndPodcastEvidenceImportWithoutActivatingMap() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceURL = root.appendingPathComponent("patterned-source.m4a")
+        try writePatternedM4A(to: sourceURL, durationSeconds: 30)
+        let generatedEvidence = try await PodcastAnchorEvidenceGenerator.generate(
+            sourceURL: sourceURL,
+            anchorMediaTimeMs: 15_000,
+            outputDirectory: root.appendingPathComponent("generated-evidence"),
+            idPrefix: "evidence"
+        )
+        let evidence = try XCTUnwrap(generatedEvidence.first)
         let proposal = PortableListeningMapProposalArtifact(
             id: "proposal-1",
             createdAt: fixedDate,
@@ -200,16 +212,508 @@ final class SharingTests: XCTestCase {
         )
         let prepared = try SpokenMarginsPackageBuilder.prepare(
             packageId: "map-package", createdAt: fixedDate, source: podcastSource,
-            selections: [.init(packageScopedId: "margin-001", revision: approvedRevision(), anchor: .init(anchorType: .media, mediaTimeMs: 5_000), representation: .textOnly)],
-            mapProposals: [proposal]
+            selections: [.init(
+                packageScopedId: "margin-001",
+                revision: approvedRevision(),
+                anchor: .init(
+                    anchorType: .media,
+                    mediaTimeMs: 5_000,
+                    machineEvidenceAssetIds: [evidence.id]
+                ),
+                representation: .textOnly
+            )],
+            mapProposals: [proposal],
+            machineEvidence: [.init(
+                id: evidence.id,
+                path: evidence.archivePath,
+                sourceURL: evidence.fileURL,
+                durationMs: evidence.durationMs,
+                anchorOffsetMs: evidence.anchorOffsetMs
+            )]
         )
-        let root = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
         let url = root.appendingPathComponent("map.spokenmargins")
         _ = try SpokenMarginsPackageArchive.write(prepared, to: url)
         let verified = try SpokenMarginsPackageArchive.read(from: url, extractingAssetsTo: root.appendingPathComponent("assets"))
         XCTAssertEqual(verified.listeningMapProposals, [proposal])
         XCTAssertEqual(verified.manifest.artifacts.last?.required, false)
+        XCTAssertEqual(verified.manifest.assets.first?.anchorOffsetMs, evidence.anchorOffsetMs)
+
+        let repository = InMemorySessionRepository()
+        _ = try SpokenMarginsPackageImporter.importPackage(
+            verified,
+            itemId: "recipient-podcast",
+            importedAt: fixedDate,
+            repository: repository
+        )
+        let layer = try XCTUnwrap(repository.importedCommentaryLayers.values.first)
+        let imported = try XCTUnwrap(repository.importedCommentaryInterjections.values.first)
+        XCTAssertEqual(layer.listeningMapProposals, [proposal])
+        XCTAssertNil(try repository.loadListeningMap(itemId: "recipient-podcast"))
+        XCTAssertEqual(imported.podcastAnchorEvidence?.first?.anchorOffsetMs, evidence.anchorOffsetMs)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(imported.podcastAnchorEvidence?.first?.localPath)))
+    }
+
+    func testPodcastResolverFusesConsistentEvidenceAndRejectsAmbiguity() {
+        let query = PodcastPortableAnchorQuery(
+            packageScopedId: "margin",
+            senderMediaTimeMs: 60_000,
+            evidence: [],
+            evidenceWasDeclared: true
+        )
+        let fused = PodcastAcousticAnchorResolver.resolveCandidates(
+            [(timeMs: 71_000, confidence: 0.92), (timeMs: 71_600, confidence: 0.88)],
+            query: query,
+            senderDurationMs: 100_000,
+            recipientDurationMs: 110_000,
+            strongSourceIdentity: true,
+            exactDigestContradiction: false
+        )
+        XCTAssertEqual(fused.evidenceClass, .fused)
+        XCTAssertEqual(fused.localMediaTimeMs, 71_600)
+        XCTAssertEqual(fused.confidence ?? -1, 0.9, accuracy: 0.0001)
+
+        let ambiguous = PodcastAcousticAnchorResolver.resolveCandidates(
+            [(timeMs: 71_000, confidence: 0.95), (timeMs: 80_000, confidence: 0.95)],
+            query: query,
+            senderDurationMs: 100_000,
+            recipientDurationMs: 110_000,
+            strongSourceIdentity: true,
+            exactDigestContradiction: false
+        )
+        XCTAssertEqual(ambiguous.evidenceClass, .ambiguous)
+        XCTAssertTrue(ambiguous.isAmbiguous)
+        XCTAssertNil(ambiguous.localMediaTimeMs)
+
+        let twoFlanks = PodcastPortableAnchorQuery(
+            packageScopedId: "partial",
+            senderMediaTimeMs: 60_000,
+            evidence: [
+                .init(id: "pre", signatureData: Data(), anchorOffsetMs: 12_500),
+                .init(id: "post", signatureData: Data(), anchorOffsetMs: -500)
+            ]
+        )
+        let partial = PodcastAcousticAnchorResolver.resolveCandidates(
+            [(timeMs: 71_000, confidence: 0.92)],
+            query: twoFlanks,
+            senderDurationMs: 100_000,
+            recipientDurationMs: 110_000,
+            strongSourceIdentity: true,
+            exactDigestContradiction: false
+        )
+        XCTAssertEqual(partial.evidenceClass, .ambiguous)
+        XCTAssertNil(partial.localMediaTimeMs)
+    }
+
+    func testPodcastTimestampFallbackStaysDisabledAfterEqualDurationCounterexample() {
+        let missingEvidence = PodcastPortableAnchorQuery(
+            packageScopedId: "margin",
+            senderMediaTimeMs: 60_000,
+            evidence: [],
+            evidenceWasDeclared: false
+        )
+        let fallback = PodcastAcousticAnchorResolver.resolveCandidates(
+            [], query: missingEvidence, senderDurationMs: 100_000, recipientDurationMs: 100_150,
+            strongSourceIdentity: true, exactDigestContradiction: false
+        )
+        XCTAssertEqual(fallback.evidenceClass, .unresolved)
+        XCTAssertNil(fallback.localMediaTimeMs)
+
+        let declaredButUnmatched = PodcastPortableAnchorQuery(
+            packageScopedId: "margin",
+            senderMediaTimeMs: 60_000,
+            evidence: [],
+            evidenceWasDeclared: true
+        )
+        XCTAssertEqual(PodcastAcousticAnchorResolver.resolveCandidates(
+            [], query: declaredButUnmatched, senderDurationMs: 100_000, recipientDurationMs: 100_000,
+            strongSourceIdentity: true, exactDigestContradiction: false
+        ).evidenceClass, .absentFromRecipientEdition)
+        XCTAssertEqual(PodcastAcousticAnchorResolver.resolveCandidates(
+            [], query: missingEvidence, senderDurationMs: 100_000, recipientDurationMs: 100_000,
+            strongSourceIdentity: true, exactDigestContradiction: true
+        ).evidenceClass, .unresolved)
+        XCTAssertEqual(PodcastAcousticAnchorResolver.resolveCandidates(
+            [], query: missingEvidence, senderDurationMs: 100_000, recipientDurationMs: 100_000,
+            strongSourceIdentity: false, exactDigestContradiction: false
+        ).evidenceClass, .unresolved)
+        XCTAssertEqual(PodcastAcousticAnchorResolver.resolveCandidates(
+            [], query: missingEvidence, senderDurationMs: 100_000, recipientDurationMs: 104_000,
+            strongSourceIdentity: true, exactDigestContradiction: false
+        ).evidenceClass, .unresolved)
+    }
+
+    func testPodcastTranscriptResolutionFusionAndMonotonicGuard() {
+        let prefix = "the durable prefix has exactly enough unique words here"
+        let suffix = "the following suffix is also uniquely present right now"
+        let timeline = TranscriptTimeline(segments: [
+            .init(id: "pre", startMs: 10_000, endMs: 11_000, text: prefix),
+            .init(id: "post", startMs: 12_000, endMs: 13_000, text: suffix)
+        ], chapters: [])
+        let anchor = PortableAnchorEvidence(
+            anchorType: .transcript,
+            prefix: prefix,
+            suffix: suffix,
+            mediaTimeMs: 11_500
+        )
+        let transcript = PodcastTranscriptAnchorResolver.resolve(
+            anchor: anchor,
+            recipientTimeline: timeline
+        )
+        XCTAssertEqual(transcript.evidenceClass, .transcriptVerified)
+        XCTAssertEqual(transcript.localMediaTimeMs, 11_500)
+
+        let acoustic = ImportedAnchorResolution(
+            evidenceClass: .acousticVerified,
+            localMediaTimeMs: 11_700,
+            confidence: 0.92
+        )
+        let fused = PodcastAnchorFusionResolver.fuse(transcript: transcript, acoustic: acoustic)
+        XCTAssertEqual(fused.evidenceClass, .fused)
+        XCTAssertEqual(fused.localMediaTimeMs, 11_700)
+        XCTAssertEqual(PodcastAnchorFusionResolver.fuse(
+            transcript: transcript,
+            acoustic: .init(evidenceClass: .acousticVerified, localMediaTimeMs: 30_000)
+        ).evidenceClass, .ambiguous)
+
+        let repeated = TranscriptTimeline(segments: timeline.segments + [
+            .init(id: "repeat-pre", startMs: 30_000, endMs: 31_000, text: prefix),
+            .init(id: "repeat-post", startMs: 32_000, endMs: 33_000, text: suffix)
+        ], chapters: [])
+        XCTAssertEqual(PodcastTranscriptAnchorResolver.resolve(
+            anchor: anchor,
+            recipientTimeline: repeated
+        ).evidenceClass, .ambiguous)
+
+        let queries = [
+            PodcastPortableAnchorQuery(packageScopedId: "one", senderMediaTimeMs: 10_000, evidence: []),
+            PodcastPortableAnchorQuery(packageScopedId: "two", senderMediaTimeMs: 20_000, evidence: [])
+        ]
+        let guarded = PodcastAnchorFusionResolver.enforcingMonotonicOrder(
+            queries: queries,
+            resolutions: [
+                "one": .init(evidenceClass: .fused, localMediaTimeMs: 30_000),
+                "two": .init(evidenceClass: .fused, localMediaTimeMs: 20_000)
+            ]
+        )
+        XCTAssertEqual(guarded["one"]?.evidenceClass, .ambiguous)
+        XCTAssertEqual(guarded["two"]?.evidenceClass, .ambiguous)
+    }
+
+    func testPodcastResolverMathBenchmarkHasNoFalseConfidentPlacements() {
+        var confidentErrors: [Int] = []
+        var falseConfidentCount = 0
+        for index in 0..<250 {
+            let expected = 30_000 + index * 5_000
+            let query = PodcastPortableAnchorQuery(
+                packageScopedId: "margin-\(index)",
+                senderMediaTimeMs: expected,
+                evidence: [],
+                evidenceWasDeclared: true
+            )
+            let isAdversarial = index.isMultiple(of: 10)
+            let candidates = isAdversarial
+                ? [(timeMs: expected - 8_000, confidence: 0.95), (timeMs: expected + 8_000, confidence: 0.95)]
+                : [(timeMs: expected - 240, confidence: 0.91), (timeMs: expected + 310, confidence: 0.89)]
+            let result = PodcastAcousticAnchorResolver.resolveCandidates(
+                candidates,
+                query: query,
+                senderDurationMs: 2_000_000,
+                recipientDurationMs: 2_060_000,
+                strongSourceIdentity: true,
+                exactDigestContradiction: false
+            )
+            if isAdversarial {
+                if result.localMediaTimeMs != nil { falseConfidentCount += 1 }
+                XCTAssertEqual(result.evidenceClass, .ambiguous)
+            } else if let resolved = result.localMediaTimeMs {
+                confidentErrors.append(abs(resolved - expected))
+                if abs(resolved - expected) > PodcastAcousticAnchorResolver.maximumFusionSpreadMs {
+                    falseConfidentCount += 1
+                }
+            }
+        }
+        let sortedErrors = confidentErrors.sorted()
+        let p95Index = Int((Double(sortedErrors.count - 1) * 0.95).rounded(.up))
+        XCTAssertEqual(falseConfidentCount, 0)
+        XCTAssertGreaterThanOrEqual(confidentErrors.count, 200)
+        XCTAssertLessThanOrEqual(sortedErrors[p95Index], 1_500)
+    }
+
+    func testAcousticResolverDeclinesConflictingSyntheticMatchesAcrossInsertedAd() async throws {
+        #if canImport(AVFoundation)
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let senderURL = root.appendingPathComponent("sender.m4a")
+        let adURL = root.appendingPathComponent("recipient-ad.m4a")
+        let recipientURL = root.appendingPathComponent("recipient.m4a")
+        try writePatternedM4A(to: senderURL, durationSeconds: 75)
+        try writePatternedM4A(to: adURL, durationSeconds: 7, frequencyOffset: 900)
+        try await composeRecipientEdition(
+            senderURL: senderURL,
+            insertedAudioURL: adURL,
+            insertionTimeMs: 25_000,
+            destinationURL: recipientURL
+        )
+        let generated = try await PodcastAnchorEvidenceGenerator.generate(
+            sourceURL: senderURL,
+            anchorMediaTimeMs: 42_000,
+            outputDirectory: root.appendingPathComponent("evidence"),
+            idPrefix: "ad-shift"
+        )
+        XCTAssertEqual(generated.count, 2)
+        let query = PodcastPortableAnchorQuery(
+            packageScopedId: "shifted-margin",
+            senderMediaTimeMs: 42_000,
+            evidence: try generated.map {
+                PodcastAcousticEvidenceQuery(
+                    id: $0.id,
+                    signatureData: try Data(contentsOf: $0.fileURL),
+                    anchorOffsetMs: $0.anchorOffsetMs
+                )
+            }
+        )
+        let resolutions = try await PodcastAcousticAnchorResolver.resolve(
+            queries: [query],
+            recipientAudioURL: recipientURL,
+            senderExactEditionSHA256: nil,
+            senderDurationMs: 75_000,
+            strongSourceIdentity: true
+        )
+        let resolution = try XCTUnwrap(resolutions[query.packageScopedId])
+        XCTAssertEqual(resolution.evidenceClass, .ambiguous)
+        XCTAssertNil(resolution.localMediaTimeMs)
+        #else
+        throw XCTSkip("AVFoundation is required")
+        #endif
+    }
+
+    func testHeldOutPublicDomainPodcastAnchorCorpus() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["SPOKEN_MARGINS_RUN_ANCHOR_CORPUS"] == "1",
+              let senderPath = environment["SPOKEN_MARGINS_BENCHMARK_SENDER_AUDIO"],
+              let recipientPath = environment["SPOKEN_MARGINS_BENCHMARK_RECIPIENT_AUDIO"],
+              let senderTranscriptPath = environment["SPOKEN_MARGINS_BENCHMARK_SENDER_TRANSCRIPT"],
+              let recipientTranscriptPath = environment["SPOKEN_MARGINS_BENCHMARK_RECIPIENT_TRANSCRIPT"] else {
+            throw XCTSkip("Run scripts/run-podcast-anchor-benchmark.sh to execute the held-out corpus.")
+        }
+        let senderURL = URL(fileURLWithPath: senderPath)
+        let recipientURL = URL(fileURLWithPath: recipientPath)
+        let senderTimeline = try whisperTimeline(from: URL(fileURLWithPath: senderTranscriptPath))
+        let recipientTimeline = try whisperTimeline(from: URL(fileURLWithPath: recipientTranscriptPath))
+        let evidenceDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "SpokenMarginsHeldOutEvidence-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: evidenceDirectory) }
+
+        let senderTimes = Array(stride(from: 20_000, through: 1_175_000, by: 5_000))
+        var expectedRecipientTimes: [String: Int] = [:]
+        var queries: [PodcastPortableAnchorQuery] = []
+        var anchors: [String: PortableAnchorEvidence] = [:]
+        let generationStarted = Date()
+        for (index, senderTime) in senderTimes.enumerated() {
+            let id = "held-out-\(String(format: "%04d", index + 1))"
+            let context = try XCTUnwrap(SourceAnchorContextResolver.resolve(
+                mediaTimeMs: senderTime,
+                timeline: senderTimeline
+            ))
+            anchors[id] = PortableAnchorEvidence(
+                anchorType: .transcript,
+                prefix: context.anchorBefore,
+                suffix: context.anchorAfter,
+                mediaTimeMs: senderTime
+            ).bounded()
+            let generated = try await PodcastAnchorEvidenceGenerator.generate(
+                sourceURL: senderURL,
+                anchorMediaTimeMs: senderTime,
+                outputDirectory: evidenceDirectory,
+                idPrefix: id
+            )
+            queries.append(PodcastPortableAnchorQuery(
+                packageScopedId: id,
+                senderMediaTimeMs: senderTime,
+                evidence: try generated.map {
+                    PodcastAcousticEvidenceQuery(
+                        id: $0.id,
+                        signatureData: try Data(contentsOf: $0.fileURL),
+                        anchorOffsetMs: $0.anchorOffsetMs
+                    )
+                }
+            ))
+            expectedRecipientTimes[id] = expectedRecipientTime(forBenchmarkSenderTime: senderTime) ?? -1
+        }
+        let generationSeconds = Date().timeIntervalSince(generationStarted)
+        let resolutionStarted = Date()
+        let acousticResolutions = try await PodcastAcousticAnchorResolver.resolve(
+            queries: queries,
+            recipientAudioURL: recipientURL,
+            senderExactEditionSHA256: nil,
+            senderDurationMs: 1_200_000,
+            strongSourceIdentity: true
+        )
+        let resolutionSeconds = Date().timeIntervalSince(resolutionStarted)
+        let transcriptResolutions = Dictionary(uniqueKeysWithValues: queries.map { query in
+            (
+                query.packageScopedId,
+                PodcastTranscriptAnchorResolver.resolve(
+                    anchor: anchors[query.packageScopedId] ?? .init(anchorType: .transcript),
+                    recipientTimeline: recipientTimeline
+                )
+            )
+        })
+        let unguardedFused = Dictionary(uniqueKeysWithValues: queries.map { query in
+            (
+                query.packageScopedId,
+                PodcastAnchorFusionResolver.fuse(
+                    transcript: transcriptResolutions[query.packageScopedId]
+                        ?? .init(evidenceClass: .unresolved),
+                    acoustic: acousticResolutions[query.packageScopedId]
+                        ?? .init(evidenceClass: .unresolved)
+                )
+            )
+        })
+        let fusedResolutions = PodcastAnchorFusionResolver.enforcingMonotonicOrder(
+            queries: queries,
+            resolutions: unguardedFused
+        )
+        let timestampResolutions = Dictionary(uniqueKeysWithValues: queries.map { query in
+            (
+                query.packageScopedId,
+                ImportedAnchorResolution(
+                    evidenceClass: .timestampFallback,
+                    localMediaTimeMs: query.senderMediaTimeMs,
+                    confidence: 0.6,
+                    algorithmVersion: "benchmark-timestamp-only.v1"
+                )
+            )
+        })
+
+        let eligibleCount = expectedRecipientTimes.values.filter { $0 >= 0 }.count
+        let absentCount = expectedRecipientTimes.count - eligibleCount
+        let timestampMetrics = benchmarkMetrics(
+            queries: queries,
+            expectedRecipientTimes: expectedRecipientTimes,
+            resolutions: timestampResolutions
+        )
+        let transcriptMetrics = benchmarkMetrics(
+            queries: queries,
+            expectedRecipientTimes: expectedRecipientTimes,
+            resolutions: transcriptResolutions
+        )
+        let acousticMetrics = benchmarkMetrics(
+            queries: queries,
+            expectedRecipientTimes: expectedRecipientTimes,
+            resolutions: acousticResolutions
+        )
+        let fusedMetrics = benchmarkMetrics(
+            queries: queries,
+            expectedRecipientTimes: expectedRecipientTimes,
+            resolutions: fusedResolutions
+        )
+        let result: [String: Any] = [
+            "schemaVersion": "spoken-margins.anchor-benchmark-result.v1",
+            "generatedAt": ISO8601DateFormatter().string(from: Date()),
+            "corpus": [
+                "source": "LibriVox / Internet Archive: The Adventures of Sherlock Holmes (version 5), chapter 4",
+                "license": "Public Domain Mark 1.0",
+                "partition": "held_out_after_rule_freeze",
+                "pairedEditionTransformations": [
+                    "45-second inserted speech advertisement",
+                    "20-second publisher correction deletion",
+                    "40-second repeated source passage",
+                    "6-second silence/edit deletion",
+                    "MP3-to-AAC re-encoding"
+                ]
+            ],
+            "anchors": [
+                "total": queries.count,
+                "eligible": eligibleCount,
+                "absent": absentCount
+            ],
+            "timestampOnly": timestampMetrics.dictionary,
+            "transcript": transcriptMetrics.dictionary,
+            "acoustic": acousticMetrics.dictionary.merging([
+                "evidenceGenerationSeconds": generationSeconds,
+                "resolutionSeconds": resolutionSeconds
+            ]) { _, runtime in runtime },
+            "fusedMonotonic": fusedMetrics.dictionary
+        ]
+        if let resultPath = environment["SPOKEN_MARGINS_BENCHMARK_RESULT_PATH"] {
+            let outputURL = URL(fileURLWithPath: resultPath)
+            try FileManager.default.createDirectory(
+                at: outputURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
+                .write(to: outputURL, options: .atomic)
+        }
+
+        XCTAssertGreaterThanOrEqual(eligibleCount, 200)
+        XCTAssertEqual(acousticMetrics.falseConfident, 0)
+        XCTAssertLessThanOrEqual(acousticMetrics.p95ErrorMs ?? .max, 1_500)
+        XCTAssertEqual(fusedMetrics.falseConfident, 0)
+        XCTAssertLessThanOrEqual(fusedMetrics.p95ErrorMs ?? .max, 1_500)
+    }
+
+    func testExistingPrivateInterjectionDecodesWithoutNewSharingFields() throws {
+        let original = Interjection(
+            id: "private", itemId: "item", sessionId: "session", targetType: .item,
+            targetId: "item", createdAt: fixedDate, roughPercent: 50,
+            anchor: .init(
+                anchorType: .media,
+                startChar: 0,
+                endChar: 0,
+                anchorBefore: "",
+                anchorAfter: "",
+                mediaTimeMs: 5_000
+            ),
+            audioPath: "/private/capture.m4a", audioStatus: "recorded",
+            transcriptionStatus: "transcribed", transcript: "A thought.", cleanedTranscript: nil,
+            displayText: "A thought.", status: "captured"
+        )
+        let encoded = try JSONEncoder.iso8601.encode(original)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object.removeValue(forKey: "alignedTranscript")
+        object.removeValue(forKey: "podcastAnchorEvidence")
+        object.removeValue(forKey: "sourceExactEditionSHA256")
+        let legacyData = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        let decoded = try JSONDecoder.iso8601.decode(Interjection.self, from: legacyData)
+        XCTAssertEqual(decoded.transcript, "A thought.")
+        XCTAssertNil(decoded.alignedTranscript)
+        XCTAssertNil(decoded.podcastAnchorEvidence)
+    }
+
+    func testAlignedTranscriptionPersistsTimingAndLegacyCompletionClearsIt() throws {
+        let interjection = Interjection(
+            id: "private", itemId: "item", sessionId: "session", targetType: .item,
+            targetId: "item", createdAt: fixedDate, roughPercent: 50,
+            anchor: .init(
+                anchorType: .media, startChar: 0, endChar: 0,
+                anchorBefore: "", anchorAfter: "", mediaTimeMs: 5_000
+            ),
+            audioPath: "/private/capture.m4a", audioStatus: "recorded",
+            transcriptionStatus: "pending", transcript: nil, cleanedTranscript: nil,
+            displayText: nil, status: "captured"
+        )
+        let repository = InMemorySessionRepository(interjections: [interjection.id: interjection])
+        let engine = SessionEngine(
+            profile: .init(id: "test", displayName: "Test", capabilities: [:]),
+            repository: repository
+        )
+        let aligned = AlignedInterjectionTranscript(
+            text: "Um, a useful thought.",
+            segments: [
+                .init(id: "one", text: "Um", startMs: 0, endMs: 170),
+                .init(id: "two", text: "a useful thought.", startMs: 320, endMs: 1_100)
+            ]
+        )
+        _ = try engine.transcriptionCompleted(interjectionId: interjection.id, alignedTranscript: aligned)
+        XCTAssertEqual(repository.interjections[interjection.id]?.alignedTranscript, aligned)
+        XCTAssertEqual(repository.interjections[interjection.id]?.displayText, aligned.text)
+
+        _ = try engine.transcriptionCompleted(interjectionId: interjection.id, transcript: "Fallback text")
+        XCTAssertNil(repository.interjections[interjection.id]?.alignedTranscript)
+        XCTAssertEqual(repository.interjections[interjection.id]?.transcript, "Fallback text")
     }
 
     func testUnknownOptionalArtifactIsSkippedAndUnknownRequiredArtifactIsRejected() throws {
@@ -273,7 +777,7 @@ final class SharingTests: XCTestCase {
         XCTAssertEqual(first, .imported(layerId: "recipient-layer-package-article-001", interjectionIds: ["recipient-interjection-margin-001"]))
         XCTAssertEqual(second, .duplicate(existingLayerId: "recipient-layer-package-article-001"))
         XCTAssertTrue(memory.interjections.isEmpty)
-        XCTAssertFalse(try XCTUnwrap(memory.importedCommentaryLayers.values.first).isEnabled)
+        XCTAssertTrue(try XCTUnwrap(memory.importedCommentaryLayers.values.first).isEnabled)
 
         let sqlite = try SQLiteSessionStore(path: root.appendingPathComponent("sharing.sqlite").path)
         _ = try SpokenMarginsPackageImporter.importPackage(contents, itemId: "recipient-item", importedAt: fixedDate, repository: sqlite, makeLocalID: provider)
@@ -377,6 +881,170 @@ final class SharingTests: XCTestCase {
         #endif
     }
 
+    private func writePatternedM4A(
+        to url: URL,
+        durationSeconds: Int,
+        frequencyOffset: Double = 0
+    ) throws {
+        #if canImport(AVFoundation)
+        let sampleRate = 44_100.0
+        let audioFile = try AVAudioFile(forWriting: url, settings: [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC), AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 96_000
+        ])
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
+        for second in 0..<durationSeconds {
+            let frameCount = AVAudioFrameCount(sampleRate)
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount))
+            buffer.frameLength = frameCount
+            let samples = try XCTUnwrap(buffer.floatChannelData?[0])
+            let baseFrequency = 180.0 + frequencyOffset + Double((second * 73) % 420)
+            for frame in 0..<Int(frameCount) {
+                let time = Double(frame) / sampleRate
+                let sweep = baseFrequency + (Double(frame) / Double(frameCount)) * 120
+                samples[frame] = Float(
+                    0.22 * sin(2 * .pi * sweep * time)
+                    + 0.12 * sin(2 * .pi * (baseFrequency * 1.7) * time)
+                    + 0.06 * sin(2 * .pi * (37 + Double(second)) * time)
+                )
+            }
+            try audioFile.write(from: buffer)
+        }
+        #else
+        throw XCTSkip("AVFoundation is required")
+        #endif
+    }
+
+    private func composeRecipientEdition(
+        senderURL: URL,
+        insertedAudioURL: URL,
+        insertionTimeMs: Int,
+        destinationURL: URL
+    ) async throws {
+        #if canImport(AVFoundation)
+        let sender = AVURLAsset(url: senderURL)
+        let inserted = AVURLAsset(url: insertedAudioURL)
+        let senderDuration = try await sender.load(.duration)
+        let insertedDuration = try await inserted.load(.duration)
+        let senderTracks = try await sender.loadTracks(withMediaType: .audio)
+        let insertedTracks = try await inserted.loadTracks(withMediaType: .audio)
+        let senderTrack = try XCTUnwrap(senderTracks.first)
+        let insertedTrack = try XCTUnwrap(insertedTracks.first)
+        let insertion = CMTime(value: CMTimeValue(insertionTimeMs), timescale: 1_000)
+        let composition = AVMutableComposition()
+        let outputTrack = try XCTUnwrap(composition.addMutableTrack(
+            withMediaType: .audio,
+            preferredTrackID: kCMPersistentTrackID_Invalid
+        ))
+        try outputTrack.insertTimeRange(
+            CMTimeRange(start: .zero, duration: insertion),
+            of: senderTrack,
+            at: .zero
+        )
+        try outputTrack.insertTimeRange(
+            CMTimeRange(start: .zero, duration: insertedDuration),
+            of: insertedTrack,
+            at: insertion
+        )
+        try outputTrack.insertTimeRange(
+            CMTimeRange(start: insertion, duration: CMTimeSubtract(senderDuration, insertion)),
+            of: senderTrack,
+            at: CMTimeAdd(insertion, insertedDuration)
+        )
+        let exporter = try XCTUnwrap(AVAssetExportSession(
+            asset: composition,
+            presetName: AVAssetExportPresetAppleM4A
+        ))
+        try await exporter.export(to: destinationURL, as: .m4a)
+        #else
+        throw XCTSkip("AVFoundation is required")
+        #endif
+    }
+
+    private func expectedRecipientTime(forBenchmarkSenderTime senderTime: Int) -> Int? {
+        switch senderTime {
+        case ..<240_000: return senderTime
+        case 240_000..<480_000: return senderTime + 45_000
+        case 480_000..<500_000: return nil
+        case 500_000..<700_000: return senderTime + 25_000
+        case 700_000..<900_000: return senderTime + 65_000
+        case 900_000..<906_000: return nil
+        default: return senderTime + 59_000
+        }
+    }
+
+    private func percentile95(_ values: [Int]) -> Int? {
+        guard !values.isEmpty else { return nil }
+        let sorted = values.sorted()
+        let index = Int((Double(sorted.count - 1) * 0.95).rounded(.up))
+        return sorted[index]
+    }
+
+    private func whisperTimeline(from url: URL) throws -> TranscriptTimeline {
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        let transcription = try XCTUnwrap(object["transcription"] as? [[String: Any]])
+        let segments = try transcription.enumerated().map { index, value -> MediaTimelineSegment in
+            let offsets = try XCTUnwrap(value["offsets"] as? [String: Any])
+            let startMs = try XCTUnwrap(offsets["from"] as? Int)
+            let endMs = try XCTUnwrap(offsets["to"] as? Int)
+            let text = try XCTUnwrap(value["text"] as? String)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return MediaTimelineSegment(
+                id: "whisper-\(String(format: "%05d", index + 1))",
+                startMs: startMs,
+                endMs: max(startMs + 1, endMs),
+                text: text
+            )
+        }.filter { !$0.text.isEmpty }
+        return TranscriptTimeline(
+            segments: segments,
+            chapters: [],
+            durationMs: segments.map(\.endMs).max()
+        )
+    }
+
+    private func benchmarkMetrics(
+        queries: [PodcastPortableAnchorQuery],
+        expectedRecipientTimes: [String: Int],
+        resolutions: [String: ImportedAnchorResolution]
+    ) -> AnchorBenchmarkMetrics {
+        var errors: [Int] = []
+        var falseConfident = 0
+        var declinedEligible = 0
+        var correctlyDeclinedAbsent = 0
+        var evidenceCounts: [String: Int] = [:]
+        for query in queries {
+            let expected = expectedRecipientTimes[query.packageScopedId] ?? -1
+            let resolution = resolutions[query.packageScopedId]
+                ?? ImportedAnchorResolution(evidenceClass: .unresolved)
+            evidenceCounts[resolution.evidenceClass.rawValue, default: 0] += 1
+            if expected >= 0 {
+                if let actual = resolution.localMediaTimeMs {
+                    let error = abs(actual - expected)
+                    errors.append(error)
+                    if error > 1_500 { falseConfident += 1 }
+                } else {
+                    declinedEligible += 1
+                }
+            } else if resolution.localMediaTimeMs != nil {
+                falseConfident += 1
+            } else {
+                correctlyDeclinedAbsent += 1
+            }
+        }
+        return AnchorBenchmarkMetrics(
+            confident: errors.count,
+            declinedEligible: declinedEligible,
+            correctlyDeclinedAbsent: correctlyDeclinedAbsent,
+            falseConfident: falseConfident,
+            p95ErrorMs: percentile95(errors),
+            placementsOver1500Ms: errors.filter { $0 > 1_500 }.count,
+            evidenceClasses: evidenceCounts
+        )
+    }
+
     private func readRawArchive(_ url: URL) throws -> [String: Data] {
         let archive = try Archive(url: url, accessMode: .read)
         var result: [String: Data] = [:]
@@ -405,10 +1073,40 @@ final class SharingTests: XCTestCase {
     }
 }
 
+private struct AnchorBenchmarkMetrics {
+    let confident: Int
+    let declinedEligible: Int
+    let correctlyDeclinedAbsent: Int
+    let falseConfident: Int
+    let p95ErrorMs: Int?
+    let placementsOver1500Ms: Int
+    let evidenceClasses: [String: Int]
+
+    var dictionary: [String: Any] {
+        [
+            "confident": confident,
+            "declinedEligible": declinedEligible,
+            "correctlyDeclinedAbsent": correctlyDeclinedAbsent,
+            "falseConfident": falseConfident,
+            "p95ErrorMs": p95ErrorMs ?? NSNull(),
+            "placementsOver1500Ms": placementsOver1500Ms,
+            "evidenceClasses": evidenceClasses
+        ]
+    }
+}
+
 private extension JSONDecoder {
     static var iso8601: JSONDecoder {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return decoder
+    }
+}
+
+private extension JSONEncoder {
+    static var iso8601: JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
     }
 }

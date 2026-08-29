@@ -53,12 +53,14 @@ public struct ReviewedMachineEvidenceAsset: Sendable {
     public let path: String
     public let sourceURL: URL
     public let durationMs: Int
+    public let anchorOffsetMs: Int
 
-    public init(id: String, path: String, sourceURL: URL, durationMs: Int) {
+    public init(id: String, path: String, sourceURL: URL, durationMs: Int, anchorOffsetMs: Int) {
         self.id = id
         self.path = path
         self.sourceURL = sourceURL
         self.durationMs = durationMs
+        self.anchorOffsetMs = anchorOffsetMs
     }
 }
 
@@ -170,6 +172,7 @@ public enum SpokenMarginsPackageBuilder {
                 path: evidence.path,
                 mimeType: "application/vnd.apple.shazam.signature",
                 durationMs: evidence.durationMs,
+                anchorOffsetMs: evidence.anchorOffsetMs,
                 provenance: "exact_playback_edition"
             ))
         }
@@ -270,6 +273,17 @@ public enum SpokenMarginsPackageImporter {
             let asset = representation.assetId.flatMap { assetID in
                 manifest.assets.first { $0.id == assetID }
             }
+            let podcastEvidence = record.anchor.machineEvidenceAssetIds.compactMap { evidenceID -> ImportedPodcastAnchorEvidence? in
+                guard let descriptor = manifest.assets.first(where: { $0.id == evidenceID }),
+                      descriptor.role == SpokenMarginsAssetRole.acousticSignature,
+                      let localURL = contents.extractedAssetURLs[evidenceID],
+                      let anchorOffsetMs = descriptor.anchorOffsetMs else { return nil }
+                return ImportedPodcastAnchorEvidence(
+                    id: evidenceID,
+                    localPath: localURL.path,
+                    anchorOffsetMs: anchorOffsetMs
+                )
+            }
             importedInterjections.append(ImportedCommentaryInterjection(
                 id: localID,
                 layerId: layerID,
@@ -279,6 +293,7 @@ public enum SpokenMarginsPackageImporter {
                 approvedTranscript: representation.approvedTranscript,
                 audioPath: asset.flatMap { contents.extractedAssetURLs[$0.id]?.path },
                 audioDurationMs: asset?.durationMs,
+                podcastAnchorEvidence: podcastEvidence,
                 resolution: sourceResolution.anchorsByPackageScopedId[record.packageScopedId]
                     ?? ImportedAnchorResolution(evidenceClass: .unresolved)
             ))
@@ -293,8 +308,9 @@ public enum SpokenMarginsPackageImporter {
             suggestedRevealMode: manifest.suggestedRevealMode,
             importedAt: importedAt,
             sourceResolutionStatus: sourceResolution.status,
-            isEnabled: false,
-            revealMode: nil
+            isEnabled: true,
+            revealMode: manifest.suggestedRevealMode ?? .companion,
+            listeningMapProposals: contents.listeningMapProposals
         )
         return try repository.importCommentaryLayer(layer, interjections: importedInterjections)
     }

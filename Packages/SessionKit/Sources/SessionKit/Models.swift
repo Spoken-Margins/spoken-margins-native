@@ -995,6 +995,20 @@ public enum AnchorContextStatus: String, Codable, Equatable, Sendable {
     case unavailable
 }
 
+public struct CapturedPodcastAnchorEvidence: Codable, Equatable, Sendable, Identifiable {
+    public let id: String
+    public let localPath: String
+    public let durationMs: Int
+    public let anchorOffsetMs: Int
+
+    public init(id: String, localPath: String, durationMs: Int, anchorOffsetMs: Int) {
+        self.id = id
+        self.localPath = localPath
+        self.durationMs = durationMs
+        self.anchorOffsetMs = anchorOffsetMs
+    }
+}
+
 public struct Interjection: Codable, Equatable, Sendable {
     public var id: String
     public var itemId: String
@@ -1012,6 +1026,13 @@ public struct Interjection: Codable, Equatable, Sendable {
     public var displayText: String?
     public var status: String
     public var anchorContextStatus: AnchorContextStatus? = nil
+    /// Word/run timing retained from on-device recognition. Optional so records
+    /// created before sharing support remain decodable without migration.
+    public var alignedTranscript: AlignedInterjectionTranscript? = nil
+    /// Non-playable signatures captured from the exact local podcast edition
+    /// available when this Margin was recorded.
+    public var podcastAnchorEvidence: [CapturedPodcastAnchorEvidence]? = nil
+    public var sourceExactEditionSHA256: String? = nil
 
     public init(
         id: String,
@@ -1029,7 +1050,10 @@ public struct Interjection: Codable, Equatable, Sendable {
         cleanedTranscript: String?,
         displayText: String?,
         status: String,
-        anchorContextStatus: AnchorContextStatus? = nil
+        anchorContextStatus: AnchorContextStatus? = nil,
+        alignedTranscript: AlignedInterjectionTranscript? = nil,
+        podcastAnchorEvidence: [CapturedPodcastAnchorEvidence]? = nil,
+        sourceExactEditionSHA256: String? = nil
     ) {
         self.id = id
         self.itemId = itemId
@@ -1047,6 +1071,9 @@ public struct Interjection: Codable, Equatable, Sendable {
         self.displayText = displayText
         self.status = status
         self.anchorContextStatus = anchorContextStatus
+        self.alignedTranscript = alignedTranscript
+        self.podcastAnchorEvidence = podcastAnchorEvidence
+        self.sourceExactEditionSHA256 = sourceExactEditionSHA256
     }
 }
 

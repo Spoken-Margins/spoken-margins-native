@@ -210,7 +210,7 @@ public enum ImportedSourceResolver {
         against localSource: SharedSourceIdentity,
         sourceText: String?
     ) -> ImportedPackageSourceResolution {
-        guard sourcesCanRepresentSameWork(source, localSource) else {
+        guard canRepresentSameWork(source, localSource) else {
             return result(status: .wrongSource, interjections: interjections, evidenceClass: .unresolved)
         }
         guard source.sourceType == .article, let sourceText else {
@@ -245,7 +245,7 @@ public enum ImportedSourceResolver {
         )
     }
 
-    private static func sourcesCanRepresentSameWork(
+    public static func canRepresentSameWork(
         _ packageSource: SharedSourceIdentity,
         _ localSource: SharedSourceIdentity
     ) -> Bool {
