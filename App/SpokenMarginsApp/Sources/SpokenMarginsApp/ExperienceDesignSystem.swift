@@ -79,6 +79,23 @@ struct ExperienceFilterChip<Content: View>: View {
     }
 }
 
+extension View {
+    func experienceListBlock(
+        horizontalSizeClass: UserInterfaceSizeClass?,
+        verticalPadding: CGFloat = 11
+    ) -> some View {
+        frame(maxWidth: horizontalSizeClass == .regular ? 960 : .infinity, alignment: .leading)
+            .listRowInsets(EdgeInsets(
+                top: verticalPadding,
+                leading: horizontalSizeClass == .regular ? 28 : 16,
+                bottom: verticalPadding,
+                trailing: horizontalSizeClass == .regular ? 28 : 16
+            ))
+            .listRowSeparator(.hidden)
+            .listRowBackground(AppColors.bone)
+    }
+}
+
 struct SMExperienceTypeCover: View {
     let id: String
     let mediaType: String

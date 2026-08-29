@@ -18,24 +18,20 @@ struct ExperienceSourcesScreen: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 20) {
-                    ExperienceEditorialHeader(
-                        eyebrow: "Chosen sources only",
-                        title: "Source inbox",
-                        detail: "New entries wait here until you explicitly add them to Library."
-                    )
-                    consentBoundary
-                    filterBar
-                    inbox
-                    sourceSetup
-                }
-                .padding(.horizontal, horizontalSizeClass == .regular ? 28 : 16)
-                .padding(.vertical, 20)
-                .frame(maxWidth: horizontalSizeClass == .regular ? 920 : .infinity)
-                .frame(maxWidth: .infinity)
+            List {
+                intakeHeader
+                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
+                consentBoundary
+                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
+                filterBar
+                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                inbox
+                sourceSetup
+                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
             }
             .background(AppColors.bone)
+            .scrollContentBackground(.hidden)
+            .listStyle(.plain)
             .accessibilityIdentifier("sources.screen")
             .navigationTitle("Sources")
             .navigationBarTitleDisplayMode(.inline)
@@ -54,14 +50,46 @@ struct ExperienceSourcesScreen: View {
                     .disabled(model.isRefreshingQuickAddFeed)
                     .accessibilityLabel("Refresh Sources")
                     .accessibilityIdentifier("quickAdd.refresh.button")
-                    Button { addSourceRoute = .linkOrPodcast } label: {
-                        Label("Add", systemImage: "plus")
-                    }
-                    .accessibilityIdentifier("sources.add.button")
                 }
             }
             .task { model.refreshQuickAddFeed(force: false) }
         }
+    }
+
+    private var intakeHeader: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 20) {
+                sourceInboxTitle
+                Spacer(minLength: 16)
+                addSourceButton
+            }
+            VStack(alignment: .leading, spacing: 14) {
+                sourceInboxTitle
+                addSourceButton
+            }
+        }
+    }
+
+    private var sourceInboxTitle: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("CHOSEN SOURCES ONLY")
+                .font(.caption.weight(.bold))
+                .tracking(1.15)
+                .foregroundStyle(AppColors.evergreen)
+            Text("Source inbox")
+                .font(.system(.largeTitle, design: .serif).weight(.bold))
+                .foregroundStyle(AppColors.text)
+        }
+    }
+
+    private var addSourceButton: some View {
+        Button { addSourceRoute = .linkOrPodcast } label: {
+            Label("Add a source", systemImage: "plus.circle.fill")
+                .frame(minHeight: 46)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(AppColors.evergreen)
+        .accessibilityIdentifier("sources.add.button")
     }
 
     private var consentBoundary: some View {
@@ -99,37 +127,47 @@ struct ExperienceSourcesScreen: View {
 
     @ViewBuilder
     private var inbox: some View {
-        HStack {
-            Text("New entries")
-                .font(.system(.title2, design: .serif).weight(.bold))
-            Spacer()
-            Text("\(filteredCandidates.count)")
-                .font(.subheadline.monospacedDigit())
-                .foregroundStyle(AppColors.secondaryText)
-        }
+        Section {
+            if model.selectedProfileId.contains("offline") {
+                Label("Showing the last local snapshot", systemImage: "wifi.slash")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppColors.secondaryText)
+                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+            }
 
-        if model.selectedProfileId.contains("offline") {
-            Label("Showing the last local snapshot", systemImage: "wifi.slash")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(AppColors.secondaryText)
-        }
-
-        if filteredCandidates.isEmpty {
-            SMExperienceEmptyState(
-                systemImage: "tray",
-                title: "You’re caught up",
-                detail: emptyDetail,
-                actionTitle: "Follow or add a source"
-            ) { showsFollow = true }
-        } else {
-            VStack(spacing: 0) {
-                ForEach(Array(filteredCandidates.enumerated()), id: \.element.id) { index, candidate in
-                    if index > 0 { Divider().padding(.leading, 76) }
+            if filteredCandidates.isEmpty {
+                SMExperienceEmptyState(
+                    systemImage: "tray",
+                    title: "You’re caught up",
+                    detail: emptyDetail,
+                    actionTitle: "Follow or add a source"
+                ) { showsFollow = true }
+                .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
+            } else {
+                ForEach(filteredCandidates) { candidate in
                     SourceInboxRow(candidate: candidate)
+                        .listRowInsets(EdgeInsets(
+                            top: 0,
+                            leading: horizontalSizeClass == .regular ? 28 : 16,
+                            bottom: 0,
+                            trailing: horizontalSizeClass == .regular ? 28 : 16
+                        ))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(AppColors.bone)
                 }
             }
-            .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay { RoundedRectangle(cornerRadius: 20).stroke(AppColors.border) }
+        } header: {
+            HStack {
+                Text("New entries")
+                    .font(.system(.title2, design: .serif).weight(.bold))
+                    .foregroundStyle(AppColors.text)
+                Spacer()
+                Text("\(filteredCandidates.count)")
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(AppColors.secondaryText)
+            }
+            .textCase(nil)
+            .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
         }
     }
 
@@ -227,41 +265,63 @@ private struct SourceInboxRow: View {
     let candidate: QuickAddCandidate
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: systemImage)
-                .font(.title3)
-                .foregroundStyle(AppColors.evergreen)
-                .frame(width: 46, height: 46)
-                .background(AppColors.softGreen, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-            VStack(alignment: .leading, spacing: 5) {
-                Text(title).font(.headline).lineLimit(2)
-                Text(provenance)
-                    .font(.caption)
-                    .foregroundStyle(AppColors.secondaryText)
-                if let summary, !summary.isEmpty {
-                    Text(summary)
-                        .font(.subheadline)
-                        .foregroundStyle(AppColors.secondaryText)
+        Button(action: addAndOpen) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.title3)
+                    .foregroundStyle(AppColors.evergreen)
+                    .frame(width: 46, height: 46)
+                    .background(AppColors.softGreen, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(title)
+                        .font(.headline)
+                        .foregroundStyle(AppColors.text)
+                        .multilineTextAlignment(.leading)
                         .lineLimit(2)
+                    Text(provenance)
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                    if let summary, !summary.isEmpty {
+                        Text(summary)
+                            .font(.subheadline)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .multilineTextAlignment(.leading)
+                            .lineLimit(2)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if isImporting {
+                    ProgressView()
+                        .frame(width: 44, height: 44)
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AppColors.secondaryText)
+                        .frame(width: 44, height: 44)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            Button(action: add) {
-                if isImporting { ProgressView() } else { Text("Add") }
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(AppColors.evergreen)
-            .disabled(isImporting)
-            Menu {
-                Button("Dismiss", systemImage: "xmark", action: dismiss)
-            } label: {
-                Image(systemName: "ellipsis")
-                    .frame(width: 44, height: 44)
-            }
-            .accessibilityLabel("Entry options")
         }
+        .buttonStyle(.plain)
+        .disabled(isImporting)
         .padding(14)
+        .background(AppColors.panel)
+        .overlay(alignment: .bottom) { Divider().padding(.leading, 72) }
         .accessibilityIdentifier(identifier)
+        .accessibilityHint("Adds this entry to Library and opens it.")
+        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+            Button(action: addInPlace) {
+                Label("Add", systemImage: "plus.circle.fill")
+            }
+            .tint(AppColors.evergreen)
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button(action: dismiss) {
+                Label("Dismiss", systemImage: "xmark")
+            }
+            .tint(AppColors.plum)
+        }
+        .accessibilityAction(named: "Add to Library", addAndOpen)
+        .accessibilityAction(named: "Dismiss", dismiss)
     }
 
     private var title: String {
@@ -304,7 +364,14 @@ private struct SourceInboxRow: View {
         }
     }
 
-    private func add() {
+    private func addAndOpen() {
+        switch candidate {
+        case .localFile(let file): model.importQuickAccessFile(file, openWhenFinished: true)
+        case .followedSource(let entry): model.importFollowedSourceEntry(entry, openWhenFinished: true)
+        }
+    }
+
+    private func addInPlace() {
         switch candidate {
         case .localFile(let file): model.importQuickAccessFile(file)
         case .followedSource(let entry): model.importFollowedSourceEntry(entry)

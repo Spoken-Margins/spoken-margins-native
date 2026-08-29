@@ -849,6 +849,68 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.selectedItem.sessions.isEmpty, "Restoring an item should restore its existing sessions")
     }
 
+    func testMarkItemCompletedPersistsListeningStateAndStopsOfferingItAsContinueHero() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+
+        model.markItemCompleted(id: "item-pill")
+
+        let row = try XCTUnwrap(model.libraryItems.first(where: { $0.id == "item-pill" }))
+        XCTAssertTrue(row.isCompleted)
+        XCTAssertEqual(row.continuationProgressPercent, 100)
+        XCTAssertNil(LibraryPresentation.continueItem(in: model.libraryItems, activeItemId: model.activePlaybackItemId))
+
+        model.openItem(id: "item-pill")
+        let session = try XCTUnwrap(model.selectedItem.sessions.first)
+        XCTAssertEqual(session.status, "finished")
+        XCTAssertEqual(session.phase, .finished)
+        XCTAssertEqual(session.completionPercent, 100)
+        XCTAssertNotNil(session.completedAt)
+    }
+
+    func testUnplayedItemCanBeMarkedCompletedWithoutStartingPlayback() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.importTitle = "Read Later"
+        model.importText = "A source that the listener finished somewhere else."
+        model.importTextItem(startListening: false)
+        let itemID = try XCTUnwrap(model.libraryItems.first(where: { $0.title == "Read Later" })?.id)
+
+        model.markItemCompleted(id: itemID)
+        model.openItem(id: itemID)
+
+        let row = try XCTUnwrap(model.libraryItems.first(where: { $0.id == itemID }))
+        let session = try XCTUnwrap(model.selectedItem.sessions.first)
+        XCTAssertTrue(row.isCompleted)
+        XCTAssertEqual(session.status, "finished")
+        XCTAssertEqual(session.completionPercent, 100)
+        XCTAssertNotNil(session.completedAt)
+        XCTAssertFalse(model.snapshot.status.isPlaybackActive)
+    }
+
+    func testExplicitOfflinePreparationJobsSortAheadOfAutomaticWork() {
+        let automatic = AudioPreparationJob(
+            id: "automatic",
+            itemId: "automatic-item",
+            manifestId: "automatic-manifest",
+            policy: .whileCharging,
+            requestedAt: Date(timeIntervalSince1970: 1)
+        )
+        let explicit = AudioPreparationJob(
+            id: "explicit",
+            itemId: "explicit-item",
+            manifestId: "explicit-manifest",
+            policy: .explicit,
+            requestedAt: Date(timeIntervalSince1970: 2)
+        )
+
+        XCTAssertEqual(
+            [automatic, explicit].sorted(by: Gate1AppModel.audioPreparationJobPrecedes).map(\.id),
+            ["explicit", "automatic"]
+        )
+    }
+
     func testTrashUndoAutoDismissesAfterConfiguredDelay() async throws {
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
@@ -1306,47 +1368,43 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.canPlayLiveSpeechInstead)
     }
 
-    func testSubstantiallyCompletedItemsAreIneligibleForWholeItemPrewarm() {
-        let almostComplete = Session(
-            id: "session-almost-complete",
+    func testTextAudioPreparationSkipsAnyCompletedOrSeventyFivePercentSession() {
+        let atCutoff = Session(
+            id: "session-at-cutoff",
             itemId: "item-native-text",
             status: "in_progress",
             phase: .itemPlayback,
             currentTargetType: .itemTextTTS,
             currentTargetId: "item-native-text",
-            position: Position(charOffset: 900),
-            completionPercent: 90,
+            position: Position(charOffset: 750),
+            completionPercent: 75,
             playbackRate: 1
         )
-        let stillListening = Session(
-            id: "session-still-listening",
+        let belowCutoff = Session(
+            id: "session-below-cutoff",
             itemId: "item-native-text",
             status: "in_progress",
             phase: .itemPlayback,
             currentTargetType: .itemTextTTS,
             currentTargetId: "item-native-text",
-            position: Position(charOffset: 890),
-            completionPercent: 89,
+            position: Position(charOffset: 740),
+            completionPercent: 74,
             playbackRate: 1
         )
+        var completed = belowCutoff
+        completed.id = "session-completed"
+        completed.status = "finished"
+        completed.phase = .finished
+        completed.completionPercent = 12
+        var completedAtOnly = belowCutoff
+        completedAtOnly.id = "session-completed-at"
+        completedAtOnly.completedAt = Date(timeIntervalSince1970: 1)
 
-        XCTAssertTrue(Gate1AppModel.hasSubstantiallyCompletedTextSession([almostComplete]))
-        XCTAssertFalse(Gate1AppModel.hasSubstantiallyCompletedTextSession([stillListening]))
-    }
-
-    func testFullyCompletedTextSessionIsExcludedFromAutomaticPreparation() throws {
-        let decoder = JSONDecoder()
-        let completed = try decoder.decode(Session.self, from: Data("""
-        {"id":"completed","itemId":"item-native-text","status":"finished","phase":"finished","currentTargetType":"item_text_tts","currentTargetId":"item-native-text","position":{"charOffset":1000},"completionPercent":100,"playbackRate":1}
-        """.utf8))
-        var inProgress = completed
-        inProgress.id = "in-progress"
-        inProgress.status = "in_progress"
-        inProgress.phase = .itemPlayback
-        inProgress.completionPercent = 99
-
-        XCTAssertTrue(Gate1AppModel.hasFullyCompletedTextSession([completed]))
-        XCTAssertFalse(Gate1AppModel.hasFullyCompletedTextSession([inProgress]))
+        XCTAssertFalse(Gate1AppModel.shouldSkipTextAudioPreparation([belowCutoff]))
+        XCTAssertTrue(Gate1AppModel.shouldSkipTextAudioPreparation([atCutoff]))
+        XCTAssertTrue(Gate1AppModel.shouldSkipTextAudioPreparation([completed]))
+        XCTAssertTrue(Gate1AppModel.shouldSkipTextAudioPreparation([completedAtOnly]))
+        XCTAssertTrue(Gate1AppModel.shouldSkipTextAudioPreparation([belowCutoff, completed]))
     }
 
     func testResumeCompletedSessionAfterExportRequiresExplicitRestart() throws {

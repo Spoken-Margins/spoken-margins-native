@@ -46,6 +46,7 @@ struct LibraryItemRow: Identifiable, Hashable {
     let canDelete: Bool
     let hasContinuationSession: Bool
     let continuationProgressPercent: Int?
+    let isCompleted: Bool
     let mediaType: String
     let sourceTitle: String?
     let author: String?
@@ -63,6 +64,7 @@ struct LibraryItemRow: Identifiable, Hashable {
         canDelete: Bool,
         hasContinuationSession: Bool = false,
         continuationProgressPercent: Int? = nil,
+        isCompleted: Bool = false,
         mediaType: String = "text",
         sourceTitle: String? = nil,
         author: String? = nil,
@@ -79,6 +81,7 @@ struct LibraryItemRow: Identifiable, Hashable {
         self.canDelete = canDelete
         self.hasContinuationSession = hasContinuationSession
         self.continuationProgressPercent = continuationProgressPercent
+        self.isCompleted = isCompleted
         self.mediaType = mediaType
         self.sourceTitle = sourceTitle
         self.author = author
@@ -660,6 +663,7 @@ final class Gate1AppModel: ObservableObject {
     private var interjectionAudioCompletionTask: Task<Void, Never>?
     #endif
     private var textAudioPrewarmTasks: [String: Task<Void, Never>] = [:]
+    private var explicitAudioPreparationTask: Task<Void, Never>?
     private var sourceImportTask: Task<Void, Never>?
     private var quickAccessRefreshTask: Task<Void, Never>?
     private var quickAccessRefreshID = UUID()
@@ -679,7 +683,7 @@ final class Gate1AppModel: ObservableObject {
     private var failedWatchPackageRenderItemIds: Set<String> = []
     #endif
     private let preparedTextAudioStarterDurationMs = 30_000
-    static let substantiallyCompletedTextThreshold = 90
+    static let textAudioPreparationCutoffPercent = 75
     private let sourceWindowContextBeforeMs = SourceAnchorContextResolver.windowBeforeMs
     private let sourceWindowContextAfterMs = SourceAnchorContextResolver.windowAfterMs
     private let quickAccessFolderBookmarkKey = "quickAccessFolderBookmark"
@@ -1231,6 +1235,7 @@ final class Gate1AppModel: ObservableObject {
         onDeviceSpeechGenerationDelayTask?.cancel()
         trashUndoDismissTask?.cancel()
         textAudioPrewarmTasks.values.forEach { $0.cancel() }
+        explicitAudioPreparationTask?.cancel()
         sourceImportTask?.cancel()
         quickAccessRefreshTask?.cancel()
         interjectionAudioCompletionTask?.cancel()
@@ -1546,7 +1551,7 @@ final class Gate1AppModel: ObservableObject {
         syncPlaybackProgressForLifecycle()
         gate2CompactControls.reconcileLiveActivities()
         importPendingSourceLinkHandoffs()
-        scheduleAutomaticAudioPreparationIfNeeded()
+        submitAutomaticAudioPreparationIfNeeded()
         refreshQuickAddFeed(force: false)
     }
 
@@ -1670,6 +1675,14 @@ final class Gate1AppModel: ObservableObject {
             if enabled { await self?.enqueueAutomaticAudioPreparationJobs() }
             AudioPreparationBackgroundController.shared.submitIfEnabled(enabled)
         }
+        #endif
+    }
+
+    private func submitAutomaticAudioPreparationIfNeeded() {
+        #if canImport(BackgroundTasks) && canImport(UIKit)
+        AudioPreparationBackgroundController.shared.submitIfEnabled(
+            automaticAudioPreparationPolicy == .whileCharging
+        )
         #endif
     }
 
@@ -3623,6 +3636,123 @@ final class Gate1AppModel: ObservableObject {
                 : "Resumed session at \(session.completionPercent)% complete.")
         } catch {
             reportFailure(error, context: "Resume session failed")
+        }
+    }
+
+    func markItemCompleted(id: String) {
+        guard !rejectNavigationOrSessionMutationWhileRecording("mark_item_completed") else { return }
+        do {
+            let store = try requireStore()
+            let item = try store.loadItem(id: id)
+            let timestamp = Date()
+            var session: Session
+
+            if snapshot.itemId == id, let engine, engine.currentSession != nil {
+                _ = try? engine.stopPlayback()
+                snapshot = try engine.endSession()
+                streamingSpeechQueue.stopAndClear()
+                gate2CompactControls.endLiveActivities()
+            }
+
+            if let existing = try store.loadSessions(itemId: id).first {
+                session = existing
+            } else {
+                let targetType = Self.completionTargetType(for: item)
+                session = Session(
+                    id: "session-\(id)-completed-\(UUID().uuidString.lowercased())",
+                    itemId: id,
+                    createdAt: timestamp,
+                    updatedAt: timestamp,
+                    completedAt: timestamp,
+                    status: "finished",
+                    phase: .finished,
+                    currentTargetType: targetType,
+                    currentTargetId: Self.completionTargetId(for: item, targetType: targetType),
+                    position: Self.completionPosition(for: item, targetType: targetType),
+                    completionPercent: 100,
+                    playbackRate: 1
+                )
+            }
+
+            session.updatedAt = timestamp
+            session.completedAt = timestamp
+            session.status = "finished"
+            session.phase = .finished
+            session.position = Self.completionPosition(for: item, targetType: session.currentTargetType)
+            session.completionPercent = 100
+            try store.saveSession(session)
+            try refreshLibraryRows(store: store)
+            if selectedItem.id == id {
+                selectedItem = try loadItemDetail(id: id, store: store)
+            }
+            reportConfirmation("Marked \(item.title) complete.")
+        } catch {
+            reportFailure(error, context: "Mark complete failed")
+        }
+    }
+
+    private nonisolated static func completionTargetType(for item: Item) -> TargetType {
+        if item.mediaType == TargetType.browserOwnedMedia.rawValue {
+            return .browserOwnedMedia
+        }
+        if item.mediaType == TargetType.transcriptBackedMedia.rawValue || item.media?.url != nil {
+            return .transcriptBackedMedia
+        }
+        return .itemTextTTS
+    }
+
+    private nonisolated static func completionTargetId(for item: Item, targetType: TargetType) -> String {
+        guard targetType == .transcriptBackedMedia || targetType == .browserOwnedMedia else {
+            return item.id
+        }
+        return item.media?.nativeMediaId ?? item.media?.url ?? item.id
+    }
+
+    private nonisolated static func completionPosition(for item: Item, targetType: TargetType) -> Position {
+        if targetType == .itemTextTTS {
+            return Position(charOffset: item.text?.count ?? 0)
+        }
+        return Position(charOffset: item.text?.count ?? 0, mediaTimeMs: item.media?.durationMs ?? 0)
+    }
+
+    func prioritizeOfflinePreparation(id: String) {
+        do {
+            let store = try requireStore()
+            let item = try store.loadItem(id: id)
+            if libraryItems.first(where: { $0.id == id })?.offlineState == .readyOffline {
+                reportConfirmation("\(item.title) is already available offline.")
+                return
+            }
+
+            switch item.media?.sourceType {
+            case .some(.nativeMediaFile):
+                reportConfirmation("\(item.title) is already available offline.")
+            case .some(.remoteStream):
+                guard let rawURL = item.media?.url, let remoteURL = URL(string: rawURL) else {
+                    reportFailure("This audio item does not have a downloadable source.")
+                    return
+                }
+                if podcastDownloadCoordinator?.downloadNow(itemId: id) != true {
+                    podcastDownloadCoordinator?.register(itemId: id, remoteURL: remoteURL, userInitiated: true)
+                }
+                reportConfirmation("Prioritized \(item.title) for download.")
+            case .some(.browserOwnedMedia):
+                reportFailure("Browser-owned audio cannot be downloaded by Spoken Margins.")
+            case .none, .some(.generatedTTSRealtime), .some(.generatedTTSPrerendered):
+                guard item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+                    reportFailure("This item does not have text that can be prepared for offline listening.")
+                    return
+                }
+                guard hasAcceptedCurrentTerms, ttsVoiceSelection.supertonicVoice != nil else {
+                    reportWarning("Choose a bundled voice and accept its terms before preparing this item offline.")
+                    return
+                }
+                Task { [weak self] in
+                    await self?.enqueueExplicitAudioPreparation(item: item)
+                }
+            }
+        } catch {
+            reportFailure(error, context: "Offline preparation failed")
         }
     }
 
@@ -6391,11 +6521,11 @@ final class Gate1AppModel: ObservableObject {
         do {
             let store = try requireStore()
             let item = try store.loadItem(id: itemId)
-            let substantiallyCompleted = Self.hasSubstantiallyCompletedTextSession(
+            let shouldSkipPreparation = Self.shouldSkipTextAudioPreparation(
                 try store.loadSessions(itemId: itemId)
             )
-            guard !substantiallyCompleted else {
-                diagnostics["textAudioPrewarm:\(itemId)"] = "skipped_substantially_completed"
+            guard !shouldSkipPreparation else {
+                diagnostics["textAudioPrewarm:\(itemId)"] = "skipped_existing_progress"
                 return
             }
             guard shouldPrewarmTextAudio(for: item), let text = item.text else { return }
@@ -6534,12 +6664,13 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    static func hasSubstantiallyCompletedTextSession(_ sessions: [Session]) -> Bool {
-        sessions.contains { $0.completionPercent >= substantiallyCompletedTextThreshold }
-    }
-
-    static func hasFullyCompletedTextSession(_ sessions: [Session]) -> Bool {
-        sessions.contains { $0.completionPercent >= 100 }
+    static func shouldSkipTextAudioPreparation(_ sessions: [Session]) -> Bool {
+        sessions.contains { session in
+            session.completedAt != nil
+                || session.status == "finished"
+                || session.phase == .finished
+                || session.completionPercent >= textAudioPreparationCutoffPercent
+        }
     }
 
     private func isStarterPreparedTextMedia(_ media: ItemMedia?) -> Bool {
@@ -7002,6 +7133,7 @@ final class Gate1AppModel: ObservableObject {
                 canDelete: true,
                 hasContinuationSession: continuation != nil,
                 continuationProgressPercent: continuation?.completionPercent,
+                isCompleted: (continuation?.completionPercent ?? 0) >= 100,
                 mediaType: item.mediaType,
                 sourceTitle: item.sourceTitle ?? item.externalReference,
                 author: item.author,
@@ -9043,6 +9175,76 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["podcastCacheLimitGB"] = "\(limit.rawValue)"
     }
 
+    private func enqueueExplicitAudioPreparation(item: Item) async {
+        guard let sourceText = item.text,
+              !sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let voice = ttsVoiceSelection.supertonicVoice else { return }
+        do {
+            let store = try requireStore()
+            guard !Self.shouldSkipTextAudioPreparation(try store.loadSessions(itemId: item.id)) else {
+                reportWarning("Completed or substantially listened items are not queued for offline rendering.")
+                return
+            }
+            let support = try applicationSupportDirectory()
+            guard let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else {
+                reportFailure("The bundled speech assets are unavailable.")
+                return
+            }
+            let signature = try SupertonicRenderIdentity.make(
+                assets: SupertonicAssetLocation(rootURL: resourceRoot),
+                voice: voice
+            )
+            let coordinator = preparedAudioCoordinator ?? PreparedAudioCoordinator(
+                repository: store,
+                rootDirectory: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
+            )
+            preparedAudioCoordinator = coordinator
+            currentSupertonicRenderSignature = signature
+            let plan = Self.preparedChunkPlan(for: sourceText)
+            guard !plan.isEmpty else { return }
+            let manifest = try await coordinator.begin(
+                itemId: item.id,
+                sourceText: sourceText,
+                signature: signature,
+                plan: plan
+            )
+            guard manifest.state != .readyOffline else {
+                try refreshLibraryRows(store: store)
+                reportConfirmation("\(item.title) is already available offline.")
+                return
+            }
+            var job = (try store.loadAudioPreparationJobs()).first(where: { $0.manifestId == manifest.id })
+                ?? AudioPreparationJob(
+                    id: "job-\(manifest.id)",
+                    itemId: item.id,
+                    manifestId: manifest.id,
+                    policy: .explicit
+                )
+            job.policy = .explicit
+            job.requestedAt = Date()
+            job.isCancelled = false
+            try store.saveAudioPreparationJob(job)
+            try refreshLibraryRows(store: store)
+            diagnostics["explicitAudioPreparation:\(item.id)"] = "queued"
+            reportConfirmation("Prioritized \(item.title) for offline rendering.")
+            startExplicitAudioPreparationIfNeeded()
+        } catch {
+            diagnostics["explicitAudioPreparation:\(item.id)"] = "failed:\(error.localizedDescription)"
+            reportFailure(error, context: "Offline rendering request failed")
+        }
+    }
+
+    private func startExplicitAudioPreparationIfNeeded() {
+        guard explicitAudioPreparationTask == nil else { return }
+        explicitAudioPreparationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled, await self.performBackgroundAudioPreparationPass(explicitOnly: true) {
+                await Task.yield()
+            }
+            self.explicitAudioPreparationTask = nil
+        }
+    }
+
     private func enqueueAutomaticAudioPreparationJobs() async {
         guard automaticAudioPreparationPolicy == .whileCharging,
               hasAcceptedCurrentTerms,
@@ -9066,8 +9268,8 @@ final class Gate1AppModel: ObservableObject {
                 guard let item = try? store.loadItem(id: row.id),
                       let text = item.text,
                       !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
-                guard !Self.hasFullyCompletedTextSession(sessionsByItemId[item.id] ?? []) else {
-                    diagnostics["automaticAudioPreparation:\(item.id)"] = "skipped_completed"
+                guard !Self.shouldSkipTextAudioPreparation(sessionsByItemId[item.id] ?? []) else {
+                    diagnostics["automaticAudioPreparation:\(item.id)"] = "skipped_existing_progress"
                     continue
                 }
                 let plan = Self.preparedChunkPlan(for: text)
@@ -9091,8 +9293,8 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func performBackgroundAudioPreparationPass() async -> Bool {
-        guard automaticAudioPreparationPolicy == .whileCharging,
+    private func performBackgroundAudioPreparationPass(explicitOnly: Bool = false) async -> Bool {
+        guard (explicitOnly || automaticAudioPreparationPolicy == .whileCharging),
               !ProcessInfo.processInfo.isLowPowerModeEnabled,
               ProcessInfo.processInfo.thermalState != .serious,
               ProcessInfo.processInfo.thermalState != .critical,
@@ -9101,23 +9303,38 @@ final class Gate1AppModel: ObservableObject {
         do {
             try Task.checkCancellation()
             let store = try requireStore()
-            guard var job = try store.loadAudioPreparationJobs()
+            var queuedJobs = try store.loadAudioPreparationJobs()
                 .filter({ !$0.isCancelled })
-                .sorted(by: { $0.requestedAt < $1.requestedAt })
-                .first,
+            if explicitOnly {
+                queuedJobs = queuedJobs.filter { $0.policy == .explicit }
+            }
+            queuedJobs.sort(by: Self.audioPreparationJobPrecedes)
+            if queuedJobs.isEmpty, !explicitOnly {
+                await enqueueAutomaticAudioPreparationJobs()
+                queuedJobs = try store.loadAudioPreparationJobs()
+                    .filter { !$0.isCancelled }
+                    .sorted(by: Self.audioPreparationJobPrecedes)
+            }
+            let hasMoreMatchingJobs = {
+                let remaining = try store.loadAudioPreparationJobs().filter { !$0.isCancelled }
+                return explicitOnly ? remaining.contains(where: { $0.policy == .explicit }) : !remaining.isEmpty
+            }
+            guard var job = queuedJobs.first,
                   var manifest = try store.loadPreparedAudioManifest(id: job.manifestId),
                   let item = try? store.loadItem(id: job.itemId),
                   let sourceText = item.text else { return false }
-            if Self.hasFullyCompletedTextSession(try store.loadSessions(itemId: item.id)) {
+            if Self.shouldSkipTextAudioPreparation(try store.loadSessions(itemId: item.id)) {
                 manifest.state = .notPrepared
                 manifest.updatedAt = Date()
                 try store.savePreparedAudioManifest(manifest)
                 try store.deleteAudioPreparationJob(id: job.id)
-                diagnostics["automaticAudioPreparation:\(item.id)"] = "cancelled_completed"
-                return !(try store.loadAudioPreparationJobs()).filter { !$0.isCancelled }.isEmpty
+                diagnostics["automaticAudioPreparation:\(item.id)"] = "cancelled_existing_progress"
+                return try hasMoreMatchingJobs()
             }
             let support = try applicationSupportDirectory()
-            guard let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else { return true }
+            guard let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else {
+                return !explicitOnly
+            }
             let assets = SupertonicAssetLocation(rootURL: resourceRoot)
             let signature = try SupertonicRenderIdentity.make(assets: assets, voice: voice)
             guard manifest.signature == signature else {
@@ -9125,13 +9342,13 @@ final class Gate1AppModel: ObservableObject {
                 manifest.updatedAt = Date()
                 try store.savePreparedAudioManifest(manifest)
                 try store.deleteAudioPreparationJob(id: job.id)
-                return !(try store.loadAudioPreparationJobs()).isEmpty
+                return try hasMoreMatchingJobs()
             }
             let plan = Self.preparedChunkPlan(for: sourceText)
             let completedIndexes = Set(manifest.chunks.map(\.index))
             guard let next = plan.first(where: { !completedIndexes.contains($0.index) }) else {
                 try store.deleteAudioPreparationJob(id: job.id)
-                return !(try store.loadAudioPreparationJobs()).isEmpty
+                return try hasMoreMatchingJobs()
             }
             let ledger = offlineStorageLedger ?? OfflineStorageLedger(repository: store, rootDirectory: support)
             offlineStorageLedger = ledger
@@ -9173,7 +9390,7 @@ final class Gate1AppModel: ObservableObject {
             guard let updated = try store.loadPreparedAudioManifest(id: manifest.id),
                   let committed = updated.chunks.first(where: { $0.index == next.index }) else {
                 try? await ledger.release(reservationId: reservation.id)
-                return true
+                return !explicitOnly
             }
             try await ledger.commit(
                 reservationId: reservation.id,
@@ -9203,16 +9420,32 @@ final class Gate1AppModel: ObservableObject {
                     support: support
                 )
             }
-            let hasMore = !(try store.loadAudioPreparationJobs()).filter { !$0.isCancelled }.isEmpty
+            let hasMore = try hasMoreMatchingJobs()
             diagnostics["backgroundAudioPreparation"] = hasMore ? "chunk_committed" : "complete"
             return hasMore
         } catch is CancellationError {
             diagnostics["backgroundAudioPreparation"] = "expired"
-            return true
+            return !explicitOnly
         } catch {
             diagnostics["backgroundAudioPreparation"] = "paused:\(error.localizedDescription)"
-            return true
+            if explicitOnly {
+                reportWarning("Offline rendering paused: \(error.localizedDescription)")
+            }
+            return !explicitOnly
         }
+    }
+
+    nonisolated static func audioPreparationJobPrecedes(
+        _ lhs: AudioPreparationJob,
+        _ rhs: AudioPreparationJob
+    ) -> Bool {
+        if (lhs.policy == .explicit) != (rhs.policy == .explicit) {
+            return lhs.policy == .explicit
+        }
+        if lhs.requestedAt != rhs.requestedAt {
+            return lhs.requestedAt < rhs.requestedAt
+        }
+        return lhs.id < rhs.id
     }
 
     private func finishBackgroundPreparedAudio(
@@ -9264,6 +9497,7 @@ final class Gate1AppModel: ObservableObject {
                 throw SessionKitError.persistenceFailed("prepared_audio_attach_failed")
             }
             try await coordinator.complete(itemId: item.id, signature: signature, prepared: prepared)
+            try refreshLibraryRows(store: store)
             let values = try url.resourceValues(forKeys: [.fileSizeKey])
             let relative = String(url.standardizedFileURL.path.dropFirst(support.standardizedFileURL.path.count + 1))
             try await ledger.commit(
@@ -9289,20 +9523,16 @@ final class Gate1AppModel: ObservableObject {
 
     private nonisolated static func preparedChunkPlan(for sourceText: String) -> [PreparedChunkPlan] {
         let normalized = SpeechTextNormalizer.normalize(sourceText)
-        var result: [PreparedChunkPlan] = []
-        var offset = 0
-        while offset < normalized.count {
-            let slice = RenderedSpeechChunker.sourceSlice(from: normalized, startOffset: offset, maxCharacters: 240)
-            guard !slice.text.isEmpty, slice.sourceLength > 0 else { break }
-            result.append(PreparedChunkPlan(
-                index: result.count,
-                startOffset: offset,
-                sourceLength: slice.sourceLength,
-                text: slice.text
-            ))
-            offset += slice.sourceLength
+        return RenderedSpeechChunker.sourceSlices(from: normalized, maxCharacters: 240)
+            .enumerated()
+            .map { index, planned in
+                PreparedChunkPlan(
+                    index: index,
+                    startOffset: planned.startOffset,
+                    sourceLength: planned.slice.sourceLength,
+                    text: planned.slice.text
+                )
         }
-        return result
     }
 
     private func configureOfflineServices(store: SQLiteSessionStore) throws {

@@ -64,7 +64,41 @@ struct RenderedSpeechSourceSlice: Equatable, Sendable {
     var boundary: RenderedSpeechChunkBoundary
 }
 
+struct RenderedSpeechPlannedSlice: Equatable, Sendable {
+    var startOffset: Int
+    var slice: RenderedSpeechSourceSlice
+}
+
 enum RenderedSpeechChunker {
+    /// Plans a complete source in one forward pass. Repeatedly calling
+    /// `sourceSlice(from:startOffset:)` for increasing offsets restarts String
+    /// indexing at the beginning and becomes quadratic for book-length text.
+    static func sourceSlices(
+        from source: String,
+        maxCharacters: Int = 240
+    ) -> [RenderedSpeechPlannedSlice] {
+        let maximum = max(1, maxCharacters)
+        var remaining = source[...]
+        var startOffset = 0
+        var result: [RenderedSpeechPlannedSlice] = []
+        result.reserveCapacity(max(1, source.utf8.count / maximum))
+
+        while !remaining.isEmpty {
+            let prefix = String(remaining.prefix(maximum))
+            let slice = selectChunkPrefix(prefix, maxCharacters: maximum)
+            guard !slice.text.isEmpty, slice.sourceLength > 0 else { break }
+            result.append(RenderedSpeechPlannedSlice(startOffset: startOffset, slice: slice))
+            guard let next = remaining.index(
+                remaining.startIndex,
+                offsetBy: slice.sourceLength,
+                limitedBy: remaining.endIndex
+            ) else { break }
+            remaining = remaining[next...]
+            startOffset += slice.sourceLength
+        }
+        return result
+    }
+
     static func sourceSlice(
         from source: String,
         startOffset: Int,
@@ -968,19 +1002,16 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     private func renderPlan(targetId: String, generation: UUID, source: String) -> [RenderRequest] {
-        var requests: [RenderRequest] = []
-        var offset = 0
-        while offset < source.count,
-              let request = renderRequest(
-                targetId: targetId,
-                startOffset: offset,
+        RenderedSpeechChunker.sourceSlices(from: source, maxCharacters: maxCharacters).map { planned in
+            RenderRequest(
                 generation: generation,
-                source: source
-              ) {
-            requests.append(request)
-            offset += max(1, request.sourceLength)
+                targetId: targetId,
+                startOffset: planned.startOffset,
+                sourceLength: planned.slice.sourceLength,
+                text: planned.slice.text,
+                boundary: planned.slice.boundary
+            )
         }
-        return requests
     }
 
     private func renderRequest(

@@ -1114,6 +1114,34 @@ public struct Session: Codable, Equatable, Sendable {
     public var position: Position
     public var completionPercent: Int
     public var playbackRate: Double
+
+    public init(
+        id: String,
+        itemId: String,
+        createdAt: Date? = nil,
+        updatedAt: Date? = nil,
+        completedAt: Date? = nil,
+        status: String,
+        phase: SessionPhase,
+        currentTargetType: TargetType,
+        currentTargetId: String,
+        position: Position,
+        completionPercent: Int,
+        playbackRate: Double
+    ) {
+        self.id = id
+        self.itemId = itemId
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.completedAt = completedAt
+        self.status = status
+        self.phase = phase
+        self.currentTargetType = currentTargetType
+        self.currentTargetId = currentTargetId
+        self.position = position
+        self.completionPercent = completionPercent
+        self.playbackRate = playbackRate
+    }
 }
 
 public struct SessionSnapshot: Codable, Equatable, Sendable {

@@ -6,7 +6,6 @@ struct ExperienceLibraryScreen: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @Binding var addSourceRoute: AddSourceRoute?
-    @State private var pendingTrashItem: LibraryItemRow?
 
     private var continueItem: LibraryItemRow? {
         LibraryPresentation.continueItem(in: model.libraryItems, activeItemId: model.activePlaybackItemId)
@@ -18,50 +17,52 @@ struct ExperienceLibraryScreen: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 22) {
-                    ExperienceEditorialHeader(
-                        eyebrow: "Your listening life",
-                        title: "Listen where you left off",
-                        detail: "Your sources, listening progress, and saved Margins stay together."
-                    )
-                    if model.shouldShowOnboardingCard {
-                        onboardingStrip
-                    }
-                    if let continueItem {
-                        continueHero(continueItem)
-                    }
-                    controls
-                    items
+            List {
+                ExperienceEditorialHeader(
+                    eyebrow: "Your listening life",
+                    title: "Listen where you left off",
+                    detail: "Your sources, listening progress, and saved Margins stay together."
+                )
+                .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
+
+                if model.shouldShowOnboardingCard {
+                    onboardingStrip
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
                 }
-                .padding(.horizontal, horizontalSizeClass == .regular ? 28 : 16)
-                .padding(.vertical, 20)
-                .frame(maxWidth: horizontalSizeClass == .regular ? 960 : .infinity)
-                .frame(maxWidth: .infinity)
-                .accessibilityIdentifier("home.screen")
+
+                if let continueItem {
+                    continueHero(continueItem)
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
+                        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                            Button { model.markItemCompleted(id: continueItem.id) } label: {
+                                Label("Complete", systemImage: "checkmark.circle.fill")
+                            }
+                            .tint(AppColors.evergreen)
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) { model.moveItemToTrash(id: continueItem.id) } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                            Button { model.prioritizeOfflinePreparation(id: continueItem.id) } label: {
+                                Label("Offline", systemImage: "arrow.down.circle")
+                            }
+                            .tint(AppColors.ochre)
+                        }
+                }
+
+                controls
+                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
+                items
             }
             .background(AppColors.bone)
-            .accessibilityIdentifier("library.screen")
+            .scrollContentBackground(.hidden)
+            .listStyle(.plain)
+            .accessibilityIdentifier("home.screen")
             .navigationTitle("Library")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
-            .alert(
-                "Move to Recently Deleted?",
-                isPresented: Binding(
-                    get: { pendingTrashItem != nil },
-                    set: { if !$0 { pendingTrashItem = nil } }
-                ),
-                presenting: pendingTrashItem
-            ) { item in
-                Button("Cancel", role: .cancel) {}
-                Button("Move to Recently Deleted", role: .destructive) {
-                    model.moveItemToTrash(id: item.id)
-                    pendingTrashItem = nil
-                }
-            } message: { item in
-                Text("\(item.title) can be restored from Settings.")
-            }
         }
+        .accessibilityIdentifier("library.screen")
     }
 
     @ToolbarContentBuilder
@@ -292,6 +293,7 @@ struct ExperienceLibraryScreen: View {
                 detail: "Add a link, text, document, book, or audiobook to begin.",
                 actionTitle: "Add Source"
             ) { addSourceRoute = .linkOrPodcast }
+            .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
         } else if compactItems.isEmpty {
             SMExperienceEmptyState(
                 systemImage: "magnifyingglass",
@@ -302,31 +304,40 @@ struct ExperienceLibraryScreen: View {
                 model.libraryQuery = LibraryQuery()
                 model.libraryQueryChanged()
             }
+            .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
         } else {
-            VStack(alignment: .leading, spacing: 0) {
+            Section {
+                ForEach(compactItems) { row in
+                    ExperienceLibraryCompactRow(
+                        row: row,
+                        onOpen: { model.openItem(id: row.id) },
+                        onPlay: { model.startItem(id: row.id) },
+                        onComplete: { model.markItemCompleted(id: row.id) },
+                        onPrepareOffline: { model.prioritizeOfflinePreparation(id: row.id) },
+                        onDelete: { model.moveItemToTrash(id: row.id) }
+                    )
+                    .listRowInsets(EdgeInsets(
+                        top: 0,
+                        leading: horizontalSizeClass == .regular ? 28 : 16,
+                        bottom: 0,
+                        trailing: horizontalSizeClass == .regular ? 28 : 16
+                    ))
+                    .listRowBackground(AppColors.bone)
+                    .listRowSeparator(.hidden)
+                }
+            } header: {
                 HStack {
                     Text("In your Library")
                         .font(.system(.title3, design: .serif).weight(.bold))
+                        .foregroundStyle(AppColors.text)
                     Spacer()
                     Text("\(compactItems.count)")
                         .font(.subheadline.monospacedDigit())
                         .foregroundStyle(AppColors.secondaryText)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
-                ForEach(Array(compactItems.enumerated()), id: \.element.id) { index, row in
-                    if index > 0 { Divider().padding(.leading, 90) }
-                    ExperienceLibraryCompactRow(
-                        row: row,
-                        onOpen: { model.openItem(id: row.id) },
-                        onPlay: { model.startItem(id: row.id) },
-                        onDelete: { pendingTrashItem = row }
-                    )
-                }
+                .textCase(nil)
+                .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
             }
-            .background(AppColors.panel)
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay { RoundedRectangle(cornerRadius: 20).stroke(AppColors.border) }
         }
     }
 
@@ -339,6 +350,8 @@ private struct ExperienceLibraryCompactRow: View {
     let row: LibraryItemRow
     let onOpen: () -> Void
     let onPlay: () -> Void
+    let onComplete: () -> Void
+    let onPrepareOffline: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
@@ -357,7 +370,10 @@ private struct ExperienceLibraryCompactRow: View {
                         .multilineTextAlignment(.leading)
                         .lineLimit(1)
                     HStack(spacing: 7) {
-                        if let progress = row.continuationProgressPercent {
+                        if row.isCompleted {
+                            Label("Completed", systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(AppColors.evergreen)
+                        } else if let progress = row.continuationProgressPercent {
                             Text("\(progress)%")
                                 .foregroundStyle(AppColors.evergreen)
                             ProgressView(value: Double(progress), total: 100)
@@ -382,31 +398,49 @@ private struct ExperienceLibraryCompactRow: View {
                     .background(AppColors.softGreen, in: Circle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(row.hasContinuationSession ? "Continue \(row.title)" : "Start \(row.title)")
+            .accessibilityLabel(playActionTitle)
             .accessibilityIdentifier("queue.start.\(row.id)")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, minHeight: 82, alignment: .leading)
         .contentShape(Rectangle())
+        .background(AppColors.panel)
+        .overlay(alignment: .bottom) {
+            Divider().padding(.leading, 90)
+        }
         .contextMenu {
             Button("Open", systemImage: "arrow.right", action: onOpen)
-            Button(row.hasContinuationSession ? "Continue" : "Start", systemImage: "play", action: onPlay)
+            Button(playActionTitle, systemImage: "play", action: onPlay)
+            if !row.isCompleted {
+                Button("Mark Complete", systemImage: "checkmark.circle", action: onComplete)
+            }
+            if row.offlineState != .readyOffline {
+                Button("Prepare Offline", systemImage: "arrow.down.circle", action: onPrepareOffline)
+            }
             if row.canDelete {
                 Button("Move to Recently Deleted", systemImage: "trash", role: .destructive, action: onDelete)
             }
         }
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
-            Button(action: onPlay) { Label("Listen", systemImage: "play.fill") }
-                .tint(AppColors.evergreen)
-                .accessibilityIdentifier("queue.start.\(row.id)")
+            if !row.isCompleted {
+                Button(action: onComplete) { Label("Complete", systemImage: "checkmark.circle.fill") }
+                    .tint(AppColors.evergreen)
+                    .accessibilityIdentifier("library.complete.\(row.id)")
+            }
         }
-        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             if row.canDelete {
                 Button(role: .destructive, action: onDelete) { Label("Delete", systemImage: "trash") }
             }
+            if row.offlineState != .readyOffline {
+                Button(action: onPrepareOffline) { Label("Offline", systemImage: "arrow.down.circle") }
+                    .tint(AppColors.ochre)
+            }
         }
-        .accessibilityAction(named: row.hasContinuationSession ? "Continue" : "Start", onPlay)
+        .accessibilityAction(named: playActionTitle, onPlay)
+        .accessibilityAction(named: "Mark Complete", onComplete)
+        .accessibilityAction(named: "Prepare Offline", onPrepareOffline)
         .accessibilityAction(named: "Move to Recently Deleted", onDelete)
     }
 
@@ -417,6 +451,11 @@ private struct ExperienceLibraryCompactRow: View {
                 return value
             }
             .joined(separator: " · ")
+    }
+
+    private var playActionTitle: String {
+        if row.isCompleted { return "Review \(row.title)" }
+        return row.hasContinuationSession ? "Continue \(row.title)" : "Start \(row.title)"
     }
 
     private var mediaLabel: String {
