@@ -25,7 +25,7 @@ struct ExperienceRootTabs: View {
                 }
                 .tag(AppRoot.library)
 
-            ExperienceSourcesScreen(addSourceRoute: addSourceRoute)
+            ExperienceSourcesScreen()
                 .tabItem {
                     Label("Sources", systemImage: AppRoot.sources.systemImage)
                         .accessibilityIdentifier("navigation.tab.sources")

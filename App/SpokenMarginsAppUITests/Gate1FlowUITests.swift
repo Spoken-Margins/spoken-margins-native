@@ -461,8 +461,10 @@ final class Gate1FlowUITests: XCTestCase {
 
         tapRoot("Sources")
         XCTAssertTrue(element("sources.screen").waitForExistence(timeout: 4))
-        XCTAssertTrue(app.staticTexts["Source inbox"].exists)
-        XCTAssertTrue(scrollToStaticText(containing: "Nothing is imported, downloaded, or prepared").exists)
+        XCTAssertTrue(app.staticTexts["Add a source"].exists)
+        XCTAssertTrue(element("sources.follow.url").waitForExistence(timeout: 4))
+        XCTAssertTrue(element("sources.follow.button").exists)
+        XCTAssertFalse(app.staticTexts["Follow is not Add"].exists)
         XCTAssertTrue(element("miniPlayer.bar").exists)
         assertMiniPlayerClearsRootNavigation()
 

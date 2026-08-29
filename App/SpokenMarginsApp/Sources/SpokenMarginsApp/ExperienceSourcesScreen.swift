@@ -11,17 +11,14 @@ struct ExperienceSourcesScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
-    @Binding var addSourceRoute: AddSourceRoute?
     @State private var filter: Filter = .all
-    @State private var showsFollow = false
     @State private var showsManagement = false
+    @FocusState private var feedURLIsFocused: Bool
 
     var body: some View {
         NavigationStack {
             List {
                 intakeHeader
-                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
-                consentBoundary
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
                 filterBar
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
@@ -32,6 +29,7 @@ struct ExperienceSourcesScreen: View {
             .background(AppColors.bone)
             .scrollContentBackground(.hidden)
             .listStyle(.plain)
+            .animation(.smooth(duration: 0.24), value: filteredCandidates.map(\.id))
             .accessibilityIdentifier("sources.screen")
             .navigationTitle("Sources")
             .navigationBarTitleDisplayMode(.inline)
@@ -57,59 +55,73 @@ struct ExperienceSourcesScreen: View {
     }
 
     private var intakeHeader: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: 20) {
-                sourceInboxTitle
-                Spacer(minLength: 16)
-                addSourceButton
+        VStack(alignment: .leading, spacing: 14) {
+            sourceInboxTitle
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    feedURLField
+                    followButton
+                }
+                VStack(alignment: .leading, spacing: 10) {
+                    feedURLField
+                    followButton
+                }
             }
-            VStack(alignment: .leading, spacing: 14) {
-                sourceInboxTitle
-                addSourceButton
+            ForEach(model.followedSourceCandidates) { candidate in
+                Button {
+                    model.followSourceCandidate(candidate)
+                } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(candidate.source.title ?? candidate.source.host)
+                            .font(.headline)
+                        Text(candidate.source.canonicalURL)
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                }
+                .buttonStyle(.bordered)
+            }
+            if !model.followedSourceCandidates.isEmpty {
+                Button("Cancel", action: model.cancelFollowSourceCandidates)
             }
         }
     }
 
     private var sourceInboxTitle: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text("CHOSEN SOURCES ONLY")
+            Text("RSS & PODCAST FEEDS")
                 .font(.caption.weight(.bold))
                 .tracking(1.15)
                 .foregroundStyle(AppColors.evergreen)
-            Text("Source inbox")
+            Text("Add a source")
                 .font(.system(.largeTitle, design: .serif).weight(.bold))
                 .foregroundStyle(AppColors.text)
         }
     }
 
-    private var addSourceButton: some View {
-        Button { addSourceRoute = .linkOrPodcast } label: {
-            Label("Add a source", systemImage: "plus.circle.fill")
-                .frame(minHeight: 46)
-        }
-        .buttonStyle(.borderedProminent)
-        .tint(AppColors.evergreen)
-        .accessibilityIdentifier("sources.add.button")
+    private var feedURLField: some View {
+        TextField("Paste an RSS feed link", text: $model.followedSourceURL)
+            .textInputAutocapitalization(.never)
+            .keyboardType(.URL)
+            .submitLabel(.go)
+            .focused($feedURLIsFocused)
+            .onSubmit(model.followSource)
+            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay { RoundedRectangle(cornerRadius: 14).stroke(AppColors.border) }
+            .accessibilityIdentifier("sources.follow.url")
     }
 
-    private var consentBoundary: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "hand.raised.fill")
-                .foregroundStyle(AppColors.evergreen)
-                .frame(width: 38, height: 38)
-                .background(AppColors.softGreen, in: Circle())
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Follow is not Add")
-                    .font(.headline)
-                Text("Following checks for future entries. Nothing is imported, downloaded, or prepared until you choose Add.")
-                    .font(.subheadline)
-                    .foregroundStyle(AppColors.secondaryText)
-            }
-        }
-        .padding(15)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AppColors.softGreen.opacity(0.58), in: RoundedRectangle(cornerRadius: 17, style: .continuous))
-        .accessibilityElement(children: .combine)
+    private var followButton: some View {
+        Button("Follow", action: model.followSource)
+            .frame(minHeight: 46)
+            .buttonStyle(.borderedProminent)
+            .tint(AppColors.evergreen)
+            .disabled(model.followedSourceURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .accessibilityIdentifier("sources.follow.button")
     }
 
     private var filterBar: some View {
@@ -140,8 +152,8 @@ struct ExperienceSourcesScreen: View {
                     systemImage: "tray",
                     title: "You’re caught up",
                     detail: emptyDetail,
-                    actionTitle: "Follow or add a source"
-                ) { showsFollow = true }
+                    actionTitle: "Paste a feed link"
+                ) { feedURLIsFocused = true }
                 .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
             } else {
                 ForEach(filteredCandidates) { candidate in
@@ -171,74 +183,36 @@ struct ExperienceSourcesScreen: View {
         }
     }
 
+    @ViewBuilder
     private var sourceSetup: some View {
-        VStack(spacing: 12) {
-            DisclosureGroup("Follow a feed", isExpanded: $showsFollow) {
-                VStack(alignment: .leading, spacing: 12) {
-                    TextField("HTTPS feed URL", text: $model.followedSourceURL)
-                        .textFieldStyle(.roundedBorder)
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.URL)
-                        .accessibilityIdentifier("sources.follow.url")
-                    Button("Follow", action: model.followSource)
-                        .buttonStyle(.borderedProminent)
-                        .tint(AppColors.evergreen)
-                        .disabled(model.followedSourceURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .accessibilityIdentifier("sources.follow.button")
-                    ForEach(model.followedSourceCandidates) { candidate in
-                        Button {
-                            model.followSourceCandidate(candidate)
-                        } label: {
+        if !model.feedSubscriptions.isEmpty {
+            DisclosureGroup("Manage followed feeds", isExpanded: $showsManagement) {
+                VStack(spacing: 0) {
+                    ForEach(model.feedSubscriptions) { subscription in
+                        HStack {
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(candidate.source.title ?? candidate.source.host).font(.headline)
-                                Text(candidate.source.canonicalURL)
+                                Text(subscription.source.title ?? subscription.source.host).font(.headline)
+                                Text(subscription.state.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
                                     .font(.caption)
                                     .foregroundStyle(AppColors.secondaryText)
-                                    .lineLimit(1)
                             }
-                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            Spacer()
+                            Menu {
+                                Button(subscription.state == .muted ? "Unmute" : "Mute") {
+                                    model.toggleMuteSource(id: subscription.id)
+                                }
+                                Button("Unfollow", role: .destructive) { model.unfollowSource(id: subscription.id) }
+                            } label: {
+                                Image(systemName: "ellipsis").frame(width: 44, height: 44)
+                            }
                         }
-                        .buttonStyle(.bordered)
-                    }
-                    if !model.followedSourceCandidates.isEmpty {
-                        Button("Cancel", action: model.cancelFollowSourceCandidates)
+                        .padding(.top, 12)
                     }
                 }
-                .padding(.top, 12)
             }
             .padding(16)
             .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
             .overlay { RoundedRectangle(cornerRadius: 17).stroke(AppColors.border) }
-
-            if !model.feedSubscriptions.isEmpty {
-                DisclosureGroup("Manage followed feeds", isExpanded: $showsManagement) {
-                    VStack(spacing: 0) {
-                        ForEach(model.feedSubscriptions) { subscription in
-                            HStack {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(subscription.source.title ?? subscription.source.host).font(.headline)
-                                    Text(subscription.state.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
-                                        .font(.caption)
-                                        .foregroundStyle(AppColors.secondaryText)
-                                }
-                                Spacer()
-                                Menu {
-                                    Button(subscription.state == .muted ? "Unmute" : "Mute") {
-                                        model.toggleMuteSource(id: subscription.id)
-                                    }
-                                    Button("Unfollow", role: .destructive) { model.unfollowSource(id: subscription.id) }
-                                } label: {
-                                    Image(systemName: "ellipsis").frame(width: 44, height: 44)
-                                }
-                            }
-                            .padding(.top, 12)
-                        }
-                    }
-                }
-                .padding(16)
-                .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
-                .overlay { RoundedRectangle(cornerRadius: 17).stroke(AppColors.border) }
-            }
         }
     }
 
@@ -305,7 +279,6 @@ private struct SourceInboxRow: View {
         .disabled(isImporting)
         .padding(14)
         .background(AppColors.panel)
-        .overlay(alignment: .bottom) { Divider().padding(.leading, 72) }
         .accessibilityIdentifier(identifier)
         .accessibilityHint("Adds this entry to Library and opens it.")
         .swipeActions(edge: .leading, allowsFullSwipe: true) {

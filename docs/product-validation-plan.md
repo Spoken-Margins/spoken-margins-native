@@ -91,7 +91,7 @@ Goal: validate the private Spoken Margins experience and core interaction loop o
 
 - adaptive Library, Sources, and Margins destinations on iPhone and iPad
 - typed Add Source routes for link/podcast, pasted text, document/book, audiobook, and Quick Folder
-- explicit follow-versus-import behavior, with Add Source promoted into the Sources header and no per-entry Add button
+- explicit follow-versus-import behavior, with an inline RSS-feed field in the Sources header and no per-entry Add button
 - two-item starter onboarding, skip, replay, and seeded-item ownership evidence
 - Library resume priority, search, filter, sort, persisted completion, prioritized offline preparation, and recoverable deletion
 - nested Listening Map navigation and mapless sessions

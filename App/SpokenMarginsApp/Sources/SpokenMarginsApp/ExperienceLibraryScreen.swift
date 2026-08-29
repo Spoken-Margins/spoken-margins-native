@@ -57,6 +57,7 @@ struct ExperienceLibraryScreen: View {
             .background(AppColors.bone)
             .scrollContentBackground(.hidden)
             .listStyle(.plain)
+            .animation(.smooth(duration: 0.24), value: compactItems.map(\.id))
             .accessibilityIdentifier("home.screen")
             .navigationTitle("Library")
             .navigationBarTitleDisplayMode(.inline)
@@ -369,20 +370,8 @@ private struct ExperienceLibraryCompactRow: View {
                         .foregroundStyle(AppColors.secondaryText)
                         .multilineTextAlignment(.leading)
                         .lineLimit(1)
-                    HStack(spacing: 7) {
-                        if row.isCompleted {
-                            Label("Completed", systemImage: "checkmark.circle.fill")
-                                .foregroundStyle(AppColors.evergreen)
-                        } else if let progress = row.continuationProgressPercent {
-                            Text("\(progress)%")
-                                .foregroundStyle(AppColors.evergreen)
-                            ProgressView(value: Double(progress), total: 100)
-                                .frame(maxWidth: 90)
-                                .tint(AppColors.ochre)
-                        }
-                        Label(offlineLabel, systemImage: offlineIcon)
-                    }
-                    .font(.caption.weight(.semibold))
+                    rowStatus
+                        .font(.caption.weight(.semibold))
                         .foregroundStyle(AppColors.secondaryText)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -406,9 +395,6 @@ private struct ExperienceLibraryCompactRow: View {
         .frame(maxWidth: .infinity, minHeight: 82, alignment: .leading)
         .contentShape(Rectangle())
         .background(AppColors.panel)
-        .overlay(alignment: .bottom) {
-            Divider().padding(.leading, 90)
-        }
         .contextMenu {
             Button("Open", systemImage: "arrow.right", action: onOpen)
             Button(playActionTitle, systemImage: "play", action: onPlay)
@@ -456,6 +442,42 @@ private struct ExperienceLibraryCompactRow: View {
     private var playActionTitle: String {
         if row.isCompleted { return "Review \(row.title)" }
         return row.hasContinuationSession ? "Continue \(row.title)" : "Start \(row.title)"
+    }
+
+    private var rowStatus: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                listeningStatus
+                offlineStatus
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                listeningStatus
+                offlineStatus
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var listeningStatus: some View {
+        if row.isCompleted {
+            Label("Completed", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(AppColors.evergreen)
+                .fixedSize(horizontal: true, vertical: false)
+        } else if let progress = row.continuationProgressPercent {
+            HStack(spacing: 7) {
+                Text("\(progress)%")
+                    .foregroundStyle(AppColors.evergreen)
+                ProgressView(value: Double(progress), total: 100)
+                    .frame(width: 78)
+                    .tint(AppColors.ochre)
+            }
+            .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+
+    private var offlineStatus: some View {
+        Label(offlineLabel, systemImage: offlineIcon)
+            .fixedSize(horizontal: true, vertical: false)
     }
 
     private var mediaLabel: String {
