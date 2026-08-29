@@ -1,0 +1,27 @@
+{
+  "id": "proposal-001",
+  "schemaVersion": "spoken-margins.listening-map-proposal.v2",
+  "languageCode": "en",
+  "createdAt": "2026-08-22T12:00:00Z",
+  "generator": "hand-authored-fixture",
+  "scenes": [
+    {
+      "id": "scene-001",
+      "order": 0,
+      "title": "Opening question",
+      "summaryText": "The speakers frame the central question.",
+      "summaryProvenance": "sender_authored",
+      "eligibility": "eligible",
+      "startAnchor": {
+        "anchorType": "transcript",
+        "exactText": "Here is the question",
+        "machineEvidenceAssetIds": []
+      },
+      "endAnchor": {
+        "anchorType": "transcript",
+        "exactText": "That frames our discussion",
+        "machineEvidenceAssetIds": []
+      }
+    }
+  ]
+}

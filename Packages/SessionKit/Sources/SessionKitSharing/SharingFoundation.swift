@@ -25,6 +25,7 @@ public enum InterjectionPackagePreparationError: Error, Equatable, LocalizedErro
 
 public enum ReviewedRepresentationSelection: Sendable {
     case textOnly
+    case originalAudio(sourceURL: URL, durationMs: Int)
     case cleanedAudio(sourceURL: URL)
 }
 
@@ -47,32 +48,39 @@ public struct ReviewedInterjectionSelection: Sendable {
     }
 }
 
-public struct PreparedInterjectionPackage: Sendable {
-    public let manifest: InterjectionPackageManifest
-    public let audioFiles: [String: URL]
+public struct ReviewedMachineEvidenceAsset: Sendable {
+    public let id: String
+    public let path: String
+    public let sourceURL: URL
+    public let durationMs: Int
 
-    public init(manifest: InterjectionPackageManifest, audioFiles: [String: URL]) {
-        self.manifest = manifest
-        self.audioFiles = audioFiles
+    public init(id: String, path: String, sourceURL: URL, durationMs: Int) {
+        self.id = id
+        self.path = path
+        self.sourceURL = sourceURL
+        self.durationMs = durationMs
     }
 }
 
-public enum InterjectionPackageBuilder {
+public enum SpokenMarginsPackageBuilder {
     public static func prepare(
         packageId: String,
         createdAt: Date,
         source: SharedSourceIdentity,
         selections: [ReviewedInterjectionSelection],
+        mapProposals: [PortableListeningMapProposalArtifact] = [],
+        machineEvidence: [ReviewedMachineEvidenceAsset] = [],
         senderDisplayLabel: String? = nil,
         suggestedRevealMode: ImportedCommentaryRevealMode? = nil
-    ) throws -> PreparedInterjectionPackage {
+    ) throws -> PreparedSpokenMarginsPackage {
         let scopedIds = selections.map(\.packageScopedId)
         if let duplicate = Dictionary(grouping: scopedIds, by: { $0 }).first(where: { $0.value.count > 1 })?.key {
             throw InterjectionPackagePreparationError.duplicatePackageScopedId(duplicate)
         }
 
         var records: [SharedInterjectionPackageRecord] = []
-        var audioFiles: [String: URL] = [:]
+        var assetFiles: [String: URL] = [:]
+        var assets: [SpokenMarginsAssetDescriptor] = []
         for (index, selection) in selections.enumerated() {
             let revision = selection.revision
             guard revision.status == .senderApproved else {
@@ -87,9 +95,32 @@ public enum InterjectionPackageBuilder {
             switch selection.representation {
             case .textOnly:
                 representation = SharedInterjectionRepresentation(
+                    id: String(format: "representation-%04d-text", index + 1),
                     kind: .textOnly,
                     approvedTranscript: approvedTranscript,
                     provenance: .senderApprovedTextOnly
+                )
+            case .originalAudio(let sourceURL, let durationMs):
+                guard durationMs > 0, durationMs <= 600_000 else {
+                    throw InterjectionPackagePreparationError.cleanedAudioUnavailable(revision.id)
+                }
+                let assetID = String(format: "asset-%04d-original", index + 1)
+                let archivePath = String(format: "assets/audio/margin-%04d-original.m4a", index + 1)
+                assetFiles[archivePath] = sourceURL
+                assets.append(SpokenMarginsAssetDescriptor(
+                    id: assetID,
+                    role: SpokenMarginsAssetRole.originalVoice,
+                    path: archivePath,
+                    mimeType: "audio/mp4",
+                    durationMs: durationMs,
+                    provenance: SharedInterjectionProvenance.senderApprovedOriginal.rawValue
+                ))
+                representation = SharedInterjectionRepresentation(
+                    id: String(format: "representation-%04d-original", index + 1),
+                    kind: .originalAudioAndText,
+                    approvedTranscript: approvedTranscript,
+                    assetId: assetID,
+                    provenance: .senderApprovedOriginal
                 )
             case .cleanedAudio(let sourceURL):
                 guard let cleanedAudioPath = revision.cleanedAudioPath,
@@ -100,14 +131,22 @@ public enum InterjectionPackageBuilder {
                 guard revisionURL == sourceURL.standardizedFileURL else {
                     throw InterjectionPackagePreparationError.cleanedAudioMismatch(revision.id)
                 }
-                let archivePath = String(format: "audio/interjection-%04d.m4a", index + 1)
-                audioFiles[archivePath] = sourceURL
+                let assetID = String(format: "asset-%04d-cleaned", index + 1)
+                let archivePath = String(format: "assets/audio/margin-%04d-cleaned.m4a", index + 1)
+                assetFiles[archivePath] = sourceURL
+                assets.append(SpokenMarginsAssetDescriptor(
+                    id: assetID,
+                    role: SpokenMarginsAssetRole.cleanedVoice,
+                    path: archivePath,
+                    mimeType: "audio/mp4",
+                    durationMs: duration,
+                    provenance: SharedInterjectionProvenance.deterministicCleanupV1SenderApproved.rawValue
+                ))
                 representation = SharedInterjectionRepresentation(
+                    id: String(format: "representation-%04d-cleaned", index + 1),
                     kind: .cleanedAudioAndText,
                     approvedTranscript: approvedTranscript,
-                    audioPath: archivePath,
-                    audioMimeType: "audio/mp4",
-                    audioDurationMs: duration,
+                    assetId: assetID,
                     provenance: .deterministicCleanupV1SenderApproved
                 )
             }
@@ -118,29 +157,77 @@ public enum InterjectionPackageBuilder {
                     prefix: revision.anchorBefore,
                     suffix: revision.anchorAfter
                 ),
-                representation: representation
+                defaultRepresentationId: representation.id,
+                representations: [representation]
             ))
         }
 
-        return PreparedInterjectionPackage(
-            manifest: InterjectionPackageManifest(
+        for evidence in machineEvidence {
+            assetFiles[evidence.path] = evidence.sourceURL
+            assets.append(SpokenMarginsAssetDescriptor(
+                id: evidence.id,
+                role: SpokenMarginsAssetRole.acousticSignature,
+                path: evidence.path,
+                mimeType: "application/vnd.apple.shazam.signature",
+                durationMs: evidence.durationMs,
+                provenance: "exact_playback_edition"
+            ))
+        }
+
+        let commentary = SharedCommentaryLayerArtifact(
+            id: "commentary-layer",
+            interjections: records
+        )
+        let commentaryPath = "artifacts/commentary-layer.json"
+        var artifactData = [commentaryPath: try encodeArtifact(commentary)]
+        var artifacts = [SpokenMarginsArtifactDescriptor(
+            id: commentary.id,
+            kind: SpokenMarginsArtifactKind.commentaryLayer,
+            schemaVersion: commentary.schemaVersion,
+            path: commentaryPath,
+            required: true
+        )]
+        for (index, proposal) in mapProposals.enumerated() {
+            let path = String(format: "artifacts/listening-map-proposal-%04d.json", index + 1)
+            artifactData[path] = try encodeArtifact(proposal)
+            artifacts.append(SpokenMarginsArtifactDescriptor(
+                id: proposal.id,
+                kind: SpokenMarginsArtifactKind.listeningMapProposal,
+                schemaVersion: proposal.schemaVersion,
+                path: path,
+                required: false
+            ))
+        }
+
+        return PreparedSpokenMarginsPackage(
+            manifest: SpokenMarginsPackageManifest(
                 packageId: packageId,
                 createdAt: createdAt,
                 source: source,
-                interjections: records,
                 senderDisplayLabel: senderDisplayLabel,
-                suggestedRevealMode: suggestedRevealMode
+                suggestedRevealMode: suggestedRevealMode,
+                requiredCapabilities: [SharedCommentaryLayerArtifact.schemaVersion],
+                artifacts: artifacts,
+                assets: assets
             ),
-            audioFiles: audioFiles
+            artifactData: artifactData,
+            assetFiles: assetFiles
         )
+    }
+
+    private static func encodeArtifact<T: Encodable>(_ value: T) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        encoder.dateEncodingStrategy = .iso8601
+        return try encoder.encode(value)
     }
 }
 
-public enum InterjectionPackageImporter {
+public enum SpokenMarginsPackageImporter {
     public typealias LocalIDProvider = (_ kind: String, _ packageScopedID: String) -> String
 
     public static func importPackage(
-        _ contents: VerifiedInterjectionPackage,
+        _ contents: VerifiedSpokenMarginsPackage,
         itemId: String? = nil,
         localSource: SharedSourceIdentity? = nil,
         sourceText: String? = nil,
@@ -152,22 +239,36 @@ public enum InterjectionPackageImporter {
         guard let digest = manifest.contentDigest else {
             throw InterjectionPackagePreparationError.missingVerifiedDigest
         }
+        guard let commentary = contents.commentaryLayers.first else {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("required commentary layer is absent")
+        }
         let sourceResolution = localSource.map {
-            ImportedSourceResolver.resolve(package: manifest, against: $0, sourceText: sourceText)
-        } ?? ImportedSourceResolver.pending(package: manifest)
+            ImportedSourceResolver.resolve(
+                source: manifest.source,
+                interjections: commentary.interjections,
+                against: $0,
+                sourceText: sourceText
+            )
+        } ?? ImportedSourceResolver.pending(interjections: commentary.interjections)
         let layerID = makeLocalID("layer", manifest.packageId)
-        let packageIDs = Set([manifest.packageId] + manifest.interjections.map(\.packageScopedId))
+        let packageIDs = Set([manifest.packageId] + commentary.interjections.map(\.packageScopedId))
         guard !layerID.isEmpty, !packageIDs.contains(layerID) else {
             throw InterjectionPackagePreparationError.invalidLocalIdentity(layerID)
         }
         var generatedIDs: Set<String> = [layerID]
         var importedInterjections: [ImportedCommentaryInterjection] = []
-        for record in manifest.interjections {
+        for record in commentary.interjections {
             let localID = makeLocalID("interjection", record.packageScopedId)
             guard !localID.isEmpty,
                   !packageIDs.contains(localID),
                   generatedIDs.insert(localID).inserted else {
                 throw InterjectionPackagePreparationError.invalidLocalIdentity(localID)
+            }
+            guard let representation = record.defaultRepresentation else {
+                throw SpokenMarginsPackageArchiveError.invalidManifest("default representation is absent")
+            }
+            let asset = representation.assetId.flatMap { assetID in
+                manifest.assets.first { $0.id == assetID }
             }
             importedInterjections.append(ImportedCommentaryInterjection(
                 id: localID,
@@ -175,9 +276,9 @@ public enum InterjectionPackageImporter {
                 packageScopedId: record.packageScopedId,
                 createdAt: record.createdAt,
                 anchorEvidence: record.anchor,
-                approvedTranscript: record.representation.approvedTranscript,
-                audioPath: record.representation.audioPath.flatMap { contents.extractedAudioURLs[$0]?.path },
-                audioDurationMs: record.representation.audioDurationMs,
+                approvedTranscript: representation.approvedTranscript,
+                audioPath: asset.flatMap { contents.extractedAssetURLs[$0.id]?.path },
+                audioDurationMs: asset?.durationMs,
                 resolution: sourceResolution.anchorsByPackageScopedId[record.packageScopedId]
                     ?? ImportedAnchorResolution(evidenceClass: .unresolved)
             ))
@@ -202,3 +303,9 @@ public enum InterjectionPackageImporter {
         "imported-\(kind)-\(UUID().uuidString.lowercased())"
     }
 }
+
+@available(*, deprecated, renamed: "SpokenMarginsPackageBuilder")
+public typealias InterjectionPackageBuilder = SpokenMarginsPackageBuilder
+
+@available(*, deprecated, renamed: "SpokenMarginsPackageImporter")
+public typealias InterjectionPackageImporter = SpokenMarginsPackageImporter

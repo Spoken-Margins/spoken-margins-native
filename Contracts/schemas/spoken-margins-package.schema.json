@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spokenmargins.local/schemas/spoken-margins-package.schema.json",
+  "title": "Spoken Margins portable package manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "packageId", "createdAt", "contentDigest", "source",
+    "requiredCapabilities", "artifacts", "assets", "redactions"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "spoken-margins.package.v1" },
+    "packageId": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "contentDigest": { "$ref": "#/$defs/sha256" },
+    "senderDisplayLabel": { "type": ["string", "null"], "maxLength": 120 },
+    "suggestedRevealMode": { "enum": ["fresh", "companion", "guided", null] },
+    "source": { "$ref": "#/$defs/source" },
+    "requiredCapabilities": {
+      "type": "array", "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+    },
+    "artifacts": {
+      "type": "array", "minItems": 1, "maxItems": 25,
+      "items": { "$ref": "#/$defs/artifact" }
+    },
+    "assets": {
+      "type": "array", "maxItems": 200,
+      "items": { "$ref": "#/$defs/asset" }
+    },
+    "redactions": { "$ref": "#/$defs/redactions" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "httpsURL": { "type": "string", "format": "uri", "pattern": "^[hH][tT][tT][pP][sS]://" },
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sourceType", "canonicalURL", "title"],
+      "properties": {
+        "sourceType": { "enum": ["article", "podcast", "other"] },
+        "canonicalURL": { "$ref": "#/$defs/httpsURL" },
+        "originalURL": { "anyOf": [{ "$ref": "#/$defs/httpsURL" }, { "type": "null" }] },
+        "feedURL": { "anyOf": [{ "$ref": "#/$defs/httpsURL" }, { "type": "null" }] },
+        "title": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "author": { "type": ["string", "null"], "maxLength": 300 },
+        "publisher": { "type": ["string", "null"], "maxLength": 300 },
+        "showTitle": { "type": ["string", "null"], "maxLength": 500 },
+        "episodeGUID": { "type": ["string", "null"], "maxLength": 1000 },
+        "enclosureURL": { "anyOf": [{ "$ref": "#/$defs/httpsURL" }, { "type": "null" }] },
+        "publishedAt": { "type": ["string", "null"], "maxLength": 100 },
+        "durationMs": { "type": ["integer", "null"], "minimum": 0 },
+        "normalizedContentSHA256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },
+        "exactEditionSHA256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },
+        "languageCode": { "type": ["string", "null"], "maxLength": 35 }
+      }
+    },
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "kind", "schemaVersion", "path", "required", "byteCount", "sha256"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "kind": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "schemaVersion": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "path": { "type": "string", "pattern": "^artifacts/[A-Za-z0-9._-]+\\.json$" },
+        "required": { "type": "boolean" },
+        "byteCount": { "type": "integer", "minimum": 0, "maximum": 5242880 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "asset": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "role", "path", "mimeType", "provenance", "byteCount", "sha256"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "role": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "path": {
+          "type": "string",
+          "pattern": "^assets/(audio/[A-Za-z0-9._-]+\\.m4a|evidence/[A-Za-z0-9._-]+\\.shazamsignature)$"
+        },
+        "mimeType": { "enum": ["audio/mp4", "application/vnd.apple.shazam.signature"] },
+        "durationMs": { "type": ["integer", "null"], "minimum": 0, "maximum": 600000 },
+        "provenance": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "byteCount": { "type": "integer", "minimum": 0, "maximum": 20971520 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "redactions": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "rawAudioOmitted", "rawTranscriptOmitted", "fullSourceTextOmitted", "sourceAudioOmitted",
+        "diagnosticsOmitted", "filesystemPathsOmitted", "unrelatedTurnsOmitted", "privateRepresentationsOmitted"
+      ],
+      "properties": {
+        "rawAudioOmitted": { "const": true },
+        "rawTranscriptOmitted": { "const": true },
+        "fullSourceTextOmitted": { "const": true },
+        "sourceAudioOmitted": { "const": true },
+        "diagnosticsOmitted": { "const": true },
+        "filesystemPathsOmitted": { "const": true },
+        "unrelatedTurnsOmitted": { "const": true },
+        "privateRepresentationsOmitted": { "const": true }
+      }
+    }
+  }
+}

@@ -1,34 +1,25 @@
 {
-  "schemaVersion": "spoken-margins.interjection-package.v1",
+  "schemaVersion": "spoken-margins.package.v1",
   "packageId": "private-url-package",
   "createdAt": "2026-08-22T12:00:00Z",
   "contentDigest": "4444444444444444444444444444444444444444444444444444444444444444",
   "source": {
-    "sourceType": "article",
-    "canonicalURL": "https://example.com/article",
-    "originalURL": "file:///private/Library/secret.html",
-    "title": "Private path must not cross the package boundary"
+    "sourceType": "article", "canonicalURL": "https://example.com/article",
+    "originalURL": "file:///private/Library/secret.html", "title": "Private path"
   },
-  "interjections": [
+  "requiredCapabilities": ["spoken-margins.commentary-layer.v1"],
+  "artifacts": [
     {
-      "packageScopedId": "margin-001",
-      "createdAt": "2026-08-22T11:30:00Z",
-      "anchor": { "anchorType": "text" },
-      "representation": {
-        "kind": "text_only",
-        "approvedTranscript": "Reviewed text.",
-        "provenance": "sender_approved_text_only"
-      }
+      "id": "commentary-layer", "kind": "commentary_layer",
+      "schemaVersion": "spoken-margins.commentary-layer.v1",
+      "path": "artifacts/commentary-layer.json", "required": true, "byteCount": 20,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }
   ],
+  "assets": [],
   "redactions": {
-    "rawAudioOmitted": true,
-    "rawTranscriptOmitted": true,
-    "fullSourceTextOmitted": true,
-    "sourceAudioOmitted": true,
-    "diagnosticsOmitted": true,
-    "filesystemPathsOmitted": true,
-    "unrelatedTurnsOmitted": true,
-    "privateRepresentationsOmitted": true
+    "rawAudioOmitted": true, "rawTranscriptOmitted": true, "fullSourceTextOmitted": true,
+    "sourceAudioOmitted": true, "diagnosticsOmitted": true, "filesystemPathsOmitted": true,
+    "unrelatedTurnsOmitted": true, "privateRepresentationsOmitted": true
   }
 }

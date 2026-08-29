@@ -255,7 +255,7 @@ Destructive actions require explicit intent. Removing or replacing one represent
 
 Sharing uses immutable reviewed revisions rather than modifying a private `Interjection`. A revision records the sender-approved transcript, optional cleaned-audio reference, deterministic cleanup decisions, and at most 500 characters of context on either side of the anchor. Draft and review-pending revisions cannot be packaged.
 
-`spoken-margins.interjection-package.v1` is a data-minimized, integrity-checked transport contract. Its manifest contains only source identity, bounded anchor evidence, explicitly selected reviewed representations, and redaction assertions. Raw captures, unselected representations, complete source text or audio, diagnostics, filesystem paths, and unrelated turns are not package fields. Cleaned audio uses archive-relative `audio/*.m4a` paths; local source paths are never serialized.
+`spoken-margins.package.v1` is the unpublished format's final data-minimized, integrity-checked envelope. The manifest declares source identity, required capabilities, typed artifacts, typed assets, content hashes, and redaction assertions. `spoken-margins.commentary-layer.v1` carries bounded durable anchors and explicitly selected reviewed representations. `spoken-margins.listening-map-proposal.v2` can carry portable scene proposals without treating sender timestamps as recipient-local truth. Raw private captures, unselected representations, complete source text or audio, diagnostics, filesystem paths, and unrelated turns are not package fields. Voice assets use `assets/audio/*.m4a`; acoustic evidence uses `assets/evidence/*.shazamsignature`; local source paths are never serialized.
 
 The content digest covers the canonical sorted-key manifest with its digest omitted, the generated `preview.md`, and each sorted audio path, byte digest, and byte count. Digest success means **integrity checked, unsigned sender**; it is not identity authentication. Only a successful archive read can create the verified-package value accepted by the importer. Malformed archives or JSON, unknown fields, unsafe entries, non-HTTPS source URLs, unsupported schema versions, missing privacy assertions, attachment mismatches, unreadable audio, and digest or preview mismatches are rejected before import. Export replacement and audio extraction use staged same-directory items so failure preserves an existing destination.
 
@@ -267,9 +267,11 @@ Contract fixture registration:
 
 | Fixture family | Schema | Expected result |
 | --- | --- | --- |
-| `fixtures/interjection-packages/*.json` | `interjection-package.schema.json` | valid |
+| `fixtures/interjection-packages/*.json` | `spoken-margins-package.schema.json` | valid |
 | `fixtures/sharing/cleanup-revision.json` | `interjection-share-revision.schema.json` | valid |
-| `fixtures/invalid/interjection-packages/*.json` | `interjection-package.schema.json` | invalid; the validator fails if one passes |
+| `fixtures/sharing/commentary-layer.json` | `shared-commentary-layer.schema.json` | valid |
+| `fixtures/sharing/listening-map-proposal.json` | `portable-listening-map-proposal.schema.json` | valid |
+| `fixtures/invalid/interjection-packages/*.json` | `spoken-margins-package.schema.json` | invalid; the validator fails if one passes |
 
 ## Snapshot
 

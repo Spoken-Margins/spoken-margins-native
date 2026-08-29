@@ -1,12 +1,12 @@
 {
-  "schemaVersion": "spoken-margins.interjection-package.v1",
+  "schemaVersion": "spoken-margins.package.v1",
   "packageId": "package-podcast-001",
   "createdAt": "2026-08-22T12:00:00Z",
   "contentDigest": "1111111111111111111111111111111111111111111111111111111111111111",
   "source": {
     "sourceType": "podcast",
     "canonicalURL": "https://example.com/podcast/episode-1",
-    "originalURL": "https://example.com/podcast/episode-1",
+    "feedURL": "https://example.com/podcast/feed.xml",
     "title": "An Episode",
     "publisher": "Example Publisher",
     "showTitle": "Example Show",
@@ -14,33 +14,35 @@
     "enclosureURL": "https://cdn.example.com/episode-1.m4a",
     "publishedAt": "2026-08-20T12:00:00Z",
     "durationMs": 1800000,
-    "exactEditionSHA256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    "exactEditionSHA256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "languageCode": "en"
   },
-  "interjections": [
-    {
-      "packageScopedId": "margin-001",
-      "createdAt": "2026-08-22T11:30:00Z",
-      "anchor": {
-        "anchorType": "media",
-        "mediaTimeMs": 321000,
-        "roughPercent": 18,
-        "exactText": "A bounded transcript excerpt.",
-        "prefix": "A little before.",
-        "suffix": "A little after.",
-        "transcriptSegmentId": "segment-42"
-      },
-      "representation": {
-        "kind": "cleaned_audio_and_text",
-        "approvedTranscript": "This is the reviewed note.",
-        "audioPath": "audio/margin-001.m4a",
-        "audioMimeType": "audio/mp4",
-        "audioDurationMs": 4200,
-        "provenance": "deterministic_cleanup_v1_sender_approved"
-      }
-    }
-  ],
   "senderDisplayLabel": "A Friend",
   "suggestedRevealMode": "companion",
+  "requiredCapabilities": ["spoken-margins.commentary-layer.v1"],
+  "artifacts": [
+    {
+      "id": "commentary-layer",
+      "kind": "commentary_layer",
+      "schemaVersion": "spoken-margins.commentary-layer.v1",
+      "path": "artifacts/commentary-layer.json",
+      "required": true,
+      "byteCount": 800,
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "assets": [
+    {
+      "id": "asset-0001-cleaned",
+      "role": "cleaned_voice",
+      "path": "assets/audio/margin-0001-cleaned.m4a",
+      "mimeType": "audio/mp4",
+      "durationMs": 4200,
+      "provenance": "deterministic_cleanup_v1_sender_approved",
+      "byteCount": 42000,
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  ],
   "redactions": {
     "rawAudioOmitted": true,
     "rawTranscriptOmitted": true,

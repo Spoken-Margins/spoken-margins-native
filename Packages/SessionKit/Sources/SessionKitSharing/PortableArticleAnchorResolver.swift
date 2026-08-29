@@ -195,31 +195,32 @@ public enum PortableArticleAnchorResolver {
 
 public enum ImportedSourceResolver {
     public static func pending(
-        package: InterjectionPackageManifest
+        interjections: [SharedInterjectionPackageRecord]
     ) -> ImportedPackageSourceResolution {
         result(
             status: .pending,
-            package: package,
+            interjections: interjections,
             evidenceClass: .unresolved
         )
     }
 
     public static func resolve(
-        package: InterjectionPackageManifest,
+        source: SharedSourceIdentity,
+        interjections: [SharedInterjectionPackageRecord],
         against localSource: SharedSourceIdentity,
         sourceText: String?
     ) -> ImportedPackageSourceResolution {
-        guard sourcesCanRepresentSameWork(package.source, localSource) else {
-            return result(status: .wrongSource, package: package, evidenceClass: .unresolved)
+        guard sourcesCanRepresentSameWork(source, localSource) else {
+            return result(status: .wrongSource, interjections: interjections, evidenceClass: .unresolved)
         }
-        guard package.source.sourceType == .article, let sourceText else {
-            return result(status: .contextOnly, package: package, evidenceClass: .unresolved)
+        guard source.sourceType == .article, let sourceText else {
+            return result(status: .contextOnly, interjections: interjections, evidenceClass: .unresolved)
         }
-        let resolutions = Dictionary(uniqueKeysWithValues: package.interjections.map { record in
+        let resolutions = Dictionary(uniqueKeysWithValues: interjections.map { record in
             (record.packageScopedId, PortableArticleAnchorResolver.resolve(
                 anchor: record.anchor,
                 in: sourceText,
-                expectedExactEditionSHA256: package.source.exactEditionSHA256
+                expectedExactEditionSHA256: source.exactEditionSHA256
             ))
         })
         if resolutions.values.contains(where: \.isAmbiguous) {
@@ -233,12 +234,12 @@ public enum ImportedSourceResolver {
 
     private static func result(
         status: ImportedSourceResolutionStatus,
-        package: InterjectionPackageManifest,
+        interjections: [SharedInterjectionPackageRecord],
         evidenceClass: AnchorResolutionEvidenceClass
     ) -> ImportedPackageSourceResolution {
         ImportedPackageSourceResolution(
             status: status,
-            anchorsByPackageScopedId: Dictionary(uniqueKeysWithValues: package.interjections.map {
+            anchorsByPackageScopedId: Dictionary(uniqueKeysWithValues: interjections.map {
                 ($0.packageScopedId, ImportedAnchorResolution(evidenceClass: evidenceClass))
             })
         )

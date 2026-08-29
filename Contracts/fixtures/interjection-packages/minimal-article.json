@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "spoken-margins.interjection-package.v1",
+  "schemaVersion": "spoken-margins.package.v1",
   "packageId": "package-article-001",
   "createdAt": "2026-08-22T12:00:00Z",
   "contentDigest": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -9,30 +9,24 @@
     "originalURL": "https://example.com/article?ref=share",
     "title": "A Useful Article",
     "author": "Example Author",
-    "publisher": "Example Publisher"
+    "publisher": "Example Publisher",
+    "languageCode": "en"
   },
-  "interjections": [
-    {
-      "packageScopedId": "margin-001",
-      "createdAt": "2026-08-22T11:30:00Z",
-      "anchor": {
-        "anchorType": "text",
-        "startChar": 240,
-        "endChar": 280,
-        "exactText": "The durable idea that prompted this note.",
-        "prefix": "Before this passage.",
-        "suffix": "After this passage.",
-        "roughPercent": 20
-      },
-      "representation": {
-        "kind": "text_only",
-        "approvedTranscript": "This changes how I think about the problem.",
-        "provenance": "sender_approved_text_only"
-      }
-    }
-  ],
   "senderDisplayLabel": "A Friend",
   "suggestedRevealMode": "companion",
+  "requiredCapabilities": ["spoken-margins.commentary-layer.v1"],
+  "artifacts": [
+    {
+      "id": "commentary-layer",
+      "kind": "commentary_layer",
+      "schemaVersion": "spoken-margins.commentary-layer.v1",
+      "path": "artifacts/commentary-layer.json",
+      "required": true,
+      "byteCount": 640,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "assets": [],
   "redactions": {
     "rawAudioOmitted": true,
     "rawTranscriptOmitted": true,

@@ -1,0 +1,36 @@
+{
+  "id": "commentary-layer",
+  "schemaVersion": "spoken-margins.commentary-layer.v1",
+  "interjections": [
+    {
+      "packageScopedId": "margin-001",
+      "createdAt": "2026-08-22T11:30:00Z",
+      "anchor": {
+        "anchorType": "media",
+        "mediaTimeMs": 321000,
+        "roughPercent": 18,
+        "exactText": "A bounded transcript excerpt.",
+        "prefix": "A little before.",
+        "suffix": "A little after.",
+        "transcriptSegmentId": "segment-42",
+        "machineEvidenceAssetIds": []
+      },
+      "defaultRepresentationId": "representation-0001-original",
+      "representations": [
+        {
+          "id": "representation-0001-original",
+          "kind": "original_audio_and_text",
+          "approvedTranscript": "This is the reviewed note.",
+          "assetId": "asset-0001-original",
+          "provenance": "sender_approved_original"
+        },
+        {
+          "id": "representation-0001-summary",
+          "kind": "summary_text",
+          "approvedTranscript": "A concise future Skim representation.",
+          "provenance": "sender_approved_summary"
+        }
+      ]
+    }
+  ]
+}

@@ -142,6 +142,7 @@ public struct SharedSourceIdentity: Codable, Equatable, Sendable {
     public let sourceType: SharedSourceType
     public let canonicalURL: String
     public let originalURL: String?
+    public let feedURL: String?
     public let title: String
     public let author: String?
     public let publisher: String?
@@ -152,11 +153,13 @@ public struct SharedSourceIdentity: Codable, Equatable, Sendable {
     public let durationMs: Int?
     public let normalizedContentSHA256: String?
     public let exactEditionSHA256: String?
+    public let languageCode: String?
 
     public init(
         sourceType: SharedSourceType,
         canonicalURL: String,
         originalURL: String? = nil,
+        feedURL: String? = nil,
         title: String,
         author: String? = nil,
         publisher: String? = nil,
@@ -166,11 +169,13 @@ public struct SharedSourceIdentity: Codable, Equatable, Sendable {
         publishedAt: String? = nil,
         durationMs: Int? = nil,
         normalizedContentSHA256: String? = nil,
-        exactEditionSHA256: String? = nil
+        exactEditionSHA256: String? = nil,
+        languageCode: String? = nil
     ) {
         self.sourceType = sourceType
         self.canonicalURL = canonicalURL
         self.originalURL = originalURL
+        self.feedURL = feedURL
         self.title = title
         self.author = author
         self.publisher = publisher
@@ -181,6 +186,7 @@ public struct SharedSourceIdentity: Codable, Equatable, Sendable {
         self.durationMs = durationMs
         self.normalizedContentSHA256 = normalizedContentSHA256
         self.exactEditionSHA256 = exactEditionSHA256
+        self.languageCode = languageCode
     }
 }
 
@@ -195,6 +201,7 @@ public struct PortableAnchorEvidence: Codable, Equatable, Sendable {
     public let roughPercent: Int?
     public let transcriptSegmentId: String?
     public let chapterTitle: String?
+    public let machineEvidenceAssetIds: [String]
 
     public init(
         anchorType: AnchorType,
@@ -206,7 +213,8 @@ public struct PortableAnchorEvidence: Codable, Equatable, Sendable {
         mediaTimeMs: Int? = nil,
         roughPercent: Int? = nil,
         transcriptSegmentId: String? = nil,
-        chapterTitle: String? = nil
+        chapterTitle: String? = nil,
+        machineEvidenceAssetIds: [String] = []
     ) {
         self.anchorType = anchorType
         self.startChar = startChar
@@ -218,6 +226,7 @@ public struct PortableAnchorEvidence: Codable, Equatable, Sendable {
         self.roughPercent = roughPercent
         self.transcriptSegmentId = transcriptSegmentId
         self.chapterTitle = chapterTitle
+        self.machineEvidenceAssetIds = machineEvidenceAssetIds
     }
 
     public func bounded(
@@ -238,7 +247,8 @@ public struct PortableAnchorEvidence: Codable, Equatable, Sendable {
             mediaTimeMs: mediaTimeMs,
             roughPercent: roughPercent.map { min(100, max(0, $0)) },
             transcriptSegmentId: transcriptSegmentId,
-            chapterTitle: chapterTitle
+            chapterTitle: chapterTitle,
+            machineEvidenceAssetIds: machineEvidenceAssetIds
         )
     }
 }
@@ -266,6 +276,11 @@ public enum AnchorResolutionEvidenceClass: String, Codable, Equatable, Sendable 
     case exactEdition = "exact_edition"
     case articleTextVerified = "article_text_verified"
     case transcriptVerified = "transcript_verified"
+    case acousticVerified = "acoustic_verified"
+    case fused
+    case mapInterpolated = "map_interpolated"
+    case timestampFallback = "timestamp_fallback"
+    case recipientConfirmed = "recipient_confirmed"
     case ambiguous
     case absentFromRecipientEdition = "absent_from_recipient_edition"
     case unresolved
@@ -406,36 +421,40 @@ public enum ImportedCommentaryImportDisposition: Equatable, Sendable {
 }
 
 public enum SharedInterjectionRepresentationKind: String, Codable, Equatable, Sendable {
+    case originalAudioAndText = "original_audio_and_text"
     case cleanedAudioAndText = "cleaned_audio_and_text"
     case textOnly = "text_only"
+    case summaryText = "summary_text"
+    case summaryAudioAndText = "summary_audio_and_text"
+    case ttsAudioAndText = "tts_audio_and_text"
 }
 
 public enum SharedInterjectionProvenance: String, Codable, Equatable, Sendable {
+    case senderApprovedOriginal = "sender_approved_original"
     case deterministicCleanupV1SenderApproved = "deterministic_cleanup_v1_sender_approved"
     case senderApprovedTextOnly = "sender_approved_text_only"
+    case senderApprovedSummary = "sender_approved_summary"
+    case senderApprovedTTS = "sender_approved_tts"
 }
 
-public struct SharedInterjectionRepresentation: Codable, Equatable, Sendable {
+public struct SharedInterjectionRepresentation: Codable, Equatable, Sendable, Identifiable {
+    public let id: String
     public let kind: SharedInterjectionRepresentationKind
     public let approvedTranscript: String
-    public let audioPath: String?
-    public let audioMimeType: String?
-    public let audioDurationMs: Int?
+    public let assetId: String?
     public let provenance: SharedInterjectionProvenance
 
     public init(
+        id: String,
         kind: SharedInterjectionRepresentationKind,
         approvedTranscript: String,
-        audioPath: String? = nil,
-        audioMimeType: String? = nil,
-        audioDurationMs: Int? = nil,
+        assetId: String? = nil,
         provenance: SharedInterjectionProvenance
     ) {
+        self.id = id
         self.kind = kind
         self.approvedTranscript = approvedTranscript
-        self.audioPath = audioPath
-        self.audioMimeType = audioMimeType
-        self.audioDurationMs = audioDurationMs
+        self.assetId = assetId
         self.provenance = provenance
     }
 }
@@ -444,18 +463,192 @@ public struct SharedInterjectionPackageRecord: Codable, Equatable, Sendable {
     public let packageScopedId: String
     public let createdAt: Date
     public let anchor: PortableAnchorEvidence
-    public let representation: SharedInterjectionRepresentation
+    public let defaultRepresentationId: String
+    public let representations: [SharedInterjectionRepresentation]
 
     public init(
         packageScopedId: String,
         createdAt: Date,
         anchor: PortableAnchorEvidence,
-        representation: SharedInterjectionRepresentation
+        defaultRepresentationId: String,
+        representations: [SharedInterjectionRepresentation]
     ) {
         self.packageScopedId = packageScopedId
         self.createdAt = createdAt
         self.anchor = anchor
-        self.representation = representation
+        self.defaultRepresentationId = defaultRepresentationId
+        self.representations = representations
+    }
+
+    public var defaultRepresentation: SharedInterjectionRepresentation? {
+        representations.first { $0.id == defaultRepresentationId }
+    }
+}
+
+public struct SharedCommentaryLayerArtifact: Codable, Equatable, Sendable, Identifiable {
+    public static let schemaVersion = "spoken-margins.commentary-layer.v1"
+
+    public let id: String
+    public let schemaVersion: String
+    public let interjections: [SharedInterjectionPackageRecord]
+
+    public init(
+        id: String,
+        schemaVersion: String = SharedCommentaryLayerArtifact.schemaVersion,
+        interjections: [SharedInterjectionPackageRecord]
+    ) {
+        self.id = id
+        self.schemaVersion = schemaVersion
+        self.interjections = interjections
+    }
+}
+
+public enum PortableSceneEligibility: String, Codable, Equatable, Sendable {
+    case eligible
+    case excluded
+    case unknown
+}
+
+public enum PortableSummaryProvenance: String, Codable, Equatable, Sendable {
+    case publisherSupplied = "publisher_supplied"
+    case senderAuthored = "sender_authored"
+    case deterministic
+    case modelGenerated = "model_generated"
+}
+
+public struct PortableListeningMapScene: Codable, Equatable, Sendable, Identifiable {
+    public let id: String
+    public let order: Int
+    public let title: String?
+    public let summaryText: String?
+    public let summaryAssetId: String?
+    public let summaryProvenance: PortableSummaryProvenance?
+    public let eligibility: PortableSceneEligibility
+    public let eligibilityReason: String?
+    public let startAnchor: PortableAnchorEvidence
+    public let endAnchor: PortableAnchorEvidence
+
+    public init(
+        id: String,
+        order: Int,
+        title: String? = nil,
+        summaryText: String? = nil,
+        summaryAssetId: String? = nil,
+        summaryProvenance: PortableSummaryProvenance? = nil,
+        eligibility: PortableSceneEligibility,
+        eligibilityReason: String? = nil,
+        startAnchor: PortableAnchorEvidence,
+        endAnchor: PortableAnchorEvidence
+    ) {
+        self.id = id
+        self.order = order
+        self.title = title
+        self.summaryText = summaryText
+        self.summaryAssetId = summaryAssetId
+        self.summaryProvenance = summaryProvenance
+        self.eligibility = eligibility
+        self.eligibilityReason = eligibilityReason
+        self.startAnchor = startAnchor
+        self.endAnchor = endAnchor
+    }
+}
+
+public struct PortableListeningMapProposalArtifact: Codable, Equatable, Sendable, Identifiable {
+    public static let schemaVersion = "spoken-margins.listening-map-proposal.v2"
+
+    public let id: String
+    public let schemaVersion: String
+    public let languageCode: String?
+    public let createdAt: Date
+    public let generator: String
+    public let scenes: [PortableListeningMapScene]
+
+    public init(
+        id: String,
+        schemaVersion: String = PortableListeningMapProposalArtifact.schemaVersion,
+        languageCode: String? = nil,
+        createdAt: Date,
+        generator: String,
+        scenes: [PortableListeningMapScene]
+    ) {
+        self.id = id
+        self.schemaVersion = schemaVersion
+        self.languageCode = languageCode
+        self.createdAt = createdAt
+        self.generator = generator
+        self.scenes = scenes
+    }
+}
+
+public enum SpokenMarginsArtifactKind {
+    public static let commentaryLayer = "commentary_layer"
+    public static let listeningMapProposal = "listening_map_proposal"
+}
+
+public struct SpokenMarginsArtifactDescriptor: Codable, Equatable, Sendable, Identifiable {
+    public let id: String
+    public let kind: String
+    public let schemaVersion: String
+    public let path: String
+    public let required: Bool
+    public var byteCount: Int?
+    public var sha256: String?
+
+    public init(
+        id: String,
+        kind: String,
+        schemaVersion: String,
+        path: String,
+        required: Bool,
+        byteCount: Int? = nil,
+        sha256: String? = nil
+    ) {
+        self.id = id
+        self.kind = kind
+        self.schemaVersion = schemaVersion
+        self.path = path
+        self.required = required
+        self.byteCount = byteCount
+        self.sha256 = sha256
+    }
+}
+
+public enum SpokenMarginsAssetRole {
+    public static let originalVoice = "original_voice"
+    public static let cleanedVoice = "cleaned_voice"
+    public static let summaryVoice = "summary_voice"
+    public static let ttsVoice = "tts_voice"
+    public static let acousticSignature = "acoustic_signature"
+}
+
+public struct SpokenMarginsAssetDescriptor: Codable, Equatable, Sendable, Identifiable {
+    public let id: String
+    public let role: String
+    public let path: String
+    public let mimeType: String
+    public let durationMs: Int?
+    public let provenance: String
+    public var byteCount: Int?
+    public var sha256: String?
+
+    public init(
+        id: String,
+        role: String,
+        path: String,
+        mimeType: String,
+        durationMs: Int? = nil,
+        provenance: String,
+        byteCount: Int? = nil,
+        sha256: String? = nil
+    ) {
+        self.id = id
+        self.role = role
+        self.path = path
+        self.mimeType = mimeType
+        self.durationMs = durationMs
+        self.provenance = provenance
+        self.byteCount = byteCount
+        self.sha256 = sha256
     }
 }
 
@@ -501,26 +694,30 @@ public struct InterjectionPackageRedactions: Codable, Equatable, Sendable {
     }
 }
 
-public struct InterjectionPackageManifest: Codable, Equatable, Sendable {
+public struct SpokenMarginsPackageManifest: Codable, Equatable, Sendable {
     public let schemaVersion: String
     public let packageId: String
     public let createdAt: Date
     public var contentDigest: String?
     public let source: SharedSourceIdentity
-    public let interjections: [SharedInterjectionPackageRecord]
     public let senderDisplayLabel: String?
     public let suggestedRevealMode: ImportedCommentaryRevealMode?
+    public let requiredCapabilities: [String]
+    public var artifacts: [SpokenMarginsArtifactDescriptor]
+    public var assets: [SpokenMarginsAssetDescriptor]
     public let redactions: InterjectionPackageRedactions
 
     public init(
-        schemaVersion: String = "spoken-margins.interjection-package.v1",
+        schemaVersion: String = "spoken-margins.package.v1",
         packageId: String,
         createdAt: Date,
         contentDigest: String? = nil,
         source: SharedSourceIdentity,
-        interjections: [SharedInterjectionPackageRecord],
         senderDisplayLabel: String? = nil,
         suggestedRevealMode: ImportedCommentaryRevealMode? = nil,
+        requiredCapabilities: [String] = [SharedCommentaryLayerArtifact.schemaVersion],
+        artifacts: [SpokenMarginsArtifactDescriptor],
+        assets: [SpokenMarginsAssetDescriptor] = [],
         redactions: InterjectionPackageRedactions = .init()
     ) {
         self.schemaVersion = schemaVersion
@@ -528,9 +725,27 @@ public struct InterjectionPackageManifest: Codable, Equatable, Sendable {
         self.createdAt = createdAt
         self.contentDigest = contentDigest
         self.source = source
-        self.interjections = interjections
         self.senderDisplayLabel = senderDisplayLabel
         self.suggestedRevealMode = suggestedRevealMode
+        self.requiredCapabilities = requiredCapabilities
+        self.artifacts = artifacts
+        self.assets = assets
         self.redactions = redactions
+    }
+}
+
+public struct PreparedSpokenMarginsPackage: Sendable {
+    public let manifest: SpokenMarginsPackageManifest
+    public let artifactData: [String: Data]
+    public let assetFiles: [String: URL]
+
+    public init(
+        manifest: SpokenMarginsPackageManifest,
+        artifactData: [String: Data],
+        assetFiles: [String: URL]
+    ) {
+        self.manifest = manifest
+        self.artifactData = artifactData
+        self.assetFiles = assetFiles
     }
 }

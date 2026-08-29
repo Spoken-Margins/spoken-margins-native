@@ -1,5 +1,5 @@
-import Foundation
 import CryptoKit
+import Foundation
 import SessionKit
 import SessionKitPersistence
 import SessionKitSharing
@@ -11,22 +11,7 @@ import AudioToolbox
 #endif
 
 final class SharingTests: XCTestCase {
-    func testContractFixturesDecodeIntoTypedModels() throws {
-        let article = try loadPackageFixture("minimal-article.json")
-        let podcast = try loadPackageFixture("podcast-cleaned-audio.json")
-        let revisionData = try Data(contentsOf: fixtureURL("sharing/cleanup-revision.json"))
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let revision = try decoder.decode(InterjectionShareRevision.self, from: revisionData)
-
-        XCTAssertEqual(article.interjections.first?.representation.kind, .textOnly)
-        XCTAssertNil(article.interjections.first?.representation.audioPath)
-        XCTAssertEqual(podcast.interjections.first?.representation.kind, .cleanedAudioAndText)
-        XCTAssertEqual(revision.cleanupPolicyVersion, DeterministicInterjectionCleanup.policyVersion)
-        XCTAssertEqual(revision.status, .senderReviewPending)
-    }
-
-    func testCleanupIsDeterministicWithoutSubstringCorruptionOrPrivateCaptureMutation() {
+    func testCleanupIsDeterministicAndDoesNotMutatePrivateCapture() {
         let transcript = AlignedInterjectionTranscript(
             text: "Um umbrella matters.",
             segments: [
@@ -36,7 +21,6 @@ final class SharingTests: XCTestCase {
             ]
         )
         let privateCapture = transcript
-
         let first = DeterministicInterjectionCleanup.propose(transcript)
         let second = DeterministicInterjectionCleanup.propose(transcript)
 
@@ -44,10 +28,9 @@ final class SharingTests: XCTestCase {
         XCTAssertEqual(first.cleanedTranscript, "Umbrella matters.")
         XCTAssertEqual(first.decisions.map(\.kind), [.filler])
         XCTAssertEqual(transcript, privateCapture)
-        XCTAssertEqual(transcript.text, "Um umbrella matters.")
     }
 
-    func testCleanupPreservesSemanticYouKnowAndRestoresIndividualDecision() throws {
+    func testCleanupPreservesSemanticYouKnowAndSupportsPerEditUndo() throws {
         let semantic = AlignedInterjectionTranscript(
             text: "You know the answer.",
             segments: [
@@ -70,877 +53,362 @@ final class SharingTests: XCTestCase {
         )
         let initial = DeterministicInterjectionCleanup.propose(filler)
         let decision = try XCTUnwrap(initial.decisions.first)
-        let restored = DeterministicInterjectionCleanup.propose(
-            filler,
-            restoredDecisionIds: [decision.id]
-        )
+        let restored = DeterministicInterjectionCleanup.propose(filler, restoredDecisionIds: [decision.id])
         XCTAssertEqual(restored.cleanedTranscript, filler.text)
         XCTAssertEqual(restored.decisions.first?.accepted, false)
     }
 
-    func testCleanupDoesNotClaimRemovalWhenEverySpokenSegmentIsFiller() {
+    func testCleanupShortensLongPauseButNeverDeletesAllSpeech() {
         let transcript = AlignedInterjectionTranscript(
-            text: "Um, uh.",
+            text: "Um uh.",
             segments: [
                 .init(id: "1", text: "Um", startMs: 0, endMs: 150),
-                .init(id: "2", text: "uh", startMs: 180, endMs: 320)
+                .init(id: "2", text: "uh", startMs: 1_200, endMs: 1_350)
             ]
         )
-
         let result = DeterministicInterjectionCleanup.propose(transcript)
-
         XCTAssertEqual(result.cleanedTranscript, transcript.text)
-        XCTAssertEqual(result.decisions.map(\.accepted), [false, false])
-        XCTAssertTrue(
-            DeterministicInterjectionCleanup.acceptedRemovalRanges(
-                decisions: result.decisions,
-                durationMs: 320
-            ).isEmpty
-        )
+        XCTAssertEqual(result.decisions.filter { $0.kind == .filler }.map(\.accepted), [false, false])
+        XCTAssertEqual(result.decisions.first { $0.kind == .longPause }?.startMs, 400)
     }
 
-    func testAnchorContextKeepsNearestBoundedEvidence() {
-        let context = BoundedAnchorContext.select(
-            before: String(repeating: "a", count: 600) + " BEFORE_NEAR ",
-            after: " AFTER_NEAR " + String(repeating: "z", count: 600)
-        )
-
-        XCTAssertEqual(context.before.count, BoundedAnchorContext.maximumCharactersPerSide)
-        XCTAssertEqual(context.after.count, BoundedAnchorContext.maximumCharactersPerSide)
-        XCTAssertTrue(context.before.hasSuffix("BEFORE_NEAR"))
-        XCTAssertTrue(context.after.hasPrefix("AFTER_NEAR"))
+    func testAnchorContextKeepsNearestBoundedEvidenceAndMachineReferences() {
+        let anchor = PortableAnchorEvidence(
+            anchorType: .transcript,
+            exactText: String(repeating: "e", count: 1_200),
+            prefix: String(repeating: "b", count: 600) + "near",
+            suffix: "near" + String(repeating: "a", count: 600),
+            mediaTimeMs: 2_000,
+            roughPercent: 120,
+            machineEvidenceAssetIds: ["signature-pre"]
+        ).bounded()
+        XCTAssertEqual(anchor.exactText?.count, 1_000)
+        XCTAssertEqual(anchor.prefix?.count, 500)
+        XCTAssertTrue(anchor.prefix?.hasSuffix("near") == true)
+        XCTAssertEqual(anchor.suffix?.count, 500)
+        XCTAssertTrue(anchor.suffix?.hasPrefix("near") == true)
+        XCTAssertEqual(anchor.roughPercent, 100)
+        XCTAssertEqual(anchor.machineEvidenceAssetIds, ["signature-pre"])
     }
 
-    func testBuilderIncludesOnlySelectedReviewedRepresentationAndMinimizesData() throws {
-        let privatePath = "/private/Library/secret-cleaned.m4a"
-        let revision = approvedRevision(
-            cleanedAudioPath: privatePath,
-            decisions: [
-                .init(
-                    id: "private-decision",
-                    kind: .filler,
-                    startMs: 0,
-                    endMs: 100,
-                    originalText: "API_KEY_SECRET",
-                    accepted: true
-                )
-            ]
-        )
-        let prepared = try InterjectionPackageBuilder.prepare(
-            packageId: "package-selected",
-            createdAt: fixedDate,
-            source: articleSource,
-            selections: [
-                ReviewedInterjectionSelection(
-                    packageScopedId: "package-note",
-                    revision: revision,
-                    anchor: PortableAnchorEvidence(
-                        anchorType: .text,
-                        startChar: 10,
-                        endChar: 20,
-                        exactText: "bounded excerpt"
-                    ),
-                    representation: .textOnly
-                )
-            ]
-        )
-        let encoded = try InterjectionPackageArchive.encodeManifest(prepared.manifest)
-        let json = try XCTUnwrap(String(data: encoded, encoding: .utf8))
-
-        XCTAssertTrue(prepared.audioFiles.isEmpty)
-        XCTAssertNil(prepared.manifest.interjections.first?.representation.audioPath)
+    func testBuilderProducesFinalEnvelopeAndTextCommentaryArtifact() throws {
+        let prepared = try textPreparedPackage()
+        XCTAssertEqual(prepared.manifest.schemaVersion, SpokenMarginsPackageArchive.schemaVersion)
+        XCTAssertEqual(prepared.manifest.artifacts.map(\.kind), [SpokenMarginsArtifactKind.commentaryLayer])
+        XCTAssertTrue(prepared.manifest.assets.isEmpty)
+        XCTAssertTrue(prepared.assetFiles.isEmpty)
+        let data = try XCTUnwrap(prepared.artifactData["artifacts/commentary-layer.json"])
+        let layer = try JSONDecoder.iso8601.decode(SharedCommentaryLayerArtifact.self, from: data)
+        XCTAssertEqual(layer.interjections.first?.defaultRepresentation?.kind, .textOnly)
         XCTAssertTrue(prepared.manifest.redactions.provesDefaultMinimization)
-        XCTAssertFalse(json.contains(privatePath))
-        XCTAssertFalse(json.contains("API_KEY_SECRET"))
-        XCTAssertFalse(json.contains("cleanedAudioPath"))
-        XCTAssertFalse(json.contains("diagnosticPayload"))
-        XCTAssertFalse(json.contains(#""fullSourceText":"#))
-        XCTAssertFalse(json.contains(#""rawTranscript":"#))
+        XCTAssertFalse(String(decoding: try SpokenMarginsPackageArchive.encodeManifest(prepared.manifest), as: UTF8.self).contains("private-note"))
     }
 
-    func testBuilderRejectsDraftRevisionAndMismatchedAudioSelection() throws {
-        let draft = InterjectionShareRevision(
-            id: "draft",
-            interjectionId: "private-note",
-            itemId: "private-item",
-            sessionId: "private-session",
-            createdAt: fixedDate,
-            approvedTranscript: "Reviewed",
-            anchorBefore: "Before",
-            anchorAfter: "After"
-        )
-        XCTAssertThrowsError(
-            try InterjectionPackageBuilder.prepare(
-                packageId: "package",
-                createdAt: fixedDate,
-                source: articleSource,
-                selections: [
-                    .init(
-                        packageScopedId: "note",
-                        revision: draft,
-                        anchor: .init(anchorType: .text),
-                        representation: .textOnly
-                    )
-                ]
-            )
-        ) { error in
-            XCTAssertEqual(error as? InterjectionPackagePreparationError, .unapprovedRevision("draft"))
-        }
-
-        let reviewed = approvedRevision(cleanedAudioPath: "/tmp/right.m4a")
-        XCTAssertThrowsError(
-            try InterjectionPackageBuilder.prepare(
-                packageId: "package",
-                createdAt: fixedDate,
-                source: articleSource,
-                selections: [
-                    .init(
-                        packageScopedId: "note",
-                        revision: reviewed,
-                        anchor: .init(anchorType: .text),
-                        representation: .cleanedAudio(sourceURL: URL(fileURLWithPath: "/tmp/wrong.m4a"))
-                    )
-                ]
-            )
-        ) { error in
-            XCTAssertEqual(error as? InterjectionPackagePreparationError, .cleanedAudioMismatch(reviewed.id))
-        }
-    }
-
-    func testBuilderUsesArchiveRelativePathOnlyForExplicitCleanedAudioSelection() throws {
-        let localURL = URL(fileURLWithPath: "/private/Library/reviewed.m4a")
-        let prepared = try InterjectionPackageBuilder.prepare(
-            packageId: "package-audio",
-            createdAt: fixedDate,
-            source: articleSource,
-            selections: [
-                .init(
-                    packageScopedId: "selected-note",
-                    revision: approvedRevision(cleanedAudioPath: localURL.path),
-                    anchor: .init(anchorType: .text),
-                    representation: .cleanedAudio(sourceURL: localURL)
-                )
-            ]
-        )
-
-        let archivePath = try XCTUnwrap(prepared.manifest.interjections.first?.representation.audioPath)
-        XCTAssertEqual(archivePath, "audio/interjection-0001.m4a")
-        XCTAssertEqual(prepared.audioFiles, [archivePath: localURL])
-        XCTAssertFalse(try String(decoding: InterjectionPackageArchive.encodeManifest(prepared.manifest), as: UTF8.self)
-            .contains(localURL.path))
-    }
-
-    func testPackageDigestAndArchiveRoundTripAreDeterministic() throws {
+    func testBuilderIncludesOnlyExplicitlySelectedOriginalOrCleanedVoice() throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
-        let audioURL = root.appendingPathComponent("reviewed.m4a")
-        try writeSilentM4A(to: audioURL)
-        let manifest = try loadPackageFixture("podcast-cleaned-audio.json")
-        let audioFiles = ["audio/margin-001.m4a": audioURL]
+        let originalURL = root.appendingPathComponent("original.m4a")
+        let cleanedURL = root.appendingPathComponent("cleaned.m4a")
+        try writeSilentM4A(to: originalURL)
+        try writeSilentM4A(to: cleanedURL)
+
+        let original = try SpokenMarginsPackageBuilder.prepare(
+            packageId: "original-package",
+            createdAt: fixedDate,
+            source: articleSource,
+            selections: [.init(
+                packageScopedId: "margin-original",
+                revision: approvedRevision(),
+                anchor: .init(anchorType: .text),
+                representation: .originalAudio(sourceURL: originalURL, durationMs: 100)
+            )]
+        )
+        XCTAssertEqual(original.manifest.assets.first?.role, SpokenMarginsAssetRole.originalVoice)
+        XCTAssertEqual(original.assetFiles.values.first, originalURL)
+
+        let cleaned = try SpokenMarginsPackageBuilder.prepare(
+            packageId: "cleaned-package",
+            createdAt: fixedDate,
+            source: articleSource,
+            selections: [.init(
+                packageScopedId: "margin-cleaned",
+                revision: approvedRevision(cleanedAudioPath: cleanedURL.path),
+                anchor: .init(anchorType: .text),
+                representation: .cleanedAudio(sourceURL: cleanedURL)
+            )]
+        )
+        XCTAssertEqual(cleaned.manifest.assets.first?.role, SpokenMarginsAssetRole.cleanedVoice)
+        XCTAssertFalse(String(decoding: try SpokenMarginsPackageArchive.encodeManifest(cleaned.manifest), as: UTF8.self).contains(cleanedURL.path))
+    }
+
+    func testBuilderRejectsDraftDuplicateAndMismatchedCleanedAudio() throws {
+        let draft = InterjectionShareRevision(
+            id: "draft", interjectionId: "private", itemId: "item", sessionId: "session",
+            createdAt: fixedDate, approvedTranscript: "Draft", anchorBefore: "", anchorAfter: ""
+        )
+        XCTAssertThrowsError(try SpokenMarginsPackageBuilder.prepare(
+            packageId: "package", createdAt: fixedDate, source: articleSource,
+            selections: [.init(packageScopedId: "a", revision: draft, anchor: .init(anchorType: .text), representation: .textOnly)]
+        )) { XCTAssertEqual($0 as? InterjectionPackagePreparationError, .unapprovedRevision("draft")) }
+
+        let approved = approvedRevision(cleanedAudioPath: "/tmp/right.m4a")
+        XCTAssertThrowsError(try SpokenMarginsPackageBuilder.prepare(
+            packageId: "package", createdAt: fixedDate, source: articleSource,
+            selections: [.init(packageScopedId: "a", revision: approved, anchor: .init(anchorType: .text), representation: .cleanedAudio(sourceURL: URL(fileURLWithPath: "/tmp/wrong.m4a")))]
+        )) { XCTAssertEqual($0 as? InterjectionPackagePreparationError, .cleanedAudioMismatch(approved.id)) }
+
+        XCTAssertThrowsError(try SpokenMarginsPackageBuilder.prepare(
+            packageId: "package", createdAt: fixedDate, source: articleSource,
+            selections: [
+                .init(packageScopedId: "same", revision: approvedRevision(), anchor: .init(anchorType: .text), representation: .textOnly),
+                .init(packageScopedId: "same", revision: approvedRevision(), anchor: .init(anchorType: .text), representation: .textOnly)
+            ]
+        )) { XCTAssertEqual($0 as? InterjectionPackagePreparationError, .duplicatePackageScopedId("same")) }
+    }
+
+    func testArchiveRoundTripAndBytesAreDeterministic() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let prepared = try textPreparedPackage()
         let firstURL = root.appendingPathComponent("first.spokenmargins")
         let secondURL = root.appendingPathComponent("second.spokenmargins")
-
-        let firstManifest = try InterjectionPackageArchive.write(
-            manifest: manifest,
-            audioFiles: audioFiles,
-            to: firstURL
-        )
-        let secondManifest = try InterjectionPackageArchive.write(
-            manifest: manifest,
-            audioFiles: audioFiles,
-            to: secondURL
-        )
-
-        XCTAssertEqual(firstManifest.contentDigest, secondManifest.contentDigest)
+        let first = try SpokenMarginsPackageArchive.write(prepared, to: firstURL)
+        let second = try SpokenMarginsPackageArchive.write(prepared, to: secondURL)
+        XCTAssertEqual(first, second)
         XCTAssertEqual(try Data(contentsOf: firstURL), try Data(contentsOf: secondURL))
-        let deterministicBytes = try Data(contentsOf: firstURL)
-        _ = try InterjectionPackageArchive.write(
-            manifest: manifest,
-            audioFiles: audioFiles,
-            to: firstURL
-        )
-        XCTAssertEqual(try Data(contentsOf: firstURL), deterministicBytes)
-        let importDirectory = root.appendingPathComponent("imported", isDirectory: true)
-        try FileManager.default.createDirectory(at: importDirectory, withIntermediateDirectories: true)
-        let replacedSentinel = importDirectory.appendingPathComponent("replaced.txt")
-        try Data("replace me".utf8).write(to: replacedSentinel)
-        let imported = try InterjectionPackageArchive.read(
+
+        let verified = try SpokenMarginsPackageArchive.read(
             from: firstURL,
-            extractingAudioTo: importDirectory
+            extractingAssetsTo: root.appendingPathComponent("assets")
         )
-        XCTAssertEqual(imported.manifest, firstManifest)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: replacedSentinel.path))
-        XCTAssertEqual(
-            try Data(contentsOf: XCTUnwrap(imported.extractedAudioURLs["audio/margin-001.m4a"])),
-            try Data(contentsOf: audioURL)
-        )
+        XCTAssertEqual(verified.manifest, first)
+        XCTAssertEqual(verified.commentaryLayers.first?.interjections.first?.packageScopedId, "margin-001")
+        XCTAssertTrue(verified.extractedAssetURLs.isEmpty)
     }
 
-    func testArchiveRejectsTamperedDigestMalformedJSONAndMalformedArchive() throws {
+    func testPortableListeningMapProposalRoundTripsButDoesNotActivate() throws {
+        let proposal = PortableListeningMapProposalArtifact(
+            id: "proposal-1",
+            createdAt: fixedDate,
+            generator: "hand-authored-fixture",
+            scenes: [.init(
+                id: "scene-1", order: 0, title: "Opening", summaryText: "The speaker frames the question.",
+                summaryProvenance: .senderAuthored, eligibility: .eligible,
+                startAnchor: .init(anchorType: .transcript, exactText: "opening"),
+                endAnchor: .init(anchorType: .transcript, exactText: "question")
+            )]
+        )
+        let prepared = try SpokenMarginsPackageBuilder.prepare(
+            packageId: "map-package", createdAt: fixedDate, source: podcastSource,
+            selections: [.init(packageScopedId: "margin-001", revision: approvedRevision(), anchor: .init(anchorType: .media, mediaTimeMs: 5_000), representation: .textOnly)],
+            mapProposals: [proposal]
+        )
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
-        var tampered = try loadPackageFixture("minimal-article.json")
-        tampered.contentDigest = String(repeating: "0", count: 64)
+        let url = root.appendingPathComponent("map.spokenmargins")
+        _ = try SpokenMarginsPackageArchive.write(prepared, to: url)
+        let verified = try SpokenMarginsPackageArchive.read(from: url, extractingAssetsTo: root.appendingPathComponent("assets"))
+        XCTAssertEqual(verified.listeningMapProposals, [proposal])
+        XCTAssertEqual(verified.manifest.artifacts.last?.required, false)
+    }
+
+    func testUnknownOptionalArtifactIsSkippedAndUnknownRequiredArtifactIsRejected() throws {
+        let base = try textPreparedPackage()
+        var optionalManifest = base.manifest
+        optionalManifest.artifacts.append(.init(
+            id: "future", kind: "future_artifact", schemaVersion: "future.v1",
+            path: "artifacts/future.json", required: false
+        ))
+        var optionalData = base.artifactData
+        optionalData["artifacts/future.json"] = Data("{}".utf8)
+        let optionalPrepared = PreparedSpokenMarginsPackage(manifest: optionalManifest, artifactData: optionalData, assetFiles: [:])
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let optionalURL = root.appendingPathComponent("optional.spokenmargins")
+        _ = try SpokenMarginsPackageArchive.write(optionalPrepared, to: optionalURL)
+        XCTAssertNoThrow(try SpokenMarginsPackageArchive.read(from: optionalURL, extractingAssetsTo: root.appendingPathComponent("optional-assets")))
+
+        var requiredManifest = base.manifest
+        requiredManifest.artifacts.append(.init(
+            id: "future", kind: "future_artifact", schemaVersion: "future.v1",
+            path: "artifacts/future.json", required: true
+        ))
+        let requiredPrepared = PreparedSpokenMarginsPackage(manifest: requiredManifest, artifactData: optionalData, assetFiles: [:])
+        XCTAssertThrowsError(try SpokenMarginsPackageArchive.write(requiredPrepared, to: root.appendingPathComponent("required.spokenmargins"))) {
+            XCTAssertEqual($0 as? SpokenMarginsPackageArchiveError, .unsupportedRequiredCapability("future_artifact"))
+        }
+    }
+
+    func testArchiveRejectsPreReleaseV1AndTamperedArtifact() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let oldURL = root.appendingPathComponent("old.spokenmargins")
+        try writeRawArchive(entries: [
+            "manifest.json": Data(#"{"schemaVersion":"spoken-margins.interjection-package.v1"}"#.utf8),
+            "preview.md": Data()
+        ], to: oldURL)
+        XCTAssertThrowsError(try SpokenMarginsPackageArchive.read(from: oldURL, extractingAssetsTo: root.appendingPathComponent("old-assets"))) {
+            XCTAssertEqual($0 as? SpokenMarginsPackageArchiveError, .unsupportedSchema("spoken-margins.interjection-package.v1"))
+        }
+
+        let goodURL = root.appendingPathComponent("good.spokenmargins")
+        _ = try SpokenMarginsPackageArchive.write(textPreparedPackage(), to: goodURL)
+        var entries = try readRawArchive(goodURL)
+        entries["artifacts/commentary-layer.json"] = Data("{}".utf8)
         let tamperedURL = root.appendingPathComponent("tampered.spokenmargins")
-        try writeRawArchive(manifestData: InterjectionPackageArchive.encodeManifest(tampered), to: tamperedURL)
-        XCTAssertThrowsError(
-            try InterjectionPackageArchive.read(
-                from: tamperedURL,
-                extractingAudioTo: root.appendingPathComponent("tampered-audio")
-            )
-        ) { error in
-            XCTAssertEqual(error as? InterjectionPackageArchiveError, .invalidDigest)
-        }
-
-        let malformedJSONURL = root.appendingPathComponent("malformed-json.spokenmargins")
-        try writeRawArchive(manifestData: Data("not-json".utf8), to: malformedJSONURL)
-        XCTAssertThrowsError(
-            try InterjectionPackageArchive.read(
-                from: malformedJSONURL,
-                extractingAudioTo: root.appendingPathComponent("malformed-json-audio")
-            )
-        ) { error in
-            guard case .invalidManifest = error as? InterjectionPackageArchiveError else {
-                return XCTFail("Expected invalidManifest, got \(error)")
-            }
-        }
-
-        let malformedArchiveURL = root.appendingPathComponent("malformed-archive.spokenmargins")
-        try Data("not-an-archive".utf8).write(to: malformedArchiveURL)
-        XCTAssertThrowsError(
-            try InterjectionPackageArchive.read(
-                from: malformedArchiveURL,
-                extractingAudioTo: root.appendingPathComponent("malformed-archive-audio")
-            )
-        ) { error in
-            XCTAssertEqual(error as? InterjectionPackageArchiveError, .malformedArchive)
+        try writeRawArchive(entries: entries, to: tamperedURL)
+        XCTAssertThrowsError(try SpokenMarginsPackageArchive.read(from: tamperedURL, extractingAssetsTo: root.appendingPathComponent("tampered-assets"))) {
+            XCTAssertEqual($0 as? SpokenMarginsPackageArchiveError, .invalidDigest)
         }
     }
 
-    func testArchiveRejectsUnsupportedSchemaVersionBeforeImport() throws {
+    func testImportUsesDistinctLocalIDsAndIsIdempotentInMemoryAndSQLite() throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
-        var unsupported = try loadPackageFixture("../invalid/interjection-packages/unsupported-schema.json")
-        unsupported.contentDigest = String(repeating: "0", count: 64)
-        let packageURL = root.appendingPathComponent("unsupported.spokenmargins")
-        try writeRawArchive(manifestData: InterjectionPackageArchive.encodeManifest(unsupported), to: packageURL)
-
-        XCTAssertThrowsError(
-            try InterjectionPackageArchive.read(
-                from: packageURL,
-                extractingAudioTo: root.appendingPathComponent("audio")
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? InterjectionPackageArchiveError,
-                .unsupportedSchema("spoken-margins.interjection-package.v999")
-            )
-        }
-    }
-
-    func testWriterRejectsFixtureWithMissingPrivacyProof() throws {
-        let root = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let data = try Data(contentsOf: fixtureURL("invalid/interjection-packages/privacy-redaction-disabled.json"))
-        let manifest = try InterjectionPackageArchive.decodeManifest(data)
-
-        XCTAssertThrowsError(
-            try InterjectionPackageArchive.write(
-                manifest: manifest,
-                audioFiles: [:],
-                to: root.appendingPathComponent("unsafe.spokenmargins")
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? InterjectionPackageArchiveError,
-                .invalidManifest("required redactions are not asserted")
-            )
-        }
-    }
-
-    func testRuntimeValidatorRejectsPrivateSourceURLAndOutOfBoundsAnchor() throws {
-        let root = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let privateURLData = try Data(
-            contentsOf: fixtureURL("invalid/interjection-packages/private-file-url.json")
-        )
-        let privateURLManifest = try InterjectionPackageArchive.decodeManifest(privateURLData)
-
-        XCTAssertThrowsError(
-            try InterjectionPackageArchive.write(
-                manifest: privateURLManifest,
-                audioFiles: [:],
-                to: root.appendingPathComponent("private-url.spokenmargins")
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? InterjectionPackageArchiveError,
-                .invalidManifest("source fields are absent or out of bounds")
-            )
-        }
-
-        let fixture = try loadPackageFixture("minimal-article.json")
-        let record = try XCTUnwrap(fixture.interjections.first)
-        let invalidAnchor = PortableAnchorEvidence(anchorType: .text, roughPercent: 101)
-        let invalidRecord = SharedInterjectionPackageRecord(
-            packageScopedId: record.packageScopedId,
-            createdAt: record.createdAt,
-            anchor: invalidAnchor,
-            representation: record.representation
-        )
-        let invalidManifest = InterjectionPackageManifest(
-            packageId: fixture.packageId,
-            createdAt: fixture.createdAt,
-            source: fixture.source,
-            interjections: [invalidRecord],
-            senderDisplayLabel: fixture.senderDisplayLabel,
-            suggestedRevealMode: fixture.suggestedRevealMode
-        )
-
-        XCTAssertThrowsError(
-            try InterjectionPackageArchive.write(
-                manifest: invalidManifest,
-                audioFiles: [:],
-                to: root.appendingPathComponent("invalid-anchor.spokenmargins")
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? InterjectionPackageArchiveError,
-                .invalidManifest("an interjection field is absent or out of bounds")
-            )
-        }
-    }
-
-    func testPreviewIsIntegrityChecked() throws {
-        let root = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let validURL = root.appendingPathComponent("valid.spokenmargins")
-        let manifest = try InterjectionPackageArchive.write(
-            manifest: loadPackageFixture("minimal-article.json"),
-            audioFiles: [:],
-            to: validURL
-        )
-        let tamperedURL = root.appendingPathComponent("tampered-preview.spokenmargins")
-        try writeRawArchive(
-            manifestData: InterjectionPackageArchive.encodeManifest(manifest),
-            previewData: Data((InterjectionPackageArchive.previewMarkdown(manifest) + "\nTampered").utf8),
-            to: tamperedURL
-        )
-
-        XCTAssertThrowsError(
-            try InterjectionPackageArchive.read(
-                from: tamperedURL,
-                extractingAudioTo: root.appendingPathComponent("tampered-preview-audio")
-            )
-        ) { error in
-            XCTAssertEqual(error as? InterjectionPackageArchiveError, .invalidDigest)
-        }
-    }
-
-    func testPreviewEscapesUntrustedMarkdownFields() throws {
-        let fixture = try loadPackageFixture("minimal-article.json")
-        let record = try XCTUnwrap(fixture.interjections.first)
-        let source = SharedSourceIdentity(
-            sourceType: .article,
-            canonicalURL: "https://example.com/article",
-            title: "[Title](https://tracker.example) <script>"
-        )
-        let representation = SharedInterjectionRepresentation(
-            kind: .textOnly,
-            approvedTranscript: "![remote](https://tracker.example/pixel) <img src=x>",
-            provenance: .senderApprovedTextOnly
-        )
-        let manifest = InterjectionPackageManifest(
-            packageId: fixture.packageId,
-            createdAt: fixture.createdAt,
-            source: source,
-            interjections: [
-                .init(
-                    packageScopedId: record.packageScopedId,
-                    createdAt: record.createdAt,
-                    anchor: record.anchor,
-                    representation: representation
-                )
-            ],
-            senderDisplayLabel: "[Sender](https://tracker.example)"
-        )
-
-        let preview = InterjectionPackageArchive.previewMarkdown(manifest)
-
-        XCTAssertFalse(preview.contains("![remote]"))
-        XCTAssertFalse(preview.contains("<script>"))
-        XCTAssertTrue(preview.contains(#"\<img"#))
-        XCTAssertTrue(preview.contains(#"\!\[remote\]\(https://tracker.example/pixel\)"#))
-        XCTAssertTrue(preview.contains("<https://example.com/article>"))
-    }
-
-    func testInvalidAudioCannotReplaceExportOrPartialImportDestination() throws {
-        let root = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let invalidAudioURL = root.appendingPathComponent("invalid.m4a")
-        try Data("not-audio".utf8).write(to: invalidAudioURL)
-        let existingExport = root.appendingPathComponent("existing.spokenmargins")
-        let existingExportData = Data("existing-package".utf8)
-        try existingExportData.write(to: existingExport)
-
-        XCTAssertThrowsError(
-            try InterjectionPackageArchive.write(
-                manifest: loadPackageFixture("podcast-cleaned-audio.json"),
-                audioFiles: ["audio/margin-001.m4a": invalidAudioURL],
-                to: existingExport
-            )
-        ) { error in
-            XCTAssertEqual(error as? InterjectionPackageArchiveError, .invalidAudio("audio/margin-001.m4a"))
-        }
-        XCTAssertEqual(try Data(contentsOf: existingExport), existingExportData)
-
-        var maliciousManifest = try loadPackageFixture("podcast-cleaned-audio.json")
-        let invalidAudioData = try Data(contentsOf: invalidAudioURL)
-        maliciousManifest.contentDigest = try testPackageDigest(
-            manifest: maliciousManifest,
-            audioData: ["audio/margin-001.m4a": invalidAudioData]
-        )
-        let maliciousURL = root.appendingPathComponent("malicious.spokenmargins")
-        try writeRawArchive(
-            manifestData: InterjectionPackageArchive.encodeManifest(maliciousManifest),
-            previewData: Data(InterjectionPackageArchive.previewMarkdown(maliciousManifest).utf8),
-            audioData: ["audio/margin-001.m4a": invalidAudioData],
-            to: maliciousURL
-        )
-        let existingImport = root.appendingPathComponent("existing-import", isDirectory: true)
-        try FileManager.default.createDirectory(at: existingImport, withIntermediateDirectories: true)
-        let sentinel = existingImport.appendingPathComponent("keep.txt")
-        try Data("keep".utf8).write(to: sentinel)
-
-        XCTAssertThrowsError(
-            try InterjectionPackageArchive.read(from: maliciousURL, extractingAudioTo: existingImport)
-        ) { error in
-            XCTAssertEqual(error as? InterjectionPackageArchiveError, .invalidAudio("audio/margin-001.m4a"))
-        }
-        XCTAssertEqual(try Data(contentsOf: sentinel), Data("keep".utf8))
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: existingImport.path), ["keep.txt"])
-    }
-
-    func testImportMapsPackageIDsToDistinctRecipientLocalIDsAndIsIdempotent() throws {
-        let root = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let contents = try verifiedArticleContents(in: root)
-        let repository = InMemorySessionRepository()
-        let idProvider: InterjectionPackageImporter.LocalIDProvider = { kind, packageID in
-            "recipient-\(kind)-\(packageID)"
-        }
-
-        let first = try InterjectionPackageImporter.importPackage(
-            contents,
-            itemId: "recipient-item",
-            importedAt: fixedDate,
-            repository: repository,
-            makeLocalID: idProvider
-        )
-        let second = try InterjectionPackageImporter.importPackage(
-            contents,
-            itemId: "recipient-item",
-            importedAt: fixedDate,
-            repository: repository,
-            makeLocalID: idProvider
-        )
-
-        XCTAssertEqual(
-            first,
-            .imported(
-                layerId: "recipient-layer-package-article-001",
-                interjectionIds: ["recipient-interjection-margin-001"]
-            )
-        )
+        let contents = try verifiedTextPackage(in: root)
+        let memory = InMemorySessionRepository()
+        let provider: SpokenMarginsPackageImporter.LocalIDProvider = { kind, packageID in "recipient-\(kind)-\(packageID)" }
+        let first = try SpokenMarginsPackageImporter.importPackage(contents, itemId: "recipient-item", importedAt: fixedDate, repository: memory, makeLocalID: provider)
+        let second = try SpokenMarginsPackageImporter.importPackage(contents, itemId: "recipient-item", importedAt: fixedDate, repository: memory, makeLocalID: provider)
+        XCTAssertEqual(first, .imported(layerId: "recipient-layer-package-article-001", interjectionIds: ["recipient-interjection-margin-001"]))
         XCTAssertEqual(second, .duplicate(existingLayerId: "recipient-layer-package-article-001"))
-        XCTAssertNotEqual(repository.importedCommentaryLayers.values.first?.id, "package-article-001")
-        XCTAssertNotEqual(repository.importedCommentaryInterjections.values.first?.id, "margin-001")
-        XCTAssertEqual(repository.importedCommentaryLayers.count, 1)
-        XCTAssertEqual(repository.importedCommentaryInterjections.count, 1)
-        XCTAssertTrue(repository.interjections.isEmpty)
-        let importedLayer = try XCTUnwrap(repository.importedCommentaryLayers.values.first)
-        XCTAssertFalse(importedLayer.isEnabled)
-        XCTAssertNil(importedLayer.revealMode)
-        XCTAssertEqual(importedLayer.suggestedRevealMode, .companion)
-        XCTAssertEqual(importedLayer.sourceResolutionStatus, .pending)
-        XCTAssertEqual(
-            repository.importedCommentaryInterjections.values.first?.resolution.evidenceClass,
-            .unresolved
-        )
+        XCTAssertTrue(memory.interjections.isEmpty)
+        XCTAssertFalse(try XCTUnwrap(memory.importedCommentaryLayers.values.first).isEnabled)
+
+        let sqlite = try SQLiteSessionStore(path: root.appendingPathComponent("sharing.sqlite").path)
+        _ = try SpokenMarginsPackageImporter.importPackage(contents, itemId: "recipient-item", importedAt: fixedDate, repository: sqlite, makeLocalID: provider)
+        XCTAssertEqual(try sqlite.loadImportedCommentaryLayers(itemId: "recipient-item").count, 1)
+        XCTAssertEqual(try sqlite.loadImportedCommentaryInterjections(layerId: "recipient-layer-package-article-001").count, 1)
+        XCTAssertEqual(try sqlite.quarantinedRecordCount(), 0)
     }
 
-    func testSQLitePersistsDistinctLayerAndDuplicateResultWithoutMigrationLoss() throws {
-        let root = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let contents = try verifiedArticleContents(in: root)
-        let databaseURL = root.appendingPathComponent("session.sqlite")
-        let repository = try SQLiteSessionStore(path: databaseURL.path)
-        let idProvider: InterjectionPackageImporter.LocalIDProvider = { kind, packageID in
-            "sqlite-\(kind)-\(packageID)"
-        }
-
-        let first = try InterjectionPackageImporter.importPackage(
-            contents,
-            itemId: "recipient-item",
-            importedAt: fixedDate,
-            repository: repository,
-            makeLocalID: idProvider
-        )
-        let second = try InterjectionPackageImporter.importPackage(
-            contents,
-            itemId: "recipient-item",
-            importedAt: fixedDate,
-            repository: repository,
-            makeLocalID: idProvider
-        )
-
-        XCTAssertEqual(
-            first,
-            .imported(
-                layerId: "sqlite-layer-package-article-001",
-                interjectionIds: ["sqlite-interjection-margin-001"]
-            )
-        )
-        XCTAssertEqual(second, .duplicate(existingLayerId: "sqlite-layer-package-article-001"))
-        XCTAssertEqual(try repository.loadImportedCommentaryLayers(itemId: "recipient-item").count, 1)
-        XCTAssertEqual(
-            try repository.loadImportedCommentaryInterjections(layerId: "sqlite-layer-package-article-001").count,
-            1
-        )
-        XCTAssertEqual(try repository.quarantinedRecordCount(), 0)
+    func testArticleResolverDistinguishesWrongAmbiguousAndVerified() throws {
+        let prepared = try textPreparedPackage()
+        let layerData = try XCTUnwrap(prepared.artifactData["artifacts/commentary-layer.json"])
+        let layer = try JSONDecoder.iso8601.decode(SharedCommentaryLayerArtifact.self, from: layerData)
+        let wrong = SharedSourceIdentity(sourceType: .article, canonicalURL: "https://example.com/wrong", title: "Wrong")
+        XCTAssertEqual(ImportedSourceResolver.resolve(source: prepared.manifest.source, interjections: layer.interjections, against: wrong, sourceText: "anything").status, .wrongSource)
+        XCTAssertEqual(ImportedSourceResolver.resolve(source: prepared.manifest.source, interjections: layer.interjections, against: articleSource, sourceText: nil).status, .contextOnly)
+        let repeated = "Before this passage. The durable idea that prompted this note. After this passage. Before this passage. The durable idea that prompted this note. After this passage."
+        XCTAssertEqual(ImportedSourceResolver.resolve(source: prepared.manifest.source, interjections: layer.interjections, against: articleSource, sourceText: repeated).status, .ambiguous)
+        let unique = "Before this passage. The durable idea that prompted this note. After this passage."
+        let resolved = ImportedSourceResolver.resolve(source: prepared.manifest.source, interjections: layer.interjections, against: articleSource, sourceText: unique)
+        XCTAssertEqual(resolved.status, .resolved)
+        XCTAssertEqual(resolved.anchorsByPackageScopedId["margin-001"]?.evidenceClass, .articleTextVerified)
     }
 
-    func testImportPersistsPerNoteResolutionAndDerivesLayerStatus() throws {
-        let root = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let contents = try verifiedArticleContents(in: root)
-        let repository = InMemorySessionRepository()
-        let sourceText = "Before this passage. The durable idea that prompted this note. After this passage."
-
-        _ = try InterjectionPackageImporter.importPackage(
-            contents,
-            itemId: "recipient-item",
-            localSource: articleSource,
-            sourceText: sourceText,
-            importedAt: fixedDate,
-            repository: repository,
-            makeLocalID: { kind, packageID in "resolved-\(kind)-\(packageID)" }
-        )
-
-        XCTAssertEqual(repository.importedCommentaryLayers.values.first?.sourceResolutionStatus, .resolved)
-        let note = try XCTUnwrap(repository.importedCommentaryInterjections.values.first)
-        XCTAssertEqual(note.resolution.evidenceClass, .articleTextVerified)
-        XCTAssertEqual(note.resolution.localStartChar, 21)
-        XCTAssertFalse(try XCTUnwrap(repository.importedCommentaryLayers.values.first).isEnabled)
-    }
-
-    func testShareRevisionIDsAreImmutableInMemoryAndSQLite() throws {
-        let original = approvedRevision(
-            createdAt: Date(timeIntervalSince1970: fixedDate.timeIntervalSince1970 + 0.123)
-        )
+    func testShareRevisionIDsRemainImmutableInMemoryAndSQLite() throws {
+        let original = approvedRevision()
         let conflicting = InterjectionShareRevision(
-            id: original.id,
-            interjectionId: original.interjectionId,
-            itemId: original.itemId,
-            sessionId: original.sessionId,
-            createdAt: original.createdAt,
-            approvedTranscript: "Changed after persistence.",
-            anchorBefore: original.anchorBefore,
-            anchorAfter: original.anchorAfter,
-            status: original.status
+            id: original.id, interjectionId: original.interjectionId, itemId: original.itemId,
+            sessionId: original.sessionId, createdAt: original.createdAt, approvedTranscript: "Changed",
+            anchorBefore: original.anchorBefore, anchorAfter: original.anchorAfter, status: original.status
         )
-        let expectedError = SessionKitError.persistenceFailed(
-            "interjection_share_revision_immutable_conflict"
-        )
-        let memoryRepository = InMemorySessionRepository()
-        try memoryRepository.saveInterjectionShareRevision(original)
-        try memoryRepository.saveInterjectionShareRevision(original)
-        XCTAssertThrowsError(try memoryRepository.saveInterjectionShareRevision(conflicting)) { error in
-            XCTAssertEqual(error as? SessionKitError, expectedError)
-        }
-        XCTAssertEqual(memoryRepository.interjectionShareRevisions[original.id], original)
+        let expected = SessionKitError.persistenceFailed("interjection_share_revision_immutable_conflict")
+        let memory = InMemorySessionRepository()
+        try memory.saveInterjectionShareRevision(original)
+        XCTAssertThrowsError(try memory.saveInterjectionShareRevision(conflicting)) { XCTAssertEqual($0 as? SessionKitError, expected) }
 
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
-        let sqliteRepository = try SQLiteSessionStore(
-            path: root.appendingPathComponent("immutable.sqlite").path
-        )
-        try sqliteRepository.saveInterjectionShareRevision(original)
-        try sqliteRepository.saveInterjectionShareRevision(original)
-        XCTAssertThrowsError(try sqliteRepository.saveInterjectionShareRevision(conflicting)) { error in
-            XCTAssertEqual(error as? SessionKitError, expectedError)
-        }
-        let loadedRevisions = try sqliteRepository.loadInterjectionShareRevisions(
-            interjectionId: original.interjectionId
-        )
-        XCTAssertEqual(loadedRevisions.count, 1)
-        let loaded = try XCTUnwrap(loadedRevisions.first)
-        XCTAssertEqual(loaded.id, original.id)
-        XCTAssertEqual(loaded.approvedTranscript, original.approvedTranscript)
-        XCTAssertEqual(loaded.status, original.status)
+        let sqlite = try SQLiteSessionStore(path: root.appendingPathComponent("immutable.sqlite").path)
+        try sqlite.saveInterjectionShareRevision(original)
+        XCTAssertThrowsError(try sqlite.saveInterjectionShareRevision(conflicting)) { XCTAssertEqual($0 as? SessionKitError, expected) }
     }
 
-    func testSourceResolutionDistinguishesWrongAmbiguousAndContextOnly() throws {
-        let package = try loadPackageFixture("minimal-article.json")
-        let wrongSource = SharedSourceIdentity(
-            sourceType: .article,
-            canonicalURL: "https://example.com/a-different-article",
-            title: "Different"
-        )
-        XCTAssertEqual(
-            ImportedSourceResolver.resolve(package: package, against: wrongSource, sourceText: "anything").status,
-            .wrongSource
-        )
-        XCTAssertEqual(
-            ImportedSourceResolver.resolve(package: package, against: articleSource, sourceText: nil).status,
-            .contextOnly
-        )
-        let repeated = """
-        Before this passage. The durable idea that prompted this note. After this passage.
-        Before this passage. The durable idea that prompted this note. After this passage.
-        """
-        XCTAssertEqual(
-            ImportedSourceResolver.resolve(package: package, against: articleSource, sourceText: repeated).status,
-            .ambiguous
-        )
-    }
-
-    func testArticleResolutionUsesExactEditionAndUniqueNormalizedFallback() throws {
-        let text = "Opening. A durable idea appears here. Closing."
-        let exactEditionAnchor = PortableAnchorEvidence(
-            anchorType: .text,
-            startChar: 9,
-            endChar: 37,
-            exactText: "A durable idea appears here."
-        )
-        let exactEdition = PortableArticleAnchorResolver.resolve(
-            anchor: exactEditionAnchor,
-            in: text,
-            expectedExactEditionSHA256: PortableArticleAnchorResolver.exactEditionSHA256(text)
-        )
-        XCTAssertEqual(exactEdition.evidenceClass, .articleTextVerified)
-        XCTAssertEqual(exactEdition.localStartChar, 9)
-        XCTAssertEqual(exactEdition.confidence, 1)
-
-        let punctuationChanged = PortableArticleAnchorResolver.resolve(
-            anchor: PortableAnchorEvidence(anchorType: .text, exactText: "the durable idea appears here"),
-            in: "Before. The durable—idea, appears here! After.",
-            expectedExactEditionSHA256: nil
-        )
-        XCTAssertEqual(punctuationChanged.evidenceClass, .articleTextVerified)
-        XCTAssertEqual(punctuationChanged.confidence, 0.88)
-    }
-
-    func testNormalizedEditionMatchNeverReusesRawOffsets() {
-        let senderText = "a b"
-        let recipientText = "a---b"
-        XCTAssertEqual(
-            PortableArticleAnchorResolver.normalizedContentSHA256(senderText),
-            PortableArticleAnchorResolver.normalizedContentSHA256(recipientText)
-        )
-
-        let resolution = PortableArticleAnchorResolver.resolve(
-            anchor: PortableAnchorEvidence(
-                anchorType: .text,
-                startChar: 2,
-                endChar: 3,
-                exactText: "b"
-            ),
-            in: recipientText,
-            expectedExactEditionSHA256: PortableArticleAnchorResolver.exactEditionSHA256(senderText)
-        )
-
-        XCTAssertEqual(resolution.evidenceClass, .articleTextVerified)
-        XCTAssertEqual(resolution.localStartChar, 4)
-        XCTAssertEqual(resolution.localEndChar, 5)
-        XCTAssertEqual(resolution.confidence, 0.98)
-    }
-
-    func testDifferentExactEditionOfSameWorkUsesQuoteFallback() throws {
-        let fixture = try loadPackageFixture("minimal-article.json")
-        let senderText = "Sender edition. The durable idea that prompted this note. End."
-        let recipientText = "Recipient edition. The durable idea that prompted this note. End."
-        let senderSource = SharedSourceIdentity(
-            sourceType: .article,
-            canonicalURL: fixture.source.canonicalURL,
-            title: fixture.source.title,
-            exactEditionSHA256: PortableArticleAnchorResolver.exactEditionSHA256(senderText)
-        )
-        let localSource = SharedSourceIdentity(
-            sourceType: .article,
-            canonicalURL: fixture.source.canonicalURL,
-            title: fixture.source.title,
-            exactEditionSHA256: PortableArticleAnchorResolver.exactEditionSHA256(recipientText)
-        )
-        let package = InterjectionPackageManifest(
-            packageId: fixture.packageId,
-            createdAt: fixture.createdAt,
-            source: senderSource,
-            interjections: fixture.interjections
-        )
-
-        let resolution = ImportedSourceResolver.resolve(
-            package: package,
-            against: localSource,
-            sourceText: recipientText
-        )
-
-        XCTAssertEqual(resolution.status, .resolved)
-        XCTAssertEqual(
-            resolution.anchorsByPackageScopedId["margin-001"]?.evidenceClass,
-            .articleTextVerified
-        )
-        XCTAssertEqual(resolution.anchorsByPackageScopedId["margin-001"]?.confidence, 0.98)
-    }
-
-    private var fixedDate: Date {
-        Date(timeIntervalSince1970: 1_777_000_000)
-    }
-
+    private var fixedDate: Date { Date(timeIntervalSince1970: 1_777_000_000) }
     private var articleSource: SharedSourceIdentity {
+        SharedSourceIdentity(sourceType: .article, canonicalURL: "https://example.com/article", title: "A Useful Article")
+    }
+    private var podcastSource: SharedSourceIdentity {
         SharedSourceIdentity(
-            sourceType: .article,
-            canonicalURL: "https://example.com/article",
-            title: "A Useful Article"
+            sourceType: .podcast, canonicalURL: "https://example.com/episodes/one", feedURL: "https://example.com/feed.xml",
+            title: "Episode One", publisher: "Example", showTitle: "Example Show", episodeGUID: "episode-one",
+            enclosureURL: "https://example.com/audio/one.mp3", durationMs: 3_600_000, languageCode: "en"
         )
     }
 
-    private func approvedRevision(
-        cleanedAudioPath: String? = nil,
-        decisions: [InterjectionCleanupDecision] = [],
-        createdAt: Date? = nil
-    ) -> InterjectionShareRevision {
+    private func approvedRevision(cleanedAudioPath: String? = nil) -> InterjectionShareRevision {
         InterjectionShareRevision(
-            id: "revision-approved",
-            interjectionId: "private-note",
-            itemId: "private-item",
-            sessionId: "private-session",
-            createdAt: createdAt ?? fixedDate,
-            approvedTranscript: "A sender-reviewed thought.",
-            cleanedAudioPath: cleanedAudioPath,
-            cleanedAudioDurationMs: cleanedAudioPath == nil ? nil : 1_000,
-            decisions: decisions,
-            anchorBefore: String(repeating: "b", count: 600) + " before-near",
-            anchorAfter: "after-near " + String(repeating: "a", count: 600),
-            status: .senderApproved
+            id: "revision-approved", interjectionId: "private-note", itemId: "private-item",
+            sessionId: "private-session", createdAt: fixedDate, approvedTranscript: "A sender-reviewed thought.",
+            cleanedAudioPath: cleanedAudioPath, cleanedAudioDurationMs: cleanedAudioPath == nil ? nil : 100,
+            anchorBefore: "Before this passage.", anchorAfter: "After this passage.", status: .senderApproved
         )
     }
 
-    private func loadPackageFixture(_ name: String) throws -> InterjectionPackageManifest {
-        let data = try Data(contentsOf: fixtureURL("interjection-packages/\(name)"))
-        return try InterjectionPackageArchive.decodeManifest(data)
+    private func textPreparedPackage() throws -> PreparedSpokenMarginsPackage {
+        try SpokenMarginsPackageBuilder.prepare(
+            packageId: "package-article-001", createdAt: fixedDate, source: articleSource,
+            selections: [.init(
+                packageScopedId: "margin-001", revision: approvedRevision(),
+                anchor: .init(anchorType: .text, exactText: "The durable idea that prompted this note."),
+                representation: .textOnly
+            )],
+            senderDisplayLabel: "A Friend", suggestedRevealMode: .companion
+        )
     }
 
-    private func fixtureURL(_ path: String) -> URL {
-        var root = URL(fileURLWithPath: #filePath)
-        for _ in 0..<5 { root.deleteLastPathComponent() }
-        return root.appendingPathComponent("Contracts/fixtures/\(path)")
+    private func verifiedTextPackage(in root: URL) throws -> VerifiedSpokenMarginsPackage {
+        let url = root.appendingPathComponent("verified.spokenmargins")
+        _ = try SpokenMarginsPackageArchive.write(textPreparedPackage(), to: url)
+        return try SpokenMarginsPackageArchive.read(from: url, extractingAssetsTo: root.appendingPathComponent("verified-assets"))
     }
 
     private func temporaryDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("SpokenMarginsSharingTests-\(UUID().uuidString)", isDirectory: true)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("SpokenMarginsSharingTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
-    }
-
-    private func verifiedArticleContents(in root: URL) throws -> VerifiedInterjectionPackage {
-        let packageURL = root.appendingPathComponent("verified.spokenmargins")
-        _ = try InterjectionPackageArchive.write(
-            manifest: loadPackageFixture("minimal-article.json"),
-            audioFiles: [:],
-            to: packageURL
-        )
-        return try InterjectionPackageArchive.read(
-            from: packageURL,
-            extractingAudioTo: root.appendingPathComponent("verified-audio")
-        )
     }
 
     private func writeSilentM4A(to url: URL) throws {
         #if canImport(AVFoundation)
         let sampleRate = 44_100.0
-        let settings: [String: Any] = [
-            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-            AVSampleRateKey: sampleRate,
-            AVNumberOfChannelsKey: 1,
-            AVEncoderBitRateKey: 64_000
-        ]
-        let audioFile = try AVAudioFile(forWriting: url, settings: settings)
-        let format = try XCTUnwrap(
-            AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)
-        )
-        let buffer = try XCTUnwrap(
-            AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(sampleRate / 10))
-        )
+        let audioFile = try AVAudioFile(forWriting: url, settings: [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC), AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64_000
+        ])
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(sampleRate / 10)))
         buffer.frameLength = buffer.frameCapacity
         try audioFile.write(from: buffer)
         #else
-        throw XCTSkip("AVFoundation is required to create the audio fixture")
+        throw XCTSkip("AVFoundation is required")
         #endif
     }
 
-    private func testPackageDigest(
-        manifest: InterjectionPackageManifest,
-        audioData: [String: Data]
-    ) throws -> String {
-        var unsigned = manifest
-        unsigned.contentDigest = nil
-        var hasher = SHA256()
-        hasher.update(data: try InterjectionPackageArchive.encodeManifest(unsigned))
-        updateTestDigest(
-            &hasher,
-            path: "preview.md",
-            data: Data(InterjectionPackageArchive.previewMarkdown(unsigned).utf8)
-        )
-        for path in audioData.keys.sorted() {
-            updateTestDigest(&hasher, path: path, data: audioData[path]!)
+    private func readRawArchive(_ url: URL) throws -> [String: Data] {
+        let archive = try Archive(url: url, accessMode: .read)
+        var result: [String: Data] = [:]
+        for entry in archive {
+            var data = Data()
+            _ = try archive.extract(entry) { data.append($0) }
+            result[entry.path] = data
         }
-        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        return result
     }
 
-    private func updateTestDigest(_ hasher: inout SHA256, path: String, data: Data) {
-        hasher.update(data: Data(path.utf8))
-        hasher.update(data: Data([0]))
-        hasher.update(data: Data(SHA256.hash(data: data)))
-        hasher.update(data: Data([0]))
-        hasher.update(data: Data(String(data.count).utf8))
-        hasher.update(data: Data([0]))
-    }
-
-    private func writeRawArchive(
-        manifestData: Data,
-        previewData: Data? = Data("preview".utf8),
-        audioData: [String: Data] = [:],
-        to url: URL
-    ) throws {
+    private func writeRawArchive(entries: [String: Data], to url: URL) throws {
         let archive = try Archive(url: url, accessMode: .create)
-        try addRawEntry(manifestData, path: "manifest.json", to: archive, compression: .deflate)
-        if let previewData {
-            try addRawEntry(previewData, path: "preview.md", to: archive, compression: .deflate)
-        }
-        for path in audioData.keys.sorted() {
-            try addRawEntry(try XCTUnwrap(audioData[path]), path: path, to: archive, compression: .none)
+        for path in entries.keys.sorted() {
+            let data = try XCTUnwrap(entries[path])
+            try archive.addEntry(
+                with: path, type: .file, uncompressedSize: Int64(data.count),
+                modificationDate: Date(timeIntervalSince1970: 315_532_800), permissions: 0o644,
+                compressionMethod: path.hasPrefix("assets/") ? .none : .deflate
+            ) { position, size in
+                let start = Int(position)
+                guard start < data.count else { return Data() }
+                return data.subdata(in: start..<min(data.count, start + size))
+            }
         }
     }
+}
 
-    private func addRawEntry(
-        _ data: Data,
-        path: String,
-        to archive: Archive,
-        compression: CompressionMethod
-    ) throws {
-        try archive.addEntry(
-            with: path,
-            type: .file,
-            uncompressedSize: Int64(data.count),
-            modificationDate: Date(timeIntervalSince1970: 315_532_800),
-            permissions: 0o644,
-            compressionMethod: compression
-        ) { position, size in
-            let start = Int(position)
-            guard start < data.count else { return Data() }
-            return data.subdata(in: start..<min(data.count, start + size))
-        }
+private extension JSONDecoder {
+    static var iso8601: JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
     }
 }

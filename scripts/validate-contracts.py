@@ -18,8 +18,10 @@ PATH_SCHEMA_RULES = [
     ("fixtures/maps/*.json", "listening-map.schema.json"),
     ("fixtures/sessions/*.json", "session.schema.json"),
     ("fixtures/interjections/*.json", "interjection.schema.json"),
-    ("fixtures/interjection-packages/*.json", "interjection-package.schema.json"),
+    ("fixtures/interjection-packages/*.json", "spoken-margins-package.schema.json"),
     ("fixtures/sharing/cleanup-revision.json", "interjection-share-revision.schema.json"),
+    ("fixtures/sharing/commentary-layer.json", "shared-commentary-layer.schema.json"),
+    ("fixtures/sharing/listening-map-proposal.json", "portable-listening-map-proposal.schema.json"),
     ("fixtures/turns/*.json", "conversation-turn.schema.json", "array"),
     ("fixtures/exports/*.json", "session-export.schema.json"),
     ("fixtures/watch/offline-package.json", "watch-audio-package.schema.json"),
@@ -31,7 +33,7 @@ PATH_SCHEMA_RULES = [
 ]
 
 NEGATIVE_PATH_SCHEMA_RULES = [
-    ("fixtures/invalid/interjection-packages/*.json", "interjection-package.schema.json"),
+    ("fixtures/invalid/interjection-packages/*.json", "spoken-margins-package.schema.json"),
 ]
 
 
