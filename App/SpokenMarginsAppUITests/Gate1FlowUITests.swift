@@ -50,6 +50,17 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertFalse(element("provider.apiKey.field").exists)
     }
 
+    func testLibraryCompactRowStaysDense() throws {
+        XCTAssertTrue(element("library.screen").waitForExistence(timeout: 8))
+        let open = app.buttons["library.row.item-pill"]
+        let play = app.buttons["queue.start.item-pill"]
+        XCTAssertTrue(open.waitForExistence(timeout: 4), app.debugDescription)
+        XCTAssertTrue(play.isHittable)
+        XCTAssertLessThanOrEqual(open.frame.height, 60, "The compact Library label stack expanded beyond its content")
+        XCTAssertLessThanOrEqual(abs(open.frame.midY - play.frame.midY), 8, "The compact Library row controls are vertically misaligned")
+        captureScreen(named: "library-compact-row")
+    }
+
     func testExperienceOverhaulVisualEvidence() throws {
         XCTAssertTrue(element("library.screen").waitForExistence(timeout: 8))
         captureScreen(named: "01-library")

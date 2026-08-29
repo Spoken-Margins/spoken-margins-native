@@ -356,24 +356,22 @@ private struct ExperienceLibraryCompactRow: View {
     let onDelete: () -> Void
 
     var body: some View {
-        HStack(spacing: 14) {
-            SMExperienceTypeCover(row: row, size: 58)
+        HStack(alignment: .center, spacing: 12) {
+            SMExperienceTypeCover(row: row, size: 52)
             Button(action: onOpen) {
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(row.title)
                         .font(.headline)
                         .foregroundStyle(AppColors.text)
                         .multilineTextAlignment(.leading)
                         .lineLimit(2)
-                    Text(metadata)
+                    Text(detailLine)
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
                         .multilineTextAlignment(.leading)
                         .lineLimit(1)
-                    rowStatus
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(AppColors.secondaryText)
                 }
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
@@ -383,16 +381,16 @@ private struct ExperienceLibraryCompactRow: View {
             Button(action: onPlay) {
                 Image(systemName: row.hasContinuationSession ? "play.fill" : "play")
                     .foregroundStyle(AppColors.evergreen)
-                    .frame(width: 44, height: 44)
+                    .frame(width: 40, height: 40)
                     .background(AppColors.softGreen, in: Circle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(playActionTitle)
             .accessibilityIdentifier("queue.start.\(row.id)")
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, minHeight: 82, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, minHeight: 70, alignment: .leading)
         .contentShape(Rectangle())
         .background(AppColors.panel)
         .contextMenu {
@@ -430,8 +428,8 @@ private struct ExperienceLibraryCompactRow: View {
         .accessibilityAction(named: "Move to Recently Deleted", onDelete)
     }
 
-    private var metadata: String {
-        [row.sourceTitle ?? row.author, mediaLabel]
+    private var detailLine: String {
+        [row.sourceTitle ?? row.author, mediaLabel, listeningLabel, offlineDetailLabel]
             .compactMap { value in
                 guard let value, !value.isEmpty else { return nil }
                 return value
@@ -444,61 +442,26 @@ private struct ExperienceLibraryCompactRow: View {
         return row.hasContinuationSession ? "Continue \(row.title)" : "Start \(row.title)"
     }
 
-    private var rowStatus: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 10) {
-                listeningStatus
-                offlineStatus
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                listeningStatus
-                offlineStatus
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var listeningStatus: some View {
+    private var listeningLabel: String? {
         if row.isCompleted {
-            Label("Completed", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(AppColors.evergreen)
-                .fixedSize(horizontal: true, vertical: false)
+            "Completed"
         } else if let progress = row.continuationProgressPercent {
-            HStack(spacing: 7) {
-                Text("\(progress)%")
-                    .foregroundStyle(AppColors.evergreen)
-                ProgressView(value: Double(progress), total: 100)
-                    .frame(width: 78)
-                    .tint(AppColors.ochre)
-            }
-            .fixedSize(horizontal: true, vertical: false)
+            "\(progress)%"
+        } else {
+            nil
         }
-    }
-
-    private var offlineStatus: some View {
-        Label(offlineLabel, systemImage: offlineIcon)
-            .fixedSize(horizontal: true, vertical: false)
     }
 
     private var mediaLabel: String {
         row.mediaType.replacingOccurrences(of: "_", with: " ").capitalized
     }
 
-    private var offlineLabel: String {
+    private var offlineDetailLabel: String? {
         switch row.offlineState {
         case .readyOffline: "Offline"
         case .preparing: "Preparing"
         case .needsRepreparation: "Needs update"
-        case .onlineOnly, .all: "Online"
-        }
-    }
-
-    private var offlineIcon: String {
-        switch row.offlineState {
-        case .readyOffline: "arrow.down.circle.fill"
-        case .preparing: "clock.arrow.circlepath"
-        case .needsRepreparation: "exclamationmark.arrow.circlepath"
-        case .onlineOnly, .all: "network"
+        case .onlineOnly, .all: nil
         }
     }
 }

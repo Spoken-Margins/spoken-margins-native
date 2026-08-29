@@ -158,12 +158,14 @@ struct AppNavigationState: Equatable, Sendable {
 }
 
 enum LibraryPresentation {
+    static let continuationSuggestionCutoffPercent = 99
+
     static func continueItem(in rows: [LibraryItemRow], activeItemId: String?) -> LibraryItemRow? {
         if let activeItemId,
            let active = rows.first(where: {
                $0.id == activeItemId
                    && $0.hasContinuationSession
-                   && ($0.continuationProgressPercent ?? 0) < 100
+                   && ($0.continuationProgressPercent ?? 0) < continuationSuggestionCutoffPercent
            }) {
             return active
         }
@@ -172,7 +174,7 @@ enum LibraryPresentation {
             .filter {
                 $0.hasContinuationSession
                     && ($0.continuationProgressPercent ?? 0) > 0
-                    && ($0.continuationProgressPercent ?? 0) < 100
+                    && ($0.continuationProgressPercent ?? 0) < continuationSuggestionCutoffPercent
             }
             .sorted {
                 let lhs = $0.lastListenedAt ?? .distantPast

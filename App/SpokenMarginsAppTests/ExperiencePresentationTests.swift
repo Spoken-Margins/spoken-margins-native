@@ -221,6 +221,36 @@ final class ExperiencePresentationTests: XCTestCase {
         XCTAssertEqual(selected.id, alpha.id)
     }
 
+    func testContinueItemDoesNotSuggestNinetyNinePercentItems() throws {
+        let activeNearComplete = libraryRow(
+            id: "active-near-complete",
+            title: "Near complete",
+            progress: 99,
+            lastListenedAt: Date(timeIntervalSince1970: 30)
+        )
+        let eligible = libraryRow(
+            id: "eligible",
+            title: "Eligible",
+            progress: 98,
+            lastListenedAt: Date(timeIntervalSince1970: 20)
+        )
+
+        let selected = try XCTUnwrap(
+            LibraryPresentation.continueItem(
+                in: [activeNearComplete, eligible],
+                activeItemId: activeNearComplete.id
+            )
+        )
+
+        XCTAssertEqual(selected.id, eligible.id)
+        XCTAssertNil(
+            LibraryPresentation.continueItem(
+                in: [activeNearComplete],
+                activeItemId: activeNearComplete.id
+            )
+        )
+    }
+
     func testCompactItemsRemoveOnlyTheContinueItemIdentity() {
         let hero = libraryRow(id: "hero", title: "Shared Title", progress: 30)
         let sameTitle = libraryRow(id: "same-title", title: "Shared Title", progress: 20)
