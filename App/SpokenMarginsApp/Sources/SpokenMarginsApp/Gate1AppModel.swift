@@ -9905,16 +9905,19 @@ final class Gate1AppModel: ObservableObject {
                 let subscription = self.feedSubscriptions.first { $0.id == entry.subscriptionId }
                 let imported: Bool
                 if subscription?.source.kind == .podcastFeed {
+                    let importURL = try await self.followedSourceCoordinator?.playableAudioURL(for: entry)
+                        ?? entry.audioURL
+                        ?? entry.canonicalURL
                     if openWhenFinished {
                         imported = await self.importSourceLinkAsync(
-                            urlString: url.absoluteString,
+                            urlString: importURL,
                             sourceSurface: "followed_source",
                             startSession: false
                         )
                     } else {
                         try await self.importSourceLinkInBackground(SourceLinkHandoff(
                             id: "quick-add-\(entry.id)",
-                            inputURL: url.absoluteString,
+                            inputURL: importURL,
                             sourceSurface: "followed_source",
                             startSession: false
                         ))

@@ -33,6 +33,20 @@ final class SourceLinkImportTests: XCTestCase {
         var entries = try repository.loadFeedEntries(subscriptionId: subscription.id)
         XCTAssertEqual(entries.count, FollowedSourceCoordinator.maximumRetainedSuggestionsPerFeed)
         XCTAssertEqual(Set(entries.map(\.title)), Set((6...30).map { "Episode \($0)" }))
+        XCTAssertTrue(entries.allSatisfy { $0.audioURL?.hasPrefix("https://cdn.example.com/") == true })
+
+        var legacyEpisode = try XCTUnwrap(entries.first(where: { $0.title == "Episode 30" }))
+        legacyEpisode.audioURL = nil
+        try repository.saveFeedEntry(legacyEpisode)
+
+        let recoveredAudioURL = try await coordinator.playableAudioURL(for: legacyEpisode)
+
+        XCTAssertEqual(recoveredAudioURL, "https://cdn.example.com/episode-30.mp3")
+        XCTAssertEqual(
+            try repository.loadFeedEntries(subscriptionId: subscription.id)
+                .first(where: { $0.id == legacyEpisode.id })?.audioURL,
+            recoveredAudioURL
+        )
 
         try repository.saveFeedEntry(FeedEntry(
             id: "legacy-unseen",

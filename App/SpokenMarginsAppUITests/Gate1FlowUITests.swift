@@ -203,8 +203,11 @@ final class Gate1FlowUITests: XCTestCase {
         editor.tap()
         app.typeText("Keyboard dismissal probe.")
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 4))
+        XCTAssertTrue(element("timeline.screen").exists)
+        XCTAssertTrue(editor.isHittable, "Focusing the reflection editor blanked or displaced the Timeline content")
         app.buttons["timeline.keyboard.done"].tap()
         XCTAssertTrue(waitForDisappearance(app.keyboards.firstMatch, timeout: 4))
+        XCTAssertTrue(editor.isHittable, "Dismissing the keyboard left the Timeline scrolled into an empty region")
 
         let importButton = scrollToElement("timeline.reflection.import.button")
         XCTAssertTrue(importButton.isHittable, "The floating Now Playing bar covers the import action")

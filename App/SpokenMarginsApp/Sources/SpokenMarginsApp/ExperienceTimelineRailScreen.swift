@@ -12,7 +12,7 @@ struct ExperienceTimelineRailScreen: View {
         NavigationStack {
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
+                    VStack(alignment: .leading, spacing: 0) {
                         ExperienceEditorialHeader(
                             eyebrow: "Listening session",
                             title: "Timeline",
@@ -34,6 +34,7 @@ struct ExperienceTimelineRailScreen: View {
 
                         reflectionComposer
                             .padding(.top, 24)
+                            .id("timeline.reflection.composer")
                     }
                     .padding(.horizontal, 18)
                     .padding(.top, 22)
@@ -49,6 +50,15 @@ struct ExperienceTimelineRailScreen: View {
                 }
                 .onReceive(model.$selectedItem) { item in
                     refreshEntries(from: item)
+                }
+                .onChange(of: responseEditorFocused) { _, isFocused in
+                    guard isFocused else { return }
+                    Task { @MainActor in
+                        await Task.yield()
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            proxy.scrollTo("timeline.reflection.composer", anchor: .bottom)
+                        }
+                    }
                 }
             }
             .accessibilityIdentifier("timeline.screen")

@@ -4,6 +4,32 @@ import SessionKit
 
 @MainActor
 final class Gate5BrowserTextImportTests: XCTestCase {
+    func testReadablePagePayloadMapsToTypedHandoffWithoutExposingWebKitDetails() throws {
+        let handoff = try AppOwnedReadablePageExtractor.handoff(from: [
+            "text": "# The poverty of anti-tech thought\n\nReadable article body.",
+            "source": [
+                "url": "https://www.noahpinion.blog/p/the-poverty-of-anti-tech-thought",
+                "title": "The poverty of anti-tech thought",
+                "author": "Noah Smith"
+            ]
+        ])
+
+        XCTAssertEqual(handoff.captureMode, .readablePage)
+        XCTAssertEqual(handoff.contentFormat, .markdown)
+        XCTAssertEqual(handoff.source.title, "The poverty of anti-tech thought")
+        XCTAssertEqual(handoff.source.author, "Noah Smith")
+        XCTAssertTrue(handoff.text.contains("Readable article body."))
+    }
+
+    func testReadablePagePayloadRejectsEmptyFallbackTextWithTypedError() {
+        XCTAssertThrowsError(try AppOwnedReadablePageExtractor.handoff(from: [
+            "text": "   ",
+            "source": ["url": "https://example.com/article", "title": "Article"]
+        ])) { error in
+            XCTAssertEqual(error as? ReadablePageExtractionError, .invalidResult)
+        }
+    }
+
     private var temporaryDirectories: [URL] = []
 
     override func tearDownWithError() throws {

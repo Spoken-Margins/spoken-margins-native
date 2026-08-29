@@ -1429,6 +1429,15 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertNil(item.sourceURL)
     }
 
+    func testLegacyFeedEntryWithoutAudioURLStillDecodes() throws {
+        let data = Data(#"{"id":"entry-legacy","subscriptionId":"source-1","canonicalURL":"https://example.com/episode","title":"Legacy episode","state":"unseen"}"#.utf8)
+
+        let entry = try JSONDecoder().decode(FeedEntry.self, from: data)
+
+        XCTAssertEqual(entry.id, "entry-legacy")
+        XCTAssertNil(entry.audioURL)
+    }
+
     func testPodcastPublisherChaptersUsePrecedencePersistAndNavigateWithoutTranscript() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
