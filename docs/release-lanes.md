@@ -28,7 +28,7 @@ Only these branches are active development lanes:
 | --- | --- | --- | --- |
 | `main` | Released and accepted integration runtime plus repository governance | Documentation, validation evidence, distributed runtime, and product-owner-accepted release integration | N/A |
 | `codex/testflight-triage` | Idle rapid-fix lane, currently aligned with the accepted integration baseline | No active issue; a later reproducible TestFlight regression requires explicit admission | `main` |
-| `codex/sharing-next` | Next major numbered feature release | Sharing foundation issues #17, #18, #67, and #68; audit reconciliation #81; then co-op replies #19 | `main` when the numbered sharing release is accepted |
+| `codex/sharing-next` | Next major numbered feature release | Testable one-way sharing MVP: #17, #18, #67, #68, and #81; cross-edition podcast resolution through #27; portable proposal-contract slice of #88; then co-op replies #19 | `main` when the numbered sharing release is accepted |
 | `codex/quality-of-life-next` | Next numbered quality-of-life release | Complete non-Watch program: #34, #64, #72, #73, #61, #79, #74, #69, #76, #77, #86, and #87 in the ordered phases below | `main` when the complete numbered quality-of-life release is accepted |
 
 All other local and remote branches are historical and read-only. Their commits may be inspected or deliberately extracted, but work must not resume directly on them without a product-owner plan change. In particular, `codex/sharingV1` is source material for reconciliation into `codex/sharing-next`; it is not an active integration branch.
@@ -87,6 +87,19 @@ For each TestFlight cycle:
 - #81: reconcile the existing `codex/sharingV1` implementation with current source and record implementation versus verification status.
 
 These issues form one end-to-end boundary: prepare, preview, export, import, and distinguish shared commentary. Rights and provenance decisions from #14 gate external enablement even when implementation remains disabled behind a feature flag.
+
+### Phase 1A: Testable podcast-sharing MVP
+
+The product owner expanded the sharing foundation on 2026-08-29 so it can reach a trusted-tester MVP instead of stopping at package-only infrastructure.
+
+- #27 is authorized first as the cross-edition benchmark and then as the production evidence/resolver gate. Automatic verified placement requires zero false-confident placements in the held-out benchmark and p95 error no greater than 1.5 seconds. The implementation must retain ambiguous, absent, unresolved, and wrong-source outcomes instead of forcing placement.
+- A sender timestamp remains a hint. A silent timestamp fallback is authorized only when strong episode identity and a benchmark-approved duration guard hold, transcript and acoustic evidence are genuinely unavailable, and no evidence contradicts the placement. It is never eligible after ambiguity, absence, digest mismatch, or wrong-source detection.
+- #88 is authorized only for the portable scene-map proposal schema, validation, deterministic `.spokenmargins` transport, and proposal persistence. Offline podcast map generation, proposal activation, summary bridge playback, and Skim controls remain post-MVP and unauthorized.
+- After a recipient confirms an integrity-checked import, the existing podcast download coordinator may treat that explicit import as a user-initiated download. It must show progress/cancel/retry and must not autoplay.
+- Add a same-device "Create recipient test session" route that exercises the real archive, verification, import, persistence, resolver, and commentary-playback path in a distinct local imported layer.
+- Sharing is exposed without a tester-facing Settings toggle in the first dedicated sharing TestFlight build, but incomplete routes remain unregistered until the complete end-to-end path is verified. #14 still gates sharing with other people outside the product owner's own-device validation.
+
+The `.spokenmargins` package is still unpublished. This lane is authorized to replace its pre-release v1 schema and fixtures in place, without a legacy decoder, before any external user relies on it.
 
 ### Phase 2: Co-op Replies
 
