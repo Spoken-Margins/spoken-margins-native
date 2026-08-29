@@ -15,6 +15,8 @@ struct ExperienceItemDetailScreen: View {
                 LazyVStack(alignment: .leading, spacing: 22) {
                     hero
                     primaryActions
+                    SourceFollowSuggestionCard()
+                    ManualSourceFollowButton()
                     if !model.selectedItem.overview.isEmpty { overview }
                     structure
                     recentMargins
@@ -83,7 +85,7 @@ struct ExperienceItemDetailScreen: View {
                 size: horizontalSizeClass == .regular ? 132 : 98
             )
             VStack(alignment: .leading, spacing: 9) {
-                Text(readinessLabel.uppercased())
+                Text(heroStatusLabel.uppercased())
                     .font(.caption.weight(.bold))
                     .tracking(1)
                     .foregroundStyle(readinessColor)
@@ -92,18 +94,49 @@ struct ExperienceItemDetailScreen: View {
                     .foregroundStyle(AppColors.text)
                     .lineLimit(4)
                     .minimumScaleFactor(0.72)
-                HStack(spacing: 8) {
-                    metadataPill(humanize(model.selectedItem.status), systemImage: "checkmark.circle")
-                    if !model.selectedItem.chapters.isEmpty {
-                        metadataPill("\(model.selectedItem.chapters.count) chapters", systemImage: "list.bullet")
-                    }
-                    if !model.selectedItem.interjections.isEmpty {
-                        metadataPill("\(model.selectedItem.interjections.count) Margins", systemImage: "quote.bubble")
-                    }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { metadataPills }
+                    VStack(alignment: .leading, spacing: 7) { metadataPills }
                 }
             }
         }
         .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private var metadataPills: some View {
+        metadataPill(itemStatusLabel, systemImage: "checkmark.circle")
+        if chapterCount > 0 {
+            metadataPill("\(chapterCount) chapters", systemImage: "list.bullet")
+        }
+        if !model.selectedItem.interjections.isEmpty {
+            metadataPill("\(model.selectedItem.interjections.count) Margins", systemImage: "quote.bubble")
+        }
+    }
+
+    private var chapterCount: Int {
+        model.selectedItem.chapters.isEmpty
+            ? model.selectedItem.mediaChapters.count
+            : model.selectedItem.chapters.count
+    }
+
+    private var itemStatusLabel: String {
+        if !model.selectedItem.mediaChapters.isEmpty,
+           model.selectedItem.status == "needs_listening_map" {
+            return "Publisher chapters"
+        }
+        return humanize(model.selectedItem.status)
+    }
+
+    private var heroStatusLabel: String {
+        switch model.selectedPodcastDownloadState {
+        case .availableOffline: "Available offline"
+        case .downloading: "Downloading"
+        case .waitingForWiFi: "Waiting for Wi-Fi"
+        case .failed, .evicted: "Download needs attention"
+        case .streamingOnly: "Ready to stream"
+        case .none: itemStatusLabel
+        }
     }
 
     private var primaryActions: some View {
@@ -183,6 +216,40 @@ struct ExperienceItemDetailScreen: View {
                             }
                             .buttonStyle(.plain)
                             .accessibilityIdentifier("chapter.jump.\(chapter.id)")
+                        }
+                    }
+                }
+            } else if !model.selectedItem.mediaChapters.isEmpty {
+                ExperienceSurface {
+                    VStack(spacing: 0) {
+                        ForEach(Array(model.selectedItem.mediaChapters.sorted { $0.startMs < $1.startMs }.enumerated()), id: \.element.id) { index, chapter in
+                            if index > 0 { Divider() }
+                            Button { model.jumpToMediaChapter(chapter) } label: {
+                                HStack(spacing: 12) {
+                                    Text(formatPlaybackTime(chapter.startMs))
+                                        .font(.caption.monospacedDigit().weight(.bold))
+                                        .foregroundStyle(AppColors.evergreen)
+                                        .frame(width: 52, alignment: .leading)
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(chapter.title)
+                                            .font(.headline)
+                                            .foregroundStyle(AppColors.text)
+                                            .multilineTextAlignment(.leading)
+                                        if let description = chapter.description, !description.isEmpty {
+                                            Text(description)
+                                                .font(.caption)
+                                                .foregroundStyle(AppColors.secondaryText)
+                                                .lineLimit(2)
+                                        }
+                                    }
+                                    Spacer()
+                                    Image(systemName: "play.fill")
+                                        .foregroundStyle(AppColors.evergreen)
+                                }
+                                .frame(minHeight: 52)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("mediaChapter.jump.\(chapter.id)")
                         }
                     }
                 }
@@ -293,9 +360,22 @@ struct ExperienceItemDetailScreen: View {
                             .foregroundStyle(AppColors.secondaryText)
                     }
                     Spacer()
-                    if model.selectedPodcastDownloadState == .failed || model.selectedPodcastDownloadState == .evicted {
-                        Button("Retry", action: model.retrySelectedPodcastDownload)
+                    switch model.selectedPodcastDownloadState {
+                    case .waitingForWiFi, .streamingOnly:
+                        Button("Download Now", action: model.downloadSelectedPodcastNow)
+                            .buttonStyle(.borderedProminent)
+                            .tint(AppColors.evergreen)
+                    case .failed, .evicted:
+                        Button("Retry Download", action: model.retrySelectedPodcastDownload)
                             .buttonStyle(.bordered)
+                    case .downloading:
+                        ProgressView()
+                    case .availableOffline:
+                        Label("Downloaded", systemImage: "checkmark.circle.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(AppColors.evergreen)
+                    case .none:
+                        EmptyView()
                     }
                 }
                 .accessibilityIdentifier("item.podcastDownload.status")
@@ -368,9 +448,19 @@ struct ExperienceItemDetailScreen: View {
         Label(text, systemImage: systemImage)
             .font(.caption.weight(.semibold))
             .foregroundStyle(AppColors.secondaryText)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 9)
             .frame(minHeight: 30)
             .background(AppColors.panel, in: Capsule())
+    }
+
+    private func formatPlaybackTime(_ milliseconds: Int) -> String {
+        let seconds = max(0, milliseconds / 1_000)
+        if seconds >= 3_600 {
+            return String(format: "%d:%02d:%02d", seconds / 3_600, (seconds % 3_600) / 60, seconds % 60)
+        }
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 
     private func sectionHeading(_ title: String, detail: String) -> some View {

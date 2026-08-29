@@ -50,6 +50,7 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     private var activeTaskItemIds: Set<String> = []
     private var reservationsByItemId: [String: OfflineStorageReservation] = [:]
     private var userInitiatedTaskIds: Set<Int> = []
+    private var lastProgressPublishDateByItemId: [String: Date] = [:]
     private var session: URLSession!
 
     init(
@@ -204,6 +205,16 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         record.retryCount += 1
         persist(record)
         register(itemId: itemId, remoteURL: url, userInitiated: true)
+    }
+
+    @discardableResult
+    func downloadNow(itemId: String) -> Bool {
+        guard networkTransport != .unavailable,
+              let record = recordsByItemId[itemId],
+              let url = URL(string: record.remoteURL) else { return false }
+        register(itemId: itemId, remoteURL: url, userInitiated: true)
+        return recordsByItemId[itemId]?.state == .downloading
+            || recordsByItemId[itemId]?.state == .availableOffline
     }
 
     func setCacheLimit(_ limit: PodcastCacheLimitGB) {
@@ -423,6 +434,14 @@ extension PodcastDownloadCoordinator: URLSessionDownloadDelegate {
         guard let itemId = downloadTask.taskDescription else { return }
         Task { @MainActor [weak self] in
             guard let self, var record = self.recordsByItemId[itemId] else { return }
+            let now = Date()
+            let isComplete = totalBytesExpectedToWrite > 0 && totalBytesWritten >= totalBytesExpectedToWrite
+            if !isComplete,
+               let lastPublish = self.lastProgressPublishDateByItemId[itemId],
+               now.timeIntervalSince(lastPublish) < 0.5 {
+                return
+            }
+            self.lastProgressPublishDateByItemId[itemId] = now
             record.bytesWritten = totalBytesWritten
             record.expectedBytes = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : nil
             self.persist(record)
@@ -539,6 +558,7 @@ extension PodcastDownloadCoordinator: URLSessionTaskDelegate {
         Task { @MainActor [weak self] in
             guard let self else { return }
             self.activeTaskItemIds.remove(itemId)
+            self.lastProgressPublishDateByItemId[itemId] = nil
             defer { self.userInitiatedTaskIds.remove(task.taskIdentifier) }
             guard let error else { return }
             if let reservation = self.reservationsByItemId.removeValue(forKey: itemId) {

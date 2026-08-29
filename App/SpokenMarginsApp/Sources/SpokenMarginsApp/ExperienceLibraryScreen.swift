@@ -127,7 +127,10 @@ struct ExperienceLibraryScreen: View {
             HStack(spacing: 18) {
                 SMExperienceTypeCover(row: item, size: horizontalSizeClass == .regular ? 112 : 88)
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("Continue listening", systemImage: "play.circle.fill")
+                    Label(
+                        model.activePlaybackItemId == item.id ? "Now playing · In your Library" : "Continue listening · In your Library",
+                        systemImage: "play.circle.fill"
+                    )
                         .font(.caption.weight(.bold))
                         .textCase(.uppercase)
                         .foregroundStyle(AppColors.ochre)
@@ -181,6 +184,7 @@ struct ExperienceLibraryScreen: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("library.row.\(item.id)")
+        .accessibilityHint("This item is saved in your Library.")
     }
 
     private var controls: some View {

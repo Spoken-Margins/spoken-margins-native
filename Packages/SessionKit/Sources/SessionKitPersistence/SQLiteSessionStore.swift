@@ -289,6 +289,15 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         try loadByItem(kind: "prepared_audio_manifest", itemId: itemId)
     }
 
+    /// Loads every manifest in one query for Library presentation. Callers that
+    /// already have the concrete SQLite store can avoid issuing one query per item.
+    public func loadPreparedAudioManifests() throws -> [PreparedAudioManifest] {
+        try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at, id;",
+            ["prepared_audio_manifest"]
+        )
+    }
+
     public func deletePreparedAudioManifest(id: String) throws { try deleteRecord(kind: "prepared_audio_manifest", id: id) }
 
     public func saveAudioPreparationJob(_ job: AudioPreparationJob) throws {

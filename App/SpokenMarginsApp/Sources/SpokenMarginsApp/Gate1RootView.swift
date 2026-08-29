@@ -8,10 +8,11 @@ import UIKit
 struct Gate1RootView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @State private var navigation = AppNavigationState()
+    @State private var keyboardIsPresented = false
 
     var body: some View {
         Group {
-            if model.snapshot.isRecording {
+            if model.snapshot.isRecording || model.isRequestingRecordingPermission {
                 ExperienceRecordingView()
             } else {
                 switch model.screen {
@@ -58,16 +59,24 @@ struct Gate1RootView: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 8) {
-            if !model.snapshot.isRecording && model.shouldShowMiniPlayer {
+            if !model.snapshot.isRecording && model.shouldShowMiniPlayer && !keyboardIsPresented {
                 MiniPlayerBar()
                     .padding(.horizontal, 12)
-                    .padding(.bottom, 4)
+                    .padding(.bottom, model.screen == .home ? 54 : 4)
             }
         }
         .edgeSwipeBack(enabled: !model.recordingNavigationIsLocked && model.screen != .home, action: model.openHome)
         .onAppear {
             model.bootstrapLibraryIfNeeded()
         }
+        #if canImport(UIKit)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            keyboardIsPresented = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            keyboardIsPresented = false
+        }
+        #endif
         .sheet(isPresented: $model.isAIDataSharingConsentPresented) {
             AIDataSharingConsentView()
                 .environmentObject(model)
@@ -1845,6 +1854,8 @@ private struct PlaybackScreen: View {
                             }
                             playbackControls
                             sessionActionDock
+                            SourceFollowSuggestionCard(appearance: .playback)
+                            ManualSourceFollowButton(appearance: .playback)
                         }
                         .padding(.horizontal, horizontalSizeClass == .regular ? 36 : 18)
                         .padding(.vertical, 24)
@@ -2833,7 +2844,7 @@ struct SourceFollowSuggestionCard: View {
     }
 }
 
-private struct ManualSourceFollowButton: View {
+struct ManualSourceFollowButton: View {
     @EnvironmentObject private var model: Gate1AppModel
     var appearance: SourceFollowSuggestionCard.Appearance = .standard
 
@@ -3391,63 +3402,77 @@ private struct SettingsScreen: View {
 
 private struct BatchExportScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @State private var isFolderImporterPresented = false
+
+    private static let destinationAnchor = "batchExport.destination"
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Export Sessions")
-                            .font(.largeTitle.bold())
-                        Text("Choose listening sessions and save one Markdown file for each session.")
-                            .foregroundStyle(AppColors.secondaryText)
-                    }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Export Sessions")
+                                .font(.largeTitle.bold())
+                            Text("Choose listening sessions and save one Markdown file for each session.")
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
 
-                    ProductPanel {
-                        VStack(alignment: .leading, spacing: 14) {
-                            Picker("Sessions", selection: $model.batchExportFilter) {
-                                Text("With Interjections").tag(BatchSessionExportFilter.withInterjections)
-                                Text("All Sessions").tag(BatchSessionExportFilter.all)
-                            }
-                            .pickerStyle(.segmented)
-                            .accessibilityIdentifier("batchExport.filter.picker")
+                        ProductPanel {
+                            VStack(alignment: .leading, spacing: 14) {
+                                Picker("Sessions", selection: $model.batchExportFilter) {
+                                    Text("With Interjections").tag(BatchSessionExportFilter.withInterjections)
+                                    Text("All Sessions").tag(BatchSessionExportFilter.all)
+                                }
+                                .pickerStyle(.segmented)
+                                .accessibilityIdentifier("batchExport.filter.picker")
 
-                            HStack {
-                                Text("\(model.selectedBatchExportSessionIds.count) selected")
-                                    .font(.subheadline.weight(.semibold))
-                                Spacer()
-                                Button("Select All", action: model.selectAllVisibleBatchExportSessions)
-                                    .disabled(model.visibleBatchExportRows.isEmpty)
-                                    .accessibilityIdentifier("batchExport.selectAll.button")
-                                Button("Clear", action: model.clearBatchExportSelection)
-                                    .disabled(model.selectedBatchExportSessionIds.isEmpty)
-                                    .accessibilityIdentifier("batchExport.clear.button")
+                                HStack {
+                                    Text("\(model.selectedBatchExportSessionIds.count) selected")
+                                        .font(.subheadline.weight(.semibold))
+                                    Spacer()
+                                    Button("Select All", action: model.selectAllVisibleBatchExportSessions)
+                                        .disabled(model.visibleBatchExportRows.isEmpty)
+                                        .accessibilityIdentifier("batchExport.selectAll.button")
+                                    Button("Clear", action: model.clearBatchExportSelection)
+                                        .disabled(model.selectedBatchExportSessionIds.isEmpty)
+                                        .accessibilityIdentifier("batchExport.clear.button")
+                                }
                             }
                         }
-                    }
 
-                    sessionSelection
+                        sessionSelection
 
-                    if !model.selectedBatchExportSessionIds.isEmpty {
-                        exportOptions
-                        destination
-                    }
+                        if !model.selectedBatchExportSessionIds.isEmpty {
+                            exportOptions
+                            destination
+                                .id(Self.destinationAnchor)
+                        }
 
-                    if let result = model.batchExportResult {
-                        exportResult(result)
+                        if let result = model.batchExportResult {
+                            exportResult(result)
+                        }
                     }
+                    .padding(20)
                 }
-                .padding(20)
-            }
-            .navigationBarTitleDisplayMode(.inline)
-            .accessibilityIdentifier("batchExport.screen")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(action: model.openHome) {
-                        Label("Home", systemImage: "arrow.left")
+                .navigationBarTitleDisplayMode(.inline)
+                .accessibilityIdentifier("batchExport.screen")
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button(action: model.openHome) {
+                            Label("Home", systemImage: "arrow.left")
+                        }
+                        .accessibilityIdentifier("batchExport.home.button")
                     }
-                    .accessibilityIdentifier("batchExport.home.button")
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Export") {
+                            jumpToDestination(using: proxy)
+                        }
+                        .disabled(model.selectedBatchExportSessionIds.isEmpty)
+                        .accessibilityHint("Jumps to Included Material and Destination.")
+                        .accessibilityIdentifier("batchExport.jumpToDestination.button")
+                    }
                 }
             }
             .fileImporter(
@@ -3463,6 +3488,16 @@ private struct BatchExportScreen: View {
                 case .failure(let error):
                     model.reportBatchExportFolderFailure(error)
                 }
+            }
+        }
+    }
+
+    private func jumpToDestination(using proxy: ScrollViewProxy) {
+        if accessibilityReduceMotion {
+            proxy.scrollTo(Self.destinationAnchor, anchor: .top)
+        } else {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                proxy.scrollTo(Self.destinationAnchor, anchor: .top)
             }
         }
     }

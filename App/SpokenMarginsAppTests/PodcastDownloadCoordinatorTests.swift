@@ -100,6 +100,24 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         XCTAssertEqual(try fixture.store.loadAudioAssets(itemId: "episode").filter { $0.availability == .remote }.count, 1)
     }
 
+    func testManualDownloadDoesNotClaimToStartWithoutAConnection() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let coordinator = try PodcastDownloadCoordinator(
+            store: fixture.store,
+            applicationSupportDirectory: fixture.support,
+            cacheLimit: .five,
+            monitorsNetwork: false,
+            usesBackgroundSession: false
+        )
+        coordinator.setNetworkTransportForTesting(.unavailable)
+        let url = try XCTUnwrap(URL(string: "https://example.com/episode.mp3"))
+        coordinator.register(itemId: "episode", remoteURL: url)
+
+        XCTAssertFalse(coordinator.downloadNow(itemId: "episode"))
+        XCTAssertEqual(coordinator.recordsByItemId["episode"]?.state, .waitingForWiFi)
+    }
+
     func testClearDownloadsProtectsActivePlaybackAndEvictsOtherLocalFile() throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }

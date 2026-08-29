@@ -55,6 +55,25 @@ enum TimelinePullPresentation {
     }
 }
 
+enum TimelineTextPresentation {
+    static let marginCharacterLimit = 180
+    static let supportingCharacterLimit = 280
+
+    static func excerpt(_ text: String, characterLimit: Int) -> String {
+        let normalized = text
+            .split(whereSeparator: \Character.isWhitespace)
+            .joined(separator: " ")
+        guard normalized.count > characterLimit else { return normalized }
+
+        let boundary = normalized.index(normalized.startIndex, offsetBy: characterLimit)
+        let prefix = normalized[..<boundary]
+        if let wordBoundary = prefix.lastIndex(of: " ") {
+            return String(prefix[..<wordBoundary]) + "…"
+        }
+        return String(prefix) + "…"
+    }
+}
+
 enum AddSourceRoute: String, CaseIterable, Identifiable, Hashable, Sendable {
     case linkOrPodcast
     case pastedText

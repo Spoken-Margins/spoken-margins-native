@@ -60,6 +60,19 @@ final class ExperiencePresentationTests: XCTestCase {
         )
     }
 
+    func testTimelineTextExcerptCollapsesWhitespaceAndBoundsLongMargins() {
+        let longMargin = Array(repeating: "This is a deliberately long spoken margin", count: 20)
+            .joined(separator: " \n\t")
+
+        let excerpt = TimelineTextPresentation.excerpt(longMargin, characterLimit: 80)
+
+        XCTAssertLessThanOrEqual(excerpt.count, 81)
+        XCTAssertTrue(excerpt.hasSuffix("…"))
+        XCTAssertFalse(excerpt.contains("\n"))
+        XCTAssertFalse(excerpt.contains("\t"))
+        XCTAssertFalse(excerpt.hasSuffix(" margin…"), "The excerpt should use the last complete word inside its limit.")
+    }
+
     @MainActor
     func testItemDetailRetainsNestedCanonicalNavigation() throws {
         let root = FileManager.default.temporaryDirectory
@@ -233,6 +246,33 @@ final class ExperiencePresentationTests: XCTestCase {
             )
         )
         XCTAssertNil(LibraryPresentation.continueItem(in: [], activeItemId: nil))
+    }
+
+    func testPodcastDownloadStateDrivesTruthfulLibraryOfflinePresentation() {
+        XCTAssertEqual(
+            Gate1AppModel.libraryOfflineState(
+                preparedState: nil,
+                mediaSourceType: .remoteStream,
+                podcastDownloadState: .availableOffline
+            ),
+            .readyOffline
+        )
+        XCTAssertEqual(
+            Gate1AppModel.libraryOfflineState(
+                preparedState: nil,
+                mediaSourceType: .remoteStream,
+                podcastDownloadState: .downloading
+            ),
+            .preparing
+        )
+        XCTAssertEqual(
+            Gate1AppModel.libraryOfflineState(
+                preparedState: nil,
+                mediaSourceType: .remoteStream,
+                podcastDownloadState: .streamingOnly
+            ),
+            .onlineOnly
+        )
     }
 
     func testMarginRowIdentityComposesSessionAndInterjectionIDs() {

@@ -11,6 +11,39 @@ import AVFoundation
 #endif
 
 final class SessionKitCoreTests: XCTestCase {
+    func testMediaCompletionAcceptsTerminalPlayerPauseWithinLastSecond() {
+        XCTAssertTrue(MediaPlaybackCompletionPolicy.reachedEffectiveEnd(
+            completionNotificationObserved: false,
+            targetMatches: true,
+            playerIsPaused: true,
+            userRequestedPause: false,
+            seekIsPending: false,
+            currentMediaTimeMs: 59_050,
+            durationMs: 60_000
+        ))
+    }
+
+    func testMediaCompletionDoesNotMistakeUserPauseOrPendingSeekForCompletion() {
+        XCTAssertFalse(MediaPlaybackCompletionPolicy.reachedEffectiveEnd(
+            completionNotificationObserved: false,
+            targetMatches: true,
+            playerIsPaused: true,
+            userRequestedPause: true,
+            seekIsPending: false,
+            currentMediaTimeMs: 59_050,
+            durationMs: 60_000
+        ))
+        XCTAssertFalse(MediaPlaybackCompletionPolicy.reachedEffectiveEnd(
+            completionNotificationObserved: false,
+            targetMatches: true,
+            playerIsPaused: true,
+            userRequestedPause: false,
+            seekIsPending: true,
+            currentMediaTimeMs: 59_050,
+            durationMs: 60_000
+        ))
+    }
+
     func testMediaSeekLifecycleTreatsDeclinedCurrentSeekAsTerminal() {
         var lifecycle = MediaSeekLifecycle()
         let generation = lifecycle.begin(targetId: "episode", mediaTimeMs: 120_000)
@@ -5024,6 +5057,8 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(PodcastDownloadPolicy.action(for: .cellular, userInitiated: false), .streamOnly)
         XCTAssertEqual(PodcastDownloadPolicy.action(for: .unavailable, userInitiated: false), .waitForWiFi)
         XCTAssertEqual(PodcastDownloadPolicy.action(for: .cellular, userInitiated: true), .download)
+        XCTAssertEqual(PodcastDownloadPolicy.action(for: .other, userInitiated: true), .download)
+        XCTAssertEqual(PodcastDownloadPolicy.action(for: .unavailable, userInitiated: true), .waitForWiFi)
         XCTAssertEqual(PodcastCacheLimitGB.defaultValue, .five)
     }
 

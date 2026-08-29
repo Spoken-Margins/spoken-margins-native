@@ -5,6 +5,7 @@ struct ExperienceTimelineRailScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
 
     @State private var selectedMargin: MarginRow?
+    @State private var entries: [TimelineRailEntry] = []
     @FocusState private var responseEditorFocused: Bool
 
     var body: some View {
@@ -42,7 +43,13 @@ struct ExperienceTimelineRailScreen: View {
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .background(AppColors.bone)
-                .onAppear { focusRequestedMargin(using: proxy) }
+                .onAppear {
+                    refreshEntries(from: model.selectedItem)
+                    focusRequestedMargin(using: proxy)
+                }
+                .onReceive(model.$selectedItem) { item in
+                    refreshEntries(from: item)
+                }
             }
             .accessibilityIdentifier("timeline.screen")
             .navigationTitle("Timeline")
@@ -75,7 +82,7 @@ struct ExperienceTimelineRailScreen: View {
     }
 
     private var timelineRail: some View {
-        VStack(spacing: 0) {
+        LazyVStack(spacing: 0) {
             ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                 TimelineRailRow(
                     entry: entry,
@@ -128,7 +135,7 @@ struct ExperienceTimelineRailScreen: View {
         }
     }
 
-    private var entries: [TimelineRailEntry] {
+    private func makeEntries(from item: ItemDetailState) -> [TimelineRailEntry] {
         var result: [TimelineRailEntry] = []
 
         result.append(
@@ -138,12 +145,17 @@ struct ExperienceTimelineRailScreen: View {
                 rank: 0,
                 provenance: .source,
                 title: "Beginning",
-                detail: model.selectedItem.overview.isEmpty ? "Start of source" : model.selectedItem.overview,
+                detail: item.overview.isEmpty
+                    ? "Start of source"
+                    : TimelineTextPresentation.excerpt(
+                        item.overview,
+                        characterLimit: TimelineTextPresentation.supportingCharacterLimit
+                    ),
                 action: .beginning
             )
         )
 
-        for chapter in model.selectedItem.chapters {
+        for chapter in item.chapters {
             result.append(
                 TimelineRailEntry(
                     id: "source.chapter.\(chapter.id)",
@@ -157,9 +169,9 @@ struct ExperienceTimelineRailScreen: View {
             )
         }
 
-        let duration = max(1, model.selectedItem.mediaDurationMs ?? model.snapshot.currentPlaybackDurationMs ?? 1)
-        let sourceChapterIDs = Set(model.selectedItem.chapters.map(\.id))
-        for chapter in model.selectedItem.mediaChapters where !sourceChapterIDs.contains(chapter.id) {
+        let duration = max(1, item.mediaDurationMs ?? model.snapshot.currentPlaybackDurationMs ?? 1)
+        let sourceChapterIDs = Set(item.chapters.map(\.id))
+        for chapter in item.mediaChapters where !sourceChapterIDs.contains(chapter.id) {
             let position = max(0, min(100, Int((Double(chapter.startMs) / Double(duration) * 100).rounded())))
             result.append(
                 TimelineRailEntry(
@@ -174,10 +186,10 @@ struct ExperienceTimelineRailScreen: View {
             )
         }
 
-        for row in currentSessionMargins {
+        for row in currentSessionMargins(in: item) {
             let position = InterjectionPositionPresentation.sortPercent(
                 for: row.interjection,
-                durationMs: model.selectedItem.mediaDurationMs
+                durationMs: item.mediaDurationMs
             )
             result.append(
                 TimelineRailEntry(
@@ -185,15 +197,18 @@ struct ExperienceTimelineRailScreen: View {
                     position: position,
                     rank: 1,
                     provenance: .myMargin,
-                    title: row.preview,
+                    title: TimelineTextPresentation.excerpt(
+                        row.preview,
+                        characterLimit: TimelineTextPresentation.marginCharacterLimit
+                    ),
                     detail: row.needsAttention ? row.attentionDescription : "Captured at \(position)%",
                     action: .margin(row)
                 )
             )
         }
 
-        for (turnIndex, turn) in model.selectedItem.turns.enumerated() {
-            let position = turnPosition(turn)
+        for (turnIndex, turn) in item.turns.enumerated() {
+            let position = turnPosition(turn, in: item)
             let provenance: TimelineProvenance = turn.role == "user" ? .userResponse : .assistantResponse
             result.append(
                 TimelineRailEntry(
@@ -202,7 +217,10 @@ struct ExperienceTimelineRailScreen: View {
                     rank: 2 + turnIndex * 10,
                     provenance: provenance,
                     title: turn.role == "user" ? "My response" : "Assistant response",
-                    detail: turn.summary ?? turn.text ?? humanize(turn.status),
+                    detail: TimelineTextPresentation.excerpt(
+                        turn.summary ?? turn.text ?? humanize(turn.status),
+                        characterLimit: TimelineTextPresentation.supportingCharacterLimit
+                    ),
                     action: .turn(turn)
                 )
             )
@@ -224,17 +242,21 @@ struct ExperienceTimelineRailScreen: View {
         return result.sorted { $0.sortKey < $1.sortKey }
     }
 
-    private var currentSessionMargins: [MarginRow] {
-        let sessionID = model.snapshot.sessionId
-        let sessionDate = model.selectedItem.sessions.first(where: { $0.id == sessionID })?.updatedAt
-        return model.selectedItem.interjections
-            .filter { $0.status == "active" && (sessionID == nil || $0.sessionId == sessionID) }
-            .map { MarginRow(interjection: $0, itemTitle: model.selectedItem.title, sessionDate: sessionDate) }
+    private func refreshEntries(from item: ItemDetailState) {
+        entries = makeEntries(from: item)
     }
 
-    private func turnPosition(_ turn: ConversationTurn) -> Int {
+    private func currentSessionMargins(in item: ItemDetailState) -> [MarginRow] {
+        let sessionID = model.snapshot.sessionId
+        let sessionDate = item.sessions.first(where: { $0.id == sessionID })?.updatedAt
+        return item.interjections
+            .filter { $0.status == "active" && (sessionID == nil || $0.sessionId == sessionID) }
+            .map { MarginRow(interjection: $0, itemTitle: item.title, sessionDate: sessionDate) }
+    }
+
+    private func turnPosition(_ turn: ConversationTurn, in item: ItemDetailState) -> Int {
         let sourceIDs = Set(turn.sourceInterjectionIds)
-        return model.selectedItem.interjections
+        return item.interjections
             .filter { sourceIDs.contains($0.id) }
             .map(\.roughPercent)
             .max() ?? 100
@@ -358,6 +380,7 @@ private struct TimelineRailRow: View {
                         .font(.headline)
                         .foregroundStyle(AppColors.text)
                         .multilineTextAlignment(.leading)
+                        .lineLimit(3)
                     Text(entry.detail)
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)

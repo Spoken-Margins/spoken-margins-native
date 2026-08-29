@@ -457,21 +457,25 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
         app.buttons["playback.home.button"].tap()
         XCTAssertTrue(element("miniPlayer.bar").waitForExistence(timeout: 4))
+        assertMiniPlayerClearsRootNavigation()
 
         tapRoot("Sources")
         XCTAssertTrue(element("sources.screen").waitForExistence(timeout: 4))
         XCTAssertTrue(app.staticTexts["Source inbox"].exists)
         XCTAssertTrue(scrollToStaticText(containing: "Nothing is imported, downloaded, or prepared").exists)
         XCTAssertTrue(element("miniPlayer.bar").exists)
+        assertMiniPlayerClearsRootNavigation()
 
         tapRoot("Margins")
         XCTAssertTrue(element("margins.screen").waitForExistence(timeout: 4))
         XCTAssertTrue(app.staticTexts["Margins"].exists)
         XCTAssertTrue(element("miniPlayer.bar").exists)
+        assertMiniPlayerClearsRootNavigation()
 
         tapRoot("Library")
         XCTAssertTrue(element("library.screen").waitForExistence(timeout: 4))
         XCTAssertTrue(element("miniPlayer.bar").exists)
+        assertMiniPlayerClearsRootNavigation()
     }
 
     func testRecordingExclusivelyOwnsTheAccessibleExperience() throws {
@@ -543,8 +547,50 @@ final class Gate1FlowUITests: XCTestCase {
         }
     }
 
+    func testBatchExportOffersPersistentJumpToDestination() throws {
+        XCTAssertTrue(element("library.screen").waitForExistence(timeout: 8))
+        app.buttons["queue.start.item-pill"].tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
+        app.buttons["playback.home.button"].tap()
+        XCTAssertTrue(element("library.screen").waitForExistence(timeout: 4))
+
+        app.buttons["home.settings.button"].tap()
+        let exportSessions = app.buttons["Export Sessions"]
+        XCTAssertTrue(exportSessions.waitForExistence(timeout: 2))
+        exportSessions.tap()
+        XCTAssertTrue(element("batchExport.screen").waitForExistence(timeout: 4))
+
+        let jump = app.buttons["batchExport.jumpToDestination.button"]
+        XCTAssertFalse(jump.isEnabled)
+        let filter = app.segmentedControls["batchExport.filter.picker"]
+        XCTAssertTrue(filter.waitForExistence(timeout: 2))
+        filter.buttons["All Sessions"].tap()
+        element("batchExport.selectAll.button").tap()
+
+        XCTAssertTrue(jump.isEnabled)
+        jump.tap()
+        XCTAssertTrue(element("batchExport.chooseFolder.button").waitForExistence(timeout: 2))
+        XCTAssertTrue(element("batchExport.chooseFolder.button").isHittable)
+    }
+
     private func element(_ identifier: String) -> XCUIElement {
         app.descendants(matching: .any)[identifier]
+    }
+
+    private func assertMiniPlayerClearsRootNavigation(
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let miniPlayer = element("miniPlayer.bar")
+        let tabBar = app.tabBars.firstMatch
+        XCTAssertTrue(tabBar.exists, "Root navigation is missing", file: file, line: line)
+        XCTAssertLessThanOrEqual(
+            miniPlayer.frame.maxY,
+            tabBar.frame.minY,
+            "The mini-player overlaps the Library, Sources, and Margins controls",
+            file: file,
+            line: line
+        )
     }
 
     private func captureScreen(named name: String) {

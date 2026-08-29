@@ -4,6 +4,10 @@ struct ExperienceRecordingView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    private var isPreparing: Bool {
+        model.isRequestingRecordingPermission && !model.snapshot.isRecording
+    }
+
     var body: some View {
         ZStack {
             LinearGradient(
@@ -15,7 +19,7 @@ struct ExperienceRecordingView: View {
             VStack(spacing: 24) {
                 Spacer()
                 VStack(spacing: 9) {
-                    Label("RECORDING", systemImage: "record.circle.fill")
+                    Label(isPreparing ? "STARTING" : "RECORDING", systemImage: isPreparing ? "mic.badge.plus" : "record.circle.fill")
                         .font(.caption.weight(.bold))
                         .tracking(1.4)
                     Text("Your margin")
@@ -24,15 +28,27 @@ struct ExperienceRecordingView: View {
                 .foregroundStyle(.white)
                 .accessibilityIdentifier("recording.screen")
 
-                TimelineView(.periodic(from: context.startedAt, by: 1)) { timeline in
+                if isPreparing {
                     VStack(spacing: 18) {
-                        RecordingWaveform(
-                            phase: reduceMotion ? 0 : timeline.date.timeIntervalSince(context.startedAt)
-                        )
-                        Text(elapsedDescription(at: timeline.date))
-                            .font(.system(.title, design: .monospaced).weight(.semibold))
+                        ProgressView()
+                            .controlSize(.large)
+                            .tint(.white)
+                        Text("Preparing microphone…")
+                            .font(.headline)
                             .foregroundStyle(.white)
-                            .accessibilityLabel("Recording duration \(elapsedDescription(at: timeline.date))")
+                    }
+                    .frame(height: 108)
+                } else {
+                    TimelineView(.periodic(from: context.startedAt, by: 1)) { timeline in
+                        VStack(spacing: 18) {
+                            RecordingWaveform(
+                                phase: reduceMotion ? 0 : timeline.date.timeIntervalSince(context.startedAt)
+                            )
+                            Text(elapsedDescription(at: timeline.date))
+                                .font(.system(.title, design: .monospaced).weight(.semibold))
+                                .foregroundStyle(.white)
+                                .accessibilityLabel("Recording duration \(elapsedDescription(at: timeline.date))")
+                        }
                     }
                 }
 
@@ -63,7 +79,9 @@ struct ExperienceRecordingView: View {
                         .background(AppColors.coral.opacity(0.8))
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 } else {
-                    Text("Finish saves this Margin, returns to the locked point, and resumes listening. Cancel discards only this recording.")
+                    Text(isPreparing
+                         ? "Your listening position is locked while the microphone becomes ready."
+                         : "Finish saves this Margin, returns to the locked point, and resumes listening. Cancel discards only this recording.")
                         .font(.subheadline)
                         .foregroundStyle(.white.opacity(0.8))
                         .multilineTextAlignment(.center)
@@ -78,6 +96,7 @@ struct ExperienceRecordingView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(.white)
                     .foregroundStyle(AppColors.interjectText)
+                    .disabled(isPreparing)
                     .accessibilityIdentifier("recording.finish.button")
                     Button(role: .destructive, action: model.cancelInterjection) {
                         Label("Cancel", systemImage: "xmark")
@@ -87,6 +106,7 @@ struct ExperienceRecordingView: View {
                     .buttonStyle(.bordered)
                     .tint(.white.opacity(0.9))
                     .foregroundStyle(.white)
+                    .disabled(isPreparing)
                     .accessibilityIdentifier("recording.cancel.button")
                 }
                 .padding(.bottom, 20)
@@ -132,4 +152,3 @@ private struct RecordingWaveform: View {
         return 18 + CGFloat(abs(value)) * 48
     }
 }
-

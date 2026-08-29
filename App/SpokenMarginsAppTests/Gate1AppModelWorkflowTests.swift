@@ -683,6 +683,22 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.shouldShowMiniPlayer)
     }
 
+    func testDismissingMiniPlayerHidesItBeforeSessionCleanupCompletes() async {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.openHome()
+
+        XCTAssertTrue(model.shouldShowMiniPlayer)
+        model.dismissMiniPlayer()
+
+        XCTAssertFalse(model.shouldShowMiniPlayer)
+        for _ in 0..<50 where model.hasActiveSession {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertFalse(model.hasActiveSession)
+    }
+
     func testRoutinePlaybackAndNavigationActionsDoNotPresentFeedback() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
@@ -1318,6 +1334,21 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(Gate1AppModel.hasSubstantiallyCompletedTextSession([stillListening]))
     }
 
+    func testFullyCompletedTextSessionIsExcludedFromAutomaticPreparation() throws {
+        let decoder = JSONDecoder()
+        let completed = try decoder.decode(Session.self, from: Data("""
+        {"id":"completed","itemId":"item-native-text","status":"finished","phase":"finished","currentTargetType":"item_text_tts","currentTargetId":"item-native-text","position":{"charOffset":1000},"completionPercent":100,"playbackRate":1}
+        """.utf8))
+        var inProgress = completed
+        inProgress.id = "in-progress"
+        inProgress.status = "in_progress"
+        inProgress.phase = .itemPlayback
+        inProgress.completionPercent = 99
+
+        XCTAssertTrue(Gate1AppModel.hasFullyCompletedTextSession([completed]))
+        XCTAssertFalse(Gate1AppModel.hasFullyCompletedTextSession([inProgress]))
+    }
+
     func testResumeCompletedSessionAfterExportRequiresExplicitRestart() throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
@@ -1933,6 +1964,30 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         ]
 
         XCTAssertTrue(model.canManuallyFollowSelectedSource)
+    }
+
+    func testPublisherChaptersAreNotPresentedAsANeedForAListeningMap() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.selectedItem = ItemDetailState(
+            id: "episode",
+            title: "An Episode",
+            status: "needs_listening_map",
+            mediaChapters: [
+                MediaTimelineChapter(
+                    id: "publisher-opening",
+                    title: "Opening",
+                    startMs: 0,
+                    transcriptSegmentId: "publisher-opening-segment"
+                )
+            ],
+            isNativeAudio: true
+        )
+
+        XCTAssertFalse(model.canGenerateListeningMap)
+        XCTAssertEqual(
+            model.listeningMapGenerationAvailabilityDescription,
+            "This podcast already includes publisher chapters. A generated Listening Map is unnecessary."
+        )
     }
 
     private func waitFor(

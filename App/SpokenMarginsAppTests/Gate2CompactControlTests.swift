@@ -391,6 +391,24 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertEqual(model.diagnostics["lockScreenLifecycleRefresh"], model.snapshot.targetType ?? "none")
     }
 
+    func testPeriodicCompactRefreshIgnoresRawElapsedTimeButRetainsMeaningfulChanges() {
+        var first = compactSnapshot(
+            targetType: TargetType.transcriptBackedMedia.rawValue,
+            availableCommands: [.togglePlayPause, .seekToMediaTime],
+            durationMs: 120_000
+        )
+        var elapsedOnly = first
+        elapsedOnly.currentMediaTimeMs = 1_500
+        var progressed = elapsedOnly
+        progressed.currentPlaybackProgressPercent = 11
+
+        XCTAssertTrue(Gate2CompactControlController.hasEquivalentSurfaceState(first, elapsedOnly))
+        XCTAssertFalse(Gate2CompactControlController.hasEquivalentSurfaceState(first, progressed))
+
+        first.status = .paused
+        XCTAssertFalse(Gate2CompactControlController.hasEquivalentSurfaceState(first, elapsedOnly))
+    }
+
     private func compactSnapshot(
         targetType: String,
         availableCommands: [CompactControlCommand],

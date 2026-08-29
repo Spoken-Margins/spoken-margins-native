@@ -51,7 +51,7 @@ struct LibraryItemRow: Identifiable, Hashable {
     let author: String?
     let sourceReference: String?
     let sourceReferenceType: String?
-    let offlineState: LibraryOfflineStateFilter
+    var offlineState: LibraryOfflineStateFilter
     let addedAt: Date?
     let lastListenedAt: Date?
     let storageRecencyRank: Int
@@ -448,7 +448,7 @@ final class Gate1AppModel: ObservableObject {
             updateGate2CompactState()
         }
     }
-    @Published var gate2CompactSnapshot: CompactControlSnapshot?
+    private(set) var gate2CompactSnapshot: CompactControlSnapshot?
     @Published var diagnostics: [String: String] = [:]
     @Published var statusMessage = "Ready."
     @Published var lastError: String?
@@ -487,6 +487,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var offlineStorageSnapshot = OfflineStorageSnapshot()
     @Published private(set) var recordingPresentationContext: RecordingPresentationContext?
     @Published private(set) var isRequestingRecordingPermission = false
+    @Published private(set) var isDismissingMiniPlayer = false
     @Published var requestedTimelineFocusMarginID: String?
     @Published var pastedAssistantResponse = ""
 
@@ -1107,7 +1108,10 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var listeningMapGenerationAvailabilityDescription: String {
-        if !selectedItem.chapters.isEmpty || !selectedItem.mediaChapters.isEmpty {
+        if !selectedItem.mediaChapters.isEmpty {
+            return "This podcast already includes publisher chapters. A generated Listening Map is unnecessary."
+        }
+        if !selectedItem.chapters.isEmpty {
             return "This item already has a Listening Map."
         }
         guard let item = try? store?.loadItem(id: activeItemId) else {
@@ -1135,7 +1139,20 @@ final class Gate1AppModel: ObservableObject {
         if record.state == .failed, let reason = record.failureReason {
             return "Failed: \(reason)"
         }
-        return record.state.displayName
+        switch record.state {
+        case .availableOffline:
+            return "Downloaded for offline playback"
+        case .waitingForWiFi:
+            return "Waiting for Wi-Fi · Download Now can force it"
+        case .streamingOnly:
+            return "Online only · Download Now saves it in the app"
+        case .downloading:
+            return "Downloading"
+        case .failed:
+            return "Download failed"
+        case .evicted:
+            return "Download was removed to free space"
+        }
     }
 
     private static func storedMediaSkipSeconds(forKey key: String) -> Int {
@@ -3399,14 +3416,15 @@ final class Gate1AppModel: ObservableObject {
     func openPlayback() {
         guard !isRequestingRecordingPermission else { return }
         guard hasActiveSession else { return }
+        screen = .playback
         if let itemId = snapshot.itemId, let store {
             activeItemId = itemId
-            if let detail = try? loadItemDetail(id: itemId, store: store) {
+            if selectedItem.id != itemId,
+               let detail = try? loadItemDetail(id: itemId, store: store) {
                 selectedItem = detail
                 offerFollowSuggestionIfEligible(itemId: itemId, store: store)
             }
         }
-        screen = .playback
     }
 
     func openTimeline(focusMarginID: String? = nil) {
@@ -3940,6 +3958,18 @@ final class Gate1AppModel: ObservableObject {
         reportSuccess("Retrying podcast download.")
     }
 
+    func downloadSelectedPodcastNow() {
+        guard !selectedItem.id.isEmpty, podcastDownloadCoordinator != nil else {
+            reportFailure("Podcast download is unavailable.")
+            return
+        }
+        if podcastDownloadCoordinator?.downloadNow(itemId: selectedItem.id) == true {
+            reportSuccess("Starting podcast download. Available storage will be checked first.")
+        } else {
+            reportWarning("The download could not start yet. Check the connection and try again.")
+        }
+    }
+
     func clearPodcastDownloads() {
         podcastDownloadCoordinator?.clearDownloads()
         reportConfirmation("Cleared downloaded podcast audio. Remote sources remain available.")
@@ -3969,6 +3999,12 @@ final class Gate1AppModel: ObservableObject {
         lastError = nil
         diagnostics["lastInterjectionTap"] = "begin"
         let requestedAt = Date()
+        recordingPresentationContext = RecordingPresentationContext(
+            itemTitle: selectedItem.title.isEmpty ? "Current item" : selectedItem.title,
+            locationTitle: snapshot.chapterTitle ?? "Current listening position",
+            progressPercent: snapshot.currentPlaybackProgressPercent,
+            startedAt: requestedAt
+        )
         if recordingClientOverride != nil {
             startInterjectionRecording(requestedAt: requestedAt)
             return
@@ -3982,7 +4018,10 @@ final class Gate1AppModel: ObservableObject {
         }
         if recordPermissionIsGranted {
             diagnostics["lastMicrophonePermissionResult"] = "granted"
-            startInterjectionRecording(requestedAt: requestedAt)
+            Task { @MainActor [weak self] in
+                await Task.yield()
+                self?.startInterjectionRecording(requestedAt: requestedAt)
+            }
             return
         }
         #endif
@@ -3990,6 +4029,7 @@ final class Gate1AppModel: ObservableObject {
             let granted = await requestMicrophonePermission()
             guard granted else {
                 isRequestingRecordingPermission = false
+                recordingPresentationContext = nil
                 reportFailure("Microphone access is required to record interjections. Enable microphone access in Settings and try again.")
                 return
             }
@@ -4003,7 +4043,6 @@ final class Gate1AppModel: ObservableObject {
         streamingSpeechQueue.pauseForInterjection()
         run { engine in
             snapshot = try engine.beginInterjection()
-            refreshSelectedItem()
             if snapshot.isRecording {
                 recordingPresentationContext = RecordingPresentationContext(
                     itemTitle: selectedItem.title,
@@ -4015,6 +4054,9 @@ final class Gate1AppModel: ObservableObject {
                 diagnostics["lastInterjectionRecordingStartLatencyMs"] = "\(latencyMs)"
                 reportSuccess("Recording interjection.")
             }
+        }
+        if !snapshot.isRecording {
+            recordingPresentationContext = nil
         }
     }
 
@@ -4077,7 +4119,14 @@ final class Gate1AppModel: ObservableObject {
 
     func dismissMiniPlayer() {
         guard !rejectNavigationOrSessionMutationWhileRecording("dismiss_mini_player") else { return }
-        closeCurrentSession(navigateHome: false)
+        guard !isDismissingMiniPlayer else { return }
+        isDismissingMiniPlayer = true
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            guard let self else { return }
+            self.closeCurrentSession(navigateHome: false)
+            self.isDismissingMiniPlayer = false
+        }
     }
 
     private func closeCurrentSession(
@@ -5263,7 +5312,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var shouldShowMiniPlayer: Bool {
-        hasActiveSession && screen != .playback && snapshot.phase != .finished && snapshot.phase != .abandoned
+        hasActiveSession && !isDismissingMiniPlayer && screen != .playback && snapshot.phase != .finished && snapshot.phase != .abandoned
     }
 
     var isMediaPlaybackSnapshot: Bool {
@@ -5645,8 +5694,14 @@ final class Gate1AppModel: ObservableObject {
 
     private func updateGate2CompactState() {
         gate2CompactControls.update(snapshot: snapshot)
-        gate2CompactSnapshot = gate2CompactControls.snapshot
-        diagnostics.merge(gate2CompactControls.diagnostics(), uniquingKeysWith: { _, new in new })
+        let compactSnapshot = gate2CompactControls.snapshot
+        if gate2CompactSnapshot != compactSnapshot {
+            gate2CompactSnapshot = compactSnapshot
+        }
+        let compactDiagnostics = gate2CompactControls.diagnostics()
+        if compactDiagnostics.contains(where: { diagnostics[$0.key] != $0.value }) {
+            diagnostics.merge(compactDiagnostics, uniquingKeysWith: { _, new in new })
+        }
     }
 
     #if SPOKEN_MARGINS_WATCH
@@ -6483,6 +6538,10 @@ final class Gate1AppModel: ObservableObject {
         sessions.contains { $0.completionPercent >= substantiallyCompletedTextThreshold }
     }
 
+    static func hasFullyCompletedTextSession(_ sessions: [Session]) -> Bool {
+        sessions.contains { $0.completionPercent >= 100 }
+    }
+
     private func isStarterPreparedTextMedia(_ media: ItemMedia?) -> Bool {
         guard media?.sourceType == .generatedTTSPrerendered else { return false }
         let identifier = media?.nativeMediaId ?? media?.url ?? ""
@@ -6918,20 +6977,24 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func loadLibraryRows(store: SQLiteSessionStore) throws -> [LibraryItemRow] {
-        try store.listItems().enumerated().map { storageRank, item in
-            let sessions = try store.loadSessions(itemId: item.id)
+        let items = try store.listItems()
+        let sessionsByItemId = Dictionary(grouping: try store.loadSessions(), by: \.itemId)
+        let manifestsByItemId = Dictionary(grouping: try store.loadPreparedAudioManifests(), by: \.itemId)
+        let podcastDownloadsByItemId = Dictionary(
+            grouping: try store.loadPodcastDownloads(),
+            by: \.itemId
+        ).compactMapValues { records in
+            records.max { $0.updatedAt < $1.updatedAt }
+        }
+        return items.enumerated().map { storageRank, item in
+            let sessions = sessionsByItemId[item.id] ?? []
             let continuation = Self.preferredContinuationSession(in: sessions)
-            let manifests = try store.loadPreparedAudioManifests(itemId: item.id)
-            let offlineState: LibraryOfflineStateFilter
-            if let state = manifests.last?.state {
-                switch state {
-                case .preparing, .pausedForThermal: offlineState = .preparing
-                case .readyOffline: offlineState = .readyOffline
-                case .needsRepreparation, .failed, .stopped: offlineState = .needsRepreparation
-                case .notPrepared: offlineState = .onlineOnly
-                }
-            } else if item.media?.sourceType == .nativeMediaFile { offlineState = .readyOffline }
-            else { offlineState = .onlineOnly }
+            let latestManifest = manifestsByItemId[item.id]?.max { $0.updatedAt < $1.updatedAt }
+            let offlineState = Self.libraryOfflineState(
+                preparedState: latestManifest?.state,
+                mediaSourceType: item.media?.sourceType,
+                podcastDownloadState: podcastDownloadsByItemId[item.id]?.state
+            )
             return LibraryItemRow(
                 id: item.id,
                 title: item.title,
@@ -6950,6 +7013,30 @@ final class Gate1AppModel: ObservableObject {
                 storageRecencyRank: storageRank
             )
         }
+    }
+
+    nonisolated static func libraryOfflineState(
+        preparedState: PreparedAudioState?,
+        mediaSourceType: AudioSourceType?,
+        podcastDownloadState: PodcastDownloadState?
+    ) -> LibraryOfflineStateFilter {
+        if let podcastDownloadState {
+            switch podcastDownloadState {
+            case .availableOffline: return .readyOffline
+            case .downloading, .waitingForWiFi: return .preparing
+            case .failed, .evicted: return .needsRepreparation
+            case .streamingOnly: return .onlineOnly
+            }
+        }
+        if let preparedState {
+            switch preparedState {
+            case .preparing, .pausedForThermal: return .preparing
+            case .readyOffline: return .readyOffline
+            case .needsRepreparation, .failed, .stopped: return .needsRepreparation
+            case .notPrepared: return .onlineOnly
+            }
+        }
+        return mediaSourceType == .nativeMediaFile ? .readyOffline : .onlineOnly
     }
 
     private func refreshBatchExportRows(store: SQLiteSessionStore) throws {
@@ -8936,6 +9023,16 @@ final class Gate1AppModel: ObservableObject {
         coordinator.onRecordChanged = { [weak self] record in
             guard let self else { return }
             podcastDownloadRecords[record.itemId] = record
+            if let index = libraryItems.firstIndex(where: { $0.id == record.itemId }) {
+                let state = Self.libraryOfflineState(
+                    preparedState: nil,
+                    mediaSourceType: nil,
+                    podcastDownloadState: record.state
+                )
+                if libraryItems[index].offlineState != state {
+                    libraryItems[index].offlineState = state
+                }
+            }
             diagnostics["podcastDownload:\(record.itemId)"] = record.state.rawValue
         }
         coordinator.onLocalAssetReady = { [weak self] itemId, url in
@@ -8964,10 +9061,15 @@ final class Gate1AppModel: ObservableObject {
             )
             preparedAudioCoordinator = coordinator
             currentSupertonicRenderSignature = signature
+            let sessionsByItemId = Dictionary(grouping: try store.loadSessions(), by: \.itemId)
             for row in libraryItems {
                 guard let item = try? store.loadItem(id: row.id),
                       let text = item.text,
                       !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                guard !Self.hasFullyCompletedTextSession(sessionsByItemId[item.id] ?? []) else {
+                    diagnostics["automaticAudioPreparation:\(item.id)"] = "skipped_completed"
+                    continue
+                }
                 let plan = Self.preparedChunkPlan(for: text)
                 guard !plan.isEmpty else { continue }
                 let manifest = try await coordinator.begin(
@@ -9006,6 +9108,14 @@ final class Gate1AppModel: ObservableObject {
                   var manifest = try store.loadPreparedAudioManifest(id: job.manifestId),
                   let item = try? store.loadItem(id: job.itemId),
                   let sourceText = item.text else { return false }
+            if Self.hasFullyCompletedTextSession(try store.loadSessions(itemId: item.id)) {
+                manifest.state = .notPrepared
+                manifest.updatedAt = Date()
+                try store.savePreparedAudioManifest(manifest)
+                try store.deleteAudioPreparationJob(id: job.id)
+                diagnostics["automaticAudioPreparation:\(item.id)"] = "cancelled_completed"
+                return !(try store.loadAudioPreparationJobs()).filter { !$0.isCancelled }.isEmpty
+            }
             let support = try applicationSupportDirectory()
             guard let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else { return true }
             let assets = SupertonicAssetLocation(rootURL: resourceRoot)
