@@ -156,7 +156,9 @@ public enum PodcastDownloadPolicy {
             return .download
         case .cellular:
             return userInitiated ? .download : .streamOnly
-        case .unavailable, .other:
+        case .other:
+            return userInitiated ? .download : .waitForWiFi
+        case .unavailable:
             return .waitForWiFi
         }
     }

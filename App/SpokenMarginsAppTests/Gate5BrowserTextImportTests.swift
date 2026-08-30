@@ -4,6 +4,32 @@ import SessionKit
 
 @MainActor
 final class Gate5BrowserTextImportTests: XCTestCase {
+    func testReadablePagePayloadMapsToTypedHandoffWithoutExposingWebKitDetails() throws {
+        let handoff = try AppOwnedReadablePageExtractor.handoff(from: [
+            "text": "# The poverty of anti-tech thought\n\nReadable article body.",
+            "source": [
+                "url": "https://www.noahpinion.blog/p/the-poverty-of-anti-tech-thought",
+                "title": "The poverty of anti-tech thought",
+                "author": "Noah Smith"
+            ]
+        ])
+
+        XCTAssertEqual(handoff.captureMode, .readablePage)
+        XCTAssertEqual(handoff.contentFormat, .markdown)
+        XCTAssertEqual(handoff.source.title, "The poverty of anti-tech thought")
+        XCTAssertEqual(handoff.source.author, "Noah Smith")
+        XCTAssertTrue(handoff.text.contains("Readable article body."))
+    }
+
+    func testReadablePagePayloadRejectsEmptyFallbackTextWithTypedError() {
+        XCTAssertThrowsError(try AppOwnedReadablePageExtractor.handoff(from: [
+            "text": "   ",
+            "source": ["url": "https://example.com/article", "title": "Article"]
+        ])) { error in
+            XCTAssertEqual(error as? ReadablePageExtractionError, .invalidResult)
+        }
+    }
+
     private var temporaryDirectories: [URL] = []
 
     override func tearDownWithError() throws {
@@ -254,7 +280,7 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         XCTAssertEqual(model.statusMessage, "Imported browser text from Route Page.")
     }
 
-    func testIncomingBrowserPayloadDoesNotReplacePlaybackScreen() throws {
+    func testIncomingBrowserPayloadDoesNotReplacePlaybackFromLibraryRoot() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("spoken-margins-browser-route-\(UUID().uuidString)", isDirectory: true)
         temporaryDirectories.append(directory)
@@ -277,10 +303,11 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         let activeItemID = try XCTUnwrap(model.libraryItems.first?.id)
         model.startItem(id: activeItemID)
         let sessionID = model.snapshot.sessionId
+        model.openHome()
 
         model.handleIncomingURL(Gate5BrowserTextHandoffURL.url(forPayloadID: payloadID))
 
-        XCTAssertEqual(model.screen, .playback)
+        XCTAssertEqual(model.screen, .home)
         XCTAssertEqual(model.snapshot.sessionId, sessionID)
         XCTAssertEqual(model.snapshot.itemId, activeItemID)
         XCTAssertTrue(model.libraryItems.contains { $0.id == "item-browser-during-playback" })

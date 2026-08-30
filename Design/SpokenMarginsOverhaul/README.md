@@ -55,3 +55,35 @@ The current prototype build passes `npm run build` with Node 24. It is a design 
 - `human_validated`: reserved for product-owner use of the proposed flow and explicit acceptance.
 
 The prototype is **implemented** and its build is **verified**. None of these redesigned product flows are claimed as **human_validated**.
+
+## Native Build 22 disposition
+
+The prototype is now also an implementation hypothesis for the private Build 22 experience on `codex/experience-overhaul`. The native implementation deliberately keeps the prototype and the shipping app distinct: this folder remains useful research material, while SwiftUI, persisted app state, accessibility semantics, and the existing SessionKit runtime determine the product behavior.
+
+Adopted in the native app:
+
+- adaptive Library, Sources, and local Margins roots, with Now Playing retained as persistent context rather than another content root;
+- a typed Add Source router over the existing link/podcast, pasted text, document/book, audiobook, and Quick Folder handlers;
+- one persisted Continue item, deterministic type covers, metadata-only Library controls, and recoverable destructive actions;
+- explicit follow-versus-add consent, feed/folder provenance, local Margin attention states, nested canonical source navigation, and a labeled Timeline;
+- exclusive recording presentation with an immutable anchor and model guards against navigation or session replacement;
+- an app-facing offline-storage ledger that separates protected, reproducible, reserved, clearable, and residual-overage bytes;
+- two genuine starter items whose actions use the same item, playback, Margin, and Timeline paths as user-added content;
+- native bone, evergreen, ochre, coral, and plum semantics with Dynamic Type, VoiceOver, light/dark appearance, Increased Contrast, Reduce Motion, and minimum control targets.
+
+Changed from the prototype:
+
+- no profile or account affordance, fabricated artwork, fabricated metadata, engagement count, or “New for you” framing;
+- no literal CSS measurements or web-navigation model; system typography and controls carry interaction semantics, with serif limited to editorial headings;
+- deletion lives behind context actions with confirmation and undo instead of occupying the primary row surface;
+- a partially prepared text-audio prefix never advertises a full scrubber, and intake or historical Margin navigation never replaces another active listening session;
+- raw Listening Map JSON is developer-only diagnostics rather than primary item-detail UI.
+
+Deferred by release-lane boundary:
+
+- Share Preview, imported people, replies, and recipient-side layers remain in `codex/sharing-next`. Build 22 implements only the local provenance portion of [issue #68](https://github.com/uncomposed/spoken-margins-native/issues/68).
+- The canonical playback, scrubbing, and recording-continuity fixes from [#83](https://github.com/uncomposed/spoken-margins-native/issues/83), [#84](https://github.com/uncomposed/spoken-margins-native/issues/84), and [#85](https://github.com/uncomposed/spoken-margins-native/issues/85) are preserved rather than reimplemented.
+- Future Scenes and Skim work in [#88](https://github.com/uncomposed/spoken-margins-native/issues/88), [#89](https://github.com/uncomposed/spoken-margins-native/issues/89), and [#90](https://github.com/uncomposed/spoken-margins-native/issues/90) may compose with the transport later; this branch adds no placeholder controls, command IDs, or schemas for it.
+- Watch, publisher-artwork dependencies, remote execution, analytics, accounts, and deployment behavior remain out of scope.
+
+The native paths are `implemented`. Automated checks may establish `verified`; only the product owner can mark them `human_validated`.

@@ -218,6 +218,7 @@ final class Gate2CompactControlController {
     private var queuedApplicationCommandHandler: (@MainActor (String) -> Bool)?
     private let liveActivity: any Gate2LiveActivityControlling
     private let liveSpeechNowPlaying = Gate2LiveSpeechNowPlayingController()
+    private var lastPublishedSnapshot: CompactControlSnapshot?
     private(set) var lastCommand: CompactControlCommand?
     private(set) var lastCommandOrigin = "none"
     private(set) var lastApplicationCommand = "none"
@@ -249,7 +250,7 @@ final class Gate2CompactControlController {
             self?.queuedCommandHandler?(command, "now_playing_live_speech", nil, nil, playbackRate)
         }
         installQueuedWidgetCommandProcessor()
-        publishCurrentSnapshot()
+        publishCurrentSnapshot(force: true)
         lastResult = "configured"
     }
 
@@ -283,15 +284,16 @@ final class Gate2CompactControlController {
         lastCommand = command
         lastCommandOrigin = origin
         lastResult = result.delegatedToCanonicalRuntime ? "delegated" : (result.rejectedReason ?? "rejected")
-        publish(result.snapshot)
+        publish(result.snapshot, force: true)
         return result
     }
 
     func reconcileLiveActivities() {
-        publishCurrentSnapshot()
+        publishCurrentSnapshot(force: true)
     }
 
     func endLiveActivities() {
+        lastPublishedSnapshot = nil
         liveActivity.endAll()
         liveSpeechNowPlaying.end()
     }
@@ -315,14 +317,35 @@ final class Gate2CompactControlController {
         ]
     }
 
-    private func publishCurrentSnapshot() {
+    private func publishCurrentSnapshot(force: Bool = false) {
         guard let snapshot = dispatcher?.snapshot() else { return }
-        publish(snapshot)
+        publish(snapshot, force: force)
     }
 
-    private func publish(_ snapshot: CompactControlSnapshot) {
+    private func publish(_ snapshot: CompactControlSnapshot, force: Bool = false) {
+        if !force,
+           let lastPublishedSnapshot,
+           Self.hasEquivalentSurfaceState(lastPublishedSnapshot, snapshot) {
+            return
+        }
+        lastPublishedSnapshot = snapshot
         liveSpeechNowPlaying.publish(snapshot)
         liveActivity.publish(snapshot)
+    }
+
+    nonisolated static func hasEquivalentSurfaceState(
+        _ lhs: CompactControlSnapshot,
+        _ rhs: CompactControlSnapshot
+    ) -> Bool {
+        var lhs = lhs
+        var rhs = rhs
+        // The system advances an active Now Playing elapsed time from its rate,
+        // while the Live Activity presents integer progress. Republishing only
+        // because the raw millisecond clock advanced creates needless ActivityKit
+        // and MediaPlayer work on the main actor during every playback tick.
+        lhs.currentMediaTimeMs = nil
+        rhs.currentMediaTimeMs = nil
+        return lhs == rhs
     }
 
     private func installQueuedWidgetCommandProcessor() {

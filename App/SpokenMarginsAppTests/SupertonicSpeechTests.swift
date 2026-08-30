@@ -45,6 +45,20 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertTrue(String(source[start..<end]).contains(slice.text.prefix(8)))
     }
 
+    func testChunkerPlansLongSourcesInOneMonotonicPass() {
+        let source = String(String(repeating: "A long 😀 sentence with stable offsets. ", count: 4_000).dropLast())
+        let plan = RenderedSpeechChunker.sourceSlices(from: source)
+
+        XCTAssertFalse(plan.isEmpty)
+        XCTAssertEqual(plan.first?.startOffset, 0)
+        for pair in zip(plan, plan.dropFirst()) {
+            XCTAssertEqual(pair.0.startOffset + pair.0.slice.sourceLength, pair.1.startOffset)
+        }
+        let consumed = plan.last.map { $0.startOffset + $0.slice.sourceLength }
+        XCTAssertEqual(consumed, source.count)
+        XCTAssertTrue(plan.allSatisfy { !$0.slice.text.isEmpty && $0.slice.sourceLength <= 240 })
+    }
+
     func testRenderFailureFallsBackAtLastConfirmedSourceOffset() async throws {
         let fallback = RecordingFallbackAudioClient()
         let callback = expectation(description: "fallback callback")

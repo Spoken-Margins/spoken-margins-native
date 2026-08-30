@@ -1471,6 +1471,35 @@ struct MediaSeekLifecycle: Equatable {
     }
 }
 
+struct MediaPlaybackCompletionPolicy {
+    static let terminalToleranceMs = 1_500
+
+    static func reachedEffectiveEnd(
+        completionNotificationObserved: Bool,
+        targetMatches: Bool,
+        playerIsPaused: Bool,
+        userRequestedPause: Bool,
+        seekIsPending: Bool,
+        currentMediaTimeMs: Int?,
+        durationMs: Int?
+    ) -> Bool {
+        if completionNotificationObserved && targetMatches {
+            return true
+        }
+        guard targetMatches,
+              playerIsPaused,
+              !userRequestedPause,
+              !seekIsPending,
+              let currentMediaTimeMs,
+              let durationMs,
+              durationMs > 0 else {
+            return false
+        }
+        let remainingMs = max(0, durationMs - currentMediaTimeMs)
+        return currentMediaTimeMs > 0 && remainingMs <= terminalToleranceMs
+    }
+}
+
 public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked Sendable {
     #if canImport(AVFoundation)
     private var player: AVPlayer?
@@ -1605,7 +1634,9 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         paused = false
         let tolerance = CMTime(seconds: 0.25, preferredTimescale: 600)
         player?.seek(to: time, toleranceBefore: tolerance, toleranceAfter: tolerance) { [weak self] finished in
-            self?.finishMediaSeek(generation: seekGeneration, targetId: targetId, finished: finished)
+            DispatchQueue.main.async { [weak self] in
+                self?.finishMediaSeek(generation: seekGeneration, targetId: targetId, finished: finished)
+            }
         }
         player?.play()
         player?.rate = Float(playbackRate)
@@ -1625,7 +1656,9 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         let time = CMTime(seconds: seconds, preferredTimescale: 600)
         let tolerance = CMTime(seconds: 0.25, preferredTimescale: 600)
         player.seek(to: time, toleranceBefore: tolerance, toleranceAfter: tolerance) { [weak self] finished in
-            self?.finishMediaSeek(generation: seekGeneration, targetId: activeTargetId, finished: finished)
+            DispatchQueue.main.async { [weak self] in
+                self?.finishMediaSeek(generation: seekGeneration, targetId: activeTargetId, finished: finished)
+            }
         }
         publishNowPlaying(isPlaying: !paused)
         #else
@@ -1684,7 +1717,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     }
 
     public func isPlaybackComplete(targetId: String) -> Bool {
-        playbackComplete && completedTargetId == targetId
+        effectivePlaybackComplete(targetId: targetId)
     }
 
     public func playbackStartStatus(targetId: String) -> PlaybackStartStatus {
@@ -1737,7 +1770,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             // AVPlayer reports transient `.paused` states while replacing,
             // seeking, and recovering a stream. Only surface a canonical pause
             // when the user actually requested one.
-            return playbackComplete ? .stopped : (paused ? .paused : .waiting)
+            return effectivePlaybackComplete(targetId: targetId) ? .stopped : (paused ? .paused : .waiting)
         case nil:
             return .stopped
         @unknown default:
@@ -1812,11 +1845,13 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             )
             let tolerance = CMTime(seconds: 0.25, preferredTimescale: 600)
             player.seek(to: time, toleranceBefore: tolerance, toleranceAfter: tolerance) { [weak self] finished in
-                self?.finishMediaSeek(
-                    generation: retry.generation,
-                    targetId: retry.targetId,
-                    finished: finished
-                )
+                DispatchQueue.main.async { [weak self] in
+                    self?.finishMediaSeek(
+                        generation: retry.generation,
+                        targetId: retry.targetId,
+                        finished: finished
+                    )
+                }
             }
             return
         case .failed:
@@ -1859,6 +1894,23 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         return nil
     }
 
+    private func effectivePlaybackComplete(targetId: String) -> Bool {
+        #if canImport(AVFoundation)
+        let playerIsPaused = player?.timeControlStatus == .paused
+        #else
+        let playerIsPaused = paused
+        #endif
+        return MediaPlaybackCompletionPolicy.reachedEffectiveEnd(
+            completionNotificationObserved: playbackComplete,
+            targetMatches: (playbackComplete ? completedTargetId : activeTargetId) == targetId,
+            playerIsPaused: playerIsPaused,
+            userRequestedPause: paused,
+            seekIsPending: mediaSeekLifecycle.pending?.targetId == targetId,
+            currentMediaTimeMs: currentMediaTimeMs(),
+            durationMs: durationMs(for: targetId)
+        )
+    }
+
     #if canImport(AVFoundation)
     private func observeCompletion(for item: AVPlayerItem) {
         completionObserver = NotificationCenter.default.addObserver(
@@ -1892,19 +1944,23 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private func installPlayerStateObserver() {
         playerStateObservation?.invalidate()
         playerStateObservation = player?.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] player, _ in
-            guard let self else { return }
-            switch player.timeControlStatus {
-            case .playing:
-                self.publishNowPlaying(isPlaying: !self.paused)
-            case .paused:
-                // `paused` tracks user intent. A transient AVPlayer pause must
-                // not turn an active session into a canonical user pause or
-                // withdraw its lock-screen playback metadata.
-                self.publishNowPlaying(isPlaying: !self.paused && !self.playbackComplete)
-            case .waitingToPlayAtSpecifiedRate:
-                self.publishNowPlaying(isPlaying: !self.paused)
-            @unknown default:
-                break
+            let status = player.timeControlStatus
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                switch status {
+                case .playing:
+                    self.publishNowPlaying(isPlaying: !self.paused)
+                case .paused:
+                    // `paused` tracks user intent. A transient AVPlayer pause must
+                    // not turn an active session into a canonical user pause or
+                    // withdraw its lock-screen playback metadata.
+                    let reachedEnd = self.activeTargetId.map { self.effectivePlaybackComplete(targetId: $0) } ?? false
+                    self.publishNowPlaying(isPlaying: !self.paused && !reachedEnd)
+                case .waitingToPlayAtSpecifiedRate:
+                    self.publishNowPlaying(isPlaying: !self.paused)
+                @unknown default:
+                    break
+                }
             }
         }
     }

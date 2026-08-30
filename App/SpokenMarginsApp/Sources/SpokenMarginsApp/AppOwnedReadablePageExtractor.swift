@@ -2,7 +2,7 @@ import Foundation
 import SessionKit
 import WebKit
 
-enum ReadablePageExtractionError: Error, LocalizedError {
+enum ReadablePageExtractionError: Error, LocalizedError, Equatable {
     case invalidURL
     case oversizedHTML
     case tooManyRedirects
@@ -45,7 +45,8 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate {
         configuration.userContentController.addUserScript(WKUserScript(
             source: script,
             injectionTime: .atDocumentEnd,
-            forMainFrameOnly: true
+            forMainFrameOnly: true,
+            in: .defaultClient
         ))
         let rules = """
         [{"trigger":{"url-filter":".*","resource-type":["image","style-sheet","script","font","media","raw","svg-document","popup"]},"action":{"type":"block"}}]
@@ -105,35 +106,10 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         Task { @MainActor in
             do {
-                let result = try await webView.callAsyncJavaScript(
-                    "return globalThis.SpokenMarginsBrowserTextCapture.captureReadablePage(document);",
-                    arguments: [:],
-                    in: nil,
-                    contentWorld: .page
-                )
-                guard let payload = result as? [String: Any],
-                      let text = payload["text"] as? String,
-                      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                      text.utf8.count <= Self.maximumHTMLBytes,
-                      let source = payload["source"] as? [String: Any],
-                      let url = source["url"] as? String,
-                      let title = source["title"] as? String else {
-                    throw ReadablePageExtractionError.invalidResult
-                }
-                finish(.success(BrowserTextHandoff(
-                    captureMode: .readablePage,
-                    source: BrowserTextSource(
-                        url: url,
-                        title: title,
-                        author: source["author"] as? String,
-                        publishedAt: source["publishedAt"] as? String
-                    ),
-                    text: text,
-                    contentFormat: .markdown,
-                    requestedContinuation: BrowserTextContinuation(startSession: false, preferredPlaybackOwner: "app")
-                )))
+                let payload = try await capturePayload(in: webView)
+                finish(.success(try Self.handoff(from: payload)))
             } catch {
-                finish(.failure(error))
+                finish(.failure(ReadablePageExtractionError.invalidResult))
             }
         }
     }
@@ -152,6 +128,82 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate {
         }
         return try String(contentsOf: url, encoding: .utf8)
     }
+
+    private func capturePayload(in webView: WKWebView) async throws -> [String: Any] {
+        do {
+            let result = try await webView.callAsyncJavaScript(
+                "return globalThis.SpokenMarginsBrowserTextCapture.captureReadablePage(document);",
+                arguments: [:],
+                in: nil,
+                contentWorld: .defaultClient
+            )
+            guard let payload = result as? [String: Any] else {
+                throw ReadablePageExtractionError.invalidResult
+            }
+            return payload
+        } catch {
+            let result = try await webView.callAsyncJavaScript(
+                Self.semanticFallbackJavaScript,
+                arguments: [:],
+                in: nil,
+                contentWorld: .defaultClient
+            )
+            guard let payload = result as? [String: Any] else {
+                throw ReadablePageExtractionError.invalidResult
+            }
+            return payload
+        }
+    }
+
+    static func handoff(from payload: [String: Any]) throws -> BrowserTextHandoff {
+        guard let text = payload["text"] as? String,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              text.utf8.count <= maximumHTMLBytes,
+              let source = payload["source"] as? [String: Any],
+              let url = source["url"] as? String,
+              let title = source["title"] as? String else {
+            throw ReadablePageExtractionError.invalidResult
+        }
+        return BrowserTextHandoff(
+            captureMode: .readablePage,
+            source: BrowserTextSource(
+                url: url,
+                title: title,
+                author: source["author"] as? String,
+                publishedAt: source["publishedAt"] as? String
+            ),
+            text: text,
+            contentFormat: .markdown,
+            requestedContinuation: BrowserTextContinuation(startSession: false, preferredPlaybackOwner: "app")
+        )
+    }
+
+    private static let semanticFallbackJavaScript = #"""
+    const root = document.querySelector("article") || document.querySelector("main") || document.body;
+    if (!root) { return null; }
+    const normalize = value => String(value || "").replace(/\s+/g, " ").trim();
+    const blocks = Array.from(root.querySelectorAll("h1,h2,h3,h4,h5,h6,p,li,blockquote,pre"));
+    const text = blocks.map(element => {
+        const value = normalize(element.innerText || element.textContent);
+        if (!value) { return ""; }
+        const tag = element.tagName.toLowerCase();
+        if (/^h[1-6]$/.test(tag)) { return `${"#".repeat(Number(tag.slice(1)))} ${value}`; }
+        if (tag === "li") { return `- ${value}`; }
+        if (tag === "blockquote") { return `> ${value}`; }
+        return value;
+    }).filter(Boolean).join("\n\n") || normalize(root.innerText || root.textContent);
+    if (!text) { return null; }
+    const metadata = selector => document.querySelector(selector)?.getAttribute("content") || null;
+    return {
+        text,
+        source: {
+            url: document.location.href,
+            title: normalize(metadata("meta[property='og:title']") || document.title || "Browser Text"),
+            author: normalize(metadata("meta[name='author']")) || null,
+            publishedAt: metadata("meta[property='article:published_time']") || null
+        }
+    };
+    """#
 
     private func finish(_ result: Result<BrowserTextHandoff, Error>) {
         guard let continuation else { return }

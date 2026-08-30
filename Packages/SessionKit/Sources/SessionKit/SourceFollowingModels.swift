@@ -74,16 +74,18 @@ public struct FeedEntry: Codable, Equatable, Sendable, Identifiable {
     public var id: String
     public var subscriptionId: String
     public var canonicalURL: String
+    public var audioURL: String?
     public var title: String
     public var author: String?
     public var summary: String?
     public var publishedAt: Date?
     public var state: FeedEntryState
 
-    public init(id: String, subscriptionId: String, canonicalURL: String, title: String, author: String? = nil, summary: String? = nil, publishedAt: Date? = nil, state: FeedEntryState = .unseen) {
+    public init(id: String, subscriptionId: String, canonicalURL: String, audioURL: String? = nil, title: String, author: String? = nil, summary: String? = nil, publishedAt: Date? = nil, state: FeedEntryState = .unseen) {
         self.id = id
         self.subscriptionId = subscriptionId
         self.canonicalURL = canonicalURL
+        self.audioURL = audioURL
         self.title = title
         self.author = author
         self.summary = summary

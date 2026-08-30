@@ -33,6 +33,20 @@ final class SourceLinkImportTests: XCTestCase {
         var entries = try repository.loadFeedEntries(subscriptionId: subscription.id)
         XCTAssertEqual(entries.count, FollowedSourceCoordinator.maximumRetainedSuggestionsPerFeed)
         XCTAssertEqual(Set(entries.map(\.title)), Set((6...30).map { "Episode \($0)" }))
+        XCTAssertTrue(entries.allSatisfy { $0.audioURL?.hasPrefix("https://cdn.example.com/") == true })
+
+        var legacyEpisode = try XCTUnwrap(entries.first(where: { $0.title == "Episode 30" }))
+        legacyEpisode.audioURL = nil
+        try repository.saveFeedEntry(legacyEpisode)
+
+        let recoveredAudioURL = try await coordinator.playableAudioURL(for: legacyEpisode)
+
+        XCTAssertEqual(recoveredAudioURL, "https://cdn.example.com/episode-30.mp3")
+        XCTAssertEqual(
+            try repository.loadFeedEntries(subscriptionId: subscription.id)
+                .first(where: { $0.id == legacyEpisode.id })?.audioURL,
+            recoveredAudioURL
+        )
 
         try repository.saveFeedEntry(FeedEntry(
             id: "legacy-unseen",
@@ -170,6 +184,50 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.diagnostics["gate2LastCommand"], CompactControlCommand.setPlaybackRate.rawValue)
         XCTAssertEqual(model.diagnostics["gate2LastResult"], "delegated")
         XCTAssertNil(model.lastError)
+    }
+
+    func testIncomingSourceLinkAddsToLibraryWithoutReplacingPlaybackFromLibraryRoot() throws {
+        let sharedURL = "https://example.com/shared-during-playback"
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: sharedURL, provider: "direct_audio", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: sharedURL, provider: "direct_audio", role: "audio_file"),
+                title: "Shared During Playback",
+                durationMs: 240_000,
+                audioURL: "https://cdn.example.com/shared-during-playback.mp3",
+                confidence: 1
+            )
+        ))
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            sourceTranscriptionClient: ThrowingSourceTranscriptionClient()
+        )
+        model.resetAndSeed()
+        let activeItemID = try XCTUnwrap(model.libraryItems.first?.id)
+        model.startItem(id: activeItemID)
+        let snapshotBeforeImport = model.snapshot
+        model.openHome()
+
+        model.handleIncomingURL(SourceLinkHandoffURL.url(for: SourceLinkHandoff(
+            id: "source-link-during-playback",
+            inputURL: sharedURL,
+            sourceSurface: "share_sheet",
+            startSession: true
+        )))
+
+        XCTAssertEqual(model.screen, .home)
+        XCTAssertEqual(model.snapshot.sessionId, snapshotBeforeImport.sessionId)
+        XCTAssertEqual(model.snapshot.itemId, snapshotBeforeImport.itemId)
+        XCTAssertEqual(model.snapshot.targetId, snapshotBeforeImport.targetId)
+        XCTAssertEqual(model.snapshot.currentTextStart, snapshotBeforeImport.currentTextStart)
+        XCTAssertTrue(model.libraryItems.contains { $0.title == "Shared During Playback" })
+        XCTAssertEqual(
+            model.statusMessage,
+            "Added Shared During Playback to Library without changing Now Playing."
+        )
     }
 
     func testNativeAudioPlaybackRatePreferenceSurvivesSessionSnapshotsAndRemoteChanges() {

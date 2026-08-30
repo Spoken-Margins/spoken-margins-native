@@ -7,27 +7,39 @@ import UIKit
 
 struct Gate1RootView: View {
     @EnvironmentObject private var model: Gate1AppModel
+    @State private var navigation = AppNavigationState()
+    @State private var keyboardIsPresented = false
 
     var body: some View {
         Group {
-            switch model.screen {
-            case .home:
-                HomeScreen()
-            case .item:
-                ItemScreen()
-            case .playback:
-                PlaybackScreen()
-            case .settings:
-                SettingsScreen()
-            case .export:
-                ExportScreen()
-            case .batchExport:
-                BatchExportScreen()
+            if model.snapshot.isRecording || model.isRequestingRecordingPermission {
+                ExperienceRecordingView()
+            } else {
+                switch model.screen {
+                case .home:
+                    ExperienceRootTabs(navigation: $navigation)
+                case .item:
+                    ExperienceItemDetailScreen()
+                case .playback:
+                    PlaybackScreen()
+                case .timeline:
+                    ExperienceTimelineRailScreen()
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                case .settings:
+                    SettingsScreen()
+                case .offlineStorage:
+                    ExperienceStorageScreen()
+                case .export:
+                    ExportScreen()
+                case .batchExport:
+                    BatchExportScreen()
+                }
             }
         }
         .background(AppColors.background.ignoresSafeArea())
         .safeAreaInset(edge: .top, spacing: 8) {
-            if model.feedbackEvent != nil || model.trashUndo != nil || model.sourceImportProgressMessage != nil || model.legacyLibraryResetNotice != nil {
+            if !model.snapshot.isRecording,
+               model.feedbackEvent != nil || model.trashUndo != nil || model.sourceImportProgressMessage != nil || model.legacyLibraryResetNotice != nil {
                 VStack(spacing: 8) {
                     if let resetNotice = model.legacyLibraryResetNotice {
                         LegacyLibraryResetBanner(message: resetNotice)
@@ -47,16 +59,24 @@ struct Gate1RootView: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 8) {
-            if model.shouldShowMiniPlayer {
+            if !model.snapshot.isRecording && model.shouldShowMiniPlayer && !keyboardIsPresented {
                 MiniPlayerBar()
                     .padding(.horizontal, 12)
-                    .padding(.bottom, 4)
+                    .padding(.bottom, model.screen == .home ? 54 : 4)
             }
         }
-        .edgeSwipeBack(enabled: model.screen != .home, action: model.openHome)
+        .edgeSwipeBack(enabled: !model.recordingNavigationIsLocked && model.screen != .home, action: model.openHome)
         .onAppear {
             model.bootstrapLibraryIfNeeded()
         }
+        #if canImport(UIKit)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            keyboardIsPresented = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            keyboardIsPresented = false
+        }
+        #endif
         .sheet(isPresented: $model.isAIDataSharingConsentPresented) {
             AIDataSharingConsentView()
                 .environmentObject(model)
@@ -394,22 +414,32 @@ private struct MiniPlayerBar: View {
     @EnvironmentObject private var model: Gate1AppModel
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Button(action: model.openPlayback) {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 6) {
-                        if model.snapshot.isRecording {
-                            Image(systemName: "waveform.circle.fill")
-                                .foregroundStyle(.red)
-                            Text("Recording interjection")
-                        } else {
-                            Text(model.snapshot.chapterTitle ?? model.snapshot.title ?? model.selectedItem.title)
+                HStack(spacing: 11) {
+                    Image(systemName: "waveform")
+                        .font(.headline)
+                        .foregroundStyle(AppColors.evergreen)
+                        .frame(width: 40, height: 40)
+                        .background(AppColors.softGreen, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(model.playbackItemHeaderTitle)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(AppColors.text)
+                            .lineLimit(1)
+                        HStack(spacing: 7) {
+                            if let chapter = model.playbackChapterHeaderTitle {
+                                Text(chapter).lineLimit(1)
+                            }
+                            Text("\(model.displayPlaybackProgressPercent)%")
+                                .monospacedDigit()
                         }
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                        ProgressView(value: Double(model.displayPlaybackProgressPercent), total: 100)
+                            .tint(AppColors.ochre)
                     }
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-                    ProgressView(value: Double(model.displayPlaybackProgressPercent), total: 100)
-                        .tint(AppColors.primaryAction)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
@@ -418,59 +448,48 @@ private struct MiniPlayerBar: View {
             .accessibilityLabel("Open Now Playing")
             .accessibilityIdentifier("miniPlayer.open.button")
 
-            if model.snapshot.isRecording {
-                Button(action: model.finishInterjection) {
-                    Image(systemName: "checkmark")
-                        .frame(width: 44, height: 44)
-                }
-                .buttonStyle(IconButtonStyle())
-                .accessibilityLabel("Finish interjection")
-                .accessibilityIdentifier("miniPlayer.interjection.done")
-                Button(action: model.cancelInterjection) {
-                    Image(systemName: "xmark")
-                        .frame(width: 44, height: 44)
-                }
-                .buttonStyle(IconButtonStyle())
-                .accessibilityLabel("Cancel interjection")
-                .accessibilityIdentifier("miniPlayer.interjection.cancel")
-            } else {
-                Button(action: model.dismissMiniPlayer) {
-                    Image(systemName: "xmark")
-                        .frame(width: 44, height: 44)
-                }
-                .buttonStyle(IconButtonStyle())
-                .accessibilityLabel("Close and save listening session")
-                .accessibilityIdentifier("miniPlayer.close.button")
-                Button(action: model.beginInterjection) {
-                    Image(systemName: "mic.fill")
-                        .frame(width: 44, height: 44)
-                }
-                .buttonStyle(IconButtonStyle())
-                .accessibilityLabel("Record an interjection")
-                .accessibilityIdentifier("miniPlayer.interject.button")
-                Button(action: model.playPause) {
-                    Group {
-                        if model.snapshot.status == .starting {
-                            ProgressView()
-                        } else {
-                            Image(systemName: model.snapshot.status.isPlaybackActive ? "pause.fill" : "play.fill")
-                        }
-                    }
+            Button(action: model.beginInterjection) {
+                Image(systemName: "mic.fill")
+                    .foregroundStyle(AppColors.coral)
                     .frame(width: 44, height: 44)
-                }
-                .buttonStyle(IconButtonStyle())
-                .accessibilityLabel(model.snapshot.status.isPlaybackActive ? "Pause" : "Play")
-                .accessibilityIdentifier("miniPlayer.playPause.button")
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Record an interjection")
+            .accessibilityIdentifier("miniPlayer.interject.button")
+
+            Button(action: model.playPause) {
+                Group {
+                    if model.snapshot.status == .starting {
+                        ProgressView().tint(.white)
+                    } else {
+                        Image(systemName: model.snapshot.status.isPlaybackActive ? "pause.fill" : "play.fill")
+                    }
+                }
+                .foregroundStyle(.white)
+                .frame(width: 46, height: 46)
+                .background(AppColors.evergreen, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(model.snapshot.status.isPlaybackActive ? "Pause" : "Play")
+            .accessibilityIdentifier("miniPlayer.playPause.button")
+
+            Button(action: model.dismissMiniPlayer) {
+                Image(systemName: "xmark")
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(AppColors.secondaryText)
+            .accessibilityLabel("Close and save listening session")
+            .accessibilityIdentifier("miniPlayer.close.button")
         }
-        .padding(.leading, 14)
-        .padding(.trailing, 8)
-        .padding(.vertical, 8)
+        .padding(.leading, 10)
+        .padding(.trailing, 6)
+        .padding(.vertical, 6)
         .foregroundStyle(AppColors.text)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AppColors.border))
-        .shadow(color: .black.opacity(0.12), radius: 12, y: 5)
+        .background(.ultraThickMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(AppColors.evergreen.opacity(0.25)))
+        .shadow(color: .black.opacity(0.14), radius: 18, y: 7)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("miniPlayer.bar")
     }
@@ -1412,7 +1431,6 @@ private struct QuickAddSwipeRow<Content: View>: View {
 
 private struct ItemScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
-    @State private var showsManualListeningMapEditor = false
     @State private var isTrashConfirmationPresented = false
     @State private var isStartNewConfirmationPresented = false
 
@@ -1509,7 +1527,7 @@ private struct ItemScreen: View {
             Pill("\(model.selectedItem.chapters.count) \(model.selectedItem.chapters.count == 1 ? "chapter" : "chapters")")
         }
         if !model.selectedItem.interjections.isEmpty {
-                Pill("\(model.selectedItem.interjections.count) interjections")
+                Pill("\(model.selectedItem.interjections.count) Margins")
         }
     }
 
@@ -1558,35 +1576,6 @@ private struct ItemScreen: View {
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
                 }
-                Button {
-                    showsManualListeningMapEditor.toggle()
-                } label: {
-                    Label(showsManualListeningMapEditor ? "Hide Manual JSON" : "Paste Listening Map JSON", systemImage: "curlybraces")
-                }
-                .buttonStyle(SecondaryButtonStyle())
-                .accessibilityIdentifier("item.toggleMapJSON.button")
-                if showsManualListeningMapEditor {
-                    Text("Listening Map JSON")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(AppColors.secondaryText)
-                    TextEditor(text: $model.listeningMapJSON)
-                        .font(.system(.caption, design: .monospaced))
-                        .frame(minHeight: 130)
-                        .padding(8)
-                        .background(AppColors.inputBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppColors.border))
-                        .accessibilityLabel("Listening Map JSON")
-                        .accessibilityIdentifier("item.mapJSON.editor")
-                    Button {
-                        model.applyListeningMapJSON()
-                    } label: {
-                        Label("Apply Listening Map JSON", systemImage: "checkmark.circle")
-                    }
-                    .buttonStyle(SecondaryButtonStyle())
-                    .disabled(model.listeningMapJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .accessibilityIdentifier("item.applyMap.button")
-                }
             }
         }
     }
@@ -1594,11 +1583,19 @@ private struct ItemScreen: View {
     private var chapters: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("Resolved Chapters", systemImage: "music.note.list")
+                Label("Structure", systemImage: "list.bullet.indent")
                     .font(.headline)
                 Spacer()
             }
-            if model.selectedItem.chapters.isEmpty {
+            if !model.selectedItem.navigation.isEmpty {
+                ProductPanel {
+                    ExperienceCanonicalNavigationTree(
+                        nodes: model.selectedItem.navigation,
+                        chapters: model.selectedItem.chapters,
+                        action: { model.jumpToChapter($0) }
+                    )
+                }
+            } else if model.selectedItem.chapters.isEmpty {
                 ProductPanel {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Mapless playback is available.")
@@ -1832,45 +1829,56 @@ private struct PlaybackScreen: View {
     @State private var isSleepTimerPresented = false
     @State private var isSourceTextPresented = false
     @State private var sourceTextOffsetAtPresentation = 0
+    @State private var timelinePullTriggered = false
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @FocusState private var followUpFocused: Bool
 
     var body: some View {
         NavigationStack {
             ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(spacing: 20) {
-                        if model.shouldShowGuidedOnboardingCoach {
-                            GuidedOnboardingPlaybackCard {
-                                withAnimation {
-                                    proxy.scrollTo("playback.timeline", anchor: .top)
-                                }
-                            }
-                        }
-                        SourceFollowSuggestionCard(appearance: .playback)
-                        ManualSourceFollowButton(appearance: .playback)
-                        Group {
-                            if horizontalSizeClass == .regular {
-                                HStack(alignment: .top, spacing: 24) {
-                                    playbackControls
-                                        .frame(width: 430)
-                                    VStack(spacing: 20) {
-                                        timeline
-                                        conversation
+                ZStack {
+                    LinearGradient(
+                        colors: [AppColors.watchBackground, AppColors.evergreen.opacity(0.82)],
+                        startPoint: .top,
+                        endPoint: .bottomTrailing
+                    )
+                    .ignoresSafeArea()
+                    ScrollView {
+                        VStack(spacing: 18) {
+                            if model.shouldShowGuidedOnboardingCoach {
+                                GuidedOnboardingPlaybackCard {
+                                    withAnimation {
+                                        proxy.scrollTo("playback.timeline", anchor: .top)
                                     }
-                                    .frame(maxWidth: 680)
-                                }
-                                .frame(maxWidth: 1160, alignment: .topLeading)
-                            } else {
-                                VStack(spacing: 20) {
-                                    playbackControls
-                                    timeline
-                                    conversation
                                 }
                             }
+                            playbackControls
+                            sessionActionDock
+                            SourceFollowSuggestionCard(appearance: .playback)
+                            ManualSourceFollowButton(appearance: .playback)
+                        }
+                        .padding(.horizontal, horizontalSizeClass == .regular ? 36 : 18)
+                        .padding(.vertical, 24)
+                        .frame(maxWidth: 620)
+                        .frame(maxWidth: .infinity)
+                    }
+                    .scrollBounceBehavior(.always)
+                    .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                        TimelinePullPresentation.overscrollDistance(
+                            contentOffsetY: geometry.contentOffset.y,
+                            contentHeight: geometry.contentSize.height,
+                            containerHeight: geometry.containerSize.height,
+                            bottomInset: geometry.contentInsets.bottom
+                        )
+                    } action: { _, distance in
+                        if distance < 1 {
+                            timelinePullTriggered = false
+                        } else if TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: distance),
+                                  !timelinePullTriggered {
+                            timelinePullTriggered = true
+                            openTimeline()
                         }
                     }
-                    .padding(20)
                 }
                 .accessibilityIdentifier("playback.screen")
                 .onCompatibleChange(of: model.guidedOnboardingStage) { stage in
@@ -1881,38 +1889,14 @@ private struct PlaybackScreen: View {
                     }
                 }
             }
+            .toolbarBackground(AppColors.watchBackground.opacity(0.92), for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(action: model.openHome) {
-                        Label("Home", systemImage: "house")
+                        Label("Library", systemImage: "books.vertical")
                     }
                     .accessibilityIdentifier("playback.home.button")
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    HStack {
-                        Button(action: model.openHelp) {
-                            Image(systemName: "questionmark.circle")
-                        }
-                        .accessibilityLabel("Help")
-                        .accessibilityIdentifier("playback.help.button")
-                        if model.snapshot.isRecording {
-                            Button(action: model.finishInterjection) {
-                                Image(systemName: "checkmark")
-                            }
-                            .accessibilityLabel("Done Recording")
-                            .accessibilityIdentifier("interjection.toolbar.done")
-                            Button(action: model.cancelInterjection) {
-                                Image(systemName: "xmark")
-                            }
-                            .accessibilityLabel("Cancel Recording")
-                            .accessibilityIdentifier("interjection.toolbar.cancel")
-                        }
-                        Button(action: model.openExport) {
-                            Image(systemName: "square.and.arrow.up")
-                        }
-                        .disabled(!model.hasActiveSession)
-                        .accessibilityIdentifier("playback.export.button")
-                    }
                 }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
@@ -1939,28 +1923,85 @@ private struct PlaybackScreen: View {
         }
     }
 
-    private var isUITesting: Bool {
-        ProcessInfo.processInfo.arguments.contains("--ui-testing")
-            || ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TESTING"] == "1"
-    }
-
     private var playbackControls: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 20) {
+            Text("NOW PLAYING")
+                .font(.caption.weight(.bold))
+                .tracking(1.4)
+                .foregroundStyle(AppColors.ochre)
             playbackHeader
-            if isUITesting {
-                gate2CompactValidation
-            }
             playbackPosition
             playbackTransport
             playbackRateControl
             onDeviceSpeechGenerationControl
             interjectionControls
         }
-        .padding(18)
-        .frame(maxWidth: 430)
-        .background(AppColors.watchBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 34))
-        .shadow(color: .black.opacity(0.18), radius: 22, y: 12)
+        .padding(.horizontal, horizontalSizeClass == .regular ? 34 : 22)
+        .padding(.vertical, 28)
+        .frame(maxWidth: 560)
+        .background(Color.black.opacity(0.22))
+        .clipShape(RoundedRectangle(cornerRadius: 36, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 36, style: .continuous)
+                .stroke(Color.white.opacity(0.14))
+        }
+        .shadow(color: .black.opacity(0.22), radius: 28, y: 14)
+    }
+
+    private var sessionActionDock: some View {
+        HStack(spacing: 8) {
+            Button(action: model.openCurrentPlaybackItem) {
+                Image(systemName: "doc.text")
+                    .frame(width: 48, height: 48)
+            }
+            .accessibilityLabel("Item")
+            .accessibilityIdentifier("playback.item.button")
+
+            Button(action: openTimeline) {
+                Label("Timeline", systemImage: "list.bullet.rectangle")
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(maxWidth: .infinity, minHeight: 48)
+            }
+            .accessibilityIdentifier("playback.timeline.button")
+
+            Button(action: model.openExport) {
+                Image(systemName: "square.and.arrow.up")
+                    .frame(width: 48, height: 48)
+            }
+            .disabled(!model.hasActiveSession)
+            .accessibilityLabel("Export")
+            .accessibilityIdentifier("playback.export.button")
+        }
+        .font(.subheadline.weight(.semibold))
+        .buttonStyle(.bordered)
+        .tint(.white)
+        .foregroundStyle(.white)
+        .padding(8)
+        .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func openTimeline() {
+        withAnimation(.snappy(duration: 0.34)) {
+            model.openTimeline()
+        }
+    }
+
+    private var timelineLaunchCard: some View {
+        ProductPanel {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Timeline", systemImage: "list.bullet.rectangle")
+                    .font(.system(.title2, design: .serif).weight(.semibold))
+                Text("Review source structure, your Margins, and eligible session reflections without crowding the listening controls.")
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.secondaryText)
+                Button(action: { model.openTimeline() }) {
+                    Label("Open Timeline", systemImage: "arrow.right")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .accessibilityIdentifier("timeline.section")
+            }
+        }
     }
 
     private var playbackHeader: some View {
@@ -2034,7 +2075,9 @@ private struct PlaybackScreen: View {
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(AppColors.watchSecondary)
-        } else if model.snapshot.targetType == TargetType.itemTextTTS.rawValue, textLength > 0 {
+        } else if model.snapshot.targetType == TargetType.itemTextTTS.rawValue,
+                  textLength > 0,
+                  model.canShowFullPlaybackScrubber {
             HStack(spacing: 8) {
                 Text("\(textScrubberPercent)%")
                     .frame(minWidth: 34, alignment: .trailing)
@@ -2435,48 +2478,6 @@ private struct PlaybackScreen: View {
         }
     }
 
-    private var gate2CompactValidation: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Compact Controls")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(AppColors.watchSecondary)
-            Text(model.gate2CompactSnapshot?.chapterTitle ?? "No compact snapshot")
-                .font(.caption)
-                .foregroundStyle(.white)
-                .accessibilityIdentifier("gate2.compact.chapter")
-                .accessibilityValue(model.snapshot.status.rawValue)
-            HStack(spacing: 8) {
-                Button {
-                    model.dispatchGate2CompactCommand(.skipBack)
-                } label: {
-                    Image(systemName: "gobackward.15")
-                }
-                .buttonStyle(WatchSecondaryButtonStyle())
-                .accessibilityLabel("Compact controls skip back")
-                .accessibilityIdentifier("gate2.compact.back.button")
-
-                Button {
-                    model.dispatchGate2CompactCommand(.togglePlayPause)
-                } label: {
-                    Image(systemName: "playpause")
-                }
-                .buttonStyle(WatchSecondaryButtonStyle())
-                .accessibilityLabel("Compact controls play or pause")
-                .accessibilityIdentifier("gate2.compact.playPause.button")
-
-                Button {
-                    model.dispatchGate2CompactCommand(.skipForward)
-                } label: {
-                    Image(systemName: "goforward.15")
-                }
-                .buttonStyle(WatchSecondaryButtonStyle())
-                .accessibilityLabel("Compact controls skip forward")
-                .accessibilityIdentifier("gate2.compact.forward.button")
-            }
-        }
-        .padding(.top, 8)
-    }
-
     private var mediaDurationMs: Int {
         max(0, model.snapshot.currentPlaybackDurationMs ?? 0)
     }
@@ -2788,8 +2789,8 @@ private struct PlaybackScreen: View {
     }
 }
 
-private struct SourceFollowSuggestionCard: View {
-    fileprivate enum Appearance: Equatable {
+struct SourceFollowSuggestionCard: View {
+    enum Appearance: Equatable {
         case standard
         case playback
     }
@@ -2843,7 +2844,7 @@ private struct SourceFollowSuggestionCard: View {
     }
 }
 
-private struct ManualSourceFollowButton: View {
+struct ManualSourceFollowButton: View {
     @EnvironmentObject private var model: Gate1AppModel
     var appearance: SourceFollowSuggestionCard.Appearance = .standard
 
@@ -3170,6 +3171,15 @@ private struct SettingsScreen: View {
                     }
                 }
                 Section("Offline Storage") {
+                    Button(action: model.openOfflineStorage) {
+                        HStack {
+                            Label("Manage Offline Storage", systemImage: "internaldrive")
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.offlineStorage.button")
                     Picker("Storage Budget", selection: $model.offlineStorageLimitGB) {
                         ForEach(OfflineStorageBudget.allowedGigabytes, id: \.self) { gigabytes in
                             Text("\(gigabytes) GB").tag(gigabytes)
@@ -3194,8 +3204,9 @@ private struct SettingsScreen: View {
                     Text("While Charging uses durable jobs and pauses before the next chunk when power, thermal, or storage safety changes. Completion timing is not guaranteed.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
-                    Button("Clear Reproducible Offline Audio", role: .destructive, action: model.clearReproducibleOfflineAudio)
-                        .accessibilityIdentifier("settings.clearReproducibleOfflineAudio.button")
+                    Text("Use Manage Offline Storage to review protected, reproducible, reserved, and category totals before clearing anything.")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
                 }
                 Section("Recently Deleted") {
                     if model.recentlyDeletedItems.isEmpty {
@@ -3319,6 +3330,21 @@ private struct SettingsScreen: View {
                                 .foregroundStyle(AppColors.secondaryText)
                         }
                     }
+                    Text("Listening Map JSON")
+                        .font(.headline)
+                    Text("Developer diagnostic for \(model.selectedItem.title.isEmpty ? "the selected item" : model.selectedItem.title).")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                    TextEditor(text: $model.listeningMapJSON)
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(minHeight: 130)
+                        .accessibilityLabel("Listening Map JSON")
+                        .accessibilityIdentifier("settings.developer.mapJSON.editor")
+                    Button("Apply Listening Map JSON", systemImage: "checkmark.circle") {
+                        model.applyListeningMapJSON()
+                    }
+                    .disabled(model.listeningMapJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityIdentifier("settings.developer.mapJSON.apply")
                 }
                 #endif
             }
@@ -3376,63 +3402,77 @@ private struct SettingsScreen: View {
 
 private struct BatchExportScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @State private var isFolderImporterPresented = false
+
+    private static let destinationAnchor = "batchExport.destination"
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Export Sessions")
-                            .font(.largeTitle.bold())
-                        Text("Choose listening sessions and save one Markdown file for each session.")
-                            .foregroundStyle(AppColors.secondaryText)
-                    }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Export Sessions")
+                                .font(.largeTitle.bold())
+                            Text("Choose listening sessions and save one Markdown file for each session.")
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
 
-                    ProductPanel {
-                        VStack(alignment: .leading, spacing: 14) {
-                            Picker("Sessions", selection: $model.batchExportFilter) {
-                                Text("With Interjections").tag(BatchSessionExportFilter.withInterjections)
-                                Text("All Sessions").tag(BatchSessionExportFilter.all)
-                            }
-                            .pickerStyle(.segmented)
-                            .accessibilityIdentifier("batchExport.filter.picker")
+                        ProductPanel {
+                            VStack(alignment: .leading, spacing: 14) {
+                                Picker("Sessions", selection: $model.batchExportFilter) {
+                                    Text("With Interjections").tag(BatchSessionExportFilter.withInterjections)
+                                    Text("All Sessions").tag(BatchSessionExportFilter.all)
+                                }
+                                .pickerStyle(.segmented)
+                                .accessibilityIdentifier("batchExport.filter.picker")
 
-                            HStack {
-                                Text("\(model.selectedBatchExportSessionIds.count) selected")
-                                    .font(.subheadline.weight(.semibold))
-                                Spacer()
-                                Button("Select All", action: model.selectAllVisibleBatchExportSessions)
-                                    .disabled(model.visibleBatchExportRows.isEmpty)
-                                    .accessibilityIdentifier("batchExport.selectAll.button")
-                                Button("Clear", action: model.clearBatchExportSelection)
-                                    .disabled(model.selectedBatchExportSessionIds.isEmpty)
-                                    .accessibilityIdentifier("batchExport.clear.button")
+                                HStack {
+                                    Text("\(model.selectedBatchExportSessionIds.count) selected")
+                                        .font(.subheadline.weight(.semibold))
+                                    Spacer()
+                                    Button("Select All", action: model.selectAllVisibleBatchExportSessions)
+                                        .disabled(model.visibleBatchExportRows.isEmpty)
+                                        .accessibilityIdentifier("batchExport.selectAll.button")
+                                    Button("Clear", action: model.clearBatchExportSelection)
+                                        .disabled(model.selectedBatchExportSessionIds.isEmpty)
+                                        .accessibilityIdentifier("batchExport.clear.button")
+                                }
                             }
                         }
-                    }
 
-                    sessionSelection
+                        sessionSelection
 
-                    if !model.selectedBatchExportSessionIds.isEmpty {
-                        exportOptions
-                        destination
-                    }
+                        if !model.selectedBatchExportSessionIds.isEmpty {
+                            exportOptions
+                            destination
+                                .id(Self.destinationAnchor)
+                        }
 
-                    if let result = model.batchExportResult {
-                        exportResult(result)
+                        if let result = model.batchExportResult {
+                            exportResult(result)
+                        }
                     }
+                    .padding(20)
                 }
-                .padding(20)
-            }
-            .navigationBarTitleDisplayMode(.inline)
-            .accessibilityIdentifier("batchExport.screen")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(action: model.openHome) {
-                        Label("Home", systemImage: "arrow.left")
+                .navigationBarTitleDisplayMode(.inline)
+                .accessibilityIdentifier("batchExport.screen")
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button(action: model.openHome) {
+                            Label("Home", systemImage: "arrow.left")
+                        }
+                        .accessibilityIdentifier("batchExport.home.button")
                     }
-                    .accessibilityIdentifier("batchExport.home.button")
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Export") {
+                            jumpToDestination(using: proxy)
+                        }
+                        .disabled(model.selectedBatchExportSessionIds.isEmpty)
+                        .accessibilityHint("Jumps to Included Material and Destination.")
+                        .accessibilityIdentifier("batchExport.jumpToDestination.button")
+                    }
                 }
             }
             .fileImporter(
@@ -3448,6 +3488,16 @@ private struct BatchExportScreen: View {
                 case .failure(let error):
                     model.reportBatchExportFolderFailure(error)
                 }
+            }
+        }
+    }
+
+    private func jumpToDestination(using proxy: ScrollViewProxy) {
+        if accessibilityReduceMotion {
+            proxy.scrollTo(Self.destinationAnchor, anchor: .top)
+        } else {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                proxy.scrollTo(Self.destinationAnchor, anchor: .top)
             }
         }
     }
@@ -4386,7 +4436,7 @@ private enum AppLinks {
     }
 }
 
-private enum AppColors {
+enum AppColors {
     static let background = dynamicColor(light: (0.96, 0.97, 0.94), dark: (0.07, 0.09, 0.08))
     static let panel = dynamicColor(light: (1.00, 1.00, 1.00), dark: (0.13, 0.16, 0.14))
     static let inputBackground = dynamicColor(light: (0.98, 0.99, 0.97), dark: (0.10, 0.12, 0.11))
@@ -4404,6 +4454,11 @@ private enum AppColors {
     static let dangerText = dynamicColor(light: (0.55, 0.13, 0.11), dark: (1.00, 0.55, 0.48))
     static let dangerBackground = dynamicColor(light: (0.96, 0.88, 0.86), dark: (0.34, 0.15, 0.13))
     static let interjectText = Color(red: 0.08, green: 0.10, blue: 0.08)
+    static let bone = dynamicColor(light: (0.97, 0.95, 0.89), dark: (0.08, 0.10, 0.09))
+    static let evergreen = dynamicColor(light: (0.08, 0.30, 0.21), dark: (0.48, 0.84, 0.62))
+    static let ochre = dynamicColor(light: (0.76, 0.52, 0.16), dark: (0.94, 0.72, 0.32))
+    static let coral = dynamicColor(light: (0.70, 0.27, 0.20), dark: (1.00, 0.57, 0.48))
+    static let plum = dynamicColor(light: (0.39, 0.24, 0.48), dark: (0.78, 0.62, 0.88))
 
     private static func dynamicColor(light: (Double, Double, Double), dark: (Double, Double, Double)) -> Color {
         #if canImport(UIKit)

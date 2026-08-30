@@ -139,6 +139,28 @@ actor FollowedSourceCoordinator {
         try repository.saveFeedEntry(entry)
     }
 
+    func playableAudioURL(for entry: FeedEntry) async throws -> String? {
+        if let audioURL = Self.validHTTPSURL(entry.audioURL) {
+            return audioURL.absoluteString
+        }
+        guard let subscription = try repository.loadFeedSubscriptions().first(where: { $0.id == entry.subscriptionId }),
+              subscription.source.kind == .podcastFeed,
+              let feedURL = URL(string: subscription.source.canonicalURL) else {
+            return nil
+        }
+        let parsed = try await fetch(url: feedURL, subscription: nil)
+        guard let match = parsed.items.first(where: { item in
+            item.url == entry.canonicalURL
+                || (item.title == entry.title && item.publishedAt == entry.publishedAt)
+        }), let audioURL = Self.validHTTPSURL(match.audioURL) else {
+            return nil
+        }
+        var updated = entry
+        updated.audioURL = audioURL.absoluteString
+        try repository.saveFeedEntry(updated)
+        return audioURL.absoluteString
+    }
+
     func setMuted(subscriptionId: String, muted: Bool) throws {
         guard var subscription = try repository.loadFeedSubscriptions().first(where: { $0.id == subscriptionId }) else { return }
         subscription.state = muted ? .muted : .active
@@ -256,6 +278,7 @@ actor FollowedSourceCoordinator {
                 id: id,
                 subscriptionId: subscription.id,
                 canonicalURL: item.url,
+                audioURL: Self.validHTTPSURL(item.audioURL)?.absoluteString,
                 title: item.title,
                 author: item.author,
                 summary: item.summary,
@@ -274,6 +297,13 @@ actor FollowedSourceCoordinator {
 
     private static func entryID(subscriptionID: String, itemID: String) -> String {
         "entry-\(digest(subscriptionID + "\u{1f}" + itemID))"
+    }
+
+    private static func validHTTPSURL(_ value: String?) -> URL? {
+        guard let value, let url = URL(string: value), url.scheme?.lowercased() == "https" else {
+            return nil
+        }
+        return url
     }
 
     private static func digest(_ value: String) -> String {

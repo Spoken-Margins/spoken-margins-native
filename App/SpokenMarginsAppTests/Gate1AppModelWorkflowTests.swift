@@ -81,6 +81,21 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(state.displayedValue(canonicalValue: 0, range: range), 900)
     }
 
+    func testPartialPreparedTextAudioDoesNotAdvertiseAFullScrubber() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.snapshot.targetType = TargetType.itemTextTTS.rawValue
+        model.snapshot.preparedTextAudioStatus = "starter_ready"
+
+        XCTAssertFalse(model.canShowFullPlaybackScrubber)
+
+        model.snapshot.preparedTextAudioStatus = "ready"
+        XCTAssertTrue(model.canShowFullPlaybackScrubber)
+
+        model.snapshot.targetType = TargetType.transcriptBackedMedia.rawValue
+        model.snapshot.preparedTextAudioStatus = nil
+        XCTAssertTrue(model.canShowFullPlaybackScrubber)
+    }
+
     func testPlaybackHeaderKeepsTheItemTitleUnprefixedWhenItIsNotAChapter() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.selectedItem = ItemDetailState(title: "Why Apple Is Heading Into a Pivotal Moment")
@@ -367,6 +382,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         XCTAssertEqual(model.selectedItem.id, Gate1AppModel.guidedOnboardingItemId)
         XCTAssertEqual(model.screen, .playback)
+        XCTAssertTrue(model.shouldShowGuidedOnboardingCoach)
         XCTAssertEqual(model.guidedOnboardingStage, .practiceInterjection)
         XCTAssertFalse(model.isOnboardingStepComplete(.firstInterjection))
 
@@ -391,6 +407,135 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(model.isOnboardingStepComplete(.exportedSession))
         XCTAssertTrue(model.hasCompletedCoreOnboarding)
         XCTAssertEqual(model.guidedOnboardingStage, .complete)
+    }
+
+    func testRecordingBlocksNavigationAndSessionReplacementWithoutMutatingListeningState() throws {
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: NoopRecordingClient()
+        )
+        model.resetAndSeed()
+        model.addSampleItem()
+        model.startItem(id: "item-pill")
+        let session = try XCTUnwrap(model.selectedItem.sessions.first)
+        let libraryIDs = model.libraryItems.map(\.id)
+        let selectedItemID = model.selectedItem.id
+        let activeItemID = model.activePlaybackItemId
+        let mediaRate = model.mediaPlaybackRate
+        let speechRate = model.speechRate
+
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        XCTAssertTrue(model.snapshot.isRecording)
+        let recordingSnapshot = model.snapshot
+
+        model.screen = .settings
+        model.openHome()
+        model.openSettings()
+        model.openHelp()
+        model.openTimeline()
+        model.openOfflineStorage()
+        model.openExport()
+        model.openBatchExport()
+        model.openItem(id: Gate1AppModel.welcomeSampleItemId)
+        model.startItem(id: Gate1AppModel.welcomeSampleItemId)
+        model.startNewSession(id: Gate1AppModel.welcomeSampleItemId)
+        model.openSession(session)
+        model.resumeSession(session)
+        model.moveItemToTrash(id: "item-pill")
+        model.endSession()
+        model.dismissMiniPlayer()
+        model.cyclePlaybackRate()
+        model.setMediaPlaybackRate(2)
+        model.dispatchGate2CompactCommand(.setPlaybackRate, playbackRate: 2)
+
+        XCTAssertEqual(model.snapshot, recordingSnapshot)
+        XCTAssertEqual(model.screen, .playback)
+        XCTAssertEqual(model.selectedItem.id, selectedItemID)
+        XCTAssertEqual(model.activePlaybackItemId, activeItemID)
+        XCTAssertEqual(model.libraryItems.map(\.id), libraryIDs)
+        XCTAssertEqual(model.mediaPlaybackRate, mediaRate)
+        XCTAssertEqual(model.speechRate, speechRate)
+        XCTAssertFalse(model.isHelpPresented)
+        XCTAssertNotNil(model.recordingPresentationContext)
+        XCTAssertTrue(model.statusMessage.contains("Finish or cancel"))
+    }
+
+    func testFinishAndCancelAreTheOnlyRecordingExits() {
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: NoopRecordingClient()
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let sessionID = model.snapshot.sessionId
+        let targetID = model.snapshot.targetId
+        let anchor = model.snapshot.currentPlaybackProgressPercent
+
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        XCTAssertTrue(model.recordingNavigationIsLocked)
+        model.dispatchGate2CompactCommand(.finishInterjection)
+
+        XCTAssertFalse(model.recordingNavigationIsLocked)
+        XCTAssertNil(model.recordingPresentationContext)
+        XCTAssertEqual(model.snapshot.sessionId, sessionID)
+        XCTAssertEqual(model.snapshot.targetId, targetID)
+        XCTAssertEqual(model.snapshot.currentPlaybackProgressPercent, anchor)
+        let savedCount = model.selectedItem.interjections.count
+        XCTAssertEqual(savedCount, 1)
+
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        XCTAssertTrue(model.recordingNavigationIsLocked)
+        model.dispatchGate2CompactCommand(.cancelInterjection)
+
+        XCTAssertFalse(model.recordingNavigationIsLocked)
+        XCTAssertNil(model.recordingPresentationContext)
+        XCTAssertEqual(model.snapshot.sessionId, sessionID)
+        XCTAssertEqual(model.snapshot.targetId, targetID)
+        XCTAssertEqual(model.snapshot.currentPlaybackProgressPercent, anchor)
+        XCTAssertEqual(model.selectedItem.interjections.count, savedCount)
+        model.openHome()
+        XCTAssertEqual(model.screen, .home)
+    }
+
+    func testOpeningMarginFromAnotherSessionDoesNotReplaceNowPlaying() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let snapshotBefore = model.snapshot
+        let margin = MarginRow(
+            interjection: Interjection(
+                id: "other-margin",
+                itemId: "item-pill",
+                sessionId: "another-session",
+                targetType: .item,
+                targetId: "item-pill",
+                createdAt: Date(),
+                roughPercent: 25,
+                anchor: Anchor(
+                    anchorType: .text,
+                    startChar: 10,
+                    endChar: 20,
+                    anchorBefore: "Before",
+                    anchorAfter: "After"
+                ),
+                audioPath: "Interjections/other-margin.m4a",
+                audioStatus: "saved",
+                transcriptionStatus: "transcribed",
+                transcript: "A thought from another session.",
+                cleanedTranscript: nil,
+                displayText: nil,
+                status: "active"
+            ),
+            itemTitle: "The Pill and the Paper Trail",
+            sessionDate: Date()
+        )
+
+        model.openMarginInTimeline(margin)
+
+        XCTAssertEqual(model.snapshot, snapshotBefore)
+        XCTAssertEqual(model.screen, .playback)
+        XCTAssertEqual(model.diagnostics["marginTimelineNavigation"], "blocked_active_session_replacement")
+        XCTAssertTrue(model.statusMessage.contains("Now Playing was left unchanged"))
     }
 
     func testGuidedOnboardingTimelineChapterCompletesReviewStep() throws {
@@ -536,6 +681,22 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.screen, .playback)
         XCTAssertEqual(model.selectedItem.id, playingItemId)
         XCTAssertFalse(model.shouldShowMiniPlayer)
+    }
+
+    func testDismissingMiniPlayerHidesItBeforeSessionCleanupCompletes() async {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.openHome()
+
+        XCTAssertTrue(model.shouldShowMiniPlayer)
+        model.dismissMiniPlayer()
+
+        XCTAssertFalse(model.shouldShowMiniPlayer)
+        for _ in 0..<50 where model.hasActiveSession {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertFalse(model.hasActiveSession)
     }
 
     func testRoutinePlaybackAndNavigationActionsDoNotPresentFeedback() {
@@ -686,6 +847,68 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(model.libraryItems.contains(where: { $0.id == "item-pill" }))
         XCTAssertFalse(model.recentlyDeletedItems.contains(where: { $0.id == "item-pill" }))
         XCTAssertFalse(model.selectedItem.sessions.isEmpty, "Restoring an item should restore its existing sessions")
+    }
+
+    func testMarkItemCompletedPersistsListeningStateAndStopsOfferingItAsContinueHero() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+
+        model.markItemCompleted(id: "item-pill")
+
+        let row = try XCTUnwrap(model.libraryItems.first(where: { $0.id == "item-pill" }))
+        XCTAssertTrue(row.isCompleted)
+        XCTAssertEqual(row.continuationProgressPercent, 100)
+        XCTAssertNil(LibraryPresentation.continueItem(in: model.libraryItems, activeItemId: model.activePlaybackItemId))
+
+        model.openItem(id: "item-pill")
+        let session = try XCTUnwrap(model.selectedItem.sessions.first)
+        XCTAssertEqual(session.status, "finished")
+        XCTAssertEqual(session.phase, .finished)
+        XCTAssertEqual(session.completionPercent, 100)
+        XCTAssertNotNil(session.completedAt)
+    }
+
+    func testUnplayedItemCanBeMarkedCompletedWithoutStartingPlayback() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.importTitle = "Read Later"
+        model.importText = "A source that the listener finished somewhere else."
+        model.importTextItem(startListening: false)
+        let itemID = try XCTUnwrap(model.libraryItems.first(where: { $0.title == "Read Later" })?.id)
+
+        model.markItemCompleted(id: itemID)
+        model.openItem(id: itemID)
+
+        let row = try XCTUnwrap(model.libraryItems.first(where: { $0.id == itemID }))
+        let session = try XCTUnwrap(model.selectedItem.sessions.first)
+        XCTAssertTrue(row.isCompleted)
+        XCTAssertEqual(session.status, "finished")
+        XCTAssertEqual(session.completionPercent, 100)
+        XCTAssertNotNil(session.completedAt)
+        XCTAssertFalse(model.snapshot.status.isPlaybackActive)
+    }
+
+    func testExplicitOfflinePreparationJobsSortAheadOfAutomaticWork() {
+        let automatic = AudioPreparationJob(
+            id: "automatic",
+            itemId: "automatic-item",
+            manifestId: "automatic-manifest",
+            policy: .whileCharging,
+            requestedAt: Date(timeIntervalSince1970: 1)
+        )
+        let explicit = AudioPreparationJob(
+            id: "explicit",
+            itemId: "explicit-item",
+            manifestId: "explicit-manifest",
+            policy: .explicit,
+            requestedAt: Date(timeIntervalSince1970: 2)
+        )
+
+        XCTAssertEqual(
+            [automatic, explicit].sorted(by: Gate1AppModel.audioPreparationJobPrecedes).map(\.id),
+            ["explicit", "automatic"]
+        )
     }
 
     func testTrashUndoAutoDismissesAfterConfiguredDelay() async throws {
@@ -1145,32 +1368,43 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.canPlayLiveSpeechInstead)
     }
 
-    func testSubstantiallyCompletedItemsAreIneligibleForWholeItemPrewarm() {
-        let almostComplete = Session(
-            id: "session-almost-complete",
+    func testTextAudioPreparationSkipsAnyCompletedOrSeventyFivePercentSession() {
+        let atCutoff = Session(
+            id: "session-at-cutoff",
             itemId: "item-native-text",
             status: "in_progress",
             phase: .itemPlayback,
             currentTargetType: .itemTextTTS,
             currentTargetId: "item-native-text",
-            position: Position(charOffset: 900),
-            completionPercent: 90,
+            position: Position(charOffset: 750),
+            completionPercent: 75,
             playbackRate: 1
         )
-        let stillListening = Session(
-            id: "session-still-listening",
+        let belowCutoff = Session(
+            id: "session-below-cutoff",
             itemId: "item-native-text",
             status: "in_progress",
             phase: .itemPlayback,
             currentTargetType: .itemTextTTS,
             currentTargetId: "item-native-text",
-            position: Position(charOffset: 890),
-            completionPercent: 89,
+            position: Position(charOffset: 740),
+            completionPercent: 74,
             playbackRate: 1
         )
+        var completed = belowCutoff
+        completed.id = "session-completed"
+        completed.status = "finished"
+        completed.phase = .finished
+        completed.completionPercent = 12
+        var completedAtOnly = belowCutoff
+        completedAtOnly.id = "session-completed-at"
+        completedAtOnly.completedAt = Date(timeIntervalSince1970: 1)
 
-        XCTAssertTrue(Gate1AppModel.hasSubstantiallyCompletedTextSession([almostComplete]))
-        XCTAssertFalse(Gate1AppModel.hasSubstantiallyCompletedTextSession([stillListening]))
+        XCTAssertFalse(Gate1AppModel.shouldSkipTextAudioPreparation([belowCutoff]))
+        XCTAssertTrue(Gate1AppModel.shouldSkipTextAudioPreparation([atCutoff]))
+        XCTAssertTrue(Gate1AppModel.shouldSkipTextAudioPreparation([completed]))
+        XCTAssertTrue(Gate1AppModel.shouldSkipTextAudioPreparation([completedAtOnly]))
+        XCTAssertTrue(Gate1AppModel.shouldSkipTextAudioPreparation([belowCutoff, completed]))
     }
 
     func testResumeCompletedSessionAfterExportRequiresExplicitRestart() throws {
@@ -1788,6 +2022,30 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         ]
 
         XCTAssertTrue(model.canManuallyFollowSelectedSource)
+    }
+
+    func testPublisherChaptersAreNotPresentedAsANeedForAListeningMap() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.selectedItem = ItemDetailState(
+            id: "episode",
+            title: "An Episode",
+            status: "needs_listening_map",
+            mediaChapters: [
+                MediaTimelineChapter(
+                    id: "publisher-opening",
+                    title: "Opening",
+                    startMs: 0,
+                    transcriptSegmentId: "publisher-opening-segment"
+                )
+            ],
+            isNativeAudio: true
+        )
+
+        XCTAssertFalse(model.canGenerateListeningMap)
+        XCTAssertEqual(
+            model.listeningMapGenerationAvailabilityDescription,
+            "This podcast already includes publisher chapters. A generated Listening Map is unnecessary."
+        )
     }
 
     private func waitFor(

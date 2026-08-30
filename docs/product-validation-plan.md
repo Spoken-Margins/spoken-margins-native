@@ -91,9 +91,9 @@ Goal: validate the private Spoken Margins experience and core interaction loop o
 
 - adaptive Library, Sources, and Margins destinations on iPhone and iPad
 - typed Add Source routes for link/podcast, pasted text, document/book, audiobook, and Quick Folder
-- explicit follow-versus-import behavior
+- explicit follow-versus-import behavior, with an inline RSS-feed field in the Sources header and no per-entry Add button
 - two-item starter onboarding, skip, replay, and seeded-item ownership evidence
-- Library resume priority, search, filter, sort, and recoverable deletion
+- Library resume priority, search, filter, sort, persisted completion, prioritized offline preparation, and recoverable deletion
 - nested Listening Map navigation and mapless sessions
 - app-owned TTS
 - TTS URL cleanup
@@ -118,8 +118,8 @@ Goal: validate the private Spoken Margins experience and core interaction loop o
 
 1. Reset the app, choose each starter item in turn, and confirm Skip and replay remain available without counting either starter as user-added content.
 2. Import representative link/podcast, pasted-text, document/book, audiobook, and Quick Folder content; confirm imports do not replace active playback.
-3. Follow a source and confirm following alone does not import, download, or prepare an entry.
-4. Resume an unfinished item from Library and confirm it is not duplicated in the compact list.
+3. Follow a source and confirm following alone does not import, download, or prepare an entry. In the Sources inbox, confirm tap imports and opens, leading swipe imports in place, and trailing swipe dismisses.
+4. Resume an unfinished item below 99% from Library and confirm it is not duplicated in the compact list. Confirm an item at 99% is not suggested in Continue Listening. Leading-swipe another item to mark it complete; confirm it leaves Continue while remaining under the Completed filter. Confirm trailing swipe can prioritize offline work or move the item to Recently Deleted, and that Undo restores a deleted item.
 5. Start playback, move among all three destinations, and confirm the persistent mini-player opens Now Playing and controls playback through separate actions.
 6. Confirm URLs are not spoken while source text remains intact, then navigate nested chapters and a mapless item.
 7. Skip and scrub repeatedly, including partial prepared audio, and confirm movement and readiness remain truthful.
