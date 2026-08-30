@@ -4,6 +4,8 @@ import XCTest
 @testable import SessionKit
 import SessionKitPersistence
 
+private let testSQLiteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
 final class SQLiteSessionStoreSafetyTests: XCTestCase {
     func testStoreWritesCurrentSchemaVersion() throws {
         let path = temporaryDatabasePath()
@@ -129,9 +131,31 @@ final class SQLiteSessionStoreSafetyTests: XCTestCase {
         laterTurn.text = "Later session response."
         try store.saveTurn(laterTurn)
 
-        XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: path), 4)
+        XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: path), 5)
         XCTAssertEqual(try store.loadTurns(sessionId: "session-one").map(\.text), ["Existing response."])
         XCTAssertEqual(try store.loadTurns(sessionId: "session-two").map(\.text), ["Later session response."])
+    }
+
+    func testVersionFiveLibraryOpensWithoutRewritingKnownOrUnknownRecords() throws {
+        let path = temporaryDatabasePath()
+        try createVersionFiveLibraryDatabase(path: path)
+
+        let store = try SQLiteSessionStore(path: path)
+
+        XCTAssertEqual(try store.listItems().map(\.id), ["item-v5-existing"])
+        try store.saveItem(Item(
+            id: "item-sharing-import",
+            title: "Sharing Import",
+            mediaType: "text",
+            text: "New text.",
+            externalReference: "manual-import",
+            status: "ready"
+        ))
+
+        XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: path), 5)
+        XCTAssertEqual(try store.listItems().map(\.id).sorted(), ["item-sharing-import", "item-v5-existing"])
+        XCTAssertTrue(try rawPayload(path: path, kind: "item", id: "item-v5-existing").contains("Quality Author"))
+        XCTAssertTrue(try recordExists(path: path, kind: "canonical_source", id: "canonical-v5"))
     }
 
     private func temporaryDatabasePath() -> String {
@@ -190,5 +214,62 @@ final class SQLiteSessionStoreSafetyTests: XCTestCase {
                 throw NSError(domain: "SQLiteSessionStoreSafetyTests", code: 6)
             }
         }
+    }
+
+    private func createVersionFiveLibraryDatabase(path: String) throws {
+        var database: OpaquePointer?
+        guard sqlite3_open(path, &database) == SQLITE_OK else {
+            throw NSError(domain: "SQLiteSessionStoreSafetyTests", code: 7)
+        }
+        defer { sqlite3_close(database) }
+        let statements = [
+            "CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+            "INSERT INTO metadata(key,value) VALUES('schema_version','5');",
+            "CREATE TABLE records (kind TEXT NOT NULL, id TEXT NOT NULL, session_id TEXT, item_id TEXT, payload TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(kind,id));",
+            "CREATE TABLE quarantined_records (kind TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL, decode_error TEXT NOT NULL, quarantined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(kind,id));",
+            "INSERT INTO records(kind,id,item_id,payload) VALUES('item','item-v5-existing','item-v5-existing','{\"id\":\"item-v5-existing\",\"title\":\"Existing Library Item\",\"mediaType\":\"text\",\"text\":\"Still here.\",\"status\":\"ready\",\"author\":\"Quality Author\",\"sourceTitle\":\"Quality Source\"}');",
+            "INSERT INTO records(kind,id,item_id,payload) VALUES('canonical_source','canonical-v5','item-v5-existing','{\"schemaVersion\":\"canonical-source.v1\",\"id\":\"canonical-v5\",\"itemId\":\"item-v5-existing\"}');"
+        ]
+        for sql in statements {
+            guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else {
+                throw NSError(domain: "SQLiteSessionStoreSafetyTests", code: 8)
+            }
+        }
+    }
+
+    private func rawPayload(path: String, kind: String, id: String) throws -> String {
+        var database: OpaquePointer?
+        guard sqlite3_open(path, &database) == SQLITE_OK else {
+            throw NSError(domain: "SQLiteSessionStoreSafetyTests", code: 9)
+        }
+        defer { sqlite3_close(database) }
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, "SELECT payload FROM records WHERE kind = ? AND id = ?;", -1, &statement, nil) == SQLITE_OK else {
+            throw NSError(domain: "SQLiteSessionStoreSafetyTests", code: 10)
+        }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_text(statement, 1, kind, -1, testSQLiteTransient)
+        sqlite3_bind_text(statement, 2, id, -1, testSQLiteTransient)
+        guard sqlite3_step(statement) == SQLITE_ROW,
+              let value = sqlite3_column_text(statement, 0) else {
+            throw NSError(domain: "SQLiteSessionStoreSafetyTests", code: 11)
+        }
+        return String(cString: value)
+    }
+
+    private func recordExists(path: String, kind: String, id: String) throws -> Bool {
+        var database: OpaquePointer?
+        guard sqlite3_open(path, &database) == SQLITE_OK else {
+            throw NSError(domain: "SQLiteSessionStoreSafetyTests", code: 12)
+        }
+        defer { sqlite3_close(database) }
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, "SELECT 1 FROM records WHERE kind = ? AND id = ?;", -1, &statement, nil) == SQLITE_OK else {
+            throw NSError(domain: "SQLiteSessionStoreSafetyTests", code: 13)
+        }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_text(statement, 1, kind, -1, testSQLiteTransient)
+        sqlite3_bind_text(statement, 2, id, -1, testSQLiteTransient)
+        return sqlite3_step(statement) == SQLITE_ROW
     }
 }

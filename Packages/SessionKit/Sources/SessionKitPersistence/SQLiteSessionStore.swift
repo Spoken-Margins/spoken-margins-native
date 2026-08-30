@@ -3,7 +3,11 @@ import SessionKit
 import SQLite3
 
 public final class SQLiteSessionStore: SessionRepository {
-    public static let currentSchemaVersion = 4
+    /// Schema 5 adds record kinds and optional payload fields to the generic
+    /// records table; it does not change the SQLite table layout. Sharing builds
+    /// must accept it so installing this lane over another active lane does not
+    /// make the existing library appear empty.
+    public static let currentSchemaVersion = 5
     private static let sessionScopedRecordKinds: Set<String> = ["interjection", "turn", "ai_job"]
     private var db: OpaquePointer?
     private let encoder = JSONEncoder()
@@ -32,7 +36,7 @@ public final class SQLiteSessionStore: SessionRepository {
         );
         """)
         let existingVersion = try metadataValue(forKey: "schema_version").flatMap(Int.init)
-        guard existingVersion.map({ [1, 2, 3, Self.currentSchemaVersion].contains($0) }) ?? true else {
+        guard existingVersion.map({ [1, 2, 3, 4, Self.currentSchemaVersion].contains($0) }) ?? true else {
             throw SessionKitError.persistenceFailed("unsupported_schema_version:\(existingVersion ?? -1)")
         }
         try execute("""

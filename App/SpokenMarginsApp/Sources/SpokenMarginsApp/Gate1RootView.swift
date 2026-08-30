@@ -1026,7 +1026,18 @@ private struct HomeScreen: View {
                     .font(.headline)
                 Spacer()
             }
-            if model.libraryItems.isEmpty {
+            if let libraryAccessError = model.libraryAccessError {
+                ProductPanel {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label("Your library could not be opened", systemImage: "exclamationmark.triangle.fill")
+                            .font(.headline)
+                            .foregroundStyle(AppColors.dangerText)
+                        Text(libraryAccessError)
+                            .foregroundStyle(AppColors.secondaryText)
+                    }
+                }
+                .accessibilityIdentifier("home.libraryAccessError")
+            } else if model.libraryItems.isEmpty {
                 ProductPanel {
                     VStack(alignment: .leading, spacing: 14) {
                         Text("Your library is empty")

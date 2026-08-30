@@ -1,6 +1,8 @@
 import XCTest
 @testable import SessionKit
+import SessionKitPersistence
 @testable import SpokenMarginsApp
+import SQLite3
 #if canImport(UIKit)
 import UIKit
 import PDFKit
@@ -408,6 +410,110 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.title, "Scratch Item")
     }
 
+    func testSchemaFiveLibraryRemainsVisibleAcrossEveryReportedIngestionRoute() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "schema-five-ingestion-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        do {
+            let store = try SQLiteSessionStore(path: databaseURL.path)
+            try store.saveItem(Item(
+                id: "item-existing-v5",
+                title: "Existing Schema 5 Library Item",
+                mediaType: "text",
+                text: "Existing library content must remain visible.",
+                externalReference: "existing-v5",
+                status: "ready"
+            ))
+        }
+        XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: databaseURL.path), 5)
+
+        let resolver = SchemaFiveIngestionLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: "https://example.com/shared-episode", provider: "direct_audio", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://example.com/shared-episode", provider: "direct_audio", role: "audio_file"),
+                title: "Shared Podcast Episode",
+                durationMs: 180_000,
+                audioURL: "https://cdn.example.com/shared-episode.mp3",
+                confidence: 1
+            )
+        ))
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            sourceTranscriptionClient: SchemaFiveNoopSourceTranscriptionClient(),
+            databaseURLOverride: databaseURL
+        )
+
+        model.bootstrapLibraryIfNeeded()
+        XCTAssertNil(model.libraryAccessError)
+        XCTAssertTrue(model.libraryItems.contains { $0.id == "item-existing-v5" })
+
+        model.importTitle = "Pasted Text"
+        model.importText = "Text pasted directly into the app."
+        model.importTextItem()
+        XCTAssertTrue(model.libraryItems.contains { $0.title == "Pasted Text" })
+
+        model.handleIncomingURL(Gate5BrowserTextHandoffURL.url(for: BrowserTextHandoff(
+            itemId: "item-plugin-v5",
+            captureMode: .selectedText,
+            source: BrowserTextSource(url: "https://example.com/plugin", title: "Plugin Text"),
+            text: "Text delivered through the browser plugin.",
+            requestedContinuation: BrowserTextContinuation(startSession: false)
+        )))
+        XCTAssertTrue(model.libraryItems.contains { $0.id == "item-plugin-v5" })
+
+        model.handleIncomingURL(SourceLinkHandoffURL.url(for: SourceLinkHandoff(
+            id: "source-link-share-v5",
+            inputURL: "https://example.com/shared-episode",
+            sourceSurface: "share_sheet",
+            startSession: false
+        )))
+        XCTAssertTrue(model.libraryItems.contains { $0.title == "Shared Podcast Episode" })
+        XCTAssertTrue(model.libraryItems.contains { $0.id == "item-existing-v5" })
+
+        let reopened = try SQLiteSessionStore(path: databaseURL.path)
+        let reopenedItems = try reopened.listItems()
+        XCTAssertEqual(reopenedItems.count, 4)
+        XCTAssertTrue(reopenedItems.contains { $0.id == "item-existing-v5" })
+        XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: databaseURL.path), 5)
+    }
+
+    func testUnsupportedFutureSchemaShowsDataPreservationMessageInsteadOfEmptyLibrary() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "future-schema-library-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        do {
+            let store = try SQLiteSessionStore(path: databaseURL.path)
+            try store.saveItem(Item(
+                id: "item-future-schema",
+                title: "Do Not Delete",
+                mediaType: "text",
+                text: "Preserve this record.",
+                externalReference: nil,
+                status: "ready"
+            ))
+        }
+        try setSchemaVersion(6, at: databaseURL)
+
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: databaseURL
+        )
+        model.bootstrapLibraryIfNeeded()
+
+        XCTAssertTrue(model.libraryItems.isEmpty)
+        XCTAssertTrue(model.libraryAccessError?.contains("did not reset") == true)
+        XCTAssertTrue(model.libraryAccessError?.contains("Do not use Reset Library or delete the app") == true)
+        XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: databaseURL.path), 6)
+        XCTAssertEqual(try recordCount(at: databaseURL), 1)
+    }
+
     func testManualImportBuildsListeningMapFromPastedMarkdownHeadings() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
@@ -439,6 +545,35 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(zip(model.selectedItem.chapters, model.selectedItem.chapters.dropFirst()).allSatisfy {
             $0.endChar == $1.startChar
         })
+    }
+
+    private func setSchemaVersion(_ version: Int, at databaseURL: URL) throws {
+        var database: OpaquePointer?
+        guard sqlite3_open(databaseURL.path, &database) == SQLITE_OK else {
+            throw NSError(domain: "Gate1AppModelWorkflowTests", code: 1)
+        }
+        defer { sqlite3_close(database) }
+        let sql = "UPDATE metadata SET value = '\(version)' WHERE key = 'schema_version';"
+        guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else {
+            throw NSError(domain: "Gate1AppModelWorkflowTests", code: 2)
+        }
+    }
+
+    private func recordCount(at databaseURL: URL) throws -> Int {
+        var database: OpaquePointer?
+        guard sqlite3_open(databaseURL.path, &database) == SQLITE_OK else {
+            throw NSError(domain: "Gate1AppModelWorkflowTests", code: 3)
+        }
+        defer { sqlite3_close(database) }
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, "SELECT COUNT(*) FROM records;", -1, &statement, nil) == SQLITE_OK else {
+            throw NSError(domain: "Gate1AppModelWorkflowTests", code: 4)
+        }
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            throw NSError(domain: "Gate1AppModelWorkflowTests", code: 5)
+        }
+        return Int(sqlite3_column_int64(statement, 0))
     }
 
     func testManualImportDoesNotInventChaptersForUnstructuredText() {
@@ -1603,6 +1738,32 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             ),
             createdAt: Date(timeIntervalSince1970: 1)
         )
+    }
+}
+
+private struct SchemaFiveIngestionLinkResolver: LinkResolutionClient {
+    var result: LinkResolutionResult
+
+    func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult {
+        LinkResolutionResult(
+            requestId: request.id,
+            status: result.status,
+            originalLink: SourceLink(
+                url: request.inputURL,
+                provider: result.originalLink.provider,
+                title: result.originalLink.title,
+                role: result.originalLink.role
+            ),
+            selectedCandidate: result.selectedCandidate,
+            candidates: result.candidates,
+            failureReason: result.failureReason
+        )
+    }
+}
+
+private struct SchemaFiveNoopSourceTranscriptionClient: SourceTranscriptionClient {
+    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+        throw SessionKitError.persistenceFailed("source_transcription_disabled_for_schema_five_ingestion_test")
     }
 }
 

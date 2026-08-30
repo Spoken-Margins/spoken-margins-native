@@ -396,6 +396,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var retryingInterjectionTranscriptionIds: Set<String> = []
     @Published private(set) var playingInterjectionAudioId: String?
     @Published var libraryItems: [LibraryItemRow] = []
+    @Published private(set) var libraryAccessError: String?
     @Published var recentlyDeletedItems: [LibraryItemRow] = []
     @Published var trashUndo: TrashUndoState?
     @Published var selectedItem = ItemDetailState()
@@ -1266,6 +1267,7 @@ final class Gate1AppModel: ObservableObject {
         guard libraryItems.isEmpty, store == nil else { return }
         do {
             let store = try requireStore()
+            libraryAccessError = nil
             if let fixtureText = ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"],
                CommandLine.arguments.contains("--ui-testing") {
                 try resetAndSeedUITestingText(
@@ -1327,6 +1329,8 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["libraryBootstrap"] = "loaded:\(rows.count)"
             reportSuccess(rows.isEmpty ? "Add a source to begin." : "Library ready.")
         } catch {
+            libraryAccessError = "This build could not open your existing library. This attempt did not reset it. Do not use Reset Library or delete the app; install a compatible build and try again. Details: \(error.localizedDescription)"
+            diagnostics["libraryBootstrap"] = "failed_without_reset:\(error.localizedDescription)"
             reportFailure(error, context: "Library bootstrap failed")
         }
     }
