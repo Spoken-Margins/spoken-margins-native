@@ -187,6 +187,15 @@ The branch merged only into `codex/quality-of-life-next` at `9118c11` and is now
 
 `codex/build-23-release` is the only branch where the quality-of-life/experience source and sharing source may be composed. It exists to complete a coherent release, not to preserve both branches' duplicate screens.
 
+Automated candidate status (2026-08-30): Spoken Margins 0.1 (23) at runtime
+SHA `10f7fd192f59f1fc8dc024d6defda2c2f41b7693` is `implemented` and
+`verified`. It is not `human_validated`. Build 22 remains a separate pending
+product-owner gate, and issue #14 continues to block externally enabled
+sharing, so Build 23 is not authorized for distribution. See
+[`automated-verification.md`](../artifacts/validation/build-23/automated-verification.md)
+and
+[`product-owner-handoff.md`](../artifacts/validation/build-23/product-owner-handoff.md).
+
 ### Product contract
 
 The sender experience is a four-stage state machine:
