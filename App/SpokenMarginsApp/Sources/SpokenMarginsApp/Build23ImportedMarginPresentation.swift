@@ -172,6 +172,7 @@ struct Build23ImportedMarginPresentation: View {
             .accessibilityLabel(Text(
                 Build23ImportedLayerPresentation.provenanceAccessibilityLabel(for: layer)
             ))
+            .accessibilityIdentifier("build23.imported.layer.\(layer.id).provenance")
 
             Text(layer.itemTitle)
                 .font(.title3.weight(.semibold))
@@ -238,6 +239,7 @@ struct Build23ImportedMarginPresentation: View {
                 .accessibilityValue(Text(
                     Build23ImportedLayerPresentation.revealModeLabel(layer.revealMode)
                 ))
+                .accessibilityIdentifier("build23.imported.layer.\(layer.id).reveal-mode")
             }
         }
     }
