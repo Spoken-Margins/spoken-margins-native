@@ -1,0 +1,549 @@
+import Combine
+import CryptoKit
+import Foundation
+import SessionKit
+import SessionKitSharing
+
+/// The canonical sender progression for Build 23. Presentation code may move
+/// backward, but it may not skip review or share bytes that have not produced a
+/// successful recipient preview.
+enum Build23SharingStage: String, CaseIterable, Equatable, Sendable {
+    case select
+    case review
+    case recipientPreview = "recipient_preview"
+    case share
+}
+
+enum Build23SharingPreviewState: Equatable, Sendable {
+    case notBuilt
+    case building
+    case ready
+    case stale
+    case failed(String)
+}
+
+enum Build23RecipientTransport: String, Equatable, Sendable {
+    case reference
+    case embeddedText = "embedded_text"
+    case recipientSupplied = "recipient_supplied"
+}
+
+struct Build23SharingMarginSnapshot: Identifiable, Equatable {
+    let id: String
+    let reviewedText: String
+    let representation: ShareMarginRepresentationChoice
+    let isIncluded: Bool
+    let isStarred: Bool
+    let privateNote: String?
+    let warning: String?
+    let canUndo: Bool
+    let canRedo: Bool
+    let canPrepareCleanup: Bool
+    let isPreparing: Bool
+    let hasOriginalVoice: Bool
+    let hasCleanedVoice: Bool
+}
+
+struct Build23RecipientPreviewMargin: Identifiable, Equatable, Sendable {
+    let id: String
+    let reviewedText: String
+    let representation: String
+    let positionDescription: String
+    let includesVoice: Bool
+}
+
+/// A projection made only from a successfully round-tripped archive. It is not
+/// a projection of draft UI state.
+struct Build23VerifiedRecipientPreview: Equatable, Sendable {
+    let packageID: String
+    let contentDigest: String
+    let fileURL: URL
+    let fileByteCount: Int
+    let itemTitle: String
+    let senderLabel: String
+    let transport: Build23RecipientTransport
+    let margins: [Build23RecipientPreviewMargin]
+    let voiceAssetCount: Int
+    let acousticEvidenceCount: Int
+    let listeningMapProposalCount: Int
+    let disclosures: [String]
+}
+
+struct Build23SharingSnapshot: Equatable {
+    let stage: Build23SharingStage
+    let itemTitle: String
+    let senderDisplayLabel: String
+    let includesAcousticEvidence: Bool
+    let confirmsPrivateSharingRights: Bool
+    let transport: Build23RecipientTransport
+    let selectedMarginID: String?
+    let filter: ShareMarginDraftFilter
+    let margins: [Build23SharingMarginSnapshot]
+    let isPreparingSelection: Bool
+    let isPreparingAll: Bool
+    let preparationCompleted: Int
+    let preparationTotal: Int
+    let preparationFailures: Int
+    let previewState: Build23SharingPreviewState
+    let verifiedPreview: Build23VerifiedRecipientPreview?
+    let errorMessage: String?
+    let canAdvance: Bool
+    let canShareVerifiedFile: Bool
+}
+
+struct Build23RecipientImportSnapshot: Equatable {
+    let itemTitle: String
+    let senderLabel: String
+    let marginCount: Int
+    let transport: Build23RecipientTransport
+    let includesEmbeddedItem: Bool
+    let requiresRecipientSource: Bool
+    let isImporting: Bool
+    let errorMessage: String?
+    let canImport: Bool
+}
+
+struct Build23RecipientSourceRequest: Identifiable, Equatable {
+    let id: String
+    let packageURL: URL
+    let itemTitle: String
+    let itemType: SharedItemType
+    let acceptedSourceKinds: [String]
+}
+
+/// Canonical sender actions. Ultra UI work should call these actions rather
+/// than mutating Gate1AppModel or InterjectionSharingState directly.
+enum Build23SenderAction: Equatable {
+    case begin
+    case setFilter(ShareMarginDraftFilter)
+    case setSenderDisplayLabel(String)
+    case setIncludesAcousticEvidence(Bool)
+    case setPrivateSharingRightsConfirmed(Bool)
+    case setIncluded(id: String, included: Bool)
+    case selectMargin(String?)
+    case setRepresentation(id: String, choice: ShareMarginRepresentationChoice)
+    case setAnchorBefore(id: String, text: String)
+    case setAnchorAfter(id: String, text: String)
+    case prepareCleanup(id: String)
+    case setCleanupDecision(draftID: String, decisionID: String, accepted: Bool)
+    case toggleTranscriptWord(draftID: String, segmentID: String)
+    case undo(id: String)
+    case redo(id: String)
+    case restoreOriginal(id: String)
+    case prepareAllIncluded
+    case cancelPreparation
+    case returnToSelect
+    case advanceToReview
+    case buildRecipientPreview
+    case presentSystemShare
+    case returnFromSystemShare
+    case cancel
+}
+
+enum Build23RecipientAction: Equatable {
+    case requestMissingSource
+    case dismissSourceRequest
+    case resumeAfterAddingSource
+    case confirmImport
+    case cancelImport
+}
+
+@MainActor
+protocol Build23SharingCoordinating: AnyObject {
+    var snapshot: Build23SharingSnapshot { get }
+    var recipientSnapshot: Build23RecipientImportSnapshot? { get }
+    var pendingRecipientSourceRequest: Build23RecipientSourceRequest? { get }
+    var verifiedShareFileURL: URL? { get }
+
+    func send(_ action: Build23SenderAction)
+    func send(_ action: Build23RecipientAction)
+}
+
+/// Steward-owned adapter between the existing implementation and the Build 23
+/// experience. Sender and recipient views can be built independently against
+/// this type while shared model/root files stay frozen.
+@MainActor
+final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinating {
+    @Published private(set) var stage: Build23SharingStage = .select
+    @Published private(set) var selectedMarginID: String?
+    @Published private(set) var previewState: Build23SharingPreviewState = .notBuilt
+    @Published private(set) var verifiedPreview: Build23VerifiedRecipientPreview?
+    @Published private(set) var pendingRecipientSourceRequest: Build23RecipientSourceRequest?
+
+    private let model: Gate1AppModel
+    private var previewFingerprint: String?
+    private var previewGeneration = 0
+    private var previewTask: Task<Void, Never>?
+    private var modelChangeCancellable: AnyCancellable?
+
+    init(model: Gate1AppModel) {
+        self.model = model
+        modelChangeCancellable = model.objectWillChange.sink { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await Task.yield()
+                self?.modelDidChange()
+            }
+        }
+    }
+
+    var snapshot: Build23SharingSnapshot {
+        let state = model.sharingState
+        let margins = state.drafts.map { draft in
+            Build23SharingMarginSnapshot(
+                id: draft.id,
+                reviewedText: draft.approvedTranscript,
+                representation: draft.representationChoice,
+                isIncluded: draft.isIncluded,
+                isStarred: draft.interjection.isStarredForSharing == true,
+                privateNote: draft.interjection.privateSharingNote?.nilIfEmpty,
+                warning: draft.warning,
+                canUndo: draft.canUndoEdit,
+                canRedo: draft.canRedoEdit,
+                canPrepareCleanup: draft.isIncluded
+                    && draft.interjection.alignedTranscript != nil
+                    && !draft.currentEditState.automaticCleanupEnabled,
+                isPreparing: draft.isAnalyzingPauses || draft.isPreparingCleanup,
+                hasOriginalVoice: model.originalAudioURL(forShareDraft: draft.id) != nil,
+                hasCleanedVoice: draft.cleanedAudioURL != nil
+            )
+        }
+        let hasReviewedSelection = margins.contains {
+            $0.isIncluded && !$0.reviewedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        let previewIsCurrent = verifiedPreview != nil
+            && previewFingerprint == currentDraftFingerprint()
+            && verifiedPreview.map { FileManager.default.fileExists(atPath: $0.fileURL.path) } == true
+        let canAdvance: Bool
+        switch stage {
+        case .select:
+            canAdvance = margins.contains(where: \.isIncluded)
+        case .review:
+            canAdvance = hasReviewedSelection && !state.isBulkPreparing && !state.isExporting
+        case .recipientPreview, .share:
+            canAdvance = previewIsCurrent
+        }
+        return Build23SharingSnapshot(
+            stage: stage,
+            itemTitle: model.selectedItem.title,
+            senderDisplayLabel: state.senderDisplayLabel,
+            includesAcousticEvidence: state.includesAcousticEvidence,
+            confirmsPrivateSharingRights: state.confirmsPrivateSharingRights,
+            transport: currentTransport,
+            selectedMarginID: selectedMarginID,
+            filter: state.draftFilter,
+            margins: margins,
+            isPreparingSelection: state.isPreparing,
+            isPreparingAll: state.isBulkPreparing,
+            preparationCompleted: state.bulkPreparationCompleted,
+            preparationTotal: state.bulkPreparationTotal,
+            preparationFailures: state.bulkPreparationFailureCount,
+            previewState: previewState,
+            verifiedPreview: verifiedPreview,
+            errorMessage: state.errorMessage,
+            canAdvance: canAdvance,
+            canShareVerifiedFile: previewIsCurrent
+        )
+    }
+
+    var recipientSnapshot: Build23RecipientImportSnapshot? {
+        guard let review = model.spokenMarginsPackageImportReview else { return nil }
+        return Build23RecipientImportSnapshot(
+            itemTitle: review.contents.manifest.item.title,
+            senderLabel: review.senderLabel,
+            marginCount: review.marginCount,
+            transport: Self.transport(review.contents.manifest.itemTransport.kind),
+            includesEmbeddedItem: review.includesEmbeddedItem,
+            requiresRecipientSource: review.requiresRecipientItem,
+            isImporting: model.isImportingSpokenMarginsPackage,
+            errorMessage: model.spokenMarginsPackageImportError,
+            canImport: !review.requiresRecipientItem && !model.isImportingSpokenMarginsPackage
+        )
+    }
+
+    var verifiedShareFileURL: URL? {
+        snapshot.canShareVerifiedFile ? verifiedPreview?.fileURL : nil
+    }
+
+    func send(_ action: Build23SenderAction) {
+        switch action {
+        case .begin:
+            discardPreview(resetTo: .select)
+            model.prepareShareInterjections()
+            selectedMarginID = model.sharingState.drafts.first(where: \.isIncluded)?.id
+        case .setFilter(let filter):
+            model.sharingState.draftFilter = filter
+        case .setSenderDisplayLabel(let label):
+            mutatePackage { model.sharingState.senderDisplayLabel = label }
+        case .setIncludesAcousticEvidence(let includes):
+            mutatePackage { model.sharingState.includesAcousticEvidence = includes }
+        case .setPrivateSharingRightsConfirmed(let confirmed):
+            mutatePackage { model.sharingState.confirmsPrivateSharingRights = confirmed }
+        case .setIncluded(let id, let included):
+            mutatePackage { model.setShareDraftIncluded(id, included: included) }
+        case .selectMargin(let id):
+            selectedMarginID = id
+        case .setRepresentation(let id, let choice):
+            mutatePackage { model.setShareDraftRepresentation(id, choice: choice) }
+        case .setAnchorBefore(let id, let text):
+            mutatePackage { model.setShareDraftAnchorBefore(id, value: text) }
+        case .setAnchorAfter(let id, let text):
+            mutatePackage { model.setShareDraftAnchorAfter(id, value: text) }
+        case .prepareCleanup(let id):
+            mutatePackage { model.prepareCleanup(forShareDraft: id) }
+        case .setCleanupDecision(let draftID, let decisionID, let accepted):
+            mutatePackage {
+                model.setCleanupDecision(draftID: draftID, decisionID: decisionID, accepted: accepted)
+            }
+        case .toggleTranscriptWord(let draftID, let segmentID):
+            mutatePackage { model.toggleShareDraftWord(draftID: draftID, segmentID: segmentID) }
+        case .undo(let id):
+            mutatePackage { model.undoShareDraftEdit(id) }
+        case .redo(let id):
+            mutatePackage { model.redoShareDraftEdit(id) }
+        case .restoreOriginal(let id):
+            mutatePackage { model.restoreOriginalShareDraft(id) }
+        case .prepareAllIncluded:
+            mutatePackage { model.prepareAllIncludedShareDrafts() }
+        case .cancelPreparation:
+            mutatePackage { model.cancelBulkSharePreparation() }
+        case .returnToSelect:
+            stage = .select
+        case .advanceToReview:
+            guard snapshot.margins.contains(where: \.isIncluded) else { return }
+            stage = .review
+            if selectedMarginID == nil {
+                selectedMarginID = snapshot.margins.first(where: \.isIncluded)?.id
+            }
+        case .buildRecipientPreview:
+            buildRecipientPreview()
+        case .presentSystemShare:
+            guard verifiedShareFileURL != nil else { return }
+            stage = .share
+        case .returnFromSystemShare:
+            stage = verifiedShareFileURL == nil ? .review : .recipientPreview
+        case .cancel:
+            model.cancelBulkSharePreparation()
+            model.isSharingInterjectionsPresented = false
+            discardPreview(resetTo: .select)
+        }
+        objectWillChange.send()
+    }
+
+    func send(_ action: Build23RecipientAction) {
+        switch action {
+        case .requestMissingSource:
+            guard let review = model.spokenMarginsPackageImportReview,
+                  review.requiresRecipientItem else { return }
+            pendingRecipientSourceRequest = Build23RecipientSourceRequest(
+                id: review.contents.manifest.packageId,
+                packageURL: review.packageURL,
+                itemTitle: review.contents.manifest.item.title,
+                itemType: review.contents.manifest.item.itemType,
+                acceptedSourceKinds: Self.acceptedSourceKinds(for: review.contents.manifest.item.itemType)
+            )
+        case .dismissSourceRequest:
+            pendingRecipientSourceRequest = nil
+        case .resumeAfterAddingSource:
+            model.refreshSpokenMarginsPackageImportAfterAddingSource()
+            if model.spokenMarginsPackageImportReview?.requiresRecipientItem == false {
+                pendingRecipientSourceRequest = nil
+            }
+        case .confirmImport:
+            guard recipientSnapshot?.canImport == true else { return }
+            model.confirmSpokenMarginsPackageImport()
+        case .cancelImport:
+            pendingRecipientSourceRequest = nil
+            model.cancelSpokenMarginsPackageImport()
+        }
+        objectWillChange.send()
+    }
+
+    private var currentTransport: Build23RecipientTransport {
+        let state = model.sharingState
+        if state.itemReferenceURL != nil { return .reference }
+        if state.canEmbedLinklessItem,
+           state.isAppAuthoredItem || state.confirmsPrivateSharingRights {
+            return .embeddedText
+        }
+        return .recipientSupplied
+    }
+
+    private func mutatePackage(_ mutation: () -> Void) {
+        discardPreview(resetTo: stage == .select ? .select : .review)
+        mutation()
+    }
+
+    private func discardPreview(resetTo newStage: Build23SharingStage) {
+        previewGeneration += 1
+        previewTask?.cancel()
+        previewTask = nil
+        previewFingerprint = nil
+        verifiedPreview = nil
+        previewState = .notBuilt
+        stage = newStage
+    }
+
+    private func buildRecipientPreview() {
+        guard stage == .review,
+              snapshot.canAdvance else { return }
+        previewGeneration += 1
+        let generation = previewGeneration
+        let fingerprint = currentDraftFingerprint()
+        previewTask?.cancel()
+        verifiedPreview = nil
+        previewFingerprint = nil
+        previewState = .building
+        stage = .recipientPreview
+        model.exportSharedInterjections(presentsReadySheet: false)
+        guard let fileURL = model.sharedSpokenMarginsPackageURL,
+              model.sharingState.errorMessage == nil else {
+            previewState = .failed(model.sharingState.errorMessage ?? "The package could not be built.")
+            stage = .review
+            return
+        }
+        previewTask = Task { [weak self] in
+            do {
+                let preview = try await Task.detached(priority: .userInitiated) {
+                    try Self.roundTrippedPreview(fileURL: fileURL)
+                }.value
+                guard let self,
+                      !Task.isCancelled,
+                      self.previewGeneration == generation else { return }
+                guard self.currentDraftFingerprint() == fingerprint else {
+                    self.previewState = .stale
+                    self.stage = .review
+                    return
+                }
+                self.previewFingerprint = fingerprint
+                self.verifiedPreview = preview
+                self.previewState = .ready
+                self.model.isSharedSpokenMarginsPackagePresented = false
+            } catch {
+                guard let self,
+                      self.previewGeneration == generation else { return }
+                self.previewState = .failed(error.localizedDescription)
+                self.stage = .review
+            }
+        }
+    }
+
+    private func modelDidChange() {
+        if verifiedPreview != nil,
+           previewFingerprint != currentDraftFingerprint() {
+            discardPreview(resetTo: .review)
+            previewState = .stale
+        }
+        objectWillChange.send()
+    }
+
+    private func currentDraftFingerprint() -> String {
+        let state = model.sharingState
+        var fields = [
+            state.senderDisplayLabel,
+            String(state.includesAcousticEvidence),
+            state.itemReferenceURL ?? "",
+            String(state.isAppAuthoredItem),
+            String(state.confirmsPrivateSharingRights)
+        ]
+        for draft in state.drafts.sorted(by: { $0.id < $1.id }) {
+            fields.append(contentsOf: [
+                draft.id,
+                String(draft.isIncluded),
+                draft.approvedTranscript,
+                draft.representationChoice.rawValue,
+                draft.anchorBefore,
+                draft.anchorAfter,
+                draft.cleanedAudioURL?.path ?? "",
+                String(draft.cleanedAudioDurationMs ?? -1),
+                String(draft.renderGeneration),
+                draft.cleanup?.decisions.map {
+                    "\($0.id):\($0.accepted):\($0.startMs):\($0.endMs)"
+                }.joined(separator: ",") ?? "",
+                draft.interjection.podcastAnchorEvidence?.map {
+                    "\($0.id):\($0.localPath):\($0.provenance?.rawValue ?? "")"
+                }.joined(separator: ",") ?? ""
+            ])
+        }
+        let digest = SHA256.hash(data: Data(fields.joined(separator: "\u{1F}").utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    nonisolated private static func roundTrippedPreview(fileURL: URL) throws -> Build23VerifiedRecipientPreview {
+        let extractionDirectory = FileManager.default.temporaryDirectory
+            .appending(path: "build-23-recipient-preview-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: extractionDirectory) }
+        let verified = try SpokenMarginsPackageArchive.read(
+            from: fileURL,
+            extractingAssetsTo: extractionDirectory
+        )
+        guard let contentDigest = verified.manifest.contentDigest else {
+            throw SpokenMarginsPackageArchiveError.invalidDigest
+        }
+        let margins = verified.commentaryLayers.flatMap(\.interjections).map { record in
+            let representation = record.defaultRepresentation
+            return Build23RecipientPreviewMargin(
+                id: record.packageScopedId,
+                reviewedText: representation?.approvedTranscript ?? "",
+                representation: representation?.kind.rawValue ?? "unavailable",
+                positionDescription: positionDescription(for: record.anchor),
+                includesVoice: representation?.assetId != nil
+            )
+        }
+        let fileByteCount = try fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        return Build23VerifiedRecipientPreview(
+            packageID: verified.manifest.packageId,
+            contentDigest: contentDigest,
+            fileURL: fileURL,
+            fileByteCount: fileByteCount,
+            itemTitle: verified.manifest.item.title,
+            senderLabel: verified.manifest.senderDisplayLabel?.nilIfEmpty ?? "Unsigned sender",
+            transport: transport(verified.manifest.itemTransport.kind),
+            margins: margins,
+            voiceAssetCount: verified.manifest.assets.filter {
+                [SpokenMarginsAssetRole.originalVoice, SpokenMarginsAssetRole.cleanedVoice].contains($0.role)
+            }.count,
+            acousticEvidenceCount: verified.manifest.assets.filter {
+                $0.role == SpokenMarginsAssetRole.acousticSignature
+            }.count,
+            listeningMapProposalCount: verified.listeningMapProposals.count,
+            disclosures: [
+                "Only the reviewed Margins shown here are in this file.",
+                "Private sharing notes, unrelated sessions, and raw diagnostics are not included.",
+                "Podcast audio is never included.",
+                "Sender identity is labeled but not cryptographically verified."
+            ]
+        )
+    }
+
+    nonisolated private static func positionDescription(for anchor: PortableAnchorEvidence) -> String {
+        if let mediaTimeMs = anchor.mediaTimeMs {
+            let totalSeconds = max(0, mediaTimeMs / 1_000)
+            return String(format: "%d:%02d", totalSeconds / 60, totalSeconds % 60)
+        }
+        if let exactText = anchor.exactText?.nilIfEmpty {
+            return "Near “\(String(exactText.prefix(80)))”"
+        }
+        if let roughPercent = anchor.roughPercent {
+            return "About \(roughPercent)% through"
+        }
+        return "Position will be resolved after import"
+    }
+
+    nonisolated private static func transport(_ kind: SharedItemTransportKind) -> Build23RecipientTransport {
+        switch kind {
+        case .reference: return .reference
+        case .embeddedText: return .embeddedText
+        case .recipientSupplied: return .recipientSupplied
+        }
+    }
+
+    private static func acceptedSourceKinds(for itemType: SharedItemType) -> [String] {
+        switch itemType {
+        case .pdf: return ["PDF"]
+        case .epub: return ["EPUB"]
+        case .podcast: return ["Podcast link", "Audio file"]
+        case .text: return ["Pasted text", "Web article", "Text file", "PDF", "EPUB"]
+        case .other: return ["Text", "Document", "Audio"]
+        }
+    }
+}

@@ -2024,6 +2024,11 @@ private struct PlaybackScreen: View {
         }
     }
 
+    private var isUITesting: Bool {
+        ProcessInfo.processInfo.arguments.contains("--ui-testing")
+            || ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TESTING"] == "1"
+    }
+
     private var playbackControls: some View {
         VStack(spacing: 20) {
             Text("NOW PLAYING")
@@ -2648,6 +2653,48 @@ private struct PlaybackScreen: View {
                 }
             }
         }
+    }
+
+    private var gate2CompactValidation: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Compact Controls")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(AppColors.watchSecondary)
+            Text(model.gate2CompactSnapshot?.chapterTitle ?? "No compact snapshot")
+                .font(.caption)
+                .foregroundStyle(.white)
+                .accessibilityIdentifier("gate2.compact.chapter")
+                .accessibilityValue(model.snapshot.status.rawValue)
+            HStack(spacing: 8) {
+                Button {
+                    model.dispatchGate2CompactCommand(.skipBack)
+                } label: {
+                    Image(systemName: "gobackward.15")
+                }
+                .buttonStyle(WatchSecondaryButtonStyle())
+                .accessibilityLabel("Compact controls skip back")
+                .accessibilityIdentifier("gate2.compact.back.button")
+
+                Button {
+                    model.dispatchGate2CompactCommand(.togglePlayPause)
+                } label: {
+                    Image(systemName: "playpause")
+                }
+                .buttonStyle(WatchSecondaryButtonStyle())
+                .accessibilityLabel("Compact controls play or pause")
+                .accessibilityIdentifier("gate2.compact.playPause.button")
+
+                Button {
+                    model.dispatchGate2CompactCommand(.skipForward)
+                } label: {
+                    Image(systemName: "goforward.15")
+                }
+                .buttonStyle(WatchSecondaryButtonStyle())
+                .accessibilityLabel("Compact controls skip forward")
+                .accessibilityIdentifier("gate2.compact.forward.button")
+            }
+        }
+        .padding(.top, 8)
     }
 
     private var mediaDurationMs: Int {

@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		00B0B7C10C1F0C571579625F /* SourceLinkHandoff.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69050C3D4931DF4FF8E80364 /* SourceLinkHandoff.swift */; };
 		02819F1A43FC00BA5C745F2B /* ExperienceMarginsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = B97D04127E5061EEE344B5FF /* ExperienceMarginsScreen.swift */; };
+		032882C373376686C366A28D /* Build23SharingSeams.swift in Sources */ = {isa = PBXBuildFile; fileRef = 178B9F2AFE38AF0C1D83FC36 /* Build23SharingSeams.swift */; };
 		0658D2E852C180C50CBA5D29 /* PDFStructuredTextExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C7193F1683777E83C876BF6 /* PDFStructuredTextExtractor.swift */; };
 		076C742DA8D8D5CD54F432AE /* EmojiArticleRegressionFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA1DE63D41008127F34297B7 /* EmojiArticleRegressionFixture.swift */; };
 		0B95095DA284B6EC0A2F4251 /* Gate2CompactCommandQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3CB7F6850A2AD331ACAB8CE /* Gate2CompactCommandQueue.swift */; };
@@ -69,6 +70,7 @@
 		738C354D0FBFB6BA6FCD1531 /* PodcastDownloadCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB069A5733426E796A80A677 /* PodcastDownloadCoordinatorTests.swift */; };
 		7470A25713E0F8722A24EE2B /* SpokenMarginsTermsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA18A80986464844DBC4C095 /* SpokenMarginsTermsView.swift */; };
 		753422BE0617A8122A91813E /* SupertonicPreparedAudioAssembler.swift in Sources */ = {isa = PBXBuildFile; fileRef = C90FD1B2793835178CD00BB7 /* SupertonicPreparedAudioAssembler.swift */; };
+		765E645CF6DF06498F1BEEE1 /* Build23SharingSeamsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA499BDD3D49FA1CBE899FA1 /* Build23SharingSeamsTests.swift */; };
 		77A875D23249DF0803925EE2 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 394BBCC831AE7CEDA7703F61 /* PrivacyInfo.xcprivacy */; };
 		77D7913EE73FD5527AE5BE61 /* Gate5BrowserTextHandoffURL.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35550BC3E5F1FF166ED033B5 /* Gate5BrowserTextHandoffURL.swift */; };
 		77FB768C911B2D872EB80DD0 /* ExperienceRecordingScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32C773F0642AE9BAE4D78CC4 /* ExperienceRecordingScreen.swift */; };
@@ -199,6 +201,7 @@
 		0FCCBE1821C609CB049229E0 /* ExperienceSourcesScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExperienceSourcesScreen.swift; sourceTree = "<group>"; };
 		1213A7465ECB99E1E9FCE12A /* popup.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = popup.css; sourceTree = "<group>"; };
 		12B57670922723E5B5D5098C /* PublicPodcastLinkResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PublicPodcastLinkResolver.swift; sourceTree = "<group>"; };
+		178B9F2AFE38AF0C1D83FC36 /* Build23SharingSeams.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Build23SharingSeams.swift; sourceTree = "<group>"; };
 		1D6C701BA62F6D79A4C8A178 /* SupertonicSpeechTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupertonicSpeechTests.swift; sourceTree = "<group>"; };
 		1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "emoji-article-crash-regression.txt"; sourceTree = "<group>"; };
 		1F04BCB2671DE0E5E8AEAD58 /* ExperienceAddSourceFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExperienceAddSourceFlow.swift; sourceTree = "<group>"; };
@@ -278,6 +281,7 @@
 		C52D1CADC5773F67C398A2B2 /* SourceLinkPreprocessor.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = SourceLinkPreprocessor.js; sourceTree = "<group>"; };
 		C7F47D3EE2D41AC856AA9C6D /* PublisherPodcastChapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PublisherPodcastChapters.swift; sourceTree = "<group>"; };
 		C90FD1B2793835178CD00BB7 /* SupertonicPreparedAudioAssembler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupertonicPreparedAudioAssembler.swift; sourceTree = "<group>"; };
+		CA499BDD3D49FA1CBE899FA1 /* Build23SharingSeamsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Build23SharingSeamsTests.swift; sourceTree = "<group>"; };
 		CECE96EA9D24248FFE111D5D /* Gate1PlaybackAutoplayQueueTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate1PlaybackAutoplayQueueTests.swift; sourceTree = "<group>"; };
 		D8F75089EB72A10C4E2E79E1 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		D905A893BF811E43BF1E1E3A /* ExperienceItemDetailScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExperienceItemDetailScreen.swift; sourceTree = "<group>"; };
@@ -476,6 +480,7 @@
 			isa = PBXGroup;
 			children = (
 				AD1E607D78F6C57AFE4CD9FE /* AppNavigationStateTests.swift */,
+				CA499BDD3D49FA1CBE899FA1 /* Build23SharingSeamsTests.swift */,
 				DA1DE63D41008127F34297B7 /* EmojiArticleRegressionFixture.swift */,
 				B4AE8A8FB30C1E104E32A2BE /* ExperiencePresentationTests.swift */,
 				2A741433D6B3E34D30387DBB /* Gate1AppModelWorkflowTests.swift */,
@@ -516,6 +521,7 @@
 				9C24AB733A76119434395F5E /* AppOwnedReadablePageExtractor.swift */,
 				7C356783B108E75F03704686 /* Assets.xcassets */,
 				BE38AF27DEEC6E2D5A8CB016 /* AudioPreparationBackgroundController.swift */,
+				178B9F2AFE38AF0C1D83FC36 /* Build23SharingSeams.swift */,
 				016327C95819700170E35C52 /* CompatibleOnChange.swift */,
 				1F04BCB2671DE0E5E8AEAD58 /* ExperienceAddSourceFlow.swift */,
 				A057DD9C49BAC064EDC8CD6C /* ExperienceCanonicalNavigationTree.swift */,
@@ -890,6 +896,7 @@
 				127BAF3DE1236BB4E5677282 /* AddArticleShortcutIntent.swift in Sources */,
 				9DD4401A055EF8CCECEE28B8 /* AppOwnedReadablePageExtractor.swift in Sources */,
 				91B26A9B44DFF82C0D55FE43 /* AudioPreparationBackgroundController.swift in Sources */,
+				032882C373376686C366A28D /* Build23SharingSeams.swift in Sources */,
 				94E22355BA9212EB835A259E /* CompatibleOnChange.swift in Sources */,
 				86E4BD46F231F3A47E1B5744 /* ExperienceAddSourceFlow.swift in Sources */,
 				DE4F2E4626B88D011FA11335 /* ExperienceCanonicalNavigationTree.swift in Sources */,
@@ -968,6 +975,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				613375393CDA71FC96514BA2 /* AppNavigationStateTests.swift in Sources */,
+				765E645CF6DF06498F1BEEE1 /* Build23SharingSeamsTests.swift in Sources */,
 				076C742DA8D8D5CD54F432AE /* EmojiArticleRegressionFixture.swift in Sources */,
 				D88CFDF277F2C902B02865C4 /* ExperiencePresentationTests.swift in Sources */,
 				3A8C7FE2A0DBA57C69F07308 /* Gate1AppModelWorkflowTests.swift in Sources */,

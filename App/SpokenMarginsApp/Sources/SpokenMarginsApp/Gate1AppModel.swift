@@ -5534,6 +5534,34 @@ final class Gate1AppModel: ObservableObject {
         if let directory { try? FileManager.default.removeItem(at: directory) }
     }
 
+    /// Reconciles a pending recipient-supplied package after Add Source returns.
+    /// Build 23 presentation code calls this seam instead of asking the user to
+    /// reopen the package and repeat integrity verification.
+    func refreshSpokenMarginsPackageImportAfterAddingSource() {
+        guard let review = spokenMarginsPackageImportReview,
+              review.requiresRecipientItem,
+              !isImportingSpokenMarginsPackage else { return }
+        do {
+            let store = try requireStore()
+            let matchingItemId = try matchingItemID(for: review.contents.manifest.item, store: store)
+            spokenMarginsPackageImportReview = SpokenMarginsPackageImportReview(
+                packageURL: review.packageURL,
+                extractionDirectory: review.extractionDirectory,
+                contents: review.contents,
+                matchingItemId: matchingItemId
+            )
+            if matchingItemId == nil {
+                spokenMarginsPackageImportError = "That source does not match the item described by this package yet. Add the same item or cancel the import."
+            } else {
+                spokenMarginsPackageImportError = nil
+                reportConfirmation("Source matched. Review the shared Margins before importing.")
+            }
+        } catch {
+            spokenMarginsPackageImportError = error.localizedDescription
+            diagnostics["lastSpokenMarginsPackageImport"] = "source_reconciliation_failed:\(error.localizedDescription)"
+        }
+    }
+
     func confirmSpokenMarginsPackageImport() {
         guard let review = spokenMarginsPackageImportReview,
               !isImportingSpokenMarginsPackage else { return }
@@ -9761,7 +9789,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func exportSharedInterjections() {
+    func exportSharedInterjections(presentsReadySheet: Bool = true) {
         guard !sharingState.isBulkPreparing else {
             sharingState.errorMessage = "Finish or cancel bulk preparation before sharing."
             return
@@ -9862,8 +9890,10 @@ final class Gate1AppModel: ObservableObject {
             UserDefaults.standard.set(sharingState.senderDisplayLabel, forKey: "sharingSenderDisplayLabel")
             sharedSpokenMarginsPackageURL = destination
             sharingState.isExporting = false
-            isSharingInterjectionsPresented = false
-            isSharedSpokenMarginsPackagePresented = true
+            if presentsReadySheet {
+                isSharingInterjectionsPresented = false
+                isSharedSpokenMarginsPackagePresented = true
+            }
             diagnostics["lastSharedPackage"] = "margins=\(drafts.count);evidence=\(machineEvidence.count)"
         } catch {
             sharingState.isExporting = false

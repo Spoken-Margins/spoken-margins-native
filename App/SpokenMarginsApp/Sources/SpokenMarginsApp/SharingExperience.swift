@@ -288,7 +288,9 @@ struct InterjectionSharingView: View {
                                     .foregroundStyle(AppColors.dangerText)
                             }
 
-                            Button(action: model.exportSharedInterjections) {
+                            Button {
+                                model.exportSharedInterjections()
+                            } label: {
                                 if model.sharingState.isExporting {
                                     ProgressView().frame(maxWidth: .infinity)
                                 } else {
