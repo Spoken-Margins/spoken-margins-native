@@ -11,6 +11,7 @@ Implementation commits:
 - `b3f0d5e` (`Capture podcast anchors from post-Margin playback`)
 - `a002330` (`Prepare Margins in bulk and match playback rate`)
 - `22901aa` (`Curate Margins for sharing from the timeline`)
+- `9c74a57` (`Close shared Margin playback gaps`)
 
 Local build setting: version 0.1 (21)
 
@@ -36,7 +37,7 @@ The sender review now supports:
 - preparing every included Margin with aligned word timing from one bulk action, with visible progress, cancellation, and per-Margin fallback;
 - tapping aligned words or inline bracketed pauses to remove or restore them, with explicit Undo and Redo and no text-insertion route;
 - one compact transcript instead of padded word capsules plus a duplicate vertical edit list;
-- automatic filler cleanup plus acoustic leading, trailing, and internal pause tightening;
+- automatic filler cleanup plus aligned-speech and acoustic leading, trailing, and internal non-speaking-gap tightening, including sustained noisy gaps between recognized words;
 - Original voice, Cleaned voice, or Text only, with previews;
 - bounded anchor-context review and optional non-playable podcast acoustic evidence; and
 - the item-transport disclosure described below.
@@ -69,13 +70,15 @@ Timeline stars and private sharing notes are local curation metadata. They persi
 - Companion mode pauses the source at a verified text or podcast anchor, sounds the cue unless the layer is muted, and presents **Listen** and **Dismiss** in playback and the Live Activity. Listening resumes the source when the Margin ends; Dismiss resumes immediately.
 - Guided mode sounds the cue and starts the Margin after the cue. **Auto-play shared Margins** on the playback screen maps enabled layers to Guided when on and Companion when off, preserving the existing persisted reveal-mode model.
 - Private and received Margin voice uses the item's current playback rate, including 1.75×. The notification cue remains at normal speed, and the item resumes at its prior rate after the Margin.
-- The Live Activity carries no Margin transcript. Its sender label is privacy-sensitive, while Listen and Dismiss remain visible controls and open the app to perform the in-process audio handoff reliably.
+- The Live Activity carries no Margin transcript. Its sender label is privacy-sensitive.
+- Listen and Dismiss are now real shared `LiveActivityIntent`/`AudioPlaybackIntent` actions compiled into both the app and widget targets, so iOS executes the handoff in the app process without requiring the widget extension to own audio. Both medium and supplemental small prompt presentations contain the actions. iOS still requires authentication before a control performs on a locked device.
+- The next-navigation slot merges publisher chapters with verified upcoming Shared Margins by source position. With no publisher chapters it shows the next Margin; otherwise it shows whichever chapter or Margin comes first. Selecting a Margin moves to its verified local anchor, sounds the cue when enabled, and either waits for Listen/Dismiss or auto-plays according to the layer. This is a presentation projection: it never rewrites publisher chapter data, and unresolved or ambiguous Margins are excluded.
 - **Create Recipient Test Session** still exercises the real archive, verification, import, persistence, resolver, and listening route on one device.
 
 ## Cleanup behavior
 
 - Filler and word removal require aligned recognition timing.
-- Acoustic cleanup examines the immutable recording, treats recognized speech as protected, shortens quiet runs of at least 360 ms, retains 80 ms at recording edges and 140 ms internally, and renders a derivative with 15 ms crossfades.
+- Speech-aware cleanup examines the immutable recording, treats aligned words as protected, and combines two signals: aligned non-speaking intervals of at least 750 ms even when they contain sustained background sound, plus acoustically quiet runs of at least 360 ms. It retains 80 ms at recording edges and 140 ms internally and renders a derivative with 15 ms crossfades.
 - **Prepare All Included** processes eligible Margins serially rather than rendering them concurrently. This intentionally bounds memory, heat, and battery use for sessions with dozens of Margins, while showing completed/total progress and allowing cancellation.
 - A failed Margin does not stop the queue. It is labeled with its fallback and retains Original voice when available or reviewed Text otherwise; successful and failed Margins remain individually reviewable.
 - The private recording and private transcript are never rewritten.
@@ -91,7 +94,7 @@ Timeline stars and private sharing notes are local curation metadata. They persi
 - Progressive podcast media that AVFoundation exposes as decoded PCM can use the stream sample without a complete download. Unsupported playback forms, a seek or item change before completion, and too little audio decline acoustic evidence and retain transcript/identity fallback rather than claiming a verified anchor.
 - Exact-local-file evidence remains available when the active playback item itself is a validated local download. A parallel download of a dynamic-ad episode is not treated as the exact edition the sender heard.
 - A text-only Margin is readable but has no voice playback.
-- Live Activity Listen and Dismiss open Spoken Margins because a suspended widget process cannot safely own the app's in-process source and Margin audio players.
+- Live Activity actions cannot bypass iOS lock authentication. After authentication, their shared intents run in the app process and hand off to the canonical source/Margin players; the widget process never owns audio.
 
 ## Reset, samples, and diagnostics
 
@@ -107,10 +110,10 @@ Timeline stars and private sharing notes are local curation metadata. They persi
 - Contract validator: passed.
 - Surface contract validator: passed.
 - SessionKit build with tests: passed.
-- Complete SessionKit package suite: 196 executed, 195 passed and 1 dedicated held-out benchmark wrapper skipped by design, 0 failed.
-- SharingTests: 28 executed, 27 passed and 1 dedicated held-out benchmark wrapper skipped by design, 0 failed. Coverage verifies that only the armed post-resume window is signed, the signature remains below 1 MB, and the anchor offset is derived from playback media time. It also verifies that private Timeline stars and notes persist locally but cannot enter reviewed revisions or session exports.
+- Complete SessionKit package suite: 197 executed, 196 passed and 1 dedicated held-out benchmark wrapper skipped by design, 0 failed.
+- SharingTests: 29 executed, 28 passed and 1 dedicated held-out benchmark wrapper skipped by design, 0 failed. Coverage verifies that only the armed post-resume window is signed, the signature remains below 1 MB, and the anchor offset is derived from playback media time. It also verifies private Timeline curation boundaries and that a continuous high-energy background-noise gap is removed without any proposed range overlapping aligned words.
 - Session lifecycle coverage verifies that the 12-second request is armed before source playback resumes after a podcast Margin.
-- Focused app-state and compact-surface tests: 22 distinct tests passed, 0 failed, including verified text/podcast anchor eligibility, word-delete Undo/Redo, legacy and current Live Activity state, prompt publication, URL/queue compatibility, and compact playback policy.
+- Complete `Gate2CompactControlTests`: 24 passed, 0 failed, including verified text/podcast anchor eligibility, legacy and current Live Activity state, prompt publication, app-group URL/queue target compatibility, compact playback policy, chapter/Margin ordering, and jumping to a verified received-Margin anchor.
 - Focused item-screen UI route: 1 passed, 0 failed; Start/Continue Listening is hittable before scrolling and no second chapter-panel map generator exists.
 - Generic iOS Simulator app build: passed.
 - Generic physical iOS app build: passed.
@@ -118,6 +121,7 @@ Timeline stars and private sharing notes are local curation metadata. They persi
 - Existing benchmark artifact: 232 anchors, 226 eligible and 6 deliberately absent; fused/monotonic placement had zero wrong confident placements, 4 ms p95 error, and declined all 6 absent passages. See `podcast-anchor-benchmark.md` and `podcast-anchor-benchmark-result.json`.
 - New bulk/rate app-model tests: 4 passed, 0 failed. A 53-Margin fixture verified exactly 53 serial renders with maximum concurrency 1, byte-for-byte private-original preservation, and Undo/Redo after preparation. Dedicated cases verified cancellation restores eligibility, renderer failure falls back to Original voice, and 1.75× maps unchanged to Margin playback while invalid rates are bounded.
 - Focused Timeline curation test: passed. It verifies relaunch persistence, the 500-character private-note bound, starred-first review selection, all-included fallback after removing the final star, and measured 10-line overflow behavior. The previously focused word-delete Undo/Redo and 53-Margin bulk tests also passed in the same run.
+- App Intents metadata extraction succeeded for both the app and Live Activity widget during simulator and physical-device builds.
 - Full `Gate1AppModelWorkflowTests` omission check: 72 executed; all 4 new tests and 67 other tests passed. One unrelated PDF visual-heading expectation failed because the implementation preserved a `Front Matter` chapter that the older assertion excludes; no sharing, Margin, playback-rate, or changed file participates in that result.
 - System TTS voice discovery is now deferred until the Settings screen appears, where the catalog was already refreshed. This removes a simulator/app-launch stall without changing the voice-selection surface.
 
@@ -150,9 +154,12 @@ Record Pass, Fail, or Not run, with device/OS and notes.
 21. **Private sharing note.** Open a Margin, add and save a sharing note, then confirm it appears on the Timeline and in sender review as private context. Export the package and session archive, import on another installation, and confirm the note is absent everywhere outside the sender's local library. Result: ___
 22. **Starred review filtering.** With at least one star, open Share and confirm the initial view and inclusion set contain only starred Margins. Switch between All and Starred, then use **Include this Margin** to make a different final export choice. Remove every star, reopen Share, and confirm the legacy all-included default returns. Result: ___
 23. **Bounded transcript review.** Review one transcript shorter than 10 rendered lines and confirm there is no unnecessary expansion control. Review a longer transcript and confirm it starts at no more than 10 lines, expands to the complete inline word/pause editor, and collapses again without losing edits. Result: ___
+24. **Noisy non-speaking gap.** Record a Margin with speech, a long pause containing steady fan/traffic/music-like background sound but no speech, and more speech. Prepare cleanup, confirm the gap appears as one reversible bracketed proposal, preview Cleaned, and verify the noise gap is shortened without clipping either spoken phrase. Result: ___
+25. **Authenticated Lock Screen response.** In Companion mode, lock the phone before a verified received Margin. After the cue, wake and authenticate the phone, then confirm Listen and Dismiss are visible and actionable in the Live Activity. Exercise both actions and repeat if iOS shows the supplemental small presentation. Result: ___
+26. **Ordered chapter/Margin navigation.** On a podcast with no chapters, confirm the Live Activity's next entry becomes the next verified Shared Margin. Repeat with publisher chapters and confirm the nearer chapter or Margin is shown. Select a Margin and verify playback moves to its resolved anchor, applies the cue/reveal policy, and returns to the source; confirm unresolved/ambiguous Margins never appear. Result: ___
 
 ## Acceptance and stopping rules
 
-Mark the MVP `human_validated` only after accepting the sender disclosure, linkless rights-on and rights-off paths, linked-item reconstruction, Timeline curation/privacy behavior, bounded word/audio review, a real system-share transfer, recipient import, Companion and Guided listening, persistence, and conservative podcast behavior.
+Mark the MVP `human_validated` only after accepting the sender disclosure, linkless rights-on and rights-off paths, linked-item reconstruction, Timeline curation/privacy behavior, bounded word/audio review including a noisy non-speaking gap, a real system-share transfer, recipient import, authenticated Lock Screen response, ordered chapter/Margin navigation, Companion and Guided listening, persistence, and conservative podcast behavior.
 
-Stop on any wrong confident cross-edition placement, podcast/item-audio leakage, item embedding without the displayed rights basis, private curation metadata in an export, transcript insertion, unreviewed representation export, private-original mutation, autoplay during import, duplicate imported layer, or library disappearance after upgrade.
+Stop on any wrong confident cross-edition placement, podcast/item-audio leakage, item embedding without the displayed rights basis, private curation metadata in an export, transcript insertion, a cleanup proposal overlapping aligned speech, navigation to an unresolved Margin, unreviewed representation export, private-original mutation, autoplay during import, duplicate imported layer, or library disappearance after upgrade.
