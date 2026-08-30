@@ -16,7 +16,9 @@ If a GitHub label, issue comment, local branch name, older planning document, or
 - Released source commit: `738c743e202f5e700f4d6975adee52862f63c69f`.
 - Upload evidence: `artifacts/validation/testflight-external/build-19/build-19-testflight-upload.md`.
 - Accepted integration baseline: TestFlight triage fixes through `22788cb96a6763d186a607961ee229c5b01d6156` have been accepted into `main` by explicit product-owner direction. Their automated evidence is `verified`; this record does not invent physical-device validation or claim that a later build has reached the largest distributed audience.
-- Next distribution candidate: version 0.1 (21) from the accepted `main` runtime was uploaded successfully on 2026-08-27, completed App Store Connect processing, and is available to the internal `Margins` group; see `artifacts/validation/testflight-external/build-21/build-21-testflight-upload.md`. Build 20 had already been uploaded on 2026-08-24 and is superseded; do not submit it externally. Build 21 is reserved for the accepted TestFlight hotfix line; the quality-of-life candidate advances from its provisional local Build 21 evidence to Build 22 before upload.
+- Current internal candidate: version 0.1 (21) from the accepted `main` runtime was uploaded successfully on 2026-08-27, completed App Store Connect processing, and is available to the internal `Margins` group; see `artifacts/validation/testflight-external/build-21/build-21-testflight-upload.md`. Build 20 had already been uploaded on 2026-08-24 and is superseded; do not submit it externally.
+- Next bounded candidate: Build 22 is reserved for the renewed #84 media-seek reconvergence fix on `codex/testflight-triage`. Its automated evidence is `verified`; it is not accepted into `main`, uploaded, distributed, or `human_validated` until the product owner completes the recorded device checklist and makes that release decision.
+- Next integrated candidate: Build 23 combines the complete quality-of-life program, the private experience overhaul, and the one-way sharing foundation on `codex/build-23-release`. Integration work may consume the exact verified Build 22 patch before its human decision, but Build 23 must not be distributed until that decision is recorded. Sharing also remains unavailable outside own-device validation until the rights and provenance gate in #14 is accepted.
 - `main` represents the released runtime plus explicitly accepted release-integration changes. Governance- or evidence-only commits may follow the released source commit; runtime changes may enter `main` only through a recorded product-owner release decision.
 - When a later build reaches the largest distributed audience, update this section in the same change that advances the release lanes.
 
@@ -27,9 +29,11 @@ Only these branches are active development lanes:
 | Branch | Role | Current authorized scope | Merge target |
 | --- | --- | --- | --- |
 | `main` | Released and accepted integration runtime plus repository governance | Documentation, validation evidence, distributed runtime, and product-owner-accepted release integration | N/A |
-| `codex/testflight-triage` | Active rapid-fix lane, aligned with the accepted integration baseline | #84 end-to-end media scrub/seek reconvergence after the recurring sticky-versus-dislocated regression | `main` |
-| `codex/sharing-next` | Next major numbered feature release | Sharing foundation issues #17, #18, #67, and #68; audit reconciliation #81; then co-op replies #19 | `main` when the numbered sharing release is accepted |
-| `codex/quality-of-life-next` | Next numbered quality-of-life release | Complete non-Watch program: #34, #64, #72, #73, #61, #79, #74, #69, #76, #77, #86, and #87 in the ordered phases below | `main` when the complete numbered quality-of-life release is accepted |
+| `codex/testflight-triage` | Active Build 22 rapid-fix lane, based on the accepted Build 21 integration runtime | #84 end-to-end media scrub/seek reconvergence only | `main` after product-owner acceptance; exact verified patch may also enter `codex/build-23-release` |
+| `codex/sharing-next` | One-way sharing source lane | Sharing foundation issues #17, #18, #67, and #68; audit reconciliation #81 | `codex/build-23-release` once, then freeze the source lane |
+| `codex/quality-of-life-next` | Quality-of-life source lane | Complete non-Watch program: #34, #64, #72, #73, #61, #79, #74, #69, #76, #77, #86, and #87, plus the accepted temporary experience-overhaul integration | `codex/build-23-release` once, then freeze the source lane |
+| `codex/experience-overhaul` | Temporary private-experience integration branch | Native Library, Sources, and local Margins shell; typed intake; item, playback, recording, Timeline, onboarding, and storage presentation over the verified quality-of-life runtime | `codex/quality-of-life-next`, then delete the temporary branch after integration |
+| `codex/build-23-release` | Unified Build 23 integration and release lane | Complete quality-of-life and experience work; one-way sharing foundation; recipient import and provenance presentation; exact verified Build 22 seek patch | `main` only after all Build 23 release gates and product-owner acceptance |
 
 All other local and remote branches are historical and read-only. Their commits may be inspected or deliberately extracted, but work must not resume directly on them without a product-owner plan change. In particular, `codex/sharingV1` is source material for reconciliation into `codex/sharing-next`; it is not an active integration branch.
 
@@ -38,19 +42,25 @@ All other local and remote branches are historical and read-only. Their commits 
 Permitted flow:
 
 ```text
-codex/testflight-triage ───────────────► main
+codex/testflight-triage ───────────────► main  (Build 22 acceptance only)
+                 │
+                 └─────────────────────► codex/build-23-release  (exact verified patch)
 
 main ──────────────────────────────────► codex/sharing-next
 main ──────────────────────────────────► codex/quality-of-life-next
 
-codex/sharing-next ────────────────────► main  (numbered release only)
-codex/quality-of-life-next ────────────► main  (bounded release only)
+codex/experience-overhaul ─────────────► codex/quality-of-life-next  (temporary integration only)
+codex/quality-of-life-next ────────────► codex/build-23-release  (one integration)
+codex/sharing-next ────────────────────► codex/build-23-release  (one integration)
+codex/build-23-release ────────────────► main  (accepted Build 23 only)
 ```
 
 Rules:
 
-- Never merge `codex/sharing-next` directly into `codex/quality-of-life-next`, or the reverse.
-- After a TestFlight triage release reaches `main`, merge `main` into both feature lanes before further integration work.
+- Never merge `codex/sharing-next` directly into `codex/quality-of-life-next`, `codex/experience-overhaul`, or the reverse. Their first shared descendant is `codex/build-23-release`.
+- Merge `codex/experience-overhaul` into `codex/quality-of-life-next` before either quality-of-life or sharing work enters `codex/build-23-release`.
+- Merge each source lane into `codex/build-23-release` once. Resolve structural conflicts in favor of the experience overhaul's navigation and presentation composition, preserve sharing's package/import/playback contracts, and regenerate project and package-resolution artifacts from the resolved source rather than manually blending generated files.
+- Build 22 acceptance remains a separate human decision. If its exact verified patch enters Build 23 before that decision, record it as inherited `verified` evidence and block Build 23 distribution until the Build 22 result is known.
 - Do not move unreleased runtime work from a feature lane into triage merely to make it ship sooner.
 - Dependency ordering inside a lane is represented by issue state, commits, tests, and feature flags—not additional persistent branches.
 
@@ -64,9 +74,9 @@ Rules:
 4. Focused regression evidence can be added without claiming product-owner validation.
 5. The change can be described in the next TestFlight handoff with exact in-scope and out-of-scope behavior.
 
-Issue #84 was explicitly readmitted by the product owner on 2026-08-30 after the scrubber again dislocated from audible playback on current private branches. The bounded triage outcome is one acknowledged media-seek transaction in the shared playback spine, with combined regression evidence proving both historical failure modes in one sequence: periodic playback updates cannot fight an active drag, and after release the accepted player time, app timeline, persisted position, elapsed/remaining labels, and Now Playing state reconverge and continue advancing. This authorization does not add a playback feature, expand available scrub ranges, or claim the device flow is `human_validated`.
+Issue #84 was explicitly readmitted by the product owner on 2026-08-30 after the scrubber again dislocated from audible playback on current private branches. The bounded outcome is one acknowledged media-seek transaction in the shared playback spine, with combined regression evidence proving both historical failure modes in one sequence: periodic playback updates cannot fight an active drag, and after release the accepted player time, app timeline, persisted position, elapsed/remaining labels, and Now Playing state reconverge and continue advancing. The implementation at `22caa72` is `verified`; Build 22 assignment, app-build regeneration, and product-owner validation evidence remain to be recorded without claiming acceptance.
 
-The accepted post-Build-19 fixes through `22788cb` include the bounded playback, recording-continuity, scrubbing, transport, PDF, and podcast-resolution corrections previously tracked through issues #56, #71, #78, #83, #84, and #85. The renewed #84 evidence proves that the earlier isolated scrubbing checks were insufficient; the issue remains open until the combined invariant is implemented, automatically verified, and then exercised by the product owner.
+The accepted post-Build-19 fixes through `22788cb` include the earlier playback, recording-continuity, scrubbing, transport, PDF, and podcast-resolution corrections tracked through issues #56, #71, #78, #83, #84, and #85. The renewed #84 evidence proves that the earlier isolated scrubbing checks were insufficient; the issue remains open until Build 22 is exercised and accepted by the product owner.
 
 For each TestFlight cycle:
 
@@ -78,7 +88,7 @@ For each TestFlight cycle:
 
 ## Sharing Lane
 
-`codex/sharing-next` is one major-feature lane with ordered phases, not a branch per sharing issue.
+`codex/sharing-next` is the source lane for the one-way Build 23 foundation, not a branch per sharing issue. After its one integration into `codex/build-23-release`, further Build 23 sharing experience work belongs only on the release lane under the frozen seams below.
 
 ### Phase 1: Foundation
 
@@ -90,17 +100,17 @@ For each TestFlight cycle:
 
 These issues form one end-to-end boundary: prepare, preview, export, import, and distinguish shared commentary. Rights and provenance decisions from #14 gate external enablement even when implementation remains disabled behind a feature flag.
 
-### Phase 2: Co-op Replies
+### Later release: Co-op Replies
 
-- #19 begins only after the one-way foundation is implemented and verified.
-- Co-op replies remain in `codex/sharing-next`; do not create a persistent child branch.
+- #19 begins only after the Build 23 one-way foundation is implemented, verified, and product-owner accepted.
+- Co-op replies require a later release-lane decision; they are not Build 23 work.
 - #26 AI synthesis is not authorized by this lane plan.
 
 ## Quality-of-Life Lane
 
-`codex/quality-of-life-next` delivers one numbered non-Watch quality-of-life release. All work remains a per-issue or tightly complementary issue-group commit series on this single branch; do not create issue-specific persistent branches.
+`codex/quality-of-life-next` supplies the complete non-Watch quality-of-life program and integrated private experience overhaul to Build 23. All source work remains a per-issue or tightly complementary issue-group commit series on this single branch; do not create issue-specific persistent branches.
 
-Its next TestFlight candidate is Build 22. Earlier Build 21 references on the branch describe local automated evidence only and are superseded because the product owner reserved Build 21 for the accepted hotfix distribution.
+Earlier Build 21 and Build 22 references on the branch describe local automated evidence only and are superseded: Build 21 is the current internal hotfix line, Build 22 is the renewed #84 triage candidate, and the unified candidate is Build 23.
 
 ### Authorized ordered program
 
@@ -120,6 +130,64 @@ Each phase may begin only when its dependency invariants have focused automated 
 - Any new Watch playback, transfer, rendering, connectivity, or synchronization work.
 
 Existing dormant Watch artifacts may be counted by the storage ledger, but this authorization does not permit changing or enabling Watch runtime code. Issue #75 remains queued for a later product-owner release decision.
+
+## Temporary Experience Overhaul Lane
+
+The product owner authorized `codex/experience-overhaul` on 2026-08-28 as a bounded temporary integration branch from `codex/quality-of-life-next`. Its purpose is to recompose the already implemented private quality-of-life capabilities into a scalable native experience without importing the sharing lane or changing SessionKit contracts.
+
+Authorized scope:
+
+- adaptive Library, Sources, and local Margins destinations;
+- app-layer navigation and presentation models;
+- typed intake routing over existing import handlers;
+- item detail, Now Playing, guarded recording, local Timeline provenance, onboarding, and offline-storage presentation;
+- semantic design tokens, accessibility behavior, focused regressions, validation evidence, and the product/spec updates required by this direction.
+
+Explicitly excluded:
+
+- reviewed sharing packages, imported people, recipient preview, co-op replies, or any other `codex/sharing-next` runtime;
+- Watch, new SessionKit commands or snapshot/schema fields, publisher-artwork dependencies, account/profile concepts, remote execution, and speculative disabled controls;
+- distribution or a claim of `human_validated` status without a separate product-owner decision and hands-on validation.
+
+The branch merges only into `codex/quality-of-life-next`. Delete it after that integration; it must not become a persistent release lane. Sharing is composed only after quality-of-life reaches `codex/build-23-release`, where the design overhaul owns navigation and screen composition and sharing owns its reviewed-package, import, provenance, and playback semantics.
+
+## Build 23 Unified Release Lane
+
+`codex/build-23-release` is the only branch where the quality-of-life/experience source and sharing source may be composed. It exists to complete a coherent release, not to preserve both branches' duplicate screens.
+
+### Product contract
+
+The sender experience is a four-stage state machine:
+
+1. **Select:** choose the final set of Margins and confirm the item and rights context. Starred Margins may be preselected, but the final set is explicit.
+2. **Review:** inspect a compact list, edit one Margin in detail at a time, choose its representation, and batch-prepare eligible representations without losing per-Margin review status.
+3. **Recipient preview:** render what the other person will receive from the successfully round-tripped, verified archive. Any package-affecting mutation invalidates this preview and requires regeneration.
+4. **Share:** invoke the system share surface with the exact verified `.spokenmargins` file represented by the preview.
+
+The recipient experience is preview, import, then an explicit behavior choice. Imported Margins remain a distinct provenance-aware layer, default to Companion voice, and never autoplay. When recipient-supplied source material is missing, the import route must enter Add Source and return to the pending import rather than require the user to reopen the file.
+
+### Frozen ownership boundary
+
+- Experience-overhaul composition owns navigation, semantic design tokens, adaptive screen structure, sheets, toolbars, and persistent-player placement.
+- Sharing owns reviewed-package schemas, archive signing/verification, bounded anchors, representation preparation, imported-layer semantics, and shared-Margin playback behavior.
+- Session and persistence integration is an additive union; neither source lane may discard the other lane's durable fields or migrations.
+- `Package.swift` contains each target and ZIP dependency once. `Package.resolved` files and the Xcode project are regenerated after source conflicts are resolved.
+- Root composition, app-model integration, shared SessionKit models/protocols/engine, project generation, contract validators, and release evidence are steward-owned seams during parallel work.
+
+### Release gates and stopping rules
+
+Build 23 may be called `implemented` when all in-scope paths exist, and `verified` only after contract validators, the complete SessionKit suite, focused app tests, generic simulator/device builds, and the scoped route checklist pass. It remains not `human_validated` until the product owner completes its handoff.
+
+Stop distribution or acceptance if:
+
+- Build 22's seek behavior is rejected or remains undecided;
+- #14 rights/provenance policy is unresolved for any externally enabled sharing path;
+- recipient preview is derived from draft UI state rather than the exact verified archive;
+- editing after preview can share stale bytes;
+- imported and local Margins are distinguishable only by color, imported audio autoplays, or import silently changes source ownership;
+- a merge drops storage, playback, anchor, provenance, or migration behavior from either source line;
+- Watch runtime, co-op replies, accounts, hosted storage, or AI synthesis enters the diff;
+- generated project/package files are hand-merged without a clean regeneration check.
 
 ## Work-In-Progress And Branch Creation Rules
 
