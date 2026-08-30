@@ -107,31 +107,44 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         let itemID = model.selectedItem.id
-        model.selectedItem.interjections = (0..<marginCount).map { index in
-            Interjection(
-                id: "margin-build-23-sender-\(index)",
+        var interjections: [Interjection] = []
+        interjections.reserveCapacity(marginCount)
+
+        for index in 0..<marginCount {
+            let marginID: String = "margin-build-23-sender-\(index)"
+            let sessionID: String = "session-build-23-sender"
+            let createdAt = Date(timeIntervalSince1970: TimeInterval(index + 1))
+            let roughPercent: Int = (index + 1) * 20
+            let startCharacter = index * 5
+            let endCharacter = startCharacter + 5
+            let anchor = Anchor(
+                anchorType: .text,
+                startChar: startCharacter,
+                endChar: endCharacter,
+                anchorBefore: "Before \(index)",
+                anchorAfter: "After \(index)"
+            )
+            let transcript: String = "Reviewed Margin \(index)."
+            let interjection = Interjection(
+                id: marginID,
                 itemId: itemID,
-                sessionId: "session-build-23-sender",
+                sessionId: sessionID,
                 targetType: .item,
                 targetId: itemID,
-                createdAt: Date(timeIntervalSince1970: TimeInterval(index + 1)),
-                roughPercent: Double((index + 1) * 20),
-                anchor: Anchor(
-                    anchorType: .text,
-                    startChar: index * 5,
-                    endChar: (index * 5) + 5,
-                    anchorBefore: "Before \(index)",
-                    anchorAfter: "After \(index)"
-                ),
+                createdAt: createdAt,
+                roughPercent: roughPercent,
+                anchor: anchor,
                 audioPath: nil,
                 audioStatus: "none",
                 transcriptionStatus: "transcribed",
-                transcript: "Reviewed Margin \(index).",
+                transcript: transcript,
                 cleanedTranscript: nil,
                 displayText: nil,
                 status: "active"
             )
+            interjections.append(interjection)
         }
+        model.selectedItem.interjections = interjections
         return Build23SharingCoordinator(model: model)
     }
 

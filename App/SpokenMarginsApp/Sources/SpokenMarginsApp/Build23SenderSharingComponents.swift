@@ -246,7 +246,7 @@ struct Build23MarginSelectionRow: View {
                     margin.isIncluded ? "Included" : "Include",
                     isOn: Binding(
                         get: { margin.isIncluded },
-                        set: onSetIncluded
+                        set: { newValue in onSetIncluded(newValue) }
                     )
                 )
                 .font(.caption.weight(.semibold))
@@ -309,6 +309,7 @@ struct Build23MarginEditor: View {
                     Text("Detailed editor")
                         .font(.title3.weight(.semibold))
                         .foregroundStyle(AppColors.text)
+                        .accessibilityIdentifier("build23.sender.margin.editor.\(margin.id)")
                     Spacer()
                     Text(margin.isIncluded ? "Included" : "Not included")
                         .font(.caption.weight(.semibold))
@@ -464,7 +465,6 @@ struct Build23MarginEditor: View {
                 }
             }
         }
-        .accessibilityIdentifier("build23.sender.margin.editor.\(margin.id)")
     }
 }
 
@@ -516,6 +516,7 @@ struct Build23BatchPreparationCard: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Voice preparation")
                     .font(.headline)
+                    .accessibilityIdentifier("build23.sender.preparation.batch")
                 Text("Prepare cleaned voice for included Margins. A failed Margin retains Original voice when available, or reviewed Text otherwise.")
                     .font(.subheadline)
                     .foregroundStyle(AppColors.secondaryText)
@@ -556,7 +557,6 @@ struct Build23BatchPreparationCard: View {
                 }
             }
         }
-        .accessibilityIdentifier("build23.sender.preparation.batch")
     }
 }
 
@@ -700,6 +700,7 @@ struct Build23InlineTranscriptEditor: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Words and pauses")
                 .font(.headline)
+                .accessibilityIdentifier("build23.sender.inline-transcript-editor")
             Text("Tap a word or bracketed pause to include or remove it from the reviewed version.")
                 .font(.caption)
                 .foregroundStyle(AppColors.secondaryText)
@@ -756,7 +757,6 @@ struct Build23InlineTranscriptEditor: View {
             collapsedHeight = heights["tokens-collapsed"] ?? collapsedHeight
             fullHeight = heights["tokens-full"] ?? fullHeight
         }
-        .accessibilityIdentifier("build23.sender.inline-transcript-editor")
     }
 
     private func tokenLayout(maximumRows: Int? = nil) -> some View {
@@ -782,6 +782,7 @@ struct Build23AudioPreviewControls: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Voice preview")
                     .font(.headline)
+                    .accessibilityIdentifier("build23.sender.voice-preview")
                 Text("Preview the exact local voice assets represented in this draft.")
                     .font(.caption)
                     .foregroundStyle(AppColors.secondaryText)
@@ -804,7 +805,6 @@ struct Build23AudioPreviewControls: View {
                 }
             }
             .onDisappear { player.stop() }
-            .accessibilityIdentifier("build23.sender.voice-preview")
         }
     }
 

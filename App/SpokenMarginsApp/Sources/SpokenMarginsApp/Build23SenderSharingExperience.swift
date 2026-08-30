@@ -36,6 +36,7 @@ struct Build23SenderSharingExperience: View {
             .frame(maxWidth: .infinity, alignment: .top)
         }
         .background(AppColors.bone.ignoresSafeArea())
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("build23.sender.experience")
         .onAppear {
             guard !hasBegun else { return }
@@ -45,7 +46,6 @@ struct Build23SenderSharingExperience: View {
         .sheet(isPresented: $isSystemSharePresented, onDismiss: finishSystemShare) {
             if let packageURL = verifiedShareURLForPresentation {
                 SharedSpokenMarginsPackageActivityView(packageURL: packageURL)
-                    .accessibilityIdentifier("build23.sender.system-share")
             }
         }
     }
@@ -71,6 +71,8 @@ struct Build23SenderSharingExperience: View {
                 title: "Choose exactly what crosses the boundary",
                 detail: "Review each Margin, its voice representation, and the context the recipient will use to place it."
             )
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("build23.sender.stage.select")
 
             senderDetails(snapshot)
             Build23TransportConsequenceCard(
@@ -110,7 +112,6 @@ struct Build23SenderSharingExperience: View {
                 .accessibilityIdentifier("build23.sender.select.continue")
             }
         }
-        .accessibilityIdentifier("build23.sender.stage.select")
     }
 
     private func senderDetails(_ snapshot: Build23SharingSnapshot) -> some View {
@@ -211,7 +212,6 @@ struct Build23SenderSharingExperience: View {
                     )
                 }
             }
-            .accessibilityIdentifier("build23.sender.margin.list")
         }
     }
 
@@ -240,7 +240,6 @@ struct Build23SenderSharingExperience: View {
                 }
             }
         }
-        .accessibilityIdentifier("build23.sender.margin.list")
     }
 
     private func marginEditors(_ margins: [Build23SharingMarginSnapshot]) -> some View {
@@ -258,7 +257,6 @@ struct Build23SenderSharingExperience: View {
                 }
             }
         }
-        .accessibilityIdentifier("build23.sender.margin.editor-region")
     }
 
     @ViewBuilder
@@ -289,6 +287,7 @@ struct Build23SenderSharingExperience: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Included Margins")
                 .font(.headline)
+                .accessibilityIdentifier("build23.sender.review.margin-list")
             ForEach(margins) { margin in
                 Build23ReviewSelectionRow(
                     margin: margin,
@@ -297,7 +296,6 @@ struct Build23SenderSharingExperience: View {
                 )
             }
         }
-        .accessibilityIdentifier("build23.sender.review.margin-list")
     }
 
     private func reviewStage(_ snapshot: Build23SharingSnapshot) -> some View {
@@ -307,6 +305,8 @@ struct Build23SenderSharingExperience: View {
                 title: "Confirm the package before it is written",
                 detail: "This is the sender-side draft. The next step writes the package and reads it back before showing the recipient view."
             )
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("build23.sender.stage.review")
 
             Build23TransportConsequenceCard(
                 transport: snapshot.transport,
@@ -363,7 +363,6 @@ struct Build23SenderSharingExperience: View {
                 .accessibilityIdentifier("build23.sender.preview.build")
             }
         }
-        .accessibilityIdentifier("build23.sender.stage.review")
         .onAppear(perform: normalizeReviewSelection)
     }
 
@@ -374,6 +373,8 @@ struct Build23SenderSharingExperience: View {
                 title: "See only what the verified package contains",
                 detail: "This projection was read back from the written package rather than reconstructed from the sender draft."
             )
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("build23.sender.stage.recipient-preview")
 
             switch snapshot.previewState {
             case .building:
@@ -438,7 +439,6 @@ struct Build23SenderSharingExperience: View {
                 )
             }
         }
-        .accessibilityIdentifier("build23.sender.stage.recipient-preview")
     }
 
     private func unavailablePreview(title: String, detail: String) -> some View {
@@ -463,6 +463,8 @@ struct Build23SenderSharingExperience: View {
                 title: "The verified file is ready for the system share sheet",
                 detail: "Sharing never substitutes a draft URL or an unverified package."
             )
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("build23.sender.stage.share")
 
             if coordinator.verifiedShareFileURL != nil, snapshot.canShareVerifiedFile {
                 ExperienceSurface(tint: AppColors.softGreen) {
@@ -495,7 +497,6 @@ struct Build23SenderSharingExperience: View {
                 )
             }
         }
-        .accessibilityIdentifier("build23.sender.stage.share")
     }
 
     private func setIncluded(_ included: Bool, marginID: String) {
