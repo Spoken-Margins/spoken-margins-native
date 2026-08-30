@@ -1270,6 +1270,7 @@ final class Gate1AppModel: ObservableObject {
                             try engine.syncPlaybackProgress(),
                             itemId: self.activeItemId
                         )
+                        self.recordMediaSeekEvidence(from: engine)
                         let completedCurrentAudio = previousStatus.isPlaybackActive &&
                             updated.status == .paused &&
                             previousTargetId == updated.targetId &&
@@ -1335,6 +1336,7 @@ final class Gate1AppModel: ObservableObject {
                 try engine.syncPlaybackProgress(),
                 itemId: activeItemId
             )
+            recordMediaSeekEvidence(from: engine)
             let completedCurrentAudio = previousStatus.isPlaybackActive &&
                 updated.status == .paused &&
                 previousTargetId == updated.targetId &&
@@ -3971,6 +3973,8 @@ final class Gate1AppModel: ObservableObject {
     func seekMedia(toMediaTimeMs mediaTimeMs: Int) {
         run { engine in
             snapshot = try engine.seekMedia(toMediaTimeMs: mediaTimeMs)
+            recordMediaSeekEvidence(from: engine)
+            refreshSelectedItem()
         }
     }
 
@@ -3988,6 +3992,21 @@ final class Gate1AppModel: ObservableObject {
 
     nonisolated static func nextPlaybackRate(after current: Double) -> Double {
         supportedPlaybackRates.first(where: { $0 > current + 0.001 }) ?? supportedPlaybackRates[0]
+    }
+
+    private func recordMediaSeekEvidence(from engine: SessionEngine) {
+        guard let request = engine.lastMediaSeekRequest,
+              let resolution = engine.lastMediaSeekResolution else { return }
+        let outcome: String
+        switch resolution {
+        case .pending:
+            outcome = "pending"
+        case .accepted(let mediaTimeMs):
+            outcome = "accepted:\(mediaTimeMs)"
+        case .failed(let actualMediaTimeMs, let reason):
+            outcome = "failed:\(actualMediaTimeMs.map(String.init) ?? "unknown"):\(reason)"
+        }
+        diagnostics["mediaSeek"] = "id:\(request.id),requested:\(request.requestedMediaTimeMs),outcome:\(outcome)"
     }
 
     func seekText(toCharOffset charOffset: Int) {

@@ -107,6 +107,8 @@ public protocol AudioPlaybackClient {
     func play(targetId: String, from charOffset: Int) throws
     func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws
     func seek(toMediaTimeMs mediaTimeMs: Int) throws
+    func requestMediaSeek(toMediaTimeMs mediaTimeMs: Int) throws -> MediaSeekRequest
+    func mediaSeekResolution(for request: MediaSeekRequest) -> MediaSeekResolution
     func setPlaybackRate(_ rate: Double) throws
     func currentPlaybackPosition() -> PlaybackPosition?
     func currentCharOffset() -> Int?
@@ -168,6 +170,16 @@ public extension AudioPlaybackClient {
     }
 
     func seek(toMediaTimeMs mediaTimeMs: Int) throws {}
+
+    func requestMediaSeek(toMediaTimeMs mediaTimeMs: Int) throws -> MediaSeekRequest {
+        let targetId = currentPlaybackPosition()?.targetId
+        try seek(toMediaTimeMs: mediaTimeMs)
+        return MediaSeekRequest(id: 0, targetId: targetId, requestedMediaTimeMs: mediaTimeMs)
+    }
+
+    func mediaSeekResolution(for request: MediaSeekRequest) -> MediaSeekResolution {
+        .accepted(mediaTimeMs: currentMediaTimeMs() ?? request.requestedMediaTimeMs)
+    }
 
     func setPlaybackRate(_ rate: Double) throws {}
 

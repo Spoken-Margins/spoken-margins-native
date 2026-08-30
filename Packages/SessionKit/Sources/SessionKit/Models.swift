@@ -66,6 +66,24 @@ public enum PlaybackTransportState: String, Codable, Equatable, Sendable {
     case failed
 }
 
+public struct MediaSeekRequest: Equatable, Sendable {
+    public var id: Int
+    public var targetId: String?
+    public var requestedMediaTimeMs: Int
+
+    public init(id: Int, targetId: String?, requestedMediaTimeMs: Int) {
+        self.id = id
+        self.targetId = targetId
+        self.requestedMediaTimeMs = max(0, requestedMediaTimeMs)
+    }
+}
+
+public enum MediaSeekResolution: Equatable, Sendable {
+    case pending
+    case accepted(mediaTimeMs: Int)
+    case failed(actualMediaTimeMs: Int?, reason: String)
+}
+
 public enum TargetType: String, Codable, Equatable, Sendable {
     case itemTextTTS = "item_text_tts"
     case transcriptBackedMedia = "transcript_backed_media"

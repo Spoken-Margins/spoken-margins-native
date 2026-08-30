@@ -70,7 +70,13 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         state.finish()
         XCTAssertFalse(state.isEditing)
-        XCTAssertEqual(state.displayedValue(canonicalValue: 1_621, range: range), 1_621)
+        for canonicalTick in [1_620.0, 1_620.5, 1_621.0, 1_621.5] {
+            XCTAssertEqual(
+                state.displayedValue(canonicalValue: canonicalTick, range: range),
+                canonicalTick,
+                "After release the scrubber must immediately rejoin and continue following canonical playback"
+            )
+        }
     }
 
     func testPlaybackScrubStateClampsGestureToCanonicalDuration() {
