@@ -10,6 +10,7 @@ Implementation commits:
 - `84fd071` (`Refine shared Margin review and playback prompts`)
 - `b3f0d5e` (`Capture podcast anchors from post-Margin playback`)
 - `a002330` (`Prepare Margins in bulk and match playback rate`)
+- `22901aa` (`Curate Margins for sharing from the timeline`)
 
 Local build setting: version 0.1 (21)
 
@@ -27,6 +28,10 @@ From playback, tap the Share icon. The first panel on the resulting **Share** sc
 
 The sender review now supports:
 
+- opening Timeline Margins normally while using a separate visible star control to build a private sharing shortlist;
+- persisting an optional private sharing note on each Margin without placing that note in an export or recipient record;
+- defaulting the review to starred Margins when any exist, with explicit All/Starred filtering and per-export Include controls remaining authoritative;
+- showing at most 10 measured transcript lines initially, with an explicit expansion control only when the transcript actually overflows;
 - choosing which Margins leave the device;
 - preparing every included Margin with aligned word timing from one bulk action, with visible progress, cancellation, and per-Margin fallback;
 - tapping aligned words or inline bracketed pauses to remove or restore them, with explicit Undo and Redo and no text-insertion route;
@@ -50,6 +55,8 @@ The package now distinguishes a reusable **source** such as a podcast feed from 
 The embedded representation is the exact text Spoken Margins listened to, not the original PDF/EPUB container, its layout, or any podcast audio. Packages that contradict the disclosure—for example a URL-backed item marked recipient-supplied, mismatched PDF/EPUB type, embedded podcast content, absent rights basis, or digest mismatch—are rejected.
 
 The pre-release `.spokenmargins` schema was replaced in place as authorized by the release lane. Packages exported by the earlier sharing prototype are intentionally unsupported. Existing locally imported Shared Margins records do retain a backward decoder so upgrading this branch does not make those records or the rest of the library disappear.
+
+Timeline stars and private sharing notes are local curation metadata. They persist across relaunch, but are deliberately excluded from reviewed revisions, session JSON/Markdown exports, `.spokenmargins` packages, and recipient records. A star changes the initial shortlist only; the sender's **Include this Margin** choice remains the final authority for each export. If no Margins are starred, review retains the existing all-included behavior.
 
 ## Podcast anchoring and recipient experience
 
@@ -100,8 +107,8 @@ The pre-release `.spokenmargins` schema was replaced in place as authorized by t
 - Contract validator: passed.
 - Surface contract validator: passed.
 - SessionKit build with tests: passed.
-- Complete SessionKit package suite: 195 executed, 194 passed and 1 dedicated held-out benchmark wrapper skipped by design, 0 failed.
-- SharingTests: 27 executed, 26 passed and 1 dedicated held-out benchmark wrapper skipped by design, 0 failed. The added decoded-PCM test verifies that only the armed post-resume window is signed, the signature remains below 1 MB, and the anchor offset is derived from playback media time.
+- Complete SessionKit package suite: 196 executed, 195 passed and 1 dedicated held-out benchmark wrapper skipped by design, 0 failed.
+- SharingTests: 28 executed, 27 passed and 1 dedicated held-out benchmark wrapper skipped by design, 0 failed. Coverage verifies that only the armed post-resume window is signed, the signature remains below 1 MB, and the anchor offset is derived from playback media time. It also verifies that private Timeline stars and notes persist locally but cannot enter reviewed revisions or session exports.
 - Session lifecycle coverage verifies that the 12-second request is armed before source playback resumes after a podcast Margin.
 - Focused app-state and compact-surface tests: 22 distinct tests passed, 0 failed, including verified text/podcast anchor eligibility, word-delete Undo/Redo, legacy and current Live Activity state, prompt publication, URL/queue compatibility, and compact playback policy.
 - Focused item-screen UI route: 1 passed, 0 failed; Start/Continue Listening is hittable before scrolling and no second chapter-panel map generator exists.
@@ -110,6 +117,7 @@ The pre-release `.spokenmargins` schema was replaced in place as authorized by t
 - Diff whitespace check: passed.
 - Existing benchmark artifact: 232 anchors, 226 eligible and 6 deliberately absent; fused/monotonic placement had zero wrong confident placements, 4 ms p95 error, and declined all 6 absent passages. See `podcast-anchor-benchmark.md` and `podcast-anchor-benchmark-result.json`.
 - New bulk/rate app-model tests: 4 passed, 0 failed. A 53-Margin fixture verified exactly 53 serial renders with maximum concurrency 1, byte-for-byte private-original preservation, and Undo/Redo after preparation. Dedicated cases verified cancellation restores eligibility, renderer failure falls back to Original voice, and 1.75× maps unchanged to Margin playback while invalid rates are bounded.
+- Focused Timeline curation test: passed. It verifies relaunch persistence, the 500-character private-note bound, starred-first review selection, all-included fallback after removing the final star, and measured 10-line overflow behavior. The previously focused word-delete Undo/Redo and 53-Margin bulk tests also passed in the same run.
 - Full `Gate1AppModelWorkflowTests` omission check: 72 executed; all 4 new tests and 67 other tests passed. One unrelated PDF visual-heading expectation failed because the implementation preserved a `Front Matter` chapter that the older assertion excludes; no sharing, Margin, playback-rate, or changed file participates in that result.
 - System TTS voice discovery is now deferred until the Settings screen appears, where the catalog was already refreshed. This removes a simulator/app-launch stall without changing the voice-selection surface.
 
@@ -138,9 +146,13 @@ Record Pass, Fail, or Not run, with device/OS and notes.
 17. **System share sheet.** After **Share Reviewed Margins**, tap **Share File** and send the `.spokenmargins` file through the desired real sharing channel. Result: ___
 18. **Bulk preparation at scale.** Create or seed a session with many aligned Margins, include the desired ones, and tap **Prepare All Included**. Confirm completed/total progress advances, the UI remains responsive, Cancel stops the queue, retry remains available for the interrupted Margin, and one failed recording falls back without blocking the rest. Review several results and exercise per-Margin Undo/Redo. Result: ___
 19. **Margin playback rate.** Set item playback to 1.75×. Play a private Margin, then cross a received Margin in Companion and Guided modes. Confirm each voice plays at 1.75×, the cue remains normal speed, and the item resumes at 1.75× afterward. Repeat at 1×. Result: ___
+20. **Timeline sharing shortlist.** While listening, star several Margins from their Timeline rows. Confirm the star does not open the Margin, the rest of the row still does, and the starred state persists after relaunch. Result: ___
+21. **Private sharing note.** Open a Margin, add and save a sharing note, then confirm it appears on the Timeline and in sender review as private context. Export the package and session archive, import on another installation, and confirm the note is absent everywhere outside the sender's local library. Result: ___
+22. **Starred review filtering.** With at least one star, open Share and confirm the initial view and inclusion set contain only starred Margins. Switch between All and Starred, then use **Include this Margin** to make a different final export choice. Remove every star, reopen Share, and confirm the legacy all-included default returns. Result: ___
+23. **Bounded transcript review.** Review one transcript shorter than 10 rendered lines and confirm there is no unnecessary expansion control. Review a longer transcript and confirm it starts at no more than 10 lines, expands to the complete inline word/pause editor, and collapses again without losing edits. Result: ___
 
 ## Acceptance and stopping rules
 
-Mark the MVP `human_validated` only after accepting the sender disclosure, linkless rights-on and rights-off paths, linked-item reconstruction, word/audio review, a real system-share transfer, recipient import, Companion and Guided listening, persistence, and conservative podcast behavior.
+Mark the MVP `human_validated` only after accepting the sender disclosure, linkless rights-on and rights-off paths, linked-item reconstruction, Timeline curation/privacy behavior, bounded word/audio review, a real system-share transfer, recipient import, Companion and Guided listening, persistence, and conservative podcast behavior.
 
-Stop on any wrong confident cross-edition placement, podcast/item-audio leakage, item embedding without the displayed rights basis, transcript insertion, unreviewed representation export, private-original mutation, autoplay during import, duplicate imported layer, or library disappearance after upgrade.
+Stop on any wrong confident cross-edition placement, podcast/item-audio leakage, item embedding without the displayed rights basis, private curation metadata in an export, transcript insertion, unreviewed representation export, private-original mutation, autoplay during import, duplicate imported layer, or library disappearance after upgrade.
