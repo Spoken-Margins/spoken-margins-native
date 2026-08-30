@@ -704,7 +704,9 @@ final class Gate1AppModel: ObservableObject {
     private var importedCommentaryAutoPlayTask: Task<Void, Never>?
     private var bulkSharePreparationTask: Task<Void, Never>?
     private var bulkSharePreparationGeneration = 0
-    private var startsRecipientTestSessionAfterImport = false
+    private var shouldForceFirstSharedSourceMissForUITesting =
+        CommandLine.arguments.contains("--ui-testing")
+        && ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_FORCE_FIRST_SHARED_SOURCE_MISS"] == "1"
     private var textAudioPrewarmTasks: [String: Task<Void, Never>] = [:]
     private var explicitAudioPreparationTask: Task<Void, Never>?
     private var sourceImportTask: Task<Void, Never>?
@@ -5478,20 +5480,13 @@ final class Gate1AppModel: ObservableObject {
             }
             let store = try requireStore()
             if let existing = try store.loadImportedCommentaryLayer(packageDigest: digest) {
-                let shouldStartRecipientSession = startsRecipientTestSessionAfterImport
                 if let itemId = existing.itemId {
                     openItem(id: itemId)
-                    if shouldStartRecipientSession {
-                        startNewSession(id: itemId)
-                        reportConfirmation("Started another recipient test session with the existing imported Margins.")
-                    } else {
-                        reportSuccess("These shared Margins are already in your library.")
-                    }
+                    reportSuccess("These shared Margins are already in your library. Playback has not started.")
                 } else {
                     reportSuccess("These shared Margins are already in your library.")
                 }
                 diagnostics["lastSpokenMarginsPackageImport"] = "duplicate:\(digest)"
-                startsRecipientTestSessionAfterImport = false
                 try? FileManager.default.removeItem(at: root)
                 return
             }
@@ -5505,7 +5500,6 @@ final class Gate1AppModel: ObservableObject {
             )
             diagnostics["lastSpokenMarginsPackageImport"] = "previewed:\(digest)"
         } catch {
-            startsRecipientTestSessionAfterImport = false
             if let workingDirectory { try? FileManager.default.removeItem(at: workingDirectory) }
             diagnostics["lastSpokenMarginsPackageImport"] = "rejected:\(error.localizedDescription)"
             reportFailure(error, context: "Shared Margins package could not be opened")
@@ -5517,7 +5511,7 @@ final class Gate1AppModel: ObservableObject {
             reportFailure("The last shared package is unavailable.")
             return
         }
-        startsRecipientTestSessionAfterImport = true
+        isSharingInterjectionsPresented = false
         isSharedSpokenMarginsPackagePresented = false
         Task { @MainActor [weak self] in
             await Task.yield()
@@ -5530,7 +5524,6 @@ final class Gate1AppModel: ObservableObject {
         let directory = spokenMarginsPackageImportReview?.extractionDirectory
         spokenMarginsPackageImportReview = nil
         spokenMarginsPackageImportError = nil
-        startsRecipientTestSessionAfterImport = false
         if let directory { try? FileManager.default.removeItem(at: directory) }
     }
 
@@ -5566,7 +5559,7 @@ final class Gate1AppModel: ObservableObject {
         guard let review = spokenMarginsPackageImportReview,
               !isImportingSpokenMarginsPackage else { return }
         guard !review.requiresRecipientItem else {
-            spokenMarginsPackageImportError = "This package does not include the item. Add the same text, PDF, or EPUB to your library, then open this .spokenmargins file again."
+            spokenMarginsPackageImportError = "This package does not include the item. Add the matching source, then return to this pending import."
             return
         }
         isImportingSpokenMarginsPackage = true
@@ -5622,16 +5615,9 @@ final class Gate1AppModel: ObservableObject {
                         self.resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
                     }
                 }
-                if self.startsRecipientTestSessionAfterImport, let itemId {
-                    self.startsRecipientTestSessionAfterImport = false
-                    self.startNewSession(id: itemId)
-                    self.reportConfirmation("Started a recipient test session with the imported shared Margins.")
-                } else {
-                    self.reportConfirmation("Imported shared Margins. Playback has not started.")
-                }
+                self.reportConfirmation("Imported shared Margins. Playback has not started.")
             } catch {
                 self.isImportingSpokenMarginsPackage = false
-                self.startsRecipientTestSessionAfterImport = false
                 self.spokenMarginsPackageImportError = error.localizedDescription
                 self.diagnostics["lastSpokenMarginsPackageImport"] = "failed:\(error.localizedDescription)"
                 self.reportFailure(error, context: "Shared Margins import failed")
@@ -5703,6 +5689,11 @@ final class Gate1AppModel: ObservableObject {
         for itemIdentity: SharedItemIdentity,
         store: SQLiteSessionStore
     ) throws -> String? {
+        if shouldForceFirstSharedSourceMissForUITesting {
+            shouldForceFirstSharedSourceMissForUITesting = false
+            diagnostics["uiTestSharedSourceMiss"] = "forced_once"
+            return nil
+        }
         let matches = try store.listItems().filter { item in
             ImportedItemResolver.canRepresentSameWork(itemIdentity, localSharedItemIdentity(for: item))
         }

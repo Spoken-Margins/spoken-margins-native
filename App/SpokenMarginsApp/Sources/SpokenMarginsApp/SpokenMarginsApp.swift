@@ -42,17 +42,28 @@ final class SpokenMarginsAppDelegate: NSObject, UIApplicationDelegate {
 #endif
 
 @main
+@MainActor
 struct SpokenMarginsApp: App {
     #if canImport(UIKit)
     @UIApplicationDelegateAdaptor(SpokenMarginsAppDelegate.self) private var appDelegate
     #endif
-    @StateObject private var model = Gate1AppModel.makeApplicationModel()
+    @StateObject private var model: Gate1AppModel
+    @StateObject private var sharingCoordinator: Build23SharingCoordinator
     @Environment(\.scenePhase) private var scenePhase
+
+    init() {
+        let model = Gate1AppModel.makeApplicationModel()
+        _model = StateObject(wrappedValue: model)
+        _sharingCoordinator = StateObject(
+            wrappedValue: Build23SharingCoordinator(model: model)
+        )
+    }
 
     var body: some Scene {
         WindowGroup {
             Gate1RootView()
                 .environmentObject(model)
+                .environmentObject(sharingCoordinator)
                 .onOpenURL { url in
                     model.handleIncomingURL(url)
                 }

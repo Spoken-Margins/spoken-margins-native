@@ -3,6 +3,7 @@ import SessionKit
 
 struct ExperienceItemDetailScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
+    @EnvironmentObject private var sharingCoordinator: Build23SharingCoordinator
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var confirmsTrash = false
@@ -15,6 +16,9 @@ struct ExperienceItemDetailScreen: View {
                 LazyVStack(alignment: .leading, spacing: 22) {
                     hero
                     primaryActions
+                    if !sharingCoordinator.importedLayers.isEmpty {
+                        Build23ImportedMarginPresentation(coordinator: sharingCoordinator)
+                    }
                     SourceFollowSuggestionCard()
                     ManualSourceFollowButton()
                     if !model.selectedItem.overview.isEmpty { overview }

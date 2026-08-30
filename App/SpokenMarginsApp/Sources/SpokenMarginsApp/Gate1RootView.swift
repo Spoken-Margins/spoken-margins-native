@@ -7,6 +7,7 @@ import UIKit
 
 struct Gate1RootView: View {
     @EnvironmentObject private var model: Gate1AppModel
+    @EnvironmentObject private var sharingCoordinator: Build23SharingCoordinator
     @State private var navigation = AppNavigationState()
     @State private var keyboardIsPresented = false
 
@@ -94,24 +95,81 @@ struct Gate1RootView: View {
                 .environmentObject(model)
         }
         .sheet(isPresented: $model.isSharingInterjectionsPresented) {
-            InterjectionSharingView()
+            Build23SenderSharingHost(coordinator: sharingCoordinator)
                 .environmentObject(model)
         }
-        .sheet(isPresented: $model.isSharedSpokenMarginsPackagePresented) {
-            if let packageURL = model.sharedSpokenMarginsPackageURL {
-                SharedSpokenMarginsPackageReadyView(packageURL: packageURL)
-                    .environmentObject(model)
-            }
-        }
-        .sheet(item: $model.spokenMarginsPackageImportReview) { review in
-            SpokenMarginsPackageImportView(review: review)
+        .sheet(item: $model.spokenMarginsPackageImportReview) { _ in
+            Build23RecipientSharingHost(coordinator: sharingCoordinator)
                 .environmentObject(model)
+                .interactiveDismissDisabled()
         }
         .alert("AI Setup Needed", isPresented: $model.isAISetupNeededPresented) {
             Button("Open AI Settings", action: model.openAISettingsFromSummaryPrompt)
             Button("Not Now", role: .cancel) {}
         } message: {
             Text("Summarize Notes uses your OpenAI API key to turn this session’s interjections into a spoken debrief. Your session and saved position have not changed.")
+        }
+    }
+}
+
+@MainActor
+private struct Build23SenderSharingHost: View {
+    @EnvironmentObject private var model: Gate1AppModel
+    @ObservedObject var coordinator: Build23SharingCoordinator
+
+    var body: some View {
+        Build23SenderSharingExperience(coordinator: coordinator)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if coordinator.verifiedShareFileURL != nil {
+                    VStack(spacing: 10) {
+                        Divider()
+                        Button("Create recipient test session", systemImage: "person.2.badge.plus") {
+                            model.createRecipientTestSessionFromLastSharedPackage()
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityHint("Stages this exact verified package in the recipient import experience")
+                        .accessibilityIdentifier("build23.sender.recipient-test-session")
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .background(.ultraThinMaterial)
+                }
+            }
+    }
+}
+
+@MainActor
+private struct Build23RecipientSharingHost: View {
+    @EnvironmentObject private var model: Gate1AppModel
+    @ObservedObject var coordinator: Build23SharingCoordinator
+    @State private var sourceRequest: Build23RecipientSourceRequest?
+
+    var body: some View {
+        Build23RecipientSharingExperience(coordinator: coordinator) { request in
+            sourceRequest = request
+        }
+        .sheet(item: $sourceRequest, onDismiss: resumePendingImport) { request in
+            ExperienceAddSourceFlow(initialRoute: addSourceRoute(for: request.itemType))
+                .environmentObject(model)
+        }
+        .accessibilityIdentifier("build23.recipient.experience")
+    }
+
+    private func resumePendingImport() {
+        coordinator.send(.resumeAfterAddingSource)
+    }
+
+    private func addSourceRoute(for itemType: SharedItemType) -> AddSourceRoute {
+        switch itemType {
+        case .podcast:
+            .linkOrPodcast
+        case .text:
+            .pastedText
+        case .pdf, .epub:
+            .documentOrBook
+        case .other:
+            .linkOrPodcast
         }
     }
 }

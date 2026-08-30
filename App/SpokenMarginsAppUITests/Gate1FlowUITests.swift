@@ -604,8 +604,276 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("batchExport.chooseFolder.button").isHittable)
     }
 
+    func testBuild23SenderStagesInvalidateStalePreviewAndUseSystemShare() throws {
+        launchBuild23SharingFixture()
+
+        XCTAssertTrue(element("build23.sender.stage.select").waitForExistence(timeout: 5))
+        openBuild23Review()
+        XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 5))
+        buildBuild23RecipientPreview()
+        XCTAssertTrue(element("build23.sender.stage.recipient-preview").waitForExistence(timeout: 8))
+        XCTAssertTrue(element("build23.sender.recipient.verified-preview").exists)
+
+        scrollToBuild23SenderElement("build23.sender.preview.edit").tap()
+        XCTAssertTrue(element("build23.sender.stage.select").waitForExistence(timeout: 5))
+        scrollToBuild23SenderElement("build23.sender.include-acoustic-evidence").tap()
+        XCTAssertFalse(element("build23.sender.recipient.verified-preview").exists)
+        XCTAssertFalse(element("build23.sender.share.present").exists)
+
+        openBuild23Review()
+        buildBuild23RecipientPreview()
+        scrollToBuild23SenderElement("build23.sender.share.present").tap()
+
+        XCTAssertTrue(element("build23.sender.stage.share").waitForExistence(timeout: 5))
+        let nativeShareSurface = element("ActivityListView")
+        XCTAssertTrue(
+            nativeShareSurface.waitForExistence(timeout: 8),
+            "The verified package did not reach the native system share surface."
+        )
+
+        dismissTopSystemSheet()
+        XCTAssertTrue(element("build23.sender.stage.recipient-preview").waitForExistence(timeout: 8))
+        XCTAssertTrue(element("build23.sender.recipient-test-session").exists)
+    }
+
+    func testBuild23RecipientMissingSourceReturnsWithoutAutoplayAndShowsProvenance() throws {
+        launchBuild23SharingFixture(forceFirstSourceMiss: true, includeSourceURL: false)
+        openBuild23Review()
+        buildBuild23RecipientPreview()
+
+        element("build23.sender.recipient-test-session").tap()
+        XCTAssertTrue(element("build23.recipient.experience").waitForExistence(timeout: 8))
+        let integrity = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS[c] %@", "integrity checked")
+        ).firstMatch
+        XCTAssertTrue(integrity.exists)
+        XCTAssertTrue(app.staticTexts["Add the source to continue"].exists)
+
+        let addSource = app.buttons["Add Source"].firstMatch
+        XCTAssertTrue(addSource.waitForExistence(timeout: 4))
+        addSource.tap()
+        XCTAssertTrue(element("addSource.sheet").waitForExistence(timeout: 5))
+        app.buttons["Close"].firstMatch.tap()
+        XCTAssertTrue(waitForDisappearance(element("addSource.sheet"), timeout: 5))
+
+        let importButton = app.buttons["Import"].firstMatch
+        XCTAssertEqual(
+            XCTWaiter().wait(
+                for: [XCTNSPredicateExpectation(
+                    predicate: NSPredicate(format: "exists == true AND enabled == true"),
+                    object: importButton
+                )],
+                timeout: 8
+            ),
+            .completed,
+            "Returning from Add Source did not resume the pending verified import."
+        )
+        importButton.tap()
+
+        XCTAssertTrue(element("item.screen").waitForExistence(timeout: 10))
+        XCTAssertFalse(element("playback.screen").exists)
+        let miniPlayerControl = element("miniPlayer.playPause.button")
+        XCTAssertTrue(miniPlayerControl.waitForExistence(timeout: 5))
+        XCTAssertEqual(miniPlayerControl.label, "Play", "Import unexpectedly resumed playback.")
+
+        let provenance = importedLayerElement(suffix: ".provenance")
+        XCTAssertTrue(provenance.waitForExistence(timeout: 5))
+        XCTAssertTrue(provenance.label.localizedCaseInsensitiveContains("separate shared layer"))
+        XCTAssertTrue(provenance.label.localizedCaseInsensitiveContains("Reveal mode Companion"))
+
+        element("miniPlayer.open.button").tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5))
+        XCTAssertEqual(element("playback.play.button").label, "Play")
+        openTimelineExperience()
+        let timelineProvenance = importedLayerElement(suffix: ".provenance")
+        XCTAssertTrue(timelineProvenance.waitForExistence(timeout: 5))
+    }
+
+    func testBuild23LayoutRegressionsRemainOperableAtAccessibilityType() throws {
+        app.terminate()
+        app.launchArguments += [
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge",
+            "-UIAccessibilityDarkerSystemColorsEnabled", "YES",
+            "-UIAccessibilityReduceMotionEnabled", "YES"
+        ]
+        app.launch()
+
+        XCTAssertTrue(element("library.screen").waitForExistence(timeout: 8))
+        let start = app.buttons["queue.start.item-pill"]
+        XCTAssertTrue(start.waitForExistence(timeout: 5))
+        start.tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
+        pausePlaybackIfNeeded()
+        app.buttons["playback.home.button"].tap()
+
+        XCTAssertTrue(element("library.screen").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("miniPlayer.bar").waitForExistence(timeout: 5))
+        assertMiniPlayerClearsRootNavigation()
+        let search = scrollToElementBidirectionally("library.search.field")
+        let filter = scrollToElementBidirectionally("library.filter.menu")
+        XCTAssertTrue(search.isHittable)
+        XCTAssertTrue(filter.isHittable)
+        XCTAssertLessThanOrEqual(filter.frame.maxX, app.windows.firstMatch.frame.maxX)
+
+        app.buttons["home.addSource.button"].tap()
+        scrollToElementBidirectionally("addSource.route.pastedText").tap()
+        let editor = element("create.text.editor")
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        editor.tap()
+        editor.typeText("Build 23 keeps the final Add Source action above the keyboard and safe area.")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        let addToLibrary = scrollToElementBidirectionally("create.start.button")
+        XCTAssertTrue(addToLibrary.isHittable)
+        XCTAssertLessThanOrEqual(
+            addToLibrary.frame.maxY,
+            app.keyboards.firstMatch.frame.minY,
+            "The Add Source action is covered by the keyboard."
+        )
+        app.buttons["Done"].firstMatch.tap()
+        XCTAssertTrue(waitForDisappearance(app.keyboards.firstMatch, timeout: 5))
+        app.buttons["Close"].firstMatch.tap()
+
+        element("miniPlayer.open.button").tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5))
+        openTimelineExperience()
+        let reflectionAction = scrollToElementBidirectionally("timeline.reflection.import.button")
+        let timelineMiniPlayer = element("miniPlayer.bar")
+        XCTAssertTrue(timelineMiniPlayer.waitForExistence(timeout: 5))
+        XCTAssertLessThanOrEqual(
+            reflectionAction.frame.maxY,
+            timelineMiniPlayer.frame.minY,
+            "Persistent playback obscures Timeline content."
+        )
+    }
+
     private func element(_ identifier: String) -> XCUIElement {
         app.descendants(matching: .any)[identifier]
+    }
+
+    private func importedLayerElement(suffix: String) -> XCUIElement {
+        app.descendants(matching: .any)
+            .matching(NSPredicate(
+                format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@",
+                "build23.imported.layer.",
+                suffix
+            ))
+            .firstMatch
+    }
+
+    private func launchBuild23SharingFixture(
+        forceFirstSourceMiss: Bool = false,
+        includeSourceURL: Bool = true
+    ) {
+        app.terminate()
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE"] = "Build 23 Sharing Probe"
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"] = String(
+            repeating: "A stable source passage gives the shared Margin exact local context. ",
+            count: 24
+        )
+        if includeSourceURL {
+            app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_URL"] = "https://example.com/build-23-sharing-probe"
+        } else {
+            app.launchEnvironment.removeValue(forKey: "SPOKEN_MARGINS_UI_TEST_SOURCE_URL")
+        }
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_INTERJECTION"] = "The recipient should notice the careful distinction between a claim and its evidence."
+        if forceFirstSourceMiss {
+            app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_FORCE_FIRST_SHARED_SOURCE_MISS"] = "1"
+        }
+        app.launch()
+
+        XCTAssertTrue(element("library.screen").waitForExistence(timeout: 8))
+        let start = app.buttons["queue.start.item-ui-text-regression"]
+        XCTAssertTrue(start.waitForExistence(timeout: 5), app.debugDescription)
+        start.tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
+        pausePlaybackIfNeeded()
+        app.buttons["playback.export.button"].tap()
+        XCTAssertTrue(element("export.screen").waitForExistence(timeout: 5))
+        scrollToButton(containingLabel: "Share Margins").tap()
+        XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 8))
+    }
+
+    private func pausePlaybackIfNeeded() {
+        let playPause = element("playback.play.button")
+        XCTAssertTrue(playPause.waitForExistence(timeout: 8))
+        _ = XCTWaiter().wait(
+            for: [XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "label == %@ OR label == %@", "Play", "Pause"),
+                object: playPause
+            )],
+            timeout: 20
+        )
+        if playPause.label == "Pause" {
+            playPause.tap()
+        }
+        XCTAssertEqual(
+            XCTWaiter().wait(
+                for: [XCTNSPredicateExpectation(
+                    predicate: NSPredicate(format: "label == %@", "Play"),
+                    object: playPause
+                )],
+                timeout: 8
+            ),
+            .completed
+        )
+    }
+
+    private func openBuild23Review() {
+        scrollToBuild23SenderElement("build23.sender.select.continue").tap()
+        XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 5))
+    }
+
+    private func buildBuild23RecipientPreview() {
+        scrollToBuild23SenderElement("build23.sender.preview.build").tap()
+        XCTAssertTrue(element("build23.sender.recipient.verified-preview").waitForExistence(timeout: 12))
+    }
+
+    private func scrollToBuild23SenderElement(_ identifier: String) -> XCUIElement {
+        let candidate = element(identifier)
+        let senderExperience = element("build23.sender.experience")
+        XCTAssertTrue(senderExperience.waitForExistence(timeout: 5), "Build 23 sender experience is missing")
+        for _ in 0..<24 where !candidate.isHittable {
+            if candidate.exists, candidate.frame.midY < senderExperience.frame.midY {
+                senderExperience.swipeDown()
+            } else {
+                senderExperience.swipeUp()
+            }
+        }
+        XCTAssertTrue(
+            candidate.waitForExistence(timeout: 5) && candidate.isHittable,
+            "Missing or unreachable Build 23 sender element: \(identifier)"
+        )
+        return candidate
+    }
+
+    private func dismissTopSystemSheet() {
+        let close = app.buttons["Close"].firstMatch
+        if close.waitForExistence(timeout: 2) {
+            close.tap()
+            return
+        }
+
+        let sheetCount = app.sheets.count
+        XCTAssertGreaterThan(sheetCount, 0)
+        let sheet = app.sheets.element(boundBy: sheetCount - 1)
+        let start = sheet.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1))
+        let end = sheet.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.9))
+        start.press(forDuration: 0.1, thenDragTo: end)
+    }
+
+    private func scrollToElementBidirectionally(_ identifier: String) -> XCUIElement {
+        scrollTo(element(identifier))
+    }
+
+    private func scrollTo(_ candidate: XCUIElement) -> XCUIElement {
+        for _ in 0..<12 where !candidate.isHittable {
+            app.swipeDown()
+        }
+        for _ in 0..<20 where !candidate.isHittable {
+            app.swipeUp()
+        }
+        XCTAssertTrue(candidate.waitForExistence(timeout: 5), "Missing or unreachable element")
+        return candidate
     }
 
     private func assertMiniPlayerClearsRootNavigation(

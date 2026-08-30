@@ -3,6 +3,8 @@ import SessionKit
 
 struct ExperienceTimelineRailScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
+    @EnvironmentObject private var sharingCoordinator: Build23SharingCoordinator
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @State private var selectedMargin: MarginRow?
     @State private var entries: [TimelineRailEntry] = []
@@ -19,6 +21,11 @@ struct ExperienceTimelineRailScreen: View {
                             detail: model.selectedItem.title
                         )
                         .padding(.bottom, 24)
+
+                        if !sharingCoordinator.importedLayers.isEmpty {
+                            Build23ImportedMarginPresentation(coordinator: sharingCoordinator)
+                                .padding(.bottom, 24)
+                        }
 
                         if entries.isEmpty {
                             SMExperienceEmptyState(
@@ -38,7 +45,7 @@ struct ExperienceTimelineRailScreen: View {
                     }
                     .padding(.horizontal, 18)
                     .padding(.top, 22)
-                    .padding(.bottom, model.shouldShowMiniPlayer ? 132 : 28)
+                    .padding(.bottom, timelineBottomClearance)
                     .frame(maxWidth: 760)
                     .frame(maxWidth: .infinity)
                 }
@@ -143,6 +150,11 @@ struct ExperienceTimelineRailScreen: View {
                 .accessibilityIdentifier("timeline.reflection.import.button")
             }
         }
+    }
+
+    private var timelineBottomClearance: CGFloat {
+        guard model.shouldShowMiniPlayer else { return 28 }
+        return dynamicTypeSize.isAccessibilitySize ? 212 : 132
     }
 
     private func makeEntries(from item: ItemDetailState) -> [TimelineRailEntry] {
