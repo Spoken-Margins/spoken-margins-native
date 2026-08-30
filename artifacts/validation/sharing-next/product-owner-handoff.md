@@ -8,6 +8,7 @@ Implementation commits:
 
 - `aa187a2` (`Complete rights-aware sharing review flow`)
 - `84fd071` (`Refine shared Margin review and playback prompts`)
+- `b3f0d5e` (`Capture podcast anchors from post-Margin playback`)
 
 Local build setting: version 0.1 (21)
 
@@ -17,7 +18,7 @@ Build 21 is already reserved for the accepted hotfix line. Allocate a new build 
 
 - iPhone or iPad running iOS/iPadOS 18.0 or later.
 - Simulator compilation and focused state tests are verified.
-- Microphone capture, acoustic anchor generation, podcast download matching, and the listening experience require product-owner validation on a physical device.
+- Microphone capture, decoded-stream acoustic sampling, podcast matching, and the listening experience require product-owner validation on a physical device.
 
 ## Implemented user path
 
@@ -51,7 +52,8 @@ The pre-release `.spokenmargins` schema was replaced in place as authorized by t
 ## Podcast anchoring and recipient experience
 
 - Podcast audio is never included.
-- When the exact downloaded sender edition was available during capture, optional ShazamKit signatures provide high-reliability, non-playable cross-edition evidence.
+- After a podcast Margin finishes, playback arms one bounded 12-second sample of the decoded audio the sender is about to hear. The resulting ShazamKit signature provides high-reliability, non-playable cross-edition evidence without a rolling buffer or a second podcast download.
+- Closely spaced Margins share the same playback tap while retaining independent bounded signatures. The app stores no sampled podcast audio.
 - Recipient resolution can use exact-edition, transcript, acoustic, and fused evidence. Ambiguous, absent, wrong-item, and unresolved results never become confident interruptions.
 - Recipient import is integrity checked but the sender identity remains unsigned and is labeled unverified.
 - Import does not autoplay. Imported commentary remains a distinct Shared Margins layer with Fresh, Companion, and Guided behavior.
@@ -73,7 +75,9 @@ The pre-release `.spokenmargins` schema was replaced in place as authorized by t
 - EPUB ingestion itself belongs to the active quality/completion lane; the sharing schema and transport already represent EPUB-derived listened text once that item type is available to the app.
 - Offline phone generation of Listening Maps, proposal activation, summary bridge playback, and Skim controls remain out of scope. Portable Listening Map proposals may travel but remain inert.
 - Co-op replies, remote revocation, accounts, trust networks, hosted storage, public distribution, and AI-generated summaries are not implemented.
-- High-reliability acoustic podcast evidence is available only when the exact sender edition was downloaded when the Margin was captured. The sender UI preserves the warning when evidence is absent, including after audio cleanup.
+- The sender must continue podcast playback long enough to collect at least 3 seconds of decoded audio; the target window is 12 seconds. A request expires after 60 seconds if playback never supplies audio.
+- Progressive podcast media that AVFoundation exposes as decoded PCM can use the stream sample without a complete download. Unsupported playback forms, a seek or item change before completion, and too little audio decline acoustic evidence and retain transcript/identity fallback rather than claiming a verified anchor.
+- Exact-local-file evidence remains available when the active playback item itself is a validated local download. A parallel download of a dynamic-ad episode is not treated as the exact edition the sender heard.
 - A text-only Margin is readable but has no voice playback.
 - Live Activity Listen and Dismiss open Spoken Margins because a suspended widget process cannot safely own the app's in-process source and Margin audio players.
 
@@ -91,7 +95,9 @@ The pre-release `.spokenmargins` schema was replaced in place as authorized by t
 - Contract validator: passed.
 - Surface contract validator: passed.
 - SessionKit build with tests: passed.
-- SharingTests: 26 executed, 25 passed and 1 dedicated held-out benchmark wrapper skipped by design, 0 failed.
+- Complete SessionKit package suite: 195 executed, 194 passed and 1 dedicated held-out benchmark wrapper skipped by design, 0 failed.
+- SharingTests: 27 executed, 26 passed and 1 dedicated held-out benchmark wrapper skipped by design, 0 failed. The added decoded-PCM test verifies that only the armed post-resume window is signed, the signature remains below 1 MB, and the anchor offset is derived from playback media time.
+- Session lifecycle coverage verifies that the 12-second request is armed before source playback resumes after a podcast Margin.
 - Focused app-state and compact-surface tests: 22 distinct tests passed, 0 failed, including verified text/podcast anchor eligibility, word-delete Undo/Redo, legacy and current Live Activity state, prompt publication, URL/queue compatibility, and compact playback policy.
 - Focused item-screen UI route: 1 passed, 0 failed; Start/Continue Listening is hittable before scrolling and no second chapter-panel map generator exists.
 - Generic iOS Simulator app build: passed.
@@ -115,11 +121,13 @@ Record Pass, Fail, or Not run, with device/OS and notes.
 8. **App-authored sample.** Share the Welcome sample. Confirm it no longer fails for lack of a canonical URL and that the app-authored disclosure is shown. Result: ___
 9. **Linked item.** Share a URL-backed item. Confirm the disclosure says reference-only and the preview/package never claims to contain the full item. Result: ___
 10. **Imported item entry point.** Open the imported item. Confirm Start/Continue Listening is available before a long scroll, the empty-chapters panel says mapless playback is available, and only one Generate Listening Map action is shown. Result: ___
-11. **Podcast cross-edition case.** Download a podcast, record well-separated Margins, export to a recipient edition with different ads, and confirm only evidence-backed placements interrupt. Any wrong confident placement is release stopping. Result: ___
-12. **Companion prompt.** With auto-play off, cross a verified text Margin and a verified podcast Margin. Confirm the source pauses, the double cue sounds, and Listen/Dismiss appear in playback and the Live Activity. Confirm Listen plays the Margin then resumes the source, while Dismiss resumes without playing it. Result: ___
-13. **Guided and explicit controls.** Turn auto-play on and confirm the cue completes before the Margin starts, then source playback resumes. Turn it off and confirm opt-in behavior returns. Validate Fresh and muted-cue behavior separately. Result: ___
-14. **Persistence and idempotency.** Relaunch and confirm the layer, auto-play/reveal mode, mute state, resolution, and Timeline rows persist. Reimport the same package and confirm no duplicate layer is created. Result: ___
-15. **System share sheet.** After **Share Reviewed Margins**, tap **Share File** and send the `.spokenmargins` file through the desired real sharing channel. Result: ___
+11. **Podcast post-Margin capture.** Stream a progressive MP3 or M4A podcast without pre-downloading it, record a Margin, then let the podcast play for at least 12 seconds. Confirm the sender warning clears and diagnostics report `complete:decoded_playback_post_resume`; confirm no second full podcast download occurs. Repeat with two closely spaced Margins and confirm both obtain evidence. Result: ___
+12. **Podcast interruption and fallback.** While a post-Margin sample is pending, seek or change items and confirm the sender reports unavailable evidence rather than success. Try a stream form that does not expose decoded PCM and confirm it times out/falls back without blocking sharing. Result: ___
+13. **Podcast cross-edition case.** Export the streamed sender package to a recipient edition with different ads and confirm only evidence-backed placements interrupt. Any wrong confident placement is release stopping. Result: ___
+14. **Companion prompt.** With auto-play off, cross a verified text Margin and a verified podcast Margin. Confirm the source pauses, the double cue sounds, and Listen/Dismiss appear in playback and the Live Activity. Confirm Listen plays the Margin then resumes the source, while Dismiss resumes without playing it. Result: ___
+15. **Guided and explicit controls.** Turn auto-play on and confirm the cue completes before the Margin starts, then source playback resumes. Turn it off and confirm opt-in behavior returns. Validate Fresh and muted-cue behavior separately. Result: ___
+16. **Persistence and idempotency.** Relaunch and confirm the layer, auto-play/reveal mode, mute state, resolution, and Timeline rows persist. Reimport the same package and confirm no duplicate layer is created. Result: ___
+17. **System share sheet.** After **Share Reviewed Margins**, tap **Share File** and send the `.spokenmargins` file through the desired real sharing channel. Result: ___
 
 ## Acceptance and stopping rules
 

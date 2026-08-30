@@ -104,6 +104,8 @@ The product owner expanded the sharing foundation on 2026-08-29 so it can reach 
 - Add a same-device "Create recipient test session" route that exercises the real archive, verification, import, persistence, resolver, and commentary-playback path in a distinct local imported layer.
 - Sharing is exposed without a tester-facing Settings toggle in the first dedicated sharing TestFlight build, but incomplete routes remain unregistered until the complete end-to-end path is verified. #14 still gates sharing with other people outside the product owner's own-device validation.
 
+Product-owner revision, 2026-08-30 (stream-efficient sender evidence): podcast evidence capture must not require a continuous rolling buffer or a complete sender-side download. After a podcast Margin finishes, arm one bounded decoded-playback sample for the next approximately 12 seconds, discard all decoded PCM after generating non-playable acoustic evidence, and share no podcast audio. Closely spaced Margins may share the short-lived playback tap while keeping distinct evidence records. If the active stream cannot expose enough decoded audio, or playback seeks or changes items before capture completes, decline acoustic evidence and use the conservative transcript/identity fallback; do not silently promote a timestamp. A separately downloaded dynamic-ad episode is not proof of the edition the sender actually heard.
+
 The `.spokenmargins` package is still unpublished. This lane is authorized to replace its pre-release v1 schema and fixtures in place, without a legacy decoder, before any external user relies on it.
 
 ### Phase 2: Co-op Replies
