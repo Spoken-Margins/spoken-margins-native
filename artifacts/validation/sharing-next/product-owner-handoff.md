@@ -4,7 +4,10 @@ Status: `implemented` and `verified`; not `human_validated`.
 
 Branch: `codex/sharing-next`
 
-Implementation commit: `aa187a2` (`Complete rights-aware sharing review flow`)
+Implementation commits:
+
+- `aa187a2` (`Complete rights-aware sharing review flow`)
+- `84fd071` (`Refine shared Margin review and playback prompts`)
 
 Local build setting: version 0.1 (21)
 
@@ -23,7 +26,8 @@ From playback, tap the Share icon. The first panel on the resulting **Share** sc
 The sender review now supports:
 
 - choosing which Margins leave the device;
-- tapping aligned words to remove or restore them, with explicit Undo and Redo and no text-insertion route;
+- tapping aligned words or inline bracketed pauses to remove or restore them, with explicit Undo and Redo and no text-insertion route;
+- one compact transcript instead of padded word capsules plus a duplicate vertical edit list;
 - automatic filler cleanup plus acoustic leading, trailing, and internal pause tightening;
 - Original voice, Cleaned voice, or Text only, with previews;
 - bounded anchor-context review and optional non-playable podcast acoustic evidence; and
@@ -51,6 +55,9 @@ The pre-release `.spokenmargins` schema was replaced in place as authorized by t
 - Recipient resolution can use exact-edition, transcript, acoustic, and fused evidence. Ambiguous, absent, wrong-item, and unresolved results never become confident interruptions.
 - Recipient import is integrity checked but the sender identity remains unsigned and is labeled unverified.
 - Import does not autoplay. Imported commentary remains a distinct Shared Margins layer with Fresh, Companion, and Guided behavior.
+- Companion mode pauses the source at a verified text or podcast anchor, sounds the cue unless the layer is muted, and presents **Listen** and **Dismiss** in playback and the Live Activity. Listening resumes the source when the Margin ends; Dismiss resumes immediately.
+- Guided mode sounds the cue and starts the Margin after the cue. **Auto-play shared Margins** on the playback screen maps enabled layers to Guided when on and Companion when off, preserving the existing persisted reveal-mode model.
+- The Live Activity carries no Margin transcript. Its sender label is privacy-sensitive, while Listen and Dismiss remain visible controls and open the app to perform the in-process audio handoff reliably.
 - **Create Recipient Test Session** still exercises the real archive, verification, import, persistence, resolver, and listening route on one device.
 
 ## Cleanup behavior
@@ -59,6 +66,7 @@ The pre-release `.spokenmargins` schema was replaced in place as authorized by t
 - Acoustic cleanup examines the immutable recording, treats recognized speech as protected, shortens quiet runs of at least 360 ms, retains 80 ms at recording edges and 140 ms internally, and renders a derivative with 15 ms crossfades.
 - The private recording and private transcript are never rewritten.
 - Older Margins without aligned timing remain eligible for original-voice or text-only sharing, but word deletion and automatic cleanup are unavailable for them.
+- Item actions now precede optional Listening Map tools, and the duplicate Generate Listening Map action was removed from the empty-chapters panel.
 
 ## Out of scope and known constraints
 
@@ -67,6 +75,7 @@ The pre-release `.spokenmargins` schema was replaced in place as authorized by t
 - Co-op replies, remote revocation, accounts, trust networks, hosted storage, public distribution, and AI-generated summaries are not implemented.
 - High-reliability acoustic podcast evidence is available only when the exact sender edition was downloaded when the Margin was captured. The sender UI preserves the warning when evidence is absent, including after audio cleanup.
 - A text-only Margin is readable but has no voice playback.
+- Live Activity Listen and Dismiss open Spoken Margins because a suspended widget process cannot safely own the app's in-process source and Margin audio players.
 
 ## Reset, samples, and diagnostics
 
@@ -83,7 +92,8 @@ The pre-release `.spokenmargins` schema was replaced in place as authorized by t
 - Surface contract validator: passed.
 - SessionKit build with tests: passed.
 - SharingTests: 26 executed, 25 passed and 1 dedicated held-out benchmark wrapper skipped by design, 0 failed.
-- Focused app-state tests for linkless rights transport and word-delete Undo/Redo: 2 passed, 0 failed.
+- Focused app-state and compact-surface tests: 22 distinct tests passed, 0 failed, including verified text/podcast anchor eligibility, word-delete Undo/Redo, legacy and current Live Activity state, prompt publication, URL/queue compatibility, and compact playback policy.
+- Focused item-screen UI route: 1 passed, 0 failed; Start/Continue Listening is hittable before scrolling and no second chapter-panel map generator exists.
 - Generic iOS Simulator app build: passed.
 - Generic physical iOS app build: passed.
 - Diff whitespace check: passed.
@@ -97,17 +107,19 @@ Record Pass, Fail, or Not run, with device/OS and notes.
 
 1. **Upgrade without reset.** Install over the current app. Confirm the existing library and any earlier imported Shared Margins layers remain present. Result: ___
 2. **Open sharing from playback.** Start listening to an item with at least one Margin, tap Share, and confirm **Share Margins** is the primary first option while session export is clearly separate. Result: ___
-3. **Delete words only.** Tap words in a timed Margin, verify they strike through, and verify no insertion control exists. Exercise Undo and Redo. Result: ___
-4. **Tighten voice.** Use **Remove Fillers & Tighten Pauses** on a recording containing “um,” removable “uh,” semantic “you know,” a leading/trailing gap, and an internal pause. Preview Original and Cleaned; turn individual automatic edits off and on. Result: ___
+3. **Review one inline transcript.** Confirm words read like a compact transcript rather than padded capsules. Tap words, verify they strike through, and verify no insertion control exists. Exercise Undo and Redo. Result: ___
+4. **Tighten voice inline.** Use **Remove Fillers & Tighten Pauses** on a recording containing “um,” removable “uh,” semantic “you know,” a leading/trailing gap, and an internal pause. Confirm removed fillers strike through as words and pauses appear as crossed-out bracketed tokens in the same transcript. Tap tokens to restore/reapply them, then compare Original and Cleaned. Result: ___
 5. **Validate private immutability.** Restore Original, reopen the Margin outside sharing, and confirm the private recording/transcript was never rewritten. Result: ___
 6. **Linkless rights enabled.** On pasted text or an imported PDF, enable **I’m sharing this privately and have the right to share this item**, export, and import on a clean recipient installation. Confirm the exact listened-to text is added and no original document container is claimed to be included. Result: ___
 7. **Linkless rights declined.** Export the same item without the confirmation. On a recipient without that item, confirm import explains that the matching text/PDF/EPUB is required and cannot attach the Margins. Add the same item, reopen the package, and confirm import becomes available. Result: ___
 8. **App-authored sample.** Share the Welcome sample. Confirm it no longer fails for lack of a canonical URL and that the app-authored disclosure is shown. Result: ___
 9. **Linked item.** Share a URL-backed item. Confirm the disclosure says reference-only and the preview/package never claims to contain the full item. Result: ___
-10. **Podcast cross-edition case.** Download a podcast, record well-separated Margins, export to a recipient edition with different ads, and confirm only evidence-backed placements interrupt. Any wrong confident placement is release stopping. Result: ___
-11. **Recipient listening.** Validate Companion and Guided Margin playback plus return to item playback; validate Fresh and muted-cue behavior. Result: ___
-12. **Persistence and idempotency.** Relaunch and confirm the layer, mode, mute state, resolution, and Timeline rows persist. Reimport the same package and confirm no duplicate layer is created. Result: ___
-13. **System share sheet.** After **Share Reviewed Margins**, tap **Share File** and send the `.spokenmargins` file through the desired real sharing channel. Result: ___
+10. **Imported item entry point.** Open the imported item. Confirm Start/Continue Listening is available before a long scroll, the empty-chapters panel says mapless playback is available, and only one Generate Listening Map action is shown. Result: ___
+11. **Podcast cross-edition case.** Download a podcast, record well-separated Margins, export to a recipient edition with different ads, and confirm only evidence-backed placements interrupt. Any wrong confident placement is release stopping. Result: ___
+12. **Companion prompt.** With auto-play off, cross a verified text Margin and a verified podcast Margin. Confirm the source pauses, the double cue sounds, and Listen/Dismiss appear in playback and the Live Activity. Confirm Listen plays the Margin then resumes the source, while Dismiss resumes without playing it. Result: ___
+13. **Guided and explicit controls.** Turn auto-play on and confirm the cue completes before the Margin starts, then source playback resumes. Turn it off and confirm opt-in behavior returns. Validate Fresh and muted-cue behavior separately. Result: ___
+14. **Persistence and idempotency.** Relaunch and confirm the layer, auto-play/reveal mode, mute state, resolution, and Timeline rows persist. Reimport the same package and confirm no duplicate layer is created. Result: ___
+15. **System share sheet.** After **Share Reviewed Margins**, tap **Share File** and send the `.spokenmargins` file through the desired real sharing channel. Result: ___
 
 ## Acceptance and stopping rules
 
