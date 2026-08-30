@@ -9403,6 +9403,7 @@ final class Gate1AppModel: ObservableObject {
         recordShareEdit(for: id, renderCleanedAudio: false) {
             $0.automaticCleanupEnabled = true
         }
+        sharingState.automaticallyCleanedDraftIDs.insert(id)
 
         guard let analysisIndex = sharingState.drafts.firstIndex(where: { $0.id == id }) else {
             return false
@@ -9514,6 +9515,45 @@ final class Gate1AppModel: ObservableObject {
         sharingState.drafts[index].isIncluded = included
     }
 
+    func setShareDraftsIncluded(_ ids: [String], included: Bool) {
+        let targetIDs = Set(ids)
+        guard !targetIDs.isEmpty else { return }
+        for index in sharingState.drafts.indices where targetIDs.contains(sharingState.drafts[index].id) {
+            sharingState.drafts[index].isIncluded = included
+        }
+    }
+
+    func setShareAutoCleanSelectedEnabled(_ enabled: Bool) {
+        ShareAutoCleanPreference.record(enabled: enabled)
+        sharingState.needsAutoCleanDecision = false
+        sharingState.autoCleanSelectedEnabled = enabled
+        if enabled {
+            prepareAllIncludedShareDrafts()
+        } else {
+            cancelBulkSharePreparation()
+            undoAutomaticallyCleanedShareDrafts()
+        }
+    }
+
+    func prepareAutomaticallyCleanedShareDraftsIfEnabled() {
+        guard sharingState.autoCleanSelectedEnabled else { return }
+        prepareAllIncludedShareDrafts()
+    }
+
+    private func undoAutomaticallyCleanedShareDrafts() {
+        let draftIDs = sharingState.automaticallyCleanedDraftIDs
+        for id in draftIDs {
+            recordShareEdit(for: id, renderCleanedAudio: false) {
+                $0.automaticCleanupEnabled = false
+                $0.restoredAutomaticDecisionIds.removeAll()
+            }
+        }
+        sharingState.automaticallyCleanedDraftIDs.removeAll()
+        sharingState.bulkPreparationCompleted = 0
+        sharingState.bulkPreparationTotal = 0
+        sharingState.bulkPreparationFailureCount = 0
+    }
+
     func setShareDraftRepresentation(_ id: String, choice: ShareMarginRepresentationChoice) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
         if choice == .cleaned, sharingState.drafts[index].cleanedAudioURL == nil { return }
@@ -9538,6 +9578,7 @@ final class Gate1AppModel: ObservableObject {
 
     func prepareCleanup(forShareDraft id: String) {
         guard !sharingState.isBulkPreparing else { return }
+        sharingState.automaticallyCleanedDraftIDs.remove(id)
         if let index = sharingState.drafts.firstIndex(where: { $0.id == id }) {
             sharingState.drafts[index].preparationMessage = nil
         }
@@ -9598,6 +9639,7 @@ final class Gate1AppModel: ObservableObject {
 
     func restoreOriginalShareDraft(_ id: String) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
+        sharingState.automaticallyCleanedDraftIDs.remove(id)
         let interjection = sharingState.drafts[index].interjection
         sharingState.drafts[index].editHistory = [.original]
         sharingState.drafts[index].editHistoryIndex = 0

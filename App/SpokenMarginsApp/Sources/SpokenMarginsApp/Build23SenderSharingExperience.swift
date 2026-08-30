@@ -9,6 +9,9 @@ struct Build23SenderSharingExperience: View {
     @State private var hasBegun = false
     @State private var isSystemSharePresented = false
     @State private var verifiedShareURLForPresentation: URL?
+    @State private var isAutoCleanChoicePresented = false
+    @State private var shareAfterVerification = false
+    @State private var showsSharingOptions = false
 
     var body: some View {
         let snapshot = coordinator.snapshot
@@ -25,9 +28,10 @@ struct Build23SenderSharingExperience: View {
                     }
                     .accessibilityIdentifier("build23.sender.cancel")
                 }
-
-                Build23SharingStageProgress(currentStage: snapshot.stage)
-
+                HStack {
+                    Spacer()
+                    topPrimaryAction(snapshot)
+                }
                 stageContent(snapshot)
             }
             .frame(maxWidth: 960, alignment: .leading)
@@ -42,6 +46,28 @@ struct Build23SenderSharingExperience: View {
             guard !hasBegun else { return }
             hasBegun = true
             coordinator.send(.begin)
+            isAutoCleanChoicePresented = coordinator.snapshot.needsAutoCleanDecision
+        }
+        .onCompatibleChange(of: snapshot.previewState) { previewState in
+            switch previewState {
+            case .ready where shareAfterVerification:
+                shareAfterVerification = false
+                presentVerifiedSystemShare()
+            case .failed, .stale:
+                shareAfterVerification = false
+            default:
+                break
+            }
+        }
+        .alert("Clean selected Margins automatically?", isPresented: $isAutoCleanChoicePresented) {
+            Button("Clean selected") {
+                coordinator.send(.setAutoCleanSelectedEnabled(true))
+            }
+            Button("Not now", role: .cancel) {
+                coordinator.send(.setAutoCleanSelectedEnabled(false))
+            }
+        } message: {
+            Text("Spoken Margins can remove filler words and tighten pauses for the Margins you include. You can review every change, undo it, or turn this off later.")
         }
         .sheet(isPresented: $isSystemSharePresented, onDismiss: finishSystemShare) {
             if let packageURL = verifiedShareURLForPresentation {
@@ -64,52 +90,133 @@ struct Build23SenderSharingExperience: View {
         }
     }
 
+    @ViewBuilder
+    private func topPrimaryAction(_ snapshot: Build23SharingSnapshot) -> some View {
+        let includedCount = snapshot.margins.filter(\.isIncluded).count
+        switch snapshot.stage {
+        case .select:
+            Button("Review \(includedCount)") {
+                advanceToReview(from: snapshot)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(AppColors.evergreen)
+            .disabled(!snapshot.canAdvance || snapshot.isPreparingAll)
+            .accessibilityIdentifier("build23.sender.select.continue")
+        case .review:
+            Button("Share \(includedCount)", systemImage: "square.and.arrow.up") {
+                shareVerifiedPackage()
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(AppColors.evergreen)
+            .disabled(!snapshot.canAdvance)
+            .accessibilityIdentifier("build23.sender.review.share")
+        case .recipientPreview:
+            Button(
+                snapshot.previewState == .building ? "Verifying…" : "Share \(includedCount)",
+                systemImage: snapshot.previewState == .building ? "hourglass" : "square.and.arrow.up"
+            ) {
+                shareVerifiedPackage()
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(AppColors.evergreen)
+            .disabled(snapshot.previewState != .ready)
+        case .share:
+            EmptyView()
+        }
+    }
+
     private func selectStage(_ snapshot: Build23SharingSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 20) {
-            ExperienceEditorialHeader(
-                eyebrow: "1 · Select",
-                title: "Choose exactly what crosses the boundary",
-                detail: "Review each Margin, its voice representation, and the context the recipient will use to place it."
-            )
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("build23.sender.stage.select")
-
-            senderDetails(snapshot)
-            Build23TransportConsequenceCard(
-                transport: snapshot.transport,
-                rightsConfirmed: snapshot.confirmsPrivateSharingRights
-            )
-
-            ExperienceSurface(tint: AppColors.ochre.opacity(0.12)) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Starred is the default shortlist", systemImage: "star.fill")
-                        .font(.headline)
-                        .foregroundStyle(AppColors.ochre)
-                    Text("A star only controls which Margins are easy to find. It never adds a Margin to the package; only the Include switch does that.")
-                        .font(.subheadline)
-                        .foregroundStyle(AppColors.secondaryText)
-                }
-            }
-            .accessibilityIdentifier("build23.sender.starred-explanation")
-
+            selectionControls(snapshot)
             filterBar(snapshot)
             selectMarginGrid(snapshot)
+
+            DisclosureGroup("Sharing options", isExpanded: $showsSharingOptions) {
+                VStack(alignment: .leading, spacing: 16) {
+                    senderDetails(snapshot)
+                    Build23TransportConsequenceCard(
+                        transport: snapshot.transport,
+                        rightsConfirmed: snapshot.confirmsPrivateSharingRights
+                    )
+                }
+                .padding(.top, 12)
+            }
+            .font(.headline)
+            .accessibilityIdentifier("build23.sender.sharing-options")
 
             if let errorMessage = snapshot.errorMessage, !errorMessage.isEmpty {
                 Build23StatusLabel(icon: "exclamationmark.triangle.fill", title: errorMessage, tint: AppColors.plum)
                     .accessibilityIdentifier("build23.sender.error")
             }
 
-            HStack {
-                Spacer()
-                Button("Continue to review", systemImage: "arrow.right") {
-                    advanceToReview(from: snapshot)
+        }
+        .accessibilityIdentifier("build23.sender.stage.select")
+    }
+
+    private func selectionControls(_ snapshot: Build23SharingSnapshot) -> some View {
+        let visibleMargins = Build23SenderPresentation.filteredMargins(in: snapshot)
+        let includedCount = snapshot.margins.filter(\.isIncluded).count
+        return ExperienceSurface(tint: AppColors.softGreen) {
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Choose Margins")
+                        .font(.title3.weight(.semibold))
+                    Text("\(includedCount) of \(snapshot.margins.count) selected")
+                        .font(.subheadline)
+                        .foregroundStyle(AppColors.secondaryText)
+                    Build23WrappingLayout(spacing: 8) {
+                        Button("Select all shown") {
+                            setVisibleIncluded(true, margins: visibleMargins)
+                        }
+                        Button("Select none shown") {
+                            setVisibleIncluded(false, margins: visibleMargins)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(snapshot.isPreparingAll || visibleMargins.isEmpty)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(AppColors.evergreen)
-                .disabled(!snapshot.canAdvance || snapshot.isPreparingAll)
-                .accessibilityHint(snapshot.canAdvance ? "Moves to package review" : "Include at least one eligible Margin first")
-                .accessibilityIdentifier("build23.sender.select.continue")
+
+                Divider()
+
+                Toggle(
+                    "Clean selected automatically",
+                    isOn: Binding(
+                        get: { snapshot.autoCleanSelectedEnabled },
+                        set: { coordinator.send(.setAutoCleanSelectedEnabled($0)) }
+                    )
+                )
+                .font(.headline)
+                .accessibilityIdentifier("build23.sender.auto-clean")
+
+                Text(snapshot.autoCleanSelectedEnabled
+                    ? "On for this and future shares. Turn it off to undo cleanup applied automatically to this draft."
+                    : "Off. You can still clean individual Margins during review.")
+                    .font(.caption)
+                    .foregroundStyle(AppColors.secondaryText)
+
+                if snapshot.isPreparingAll {
+                    ProgressView(
+                        value: Double(snapshot.preparationCompleted),
+                        total: Double(max(snapshot.preparationTotal, 1))
+                    )
+                    .tint(AppColors.evergreen)
+                    HStack {
+                        Text("Cleaning \(snapshot.preparationCompleted) of \(snapshot.preparationTotal)")
+                            .font(.subheadline)
+                        Spacer()
+                        Button("Cancel", role: .cancel) {
+                            coordinator.send(.cancelPreparation)
+                        }
+                    }
+                } else if snapshot.preparationTotal > 0 {
+                    Build23StatusLabel(
+                        icon: snapshot.preparationFailures == 0 ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
+                        title: snapshot.preparationFailures == 0
+                            ? "Cleaned \(snapshot.preparationCompleted) selected Margins"
+                            : "Cleaned \(snapshot.preparationCompleted - snapshot.preparationFailures); \(snapshot.preparationFailures) kept their available Original or Text version.",
+                        tint: snapshot.preparationFailures == 0 ? AppColors.evergreen : AppColors.plum
+                    )
+                }
             }
         }
     }
@@ -206,8 +313,7 @@ struct Build23SenderSharingExperience: View {
                 ForEach(visibleMargins) { margin in
                     Build23MarginSelectionRow(
                         margin: margin,
-                        isSelected: snapshot.selectedMarginID == margin.id,
-                        onSelect: { coordinator.send(.selectMargin(margin.id)) },
+                        isEnabled: !snapshot.isPreparingAll,
                         onSetIncluded: { setIncluded($0, marginID: margin.id) }
                     )
                 }
@@ -233,8 +339,7 @@ struct Build23SenderSharingExperience: View {
                 ForEach(margins) { margin in
                     Build23MarginSelectionRow(
                         margin: margin,
-                        isSelected: snapshot.selectedMarginID == margin.id,
-                        onSelect: { coordinator.send(.selectMargin(margin.id)) },
+                        isEnabled: !snapshot.isPreparingAll,
                         onSetIncluded: { setIncluded($0, marginID: margin.id) }
                     )
                 }
@@ -274,10 +379,52 @@ struct Build23SenderSharingExperience: View {
             }
         } else {
             VStack(alignment: .leading, spacing: 16) {
-                reviewMarginList(includedMargins, selectedEditorID: selectedEditorID)
+                reviewMarginNavigator(includedMargins, selectedEditorID: selectedEditorID)
                 marginEditors(expandedMargins)
             }
         }
+    }
+
+    private func reviewMarginNavigator(
+        _ margins: [Build23SharingMarginSnapshot],
+        selectedEditorID: String?
+    ) -> some View {
+        let selectedIndex = margins.firstIndex(where: { $0.id == selectedEditorID }) ?? 0
+        return HStack(spacing: 10) {
+            Button("Previous", systemImage: "chevron.left") {
+                coordinator.send(.selectMargin(margins[max(0, selectedIndex - 1)].id))
+            }
+            .labelStyle(.iconOnly)
+            .disabled(margins.isEmpty || selectedIndex == 0)
+
+            Menu {
+                ForEach(Array(margins.enumerated()), id: \.element.id) { index, margin in
+                    Button("Margin \(index + 1): \(margin.reviewedText)") {
+                        coordinator.send(.selectMargin(margin.id))
+                    }
+                }
+            } label: {
+                HStack {
+                    Text(margins.isEmpty ? "No Margins" : "Margin \(selectedIndex + 1) of \(margins.count)")
+                        .font(.headline)
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down")
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(AppColors.softGreen, in: RoundedRectangle(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
+            .disabled(margins.isEmpty)
+
+            Button("Next", systemImage: "chevron.right") {
+                coordinator.send(.selectMargin(margins[min(margins.count - 1, selectedIndex + 1)].id))
+            }
+            .labelStyle(.iconOnly)
+            .disabled(margins.isEmpty || selectedIndex + 1 >= margins.count)
+        }
+        .buttonStyle(.bordered)
+        .accessibilityIdentifier("build23.sender.review.navigator")
     }
 
     private func reviewMarginList(
@@ -301,44 +448,28 @@ struct Build23SenderSharingExperience: View {
     private func reviewStage(_ snapshot: Build23SharingSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 20) {
             ExperienceEditorialHeader(
-                eyebrow: "2 · Review",
-                title: "Confirm the package before it is written",
-                detail: "This is the sender-side draft. The next step writes the package and reads it back before showing the recipient view."
+                eyebrow: "Review",
+                title: "Check the cleanup",
+                detail: "Focus on changes that need attention, make any point edits, then Share. Package verification happens automatically."
             )
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("build23.sender.stage.review")
 
-            Build23TransportConsequenceCard(
-                transport: snapshot.transport,
-                rightsConfirmed: snapshot.confirmsPrivateSharingRights
-            )
-
-            ExperienceSurface {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(snapshot.itemTitle)
-                        .font(.title3.weight(.semibold))
-                    Label("From \(snapshot.senderDisplayLabel)", systemImage: "person.crop.circle")
-                        .font(.subheadline)
-                    Label(
-                        snapshot.includesAcousticEvidence ? "Acoustic evidence included when available" : "Acoustic evidence excluded",
-                        systemImage: snapshot.includesAcousticEvidence ? "waveform.path.ecg" : "waveform.path.ecg.rectangle"
-                    )
-                    .font(.subheadline)
-                    .foregroundStyle(AppColors.secondaryText)
-                }
-            }
-
             reviewComposition(snapshot)
 
-            Build23BatchPreparationCard(
-                isPreparing: snapshot.isPreparingAll,
-                completed: snapshot.preparationCompleted,
-                total: snapshot.preparationTotal,
-                failures: snapshot.preparationFailures,
-                canPrepare: snapshot.margins.contains(where: { $0.isIncluded && $0.canPrepareCleanup }),
-                onPrepare: { coordinator.send(.prepareAllIncluded) },
-                onCancel: { coordinator.send(.cancelPreparation) }
-            )
+            DisclosureGroup("Package and placement details") {
+                VStack(alignment: .leading, spacing: 16) {
+                    Build23TransportConsequenceCard(
+                        transport: snapshot.transport,
+                        rightsConfirmed: snapshot.confirmsPrivateSharingRights
+                    )
+                    Text("\(snapshot.itemTitle) · From \(snapshot.senderDisplayLabel)")
+                        .font(.subheadline)
+                        .foregroundStyle(AppColors.secondaryText)
+                }
+                .padding(.top, 10)
+            }
+            .font(.headline)
 
             if let errorMessage = snapshot.errorMessage, !errorMessage.isEmpty {
                 Build23StatusLabel(icon: "exclamationmark.triangle.fill", title: errorMessage, tint: AppColors.plum)
@@ -351,15 +482,12 @@ struct Build23SenderSharingExperience: View {
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("build23.sender.review.back")
 
-                Spacer()
-
-                Button("Build recipient preview", systemImage: "checkmark.seal") {
+                Button("Preview package details", systemImage: "doc.text.magnifyingglass") {
                     coordinator.send(.buildRecipientPreview)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(AppColors.evergreen)
+                .buttonStyle(.bordered)
                 .disabled(!snapshot.canAdvance)
-                .accessibilityHint("Writes and verifies the package before showing the recipient view")
+                .accessibilityHint("Optionally builds and shows the verified package details")
                 .accessibilityIdentifier("build23.sender.preview.build")
             }
         }
@@ -393,8 +521,6 @@ struct Build23SenderSharingExperience: View {
 
             case .ready:
                 if let verifiedPreview = snapshot.verifiedPreview {
-                    Build23VerifiedRecipientPreviewPanel(preview: verifiedPreview)
-
                     HStack(spacing: 12) {
                         Button("Edit selection", systemImage: "arrow.left") {
                             coordinator.send(.returnToSelect)
@@ -413,6 +539,8 @@ struct Build23SenderSharingExperience: View {
                         .accessibilityHint("Opens the system share sheet with the verified package file")
                         .accessibilityIdentifier("build23.sender.share.present")
                     }
+
+                    Build23VerifiedRecipientPreviewPanel(preview: verifiedPreview)
                 } else {
                     unavailablePreview(
                         title: "The verified projection is unavailable.",
@@ -501,6 +629,14 @@ struct Build23SenderSharingExperience: View {
 
     private func setIncluded(_ included: Bool, marginID: String) {
         coordinator.send(.setIncluded(id: marginID, included: included))
+        if included {
+            coordinator.send(.selectMargin(marginID))
+        }
+        normalizeReviewSelection()
+    }
+
+    private func setVisibleIncluded(_ included: Bool, margins: [Build23SharingMarginSnapshot]) {
+        coordinator.send(.setVisibleIncluded(ids: margins.map(\.id), included: included))
         normalizeReviewSelection()
     }
 
@@ -545,6 +681,15 @@ struct Build23SenderSharingExperience: View {
         guard let verifiedURL = coordinator.verifiedShareFileURL else { return }
         verifiedShareURLForPresentation = verifiedURL
         isSystemSharePresented = true
+    }
+
+    private func shareVerifiedPackage() {
+        if coordinator.verifiedShareFileURL != nil {
+            presentVerifiedSystemShare()
+            return
+        }
+        shareAfterVerification = true
+        coordinator.send(.buildRecipientPreview)
     }
 
     private func finishSystemShare() {

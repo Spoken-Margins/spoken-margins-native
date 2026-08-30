@@ -20,6 +20,24 @@ enum ShareMarginDraftFilter: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum ShareAutoCleanPreference {
+    static let decisionRecordedKey = "sharingAutoCleanDecisionRecordedV1"
+    static let enabledKey = "sharingAutoCleanSelectedEnabledV1"
+
+    static var hasRecordedDecision: Bool {
+        UserDefaults.standard.bool(forKey: decisionRecordedKey)
+    }
+
+    static var isEnabled: Bool {
+        hasRecordedDecision && UserDefaults.standard.bool(forKey: enabledKey)
+    }
+
+    static func record(enabled: Bool) {
+        UserDefaults.standard.set(true, forKey: decisionRecordedKey)
+        UserDefaults.standard.set(enabled, forKey: enabledKey)
+    }
+}
+
 struct ShareMarginEditState: Equatable {
     var automaticCleanupEnabled = false
     var restoredAutomaticDecisionIds: Set<String> = []
@@ -72,6 +90,9 @@ struct InterjectionSharingState {
     var isExporting = false
     var errorMessage: String?
     var draftFilter: ShareMarginDraftFilter = .all
+    var autoCleanSelectedEnabled = ShareAutoCleanPreference.isEnabled
+    var needsAutoCleanDecision = !ShareAutoCleanPreference.hasRecordedDecision
+    var automaticallyCleanedDraftIDs: Set<String> = []
 }
 
 struct SpokenMarginsPackageImportReview: Identifiable {

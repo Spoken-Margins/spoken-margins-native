@@ -5,6 +5,48 @@ import XCTest
 
 @MainActor
 final class Build23SenderSharingExperienceTests: XCTestCase {
+    func testFirstShareChoiceIsRememberedAndControlsFutureDefault() {
+        let defaults = UserDefaults.standard
+        let priorDecision = defaults.object(forKey: ShareAutoCleanPreference.decisionRecordedKey)
+        let priorEnabled = defaults.object(forKey: ShareAutoCleanPreference.enabledKey)
+        defer {
+            restoreUserDefault(priorDecision, forKey: ShareAutoCleanPreference.decisionRecordedKey)
+            restoreUserDefault(priorEnabled, forKey: ShareAutoCleanPreference.enabledKey)
+        }
+        defaults.removeObject(forKey: ShareAutoCleanPreference.decisionRecordedKey)
+        defaults.removeObject(forKey: ShareAutoCleanPreference.enabledKey)
+
+        let firstShare = makeCoordinator()
+        firstShare.send(.begin)
+        XCTAssertTrue(firstShare.snapshot.needsAutoCleanDecision)
+        XCTAssertFalse(firstShare.snapshot.autoCleanSelectedEnabled)
+
+        firstShare.send(.setAutoCleanSelectedEnabled(true))
+        XCTAssertFalse(firstShare.snapshot.needsAutoCleanDecision)
+        XCTAssertTrue(firstShare.snapshot.autoCleanSelectedEnabled)
+
+        let laterShare = makeCoordinator()
+        laterShare.send(.begin)
+        XCTAssertFalse(laterShare.snapshot.needsAutoCleanDecision)
+        XCTAssertTrue(laterShare.snapshot.autoCleanSelectedEnabled)
+
+        laterShare.send(.setAutoCleanSelectedEnabled(false))
+        XCTAssertFalse(laterShare.snapshot.autoCleanSelectedEnabled)
+        XCTAssertFalse(defaults.bool(forKey: ShareAutoCleanPreference.enabledKey))
+    }
+
+    func testBulkSelectionCanIncludeOrExcludeEveryVisibleMarginInOneAction() {
+        let coordinator = makeCoordinator(marginCount: 3)
+        coordinator.send(.begin)
+        let visibleIDs = coordinator.snapshot.margins.map(\.id)
+
+        coordinator.send(.setVisibleIncluded(ids: visibleIDs, included: false))
+        XCTAssertTrue(coordinator.snapshot.margins.allSatisfy { !$0.isIncluded })
+
+        coordinator.send(.setVisibleIncluded(ids: visibleIDs, included: true))
+        XCTAssertTrue(coordinator.snapshot.margins.allSatisfy(\.isIncluded))
+    }
+
     func testStageGatingKeepsSenderInSelectWithoutAnIncludedMargin() {
         let coordinator = makeCoordinator()
         coordinator.send(.begin)
@@ -81,9 +123,9 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
 
     func testSelectAndReviewOwnDistinctPresentationSurfaces() {
         XCTAssertFalse(Build23SenderPresentation.stageOwnsDetailedEditor(.select))
-        XCTAssertFalse(Build23SenderPresentation.stageOwnsBatchPreparation(.select))
+        XCTAssertTrue(Build23SenderPresentation.stageOwnsBatchPreparation(.select))
         XCTAssertTrue(Build23SenderPresentation.stageOwnsDetailedEditor(.review))
-        XCTAssertTrue(Build23SenderPresentation.stageOwnsBatchPreparation(.review))
+        XCTAssertFalse(Build23SenderPresentation.stageOwnsBatchPreparation(.review))
 
         let coordinator = makeCoordinator(marginCount: 2)
         coordinator.send(.begin)
@@ -155,5 +197,13 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(20))
         }
         return try XCTUnwrap(coordinator.snapshot.verifiedPreview)
+    }
+
+    private func restoreUserDefault(_ value: Any?, forKey key: String) {
+        if let value {
+            UserDefaults.standard.set(value, forKey: key)
+        } else {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
     }
 }

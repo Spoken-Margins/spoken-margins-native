@@ -57,6 +57,7 @@ struct Build23SharingMarginSnapshot: Identifiable, Equatable {
     let canUndo: Bool
     let canRedo: Bool
     let canPrepareCleanup: Bool
+    let automaticCleanupEnabled: Bool
     let isPreparing: Bool
     let hasOriginalVoice: Bool
     let hasCleanedVoice: Bool
@@ -104,6 +105,8 @@ struct Build23SharingSnapshot: Equatable {
     let preparationCompleted: Int
     let preparationTotal: Int
     let preparationFailures: Int
+    let autoCleanSelectedEnabled: Bool
+    let needsAutoCleanDecision: Bool
     let previewState: Build23SharingPreviewState
     let verifiedPreview: Build23VerifiedRecipientPreview?
     let errorMessage: String?
@@ -161,6 +164,8 @@ enum Build23SenderAction: Equatable {
     case setIncludesAcousticEvidence(Bool)
     case setPrivateSharingRightsConfirmed(Bool)
     case setIncluded(id: String, included: Bool)
+    case setVisibleIncluded(ids: [String], included: Bool)
+    case setAutoCleanSelectedEnabled(Bool)
     case selectMargin(String?)
     case setRepresentation(id: String, choice: ShareMarginRepresentationChoice)
     case setAnchorBefore(id: String, text: String)
@@ -252,6 +257,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                 canPrepareCleanup: draft.isIncluded
                     && draft.interjection.alignedTranscript != nil
                     && !draft.currentEditState.automaticCleanupEnabled,
+                automaticCleanupEnabled: draft.currentEditState.automaticCleanupEnabled,
                 isPreparing: draft.isAnalyzingPauses || draft.isPreparingCleanup,
                 hasOriginalVoice: originalVoiceURL != nil,
                 hasCleanedVoice: draft.cleanedAudioURL != nil,
@@ -289,6 +295,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             preparationCompleted: state.bulkPreparationCompleted,
             preparationTotal: state.bulkPreparationTotal,
             preparationFailures: state.bulkPreparationFailureCount,
+            autoCleanSelectedEnabled: state.autoCleanSelectedEnabled,
+            needsAutoCleanDecision: state.needsAutoCleanDecision,
             previewState: previewState,
             verifiedPreview: verifiedPreview,
             errorMessage: state.errorMessage,
@@ -351,6 +359,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             discardPreview(resetTo: .select)
             model.prepareShareInterjections()
             selectedMarginID = model.sharingState.drafts.first(where: \.isIncluded)?.id
+            model.prepareAutomaticallyCleanedShareDraftsIfEnabled()
         case .setFilter(let filter):
             model.sharingState.draftFilter = filter
         case .setSenderDisplayLabel(let label):
@@ -361,6 +370,16 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             mutatePackage { model.sharingState.confirmsPrivateSharingRights = confirmed }
         case .setIncluded(let id, let included):
             mutatePackage { model.setShareDraftIncluded(id, included: included) }
+            if included, model.sharingState.autoCleanSelectedEnabled {
+                model.prepareAllIncludedShareDrafts()
+            }
+        case .setVisibleIncluded(let ids, let included):
+            mutatePackage { model.setShareDraftsIncluded(ids, included: included) }
+            if included, model.sharingState.autoCleanSelectedEnabled {
+                model.prepareAllIncludedShareDrafts()
+            }
+        case .setAutoCleanSelectedEnabled(let enabled):
+            mutatePackage { model.setShareAutoCleanSelectedEnabled(enabled) }
         case .selectMargin(let id):
             selectedMarginID = id
         case .setRepresentation(let id, let choice):
@@ -401,7 +420,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             guard verifiedShareFileURL != nil else { return }
             stage = .share
         case .returnFromSystemShare:
-            stage = verifiedShareFileURL == nil ? .review : .recipientPreview
+            stage = .review
         case .cancel:
             model.cancelBulkSharePreparation()
             model.isSharingInterjectionsPresented = false

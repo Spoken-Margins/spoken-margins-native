@@ -37,7 +37,7 @@ enum Build23SenderPresentation {
     }
 
     static func stageOwnsBatchPreparation(_ stage: Build23SharingStage) -> Bool {
-        stage == .review
+        stage == .select
     }
 
     static func showsLinklessRightsControl(for transport: Build23RecipientTransport) -> Bool {
@@ -200,14 +200,15 @@ struct Build23TransportConsequenceCard: View {
 
 struct Build23MarginSelectionRow: View {
     let margin: Build23SharingMarginSnapshot
-    let isSelected: Bool
-    let onSelect: () -> Void
+    let isEnabled: Bool
     let onSetIncluded: (Bool) -> Void
 
     var body: some View {
-        ExperienceSurface(tint: isSelected ? AppColors.softGreen : nil) {
+        ExperienceSurface(tint: margin.isIncluded ? AppColors.softGreen : nil) {
             HStack(alignment: .top, spacing: 12) {
-                Button(action: onSelect) {
+                Button {
+                    onSetIncluded(!margin.isIncluded)
+                } label: {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 6) {
                             if margin.isStarred {
@@ -231,15 +232,17 @@ struct Build23MarginSelectionRow: View {
                             .multilineTextAlignment(.leading)
                             .lineLimit(3)
 
-                        Text(isSelected ? "Selected for Review" : "Select for Review")
+                        Text(margin.isIncluded ? "Included" : "Tap to include")
                             .font(.caption)
-                            .foregroundStyle(AppColors.evergreen)
+                            .foregroundStyle(margin.isIncluded ? AppColors.evergreen : AppColors.secondaryText)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("\(margin.isStarred ? "Starred " : "")Margin, \(margin.reviewedText), \(isSelected ? "selected for Review" : "select for Review")")
+                .disabled(!isEnabled)
+                .accessibilityLabel("\(margin.isStarred ? "Starred " : "")Margin, \(margin.reviewedText), \(margin.isIncluded ? "included" : "not included")")
+                .accessibilityHint("Double tap to \(margin.isIncluded ? "exclude" : "include") this Margin")
                 .accessibilityIdentifier("build23.sender.margin.row.\(margin.id)")
 
                 Toggle(
@@ -254,6 +257,7 @@ struct Build23MarginSelectionRow: View {
                 .accessibilityLabel("Include this Margin in the package")
                 .accessibilityValue(margin.isIncluded ? "Included" : "Not included")
                 .accessibilityIdentifier("build23.sender.margin.include.\(margin.id)")
+                .disabled(!isEnabled)
             }
         }
     }
@@ -301,12 +305,13 @@ struct Build23ReviewSelectionRow: View {
 struct Build23MarginEditor: View {
     let margin: Build23SharingMarginSnapshot
     let send: (Build23SenderAction) -> Void
+    @State private var showsPositionContext = false
 
     var body: some View {
         ExperienceSurface(tint: AppColors.softGreen) {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("Detailed editor")
+                    Text("Review this Margin")
                         .font(.title3.weight(.semibold))
                         .foregroundStyle(AppColors.text)
                         .accessibilityIdentifier("build23.sender.margin.editor.\(margin.id)")
@@ -316,34 +321,55 @@ struct Build23MarginEditor: View {
                         .foregroundStyle(margin.isIncluded ? AppColors.evergreen : AppColors.secondaryText)
                 }
 
+                if margin.isPreparing {
+                    Build23StatusLabel(icon: "hourglass", title: "Cleaning this Margin…", tint: AppColors.evergreen)
+                } else if margin.canPrepareCleanup {
+                    Button("Clean this Margin", systemImage: "wand.and.stars") {
+                        send(.prepareCleanup(id: margin.id))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(AppColors.evergreen)
+                    .accessibilityHint("Removes proposed filler words and tightens pauses; every change remains reversible")
+                    .accessibilityIdentifier("build23.sender.editor.prepare.\(margin.id)")
+                } else if margin.automaticCleanupEnabled {
+                    Build23StatusLabel(
+                        icon: "checkmark.circle.fill",
+                        title: "Cleanup applied — tap any changed word or pause below to restore it.",
+                        tint: AppColors.evergreen
+                    )
+                } else if margin.reviewTokens.isEmpty {
+                    Build23StatusLabel(
+                        icon: "info.circle",
+                        title: "Automatic cleanup is unavailable because this Margin has no word-level timing. Text review remains available."
+                    )
+                }
+
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Recipient representation")
+                    Text("Share as")
                         .font(.headline)
-                    Text("Unavailable voice choices are disabled. Text only remains available as the fallback.")
+                    Text(margin.hasCleanedVoice
+                        ? "Choose the version the recipient will receive."
+                        : "Cleaned voice becomes available after this Margin is cleaned successfully.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
 
-                    Build23WrappingLayout(spacing: 8) {
-                        ForEach(ShareMarginRepresentationChoice.allCases) { choice in
-                            let isUnavailable = (choice == .original && !margin.hasOriginalVoice)
-                                || (choice == .cleaned && !margin.hasCleanedVoice)
-                            Button {
-                                send(.setRepresentation(id: margin.id, choice: choice))
-                            } label: {
-                                Label(
-                                    Build23SenderPresentation.representationTitle(choice),
-                                    systemImage: choice == margin.representation ? "checkmark.circle.fill" : "circle"
-                                )
-                            }
-                            .buttonStyle(.bordered)
-                            .tint(choice == margin.representation ? AppColors.evergreen : AppColors.secondaryText)
-                            .disabled(isUnavailable)
-                            .accessibilityValue(
-                                isUnavailable ? "Unavailable" : (choice == margin.representation ? "Selected" : "Not selected")
-                            )
-                            .accessibilityIdentifier("build23.sender.representation.\(margin.id).\(choice.rawValue)")
+                    Picker(
+                        "Share as",
+                        selection: Binding(
+                            get: { margin.representation },
+                            set: { send(.setRepresentation(id: margin.id, choice: $0)) }
+                        )
+                    ) {
+                        if margin.hasOriginalVoice {
+                            Text("Original").tag(ShareMarginRepresentationChoice.original)
                         }
+                        if margin.hasCleanedVoice {
+                            Text("Cleaned").tag(ShareMarginRepresentationChoice.cleaned)
+                        }
+                        Text("Text").tag(ShareMarginRepresentationChoice.textOnly)
                     }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("build23.sender.representation.\(margin.id)")
                 }
 
                 Build23AudioPreviewControls(
@@ -374,33 +400,38 @@ struct Build23MarginEditor: View {
                     }
                 }
 
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Position context")
-                        .font(.headline)
-                    TextField(
-                        "Words before this Margin",
-                        text: Binding(
-                            get: { margin.anchorBefore },
-                            set: { send(.setAnchorBefore(id: margin.id, text: $0)) }
-                        ),
-                        axis: .vertical
-                    )
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("Anchor text before this Margin")
-                    .accessibilityIdentifier("build23.sender.anchor.before.\(margin.id)")
+                DisclosureGroup("Placement details", isExpanded: $showsPositionContext) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("These excerpts help place the Margin for the recipient. Most people do not need to edit them.")
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                        TextField(
+                            "Words before this Margin",
+                            text: Binding(
+                                get: { margin.anchorBefore },
+                                set: { send(.setAnchorBefore(id: margin.id, text: $0)) }
+                            ),
+                            axis: .vertical
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Anchor text before this Margin")
+                        .accessibilityIdentifier("build23.sender.anchor.before.\(margin.id)")
 
-                    TextField(
-                        "Words after this Margin",
-                        text: Binding(
-                            get: { margin.anchorAfter },
-                            set: { send(.setAnchorAfter(id: margin.id, text: $0)) }
-                        ),
-                        axis: .vertical
-                    )
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("Anchor text after this Margin")
-                    .accessibilityIdentifier("build23.sender.anchor.after.\(margin.id)")
+                        TextField(
+                            "Words after this Margin",
+                            text: Binding(
+                                get: { margin.anchorAfter },
+                                set: { send(.setAnchorAfter(id: margin.id, text: $0)) }
+                            ),
+                            axis: .vertical
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Anchor text after this Margin")
+                        .accessibilityIdentifier("build23.sender.anchor.after.\(margin.id)")
+                    }
+                    .padding(.top, 8)
                 }
+                .font(.headline)
 
                 HStack(spacing: 10) {
                     Button("Undo", systemImage: "arrow.uturn.backward") {
@@ -415,25 +446,15 @@ struct Build23MarginEditor: View {
                     .disabled(!margin.canRedo)
                     .accessibilityIdentifier("build23.sender.editor.redo.\(margin.id)")
 
-                    Spacer()
-
-                    Button("Restore original") {
-                        send(.restoreOriginal(id: margin.id))
+                    if margin.canUndo || margin.automaticCleanupEnabled || margin.hasCleanedVoice {
+                        Spacer()
+                        Button("Undo all edits") {
+                            send(.restoreOriginal(id: margin.id))
+                        }
+                        .accessibilityIdentifier("build23.sender.editor.restore.\(margin.id)")
                     }
-                    .accessibilityIdentifier("build23.sender.editor.restore.\(margin.id)")
                 }
                 .buttonStyle(.bordered)
-
-                if margin.isPreparing {
-                    Build23StatusLabel(icon: "hourglass", title: "Preparing cleaned voice…", tint: AppColors.evergreen)
-                } else if margin.canPrepareCleanup {
-                    Button("Prepare cleaned voice", systemImage: "waveform.badge.plus") {
-                        send(.prepareCleanup(id: margin.id))
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(AppColors.evergreen)
-                    .accessibilityIdentifier("build23.sender.editor.prepare.\(margin.id)")
-                }
 
                 if let preparationMessage = margin.preparationMessage, !preparationMessage.isEmpty {
                     Build23StatusLabel(
@@ -483,15 +504,18 @@ struct Build23ReviewTokenButton: View {
 
     var body: some View {
         Button(action: action) {
-            Label(
-                Build23SenderPresentation.tokenTitle(token),
-                systemImage: token.isRemoved ? "minus.circle.fill" : "checkmark.circle.fill"
-            )
-            .font(.body)
-            .strikethrough(token.isRemoved)
+            Text(Build23SenderPresentation.tokenTitle(token))
+                .font(.body)
+                .italic(token.kind == .pause)
+                .strikethrough(token.isRemoved)
+                .foregroundStyle(
+                    token.isRemoved
+                        ? AppColors.secondaryText.opacity(0.65)
+                        : (token.kind == .pause ? AppColors.evergreen : AppColors.text)
+                )
+                .contentShape(Rectangle())
         }
-        .buttonStyle(.bordered)
-        .tint(token.isRemoved ? AppColors.secondaryText : AppColors.evergreen)
+        .buttonStyle(.plain)
         .fixedSize(horizontal: true, vertical: true)
         .disabled(!hasCanonicalTarget)
         .accessibilityLabel(
@@ -696,14 +720,29 @@ struct Build23InlineTranscriptEditor: View {
         fullHeight > collapsedHeight + 0.5
     }
 
+    private var removedWordCount: Int {
+        tokens.filter { $0.kind == .word && $0.isRemoved }.count
+    }
+
+    private var tightenedPauseCount: Int {
+        tokens.filter { $0.kind == .pause && $0.isRemoved }.count
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Words and pauses")
+            Text("Transcript")
                 .font(.headline)
                 .accessibilityIdentifier("build23.sender.inline-transcript-editor")
-            Text("Tap a word or bracketed pause to include or remove it from the reviewed version.")
+            Text("Read normally. Tap any word or bracketed pause to remove or restore it.")
                 .font(.caption)
                 .foregroundStyle(AppColors.secondaryText)
+
+            if removedWordCount > 0 || tightenedPauseCount > 0 {
+                Text(cleanupSummary)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppColors.evergreen)
+                    .accessibilityIdentifier("build23.sender.cleanup.summary")
+            }
 
             if isExpanded {
                 tokenLayout()
@@ -767,6 +806,14 @@ struct Build23InlineTranscriptEditor: View {
                 }
             }
         }
+    }
+
+    private var cleanupSummary: String {
+        let words = "\(removedWordCount) \(removedWordCount == 1 ? "word" : "words") removed"
+        let pauses = "\(tightenedPauseCount) \(tightenedPauseCount == 1 ? "pause" : "pauses") tightened"
+        if removedWordCount == 0 { return pauses }
+        if tightenedPauseCount == 0 { return words }
+        return "\(words) · \(pauses)"
     }
 }
 

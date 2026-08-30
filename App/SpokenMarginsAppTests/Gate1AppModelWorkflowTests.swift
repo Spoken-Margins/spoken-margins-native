@@ -235,6 +235,56 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.sharingState.drafts[0].approvedTranscript, "Keep words.")
     }
 
+    func testTurningOffAutomaticCleanupRestoresAutomaticallyCleanedDrafts() async throws {
+        let defaults = UserDefaults.standard
+        let priorDecision = defaults.object(forKey: ShareAutoCleanPreference.decisionRecordedKey)
+        let priorEnabled = defaults.object(forKey: ShareAutoCleanPreference.enabledKey)
+        defer {
+            restoreUserDefault(priorDecision, forKey: ShareAutoCleanPreference.decisionRecordedKey)
+            restoreUserDefault(priorEnabled, forKey: ShareAutoCleanPreference.enabledKey)
+        }
+        defaults.removeObject(forKey: ShareAutoCleanPreference.decisionRecordedKey)
+        defaults.removeObject(forKey: ShareAutoCleanPreference.enabledKey)
+
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            shareMarginSilenceAnalysisHandler: { _, _ in [] }
+        )
+        model.resetAndSeed()
+        model.importTitle = "Automatic cleanup preference"
+        model.importText = "An item with one Margin."
+        model.importTextItem()
+        model.selectedItem.interjections = [bulkShareableInterjection(
+            itemId: model.selectedItem.id,
+            id: "margin-auto-clean-toggle",
+            audioPath: "/missing-auto-clean-toggle.m4a"
+        )]
+        model.prepareShareInterjections()
+
+        model.setShareAutoCleanSelectedEnabled(true)
+        try await waitFor("automatic cleanup to finish") {
+            !model.sharingState.isBulkPreparing
+        }
+        XCTAssertEqual(model.sharingState.drafts[0].approvedTranscript, "Keep words.")
+        XCTAssertTrue(model.sharingState.drafts[0].currentEditState.automaticCleanupEnabled)
+
+        model.setShareAutoCleanSelectedEnabled(false)
+
+        XCTAssertEqual(model.sharingState.drafts[0].approvedTranscript, "Keep um words.")
+        XCTAssertFalse(model.sharingState.drafts[0].currentEditState.automaticCleanupEnabled)
+        XCTAssertTrue(model.sharingState.automaticallyCleanedDraftIDs.isEmpty)
+
+        model.prepareCleanup(forShareDraft: "margin-auto-clean-toggle")
+        XCTAssertEqual(model.sharingState.drafts[0].approvedTranscript, "Keep words.")
+        XCTAssertTrue(model.sharingState.automaticallyCleanedDraftIDs.isEmpty)
+
+        model.setShareAutoCleanSelectedEnabled(true)
+        model.setShareAutoCleanSelectedEnabled(false)
+
+        XCTAssertEqual(model.sharingState.drafts[0].approvedTranscript, "Keep words.")
+        XCTAssertTrue(model.sharingState.drafts[0].currentEditState.automaticCleanupEnabled)
+    }
+
     func testMarginPlaybackRateMatchesItemRateAndClampsInvalidValues() {
         XCTAssertEqual(Gate1AppModel.marginPlaybackRate(itemPlaybackRate: 1.75), 1.75)
         XCTAssertEqual(Gate1AppModel.marginPlaybackRate(itemPlaybackRate: 4), 3)
