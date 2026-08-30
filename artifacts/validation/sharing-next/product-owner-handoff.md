@@ -9,6 +9,7 @@ Implementation commits:
 - `aa187a2` (`Complete rights-aware sharing review flow`)
 - `84fd071` (`Refine shared Margin review and playback prompts`)
 - `b3f0d5e` (`Capture podcast anchors from post-Margin playback`)
+- `a002330` (`Prepare Margins in bulk and match playback rate`)
 
 Local build setting: version 0.1 (21)
 
@@ -27,6 +28,7 @@ From playback, tap the Share icon. The first panel on the resulting **Share** sc
 The sender review now supports:
 
 - choosing which Margins leave the device;
+- preparing every included Margin with aligned word timing from one bulk action, with visible progress, cancellation, and per-Margin fallback;
 - tapping aligned words or inline bracketed pauses to remove or restore them, with explicit Undo and Redo and no text-insertion route;
 - one compact transcript instead of padded word capsules plus a duplicate vertical edit list;
 - automatic filler cleanup plus acoustic leading, trailing, and internal pause tightening;
@@ -59,6 +61,7 @@ The pre-release `.spokenmargins` schema was replaced in place as authorized by t
 - Import does not autoplay. Imported commentary remains a distinct Shared Margins layer with Fresh, Companion, and Guided behavior.
 - Companion mode pauses the source at a verified text or podcast anchor, sounds the cue unless the layer is muted, and presents **Listen** and **Dismiss** in playback and the Live Activity. Listening resumes the source when the Margin ends; Dismiss resumes immediately.
 - Guided mode sounds the cue and starts the Margin after the cue. **Auto-play shared Margins** on the playback screen maps enabled layers to Guided when on and Companion when off, preserving the existing persisted reveal-mode model.
+- Private and received Margin voice uses the item's current playback rate, including 1.75×. The notification cue remains at normal speed, and the item resumes at its prior rate after the Margin.
 - The Live Activity carries no Margin transcript. Its sender label is privacy-sensitive, while Listen and Dismiss remain visible controls and open the app to perform the in-process audio handoff reliably.
 - **Create Recipient Test Session** still exercises the real archive, verification, import, persistence, resolver, and listening route on one device.
 
@@ -66,6 +69,8 @@ The pre-release `.spokenmargins` schema was replaced in place as authorized by t
 
 - Filler and word removal require aligned recognition timing.
 - Acoustic cleanup examines the immutable recording, treats recognized speech as protected, shortens quiet runs of at least 360 ms, retains 80 ms at recording edges and 140 ms internally, and renders a derivative with 15 ms crossfades.
+- **Prepare All Included** processes eligible Margins serially rather than rendering them concurrently. This intentionally bounds memory, heat, and battery use for sessions with dozens of Margins, while showing completed/total progress and allowing cancellation.
+- A failed Margin does not stop the queue. It is labeled with its fallback and retains Original voice when available or reviewed Text otherwise; successful and failed Margins remain individually reviewable.
 - The private recording and private transcript are never rewritten.
 - Older Margins without aligned timing remain eligible for original-voice or text-only sharing, but word deletion and automatic cleanup are unavailable for them.
 - Item actions now precede optional Listening Map tools, and the duplicate Generate Listening Map action was removed from the empty-chapters panel.
@@ -104,6 +109,9 @@ The pre-release `.spokenmargins` schema was replaced in place as authorized by t
 - Generic physical iOS app build: passed.
 - Diff whitespace check: passed.
 - Existing benchmark artifact: 232 anchors, 226 eligible and 6 deliberately absent; fused/monotonic placement had zero wrong confident placements, 4 ms p95 error, and declined all 6 absent passages. See `podcast-anchor-benchmark.md` and `podcast-anchor-benchmark-result.json`.
+- New bulk/rate app-model tests: 4 passed, 0 failed. A 53-Margin fixture verified exactly 53 serial renders with maximum concurrency 1, byte-for-byte private-original preservation, and Undo/Redo after preparation. Dedicated cases verified cancellation restores eligibility, renderer failure falls back to Original voice, and 1.75× maps unchanged to Margin playback while invalid rates are bounded.
+- Full `Gate1AppModelWorkflowTests` omission check: 72 executed; all 4 new tests and 67 other tests passed. One unrelated PDF visual-heading expectation failed because the implementation preserved a `Front Matter` chapter that the older assertion excludes; no sharing, Margin, playback-rate, or changed file participates in that result.
+- System TTS voice discovery is now deferred until the Settings screen appears, where the catalog was already refreshed. This removes a simulator/app-launch stall without changing the voice-selection surface.
 
 Automated evidence establishes `verified`, not `human_validated`.
 
@@ -128,6 +136,8 @@ Record Pass, Fail, or Not run, with device/OS and notes.
 15. **Guided and explicit controls.** Turn auto-play on and confirm the cue completes before the Margin starts, then source playback resumes. Turn it off and confirm opt-in behavior returns. Validate Fresh and muted-cue behavior separately. Result: ___
 16. **Persistence and idempotency.** Relaunch and confirm the layer, auto-play/reveal mode, mute state, resolution, and Timeline rows persist. Reimport the same package and confirm no duplicate layer is created. Result: ___
 17. **System share sheet.** After **Share Reviewed Margins**, tap **Share File** and send the `.spokenmargins` file through the desired real sharing channel. Result: ___
+18. **Bulk preparation at scale.** Create or seed a session with many aligned Margins, include the desired ones, and tap **Prepare All Included**. Confirm completed/total progress advances, the UI remains responsive, Cancel stops the queue, retry remains available for the interrupted Margin, and one failed recording falls back without blocking the rest. Review several results and exercise per-Margin Undo/Redo. Result: ___
+19. **Margin playback rate.** Set item playback to 1.75×. Play a private Margin, then cross a received Margin in Companion and Guided modes. Confirm each voice plays at 1.75×, the cue remains normal speed, and the item resumes at 1.75× afterward. Repeat at 1×. Result: ___
 
 ## Acceptance and stopping rules
 
