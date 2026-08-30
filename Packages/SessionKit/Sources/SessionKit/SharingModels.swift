@@ -576,11 +576,18 @@ public struct ImportedPodcastAnchorEvidence: Codable, Equatable, Sendable, Ident
     public let id: String
     public let localPath: String
     public let anchorOffsetMs: Int
+    public let provenance: String?
 
-    public init(id: String, localPath: String, anchorOffsetMs: Int) {
+    public init(
+        id: String,
+        localPath: String,
+        anchorOffsetMs: Int,
+        provenance: String? = nil
+    ) {
         self.id = id
         self.localPath = localPath
         self.anchorOffsetMs = anchorOffsetMs
+        self.provenance = provenance
     }
 }
 

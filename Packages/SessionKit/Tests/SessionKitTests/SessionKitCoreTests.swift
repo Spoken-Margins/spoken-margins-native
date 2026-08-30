@@ -2048,6 +2048,54 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertTrue(markdown.contains("Context after the note."))
     }
 
+    func testPodcastInterjectionArmsBoundedPostResumeSampleBeforePlaybackRestarts() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "post-resume-anchor",
+            displayName: "Post-resume podcast anchor",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["native_media"],
+                "interjection": ["record_audio", "capture_media_anchor"]
+            ]
+        )
+        let item = Item(
+            id: "episode-post-resume",
+            title: "Post-resume episode",
+            mediaType: "audio",
+            text: nil,
+            externalReference: "https://example.com/episode",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(
+                sourceType: .remoteStream,
+                url: "https://cdn.example.com/episode.mp3",
+                durationMs: 900_000
+            )
+        )
+        let audio = RecordingAudioClient()
+        audio.acceptsPostResumeSamples = true
+        let repository = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repository, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentMediaTimeValue = 321_000
+        _ = try engine.beginInterjection()
+        audio.eventLog.removeAll()
+        _ = try engine.finishInterjection(audioRef: "interjections/post-resume.m4a")
+
+        let request = try XCTUnwrap(audio.postResumeSampleRequests.first)
+        XCTAssertEqual(request.itemId, item.id)
+        XCTAssertEqual(request.anchorMediaTimeMs, 321_000)
+        XCTAssertEqual(request.targetDurationMs, 12_000)
+        XCTAssertEqual(audio.eventLog, ["arm_post_resume_sample", "play_media"])
+        let interjection = try XCTUnwrap(
+            try repository.loadInterjections(sessionId: request.sessionId).first
+        )
+        XCTAssertEqual(interjection.id, request.interjectionId)
+        XCTAssertEqual(interjection.podcastAnchorEvidenceCaptureStatus, .pendingPostResumeSample)
+        XCTAssertNil(interjection.podcastAnchorEvidenceFailureReason)
+    }
+
     func testSourceAnchorContextSlicesOneWholeEpisodeSegmentByMediaTime() throws {
         let words = (0..<600).map { String(format: "token%03d", $0) }
         let timeline = TranscriptTimeline(
@@ -5252,6 +5300,9 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     var transportState: PlaybackTransportState?
     var configuredSpeechSettings: [(String?, Float)] = []
     var remoteCommandHandlingStates: [Bool] = []
+    var acceptsPostResumeSamples = false
+    var postResumeSampleRequests: [PostResumeAudioSampleRequest] = []
+    var eventLog: [String] = []
 
     func configureMediaContext(_ context: PlaybackMediaContext?) throws {
         mediaContexts.append(context)
@@ -5285,6 +5336,7 @@ private final class RecordingAudioClient: AudioPlaybackClient {
         currentMediaTimeValue = mediaTimeMs
         playedTargets.append(targetId)
         playedOffsets.append(mediaTimeMs)
+        eventLog.append("play_media")
     }
 
     func seek(toMediaTimeMs mediaTimeMs: Int) throws {
@@ -5364,6 +5416,12 @@ private final class RecordingAudioClient: AudioPlaybackClient {
 
     func setRemoteCommandHandlingEnabled(_ enabled: Bool) {
         remoteCommandHandlingStates.append(enabled)
+    }
+
+    func armPostResumeAudioSample(_ request: PostResumeAudioSampleRequest) -> Bool {
+        postResumeSampleRequests.append(request)
+        eventLog.append("arm_post_resume_sample")
+        return acceptsPostResumeSamples
     }
 }
 

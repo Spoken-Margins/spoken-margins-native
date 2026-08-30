@@ -9,6 +9,11 @@ import AVFoundation
 import MediaPlayer
 #endif
 
+#if canImport(MediaToolbox) && canImport(ShazamKit) && !os(watchOS)
+import MediaToolbox
+import ShazamKit
+#endif
+
 #if canImport(Speech)
 import Speech
 #endif
@@ -1479,6 +1484,13 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private var playerStateObservation: NSKeyValueObservation?
     private var audioSessionObservers: [NSObjectProtocol] = []
     #endif
+    #if canImport(AVFoundation) && canImport(MediaToolbox) && canImport(ShazamKit) && !os(watchOS)
+    private var postResumeEvidenceTap: MTAudioProcessingTap?
+    private var postResumeEvidenceTapContext: PostResumePodcastEvidenceTapContext?
+    private weak var postResumeEvidenceItem: AVPlayerItem?
+    private var postResumeEvidenceAudioMix: AVAudioMix?
+    public var postResumePodcastEvidenceHandler: (@Sendable (PostResumePodcastEvidenceCaptureResult) -> Void)?
+    #endif
     private let remoteCommandHandler: (@Sendable (CompactControlCommand, Int?, Double?) -> Void)?
     private let interruptionHandler: (@Sendable (AudioPlaybackInterruptionEvent) -> Void)?
     private let audioSessionNotificationCenter: NotificationCenter
@@ -1540,6 +1552,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     }
 
     deinit {
+        cancelPostResumeEvidenceCapture(reason: "playback_client_deinitialized")
         removePlayerStateObserver()
         removeCompletionObserver()
         removeTimeObserver()
@@ -1580,6 +1593,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             throw SessionKitError.invalidCommandForState("stream_audio_invalid_url:\(requestedURL ?? targetId)")
         }
         if activeTargetId != targetId || activePlaybackURL != url || player == nil {
+            cancelPostResumeEvidenceCapture(reason: "playback_item_changed")
             removePlayerStateObserver()
             removeCompletionObserver()
             removeTimeObserver()
@@ -1616,6 +1630,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     public func seek(toMediaTimeMs mediaTimeMs: Int) throws {
         #if canImport(AVFoundation)
+        cancelPostResumeEvidenceCapture(reason: "playback_seeked_during_capture")
         let seconds = max(0, Double(mediaTimeMs) / 1000)
         lastRequestedMediaTimeMs = max(0, mediaTimeMs)
         guard let player else { return }
@@ -1639,6 +1654,64 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         }
         publishNowPlaying(isPlaying: !paused)
         #endif
+    }
+
+    @discardableResult
+    public func armPostResumeAudioSample(_ request: PostResumeAudioSampleRequest) -> Bool {
+        #if canImport(AVFoundation) && canImport(MediaToolbox) && canImport(ShazamKit) && !os(watchOS)
+        guard Thread.isMainThread else { return false }
+        return MainActor.assumeIsolated {
+            guard mediaContext?.itemId == request.itemId,
+                  let item = player?.currentItem else { return false }
+            if let context = postResumeEvidenceTapContext,
+               postResumeEvidenceItem === item {
+                return context.arm(request)
+            }
+
+            cancelPostResumeEvidenceCapture(reason: "playback_capture_replaced")
+            guard let assetTrack = item.tracks
+                .compactMap({ $0.assetTrack })
+                .first(where: { $0.mediaType == .audio }) else {
+                return false
+            }
+            let context = PostResumePodcastEvidenceTapContext(
+                resultHandler: { [weak self] result in
+                    self?.postResumePodcastEvidenceHandler?(result)
+                },
+                becameIdle: { [weak self, weak item] in
+                    DispatchQueue.main.async {
+                        guard let self, self.postResumeEvidenceItem === item else { return }
+                        self.removePostResumeEvidenceTap()
+                    }
+                }
+            )
+            guard context.arm(request) else { return false }
+            do {
+                let tap = try PostResumePodcastEvidenceTapFactory.make(context: context)
+                let parameters = AVMutableAudioMixInputParameters(track: assetTrack)
+                parameters.audioTapProcessor = tap
+                let mix = AVMutableAudioMix()
+                mix.inputParameters = [parameters]
+                postResumeEvidenceTap = tap
+                postResumeEvidenceTapContext = context
+                postResumeEvidenceItem = item
+                postResumeEvidenceAudioMix = mix
+                item.audioMix = mix
+                return true
+            } catch {
+                context.cancelAll(reason: "decoded_playback_tap_install_failed:\(error.localizedDescription)")
+                removePostResumeEvidenceTap()
+                return false
+            }
+        }
+        #else
+        _ = request
+        return false
+        #endif
+    }
+
+    public func isUsingPlaybackURL(_ url: URL, itemId: String) -> Bool {
+        mediaContext?.itemId == itemId && activePlaybackURL?.standardizedFileURL == url.standardizedFileURL
     }
 
     public func currentPlaybackPosition() -> PlaybackPosition? {
@@ -1757,6 +1830,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     public func stop() throws {
         #if canImport(AVFoundation)
+        cancelPostResumeEvidenceCapture(reason: "playback_stopped_during_capture")
         interruptionResumePolicy.cancelAutomaticResume()
         invalidatePendingMediaSeek()
         player?.pause()
@@ -1830,6 +1904,36 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         mediaSeekLifecycle.invalidate()
         mediaSeekFailure = nil
     }
+
+    private func cancelPostResumeEvidenceCapture(reason: String) {
+        #if canImport(AVFoundation) && canImport(MediaToolbox) && canImport(ShazamKit) && !os(watchOS)
+        postResumeEvidenceTapContext?.cancelAll(reason: reason)
+        removePostResumeEvidenceTap()
+        #else
+        _ = reason
+        #endif
+    }
+
+    #if canImport(AVFoundation) && canImport(MediaToolbox) && canImport(ShazamKit) && !os(watchOS)
+    private func removePostResumeEvidenceTap() {
+        let item = postResumeEvidenceItem
+        let mix = postResumeEvidenceAudioMix
+        postResumeEvidenceAudioMix = nil
+        postResumeEvidenceItem = nil
+        postResumeEvidenceTapContext = nil
+        postResumeEvidenceTap = nil
+        guard let item, let mix else { return }
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                if item.audioMix === mix { item.audioMix = nil }
+            }
+        } else {
+            DispatchQueue.main.async {
+                if item.audioMix === mix { item.audioMix = nil }
+            }
+        }
+    }
+    #endif
 
     private func durationMs(for targetId: String) -> Int? {
         #if canImport(AVFoundation)

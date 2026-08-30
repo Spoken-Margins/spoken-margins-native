@@ -362,7 +362,8 @@ final class SharingTests: XCTestCase {
                 path: evidence.archivePath,
                 sourceURL: evidence.fileURL,
                 durationMs: evidence.durationMs,
-                anchorOffsetMs: evidence.anchorOffsetMs
+                anchorOffsetMs: evidence.anchorOffsetMs,
+                provenance: PodcastAnchorEvidenceProvenance.decodedPlaybackStream.rawValue
             )]
         )
         let url = root.appendingPathComponent("map.spokenmargins")
@@ -371,6 +372,10 @@ final class SharingTests: XCTestCase {
         XCTAssertEqual(verified.listeningMapProposals, [proposal])
         XCTAssertEqual(verified.manifest.artifacts.last?.required, false)
         XCTAssertEqual(verified.manifest.assets.first?.anchorOffsetMs, evidence.anchorOffsetMs)
+        XCTAssertEqual(
+            verified.manifest.assets.first?.provenance,
+            PodcastAnchorEvidenceProvenance.decodedPlaybackStream.rawValue
+        )
 
         let repository = InMemorySessionRepository()
         _ = try SpokenMarginsPackageImporter.importPackage(
@@ -384,7 +389,78 @@ final class SharingTests: XCTestCase {
         XCTAssertEqual(layer.listeningMapProposals, [proposal])
         XCTAssertNil(try repository.loadListeningMap(itemId: "recipient-podcast"))
         XCTAssertEqual(imported.podcastAnchorEvidence?.first?.anchorOffsetMs, evidence.anchorOffsetMs)
+        XCTAssertEqual(
+            imported.podcastAnchorEvidence?.first?.provenance,
+            PodcastAnchorEvidenceProvenance.decodedPlaybackStream.rawValue
+        )
         XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(imported.podcastAnchorEvidence?.first?.localPath)))
+    }
+
+    func testPostResumePodcastEvidenceUsesOnlyArmedDecodedAudioWindow() async throws {
+        #if canImport(AVFoundation) && canImport(ShazamKit) && canImport(MediaToolbox)
+        let (results, continuation) = AsyncStream<PostResumePodcastEvidenceCaptureResult>.makeStream()
+        let context = PostResumePodcastEvidenceTapContext(
+            resultHandler: { continuation.yield($0) },
+            becameIdle: {}
+        )
+        let request = PostResumeAudioSampleRequest(
+            interjectionId: "ij-post-resume",
+            sessionId: "session-post-resume",
+            itemId: "episode-post-resume",
+            anchorMediaTimeMs: 42_000,
+            targetDurationMs: PodcastAnchorEvidenceGenerator.minimumEvidenceDurationMs
+        )
+        XCTAssertTrue(context.arm(request))
+
+        let sampleRate = 44_100.0
+        let format = try XCTUnwrap(AVAudioFormat(
+            standardFormatWithSampleRate: sampleRate,
+            channels: 1
+        ))
+        context.prepare(processingFormat: format.streamDescription)
+        let frameCount = AVAudioFrameCount(
+            sampleRate * Double(PodcastAnchorEvidenceGenerator.minimumEvidenceDurationMs) / 1_000
+        )
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(
+            pcmFormat: format,
+            frameCapacity: frameCount
+        ))
+        buffer.frameLength = frameCount
+        let samples = try XCTUnwrap(buffer.floatChannelData?[0])
+        for frame in 0..<Int(frameCount) {
+            let second = Double(frame) / sampleRate
+            let frequency = 190 + (second * 83).truncatingRemainder(dividingBy: 510)
+            samples[frame] = Float(
+                0.24 * sin(2 * .pi * frequency * second)
+                + 0.11 * sin(2 * .pi * frequency * 1.63 * second)
+            )
+        }
+        context.process(
+            bufferList: buffer.mutableAudioBufferList,
+            frameCount: CMItemCount(frameCount),
+            timeRange: CMTimeRange(
+                start: CMTime(value: 42_250, timescale: 1_000),
+                duration: CMTime(value: 3_000, timescale: 1_000)
+            )
+        )
+
+        guard let result = await results.first(where: { _ in true }) else {
+            return XCTFail("Expected a post-resume evidence result")
+        }
+        switch result {
+        case .captured(let capture):
+            XCTAssertEqual(capture.request, request)
+            XCTAssertEqual(capture.anchorOffsetMs, -250)
+            XCTAssertGreaterThanOrEqual(capture.durationMs, 2_900)
+            XCTAssertFalse(capture.signatureData.isEmpty)
+            XCTAssertLessThan(capture.signatureData.count, 1_048_576)
+        case .failed(_, let reason):
+            XCTFail("Post-resume signature failed: \(reason)")
+        }
+        continuation.finish()
+        #else
+        throw XCTSkip("AVFoundation, MediaToolbox, and ShazamKit are required")
+        #endif
     }
 
     func testPodcastResolverFusesConsistentEvidenceAndRejectsAmbiguity() {

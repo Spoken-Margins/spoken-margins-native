@@ -1,5 +1,27 @@
 import Foundation
 
+public struct PostResumeAudioSampleRequest: Equatable, Sendable {
+    public let interjectionId: String
+    public let sessionId: String
+    public let itemId: String
+    public let anchorMediaTimeMs: Int
+    public let targetDurationMs: Int
+
+    public init(
+        interjectionId: String,
+        sessionId: String,
+        itemId: String,
+        anchorMediaTimeMs: Int,
+        targetDurationMs: Int
+    ) {
+        self.interjectionId = interjectionId
+        self.sessionId = sessionId
+        self.itemId = itemId
+        self.anchorMediaTimeMs = anchorMediaTimeMs
+        self.targetDurationMs = targetDurationMs
+    }
+}
+
 public protocol SessionRepository {
     func loadItem(id: String) throws -> Item
     func saveItem(_ item: Item) throws
@@ -66,6 +88,8 @@ public protocol AudioPlaybackClient {
     func playbackStartStatus(targetId: String) -> PlaybackStartStatus
     func playbackTransportState(targetId: String) -> PlaybackTransportState?
     func setRemoteCommandHandlingEnabled(_ enabled: Bool)
+    @discardableResult
+    func armPostResumeAudioSample(_ request: PostResumeAudioSampleRequest) -> Bool
     func pause() throws
     func stop() throws
 }
@@ -119,6 +143,11 @@ public extension AudioPlaybackClient {
     func seek(toMediaTimeMs mediaTimeMs: Int) throws {}
 
     func setPlaybackRate(_ rate: Double) throws {}
+
+    @discardableResult
+    func armPostResumeAudioSample(_ request: PostResumeAudioSampleRequest) -> Bool {
+        false
+    }
 
     func stop() throws {
         try pause()

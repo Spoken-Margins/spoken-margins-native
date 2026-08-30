@@ -6827,6 +6827,13 @@ final class Gate1AppModel: ObservableObject {
                 )
             }
         }
+        #if canImport(AVFoundation) && canImport(ShazamKit)
+        client.postResumePodcastEvidenceHandler = { [weak self] result in
+            Task { @MainActor [weak self] in
+                self?.handlePostResumePodcastEvidence(result)
+            }
+        }
+        #endif
         mediaPlaybackClient = client
         return client
     }
@@ -7892,6 +7899,8 @@ final class Gate1AppModel: ObservableObject {
         default:
             return
         }
+        let currentInterjection = ((try? store.loadInterjections(sessionId: interjection.sessionId)) ?? [])
+            .first(where: { $0.id == interjection.id }) ?? interjection
         if let storedTimeline = try? store.loadTranscriptTimeline(itemId: item.id)?.timeline,
            let window = Self.sourceContextWindow(
                from: storedTimeline,
@@ -7905,6 +7914,26 @@ final class Gate1AppModel: ObservableObject {
                 diagnostics["sourceWindowTranscription:\(interjection.id)"] = "complete:stored_transcript"
                 diagnostics["sourceWindowContextProvenance:\(interjection.id)"] = "stored_transcript"
             }
+            return
+        }
+        if !(currentInterjection.podcastAnchorEvidence ?? []).isEmpty
+            || currentInterjection.podcastAnchorEvidenceCaptureStatus == .ready {
+            if currentInterjection.anchorContextStatus != .ready {
+                var updated = currentInterjection
+                updated.anchorContextStatus = .unavailable
+                try? store.saveInterjection(updated)
+                refreshSelectedItem()
+            }
+            diagnostics["sourceWindowTranscription:\(interjection.id)"] =
+                "skipped:high_reliability_acoustic_evidence_ready"
+            diagnostics["sourceWindowContextProvenance:\(interjection.id)"] = "acoustic_evidence_only"
+            return
+        }
+        if currentInterjection.podcastAnchorEvidenceCaptureStatus == .pendingPostResumeSample
+            || currentInterjection.podcastAnchorEvidenceCaptureStatus == .pendingExactLocalCapture {
+            diagnostics["sourceWindowTranscription:\(interjection.id)"] =
+                "waiting_for_post_resume_acoustic_evidence"
+            diagnostics["sourceWindowContextProvenance:\(interjection.id)"] = "pending_acoustic_evidence"
             return
         }
         diagnostics["sourceWindowTranscription:\(interjection.id)"] = "scheduled"
@@ -7987,7 +8016,16 @@ final class Gate1AppModel: ObservableObject {
     private func scheduleTranscription(for interjection: Interjection) {
         guard let audioPath = interjection.audioPath else { return }
         recordAnchorCaptureDiagnostics(for: interjection)
-        schedulePodcastAnchorEvidenceCapture(for: interjection)
+        switch interjection.podcastAnchorEvidenceCaptureStatus {
+        case .pendingPostResumeSample:
+            diagnostics["podcastAnchorEvidence:\(interjection.id)"] = "sampling:decoded_playback_post_resume"
+        case .pendingExactLocalCapture:
+            diagnostics["podcastAnchorEvidence:\(interjection.id)"] = "sampling:exact_local_playback_edition"
+        case .ready:
+            break
+        case .unavailable, nil:
+            schedulePodcastAnchorEvidenceCapture(for: interjection)
+        }
         diagnostics["interjectionAudioAtCapture:\(interjection.id)"] = interjectionAudioEvidence(for: audioPath)
         diagnostics["interjectionTranscription:\(interjection.id)"] = "scheduled"
         Task {
@@ -8046,16 +8084,34 @@ final class Gate1AppModel: ObservableObject {
     private func schedulePodcastAnchorEvidenceCapture(for interjection: Interjection) {
         guard interjection.targetType == .item,
               let mediaTimeMs = interjection.anchor.mediaTimeMs,
-              let sourceURL = podcastDownloadCoordinator?.validatedLocalURL(for: interjection.itemId) else {
-            diagnostics["podcastAnchorEvidence:\(interjection.id)"] = "unavailable:no_exact_local_playback_edition"
+              let sourceURL = podcastDownloadCoordinator?.validatedLocalURL(for: interjection.itemId),
+              mediaPlaybackClient?.isUsingPlaybackURL(sourceURL, itemId: interjection.itemId) == true else {
+            markPodcastAnchorEvidenceUnavailable(
+                request: PostResumeAudioSampleRequest(
+                    interjectionId: interjection.id,
+                    sessionId: interjection.sessionId,
+                    itemId: interjection.itemId,
+                    anchorMediaTimeMs: interjection.anchor.mediaTimeMs ?? 0,
+                    targetDurationMs: PodcastAnchorEvidenceGenerator.flankDurationMs
+                ),
+                reason: "no_exact_local_playback_edition"
+            )
             return
         }
         diagnostics["podcastAnchorEvidence:\(interjection.id)"] = "scheduled"
-        guard let root = try? applicationSupportDirectory()
-            .appending(path: "SpokenMargins/AnchorEvidence/\(interjection.id)", directoryHint: .isDirectory) else {
-            diagnostics["podcastAnchorEvidence:\(interjection.id)"] = "failed:storage_unavailable"
+        let request = PostResumeAudioSampleRequest(
+            interjectionId: interjection.id,
+            sessionId: interjection.sessionId,
+            itemId: interjection.itemId,
+            anchorMediaTimeMs: mediaTimeMs,
+            targetDurationMs: PodcastAnchorEvidenceGenerator.flankDurationMs
+        )
+        guard let root = try? podcastAnchorEvidenceDirectory(for: request) else {
+            markPodcastAnchorEvidenceUnavailable(request: request, reason: "storage_unavailable")
             return
         }
+        markPodcastAnchorEvidencePendingLocal(request: request)
+        let evidenceIDPrefix = podcastAnchorEvidenceID(request: request, suffix: "local")
         Task.detached { [weak self] in
             do {
                 let digestBeforeCapture = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: sourceURL)
@@ -8063,7 +8119,7 @@ final class Gate1AppModel: ObservableObject {
                     sourceURL: sourceURL,
                     anchorMediaTimeMs: mediaTimeMs,
                     outputDirectory: root,
-                    idPrefix: "anchor-\(interjection.id)"
+                    idPrefix: evidenceIDPrefix
                 )
                 let digestAfterCapture = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: sourceURL)
                 guard digestBeforeCapture == digestAfterCapture else {
@@ -8074,25 +8130,164 @@ final class Gate1AppModel: ObservableObject {
                         id: $0.id,
                         localPath: $0.fileURL.path,
                         durationMs: $0.durationMs,
-                        anchorOffsetMs: $0.anchorOffsetMs
+                        anchorOffsetMs: $0.anchorOffsetMs,
+                        provenance: .exactLocalPlaybackEdition
                     )
                 }
                 await MainActor.run {
-                    self?.run { engine in
-                        self?.snapshot = try engine.podcastAnchorEvidenceCompleted(
-                            interjectionId: interjection.id,
+                    do {
+                        try self?.persistPodcastAnchorEvidence(
+                            request: request,
                             evidence: captured,
                             sourceExactEditionSHA256: digestAfterCapture
                         )
-                        self?.refreshSelectedItem()
+                        self?.diagnostics["podcastAnchorEvidence:\(interjection.id)"] = "complete:\(captured.count)"
+                    } catch {
+                        self?.markPodcastAnchorEvidenceUnavailable(
+                            request: request,
+                            reason: "local_signature_persistence_failed:\(error.localizedDescription)"
+                        )
                     }
-                    self?.diagnostics["podcastAnchorEvidence:\(interjection.id)"] = "complete:\(captured.count)"
                 }
             } catch {
                 await MainActor.run {
-                    self?.diagnostics["podcastAnchorEvidence:\(interjection.id)"] = "failed:\(error.localizedDescription)"
+                    self?.markPodcastAnchorEvidenceUnavailable(
+                        request: request,
+                        reason: "local_signature_failed:\(error.localizedDescription)"
+                    )
                 }
             }
+        }
+    }
+
+    #if canImport(AVFoundation) && canImport(ShazamKit)
+    private func handlePostResumePodcastEvidence(_ result: PostResumePodcastEvidenceCaptureResult) {
+        switch result {
+        case .captured(let capture):
+            do {
+                let root = try podcastAnchorEvidenceDirectory(for: capture.request)
+                try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+                let evidenceID = podcastAnchorEvidenceID(
+                    request: capture.request,
+                    suffix: "stream-post"
+                )
+                let fileURL = root.appending(path: "\(evidenceID).shazamsignature")
+                try capture.signatureData.write(to: fileURL, options: .atomic)
+                try persistPodcastAnchorEvidence(
+                    request: capture.request,
+                    evidence: [CapturedPodcastAnchorEvidence(
+                        id: evidenceID,
+                        localPath: fileURL.path,
+                        durationMs: capture.durationMs,
+                        anchorOffsetMs: capture.anchorOffsetMs,
+                        provenance: .decodedPlaybackStream
+                    )],
+                    sourceExactEditionSHA256: nil
+                )
+                diagnostics["podcastAnchorEvidence:\(capture.request.interjectionId)"] =
+                    "complete:decoded_playback_post_resume:bytes=\(capture.signatureData.count)"
+            } catch {
+                markPodcastAnchorEvidenceUnavailable(
+                    request: capture.request,
+                    reason: "stream_signature_persistence_failed:\(error.localizedDescription)"
+                )
+            }
+        case .failed(let request, let reason):
+            if let interjection = storedInterjection(request: request) {
+                diagnostics["podcastAnchorEvidence:\(request.interjectionId)"] = "stream_failed:\(reason)"
+                schedulePodcastAnchorEvidenceCapture(for: interjection)
+            } else {
+                markPodcastAnchorEvidenceUnavailable(request: request, reason: reason)
+            }
+        }
+    }
+    #endif
+
+    private func podcastAnchorEvidenceDirectory(for request: PostResumeAudioSampleRequest) throws -> URL {
+        try applicationSupportDirectory()
+            .appending(path: "SpokenMargins/AnchorEvidence", directoryHint: .isDirectory)
+            .appending(path: safePodcastEvidenceComponent(request.sessionId), directoryHint: .isDirectory)
+            .appending(path: safePodcastEvidenceComponent(request.interjectionId), directoryHint: .isDirectory)
+    }
+
+    private func podcastAnchorEvidenceID(
+        request: PostResumeAudioSampleRequest,
+        suffix: String
+    ) -> String {
+        "anchor-\(safePodcastEvidenceComponent(request.sessionId))-\(safePodcastEvidenceComponent(request.interjectionId))-\(suffix)"
+    }
+
+    private func safePodcastEvidenceComponent(_ value: String) -> String {
+        let safe = value.replacingOccurrences(
+            of: #"[^A-Za-z0-9._-]"#,
+            with: "-",
+            options: .regularExpression
+        )
+        return safe.isEmpty ? "unknown" : String(safe.prefix(96))
+    }
+
+    private func storedInterjection(request: PostResumeAudioSampleRequest) -> Interjection? {
+        guard let store,
+              let records = try? store.loadInterjections(sessionId: request.sessionId) else { return nil }
+        return records.first { $0.id == request.interjectionId && $0.itemId == request.itemId }
+    }
+
+    private func persistPodcastAnchorEvidence(
+        request: PostResumeAudioSampleRequest,
+        evidence: [CapturedPodcastAnchorEvidence],
+        sourceExactEditionSHA256: String?
+    ) throws {
+        guard let store,
+              var interjection = try store.loadInterjections(sessionId: request.sessionId)
+                .first(where: { $0.id == request.interjectionId && $0.itemId == request.itemId }) else {
+            throw SessionKitError.persistenceFailed("podcast_anchor_interjection_missing")
+        }
+        interjection.podcastAnchorEvidence = evidence
+        interjection.sourceExactEditionSHA256 = sourceExactEditionSHA256
+        interjection.podcastAnchorEvidenceCaptureStatus = .ready
+        interjection.podcastAnchorEvidenceFailureReason = nil
+        if interjection.anchorContextStatus == .pending {
+            interjection.anchorContextStatus = .unavailable
+        }
+        try store.saveInterjection(interjection)
+        if activeItemId == request.itemId {
+            refreshSelectedItem()
+        }
+    }
+
+    private func markPodcastAnchorEvidenceUnavailable(
+        request: PostResumeAudioSampleRequest,
+        reason: String
+    ) {
+        guard let store,
+              let records = try? store.loadInterjections(sessionId: request.sessionId),
+              var interjection = records.first(where: {
+                  $0.id == request.interjectionId && $0.itemId == request.itemId
+              }) else {
+            diagnostics["podcastAnchorEvidence:\(request.interjectionId)"] = "unavailable:\(reason)"
+            return
+        }
+        interjection.podcastAnchorEvidenceCaptureStatus = .unavailable
+        interjection.podcastAnchorEvidenceFailureReason = reason
+        try? store.saveInterjection(interjection)
+        if activeItemId == request.itemId {
+            refreshSelectedItem()
+        }
+        diagnostics["podcastAnchorEvidence:\(request.interjectionId)"] = "unavailable:\(reason)"
+        scheduleSourceWindowContextIfNeeded(for: interjection)
+    }
+
+    private func markPodcastAnchorEvidencePendingLocal(request: PostResumeAudioSampleRequest) {
+        guard let store,
+              let records = try? store.loadInterjections(sessionId: request.sessionId),
+              var interjection = records.first(where: {
+                  $0.id == request.interjectionId && $0.itemId == request.itemId
+              }) else { return }
+        interjection.podcastAnchorEvidenceCaptureStatus = .pendingExactLocalCapture
+        interjection.podcastAnchorEvidenceFailureReason = nil
+        try? store.saveInterjection(interjection)
+        if activeItemId == request.itemId {
+            refreshSelectedItem()
         }
     }
 
@@ -8374,9 +8569,19 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func shareAnchorWarning(for interjection: Interjection) -> String? {
-        selectedItem.isNativeAudio && (interjection.podcastAnchorEvidence ?? []).isEmpty
-            ? "High-reliability anchor evidence was unavailable at capture. This Margin will remain unresolved on a different podcast edition."
-            : nil
+        guard selectedItem.isNativeAudio && (interjection.podcastAnchorEvidence ?? []).isEmpty else {
+            return nil
+        }
+        switch interjection.podcastAnchorEvidenceCaptureStatus {
+        case .pendingPostResumeSample:
+            return "High-reliability evidence is capturing. Continue podcast playback for about 12 seconds before sharing this Margin."
+        case .pendingExactLocalCapture:
+            return "High-reliability evidence is being prepared from the podcast edition currently playing."
+        case .ready:
+            return nil
+        case .unavailable, nil:
+            return "High-reliability anchor evidence was unavailable at capture. Transcript context may still resolve this Margin; a timestamp alone will not be treated as verified."
+        }
     }
 
     func exportSharedInterjections() {
@@ -8425,7 +8630,8 @@ final class Gate1AppModel: ObservableObject {
                         path: "assets/evidence/\($0.id).shazamsignature",
                         sourceURL: URL(fileURLWithPath: $0.localPath),
                         durationMs: $0.durationMs,
-                        anchorOffsetMs: $0.anchorOffsetMs
+                        anchorOffsetMs: $0.anchorOffsetMs,
+                        provenance: ($0.provenance ?? .exactLocalPlaybackEdition).rawValue
                     )
                 })
                 let anchor = portableAnchor(

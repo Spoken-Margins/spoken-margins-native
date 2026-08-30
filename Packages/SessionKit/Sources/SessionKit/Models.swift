@@ -995,17 +995,37 @@ public enum AnchorContextStatus: String, Codable, Equatable, Sendable {
     case unavailable
 }
 
+public enum PodcastAnchorEvidenceCaptureStatus: String, Codable, Equatable, Sendable {
+    case pendingPostResumeSample = "pending_post_resume_sample"
+    case pendingExactLocalCapture = "pending_exact_local_capture"
+    case ready
+    case unavailable
+}
+
+public enum PodcastAnchorEvidenceProvenance: String, Codable, Equatable, Sendable {
+    case decodedPlaybackStream = "decoded_playback_stream"
+    case exactLocalPlaybackEdition = "exact_local_playback_edition"
+}
+
 public struct CapturedPodcastAnchorEvidence: Codable, Equatable, Sendable, Identifiable {
     public let id: String
     public let localPath: String
     public let durationMs: Int
     public let anchorOffsetMs: Int
+    public let provenance: PodcastAnchorEvidenceProvenance?
 
-    public init(id: String, localPath: String, durationMs: Int, anchorOffsetMs: Int) {
+    public init(
+        id: String,
+        localPath: String,
+        durationMs: Int,
+        anchorOffsetMs: Int,
+        provenance: PodcastAnchorEvidenceProvenance? = nil
+    ) {
         self.id = id
         self.localPath = localPath
         self.durationMs = durationMs
         self.anchorOffsetMs = anchorOffsetMs
+        self.provenance = provenance
     }
 }
 
@@ -1029,10 +1049,12 @@ public struct Interjection: Codable, Equatable, Sendable {
     /// Word/run timing retained from on-device recognition. Optional so records
     /// created before sharing support remain decodable without migration.
     public var alignedTranscript: AlignedInterjectionTranscript? = nil
-    /// Non-playable signatures captured from the exact local podcast edition
-    /// available when this Margin was recorded.
+    /// Non-playable signatures captured from decoded playback or an exact local
+    /// playback edition when this Margin was recorded.
     public var podcastAnchorEvidence: [CapturedPodcastAnchorEvidence]? = nil
     public var sourceExactEditionSHA256: String? = nil
+    public var podcastAnchorEvidenceCaptureStatus: PodcastAnchorEvidenceCaptureStatus? = nil
+    public var podcastAnchorEvidenceFailureReason: String? = nil
 
     public init(
         id: String,
@@ -1053,7 +1075,9 @@ public struct Interjection: Codable, Equatable, Sendable {
         anchorContextStatus: AnchorContextStatus? = nil,
         alignedTranscript: AlignedInterjectionTranscript? = nil,
         podcastAnchorEvidence: [CapturedPodcastAnchorEvidence]? = nil,
-        sourceExactEditionSHA256: String? = nil
+        sourceExactEditionSHA256: String? = nil,
+        podcastAnchorEvidenceCaptureStatus: PodcastAnchorEvidenceCaptureStatus? = nil,
+        podcastAnchorEvidenceFailureReason: String? = nil
     ) {
         self.id = id
         self.itemId = itemId
@@ -1074,6 +1098,8 @@ public struct Interjection: Codable, Equatable, Sendable {
         self.alignedTranscript = alignedTranscript
         self.podcastAnchorEvidence = podcastAnchorEvidence
         self.sourceExactEditionSHA256 = sourceExactEditionSHA256
+        self.podcastAnchorEvidenceCaptureStatus = podcastAnchorEvidenceCaptureStatus
+        self.podcastAnchorEvidenceFailureReason = podcastAnchorEvidenceFailureReason
     }
 }
 

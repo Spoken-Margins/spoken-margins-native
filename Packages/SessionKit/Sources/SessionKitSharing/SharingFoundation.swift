@@ -54,13 +54,22 @@ public struct ReviewedMachineEvidenceAsset: Sendable {
     public let sourceURL: URL
     public let durationMs: Int
     public let anchorOffsetMs: Int
+    public let provenance: String
 
-    public init(id: String, path: String, sourceURL: URL, durationMs: Int, anchorOffsetMs: Int) {
+    public init(
+        id: String,
+        path: String,
+        sourceURL: URL,
+        durationMs: Int,
+        anchorOffsetMs: Int,
+        provenance: String = PodcastAnchorEvidenceProvenance.exactLocalPlaybackEdition.rawValue
+    ) {
         self.id = id
         self.path = path
         self.sourceURL = sourceURL
         self.durationMs = durationMs
         self.anchorOffsetMs = anchorOffsetMs
+        self.provenance = provenance
     }
 }
 
@@ -180,7 +189,7 @@ public enum SpokenMarginsPackageBuilder {
                 mimeType: "application/vnd.apple.shazam.signature",
                 durationMs: evidence.durationMs,
                 anchorOffsetMs: evidence.anchorOffsetMs,
-                provenance: "exact_playback_edition"
+                provenance: evidence.provenance
             ))
         }
 
@@ -326,7 +335,8 @@ public enum SpokenMarginsPackageImporter {
                 return ImportedPodcastAnchorEvidence(
                     id: evidenceID,
                     localPath: localURL.path,
-                    anchorOffsetMs: anchorOffsetMs
+                    anchorOffsetMs: anchorOffsetMs,
+                    provenance: descriptor.provenance
                 )
             }
             importedInterjections.append(ImportedCommentaryInterjection(
