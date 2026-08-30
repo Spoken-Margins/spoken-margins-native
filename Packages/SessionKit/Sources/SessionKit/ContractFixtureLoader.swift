@@ -103,7 +103,9 @@ public enum ContractFixtureLoader {
             transcript: object["transcript"] as? String,
             cleanedTranscript: object["cleanedTranscript"] as? String,
             displayText: object["cleanedTranscript"] as? String ?? object["transcript"] as? String,
-            status: object["status"] as? String ?? "active"
+            status: object["status"] as? String ?? "active",
+            isStarredForSharing: object["isStarredForSharing"] as? Bool,
+            privateSharingNote: object["privateSharingNote"] as? String
         )
     }
 

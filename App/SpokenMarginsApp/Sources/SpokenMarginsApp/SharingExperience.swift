@@ -13,6 +13,13 @@ enum ShareMarginRepresentationChoice: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum ShareMarginDraftFilter: String, CaseIterable, Identifiable {
+    case all
+    case starred
+
+    var id: String { rawValue }
+}
+
 struct ShareMarginEditState: Equatable {
     var automaticCleanupEnabled = false
     var restoredAutomaticDecisionIds: Set<String> = []
@@ -64,6 +71,7 @@ struct InterjectionSharingState {
     var bulkPreparationFailureCount = 0
     var isExporting = false
     var errorMessage: String?
+    var draftFilter: ShareMarginDraftFilter = .all
 }
 
 struct SpokenMarginsPackageImportReview: Identifiable {
@@ -116,6 +124,31 @@ private enum MarginReviewToken: Identifiable {
         case .word(let segment): return segment.startMs
         case .pause(let decision): return decision.startMs
         }
+    }
+
+    var measurementText: String {
+        switch self {
+        case .word(let segment): return segment.text
+        case .pause(let decision):
+            let duration = Double(max(0, decision.endMs - decision.startMs)) / 1_000
+            return String(format: "[%.1fs pause]", duration)
+        }
+    }
+}
+
+private struct MarginTranscriptFullHeightKey: PreferenceKey {
+    static let defaultValue: [String: CGFloat] = [:]
+
+    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+private struct MarginTranscriptLimitedHeightKey: PreferenceKey {
+    static let defaultValue: [String: CGFloat] = [:]
+
+    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
     }
 }
 
@@ -201,8 +234,13 @@ struct SpokenMarginsPackageImportView: View {
 }
 
 struct InterjectionSharingView: View {
+    static let collapsedTranscriptLineLimit = 10
+
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dismiss) private var dismiss
+    @State private var expandedTranscriptIDs: Set<String> = []
+    @State private var transcriptFullHeights: [String: CGFloat] = [:]
+    @State private var transcriptLimitedHeights: [String: CGFloat] = [:]
 
     var body: some View {
         NavigationStack {
@@ -235,9 +273,11 @@ struct InterjectionSharingView: View {
                                 .font(.caption)
                                 .foregroundStyle(AppColors.secondaryText)
 
+                            curationFilterPanel
+
                             bulkPreparationPanel
 
-                            ForEach(model.sharingState.drafts) { draft in
+                            ForEach(visibleDrafts) { draft in
                                 shareDraftCard(draft)
                                     .disabled(model.sharingState.isBulkPreparing)
                             }
@@ -278,6 +318,46 @@ struct InterjectionSharingView: View {
             }
         }
         .onDisappear(perform: model.cancelBulkSharePreparation)
+        .onPreferenceChange(MarginTranscriptFullHeightKey.self) {
+            transcriptFullHeights.merge($0, uniquingKeysWith: { _, new in new })
+        }
+        .onPreferenceChange(MarginTranscriptLimitedHeightKey.self) {
+            transcriptLimitedHeights.merge($0, uniquingKeysWith: { _, new in new })
+        }
+    }
+
+    private var starredDraftCount: Int {
+        model.sharingState.drafts.filter { $0.interjection.isStarredForSharing == true }.count
+    }
+
+    private var visibleDrafts: [ShareInterjectionDraft] {
+        switch model.sharingState.draftFilter {
+        case .all:
+            return model.sharingState.drafts
+        case .starred:
+            return model.sharingState.drafts.filter { $0.interjection.isStarredForSharing == true }
+        }
+    }
+
+    @ViewBuilder
+    private var curationFilterPanel: some View {
+        if starredDraftCount > 0 {
+            ProductPanel {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Sharing shortlist")
+                        .font(.headline)
+                    Picker("Margins shown", selection: $model.sharingState.draftFilter) {
+                        Text("All (\(model.sharingState.drafts.count))").tag(ShareMarginDraftFilter.all)
+                        Text("Starred (\(starredDraftCount))").tag(ShareMarginDraftFilter.starred)
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("sharing.marginFilter")
+                    Text("Stars choose the initial shortlist. Include this Margin is still the final choice for this share. Private sharing notes are shown below but are never sent.")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -393,48 +473,96 @@ struct InterjectionSharingView: View {
                 )
                 .font(.headline)
 
+                if draft.interjection.isStarredForSharing == true {
+                    Label("Starred for sharing", systemImage: "star.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AppColors.green)
+                }
+                if let note = draft.interjection.privateSharingNote?.nilIfEmpty {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Private sharing note")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(AppColors.secondaryText)
+                        Text(note)
+                            .font(.callout)
+                        Text("Only you can see this note; it is not included in the package.")
+                            .font(.caption2)
+                            .foregroundStyle(AppColors.secondaryText)
+                    }
+                }
+
                 Text("Reviewed transcript")
                     .font(.caption.weight(.semibold))
                 if let aligned = draft.interjection.alignedTranscript {
+                    let tokens = reviewTokens(for: draft, aligned: aligned)
+                    let measurementText = tokens.map(\.measurementText).joined(separator: " ")
+                    let isExpanded = expandedTranscriptIDs.contains(draft.id)
+                    let isLong = transcriptIsLong(draft.id)
+                    transcriptMeasurement(draftID: draft.id, text: measurementText)
                     Text("Tap a word or bracketed pause to remove or restore it. Crossed-out edits are removed from both the transcript and Cleaned voice; new words cannot be inserted into recorded audio.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
-                    MarginWordWrapLayout(horizontalSpacing: 4, verticalSpacing: 6) {
-                        ForEach(reviewTokens(for: draft, aligned: aligned)) { token in
-                            switch token {
-                            case .word(let segment):
-                                let deleted = model.isShareDraftWordDeleted(draftID: draft.id, segmentID: segment.id)
-                                Button {
-                                    model.toggleShareDraftWord(draftID: draft.id, segmentID: segment.id)
-                                } label: {
-                                    Text(segment.text)
-                                        .font(.body)
-                                        .foregroundStyle(deleted ? AppColors.dangerText : AppColors.text)
-                                        .strikethrough(deleted, color: AppColors.dangerText)
+                    if isLong, !isExpanded {
+                        Text(draft.approvedTranscript)
+                            .font(.body)
+                            .lineLimit(Self.collapsedTranscriptLineLimit)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                            .padding(10)
+                            .background(AppColors.inputBackground)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                        Text("Expand to edit individual words and pauses.")
+                            .font(.caption2)
+                            .foregroundStyle(AppColors.secondaryText)
+                    } else {
+                        MarginWordWrapLayout(horizontalSpacing: 4, verticalSpacing: 6) {
+                            ForEach(tokens) { token in
+                                switch token {
+                                case .word(let segment):
+                                    let deleted = model.isShareDraftWordDeleted(draftID: draft.id, segmentID: segment.id)
+                                    Button {
+                                        model.toggleShareDraftWord(draftID: draft.id, segmentID: segment.id)
+                                    } label: {
+                                        Text(segment.text)
+                                            .font(.body)
+                                            .foregroundStyle(deleted ? AppColors.dangerText : AppColors.text)
+                                            .strikethrough(deleted, color: AppColors.dangerText)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .disabled(!draft.isIncluded)
+                                    .contentShape(Rectangle())
+                                    .accessibilityLabel("\(deleted ? "Restore" : "Remove") \(segment.text)")
+                                case .pause(let decision):
+                                    Button {
+                                        model.setCleanupDecision(
+                                            draftID: draft.id,
+                                            decisionID: decision.id,
+                                            accepted: !decision.accepted
+                                        )
+                                    } label: {
+                                        Text(pauseLabel(decision))
+                                            .font(.body)
+                                            .foregroundStyle(decision.accepted ? AppColors.dangerText : AppColors.secondaryText)
+                                            .strikethrough(decision.accepted, color: AppColors.dangerText)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .disabled(!draft.isIncluded)
+                                    .contentShape(Rectangle())
+                                    .accessibilityLabel("\(decision.accepted ? "Restore" : "Shorten") pause")
                                 }
-                                .buttonStyle(.plain)
-                                .disabled(!draft.isIncluded)
-                                .contentShape(Rectangle())
-                                .accessibilityLabel("\(deleted ? "Restore" : "Remove") \(segment.text)")
-                            case .pause(let decision):
-                                Button {
-                                    model.setCleanupDecision(
-                                        draftID: draft.id,
-                                        decisionID: decision.id,
-                                        accepted: !decision.accepted
-                                    )
-                                } label: {
-                                    Text(pauseLabel(decision))
-                                        .font(.body)
-                                        .foregroundStyle(decision.accepted ? AppColors.dangerText : AppColors.secondaryText)
-                                        .strikethrough(decision.accepted, color: AppColors.dangerText)
-                                }
-                                .buttonStyle(.plain)
-                                .disabled(!draft.isIncluded)
-                                .contentShape(Rectangle())
-                                .accessibilityLabel("\(decision.accepted ? "Restore" : "Shorten") pause")
                             }
                         }
+                    }
+                    if isLong {
+                        Button {
+                            toggleTranscriptExpansion(draft.id)
+                        } label: {
+                            Label(
+                                isExpanded ? "Show first \(Self.collapsedTranscriptLineLimit) lines" : "Show full editable transcript",
+                                systemImage: isExpanded ? "chevron.up" : "chevron.down"
+                            )
+                        }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .accessibilityIdentifier("sharing.transcriptExpansion.\(draft.id)")
                     }
                     HStack {
                         Button {
@@ -448,11 +576,27 @@ struct InterjectionSharingView: View {
                     }
                     .buttonStyle(SecondaryButtonStyle())
                 } else {
+                    let isExpanded = expandedTranscriptIDs.contains(draft.id)
+                    let isLong = transcriptIsLong(draft.id)
+                    transcriptMeasurement(draftID: draft.id, text: draft.approvedTranscript)
                     Text(draft.approvedTranscript)
+                        .lineLimit(isExpanded ? nil : Self.collapsedTranscriptLineLimit)
                         .frame(maxWidth: .infinity, minHeight: 90, alignment: .topLeading)
                         .padding(10)
                         .background(AppColors.inputBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
+                    if isLong {
+                        Button {
+                            toggleTranscriptExpansion(draft.id)
+                        } label: {
+                            Label(
+                                isExpanded ? "Show first \(Self.collapsedTranscriptLineLimit) lines" : "Show full transcript",
+                                systemImage: isExpanded ? "chevron.up" : "chevron.down"
+                            )
+                        }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .accessibilityIdentifier("sharing.transcriptExpansion.\(draft.id)")
+                    }
                 }
 
                 Picker(
@@ -564,6 +708,58 @@ struct InterjectionSharingView: View {
     private func pauseLabel(_ decision: InterjectionCleanupDecision) -> String {
         let duration = Double(max(0, decision.endMs - decision.startMs)) / 1_000
         return String(format: "[%.1fs pause]", duration)
+    }
+
+    private func transcriptIsLong(_ draftID: String) -> Bool {
+        guard let full = transcriptFullHeights[draftID],
+              let limited = transcriptLimitedHeights[draftID] else { return false }
+        return Self.transcriptRequiresExpansion(fullHeight: full, limitedHeight: limited)
+    }
+
+    static func transcriptRequiresExpansion(fullHeight: CGFloat, limitedHeight: CGFloat) -> Bool {
+        fullHeight > limitedHeight + 1
+    }
+
+    private func toggleTranscriptExpansion(_ draftID: String) {
+        if expandedTranscriptIDs.contains(draftID) {
+            expandedTranscriptIDs.remove(draftID)
+        } else {
+            expandedTranscriptIDs.insert(draftID)
+        }
+    }
+
+    private func transcriptMeasurement(draftID: String, text: String) -> some View {
+        ZStack(alignment: .topLeading) {
+            Text(text)
+                .font(.body)
+                .lineLimit(Self.collapsedTranscriptLineLimit)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: MarginTranscriptLimitedHeightKey.self,
+                            value: [draftID: proxy.size.height]
+                        )
+                    }
+                }
+            Text(text)
+                .font(.body)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: MarginTranscriptFullHeightKey.self,
+                            value: [draftID: proxy.size.height]
+                        )
+                    }
+                }
+        }
+        .hidden()
+        .frame(height: 0)
+        .clipped()
+        .accessibilityHidden(true)
     }
 }
 

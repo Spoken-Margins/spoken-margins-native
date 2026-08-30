@@ -1055,6 +1055,11 @@ public struct Interjection: Codable, Equatable, Sendable {
     public var sourceExactEditionSHA256: String? = nil
     public var podcastAnchorEvidenceCaptureStatus: PodcastAnchorEvidenceCaptureStatus? = nil
     public var podcastAnchorEvidenceFailureReason: String? = nil
+    /// Local, private curation metadata. These fields help the owner shortlist
+    /// Margins for sender review and are never copied into reviewed revisions
+    /// or `.spokenmargins` packages.
+    public var isStarredForSharing: Bool? = nil
+    public var privateSharingNote: String? = nil
 
     public init(
         id: String,
@@ -1077,7 +1082,9 @@ public struct Interjection: Codable, Equatable, Sendable {
         podcastAnchorEvidence: [CapturedPodcastAnchorEvidence]? = nil,
         sourceExactEditionSHA256: String? = nil,
         podcastAnchorEvidenceCaptureStatus: PodcastAnchorEvidenceCaptureStatus? = nil,
-        podcastAnchorEvidenceFailureReason: String? = nil
+        podcastAnchorEvidenceFailureReason: String? = nil,
+        isStarredForSharing: Bool? = nil,
+        privateSharingNote: String? = nil
     ) {
         self.id = id
         self.itemId = itemId
@@ -1100,6 +1107,8 @@ public struct Interjection: Codable, Equatable, Sendable {
         self.sourceExactEditionSHA256 = sourceExactEditionSHA256
         self.podcastAnchorEvidenceCaptureStatus = podcastAnchorEvidenceCaptureStatus
         self.podcastAnchorEvidenceFailureReason = podcastAnchorEvidenceFailureReason
+        self.isStarredForSharing = isStarredForSharing
+        self.privateSharingNote = privateSharingNote
     }
 }
 

@@ -1,6 +1,6 @@
 import CryptoKit
 import Foundation
-import SessionKit
+@testable import SessionKit
 @testable import SessionKitAudio
 import SessionKitPersistence
 import SessionKitSharing
@@ -886,11 +886,70 @@ final class SharingTests: XCTestCase {
         object.removeValue(forKey: "alignedTranscript")
         object.removeValue(forKey: "podcastAnchorEvidence")
         object.removeValue(forKey: "sourceExactEditionSHA256")
+        object.removeValue(forKey: "isStarredForSharing")
+        object.removeValue(forKey: "privateSharingNote")
         let legacyData = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
         let decoded = try JSONDecoder.iso8601.decode(Interjection.self, from: legacyData)
         XCTAssertEqual(decoded.transcript, "A thought.")
         XCTAssertNil(decoded.alignedTranscript)
         XCTAssertNil(decoded.podcastAnchorEvidence)
+        XCTAssertNil(decoded.isStarredForSharing)
+        XCTAssertNil(decoded.privateSharingNote)
+    }
+
+    func testPrivateShareCurationPersistsButCannotEnterReviewedRevisionOrSessionExport() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try SQLiteSessionStore(path: root.appendingPathComponent("curation.sqlite").path)
+        let privateNote = "Use this Margin to explain the key tradeoff."
+        let interjection = Interjection(
+            id: "private-curated", itemId: "item", sessionId: "session", targetType: .item,
+            targetId: "item", createdAt: fixedDate, roughPercent: 50,
+            anchor: .init(
+                anchorType: .text,
+                startChar: 0,
+                endChar: 8,
+                anchorBefore: "Before",
+                anchorAfter: "After"
+            ),
+            audioPath: nil, audioStatus: "saved", transcriptionStatus: "transcribed",
+            transcript: "A curated thought.", cleanedTranscript: nil,
+            displayText: "A curated thought.", status: "active",
+            isStarredForSharing: true,
+            privateSharingNote: privateNote
+        )
+
+        try store.saveInterjection(interjection)
+        let restored = try XCTUnwrap(store.loadInterjections(sessionId: "session").first)
+
+        XCTAssertEqual(restored.isStarredForSharing, true)
+        XCTAssertEqual(restored.privateSharingNote, privateNote)
+        let revisionJSON = String(
+            decoding: try JSONEncoder.iso8601.encode(approvedRevision()),
+            as: UTF8.self
+        )
+        XCTAssertFalse(revisionJSON.contains(privateNote))
+        XCTAssertFalse(revisionJSON.contains("privateSharingNote"))
+        XCTAssertFalse(revisionJSON.contains("isStarredForSharing"))
+        let exportJSON = String(
+            decoding: try JSONEncoder.iso8601.encode(ExportInterjection(
+                id: restored.id,
+                sessionId: restored.sessionId,
+                targetType: restored.targetType.rawValue,
+                targetId: restored.targetId,
+                roughPercent: restored.roughPercent,
+                anchorBefore: restored.anchor.anchorBefore,
+                anchorAfter: restored.anchor.anchorAfter,
+                mediaTimeMs: restored.anchor.mediaTimeMs,
+                transcriptionStatus: restored.transcriptionStatus,
+                transcript: restored.transcript,
+                audioPath: nil
+            )),
+            as: UTF8.self
+        )
+        XCTAssertFalse(exportJSON.contains(privateNote))
+        XCTAssertFalse(exportJSON.contains("privateSharingNote"))
+        XCTAssertFalse(exportJSON.contains("isStarredForSharing"))
     }
 
     func testExistingImportedLayerDecodesLegacySourceIdentityWithoutLosingTheLibraryRecord() throws {

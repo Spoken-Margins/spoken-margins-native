@@ -27,6 +27,8 @@
   "transcriptionStatus": "transcribed",
   "transcript": "This list works, but it feels repetitive.",
   "cleanedTranscript": "This list works, but it feels repetitive.",
+  "isStarredForSharing": true,
+  "privateSharingNote": "Strong example for the section on repetition.",
   "status": "active",
   "error": null
 }

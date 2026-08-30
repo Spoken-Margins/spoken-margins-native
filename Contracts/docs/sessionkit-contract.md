@@ -196,6 +196,8 @@ Rollback must reorient the listener rather than simply rewind by an implementati
 
 Interjection failures must not end the session. Audio save failure creates an active interjection only if a durable audio reference exists.
 
+A private Interjection may persist optional local share-later curation: a star and a private note capped at 500 characters. This metadata is owner-only selection assistance. It must not enter an immutable reviewed revision, `.spokenmargins` manifest or artifact, imported commentary layer, session export, or recipient display. A star may determine the sender review's initial shortlist, but the explicit per-export Include decision remains authoritative.
+
 ### Summary And Discussion
 
 `generateInterjectionSummary(scope?)` creates an AI job over scoped interjections. The default scope is active interjections against the original item in the current session.

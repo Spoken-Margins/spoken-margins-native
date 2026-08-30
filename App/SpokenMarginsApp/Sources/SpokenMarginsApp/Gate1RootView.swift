@@ -2357,20 +2357,26 @@ private struct PlaybackScreen: View {
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("timeline.mediaChapter.jump.\(chapter.id)")
                     case .interjection(let interjection):
-                        Button {
-                            model.recordTimelineInterjectionViewed(interjectionId: interjection.id)
-                            selectedInterjection = interjection
-                        } label: {
-                            TimelineRow(
-                                percent: InterjectionPositionPresentation.timelineBadge(
-                                    for: interjection,
-                                    durationMs: interjectionMediaDurationMs
-                                ),
-                                title: "Interjection",
-                                subtitle: interjectionPreview(interjection)
-                            )
-                        }
-                        .buttonStyle(.plain)
+                        TimelineInterjectionRow(
+                            interjectionID: interjection.id,
+                            percent: InterjectionPositionPresentation.timelineBadge(
+                                for: interjection,
+                                durationMs: interjectionMediaDurationMs
+                            ),
+                            subtitle: interjectionPreview(interjection),
+                            isStarred: interjection.isStarredForSharing == true,
+                            privateNote: interjection.privateSharingNote,
+                            open: {
+                                model.recordTimelineInterjectionViewed(interjectionId: interjection.id)
+                                selectedInterjection = interjection
+                            },
+                            toggleStar: {
+                                model.setInterjectionStarredForSharing(
+                                    interjection.id,
+                                    starred: interjection.isStarredForSharing != true
+                                )
+                            }
+                        )
                         .accessibilityIdentifier("timeline.interjection.\(interjection.id)")
                     case .importedCommentary(let layer, let margin, _):
                         Button {
@@ -3717,6 +3723,7 @@ private struct InterjectionDetailView: View {
     let interjection: Interjection
     @State private var pendingDeletion: PendingInterjectionDeletion?
     @State private var copied = false
+    @State private var privateSharingNoteDraft = ""
 
     private enum PendingInterjectionDeletion: Equatable {
         case transcript
@@ -3790,6 +3797,40 @@ private struct InterjectionDetailView: View {
                     .disabled(current.transcript == nil && current.cleanedTranscript == nil)
                     .accessibilityIdentifier("interjection.detail.deleteTranscript")
                 }
+                Section("Share later") {
+                    Toggle(
+                        "Star for sharing",
+                        isOn: Binding(
+                            get: { currentInterjection.isStarredForSharing == true },
+                            set: {
+                                model.setInterjectionStarredForSharing(current.id, starred: $0)
+                            }
+                        )
+                    )
+                    .accessibilityIdentifier("interjection.detail.shareStar")
+                    TextField("Private note for sender review", text: $privateSharingNoteDraft, axis: .vertical)
+                        .lineLimit(2...5)
+                        .onCompatibleChange(of: privateSharingNoteDraft) { value in
+                            if value.count > Gate1AppModel.privateSharingNoteCharacterLimit {
+                                privateSharingNoteDraft = String(value.prefix(Gate1AppModel.privateSharingNoteCharacterLimit))
+                            }
+                        }
+                        .accessibilityIdentifier("interjection.detail.privateSharingNote")
+                    HStack {
+                        Text("\(privateSharingNoteDraft.count)/\(Gate1AppModel.privateSharingNoteCharacterLimit)")
+                            .font(.caption2)
+                            .foregroundStyle(AppColors.secondaryText)
+                        Spacer()
+                        Button("Save Note") {
+                            model.setInterjectionPrivateSharingNote(current.id, note: privateSharingNoteDraft)
+                        }
+                        .disabled(privateSharingNoteDraft == (current.privateSharingNote ?? ""))
+                        .accessibilityIdentifier("interjection.detail.savePrivateSharingNote")
+                    }
+                    Text("This note helps you choose what to send. It stays private and is never included in a shared package.")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                }
                 Section("Anchors") {
                     LabeledContent("Context status", value: anchorContextStatusLabel(current))
                     Text("Before")
@@ -3817,7 +3858,14 @@ private struct InterjectionDetailView: View {
                 }
             }
             .navigationTitle("Interjection")
+            .onAppear {
+                privateSharingNoteDraft = current.privateSharingNote ?? ""
+            }
             .onDisappear {
+                if model.selectedItem.interjections.contains(where: { $0.id == current.id }),
+                   privateSharingNoteDraft != (current.privateSharingNote ?? "") {
+                    model.setInterjectionPrivateSharingNote(current.id, note: privateSharingNoteDraft)
+                }
                 model.stopInterjectionAudioPlayback()
             }
             .toolbar {
@@ -3998,6 +4046,63 @@ private struct TimelineRow: View {
             }
         }
         .accessibilityValue(isCurrent ? "Current chapter" : "")
+    }
+}
+
+private struct TimelineInterjectionRow: View {
+    let interjectionID: String
+    let percent: String
+    let subtitle: String
+    let isStarred: Bool
+    let privateNote: String?
+    let open: () -> Void
+    let toggleStar: () -> Void
+
+    var body: some View {
+        ProductPanel {
+            HStack(alignment: .top, spacing: 10) {
+                Button(action: open) {
+                    HStack(alignment: .top, spacing: 14) {
+                        Text(percent)
+                            .font(.headline)
+                            .foregroundStyle(AppColors.green)
+                            .frame(width: 64, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Margin")
+                                .font(.headline)
+                                .foregroundStyle(AppColors.text)
+                            Text(subtitle)
+                                .font(.subheadline)
+                                .foregroundStyle(AppColors.secondaryText)
+                                .lineLimit(3)
+                            if let privateNote = privateNote?.nilIfEmpty {
+                                Label(privateNote, systemImage: "note.text")
+                                    .font(.caption)
+                                    .foregroundStyle(AppColors.secondaryText)
+                                    .lineLimit(2)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open Margin")
+                .accessibilityIdentifier("timeline.interjection.open.\(interjectionID)")
+
+                Button(action: toggleStar) {
+                    Image(systemName: isStarred ? "star.fill" : "star")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(isStarred ? Color.yellow : AppColors.secondaryText)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isStarred ? "Remove sharing star" : "Star Margin for sharing")
+                .accessibilityValue(isStarred ? "Starred" : "Not starred")
+                .accessibilityIdentifier("timeline.interjection.star.\(interjectionID)")
+            }
+        }
     }
 }
 

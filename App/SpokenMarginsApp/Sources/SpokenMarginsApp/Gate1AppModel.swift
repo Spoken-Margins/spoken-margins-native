@@ -364,6 +364,7 @@ final class Gate1AppModel: ObservableObject {
     private static let supertonicTTSMigrationKey = "supertonicTTSMigrationV1"
     private static let supertonicVoicePendingTermsKey = "supertonicVoicePendingTermsV1"
     static let exportPreviewCharacterLimit = 24_000
+    static let privateSharingNoteCharacterLimit = 500
     private static var isRunningUnitTests: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
             || NSClassFromString("XCTestCase") != nil
@@ -4191,6 +4192,38 @@ final class Gate1AppModel: ObservableObject {
             snapshot = try engine.deleteInterjection(interjectionId: interjection.id)
             refreshSelectedItem()
             reportSuccess("Deleted interjection.")
+        }
+    }
+
+    func setInterjectionStarredForSharing(_ interjectionID: String, starred: Bool) {
+        do {
+            let store = try requireStore()
+            guard var interjection = selectedItem.interjections.first(where: { $0.id == interjectionID }) else {
+                throw SessionKitError.persistenceFailed("share_curation_interjection_missing")
+            }
+            interjection.isStarredForSharing = starred ? true : nil
+            try store.saveInterjection(interjection)
+            refreshSelectedItem()
+            diagnostics["shareCuration:\(interjectionID)"] = starred ? "starred" : "unstarred"
+        } catch {
+            reportFailure(error, context: "Margin sharing star could not be saved")
+        }
+    }
+
+    func setInterjectionPrivateSharingNote(_ interjectionID: String, note: String) {
+        do {
+            let store = try requireStore()
+            guard var interjection = selectedItem.interjections.first(where: { $0.id == interjectionID }) else {
+                throw SessionKitError.persistenceFailed("share_curation_interjection_missing")
+            }
+            let bounded = String(note.prefix(Self.privateSharingNoteCharacterLimit))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            interjection.privateSharingNote = bounded.isEmpty ? nil : bounded
+            try store.saveInterjection(interjection)
+            refreshSelectedItem()
+            diagnostics["shareCurationNote:\(interjectionID)"] = bounded.isEmpty ? "empty" : "saved"
+        } catch {
+            reportFailure(error, context: "Private sharing note could not be saved")
         }
     }
 
@@ -8347,7 +8380,9 @@ final class Gate1AppModel: ObservableObject {
             reportFailure("Record at least one Margin on this item before sharing.")
             return
         }
+        let hasStarredCandidates = candidates.contains { $0.isStarredForSharing == true }
         sharingState = InterjectionSharingState(isPreparing: true)
+        sharingState.draftFilter = hasStarredCandidates ? .starred : .all
         isSharingInterjectionsPresented = true
         if let item = try? requireStore().loadItem(id: selectedItem.id) {
             let reference = secureSharedItemURL(for: item)
@@ -8370,6 +8405,7 @@ final class Gate1AppModel: ObservableObject {
             )
             return ShareInterjectionDraft(
                 interjection: interjection,
+                isIncluded: !hasStarredCandidates || interjection.isStarredForSharing == true,
                 approvedTranscript: transcript,
                 representationChoice: hasAudio ? .original : .textOnly,
                 warning: shareAnchorWarning(for: interjection),

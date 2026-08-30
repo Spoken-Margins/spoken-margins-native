@@ -95,6 +95,8 @@ Product-owner revision, 2026-08-29 (playback validation): sender review must use
 
 Product-owner revision, 2026-08-30 (bulk review and listening rate): sender review must offer one explicit bulk action that prepares every included, eligible Margin for filler removal and pause tightening with bounded work, visible progress, cancellation, and per-Margin fallback to Original voice or Text when preparation is unavailable. Bulk preparation must not mutate private originals or prevent later per-Margin review and Undo/Redo. When a private or received Margin voice is played during an item session, it inherits the item's current playback rate; the notification cue remains at normal speed and source playback resumes at its existing rate.
 
+Product-owner revision, 2026-08-30 (share-later curation and review density): the listening Timeline must let the user visibly star a private Margin for later sharing, and Margin detail may retain a bounded private sharing note. This curation must persist locally, remain private rather than entering a `.spokenmargins` package, and drive a Starred filter plus safe default selection in sender review without replacing the per-export Include control. If any Margins are starred, sender review initially includes and shows only those starred Margins; if none are starred, the existing all-included default remains. Long sender-review transcripts must default to a readable preview of no more than 10 lines and expose an explicit expansion control; short transcripts must not gain unnecessary disclosure chrome.
+
 ### Phase 1A: Testable podcast-sharing MVP
 
 The product owner expanded the sharing foundation on 2026-08-29 so it can reach a trusted-tester MVP instead of stopping at package-only infrastructure.

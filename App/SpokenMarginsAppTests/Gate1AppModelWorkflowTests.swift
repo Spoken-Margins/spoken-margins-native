@@ -76,6 +76,60 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.sharingState.drafts[0].approvedTranscript, "Keep words.")
     }
 
+    func testTimelineShareCurationPersistsAndCreatesAStarredSenderShortlist() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "share-curation-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: databaseURL
+        )
+        model.resetAndSeed()
+        let itemID = model.selectedItem.id
+        model.startItem(id: itemID)
+        let sessionID = try XCTUnwrap(model.snapshot.sessionId)
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        let ids = ["margin-first", "margin-starred", "margin-last"]
+        for id in ids {
+            var margin = shareableInterjection(itemId: itemID)
+            margin.id = id
+            margin.sessionId = sessionID
+            try store.saveInterjection(margin)
+        }
+        model.openItem(id: itemID)
+
+        model.setInterjectionStarredForSharing("margin-starred", starred: true)
+        model.setInterjectionPrivateSharingNote(
+            "margin-starred",
+            note: String(repeating: "n", count: Gate1AppModel.privateSharingNoteCharacterLimit + 25)
+        )
+
+        let reopened = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: databaseURL
+        )
+        reopened.bootstrapLibraryIfNeeded()
+        reopened.openItem(id: itemID)
+        let curated = try XCTUnwrap(reopened.selectedItem.interjections.first(where: { $0.id == "margin-starred" }))
+        XCTAssertEqual(curated.isStarredForSharing, true)
+        XCTAssertEqual(curated.privateSharingNote?.count, Gate1AppModel.privateSharingNoteCharacterLimit)
+
+        reopened.prepareShareInterjections()
+
+        XCTAssertEqual(reopened.sharingState.draftFilter, .starred)
+        XCTAssertEqual(reopened.sharingState.drafts.filter(\.isIncluded).map(\.id), ["margin-starred"])
+        XCTAssertEqual(InterjectionSharingView.collapsedTranscriptLineLimit, 10)
+        XCTAssertFalse(InterjectionSharingView.transcriptRequiresExpansion(fullHeight: 220, limitedHeight: 220))
+        XCTAssertTrue(InterjectionSharingView.transcriptRequiresExpansion(fullHeight: 440, limitedHeight: 220))
+
+        reopened.setInterjectionStarredForSharing("margin-starred", starred: false)
+        reopened.prepareShareInterjections()
+        XCTAssertEqual(reopened.sharingState.draftFilter, .all)
+        XCTAssertTrue(reopened.sharingState.drafts.allSatisfy(\.isIncluded))
+    }
+
     func testBulkSharePreparationProcessesFiftyThreeMarginsSequentiallyAndPreservesOriginals() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appending(path: "bulk-margin-preparation-\(UUID().uuidString)", directoryHint: .isDirectory)
