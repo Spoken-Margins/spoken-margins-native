@@ -50,17 +50,20 @@ public struct VerifiedSpokenMarginsPackage: Sendable {
     public let manifest: SpokenMarginsPackageManifest
     public let commentaryLayers: [SharedCommentaryLayerArtifact]
     public let listeningMapProposals: [PortableListeningMapProposalArtifact]
+    public let embeddedTextItems: [EmbeddedTextItemArtifact]
     public let extractedAssetURLs: [String: URL]
 
     init(
         manifest: SpokenMarginsPackageManifest,
         commentaryLayers: [SharedCommentaryLayerArtifact],
         listeningMapProposals: [PortableListeningMapProposalArtifact],
+        embeddedTextItems: [EmbeddedTextItemArtifact],
         extractedAssetURLs: [String: URL]
     ) {
         self.manifest = manifest
         self.commentaryLayers = commentaryLayers
         self.listeningMapProposals = listeningMapProposals
+        self.embeddedTextItems = embeddedTextItems
         self.extractedAssetURLs = extractedAssetURLs
     }
 }
@@ -79,7 +82,10 @@ public enum SpokenMarginsPackageArchive {
     private static let maximumInterjections = 50
     private static let maximumCompressionRatio: UInt64 = 100
     private static let fixedArchiveDate = Date(timeIntervalSince1970: 315_532_800)
-    private static let supportedRequiredCapabilities: Set<String> = [SharedCommentaryLayerArtifact.schemaVersion]
+    private static let supportedRequiredCapabilities: Set<String> = [
+        SharedCommentaryLayerArtifact.schemaVersion,
+        EmbeddedTextItemArtifact.schemaVersion
+    ]
 
     public static func write(
         _ prepared: PreparedSpokenMarginsPackage,
@@ -114,12 +120,14 @@ public enum SpokenMarginsPackageArchive {
             manifest,
             commentaryLayers: decoded.commentary,
             proposals: decoded.proposals,
+            embeddedTextItems: decoded.embeddedTextItems,
             requireDigest: false
         )
         let previewData = Data(previewMarkdown(
             manifest,
             commentaryLayers: decoded.commentary,
-            listeningMapProposals: decoded.proposals
+            listeningMapProposals: decoded.proposals,
+            embeddedTextItems: decoded.embeddedTextItems
         ).utf8)
         manifest.contentDigest = try digest(
             manifest: manifest,
@@ -239,6 +247,7 @@ public enum SpokenMarginsPackageArchive {
             manifest,
             commentaryLayers: decoded.commentary,
             proposals: decoded.proposals,
+            embeddedTextItems: decoded.embeddedTextItems,
             requireDigest: true
         )
         guard let previewData = entryData["preview.md"] else {
@@ -255,7 +264,8 @@ public enum SpokenMarginsPackageArchive {
         let expectedPreview = Data(previewMarkdown(
             manifest,
             commentaryLayers: decoded.commentary,
-            listeningMapProposals: decoded.proposals
+            listeningMapProposals: decoded.proposals,
+            embeddedTextItems: decoded.embeddedTextItems
         ).utf8)
         guard previewData == expectedPreview else {
             throw SpokenMarginsPackageArchiveError.invalidManifest("preview does not match package")
@@ -287,6 +297,7 @@ public enum SpokenMarginsPackageArchive {
             manifest: manifest,
             commentaryLayers: decoded.commentary,
             listeningMapProposals: decoded.proposals,
+            embeddedTextItems: decoded.embeddedTextItems,
             extractedAssetURLs: extractedURLs
         )
     }
@@ -404,9 +415,14 @@ public enum SpokenMarginsPackageArchive {
     private static func decodeKnownArtifacts(
         manifest: SpokenMarginsPackageManifest,
         artifactData: [String: Data]
-    ) throws -> (commentary: [SharedCommentaryLayerArtifact], proposals: [PortableListeningMapProposalArtifact]) {
+    ) throws -> (
+        commentary: [SharedCommentaryLayerArtifact],
+        proposals: [PortableListeningMapProposalArtifact],
+        embeddedTextItems: [EmbeddedTextItemArtifact]
+    ) {
         var commentary: [SharedCommentaryLayerArtifact] = []
         var proposals: [PortableListeningMapProposalArtifact] = []
+        var embeddedTextItems: [EmbeddedTextItemArtifact] = []
         for descriptor in manifest.artifacts {
             guard let data = artifactData[descriptor.path] else {
                 throw SpokenMarginsPackageArchiveError.invalidManifest("artifact is absent: \(descriptor.path)")
@@ -431,19 +447,29 @@ public enum SpokenMarginsPackageArchive {
                     throw SpokenMarginsPackageArchiveError.invalidManifest("map descriptor does not match artifact")
                 }
                 proposals.append(value)
+            case SpokenMarginsArtifactKind.embeddedTextItem:
+                guard descriptor.schemaVersion == EmbeddedTextItemArtifact.schemaVersion else {
+                    throw SpokenMarginsPackageArchiveError.unsupportedSchema(descriptor.schemaVersion)
+                }
+                let value = try decoder().decode(EmbeddedTextItemArtifact.self, from: data)
+                guard value.id == descriptor.id, value.schemaVersion == descriptor.schemaVersion else {
+                    throw SpokenMarginsPackageArchiveError.invalidManifest("embedded item descriptor does not match artifact")
+                }
+                embeddedTextItems.append(value)
             default:
                 if descriptor.required {
                     throw SpokenMarginsPackageArchiveError.unsupportedRequiredCapability(descriptor.kind)
                 }
             }
         }
-        return (commentary, proposals)
+        return (commentary, proposals, embeddedTextItems)
     }
 
     private static func validateManifestBoundary(
         _ manifest: SpokenMarginsPackageManifest,
         commentaryLayers: [SharedCommentaryLayerArtifact],
         proposals: [PortableListeningMapProposalArtifact],
+        embeddedTextItems: [EmbeddedTextItemArtifact],
         requireDigest: Bool
     ) throws {
         guard manifest.schemaVersion == schemaVersion else {
@@ -461,10 +487,10 @@ public enum SpokenMarginsPackageArchive {
         if let digest = manifest.contentDigest, !isSHA256(digest) {
             throw SpokenMarginsPackageArchiveError.invalidManifest("content digest is invalid")
         }
-        guard manifest.senderDisplayLabel.map({ $0.count <= 120 }) ?? true, manifest.redactions.provesDefaultMinimization else {
+        guard manifest.senderDisplayLabel.map({ $0.count <= 120 }) ?? true, manifest.redactions.provesPrivateMinimization else {
             throw SpokenMarginsPackageArchiveError.invalidManifest("sender or redaction fields are invalid")
         }
-        try validateSource(manifest.source)
+        try validateItem(manifest.item)
 
         let artifactIDs = manifest.artifacts.map(\.id)
         let assetIDs = manifest.assets.map(\.id)
@@ -493,6 +519,41 @@ public enum SpokenMarginsPackageArchive {
             }
         }
 
+        switch manifest.itemTransport.kind {
+        case .reference:
+            guard manifest.item.canonicalURL.map(validHTTPSURL) == true,
+                  manifest.itemTransport.embeddedArtifactId == nil,
+                  manifest.itemTransport.rightsBasis == nil,
+                  manifest.redactions.fullItemOmitted,
+                  embeddedTextItems.isEmpty else {
+                throw SpokenMarginsPackageArchiveError.invalidManifest("referenced item transport is inconsistent")
+            }
+        case .recipientSupplied:
+            guard manifest.item.canonicalURL == nil,
+                  manifest.itemTransport.embeddedArtifactId == nil,
+                  manifest.itemTransport.rightsBasis == nil,
+                  manifest.redactions.fullItemOmitted,
+                  embeddedTextItems.isEmpty else {
+                throw SpokenMarginsPackageArchiveError.invalidManifest("recipient-supplied item transport is inconsistent")
+            }
+        case .embeddedText:
+            guard manifest.item.canonicalURL == nil,
+                  manifest.item.itemType != .podcast,
+                  let artifactID = manifest.itemTransport.embeddedArtifactId,
+                  manifest.itemTransport.rightsBasis != nil,
+                  !manifest.redactions.fullItemOmitted,
+                  embeddedTextItems.count == 1,
+                  let embedded = embeddedTextItems.first,
+                  embedded.id == artifactID,
+                  !embedded.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  embedded.originalMediaType.count <= 100,
+                  embedded.originalMediaType == manifest.item.itemType.rawValue,
+                  manifest.item.exactEditionSHA256 == PortableArticleAnchorResolver.exactEditionSHA256(embedded.text),
+                  manifest.item.normalizedContentSHA256 == PortableArticleAnchorResolver.normalizedContentSHA256(embedded.text) else {
+                throw SpokenMarginsPackageArchiveError.invalidManifest("embedded item transport is inconsistent")
+            }
+        }
+
         let assetsByID = Dictionary(uniqueKeysWithValues: manifest.assets.map { ($0.id, $0) })
         let layer = commentaryLayers[0]
         guard !layer.interjections.isEmpty, layer.interjections.count <= maximumInterjections else {
@@ -506,21 +567,23 @@ public enum SpokenMarginsPackageArchive {
         for proposal in proposals { try validate(proposal, assetsByID: assetsByID) }
     }
 
-    private static func validateSource(_ source: SharedSourceIdentity) throws {
-        guard validHTTPSURL(source.canonicalURL),
-              source.originalURL.map(validHTTPSURL) ?? true,
-              source.feedURL.map(validHTTPSURL) ?? true,
-              source.enclosureURL.map(validHTTPSURL) ?? true,
-              (1...500).contains(source.title.count),
-              !source.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              optionalLength(source.author, maximum: 300), optionalLength(source.publisher, maximum: 300),
-              optionalLength(source.showTitle, maximum: 500), optionalLength(source.episodeGUID, maximum: 1_000),
-              optionalLength(source.publishedAt, maximum: 100), optionalLength(source.languageCode, maximum: 35),
-              source.durationMs.map({ $0 >= 0 }) ?? true else {
-            throw SpokenMarginsPackageArchiveError.invalidManifest("source fields are absent or out of bounds")
+    private static func validateItem(_ item: SharedItemIdentity) throws {
+        guard item.canonicalURL.map(validHTTPSURL) ?? true,
+              item.originalURL.map(validHTTPSURL) ?? true,
+              item.enclosureURL.map(validHTTPSURL) ?? true,
+              (1...500).contains(item.title.count),
+              !item.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              optionalLength(item.author, maximum: 300), optionalLength(item.publisher, maximum: 300),
+              optionalLength(item.showTitle, maximum: 500), optionalLength(item.episodeGUID, maximum: 1_000),
+              optionalLength(item.publishedAt, maximum: 100), optionalLength(item.languageCode, maximum: 35),
+              item.durationMs.map({ $0 >= 0 }) ?? true,
+              item.source.map({ validHTTPSURL($0.canonicalURL) }) ?? true,
+              optionalLength(item.source?.title, maximum: 500),
+              optionalLength(item.source?.publisher, maximum: 300) else {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("item fields are absent or out of bounds")
         }
-        for digest in [source.normalizedContentSHA256, source.exactEditionSHA256].compactMap({ $0 }) where !isSHA256(digest) {
-            throw SpokenMarginsPackageArchiveError.invalidManifest("source digest is invalid")
+        for digest in [item.normalizedContentSHA256, item.exactEditionSHA256].compactMap({ $0 }) where !isSHA256(digest) {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("item digest is invalid")
         }
     }
 
@@ -601,17 +664,22 @@ public enum SpokenMarginsPackageArchive {
         }
         try rejectUnknownKeys(
             root,
-            allowed: ["schemaVersion", "packageId", "createdAt", "contentDigest", "source", "senderDisplayLabel", "suggestedRevealMode", "requiredCapabilities", "artifacts", "assets", "redactions"],
+            allowed: ["schemaVersion", "packageId", "createdAt", "contentDigest", "item", "itemTransport", "senderDisplayLabel", "suggestedRevealMode", "requiredCapabilities", "artifacts", "assets", "redactions"],
             context: "manifest"
         )
-        guard let source = root["source"] as? [String: Any],
+        guard let item = root["item"] as? [String: Any],
+              let itemTransport = root["itemTransport"] as? [String: Any],
               let artifacts = root["artifacts"] as? [[String: Any]],
               let assets = root["assets"] as? [[String: Any]],
               let redactions = root["redactions"] as? [String: Any] else {
             throw SpokenMarginsPackageArchiveError.invalidManifest("typed package fields are absent")
         }
-        try rejectUnknownKeys(source, allowed: ["sourceType", "canonicalURL", "originalURL", "feedURL", "title", "author", "publisher", "showTitle", "episodeGUID", "enclosureURL", "publishedAt", "durationMs", "normalizedContentSHA256", "exactEditionSHA256", "languageCode"], context: "source")
-        try rejectUnknownKeys(redactions, allowed: ["rawAudioOmitted", "rawTranscriptOmitted", "fullSourceTextOmitted", "sourceAudioOmitted", "diagnosticsOmitted", "filesystemPathsOmitted", "unrelatedTurnsOmitted", "privateRepresentationsOmitted"], context: "redactions")
+        try rejectUnknownKeys(item, allowed: ["itemType", "canonicalURL", "originalURL", "title", "author", "publisher", "showTitle", "episodeGUID", "enclosureURL", "publishedAt", "durationMs", "normalizedContentSHA256", "exactEditionSHA256", "languageCode", "source"], context: "item")
+        if let source = item["source"] as? [String: Any] {
+            try rejectUnknownKeys(source, allowed: ["sourceType", "canonicalURL", "title", "publisher"], context: "source")
+        }
+        try rejectUnknownKeys(itemTransport, allowed: ["kind", "embeddedArtifactId", "rightsBasis"], context: "item transport")
+        try rejectUnknownKeys(redactions, allowed: ["rawAudioOmitted", "rawTranscriptOmitted", "fullItemOmitted", "itemAudioOmitted", "diagnosticsOmitted", "filesystemPathsOmitted", "unrelatedTurnsOmitted", "privateRepresentationsOmitted"], context: "redactions")
         for artifact in artifacts {
             try rejectUnknownKeys(artifact, allowed: ["id", "kind", "schemaVersion", "path", "required", "byteCount", "sha256"], context: "artifact descriptor")
         }
@@ -777,17 +845,21 @@ public enum SpokenMarginsPackageArchive {
     public static func previewMarkdown(
         _ manifest: SpokenMarginsPackageManifest,
         commentaryLayers: [SharedCommentaryLayerArtifact],
-        listeningMapProposals: [PortableListeningMapProposalArtifact]
+        listeningMapProposals: [PortableListeningMapProposalArtifact],
+        embeddedTextItems: [EmbeddedTextItemArtifact] = []
     ) -> String {
         let interjections = commentaryLayers.flatMap(\.interjections)
         let sender = manifest.senderDisplayLabel?.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
         var lines = [
             "# Spoken Margins", "",
-            "\(markdownEscaped(sender?.isEmpty == false ? sender! : "Someone")) shared \(interjections.count) reviewed Margin\(interjections.count == 1 ? "" : "s") about **\(markdownEscaped(manifest.source.title))**.",
-            "", "<\(manifest.source.canonicalURL)>", "",
-            "Full source audio and full source transcripts are not included.",
+            "\(markdownEscaped(sender?.isEmpty == false ? sender! : "Someone")) shared \(interjections.count) reviewed Margin\(interjections.count == 1 ? "" : "s") about **\(markdownEscaped(manifest.item.title))**.",
+            "",
+            manifest.item.canonicalURL.map { "Item reference: <\($0)>" } ?? "Item reference: no public URL",
+            "",
+            itemTransportPreview(manifest.itemTransport, embeddedTextItems: embeddedTextItems),
+            "Item audio is not included.",
             "Voice assets: \(manifest.assets.filter { $0.path.hasPrefix("assets/audio/") }.count).",
-            "Acoustic signatures: \(manifest.assets.filter { $0.role == SpokenMarginsAssetRole.acousticSignature }.count). These are opaque matching evidence, not source audio.",
+            "Acoustic signatures: \(manifest.assets.filter { $0.role == SpokenMarginsAssetRole.acousticSignature }.count). These are opaque matching evidence, not item audio.",
             "Listening Map proposals: \(listeningMapProposals.count). Proposals are not activated automatically.", ""
         ]
         for (index, interjection) in interjections.enumerated() {
@@ -797,6 +869,21 @@ public enum SpokenMarginsPackageArchive {
             lines.append("")
         }
         return lines.joined(separator: "\n")
+    }
+
+    private static func itemTransportPreview(
+        _ transport: SharedItemTransport,
+        embeddedTextItems: [EmbeddedTextItemArtifact]
+    ) -> String {
+        switch transport.kind {
+        case .reference:
+            return "Item transport: reference only; the recipient reconstructs the item."
+        case .recipientSupplied:
+            return "Item transport: not included; the recipient must provide the same item."
+        case .embeddedText:
+            let characters = embeddedTextItems.first?.text.count ?? 0
+            return "Item transport: full listened-to text included (\(characters) characters) after a private-sharing rights confirmation."
+        }
     }
 
     private static func markdownEscaped(_ value: String) -> String {

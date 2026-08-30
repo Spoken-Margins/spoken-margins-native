@@ -51,6 +51,7 @@ public enum InterjectionCleanupDecisionKind: String, Codable, Equatable, Sendabl
     case filler
     case isolatedPhrase = "isolated_phrase"
     case longPause = "long_pause"
+    case manualWord = "manual_word"
 }
 
 public struct InterjectionCleanupDecision: Codable, Equatable, Sendable, Identifiable {
@@ -132,17 +133,46 @@ public struct InterjectionShareRevision: Codable, Equatable, Sendable, Identifia
     }
 }
 
-public enum SharedSourceType: String, Codable, Equatable, Sendable {
-    case article
+public enum SharedItemType: String, Codable, Equatable, Sendable {
+    case text
     case podcast
+    case pdf
+    case epub
     case other
 }
 
 public struct SharedSourceIdentity: Codable, Equatable, Sendable {
-    public let sourceType: SharedSourceType
+    public enum SourceType: String, Codable, Equatable, Sendable {
+        case podcastFeed = "podcast_feed"
+        case textFeed = "text_feed"
+        case newsletter
+        case blog
+        case socialFeed = "social_feed"
+        case other
+    }
+
+    public let sourceType: SourceType
     public let canonicalURL: String
+    public let title: String?
+    public let publisher: String?
+
+    public init(
+        sourceType: SourceType,
+        canonicalURL: String,
+        title: String? = nil,
+        publisher: String? = nil
+    ) {
+        self.sourceType = sourceType
+        self.canonicalURL = canonicalURL
+        self.title = title
+        self.publisher = publisher
+    }
+}
+
+public struct SharedItemIdentity: Codable, Equatable, Sendable {
+    public let itemType: SharedItemType
+    public let canonicalURL: String?
     public let originalURL: String?
-    public let feedURL: String?
     public let title: String
     public let author: String?
     public let publisher: String?
@@ -154,12 +184,12 @@ public struct SharedSourceIdentity: Codable, Equatable, Sendable {
     public let normalizedContentSHA256: String?
     public let exactEditionSHA256: String?
     public let languageCode: String?
+    public let source: SharedSourceIdentity?
 
     public init(
-        sourceType: SharedSourceType,
-        canonicalURL: String,
+        itemType: SharedItemType,
+        canonicalURL: String? = nil,
         originalURL: String? = nil,
-        feedURL: String? = nil,
         title: String,
         author: String? = nil,
         publisher: String? = nil,
@@ -170,12 +200,12 @@ public struct SharedSourceIdentity: Codable, Equatable, Sendable {
         durationMs: Int? = nil,
         normalizedContentSHA256: String? = nil,
         exactEditionSHA256: String? = nil,
-        languageCode: String? = nil
+        languageCode: String? = nil,
+        source: SharedSourceIdentity? = nil
     ) {
-        self.sourceType = sourceType
+        self.itemType = itemType
         self.canonicalURL = canonicalURL
         self.originalURL = originalURL
-        self.feedURL = feedURL
         self.title = title
         self.author = author
         self.publisher = publisher
@@ -187,6 +217,34 @@ public struct SharedSourceIdentity: Codable, Equatable, Sendable {
         self.normalizedContentSHA256 = normalizedContentSHA256
         self.exactEditionSHA256 = exactEditionSHA256
         self.languageCode = languageCode
+        self.source = source
+    }
+}
+
+public enum SharedItemTransportKind: String, Codable, Equatable, Sendable {
+    case reference
+    case embeddedText = "embedded_text"
+    case recipientSupplied = "recipient_supplied"
+}
+
+public enum SharedItemRightsBasis: String, Codable, Equatable, Sendable {
+    case appAuthored = "app_authored"
+    case senderConfirmedPrivateRights = "sender_confirmed_private_rights"
+}
+
+public struct SharedItemTransport: Codable, Equatable, Sendable {
+    public let kind: SharedItemTransportKind
+    public let embeddedArtifactId: String?
+    public let rightsBasis: SharedItemRightsBasis?
+
+    public init(
+        kind: SharedItemTransportKind,
+        embeddedArtifactId: String? = nil,
+        rightsBasis: SharedItemRightsBasis? = nil
+    ) {
+        self.kind = kind
+        self.embeddedArtifactId = embeddedArtifactId
+        self.rightsBasis = rightsBasis
     }
 }
 
@@ -314,7 +372,7 @@ public struct ImportedAnchorResolution: Codable, Equatable, Sendable {
     }
 }
 
-/// Source resolution is recorded per imported note. The aggregate layer status is
+/// Item resolution is recorded per imported note. The aggregate layer status is
 /// derived from these results so a layer cannot claim to be resolved while its
 /// individual anchors remain unresolved.
 public struct ImportedPackageSourceResolution: Codable, Equatable, Sendable {
@@ -337,7 +395,7 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
     public var itemId: String?
     public let packageDigest: String
     public let packageId: String
-    public let sourceIdentity: SharedSourceIdentity
+    public let itemIdentity: SharedItemIdentity
     public let displayLabel: String?
     public let suggestedRevealMode: ImportedCommentaryRevealMode?
     public let importedAt: Date
@@ -356,7 +414,7 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
         itemId: String? = nil,
         packageDigest: String,
         packageId: String,
-        sourceIdentity: SharedSourceIdentity,
+        itemIdentity: SharedItemIdentity,
         displayLabel: String? = nil,
         suggestedRevealMode: ImportedCommentaryRevealMode? = nil,
         importedAt: Date,
@@ -372,7 +430,7 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
         self.itemId = itemId
         self.packageDigest = packageDigest
         self.packageId = packageId
-        self.sourceIdentity = sourceIdentity
+        self.itemIdentity = itemIdentity
         self.displayLabel = displayLabel
         self.suggestedRevealMode = suggestedRevealMode
         self.importedAt = importedAt
@@ -383,6 +441,97 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
         self.revealMode = revealMode
         self.deletedAt = deletedAt
         self.listeningMapProposals = listeningMapProposals
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, itemId, packageDigest, packageId, itemIdentity, sourceIdentity
+        case displayLabel, suggestedRevealMode, importedAt, integrityStatus
+        case sourceResolutionStatus, isEnabled, isMuted, revealMode, deletedAt
+        case listeningMapProposals
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        itemId = try values.decodeIfPresent(String.self, forKey: .itemId)
+        packageDigest = try values.decode(String.self, forKey: .packageDigest)
+        packageId = try values.decode(String.self, forKey: .packageId)
+        if let current = try values.decodeIfPresent(SharedItemIdentity.self, forKey: .itemIdentity) {
+            itemIdentity = current
+        } else {
+            let legacy = try values.decode(LegacySharedItemIdentity.self, forKey: .sourceIdentity)
+            itemIdentity = legacy.currentIdentity
+        }
+        displayLabel = try values.decodeIfPresent(String.self, forKey: .displayLabel)
+        suggestedRevealMode = try values.decodeIfPresent(ImportedCommentaryRevealMode.self, forKey: .suggestedRevealMode)
+        importedAt = try values.decode(Date.self, forKey: .importedAt)
+        integrityStatus = try values.decodeIfPresent(ImportedCommentaryIntegrityStatus.self, forKey: .integrityStatus)
+            ?? .integrityCheckedUnsigned
+        sourceResolutionStatus = try values.decodeIfPresent(ImportedSourceResolutionStatus.self, forKey: .sourceResolutionStatus)
+            ?? .pending
+        isEnabled = try values.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? false
+        isMuted = try values.decodeIfPresent(Bool.self, forKey: .isMuted) ?? false
+        revealMode = try values.decodeIfPresent(ImportedCommentaryRevealMode.self, forKey: .revealMode)
+        deletedAt = try values.decodeIfPresent(Date.self, forKey: .deletedAt)
+        listeningMapProposals = try values.decodeIfPresent(
+            [PortableListeningMapProposalArtifact].self,
+            forKey: .listeningMapProposals
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(id, forKey: .id)
+        try values.encodeIfPresent(itemId, forKey: .itemId)
+        try values.encode(packageDigest, forKey: .packageDigest)
+        try values.encode(packageId, forKey: .packageId)
+        try values.encode(itemIdentity, forKey: .itemIdentity)
+        try values.encodeIfPresent(displayLabel, forKey: .displayLabel)
+        try values.encodeIfPresent(suggestedRevealMode, forKey: .suggestedRevealMode)
+        try values.encode(importedAt, forKey: .importedAt)
+        try values.encode(integrityStatus, forKey: .integrityStatus)
+        try values.encode(sourceResolutionStatus, forKey: .sourceResolutionStatus)
+        try values.encode(isEnabled, forKey: .isEnabled)
+        try values.encode(isMuted, forKey: .isMuted)
+        try values.encodeIfPresent(revealMode, forKey: .revealMode)
+        try values.encodeIfPresent(deletedAt, forKey: .deletedAt)
+        try values.encodeIfPresent(listeningMapProposals, forKey: .listeningMapProposals)
+    }
+}
+
+private struct LegacySharedItemIdentity: Decodable {
+    let sourceType: String
+    let canonicalURL: String
+    let originalURL: String?
+    let title: String
+    let author: String?
+    let publisher: String?
+    let showTitle: String?
+    let episodeGUID: String?
+    let enclosureURL: String?
+    let publishedAt: String?
+    let durationMs: Int?
+    let normalizedContentSHA256: String?
+    let exactEditionSHA256: String?
+    let languageCode: String?
+
+    var currentIdentity: SharedItemIdentity {
+        SharedItemIdentity(
+            itemType: sourceType == "podcast" ? .podcast : (sourceType == "article" ? .text : .other),
+            canonicalURL: canonicalURL,
+            originalURL: originalURL,
+            title: title,
+            author: author,
+            publisher: publisher,
+            showTitle: showTitle,
+            episodeGUID: episodeGUID,
+            enclosureURL: enclosureURL,
+            publishedAt: publishedAt,
+            durationMs: durationMs,
+            normalizedContentSHA256: normalizedContentSHA256,
+            exactEditionSHA256: exactEditionSHA256,
+            languageCode: languageCode
+        )
     }
 }
 
@@ -600,9 +749,31 @@ public struct PortableListeningMapProposalArtifact: Codable, Equatable, Sendable
     }
 }
 
+public struct EmbeddedTextItemArtifact: Codable, Equatable, Sendable, Identifiable {
+    public static let schemaVersion = "spoken-margins.embedded-text-item.v1"
+
+    public let id: String
+    public let schemaVersion: String
+    public let originalMediaType: String
+    public let text: String
+
+    public init(
+        id: String = "embedded-item",
+        schemaVersion: String = EmbeddedTextItemArtifact.schemaVersion,
+        originalMediaType: String,
+        text: String
+    ) {
+        self.id = id
+        self.schemaVersion = schemaVersion
+        self.originalMediaType = originalMediaType
+        self.text = text
+    }
+}
+
 public enum SpokenMarginsArtifactKind {
     public static let commentaryLayer = "commentary_layer"
     public static let listeningMapProposal = "listening_map_proposal"
+    public static let embeddedTextItem = "embedded_text_item"
 }
 
 public struct SpokenMarginsArtifactDescriptor: Codable, Equatable, Sendable, Identifiable {
@@ -680,8 +851,8 @@ public struct SpokenMarginsAssetDescriptor: Codable, Equatable, Sendable, Identi
 public struct InterjectionPackageRedactions: Codable, Equatable, Sendable {
     public let rawAudioOmitted: Bool
     public let rawTranscriptOmitted: Bool
-    public let fullSourceTextOmitted: Bool
-    public let sourceAudioOmitted: Bool
+    public let fullItemOmitted: Bool
+    public let itemAudioOmitted: Bool
     public let diagnosticsOmitted: Bool
     public let filesystemPathsOmitted: Bool
     public let unrelatedTurnsOmitted: Bool
@@ -690,8 +861,8 @@ public struct InterjectionPackageRedactions: Codable, Equatable, Sendable {
     public init(
         rawAudioOmitted: Bool = true,
         rawTranscriptOmitted: Bool = true,
-        fullSourceTextOmitted: Bool = true,
-        sourceAudioOmitted: Bool = true,
+        fullItemOmitted: Bool = true,
+        itemAudioOmitted: Bool = true,
         diagnosticsOmitted: Bool = true,
         filesystemPathsOmitted: Bool = true,
         unrelatedTurnsOmitted: Bool = true,
@@ -699,19 +870,41 @@ public struct InterjectionPackageRedactions: Codable, Equatable, Sendable {
     ) {
         self.rawAudioOmitted = rawAudioOmitted
         self.rawTranscriptOmitted = rawTranscriptOmitted
-        self.fullSourceTextOmitted = fullSourceTextOmitted
-        self.sourceAudioOmitted = sourceAudioOmitted
+        self.fullItemOmitted = fullItemOmitted
+        self.itemAudioOmitted = itemAudioOmitted
         self.diagnosticsOmitted = diagnosticsOmitted
         self.filesystemPathsOmitted = filesystemPathsOmitted
         self.unrelatedTurnsOmitted = unrelatedTurnsOmitted
         self.privateRepresentationsOmitted = privateRepresentationsOmitted
     }
 
-    public var provesDefaultMinimization: Bool {
+    @available(*, deprecated, message: "Use itemAudioOmitted; a source is a feed, while this flag describes the listened-to item's audio.")
+    public init(
+        rawAudioOmitted: Bool,
+        rawTranscriptOmitted: Bool,
+        fullItemOmitted: Bool,
+        sourceAudioOmitted: Bool,
+        diagnosticsOmitted: Bool,
+        filesystemPathsOmitted: Bool,
+        unrelatedTurnsOmitted: Bool,
+        privateRepresentationsOmitted: Bool
+    ) {
+        self.init(
+            rawAudioOmitted: rawAudioOmitted,
+            rawTranscriptOmitted: rawTranscriptOmitted,
+            fullItemOmitted: fullItemOmitted,
+            itemAudioOmitted: sourceAudioOmitted,
+            diagnosticsOmitted: diagnosticsOmitted,
+            filesystemPathsOmitted: filesystemPathsOmitted,
+            unrelatedTurnsOmitted: unrelatedTurnsOmitted,
+            privateRepresentationsOmitted: privateRepresentationsOmitted
+        )
+    }
+
+    public var provesPrivateMinimization: Bool {
         rawAudioOmitted
             && rawTranscriptOmitted
-            && fullSourceTextOmitted
-            && sourceAudioOmitted
+            && itemAudioOmitted
             && diagnosticsOmitted
             && filesystemPathsOmitted
             && unrelatedTurnsOmitted
@@ -724,7 +917,8 @@ public struct SpokenMarginsPackageManifest: Codable, Equatable, Sendable {
     public let packageId: String
     public let createdAt: Date
     public var contentDigest: String?
-    public let source: SharedSourceIdentity
+    public let item: SharedItemIdentity
+    public let itemTransport: SharedItemTransport
     public let senderDisplayLabel: String?
     public let suggestedRevealMode: ImportedCommentaryRevealMode?
     public let requiredCapabilities: [String]
@@ -737,7 +931,8 @@ public struct SpokenMarginsPackageManifest: Codable, Equatable, Sendable {
         packageId: String,
         createdAt: Date,
         contentDigest: String? = nil,
-        source: SharedSourceIdentity,
+        item: SharedItemIdentity,
+        itemTransport: SharedItemTransport,
         senderDisplayLabel: String? = nil,
         suggestedRevealMode: ImportedCommentaryRevealMode? = nil,
         requiredCapabilities: [String] = [SharedCommentaryLayerArtifact.schemaVersion],
@@ -749,7 +944,8 @@ public struct SpokenMarginsPackageManifest: Codable, Equatable, Sendable {
         self.packageId = packageId
         self.createdAt = createdAt
         self.contentDigest = contentDigest
-        self.source = source
+        self.item = item
+        self.itemTransport = itemTransport
         self.senderDisplayLabel = senderDisplayLabel
         self.suggestedRevealMode = suggestedRevealMode
         self.requiredCapabilities = requiredCapabilities

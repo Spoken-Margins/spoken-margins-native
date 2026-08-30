@@ -64,11 +64,18 @@ public struct ReviewedMachineEvidenceAsset: Sendable {
     }
 }
 
+public enum ReviewedItemTransportSelection: Sendable {
+    case reference
+    case recipientSupplied
+    case embeddedText(text: String, originalMediaType: String, rightsBasis: SharedItemRightsBasis)
+}
+
 public enum SpokenMarginsPackageBuilder {
     public static func prepare(
         packageId: String,
         createdAt: Date,
-        source: SharedSourceIdentity,
+        item: SharedItemIdentity,
+        itemTransportSelection: ReviewedItemTransportSelection,
         selections: [ReviewedInterjectionSelection],
         mapProposals: [PortableListeningMapProposalArtifact] = [],
         machineEvidence: [ReviewedMachineEvidenceAsset] = [],
@@ -202,16 +209,54 @@ public enum SpokenMarginsPackageBuilder {
             ))
         }
 
+        let itemTransport: SharedItemTransport
+        let fullItemOmitted: Bool
+        switch itemTransportSelection {
+        case .reference:
+            itemTransport = SharedItemTransport(kind: .reference)
+            fullItemOmitted = true
+        case .recipientSupplied:
+            itemTransport = SharedItemTransport(kind: .recipientSupplied)
+            fullItemOmitted = true
+        case .embeddedText(let text, let originalMediaType, let rightsBasis):
+            let embedded = EmbeddedTextItemArtifact(
+                originalMediaType: originalMediaType,
+                text: text
+            )
+            let path = "artifacts/embedded-item.json"
+            artifactData[path] = try encodeArtifact(embedded)
+            artifacts.append(SpokenMarginsArtifactDescriptor(
+                id: embedded.id,
+                kind: SpokenMarginsArtifactKind.embeddedTextItem,
+                schemaVersion: embedded.schemaVersion,
+                path: path,
+                required: true
+            ))
+            itemTransport = SharedItemTransport(
+                kind: .embeddedText,
+                embeddedArtifactId: embedded.id,
+                rightsBasis: rightsBasis
+            )
+            fullItemOmitted = false
+        }
+
+        var requiredCapabilities = [SharedCommentaryLayerArtifact.schemaVersion]
+        if itemTransport.kind == .embeddedText {
+            requiredCapabilities.append(EmbeddedTextItemArtifact.schemaVersion)
+        }
+
         return PreparedSpokenMarginsPackage(
             manifest: SpokenMarginsPackageManifest(
                 packageId: packageId,
                 createdAt: createdAt,
-                source: source,
+                item: item,
+                itemTransport: itemTransport,
                 senderDisplayLabel: senderDisplayLabel,
                 suggestedRevealMode: suggestedRevealMode,
-                requiredCapabilities: [SharedCommentaryLayerArtifact.schemaVersion],
+                requiredCapabilities: requiredCapabilities,
                 artifacts: artifacts,
-                assets: assets
+                assets: assets,
+                redactions: InterjectionPackageRedactions(fullItemOmitted: fullItemOmitted)
             ),
             artifactData: artifactData,
             assetFiles: assetFiles
@@ -232,8 +277,8 @@ public enum SpokenMarginsPackageImporter {
     public static func importPackage(
         _ contents: VerifiedSpokenMarginsPackage,
         itemId: String? = nil,
-        localSource: SharedSourceIdentity? = nil,
-        sourceText: String? = nil,
+        localItem: SharedItemIdentity? = nil,
+        itemText: String? = nil,
         importedAt: Date = Date(),
         repository: SessionRepository,
         makeLocalID: LocalIDProvider = defaultLocalID
@@ -245,14 +290,14 @@ public enum SpokenMarginsPackageImporter {
         guard let commentary = contents.commentaryLayers.first else {
             throw SpokenMarginsPackageArchiveError.invalidManifest("required commentary layer is absent")
         }
-        let sourceResolution = localSource.map {
-            ImportedSourceResolver.resolve(
-                source: manifest.source,
+        let itemResolution = localItem.map {
+            ImportedItemResolver.resolve(
+                item: manifest.item,
                 interjections: commentary.interjections,
                 against: $0,
-                sourceText: sourceText
+                itemText: itemText
             )
-        } ?? ImportedSourceResolver.pending(interjections: commentary.interjections)
+        } ?? ImportedItemResolver.pending(interjections: commentary.interjections)
         let layerID = makeLocalID("layer", manifest.packageId)
         let packageIDs = Set([manifest.packageId] + commentary.interjections.map(\.packageScopedId))
         guard !layerID.isEmpty, !packageIDs.contains(layerID) else {
@@ -294,7 +339,7 @@ public enum SpokenMarginsPackageImporter {
                 audioPath: asset.flatMap { contents.extractedAssetURLs[$0.id]?.path },
                 audioDurationMs: asset?.durationMs,
                 podcastAnchorEvidence: podcastEvidence,
-                resolution: sourceResolution.anchorsByPackageScopedId[record.packageScopedId]
+                resolution: itemResolution.anchorsByPackageScopedId[record.packageScopedId]
                     ?? ImportedAnchorResolution(evidenceClass: .unresolved)
             ))
         }
@@ -303,11 +348,11 @@ public enum SpokenMarginsPackageImporter {
             itemId: itemId,
             packageDigest: digest,
             packageId: manifest.packageId,
-            sourceIdentity: manifest.source,
+            itemIdentity: manifest.item,
             displayLabel: manifest.senderDisplayLabel,
             suggestedRevealMode: manifest.suggestedRevealMode,
             importedAt: importedAt,
-            sourceResolutionStatus: sourceResolution.status,
+            sourceResolutionStatus: itemResolution.status,
             isEnabled: true,
             revealMode: manifest.suggestedRevealMode ?? .companion,
             listeningMapProposals: contents.listeningMapProposals

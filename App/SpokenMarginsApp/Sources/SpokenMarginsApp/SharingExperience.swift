@@ -13,6 +13,14 @@ enum ShareMarginRepresentationChoice: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+struct ShareMarginEditState: Equatable {
+    var automaticCleanupEnabled = false
+    var restoredAutomaticDecisionIds: Set<String> = []
+    var manuallyDeletedSegmentIds: Set<String> = []
+
+    static let original = ShareMarginEditState()
+}
+
 struct ShareInterjectionDraft: Identifiable {
     var id: String { interjection.id }
     var interjection: Interjection
@@ -25,12 +33,28 @@ struct ShareInterjectionDraft: Identifiable {
     var warning: String?
     var anchorBefore: String
     var anchorAfter: String
+    var acousticPauseDecisions: [InterjectionCleanupDecision] = []
+    var editHistory: [ShareMarginEditState] = [.original]
+    var editHistoryIndex = 0
+    var isAnalyzingPauses = false
+    var renderGeneration = 0
+
+    var currentEditState: ShareMarginEditState {
+        editHistory[min(max(0, editHistoryIndex), editHistory.count - 1)]
+    }
+
+    var canUndoEdit: Bool { editHistoryIndex > 0 }
+    var canRedoEdit: Bool { editHistoryIndex + 1 < editHistory.count }
 }
 
 struct InterjectionSharingState {
     var drafts: [ShareInterjectionDraft] = []
     var senderDisplayLabel = UserDefaults.standard.string(forKey: "sharingSenderDisplayLabel") ?? ""
     var includesAcousticEvidence = true
+    var itemReferenceURL: String?
+    var canEmbedLinklessItem = false
+    var isAppAuthoredItem = false
+    var confirmsPrivateSharingRights = false
     var isPreparing = false
     var isExporting = false
     var errorMessage: String?
@@ -49,6 +73,14 @@ struct SpokenMarginsPackageImportReview: Identifiable {
 
     var senderLabel: String {
         contents.manifest.senderDisplayLabel?.nilIfEmpty ?? "Unsigned sender"
+    }
+
+    var includesEmbeddedItem: Bool {
+        contents.manifest.itemTransport.kind == .embeddedText
+    }
+
+    var requiresRecipientItem: Bool {
+        contents.manifest.itemTransport.kind == .recipientSupplied && matchingItemId == nil
     }
 }
 
@@ -72,7 +104,7 @@ struct SpokenMarginsPackageImportView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     ProductPanel {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(review.contents.manifest.source.title)
+                            Text(review.contents.manifest.item.title)
                                 .font(.title3.weight(.semibold))
                             Text(review.senderLabel)
                                 .font(.headline)
@@ -83,9 +115,7 @@ struct SpokenMarginsPackageImportView: View {
                         }
                     }
 
-                    Text(review.matchingItemId == nil
-                        ? "Spoken Margins will add this podcast, download the recipient edition, and then resolve the shared anchors. Nothing will play automatically."
-                        : "Spoken Margins found this item in your library. It will use the downloaded recipient edition to resolve shared anchors. Nothing will play automatically.")
+                    Text(importExplanation)
                         .font(.callout)
 
                     DisclosureGroup("Package contents") {
@@ -93,6 +123,7 @@ struct SpokenMarginsPackageImportView: View {
                             Text("Voice files: \(review.contents.manifest.assets.filter { [SpokenMarginsAssetRole.originalVoice, SpokenMarginsAssetRole.cleanedVoice].contains($0.role) }.count)")
                             Text("Acoustic anchor signatures: \(review.contents.manifest.assets.filter { $0.role == SpokenMarginsAssetRole.acousticSignature }.count)")
                             Text("Listening Map proposals: \(review.contents.listeningMapProposals.count) (stored as proposals; not activated)")
+                            Text(review.includesEmbeddedItem ? "Full listened-to item: included" : "Full listened-to item: not included")
                             Text("Podcast audio: not included")
                         }
                         .font(.caption)
@@ -109,7 +140,7 @@ struct SpokenMarginsPackageImportView: View {
                         model.confirmSpokenMarginsPackageImport()
                     }
                     .buttonStyle(PrimaryButtonStyle())
-                    .disabled(model.isImportingSpokenMarginsPackage)
+                    .disabled(model.isImportingSpokenMarginsPackage || review.requiresRecipientItem)
 
                     Button("Cancel", role: .cancel) {
                         model.cancelSpokenMarginsPackageImport()
@@ -127,6 +158,20 @@ struct SpokenMarginsPackageImportView: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .interactiveDismissDisabled(model.isImportingSpokenMarginsPackage)
+    }
+
+    private var importExplanation: String {
+        if review.matchingItemId != nil {
+            return "Spoken Margins found this item in your library and will resolve the shared anchors against it. Nothing will play automatically."
+        }
+        switch review.contents.manifest.itemTransport.kind {
+        case .embeddedText:
+            return "The sender included the exact text they listened to. Spoken Margins will add it to your library and resolve the Margins. Nothing will play automatically."
+        case .reference:
+            return "Spoken Margins will reconstruct this linked item and then resolve the shared anchors. Nothing will play automatically."
+        case .recipientSupplied:
+            return "The item is not included. Add the same text, PDF, or EPUB to your library, then reopen this .spokenmargins file so its Margins can be attached safely."
+        }
     }
 }
 
@@ -149,7 +194,7 @@ struct InterjectionSharingView: View {
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text("Review what you are sending")
                                         .font(.headline)
-                                    Text("The package includes only selected Margins, the reviewed text and voice version shown below, bounded anchor context, source identity, and optional acoustic signatures. It never includes the podcast audio, raw diagnostics, or unrelated sessions.")
+                                    Text("The package includes only selected Margins, the reviewed text and voice version shown below, bounded anchor context, item identity, and optional acoustic signatures. It never includes the podcast audio, raw diagnostics, or unrelated sessions.")
                                         .font(.callout)
                                         .foregroundStyle(AppColors.secondaryText)
                                 }
@@ -157,6 +202,8 @@ struct InterjectionSharingView: View {
 
                             TextField("Your display label (optional)", text: $model.sharingState.senderDisplayLabel)
                                 .textFieldStyle(.roundedBorder)
+
+                            itemTransportReview
 
                             Toggle("Include high-reliability podcast anchor evidence", isOn: $model.sharingState.includesAcousticEvidence)
                             Text("Recommended. These ShazamKit signatures help a recipient find the same spoken passage when their download contains different ads. They are not playable podcast audio.")
@@ -200,6 +247,52 @@ struct InterjectionSharingView: View {
         }
     }
 
+    @ViewBuilder
+    private var itemTransportReview: some View {
+        ProductPanel {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Item being listened to")
+                    .font(.headline)
+                if let reference = model.sharingState.itemReferenceURL {
+                    Label("Linked item", systemImage: "link")
+                        .font(.subheadline.weight(.semibold))
+                    Text(reference)
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                    Text("The recipient will reconstruct the item from this reference. The full item is not included.")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                } else if model.sharingState.canEmbedLinklessItem {
+                    Toggle(
+                        "I’m sharing this privately and have the right to share this item",
+                        isOn: $model.sharingState.confirmsPrivateSharingRights
+                    )
+                    .disabled(model.sharingState.isAppAuthoredItem)
+                    if model.sharingState.isAppAuthoredItem {
+                        Text("This Spoken Margins sample is app-authored, so its full listened-to text will be included.")
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                    } else if model.sharingState.confirmsPrivateSharingRights {
+                        Text("The full listened-to text will be included so the recipient can add and listen to the item.")
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                    } else {
+                        Label(
+                            "Only your Margins will be sent. Make sure the recipient already has the same text, PDF, or EPUB.",
+                            systemImage: "person.crop.circle.badge.exclamationmark"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    }
+                } else {
+                    Text("The item itself cannot be included. Make sure the recipient already has the same item.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+        }
+    }
+
     private func shareDraftCard(_ draft: ShareInterjectionDraft) -> some View {
         ProductPanel {
             VStack(alignment: .leading, spacing: 12) {
@@ -214,15 +307,48 @@ struct InterjectionSharingView: View {
 
                 Text("Reviewed transcript")
                     .font(.caption.weight(.semibold))
-                TextEditor(text: Binding(
-                    get: { model.sharingState.drafts.first(where: { $0.id == draft.id })?.approvedTranscript ?? "" },
-                    set: { model.setShareDraftTranscript(draft.id, transcript: $0) }
-                ))
-                .frame(minHeight: 90)
-                .padding(8)
-                .background(AppColors.inputBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .disabled(!draft.isIncluded)
+                if let aligned = draft.interjection.alignedTranscript {
+                    Text("Tap a word to remove or restore it. Word deletions are applied to both the transcript and Cleaned voice; new words cannot be inserted into recorded audio.")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                    MarginWordWrapLayout(spacing: 6) {
+                        ForEach(aligned.segments) { segment in
+                            let deleted = model.isShareDraftWordDeleted(draftID: draft.id, segmentID: segment.id)
+                            Button {
+                                model.toggleShareDraftWord(draftID: draft.id, segmentID: segment.id)
+                            } label: {
+                                Text(segment.text)
+                                    .strikethrough(deleted, color: AppColors.dangerText)
+                                    .padding(.horizontal, 9)
+                                    .padding(.vertical, 6)
+                                    .background(
+                                        deleted ? AppColors.dangerText.opacity(0.15) : AppColors.inputBackground,
+                                        in: Capsule()
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(!draft.isIncluded)
+                            .accessibilityLabel("\(deleted ? "Restore" : "Remove") \(segment.text)")
+                        }
+                    }
+                    HStack {
+                        Button {
+                            model.undoShareDraftEdit(draft.id)
+                        } label: { Label("Undo", systemImage: "arrow.uturn.backward") }
+                        .disabled(!draft.canUndoEdit)
+                        Button {
+                            model.redoShareDraftEdit(draft.id)
+                        } label: { Label("Redo", systemImage: "arrow.uturn.forward") }
+                        .disabled(!draft.canRedoEdit)
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                } else {
+                    Text(draft.approvedTranscript)
+                        .frame(maxWidth: .infinity, minHeight: 90, alignment: .topLeading)
+                        .padding(10)
+                        .background(AppColors.inputBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
 
                 Picker(
                     "Voice sent",
@@ -250,7 +376,7 @@ struct InterjectionSharingView: View {
 
                 if draft.interjection.alignedTranscript != nil {
                     if draft.cleanup == nil {
-                        Button("Remove Fillers & Long Pauses") {
+                        Button("Remove Fillers & Tighten Pauses") {
                             model.prepareCleanup(forShareDraft: draft.id)
                         }
                         .buttonStyle(SecondaryButtonStyle())
@@ -260,6 +386,10 @@ struct InterjectionSharingView: View {
                             model.restoreOriginalShareDraft(draft.id)
                         }
                         .buttonStyle(SecondaryButtonStyle())
+                    }
+                    if draft.isAnalyzingPauses {
+                        ProgressView("Analyzing the recording for quiet gaps…")
+                            .font(.caption)
                     }
                 } else {
                     Text("Word timing is unavailable for this older recording, so automatic audio cleanup is disabled. You can still share the original voice or text.")
@@ -283,7 +413,7 @@ struct InterjectionSharingView: View {
                             get: { model.sharingState.drafts.first(where: { $0.id == draft.id })?.anchorAfter ?? "" },
                             set: { model.setShareDraftAnchorAfter(draft.id, value: $0) }
                         ), axis: .vertical)
-                        Text("Each side is capped at 500 characters. Full source text is not sent.")
+                        Text("Each side is capped at 500 characters. Full item text is sent only when the item disclosure above says it is included.")
                             .font(.caption2)
                             .foregroundStyle(AppColors.secondaryText)
                     }
@@ -296,28 +426,33 @@ struct InterjectionSharingView: View {
     @ViewBuilder
     private func cleanupReview(_ draft: ShareInterjectionDraft) -> some View {
         if let decisions = draft.cleanup?.decisions {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Proposed edits — turn any edit off to undo it")
-                    .font(.subheadline.weight(.semibold))
-                ForEach(decisions) { decision in
-                    Toggle(
-                        decisionLabel(decision),
-                        isOn: Binding(
-                            get: {
-                                model.sharingState.drafts
-                                    .first(where: { $0.id == draft.id })?
-                                    .cleanup?.decisions.first(where: { $0.id == decision.id })?.accepted ?? false
-                            },
-                            set: {
-                                model.setCleanupDecision(
-                                    draftID: draft.id,
-                                    decisionID: decision.id,
-                                    accepted: $0
-                                )
-                            }
+            let automaticDecisions = decisions.filter {
+                $0.kind != .manualWord && (draft.currentEditState.automaticCleanupEnabled || $0.accepted)
+            }
+            if !automaticDecisions.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Proposed edits — turn any edit off to undo it")
+                        .font(.subheadline.weight(.semibold))
+                    ForEach(automaticDecisions) { decision in
+                        Toggle(
+                            decisionLabel(decision),
+                            isOn: Binding(
+                                get: {
+                                    model.sharingState.drafts
+                                        .first(where: { $0.id == draft.id })?
+                                        .cleanup?.decisions.first(where: { $0.id == decision.id })?.accepted ?? false
+                                },
+                                set: {
+                                    model.setCleanupDecision(
+                                        draftID: draft.id,
+                                        decisionID: decision.id,
+                                        accepted: $0
+                                    )
+                                }
+                            )
                         )
-                    )
-                    .font(.caption)
+                        .font(.caption)
+                    }
                 }
             }
         }
@@ -328,6 +463,59 @@ struct InterjectionSharingView: View {
         case .filler: return "Remove “\(decision.originalText ?? "filler")”"
         case .isolatedPhrase: return "Remove isolated “\(decision.originalText ?? "phrase")”"
         case .longPause: return "Shorten \(max(0, decision.endMs - decision.startMs)) ms pause"
+        case .manualWord: return "Remove “\(decision.originalText ?? "word")”"
+        }
+    }
+}
+
+private struct MarginWordWrapLayout: Layout {
+    let spacing: CGFloat
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        let width = proposal.width ?? .greatestFiniteMagnitude
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        return CGSize(width: proposal.width ?? max(0, x - spacing), height: y + rowHeight)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            subview.place(
+                at: CGPoint(x: x, y: y),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(size)
+            )
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
         }
     }
 }

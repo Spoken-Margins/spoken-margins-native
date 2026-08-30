@@ -59,7 +59,8 @@ public enum DeterministicInterjectionCleanup {
 
     public static func propose(
         _ transcript: AlignedInterjectionTranscript,
-        restoredDecisionIds: Set<String> = []
+        restoredDecisionIds: Set<String> = [],
+        manuallyDeletedSegmentIds: Set<String> = []
     ) -> InterjectionCleanupResult {
         let segments = transcript.segments
             .filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.endMs > $0.startMs }
@@ -87,6 +88,19 @@ public enum DeterministicInterjectionCleanup {
                 accepted: accepted
             ))
             if accepted { removedIndices.insert(index) }
+        }
+
+        for (index, segment) in segments.enumerated() where manuallyDeletedSegmentIds.contains(segment.id) {
+            let id = decisionId(kind: "manual-word", index: index, startMs: segment.startMs, endMs: segment.endMs)
+            decisions.append(InterjectionCleanupDecision(
+                id: id,
+                kind: .manualWord,
+                startMs: paddedStart(for: index, in: segments),
+                endMs: paddedEnd(for: index, in: segments),
+                originalText: segment.text,
+                accepted: true
+            ))
+            removedIndices.insert(index)
         }
 
         if segments.count >= 2 {

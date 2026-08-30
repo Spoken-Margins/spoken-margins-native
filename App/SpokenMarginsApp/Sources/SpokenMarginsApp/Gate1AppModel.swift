@@ -4354,7 +4354,7 @@ final class Gate1AppModel: ObservableObject {
                 try? FileManager.default.removeItem(at: root)
                 return
             }
-            let matchingItemId = try matchingItemID(for: contents.manifest.source, store: store)
+            let matchingItemId = try matchingItemID(for: contents.manifest.item, store: store)
             spokenMarginsPackageImportError = nil
             spokenMarginsPackageImportReview = SpokenMarginsPackageImportReview(
                 packageURL: copiedPackage,
@@ -4396,6 +4396,10 @@ final class Gate1AppModel: ObservableObject {
     func confirmSpokenMarginsPackageImport() {
         guard let review = spokenMarginsPackageImportReview,
               !isImportingSpokenMarginsPackage else { return }
+        guard !review.requiresRecipientItem else {
+            spokenMarginsPackageImportError = "This package does not include the item. Add the same text, PDF, or EPUB to your library, then open this .spokenmargins file again."
+            return
+        }
         isImportingSpokenMarginsPackage = true
         spokenMarginsPackageImportError = nil
         Task { @MainActor [weak self] in
@@ -4405,19 +4409,21 @@ final class Gate1AppModel: ObservableObject {
                 let itemId: String?
                 if let matching = review.matchingItemId {
                     itemId = matching
-                } else if review.contents.manifest.source.sourceType == .podcast {
-                    itemId = try await self.acquirePodcastForImportedPackage(review.contents.manifest.source)
+                } else if review.contents.manifest.itemTransport.kind == .embeddedText {
+                    itemId = try self.installEmbeddedItem(from: review.contents, store: store)
+                } else if review.contents.manifest.item.itemType == .podcast {
+                    itemId = try await self.acquirePodcastForImportedPackage(review.contents.manifest.item)
                 } else {
                     itemId = nil
                 }
                 let item = try itemId.map { try store.loadItem(id: $0) }
-                let localSource = item.map(self.localSharedSourceIdentity(for:))
-                let sourceText = item?.text
+                let localItem = item.map(self.localSharedItemIdentity(for:))
+                let itemText = item?.text
                 let disposition = try SpokenMarginsPackageImporter.importPackage(
                     review.contents,
                     itemId: itemId,
-                    localSource: localSource,
-                    sourceText: sourceText,
+                    localItem: localItem,
+                    itemText: itemText,
                     repository: store
                 )
                 switch disposition {
@@ -4430,6 +4436,7 @@ final class Gate1AppModel: ObservableObject {
                 self.isImportingSpokenMarginsPackage = false
                 if let itemId {
                     self.activeItemId = itemId
+                    self.libraryItems = try self.loadLibraryRows(store: store)
                     self.selectedItem = try self.loadItemDetail(id: itemId, store: store)
                     self.screen = .item
                     if let item,
@@ -4463,27 +4470,54 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func acquirePodcastForImportedPackage(_ source: SharedSourceIdentity) async throws -> String {
+    private func installEmbeddedItem(
+        from contents: VerifiedSpokenMarginsPackage,
+        store: SQLiteSessionStore
+    ) throws -> String {
+        guard contents.manifest.itemTransport.kind == .embeddedText,
+              let artifactID = contents.manifest.itemTransport.embeddedArtifactId,
+              let embedded = contents.embeddedTextItems.first(where: { $0.id == artifactID }),
+              let digest = contents.manifest.contentDigest else {
+            throw SessionKitError.persistenceFailed("shared_embedded_item_is_unavailable")
+        }
+        let itemID = "item-shared-\(digest.prefix(20))"
+        let item = Item(
+            id: itemID,
+            title: contents.manifest.item.title,
+            mediaType: "text",
+            text: embedded.text,
+            externalReference: "shared-package:\(contents.manifest.packageId)",
+            status: "ready",
+            externalReferenceType: "spoken_margins_package"
+        )
+        try store.seed(item: item)
+        return itemID
+    }
+
+    private func acquirePodcastForImportedPackage(_ item: SharedItemIdentity) async throws -> String {
+        guard let canonicalURL = item.canonicalURL else {
+            throw SessionKitError.persistenceFailed("shared_podcast_item_has_no_reference")
+        }
         let request = LinkResolutionRequest(
             id: "shared-package-\(UUID().uuidString)",
-            inputURL: source.canonicalURL,
+            inputURL: canonicalURL,
             sourceSurface: "spoken_margins_package",
             createdAt: Date()
         )
         var result = try await PublicPodcastLinkResolver().resolveAsync(request)
         if result.status == .needsReview {
             let exactEnclosureMatches = result.candidates.filter {
-                normalizedSharingURL($0.audioURL) == normalizedSharingURL(source.enclosureURL)
+                normalizedSharingURL($0.audioURL) == normalizedSharingURL(item.enclosureURL)
             }
             let titleDurationMatches = result.candidates.filter {
-                $0.title.compare(source.title, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
-                    && durationIsCompatible($0.durationMs, source.durationMs)
+                $0.title.compare(item.title, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+                    && durationIsCompatible($0.durationMs, item.durationMs)
             }
             let selected = exactEnclosureMatches.count == 1
                 ? exactEnclosureMatches.first
                 : (titleDurationMatches.count == 1 ? titleDurationMatches.first : nil)
             guard let selected else {
-                throw SessionKitError.persistenceFailed("shared_podcast_source_is_ambiguous")
+                throw SessionKitError.persistenceFailed("shared_podcast_item_is_ambiguous")
             }
             result.status = .playable
             result.selectedCandidate = selected
@@ -4497,22 +4531,22 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func matchingItemID(
-        for source: SharedSourceIdentity,
+        for itemIdentity: SharedItemIdentity,
         store: SQLiteSessionStore
     ) throws -> String? {
         let matches = try store.listItems().filter { item in
-            ImportedSourceResolver.canRepresentSameWork(source, localSharedSourceIdentity(for: item))
+            ImportedItemResolver.canRepresentSameWork(itemIdentity, localSharedItemIdentity(for: item))
         }
         return matches.count == 1 ? matches[0].id : nil
     }
 
-    private func localSharedSourceIdentity(for item: Item) -> SharedSourceIdentity {
+    private func localSharedItemIdentity(for item: Item) -> SharedItemIdentity {
         let isPodcast = item.media?.sourceType == .remoteStream || item.media?.sourceType == .nativeMediaFile
         let external = item.externalReference.flatMap { normalizedSharingURL($0) == nil ? nil : $0 }
         let enclosure = item.media?.url.flatMap { normalizedSharingURL($0) == nil ? nil : $0 }
-        return SharedSourceIdentity(
-            sourceType: isPodcast ? .podcast : .article,
-            canonicalURL: external ?? enclosure ?? "https://spokenmargins.invalid/item/\(item.id)",
+        return SharedItemIdentity(
+            itemType: sharedItemType(for: item),
+            canonicalURL: external ?? enclosure,
             originalURL: external,
             title: item.title,
             enclosureURL: enclosure,
@@ -8002,6 +8036,15 @@ final class Gate1AppModel: ObservableObject {
         }
         sharingState = InterjectionSharingState(isPreparing: true)
         isSharingInterjectionsPresented = true
+        if let item = try? requireStore().loadItem(id: selectedItem.id) {
+            let reference = secureSharedItemURL(for: item)
+            sharingState.itemReferenceURL = reference
+            sharingState.isAppAuthoredItem = item.id == Self.welcomeSampleItemId
+            sharingState.canEmbedLinklessItem = reference == nil
+                && sharedItemType(for: item) != .podcast
+                && !(item.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            sharingState.confirmsPrivateSharingRights = sharingState.isAppAuthoredItem
+        }
         sharingState.drafts = candidates.map { interjection in
             let transcript = interjection.cleanedTranscript
                 ?? interjection.transcript
@@ -8012,17 +8055,11 @@ final class Gate1AppModel: ObservableObject {
                 before: interjection.anchor.anchorBefore,
                 after: interjection.anchor.anchorAfter
             )
-            let evidenceWarning: String?
-            if selectedItem.isNativeAudio && (interjection.podcastAnchorEvidence ?? []).isEmpty {
-                evidenceWarning = "High-reliability anchor evidence was unavailable at capture. This Margin will remain unresolved on a different podcast edition."
-            } else {
-                evidenceWarning = nil
-            }
             return ShareInterjectionDraft(
                 interjection: interjection,
                 approvedTranscript: transcript,
                 representationChoice: hasAudio ? .original : .textOnly,
-                warning: evidenceWarning,
+                warning: shareAnchorWarning(for: interjection),
                 anchorBefore: context.before,
                 anchorAfter: context.after
             )
@@ -8033,11 +8070,6 @@ final class Gate1AppModel: ObservableObject {
     func setShareDraftIncluded(_ id: String, included: Bool) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
         sharingState.drafts[index].isIncluded = included
-    }
-
-    func setShareDraftTranscript(_ id: String, transcript: String) {
-        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
-        sharingState.drafts[index].approvedTranscript = transcript
     }
 
     func setShareDraftRepresentation(_ id: String, choice: ShareMarginRepresentationChoice) {
@@ -8063,40 +8095,159 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func prepareCleanup(forShareDraft id: String) {
-        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }),
-              let aligned = sharingState.drafts[index].interjection.alignedTranscript else { return }
-        let cleanup = DeterministicInterjectionCleanup.propose(aligned)
-        sharingState.drafts[index].cleanup = cleanup
-        sharingState.drafts[index].approvedTranscript = cleanup.cleanedTranscript
-        renderCleanup(forShareDraft: id)
+        recordShareEdit(for: id) { $0.automaticCleanupEnabled = true }
+        analyzeAcousticPauses(forShareDraft: id)
     }
 
     func setCleanupDecision(draftID: String, decisionID: String, accepted: Bool) {
-        guard let index = sharingState.drafts.firstIndex(where: { $0.id == draftID }),
-              let aligned = sharingState.drafts[index].interjection.alignedTranscript else { return }
-        var restored = Set(
-            sharingState.drafts[index].cleanup?.decisions
-                .filter { !$0.accepted }
-                .map(\.id) ?? []
-        )
-        if accepted { restored.remove(decisionID) } else { restored.insert(decisionID) }
-        let cleanup = DeterministicInterjectionCleanup.propose(aligned, restoredDecisionIds: restored)
-        sharingState.drafts[index].cleanup = cleanup
-        sharingState.drafts[index].approvedTranscript = cleanup.cleanedTranscript
-        renderCleanup(forShareDraft: draftID)
+        recordShareEdit(for: draftID) { state in
+            if accepted {
+                state.restoredAutomaticDecisionIds.remove(decisionID)
+            } else {
+                state.restoredAutomaticDecisionIds.insert(decisionID)
+            }
+        }
+    }
+
+    func toggleShareDraftWord(draftID: String, segmentID: String) {
+        guard let draft = sharingState.drafts.first(where: { $0.id == draftID }),
+              let aligned = draft.interjection.alignedTranscript,
+              let segment = aligned.segments.first(where: { $0.id == segmentID }) else { return }
+        let overlappingAccepted = draft.cleanup?.decisions.filter {
+            $0.accepted && $0.kind != .longPause && $0.startMs < segment.endMs && $0.endMs > segment.startMs
+        } ?? []
+        recordShareEdit(for: draftID) { state in
+            if state.manuallyDeletedSegmentIds.contains(segmentID) || !overlappingAccepted.isEmpty {
+                state.manuallyDeletedSegmentIds.remove(segmentID)
+                overlappingAccepted.forEach { state.restoredAutomaticDecisionIds.insert($0.id) }
+            } else {
+                state.manuallyDeletedSegmentIds.insert(segmentID)
+            }
+        }
+    }
+
+    func isShareDraftWordDeleted(draftID: String, segmentID: String) -> Bool {
+        guard let draft = sharingState.drafts.first(where: { $0.id == draftID }),
+              let segment = draft.interjection.alignedTranscript?.segments.first(where: { $0.id == segmentID }) else {
+            return false
+        }
+        return draft.cleanup?.decisions.contains {
+            $0.accepted && $0.kind != .longPause && $0.startMs < segment.endMs && $0.endMs > segment.startMs
+        } ?? false
+    }
+
+    func undoShareDraftEdit(_ id: String) {
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }),
+              sharingState.drafts[index].canUndoEdit else { return }
+        sharingState.drafts[index].editHistoryIndex -= 1
+        applyShareEditState(at: index)
+    }
+
+    func redoShareDraftEdit(_ id: String) {
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }),
+              sharingState.drafts[index].canRedoEdit else { return }
+        sharingState.drafts[index].editHistoryIndex += 1
+        applyShareEditState(at: index)
     }
 
     func restoreOriginalShareDraft(_ id: String) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
         let interjection = sharingState.drafts[index].interjection
+        sharingState.drafts[index].editHistory = [.original]
+        sharingState.drafts[index].editHistoryIndex = 0
         sharingState.drafts[index].cleanup = nil
         sharingState.drafts[index].cleanedAudioURL = nil
         sharingState.drafts[index].cleanedAudioDurationMs = nil
         sharingState.drafts[index].approvedTranscript = interjection.transcript ?? interjection.displayText ?? ""
         sharingState.drafts[index].representationChoice = originalAudioURL(forShareDraft: id) == nil ? .textOnly : .original
-        sharingState.drafts[index].warning = selectedItem.isNativeAudio && (interjection.podcastAnchorEvidence ?? []).isEmpty
-            ? "High-reliability anchor evidence was unavailable at capture. This Margin will remain unresolved on a different podcast edition."
+        sharingState.drafts[index].warning = shareAnchorWarning(for: interjection)
+    }
+
+    private func recordShareEdit(
+        for id: String,
+        mutate: (inout ShareMarginEditState) -> Void
+    ) {
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }),
+              sharingState.drafts[index].interjection.alignedTranscript != nil else { return }
+        var state = sharingState.drafts[index].currentEditState
+        mutate(&state)
+        guard state != sharingState.drafts[index].currentEditState else { return }
+        sharingState.drafts[index].editHistory = Array(
+            sharingState.drafts[index].editHistory.prefix(sharingState.drafts[index].editHistoryIndex + 1)
+        ) + [state]
+        sharingState.drafts[index].editHistoryIndex += 1
+        applyShareEditState(at: index)
+    }
+
+    private func applyShareEditState(at index: Int) {
+        guard sharingState.drafts.indices.contains(index),
+              let aligned = sharingState.drafts[index].interjection.alignedTranscript else { return }
+        let state = sharingState.drafts[index].currentEditState
+        let allAutomatic = DeterministicInterjectionCleanup.propose(aligned).decisions.map(\.id)
+        var restored = state.restoredAutomaticDecisionIds
+        if !state.automaticCleanupEnabled {
+            restored.formUnion(allAutomatic)
+            restored.formUnion(sharingState.drafts[index].acousticPauseDecisions.map(\.id))
+        }
+        let core = DeterministicInterjectionCleanup.propose(
+            aligned,
+            restoredDecisionIds: restored,
+            manuallyDeletedSegmentIds: state.manuallyDeletedSegmentIds
+        )
+        let acoustic = sharingState.drafts[index].acousticPauseDecisions.map { decision in
+            InterjectionCleanupDecision(
+                id: decision.id,
+                kind: decision.kind,
+                startMs: decision.startMs,
+                endMs: decision.endMs,
+                originalText: decision.originalText,
+                accepted: !restored.contains(decision.id)
+            )
+        }
+        let visibleCoreDecisions = acoustic.isEmpty
+            ? core.decisions
+            : core.decisions.filter { $0.kind != .longPause }
+        let hasEdits = visibleCoreDecisions.contains { $0.accepted } || acoustic.contains { $0.accepted }
+        sharingState.drafts[index].cleanup = hasEdits
+            ? InterjectionCleanupResult(
+                policyVersion: core.policyVersion,
+                cleanedTranscript: core.cleanedTranscript,
+                decisions: (visibleCoreDecisions + acoustic).sorted { $0.startMs == $1.startMs ? $0.id < $1.id : $0.startMs < $1.startMs }
+            )
             : nil
+        sharingState.drafts[index].approvedTranscript = hasEdits
+            ? core.cleanedTranscript
+            : (sharingState.drafts[index].interjection.transcript ?? sharingState.drafts[index].interjection.displayText ?? "")
+        if hasEdits {
+            renderCleanup(forShareDraft: sharingState.drafts[index].id)
+        } else {
+            sharingState.drafts[index].cleanedAudioURL = nil
+            sharingState.drafts[index].cleanedAudioDurationMs = nil
+            sharingState.drafts[index].representationChoice = originalAudioURL(forShareDraft: sharingState.drafts[index].id) == nil ? .textOnly : .original
+        }
+    }
+
+    private func analyzeAcousticPauses(forShareDraft id: String) {
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }),
+              sharingState.drafts[index].acousticPauseDecisions.isEmpty,
+              !sharingState.drafts[index].isAnalyzingPauses,
+              let aligned = sharingState.drafts[index].interjection.alignedTranscript,
+              let sourcePath = sharingState.drafts[index].interjection.audioPath,
+              let sourceURL = resolvedInterjectionAudioURL(for: sourcePath) else { return }
+        sharingState.drafts[index].isAnalyzingPauses = true
+        Task.detached { [weak self] in
+            let decisions = (try? InterjectionSilenceDetector.proposePauseEdits(
+                sourceURL: sourceURL,
+                alignedTranscript: aligned
+            )) ?? []
+            await MainActor.run {
+                guard let self,
+                      let current = self.sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
+                self.sharingState.drafts[current].isAnalyzingPauses = false
+                self.sharingState.drafts[current].acousticPauseDecisions = decisions
+                self.applyShareEditState(at: current)
+            }
+        }
     }
 
     private func renderCleanup(forShareDraft id: String) {
@@ -8107,10 +8258,15 @@ final class Gate1AppModel: ObservableObject {
               let root = try? applicationSupportDirectory()
                 .appending(path: "SpokenMargins/ShareRevisions/\(UUID().uuidString)", directoryHint: .isDirectory) else {
             if let index = sharingState.drafts.firstIndex(where: { $0.id == id }) {
-                sharingState.drafts[index].warning = "The cleaned audio preview could not be prepared. You can still share original voice or text."
+                sharingState.drafts[index].warning = [
+                    shareAnchorWarning(for: sharingState.drafts[index].interjection),
+                    "The cleaned audio preview could not be prepared. You can still share original voice or text."
+                ].compactMap { $0 }.joined(separator: " ")
             }
             return
         }
+        sharingState.drafts[index].renderGeneration += 1
+        let generation = sharingState.drafts[index].renderGeneration
         let destination = root.appending(path: "cleaned-\(id).m4a")
         Task.detached { [weak self] in
             do {
@@ -8120,22 +8276,37 @@ final class Gate1AppModel: ObservableObject {
                     decisions: decisions
                 )
                 await MainActor.run {
-                    guard let current = self?.sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
+                    guard let current = self?.sharingState.drafts.firstIndex(where: { $0.id == id }),
+                          self?.sharingState.drafts[current].renderGeneration == generation else { return }
                     self?.sharingState.drafts[current].cleanedAudioURL = destination
                     self?.sharingState.drafts[current].cleanedAudioDurationMs = duration
                     self?.sharingState.drafts[current].representationChoice = .cleaned
-                    self?.sharingState.drafts[current].warning = nil
+                    if let interjection = self?.sharingState.drafts[current].interjection {
+                        self?.sharingState.drafts[current].warning = self?.shareAnchorWarning(for: interjection)
+                    }
                 }
             } catch {
                 await MainActor.run {
-                    guard let current = self?.sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
+                    guard let current = self?.sharingState.drafts.firstIndex(where: { $0.id == id }),
+                          self?.sharingState.drafts[current].renderGeneration == generation else { return }
                     self?.sharingState.drafts[current].cleanedAudioURL = nil
                     self?.sharingState.drafts[current].cleanedAudioDurationMs = nil
                     self?.sharingState.drafts[current].representationChoice = .original
-                    self?.sharingState.drafts[current].warning = "Cleaned audio could not be regenerated. Original voice and reviewed text are still available."
+                    if let interjection = self?.sharingState.drafts[current].interjection {
+                        self?.sharingState.drafts[current].warning = [
+                            self?.shareAnchorWarning(for: interjection),
+                            "Cleaned audio could not be regenerated. Original voice and reviewed text are still available."
+                        ].compactMap { $0 }.joined(separator: " ")
+                    }
                 }
             }
         }
+    }
+
+    private func shareAnchorWarning(for interjection: Interjection) -> String? {
+        selectedItem.isNativeAudio && (interjection.podcastAnchorEvidence ?? []).isEmpty
+            ? "High-reliability anchor evidence was unavailable at capture. This Margin will remain unresolved on a different podcast edition."
+            : nil
     }
 
     func exportSharedInterjections() {
@@ -8151,7 +8322,8 @@ final class Gate1AppModel: ObservableObject {
         do {
             let store = try requireStore()
             let item = try store.loadItem(id: selectedItem.id)
-            let source = try sharedSourceIdentity(for: item, drafts: drafts)
+            let itemIdentity = sharedItemIdentity(for: item, drafts: drafts)
+            let itemTransport = reviewedItemTransport(for: item, identity: itemIdentity)
             var machineEvidence: [ReviewedMachineEvidenceAsset] = []
             var selections: [ReviewedInterjectionSelection] = []
 
@@ -8219,7 +8391,8 @@ final class Gate1AppModel: ObservableObject {
             let prepared = try SpokenMarginsPackageBuilder.prepare(
                 packageId: packageID,
                 createdAt: Date(),
-                source: source,
+                item: itemIdentity,
+                itemTransportSelection: itemTransport,
                 selections: selections,
                 machineEvidence: machineEvidence,
                 senderDisplayLabel: sharingState.senderDisplayLabel.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
@@ -8242,25 +8415,22 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func sharedSourceIdentity(
+    private func sharedItemIdentity(
         for item: Item,
         drafts: [ShareInterjectionDraft]
-    ) throws -> SharedSourceIdentity {
+    ) -> SharedItemIdentity {
         let isPodcast = item.media?.sourceType == .remoteStream || item.media?.sourceType == .nativeMediaFile
-        let external = item.externalReference.flatMap { URL(string: $0)?.scheme?.lowercased() == "https" ? $0 : nil }
+        let external = item.externalReference.flatMap { normalizedSharingURL($0) }
         let enclosure = item.media?.url.flatMap { URL(string: $0)?.scheme?.lowercased() == "https" ? $0 : nil }
-        guard let canonical = external ?? enclosure else {
-            throw SessionKitError.persistenceFailed("share_source_has_no_secure_canonical_url")
-        }
         let draftDigests = drafts.compactMap { $0.interjection.sourceExactEditionSHA256 }
         let exactDigest = draftDigests.count == drafts.count && Set(draftDigests).count == 1
             ? draftDigests.first
             : nil
         let articleExact = isPodcast ? nil : PortableArticleAnchorResolver.exactEditionSHA256(item.text ?? "")
         let articleNormalized = isPodcast ? nil : PortableArticleAnchorResolver.normalizedContentSHA256(item.text ?? "")
-        return SharedSourceIdentity(
-            sourceType: isPodcast ? .podcast : .article,
-            canonicalURL: canonical,
+        return SharedItemIdentity(
+            itemType: sharedItemType(for: item),
+            canonicalURL: external ?? enclosure,
             originalURL: external,
             title: item.title,
             enclosureURL: enclosure,
@@ -8268,6 +8438,40 @@ final class Gate1AppModel: ObservableObject {
             normalizedContentSHA256: articleNormalized,
             exactEditionSHA256: exactDigest ?? articleExact
         )
+    }
+
+    private func reviewedItemTransport(
+        for item: Item,
+        identity: SharedItemIdentity
+    ) -> ReviewedItemTransportSelection {
+        if identity.canonicalURL != nil {
+            return .reference
+        }
+        let text = item.text ?? ""
+        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           sharingState.isAppAuthoredItem || sharingState.confirmsPrivateSharingRights {
+            return .embeddedText(
+                text: text,
+                originalMediaType: identity.itemType.rawValue,
+                rightsBasis: sharingState.isAppAuthoredItem ? .appAuthored : .senderConfirmedPrivateRights
+            )
+        }
+        return .recipientSupplied
+    }
+
+    private func secureSharedItemURL(for item: Item) -> String? {
+        item.externalReference.flatMap(normalizedSharingURL)
+            ?? item.media?.url.flatMap(normalizedSharingURL)
+    }
+
+    private func sharedItemType(for item: Item) -> SharedItemType {
+        if item.media?.sourceType == .remoteStream || item.media?.sourceType == .nativeMediaFile {
+            return .podcast
+        }
+        let extensionName = URL(fileURLWithPath: item.externalReference ?? "").pathExtension.lowercased()
+        if extensionName == "pdf" { return .pdf }
+        if extensionName == "epub" { return .epub }
+        return .text
     }
 
     private func portableAnchor(
@@ -9263,11 +9467,11 @@ final class Gate1AppModel: ObservableObject {
               let item = try? store.loadItem(id: itemId),
               let layers = try? store.loadImportedCommentaryLayers(itemId: itemId),
               !layers.isEmpty else { return }
-        let localSource = localSharedSourceIdentity(for: item)
+        let localItem = localSharedItemIdentity(for: item)
         let recipientTranscript = try? store.loadTranscriptTimeline(itemId: itemId)?.timeline
         let work = layers.compactMap { layer -> (ImportedCommentaryLayer, [ImportedCommentaryInterjection])? in
             guard layer.deletedAt == nil,
-                  layer.sourceIdentity.sourceType == .podcast,
+                  layer.itemIdentity.itemType == .podcast,
                   let records = try? store.loadImportedCommentaryInterjections(layerId: layer.id),
                   !records.isEmpty else { return nil }
             return (layer, records)
@@ -9297,11 +9501,11 @@ final class Gate1AppModel: ObservableObject {
                     let resolutions = try await PodcastAcousticAnchorResolver.resolve(
                         queries: queries,
                         recipientAudioURL: localURL,
-                        senderExactEditionSHA256: layer.sourceIdentity.exactEditionSHA256,
-                        senderDurationMs: layer.sourceIdentity.durationMs,
-                        strongSourceIdentity: ImportedSourceResolver.canRepresentSameWork(
-                            layer.sourceIdentity,
-                            localSource
+                        senderExactEditionSHA256: layer.itemIdentity.exactEditionSHA256,
+                        senderDurationMs: layer.itemIdentity.durationMs,
+                        strongSourceIdentity: ImportedItemResolver.canRepresentSameWork(
+                            layer.itemIdentity,
+                            localItem
                         )
                     )
                     let fusedResolutions = PodcastAnchorFusionResolver.enforcingMonotonicOrder(

@@ -10,6 +10,46 @@ import PDFKit
 
 @MainActor
 final class Gate1AppModelWorkflowTests: XCTestCase {
+    func testLinklessTextSharingOffersPrivateRightsOrRecipientSuppliedTransport() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.importTitle = "Private draft"
+        model.importText = "A linkless item that can travel with its Margins when the sender confirms rights."
+        model.importTextItem()
+        model.selectedItem.interjections = [shareableInterjection(itemId: model.selectedItem.id)]
+
+        model.prepareShareInterjections()
+
+        XCTAssertNil(model.sharingState.itemReferenceURL)
+        XCTAssertTrue(model.sharingState.canEmbedLinklessItem)
+        XCTAssertFalse(model.sharingState.isAppAuthoredItem)
+        XCTAssertFalse(model.sharingState.confirmsPrivateSharingRights)
+        XCTAssertEqual(model.sharingState.drafts.count, 1)
+    }
+
+    func testShareWordDeletionSupportsUndoAndRedoWithoutAllowingInsertedText() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.importTitle = "Editable Margin item"
+        model.importText = "An item used to review a Margin."
+        model.importTextItem()
+        let margin = shareableInterjection(itemId: model.selectedItem.id)
+        model.selectedItem.interjections = [margin]
+        model.prepareShareInterjections()
+        let draft = try XCTUnwrap(model.sharingState.drafts.first)
+
+        model.toggleShareDraftWord(draftID: draft.id, segmentID: "word-remove")
+        XCTAssertEqual(model.sharingState.drafts[0].approvedTranscript, "Keep words.")
+        XCTAssertTrue(model.sharingState.drafts[0].canUndoEdit)
+
+        model.undoShareDraftEdit(draft.id)
+        XCTAssertEqual(model.sharingState.drafts[0].approvedTranscript, "Keep unnecessary words.")
+        XCTAssertTrue(model.sharingState.drafts[0].canRedoEdit)
+
+        model.redoShareDraftEdit(draft.id)
+        XCTAssertEqual(model.sharingState.drafts[0].approvedTranscript, "Keep words.")
+    }
+
     func testPlaybackScrubStateKeepsGestureValueAuthoritativeUntilCommit() {
         var state = PlaybackScrubState()
         let range = 0.0...3_600.0
@@ -1492,6 +1532,40 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         } else {
             UserDefaults.standard.removeObject(forKey: key)
         }
+    }
+
+    private func shareableInterjection(itemId: String) -> Interjection {
+        Interjection(
+            id: "margin-\(UUID().uuidString)",
+            itemId: itemId,
+            sessionId: "session-sharing-test",
+            targetType: .item,
+            targetId: itemId,
+            createdAt: Date(timeIntervalSince1970: 1),
+            roughPercent: 50,
+            anchor: Anchor(
+                anchorType: .text,
+                startChar: 0,
+                endChar: 5,
+                anchorBefore: "Before",
+                anchorAfter: "After"
+            ),
+            audioPath: nil,
+            audioStatus: "none",
+            transcriptionStatus: "transcribed",
+            transcript: "Keep unnecessary words.",
+            cleanedTranscript: nil,
+            displayText: nil,
+            status: "active",
+            alignedTranscript: AlignedInterjectionTranscript(
+                text: "Keep unnecessary words.",
+                segments: [
+                    .init(id: "word-keep", text: "Keep", startMs: 0, endMs: 200),
+                    .init(id: "word-remove", text: "unnecessary", startMs: 240, endMs: 650),
+                    .init(id: "word-words", text: "words.", startMs: 690, endMs: 950)
+                ]
+            )
+        )
     }
 
     func testObsidianImportRunsInBackgroundAndLoadsHeadingBasedListeningMap() async throws {

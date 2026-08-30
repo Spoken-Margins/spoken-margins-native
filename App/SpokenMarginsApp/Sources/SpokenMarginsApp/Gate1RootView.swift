@@ -3330,10 +3330,27 @@ private struct ExportScreen: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("Share Session")
+                    Text("Share")
                         .font(.largeTitle.bold())
-                    Text("Choose one listening session, then share or copy a session-isolated handoff. Changes below update the preview automatically.")
+                    Text("Share reviewed Margins with their voice, or export a session handoff as Markdown or JSON.")
                         .foregroundStyle(AppColors.secondaryText)
+                    ProductPanel {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Share Margins")
+                                .font(.headline)
+                            Text("Review the words, voice version, item transport, and anchor evidence that will leave your device.")
+                                .font(.callout)
+                                .foregroundStyle(AppColors.secondaryText)
+                            Button(action: model.prepareShareInterjections) {
+                                Label("Share Margins (\(shareableMarginCount))", systemImage: "person.wave.2")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(PrimaryButtonStyle())
+                            .disabled(shareableMarginCount == 0)
+                        }
+                    }
+                    Text("Export listening session")
+                        .font(.headline)
                     ProductPanel {
                         VStack(alignment: .leading, spacing: 14) {
                             Picker(
@@ -3399,7 +3416,7 @@ private struct ExportScreen: View {
                             Button {
                                 isSharePresented = true
                             } label: {
-                                Label("Share Session", systemImage: "square.and.arrow.up")
+                                Label("Export Session", systemImage: "square.and.arrow.up")
                             }
                             .buttonStyle(PrimaryButtonStyle())
                             .accessibilityIdentifier("export.share.button")
@@ -3411,7 +3428,7 @@ private struct ExportScreen: View {
                             }
                             #else
                             ShareLink(item: model.exportPreview) {
-                                Label("Share Session", systemImage: "square.and.arrow.up")
+                                Label("Export Session", systemImage: "square.and.arrow.up")
                             }
                             .buttonStyle(PrimaryButtonStyle())
                             .accessibilityIdentifier("export.share.button")
@@ -3475,6 +3492,10 @@ private struct ExportScreen: View {
                 }
             }
         }
+    }
+
+    private var shareableMarginCount: Int {
+        model.selectedItem.interjections.filter { $0.status == "active" && $0.targetType == .item }.count
     }
 
     #if canImport(UIKit)

@@ -193,7 +193,7 @@ public enum PortableArticleAnchorResolver {
     }
 }
 
-public enum ImportedSourceResolver {
+public enum ImportedItemResolver {
     public static func pending(
         interjections: [SharedInterjectionPackageRecord]
     ) -> ImportedPackageSourceResolution {
@@ -205,22 +205,22 @@ public enum ImportedSourceResolver {
     }
 
     public static func resolve(
-        source: SharedSourceIdentity,
+        item: SharedItemIdentity,
         interjections: [SharedInterjectionPackageRecord],
-        against localSource: SharedSourceIdentity,
-        sourceText: String?
+        against localItem: SharedItemIdentity,
+        itemText: String?
     ) -> ImportedPackageSourceResolution {
-        guard canRepresentSameWork(source, localSource) else {
+        guard canRepresentSameWork(item, localItem) else {
             return result(status: .wrongSource, interjections: interjections, evidenceClass: .unresolved)
         }
-        guard source.sourceType == .article, let sourceText else {
+        guard item.itemType != .podcast, let itemText else {
             return result(status: .contextOnly, interjections: interjections, evidenceClass: .unresolved)
         }
         let resolutions = Dictionary(uniqueKeysWithValues: interjections.map { record in
             (record.packageScopedId, PortableArticleAnchorResolver.resolve(
                 anchor: record.anchor,
-                in: sourceText,
-                expectedExactEditionSHA256: source.exactEditionSHA256
+                in: itemText,
+                expectedExactEditionSHA256: item.exactEditionSHA256
             ))
         })
         if resolutions.values.contains(where: \.isAmbiguous) {
@@ -246,26 +246,28 @@ public enum ImportedSourceResolver {
     }
 
     public static func canRepresentSameWork(
-        _ packageSource: SharedSourceIdentity,
-        _ localSource: SharedSourceIdentity
+        _ packageItem: SharedItemIdentity,
+        _ localItem: SharedItemIdentity
     ) -> Bool {
-        guard packageSource.sourceType == localSource.sourceType else { return false }
-        if let packageEdition = packageSource.exactEditionSHA256,
-           let localEdition = localSource.exactEditionSHA256,
+        if let packageEdition = packageItem.exactEditionSHA256,
+           let localEdition = localItem.exactEditionSHA256,
            packageEdition == localEdition {
             return true
         }
-        if let packageContent = packageSource.normalizedContentSHA256,
-           let localContent = localSource.normalizedContentSHA256,
+        if let packageContent = packageItem.normalizedContentSHA256,
+           let localContent = localItem.normalizedContentSHA256,
            packageContent == localContent {
             return true
         }
-        if packageSource.sourceType == .podcast,
-           let packageGUID = packageSource.episodeGUID,
-           let localGUID = localSource.episodeGUID {
+        if packageItem.itemType == .podcast,
+           localItem.itemType == .podcast,
+           let packageGUID = packageItem.episodeGUID,
+           let localGUID = localItem.episodeGUID {
             return packageGUID == localGUID
         }
-        return normalizedURL(packageSource.canonicalURL) == normalizedURL(localSource.canonicalURL)
+        guard let packageURL = packageItem.canonicalURL,
+              let localURL = localItem.canonicalURL else { return false }
+        return normalizedURL(packageURL) == normalizedURL(localURL)
     }
 
     private static func normalizedURL(_ value: String) -> String {

@@ -73,6 +73,44 @@ final class SharingTests: XCTestCase {
         XCTAssertEqual(result.decisions.first { $0.kind == .longPause }?.startMs, 400)
     }
 
+    func testManualWordDeletionUsesAlignedRangeAndCanBeRestored() throws {
+        let transcript = AlignedInterjectionTranscript(
+            text: "Keep unnecessary words.",
+            segments: [
+                .init(id: "keep", text: "Keep", startMs: 100, endMs: 320),
+                .init(id: "unnecessary", text: "unnecessary", startMs: 360, endMs: 780),
+                .init(id: "words", text: "words.", startMs: 820, endMs: 1_100)
+            ]
+        )
+        let deleted = DeterministicInterjectionCleanup.propose(
+            transcript,
+            manuallyDeletedSegmentIds: ["unnecessary"]
+        )
+        let decision = try XCTUnwrap(deleted.decisions.first { $0.kind == .manualWord })
+        XCTAssertEqual(deleted.cleanedTranscript, "Keep words.")
+        XCTAssertLessThanOrEqual(decision.startMs, 360)
+        XCTAssertGreaterThanOrEqual(decision.endMs, 780)
+        XCTAssertEqual(DeterministicInterjectionCleanup.propose(transcript).cleanedTranscript, transcript.text)
+    }
+
+    func testAcousticPauseDetectionFindsEdgesAndProtectsAlignedSpeech() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("silence-speech-silence.m4a")
+        try writeSilenceSpeechSilenceM4A(to: url)
+        let transcript = AlignedInterjectionTranscript(
+            text: "A thought.",
+            segments: [.init(id: "thought", text: "A thought.", startMs: 1_000, endMs: 2_000)]
+        )
+        let decisions = try InterjectionSilenceDetector.proposePauseEdits(
+            sourceURL: url,
+            alignedTranscript: transcript
+        )
+        XCTAssertGreaterThanOrEqual(decisions.count, 2)
+        XCTAssertTrue(decisions.allSatisfy { $0.endMs <= 950 || $0.startMs >= 2_050 })
+        XCTAssertTrue(decisions.allSatisfy { $0.kind == .longPause && $0.accepted })
+    }
+
     func testAnchorContextKeepsNearestBoundedEvidenceAndMachineReferences() {
         let anchor = PortableAnchorEvidence(
             anchorType: .transcript,
@@ -101,8 +139,102 @@ final class SharingTests: XCTestCase {
         let data = try XCTUnwrap(prepared.artifactData["artifacts/commentary-layer.json"])
         let layer = try JSONDecoder.iso8601.decode(SharedCommentaryLayerArtifact.self, from: data)
         XCTAssertEqual(layer.interjections.first?.defaultRepresentation?.kind, .textOnly)
-        XCTAssertTrue(prepared.manifest.redactions.provesDefaultMinimization)
+        XCTAssertTrue(prepared.manifest.redactions.provesPrivateMinimization)
         XCTAssertFalse(String(decoding: try SpokenMarginsPackageArchive.encodeManifest(prepared.manifest), as: UTF8.self).contains("private-note"))
+    }
+
+    func testEmbeddedAndRecipientSuppliedItemTransportsDoNotRequireInventedURL() throws {
+        let text = "A linkless item whose exact listened-to text can travel with reviewed Margins."
+        let item = SharedItemIdentity(
+            itemType: .pdf,
+            title: "Linkless Reading",
+            normalizedContentSHA256: PortableArticleAnchorResolver.normalizedContentSHA256(text),
+            exactEditionSHA256: PortableArticleAnchorResolver.exactEditionSHA256(text)
+        )
+        let embedded = try SpokenMarginsPackageBuilder.prepare(
+            packageId: "embedded-package",
+            createdAt: fixedDate,
+            item: item,
+            itemTransportSelection: .embeddedText(
+                text: text,
+                originalMediaType: "pdf",
+                rightsBasis: .senderConfirmedPrivateRights
+            ),
+            selections: [.init(
+                packageScopedId: "margin-001",
+                revision: approvedRevision(),
+                anchor: .init(anchorType: .text, exactText: "exact listened-to text"),
+                representation: .textOnly
+            )]
+        )
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("embedded.spokenmargins")
+        let manifest = try SpokenMarginsPackageArchive.write(embedded, to: url)
+        let verified = try SpokenMarginsPackageArchive.read(
+            from: url,
+            extractingAssetsTo: root.appendingPathComponent("assets")
+        )
+        XCTAssertNil(manifest.item.canonicalURL)
+        XCTAssertEqual(manifest.itemTransport.kind, .embeddedText)
+        XCTAssertEqual(manifest.itemTransport.rightsBasis, .senderConfirmedPrivateRights)
+        XCTAssertFalse(manifest.redactions.fullItemOmitted)
+        XCTAssertEqual(verified.embeddedTextItems.first?.text, text)
+
+        let omitted = try SpokenMarginsPackageBuilder.prepare(
+            packageId: "recipient-supplied-package",
+            createdAt: fixedDate,
+            item: item,
+            itemTransportSelection: .recipientSupplied,
+            selections: [.init(
+                packageScopedId: "margin-001",
+                revision: approvedRevision(),
+                anchor: .init(anchorType: .text),
+                representation: .textOnly
+            )]
+        )
+        let omittedURL = root.appendingPathComponent("omitted.spokenmargins")
+        let omittedManifest = try SpokenMarginsPackageArchive.write(omitted, to: omittedURL)
+        XCTAssertEqual(omittedManifest.itemTransport.kind, .recipientSupplied)
+        XCTAssertTrue(omittedManifest.redactions.fullItemOmitted)
+
+        let linkedButOmitted = try SpokenMarginsPackageBuilder.prepare(
+            packageId: "linked-but-omitted",
+            createdAt: fixedDate,
+            item: articleItem,
+            itemTransportSelection: .recipientSupplied,
+            selections: [.init(
+                packageScopedId: "margin-001",
+                revision: approvedRevision(),
+                anchor: .init(anchorType: .text),
+                representation: .textOnly
+            )]
+        )
+        XCTAssertThrowsError(try SpokenMarginsPackageArchive.write(
+            linkedButOmitted,
+            to: root.appendingPathComponent("linked-but-omitted.spokenmargins")
+        ))
+
+        let mismatchedDocumentType = try SpokenMarginsPackageBuilder.prepare(
+            packageId: "mismatched-document-type",
+            createdAt: fixedDate,
+            item: item,
+            itemTransportSelection: .embeddedText(
+                text: text,
+                originalMediaType: "epub",
+                rightsBasis: .senderConfirmedPrivateRights
+            ),
+            selections: [.init(
+                packageScopedId: "margin-001",
+                revision: approvedRevision(),
+                anchor: .init(anchorType: .text),
+                representation: .textOnly
+            )]
+        )
+        XCTAssertThrowsError(try SpokenMarginsPackageArchive.write(
+            mismatchedDocumentType,
+            to: root.appendingPathComponent("mismatched-document-type.spokenmargins")
+        ))
     }
 
     func testBuilderIncludesOnlyExplicitlySelectedOriginalOrCleanedVoice() throws {
@@ -116,7 +248,8 @@ final class SharingTests: XCTestCase {
         let original = try SpokenMarginsPackageBuilder.prepare(
             packageId: "original-package",
             createdAt: fixedDate,
-            source: articleSource,
+            item: articleItem,
+            itemTransportSelection: .reference,
             selections: [.init(
                 packageScopedId: "margin-original",
                 revision: approvedRevision(),
@@ -130,7 +263,8 @@ final class SharingTests: XCTestCase {
         let cleaned = try SpokenMarginsPackageBuilder.prepare(
             packageId: "cleaned-package",
             createdAt: fixedDate,
-            source: articleSource,
+            item: articleItem,
+            itemTransportSelection: .reference,
             selections: [.init(
                 packageScopedId: "margin-cleaned",
                 revision: approvedRevision(cleanedAudioPath: cleanedURL.path),
@@ -148,18 +282,18 @@ final class SharingTests: XCTestCase {
             createdAt: fixedDate, approvedTranscript: "Draft", anchorBefore: "", anchorAfter: ""
         )
         XCTAssertThrowsError(try SpokenMarginsPackageBuilder.prepare(
-            packageId: "package", createdAt: fixedDate, source: articleSource,
+            packageId: "package", createdAt: fixedDate, item: articleItem, itemTransportSelection: .reference,
             selections: [.init(packageScopedId: "a", revision: draft, anchor: .init(anchorType: .text), representation: .textOnly)]
         )) { XCTAssertEqual($0 as? InterjectionPackagePreparationError, .unapprovedRevision("draft")) }
 
         let approved = approvedRevision(cleanedAudioPath: "/tmp/right.m4a")
         XCTAssertThrowsError(try SpokenMarginsPackageBuilder.prepare(
-            packageId: "package", createdAt: fixedDate, source: articleSource,
+            packageId: "package", createdAt: fixedDate, item: articleItem, itemTransportSelection: .reference,
             selections: [.init(packageScopedId: "a", revision: approved, anchor: .init(anchorType: .text), representation: .cleanedAudio(sourceURL: URL(fileURLWithPath: "/tmp/wrong.m4a")))]
         )) { XCTAssertEqual($0 as? InterjectionPackagePreparationError, .cleanedAudioMismatch(approved.id)) }
 
         XCTAssertThrowsError(try SpokenMarginsPackageBuilder.prepare(
-            packageId: "package", createdAt: fixedDate, source: articleSource,
+            packageId: "package", createdAt: fixedDate, item: articleItem, itemTransportSelection: .reference,
             selections: [
                 .init(packageScopedId: "same", revision: approvedRevision(), anchor: .init(anchorType: .text), representation: .textOnly),
                 .init(packageScopedId: "same", revision: approvedRevision(), anchor: .init(anchorType: .text), representation: .textOnly)
@@ -211,7 +345,7 @@ final class SharingTests: XCTestCase {
             )]
         )
         let prepared = try SpokenMarginsPackageBuilder.prepare(
-            packageId: "map-package", createdAt: fixedDate, source: podcastSource,
+            packageId: "map-package", createdAt: fixedDate, item: podcastItem, itemTransportSelection: .reference,
             selections: [.init(
                 packageScopedId: "margin-001",
                 revision: approvedRevision(),
@@ -683,6 +817,20 @@ final class SharingTests: XCTestCase {
         XCTAssertNil(decoded.podcastAnchorEvidence)
     }
 
+    func testExistingImportedLayerDecodesLegacySourceIdentityWithoutLosingTheLibraryRecord() throws {
+        let data = Data(#"{"id":"legacy-layer","itemId":"item","packageDigest":"digest","packageId":"legacy-package","sourceIdentity":{"sourceType":"article","canonicalURL":"https://example.com/article","originalURL":"https://example.com/article","feedURL":null,"title":"Legacy article","author":null,"publisher":null,"showTitle":null,"episodeGUID":null,"enclosureURL":null,"publishedAt":null,"durationMs":null,"normalizedContentSHA256":null,"exactEditionSHA256":null,"languageCode":null},"displayLabel":null,"suggestedRevealMode":null,"importedAt":"2026-08-29T00:00:00Z","integrityStatus":"integrity_checked_unsigned","sourceResolutionStatus":"resolved","isEnabled":true,"isMuted":false,"revealMode":"companion","deletedAt":null,"listeningMapProposals":null}"#.utf8)
+
+        let decoded = try JSONDecoder.iso8601.decode(ImportedCommentaryLayer.self, from: data)
+
+        XCTAssertEqual(decoded.id, "legacy-layer")
+        XCTAssertEqual(decoded.itemIdentity.itemType, .text)
+        XCTAssertEqual(decoded.itemIdentity.canonicalURL, "https://example.com/article")
+        let reencoded = try JSONEncoder.iso8601.encode(decoded)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: reencoded) as? [String: Any])
+        XCTAssertNotNil(object["itemIdentity"])
+        XCTAssertNil(object["sourceIdentity"])
+    }
+
     func testAlignedTranscriptionPersistsTimingAndLegacyCompletionClearsIt() throws {
         let interjection = Interjection(
             id: "private", itemId: "item", sessionId: "session", targetType: .item,
@@ -790,13 +938,13 @@ final class SharingTests: XCTestCase {
         let prepared = try textPreparedPackage()
         let layerData = try XCTUnwrap(prepared.artifactData["artifacts/commentary-layer.json"])
         let layer = try JSONDecoder.iso8601.decode(SharedCommentaryLayerArtifact.self, from: layerData)
-        let wrong = SharedSourceIdentity(sourceType: .article, canonicalURL: "https://example.com/wrong", title: "Wrong")
-        XCTAssertEqual(ImportedSourceResolver.resolve(source: prepared.manifest.source, interjections: layer.interjections, against: wrong, sourceText: "anything").status, .wrongSource)
-        XCTAssertEqual(ImportedSourceResolver.resolve(source: prepared.manifest.source, interjections: layer.interjections, against: articleSource, sourceText: nil).status, .contextOnly)
+        let wrong = SharedItemIdentity(itemType: .text, canonicalURL: "https://example.com/wrong", title: "Wrong")
+        XCTAssertEqual(ImportedItemResolver.resolve(item: prepared.manifest.item, interjections: layer.interjections, against: wrong, itemText: "anything").status, .wrongSource)
+        XCTAssertEqual(ImportedItemResolver.resolve(item: prepared.manifest.item, interjections: layer.interjections, against: articleItem, itemText: nil).status, .contextOnly)
         let repeated = "Before this passage. The durable idea that prompted this note. After this passage. Before this passage. The durable idea that prompted this note. After this passage."
-        XCTAssertEqual(ImportedSourceResolver.resolve(source: prepared.manifest.source, interjections: layer.interjections, against: articleSource, sourceText: repeated).status, .ambiguous)
+        XCTAssertEqual(ImportedItemResolver.resolve(item: prepared.manifest.item, interjections: layer.interjections, against: articleItem, itemText: repeated).status, .ambiguous)
         let unique = "Before this passage. The durable idea that prompted this note. After this passage."
-        let resolved = ImportedSourceResolver.resolve(source: prepared.manifest.source, interjections: layer.interjections, against: articleSource, sourceText: unique)
+        let resolved = ImportedItemResolver.resolve(item: prepared.manifest.item, interjections: layer.interjections, against: articleItem, itemText: unique)
         XCTAssertEqual(resolved.status, .resolved)
         XCTAssertEqual(resolved.anchorsByPackageScopedId["margin-001"]?.evidenceClass, .articleTextVerified)
     }
@@ -821,14 +969,20 @@ final class SharingTests: XCTestCase {
     }
 
     private var fixedDate: Date { Date(timeIntervalSince1970: 1_777_000_000) }
-    private var articleSource: SharedSourceIdentity {
-        SharedSourceIdentity(sourceType: .article, canonicalURL: "https://example.com/article", title: "A Useful Article")
+    private var articleItem: SharedItemIdentity {
+        SharedItemIdentity(itemType: .text, canonicalURL: "https://example.com/article", title: "A Useful Article")
     }
-    private var podcastSource: SharedSourceIdentity {
-        SharedSourceIdentity(
-            sourceType: .podcast, canonicalURL: "https://example.com/episodes/one", feedURL: "https://example.com/feed.xml",
+    private var podcastItem: SharedItemIdentity {
+        SharedItemIdentity(
+            itemType: .podcast, canonicalURL: "https://example.com/episodes/one",
             title: "Episode One", publisher: "Example", showTitle: "Example Show", episodeGUID: "episode-one",
-            enclosureURL: "https://example.com/audio/one.mp3", durationMs: 3_600_000, languageCode: "en"
+            enclosureURL: "https://example.com/audio/one.mp3", durationMs: 3_600_000, languageCode: "en",
+            source: SharedSourceIdentity(
+                sourceType: .podcastFeed,
+                canonicalURL: "https://example.com/feed.xml",
+                title: "Example Show",
+                publisher: "Example"
+            )
         )
     }
 
@@ -843,7 +997,7 @@ final class SharingTests: XCTestCase {
 
     private func textPreparedPackage() throws -> PreparedSpokenMarginsPackage {
         try SpokenMarginsPackageBuilder.prepare(
-            packageId: "package-article-001", createdAt: fixedDate, source: articleSource,
+            packageId: "package-article-001", createdAt: fixedDate, item: articleItem, itemTransportSelection: .reference,
             selections: [.init(
                 packageScopedId: "margin-001", revision: approvedRevision(),
                 anchor: .init(anchorType: .text, exactText: "The durable idea that prompted this note."),
@@ -876,6 +1030,31 @@ final class SharingTests: XCTestCase {
         let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(sampleRate / 10)))
         buffer.frameLength = buffer.frameCapacity
         try audioFile.write(from: buffer)
+        #else
+        throw XCTSkip("AVFoundation is required")
+        #endif
+    }
+
+    private func writeSilenceSpeechSilenceM4A(to url: URL) throws {
+        #if canImport(AVFoundation)
+        let sampleRate = 44_100.0
+        let audioFile = try AVAudioFile(forWriting: url, settings: [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC), AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64_000
+        ])
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
+        for second in 0..<3 {
+            let frameCount = AVAudioFrameCount(sampleRate)
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount))
+            buffer.frameLength = frameCount
+            let samples = try XCTUnwrap(buffer.floatChannelData?[0])
+            for frame in 0..<Int(frameCount) {
+                samples[frame] = second == 1
+                    ? Float(0.25 * sin(2 * .pi * 220 * Double(frame) / sampleRate))
+                    : 0
+            }
+            try audioFile.write(from: buffer)
+        }
         #else
         throw XCTSkip("AVFoundation is required")
         #endif

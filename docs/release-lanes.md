@@ -28,7 +28,7 @@ Only these branches are active development lanes:
 | --- | --- | --- | --- |
 | `main` | Released and accepted integration runtime plus repository governance | Documentation, validation evidence, distributed runtime, and product-owner-accepted release integration | N/A |
 | `codex/testflight-triage` | Idle rapid-fix lane, currently aligned with the accepted integration baseline | No active issue; a later reproducible TestFlight regression requires explicit admission | `main` |
-| `codex/sharing-next` | Next major numbered feature release | Testable one-way sharing MVP: #17, #18, #67, #68, and #81; cross-edition podcast resolution through #27; portable proposal-contract slice of #88; then co-op replies #19 | `main` when the numbered sharing release is accepted |
+| `codex/sharing-next` | Next major numbered feature release | Direct-share policy #14; testable one-way sharing MVP: #17, #18, #67, #68, and #81; cross-edition podcast resolution through #27; portable proposal-contract slice of #88; then co-op replies #19 | `main` when the numbered sharing release is accepted |
 | `codex/quality-of-life-next` | Next numbered quality-of-life release | Complete non-Watch program: #34, #64, #72, #73, #61, #79, #74, #69, #76, #77, #86, and #87 in the ordered phases below | `main` when the complete numbered quality-of-life release is accepted |
 
 All other local and remote branches are historical and read-only. Their commits may be inspected or deliberately extracted, but work must not resume directly on them without a product-owner plan change. In particular, `codex/sharingV1` is source material for reconciliation into `codex/sharing-next`; it is not an active integration branch.
@@ -80,6 +80,7 @@ For each TestFlight cycle:
 
 ### Phase 1: Foundation
 
+- #14: direct-share rights and provenance policy for referenced versus embedded items.
 - #17: reviewed interjection packages and sender preview.
 - #18: recipient import and distinct commentary layers.
 - #67: deterministic cleanup and bounded anchor context for reviewed representations.
@@ -87,6 +88,8 @@ For each TestFlight cycle:
 - #81: reconcile the existing `codex/sharingV1` implementation with current source and record implementation versus verification status.
 
 These issues form one end-to-end boundary: prepare, preview, export, import, and distinguish shared commentary. Rights and provenance decisions from #14 gate external enablement even when implementation remains disabled behind a feature flag.
+
+Product-owner revision, 2026-08-29: package terminology and transport must distinguish a reusable **source** (for example an RSS feed, newsletter, blog, or social feed) from the discrete **item** being listened to. URL-backed items share source/item references and never redistribute the item payload by default. A linkless native-text or document-derived item may be embedded only after the sender explicitly confirms that the share is private and that they have the right to share the item. Declining that confirmation must not block Margin export; the package instead declares that the recipient must supply the same item. App-authored sample text may be embedded without a user rights assertion because its provenance is known. Missing canonical URLs must never be represented by invented public URLs or reported as persistence failures.
 
 ### Phase 1A: Testable podcast-sharing MVP
 
