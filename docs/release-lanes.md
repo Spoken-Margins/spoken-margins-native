@@ -93,6 +93,8 @@ Product-owner revision, 2026-08-29: package terminology and transport must disti
 
 Product-owner revision, 2026-08-29 (playback validation): sender review must use one compact, readable inline transcript in which words and bracketed pause markers can be tapped to remove or restore them; it must not duplicate the same edits as a vertical toggle list. Imported-item presentation must show one Listening Map generation request and a play/resume action without requiring a long scroll. Companion playback must sound a cue and expose **Listen** and **Dismiss** on the playback screen and Live Activity when a shared Margin is reached. The playback screen must also expose an auto-play control that selects automatic versus opt-in shared-Margin playback without creating a second persistence model.
 
+Product-owner revision, 2026-08-30 (bulk review and listening rate): sender review must offer one explicit bulk action that prepares every included, eligible Margin for filler removal and pause tightening with bounded work, visible progress, cancellation, and per-Margin fallback to Original voice or Text when preparation is unavailable. Bulk preparation must not mutate private originals or prevent later per-Margin review and Undo/Redo. When a private or received Margin voice is played during an item session, it inherits the item's current playback rate; the notification cue remains at normal speed and source playback resumes at its existing rate.
+
 ### Phase 1A: Testable podcast-sharing MVP
 
 The product owner expanded the sharing foundation on 2026-08-29 so it can reach a trusted-tester MVP instead of stopping at package-only infrastructure.

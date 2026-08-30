@@ -76,6 +76,145 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.sharingState.drafts[0].approvedTranscript, "Keep words.")
     }
 
+    func testBulkSharePreparationProcessesFiftyThreeMarginsSequentiallyAndPreservesOriginals() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "bulk-margin-preparation-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let originalURL = directory.appending(path: "private-original.m4a")
+        let originalBytes = Data([0x53, 0x4D, 0x01, 0x35])
+        try originalBytes.write(to: originalURL)
+        let probe = BulkSharePreparationProbe()
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            shareMarginSilenceAnalysisHandler: { _, _ in [] },
+            shareMarginAudioCleanupHandler: { sourceURL, destinationURL, decisions in
+                try await probe.render(
+                    sourceURL: sourceURL,
+                    destinationURL: destinationURL,
+                    decisions: decisions
+                )
+            }
+        )
+        model.resetAndSeed()
+        model.importTitle = "Bulk preparation"
+        model.importText = "An item with many Margins."
+        model.importTextItem()
+        model.selectedItem.interjections = (0..<53).map { index in
+            bulkShareableInterjection(
+                itemId: model.selectedItem.id,
+                id: "margin-bulk-\(index)",
+                audioPath: originalURL.path
+            )
+        }
+        model.prepareShareInterjections()
+
+        XCTAssertEqual(model.bulkSharePreparationEligibleCount, 53)
+        model.prepareAllIncludedShareDrafts()
+        try await waitFor("53 Margins to finish bulk preparation", timeoutNanoseconds: 5_000_000_000) {
+            !model.sharingState.isBulkPreparing
+        }
+
+        let probeSnapshot = await probe.snapshot()
+        XCTAssertEqual(probeSnapshot.renderCount, 53)
+        XCTAssertEqual(probeSnapshot.maximumConcurrentRenders, 1)
+        XCTAssertEqual(model.sharingState.bulkPreparationCompleted, 53)
+        XCTAssertEqual(model.sharingState.bulkPreparationFailureCount, 0)
+        XCTAssertEqual(model.bulkSharePreparationEligibleCount, 0)
+        XCTAssertTrue(model.sharingState.drafts.allSatisfy {
+            $0.currentEditState.automaticCleanupEnabled
+                && $0.representationChoice == .cleaned
+                && $0.approvedTranscript == "Keep words."
+        })
+        XCTAssertEqual(try Data(contentsOf: originalURL), originalBytes)
+
+        let firstID = try XCTUnwrap(model.sharingState.drafts.first?.id)
+        model.undoShareDraftEdit(firstID)
+        XCTAssertEqual(model.sharingState.drafts[0].approvedTranscript, "Keep um words.")
+        model.redoShareDraftEdit(firstID)
+        XCTAssertEqual(model.sharingState.drafts[0].approvedTranscript, "Keep words.")
+    }
+
+    func testMarginPlaybackRateMatchesItemRateAndClampsInvalidValues() {
+        XCTAssertEqual(Gate1AppModel.marginPlaybackRate(itemPlaybackRate: 1.75), 1.75)
+        XCTAssertEqual(Gate1AppModel.marginPlaybackRate(itemPlaybackRate: 4), 3)
+        XCTAssertEqual(Gate1AppModel.marginPlaybackRate(itemPlaybackRate: 0.1), 0.25)
+        XCTAssertEqual(Gate1AppModel.marginPlaybackRate(itemPlaybackRate: .nan), 1)
+    }
+
+    func testCancellingBulkSharePreparationMakesInFlightMarginEligibleAgain() async throws {
+        let sourceURL = FileManager.default.temporaryDirectory
+            .appending(path: "bulk-margin-cancel-\(UUID().uuidString).m4a")
+        try Data([0x01]).write(to: sourceURL)
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            shareMarginSilenceAnalysisHandler: { _, _ in [] },
+            shareMarginAudioCleanupHandler: { _, _, _ in
+                try await Task.sleep(for: .seconds(5))
+                return 625
+            }
+        )
+        model.resetAndSeed()
+        model.importTitle = "Bulk cancellation"
+        model.importText = "An item with one Margin."
+        model.importTextItem()
+        model.selectedItem.interjections = [bulkShareableInterjection(
+            itemId: model.selectedItem.id,
+            id: "margin-cancel",
+            audioPath: sourceURL.path
+        )]
+        model.prepareShareInterjections()
+        model.prepareAllIncludedShareDrafts()
+        try await waitFor("bulk render to begin") {
+            model.sharingState.drafts.first?.isPreparingCleanup == true
+        }
+
+        model.cancelBulkSharePreparation()
+
+        XCTAssertFalse(model.sharingState.isBulkPreparing)
+        XCTAssertEqual(model.sharingState.bulkPreparationCompleted, 0)
+        XCTAssertEqual(model.bulkSharePreparationEligibleCount, 1)
+        XCTAssertFalse(try XCTUnwrap(model.sharingState.drafts.first).currentEditState.automaticCleanupEnabled)
+        XCTAssertNil(model.sharingState.drafts.first?.cleanup)
+    }
+
+    func testBulkSharePreparationFallsBackToOriginalVoiceWhenRenderingFails() async throws {
+        let sourceURL = FileManager.default.temporaryDirectory
+            .appending(path: "bulk-margin-fallback-\(UUID().uuidString).m4a")
+        let originalBytes = Data([0x02, 0x03])
+        try originalBytes.write(to: sourceURL)
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            shareMarginSilenceAnalysisHandler: { _, _ in [] },
+            shareMarginAudioCleanupHandler: { _, _, _ in
+                throw SessionKitError.persistenceFailed("deliberate_cleanup_failure")
+            }
+        )
+        model.resetAndSeed()
+        model.importTitle = "Bulk fallback"
+        model.importText = "An item with one Margin."
+        model.importTextItem()
+        model.selectedItem.interjections = [bulkShareableInterjection(
+            itemId: model.selectedItem.id,
+            id: "margin-fallback",
+            audioPath: sourceURL.path
+        )]
+        model.prepareShareInterjections()
+        model.prepareAllIncludedShareDrafts()
+        try await waitFor("bulk fallback to finish") {
+            !model.sharingState.isBulkPreparing
+        }
+
+        let draft = try XCTUnwrap(model.sharingState.drafts.first)
+        XCTAssertEqual(model.sharingState.bulkPreparationFailureCount, 1)
+        XCTAssertEqual(draft.representationChoice, .original)
+        XCTAssertNil(draft.cleanedAudioURL)
+        XCTAssertNotNil(draft.preparationMessage)
+        XCTAssertEqual(try Data(contentsOf: sourceURL), originalBytes)
+    }
+
     func testPlaybackScrubStateKeepsGestureValueAuthoritativeUntilCommit() {
         var state = PlaybackScrubState()
         let range = 0.0...3_600.0
@@ -1594,6 +1733,44 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         )
     }
 
+    private func bulkShareableInterjection(
+        itemId: String,
+        id: String,
+        audioPath: String
+    ) -> Interjection {
+        Interjection(
+            id: id,
+            itemId: itemId,
+            sessionId: "session-sharing-bulk-test",
+            targetType: .item,
+            targetId: itemId,
+            createdAt: Date(timeIntervalSince1970: 1),
+            roughPercent: 50,
+            anchor: Anchor(
+                anchorType: .text,
+                startChar: 0,
+                endChar: 5,
+                anchorBefore: "Before",
+                anchorAfter: "After"
+            ),
+            audioPath: audioPath,
+            audioStatus: "saved",
+            transcriptionStatus: "transcribed",
+            transcript: "Keep um words.",
+            cleanedTranscript: nil,
+            displayText: nil,
+            status: "active",
+            alignedTranscript: AlignedInterjectionTranscript(
+                text: "Keep um words.",
+                segments: [
+                    .init(id: "\(id)-keep", text: "Keep", startMs: 0, endMs: 200),
+                    .init(id: "\(id)-um", text: "um", startMs: 240, endMs: 380),
+                    .init(id: "\(id)-words", text: "words.", startMs: 420, endMs: 700)
+                ]
+            )
+        )
+    }
+
     func testObsidianImportRunsInBackgroundAndLoadsHeadingBasedListeningMap() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appending(path: "spoken-margins-markdown-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -1838,6 +2015,32 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             ),
             createdAt: Date(timeIntervalSince1970: 1)
         )
+    }
+}
+
+private actor BulkSharePreparationProbe {
+    private var activeRenders = 0
+    private var maximumConcurrentRenders = 0
+    private var renderCount = 0
+
+    func render(
+        sourceURL: URL,
+        destinationURL: URL,
+        decisions: [InterjectionCleanupDecision]
+    ) async throws -> Int {
+        _ = sourceURL
+        _ = destinationURL
+        XCTAssertFalse(decisions.isEmpty)
+        activeRenders += 1
+        maximumConcurrentRenders = max(maximumConcurrentRenders, activeRenders)
+        defer { activeRenders -= 1 }
+        try await Task.sleep(for: .milliseconds(1))
+        renderCount += 1
+        return 625
+    }
+
+    func snapshot() -> (renderCount: Int, maximumConcurrentRenders: Int) {
+        (renderCount, maximumConcurrentRenders)
     }
 }
 

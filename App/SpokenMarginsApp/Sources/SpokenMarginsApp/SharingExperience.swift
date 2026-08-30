@@ -37,6 +37,8 @@ struct ShareInterjectionDraft: Identifiable {
     var editHistory: [ShareMarginEditState] = [.original]
     var editHistoryIndex = 0
     var isAnalyzingPauses = false
+    var isPreparingCleanup = false
+    var preparationMessage: String?
     var renderGeneration = 0
 
     var currentEditState: ShareMarginEditState {
@@ -56,6 +58,10 @@ struct InterjectionSharingState {
     var isAppAuthoredItem = false
     var confirmsPrivateSharingRights = false
     var isPreparing = false
+    var isBulkPreparing = false
+    var bulkPreparationCompleted = 0
+    var bulkPreparationTotal = 0
+    var bulkPreparationFailureCount = 0
     var isExporting = false
     var errorMessage: String?
 }
@@ -229,8 +235,11 @@ struct InterjectionSharingView: View {
                                 .font(.caption)
                                 .foregroundStyle(AppColors.secondaryText)
 
+                            bulkPreparationPanel
+
                             ForEach(model.sharingState.drafts) { draft in
                                 shareDraftCard(draft)
+                                    .disabled(model.sharingState.isBulkPreparing)
                             }
 
                             if let error = model.sharingState.errorMessage {
@@ -250,6 +259,7 @@ struct InterjectionSharingView: View {
                             .disabled(
                                 model.sharingState.drafts.allSatisfy { !$0.isIncluded }
                                     || model.sharingState.isExporting
+                                    || model.sharingState.isBulkPreparing
                             )
                         }
                         .padding(20)
@@ -260,8 +270,67 @@ struct InterjectionSharingView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") {
+                        model.cancelBulkSharePreparation()
+                        dismiss()
+                    }
                 }
+            }
+        }
+        .onDisappear(perform: model.cancelBulkSharePreparation)
+    }
+
+    @ViewBuilder
+    private var bulkPreparationPanel: some View {
+        ProductPanel {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Prepare Margins in Bulk")
+                    .font(.headline)
+                Text("Removes suggested fillers, tightens pauses, and prepares cleaned review copies for every included Margin with word timing. Private recordings are never changed.")
+                    .font(.caption)
+                    .foregroundStyle(AppColors.secondaryText)
+                if model.sharingState.isBulkPreparing {
+                    ProgressView(
+                        value: Double(model.sharingState.bulkPreparationCompleted),
+                        total: Double(max(1, model.sharingState.bulkPreparationTotal))
+                    )
+                    .accessibilityIdentifier("sharing.bulkPreparationProgress")
+                    Text("Prepared \(model.sharingState.bulkPreparationCompleted) of \(model.sharingState.bulkPreparationTotal)")
+                        .font(.caption.weight(.semibold))
+                    Button("Cancel Bulk Preparation", role: .cancel) {
+                        model.cancelBulkSharePreparation()
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .accessibilityIdentifier("sharing.bulkPreparationCancel")
+                } else {
+                    Button {
+                        model.prepareAllIncludedShareDrafts()
+                    } label: {
+                        Label(
+                            "Prepare All Included (\(model.bulkSharePreparationEligibleCount))",
+                            systemImage: "wand.and.stars"
+                        )
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .disabled(model.bulkSharePreparationEligibleCount == 0 || model.sharingState.isExporting)
+                    .accessibilityIdentifier("sharing.bulkPreparationStart")
+                    if model.sharingState.bulkPreparationTotal > 0 {
+                        Text(
+                            model.sharingState.bulkPreparationFailureCount == 0
+                                ? "Bulk preparation completed. Review any Margin below before sharing."
+                                : "Bulk preparation completed with \(model.sharingState.bulkPreparationFailureCount) Margin fallback\(model.sharingState.bulkPreparationFailureCount == 1 ? "" : "s"). Original voice or text remains available below."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(
+                            model.sharingState.bulkPreparationFailureCount == 0
+                                ? AppColors.secondaryText
+                                : .orange
+                        )
+                    }
+                }
+                Text("Preparation runs one recording at a time to keep memory, heat, and battery use bounded—even for dozens of Margins.")
+                    .font(.caption2)
+                    .foregroundStyle(AppColors.secondaryText)
             }
         }
     }
@@ -426,6 +495,21 @@ struct InterjectionSharingView: View {
                         ProgressView("Analyzing the recording for quiet gaps…")
                             .font(.caption)
                     }
+                    if draft.isPreparingCleanup {
+                        ProgressView("Preparing cleaned voice…")
+                            .font(.caption)
+                    } else if draft.currentEditState.automaticCleanupEnabled {
+                        Label(
+                            draft.cleanedAudioURL != nil
+                                ? "Cleaned voice prepared"
+                                : (draft.cleanup == nil
+                                    ? "Reviewed—no automatic edits suggested"
+                                    : "Reviewed text prepared; original voice retained"),
+                            systemImage: "checkmark.circle"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                    }
                 } else {
                     Text("Word timing is unavailable for this older recording, so automatic audio cleanup is disabled. You can still share the original voice or text.")
                         .font(.caption)
@@ -434,6 +518,11 @@ struct InterjectionSharingView: View {
 
                 if let warning = draft.warning {
                     Label(warning, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                if let message = draft.preparationMessage {
+                    Label(message, systemImage: "exclamationmark.circle")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }

@@ -304,6 +304,15 @@ typealias PreparedTextAudioPrewarmHandler = @Sendable (
 
 typealias InterjectionTranscriptionHandler = @Sendable (_ audioPath: String) async throws -> String
 typealias AlignedInterjectionTranscriptionHandler = @Sendable (_ audioPath: String) async throws -> AlignedInterjectionTranscript
+typealias ShareMarginSilenceAnalysisHandler = @Sendable (
+    _ sourceURL: URL,
+    _ alignedTranscript: AlignedInterjectionTranscript
+) throws -> [InterjectionCleanupDecision]
+typealias ShareMarginAudioCleanupHandler = @Sendable (
+    _ sourceURL: URL,
+    _ destinationURL: URL,
+    _ decisions: [InterjectionCleanupDecision]
+) async throws -> Int
 
 private struct UITestingAmbiguousSourceLinkResolver: LinkResolutionClient {
     func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult {
@@ -357,6 +366,7 @@ final class Gate1AppModel: ObservableObject {
     static let exportPreviewCharacterLimit = 24_000
     private static var isRunningUnitTests: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || NSClassFromString("XCTestCase") != nil
     }
 
     @Published var screen: Gate1Screen = .home
@@ -395,6 +405,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var isWritingBatchExport = false
     @Published private(set) var retryingInterjectionTranscriptionIds: Set<String> = []
     @Published private(set) var playingInterjectionAudioId: String?
+    @Published private(set) var playingInterjectionAudioRate: Double = 1
     @Published var libraryItems: [LibraryItemRow] = []
     @Published private(set) var libraryAccessError: String?
     @Published var recentlyDeletedItems: [LibraryItemRow] = []
@@ -548,6 +559,8 @@ final class Gate1AppModel: ObservableObject {
     private let interjectionTranscriptionHandler: InterjectionTranscriptionHandler
     private let alignedInterjectionTranscriptionHandler: AlignedInterjectionTranscriptionHandler?
     private let preparedTextAudioPrewarmHandler: PreparedTextAudioPrewarmHandler?
+    private let shareMarginSilenceAnalysisHandler: ShareMarginSilenceAnalysisHandler
+    private let shareMarginAudioCleanupHandler: ShareMarginAudioCleanupHandler
     private let trashUndoDismissDelay: Duration
     #if SPOKEN_MARGINS_WATCH
     private var gate3WatchDispatcher: CompactControlDispatcher?
@@ -569,6 +582,8 @@ final class Gate1AppModel: ObservableObject {
     private var sourceShouldResumeAfterImportedCommentary = false
     private var sourcePausedForImportedCommentaryPrompt = false
     private var importedCommentaryAutoPlayTask: Task<Void, Never>?
+    private var bulkSharePreparationTask: Task<Void, Never>?
+    private var bulkSharePreparationGeneration = 0
     private var startsRecipientTestSessionAfterImport = false
     private var textAudioPrewarmTasks: [String: Task<Void, Never>] = [:]
     private var sourceImportTask: Task<Void, Never>?
@@ -781,6 +796,8 @@ final class Gate1AppModel: ObservableObject {
         interjectionTranscriptionHandler: InterjectionTranscriptionHandler? = nil,
         alignedInterjectionTranscriptionHandler: AlignedInterjectionTranscriptionHandler? = nil,
         preparedTextAudioPrewarmHandler: PreparedTextAudioPrewarmHandler? = nil,
+        shareMarginSilenceAnalysisHandler: ShareMarginSilenceAnalysisHandler? = nil,
+        shareMarginAudioCleanupHandler: ShareMarginAudioCleanupHandler? = nil,
         gate2CompactControls: Gate2CompactControlController = Gate2CompactControlController(),
         featureFlags: SpokenMarginsFeatureFlags = .release,
         localFoundationModelClient: any LocalFoundationModelClient = AppleFoundationModelClient(),
@@ -824,6 +841,19 @@ final class Gate1AppModel: ObservableObject {
             }
         }
         self.preparedTextAudioPrewarmHandler = preparedTextAudioPrewarmHandler
+        self.shareMarginSilenceAnalysisHandler = shareMarginSilenceAnalysisHandler ?? { sourceURL, aligned in
+            try InterjectionSilenceDetector.proposePauseEdits(
+                sourceURL: sourceURL,
+                alignedTranscript: aligned
+            )
+        }
+        self.shareMarginAudioCleanupHandler = shareMarginAudioCleanupHandler ?? { sourceURL, destinationURL, decisions in
+            try await InterjectionAudioCleanupRenderer.render(
+                sourceURL: sourceURL,
+                destinationURL: destinationURL,
+                decisions: decisions
+            )
+        }
         localFoundationModelAvailability = localFoundationModelClient.availability()
         if CommandLine.arguments.contains("--ui-testing") {
             speechVoiceIdentifier = ""
@@ -848,7 +878,9 @@ final class Gate1AppModel: ObservableObject {
         migrateTTSSettingsIfNeeded()
         enforceTermsGateForStoredVoice()
         UserDefaults.standard.removeObject(forKey: "aiExecutionMode")
-        refreshSpeechVoiceOptions()
+        // The system voice catalog is loaded when Settings appears. Eager
+        // enumeration here can block app launch while TextToSpeech services
+        // are still starting, and the catalog is not needed on other screens.
         sanitizeTTSMode()
         settingsValueChanged()
         refreshQuickAccessFolder()
@@ -1133,6 +1165,7 @@ final class Gate1AppModel: ObservableObject {
         quickAccessRefreshTask?.cancel()
         interjectionAudioCompletionTask?.cancel()
         importedCommentaryAutoPlayTask?.cancel()
+        bulkSharePreparationTask?.cancel()
     }
 
     private func reconcilePlaybackProgressTicker() {
@@ -3859,9 +3892,13 @@ final class Gate1AppModel: ObservableObject {
             try AVAudioSession.sharedInstance().setActive(true)
             #endif
             let item = AVPlayerItem(url: url)
+            item.audioTimePitchAlgorithm = .timeDomain
             let player = AVPlayer(playerItem: item)
+            let rate = Self.marginPlaybackRate(itemPlaybackRate: snapshot.playbackRate)
+            player.defaultRate = Float(rate)
             interjectionAudioPlayer = player
             playingInterjectionAudioId = interjection.id
+            playingInterjectionAudioRate = rate
             interjectionAudioCompletionTask = Task { @MainActor [weak self, weak item] in
                 while !Task.isCancelled, let item {
                     try? await Task.sleep(for: .milliseconds(250))
@@ -3874,7 +3911,7 @@ final class Gate1AppModel: ObservableObject {
                     }
                 }
             }
-            player.play()
+            player.playImmediately(atRate: Float(rate))
         } catch {
             stopInterjectionAudioPlayback()
             reportFailure(error, context: "Interjection playback failed")
@@ -3893,6 +3930,7 @@ final class Gate1AppModel: ObservableObject {
         interjectionAudioCompletionTask = nil
         #endif
         playingInterjectionAudioId = nil
+        playingInterjectionAudioRate = 1
     }
 
     func listenToPendingImportedCommentary() {
@@ -3949,8 +3987,12 @@ final class Gate1AppModel: ObservableObject {
             try AVAudioSession.sharedInstance().setActive(true)
             #endif
             let item = AVPlayerItem(url: URL(fileURLWithPath: audioPath))
+            item.audioTimePitchAlgorithm = .timeDomain
             let player = AVPlayer(playerItem: item)
+            let rate = Self.marginPlaybackRate(itemPlaybackRate: snapshot.playbackRate)
+            player.defaultRate = Float(rate)
             interjectionAudioPlayer = player
+            playingInterjectionAudioRate = rate
             playingImportedCommentary = prompt
             pendingImportedCommentary = nil
             interjectionAudioCompletionTask = Task { @MainActor [weak self, weak item] in
@@ -3965,7 +4007,7 @@ final class Gate1AppModel: ObservableObject {
                     }
                 }
             }
-            player.play()
+            player.playImmediately(atRate: Float(rate))
         } catch {
             stopImportedCommentaryPlayback(resumeSource: false)
             reportFailure(error, context: "Shared Margin playback failed")
@@ -4067,6 +4109,11 @@ final class Gate1AppModel: ObservableObject {
              .timestampFallback, .ambiguous, .absentFromRecipientEdition, .unresolved:
             return false
         }
+    }
+
+    nonisolated static func marginPlaybackRate(itemPlaybackRate: Double) -> Double {
+        guard itemPlaybackRate.isFinite else { return 1 }
+        return max(0.25, min(3, itemPlaybackRate))
     }
 
     private func playImportedCommentaryCue() {
@@ -8292,6 +8339,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func prepareShareInterjections() {
+        cancelBulkSharePreparation()
         let candidates = selectedItem.interjections.filter {
             $0.status == "active" && $0.targetType == .item
         }
@@ -8332,6 +8380,202 @@ final class Gate1AppModel: ObservableObject {
         sharingState.isPreparing = false
     }
 
+    var bulkSharePreparationEligibleCount: Int {
+        sharingState.drafts.filter(isEligibleForBulkSharePreparation).count
+    }
+
+    func prepareAllIncludedShareDrafts() {
+        guard !sharingState.isBulkPreparing else { return }
+        let draftIDs = sharingState.drafts
+            .filter(isEligibleForBulkSharePreparation)
+            .map(\.id)
+        guard !draftIDs.isEmpty else { return }
+
+        bulkSharePreparationGeneration += 1
+        let generation = bulkSharePreparationGeneration
+        sharingState.isBulkPreparing = true
+        sharingState.bulkPreparationCompleted = 0
+        sharingState.bulkPreparationTotal = draftIDs.count
+        sharingState.bulkPreparationFailureCount = 0
+        sharingState.errorMessage = nil
+        diagnostics["bulkSharePreparation"] = "started:total=\(draftIDs.count)"
+
+        bulkSharePreparationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            for draftID in draftIDs {
+                guard !Task.isCancelled,
+                      self.bulkSharePreparationGeneration == generation else { return }
+                let prepared = await self.prepareShareDraftForBulk(
+                    draftID,
+                    generation: generation
+                )
+                guard !Task.isCancelled,
+                      self.bulkSharePreparationGeneration == generation else { return }
+                self.sharingState.bulkPreparationCompleted += 1
+                if !prepared {
+                    self.sharingState.bulkPreparationFailureCount += 1
+                }
+            }
+            guard self.bulkSharePreparationGeneration == generation else { return }
+            self.sharingState.isBulkPreparing = false
+            self.bulkSharePreparationTask = nil
+            self.diagnostics["bulkSharePreparation"] = [
+                "complete",
+                "prepared=\(self.sharingState.bulkPreparationCompleted)",
+                "fallbacks=\(self.sharingState.bulkPreparationFailureCount)"
+            ].joined(separator: ";")
+        }
+    }
+
+    func cancelBulkSharePreparation() {
+        guard sharingState.isBulkPreparing || bulkSharePreparationTask != nil else { return }
+        bulkSharePreparationGeneration += 1
+        bulkSharePreparationTask?.cancel()
+        bulkSharePreparationTask = nil
+        sharingState.isBulkPreparing = false
+        for index in sharingState.drafts.indices {
+            let wasInFlight = sharingState.drafts[index].isAnalyzingPauses
+                || sharingState.drafts[index].isPreparingCleanup
+            sharingState.drafts[index].isAnalyzingPauses = false
+            sharingState.drafts[index].isPreparingCleanup = false
+            if wasInFlight,
+               sharingState.drafts[index].currentEditState.automaticCleanupEnabled,
+               sharingState.drafts[index].canUndoEdit {
+                sharingState.drafts[index].editHistoryIndex -= 1
+                applyShareEditState(at: index, renderCleanedAudio: false)
+            }
+        }
+        diagnostics["bulkSharePreparation"] = [
+            "cancelled",
+            "prepared=\(sharingState.bulkPreparationCompleted)",
+            "total=\(sharingState.bulkPreparationTotal)"
+        ].joined(separator: ";")
+    }
+
+    private func isEligibleForBulkSharePreparation(_ draft: ShareInterjectionDraft) -> Bool {
+        draft.isIncluded
+            && draft.interjection.alignedTranscript != nil
+            && !draft.currentEditState.automaticCleanupEnabled
+    }
+
+    private func prepareShareDraftForBulk(
+        _ id: String,
+        generation: Int
+    ) async -> Bool {
+        guard let initialIndex = sharingState.drafts.firstIndex(where: { $0.id == id }),
+              let aligned = sharingState.drafts[initialIndex].interjection.alignedTranscript else {
+            return false
+        }
+        sharingState.drafts[initialIndex].preparationMessage = nil
+        recordShareEdit(for: id, renderCleanedAudio: false) {
+            $0.automaticCleanupEnabled = true
+        }
+
+        guard let analysisIndex = sharingState.drafts.firstIndex(where: { $0.id == id }) else {
+            return false
+        }
+        let audioPath = sharingState.drafts[analysisIndex].interjection.audioPath
+        let sourceURL = audioPath.flatMap(resolvedInterjectionAudioURL(for:))
+        var analysisFailure: String?
+        if let sourceURL {
+            sharingState.drafts[analysisIndex].isAnalyzingPauses = true
+            let analyzer = shareMarginSilenceAnalysisHandler
+            let analysis = await Task.detached {
+                do {
+                    return (try analyzer(sourceURL, aligned), nil as String?)
+                } catch {
+                    return ([], error.localizedDescription)
+                }
+            }.value
+            guard !Task.isCancelled,
+                  bulkSharePreparationGeneration == generation,
+                  let current = sharingState.drafts.firstIndex(where: { $0.id == id }) else {
+                return false
+            }
+            sharingState.drafts[current].isAnalyzingPauses = false
+            sharingState.drafts[current].acousticPauseDecisions = analysis.0
+            analysisFailure = analysis.1
+            applyShareEditState(at: current, renderCleanedAudio: false)
+        } else if audioPath != nil {
+            analysisFailure = "The saved voice recording is unavailable; reviewed text remains available."
+        }
+
+        guard !Task.isCancelled,
+              bulkSharePreparationGeneration == generation else { return false }
+        let rendered = await renderBulkCleanup(forShareDraft: id, generation: generation)
+        guard bulkSharePreparationGeneration == generation,
+              let finalIndex = sharingState.drafts.firstIndex(where: { $0.id == id }) else {
+            return false
+        }
+        if let analysisFailure {
+            let analysisMessage =
+                "Pause analysis was unavailable (\(analysisFailure)). Filler and manual text edits remain reviewable."
+            if let renderMessage = sharingState.drafts[finalIndex].preparationMessage {
+                sharingState.drafts[finalIndex].preparationMessage = "\(renderMessage) \(analysisMessage)"
+            } else {
+                sharingState.drafts[finalIndex].preparationMessage = analysisMessage
+            }
+        }
+        return rendered && analysisFailure == nil
+    }
+
+    private func renderBulkCleanup(
+        forShareDraft id: String,
+        generation bulkGeneration: Int
+    ) async -> Bool {
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else {
+            return false
+        }
+        guard let decisions = sharingState.drafts[index].cleanup?.decisions else {
+            return true
+        }
+        guard let sourcePath = sharingState.drafts[index].interjection.audioPath,
+              let sourceURL = resolvedInterjectionAudioURL(for: sourcePath) else {
+            sharingState.drafts[index].representationChoice = .textOnly
+            sharingState.drafts[index].preparationMessage =
+                "Cleaned voice could not be prepared because the saved recording is unavailable. Reviewed text remains available."
+            return false
+        }
+        guard let root = try? applicationSupportDirectory()
+            .appending(path: "SpokenMargins/ShareRevisions/\(UUID().uuidString)", directoryHint: .isDirectory) else {
+            sharingState.drafts[index].preparationMessage =
+                "Cleaned voice storage is unavailable. Original voice and reviewed text remain available."
+            return false
+        }
+        sharingState.drafts[index].renderGeneration += 1
+        let renderGeneration = sharingState.drafts[index].renderGeneration
+        sharingState.drafts[index].isPreparingCleanup = true
+        let destination = root.appending(path: "cleaned-\(safePodcastEvidenceComponent(id)).m4a")
+        let renderer = shareMarginAudioCleanupHandler
+        let result: (duration: Int?, failure: String?)
+        do {
+            result = (try await renderer(sourceURL, destination, decisions), nil)
+        } catch {
+            result = (nil, error.localizedDescription)
+        }
+        guard !Task.isCancelled,
+              bulkSharePreparationGeneration == bulkGeneration,
+              let current = sharingState.drafts.firstIndex(where: { $0.id == id }),
+              sharingState.drafts[current].renderGeneration == renderGeneration else {
+            try? FileManager.default.removeItem(at: destination)
+            return false
+        }
+        sharingState.drafts[current].isPreparingCleanup = false
+        if let duration = result.duration {
+            sharingState.drafts[current].cleanedAudioURL = destination
+            sharingState.drafts[current].cleanedAudioDurationMs = duration
+            sharingState.drafts[current].representationChoice = .cleaned
+            return true
+        }
+        sharingState.drafts[current].cleanedAudioURL = nil
+        sharingState.drafts[current].cleanedAudioDurationMs = nil
+        sharingState.drafts[current].representationChoice =
+            originalAudioURL(forShareDraft: id) == nil ? .textOnly : .original
+        sharingState.drafts[current].preparationMessage =
+            "Cleaned voice could not be prepared (\(result.failure ?? "unknown error")). Original voice or reviewed text remains available."
+        return false
+    }
+
     func setShareDraftIncluded(_ id: String, included: Bool) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
         sharingState.drafts[index].isIncluded = included
@@ -8360,6 +8604,10 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func prepareCleanup(forShareDraft id: String) {
+        guard !sharingState.isBulkPreparing else { return }
+        if let index = sharingState.drafts.firstIndex(where: { $0.id == id }) {
+            sharingState.drafts[index].preparationMessage = nil
+        }
         recordShareEdit(for: id) { $0.automaticCleanupEnabled = true }
         analyzeAcousticPauses(forShareDraft: id)
     }
@@ -8423,6 +8671,9 @@ final class Gate1AppModel: ObservableObject {
         sharingState.drafts[index].cleanup = nil
         sharingState.drafts[index].cleanedAudioURL = nil
         sharingState.drafts[index].cleanedAudioDurationMs = nil
+        sharingState.drafts[index].isAnalyzingPauses = false
+        sharingState.drafts[index].isPreparingCleanup = false
+        sharingState.drafts[index].preparationMessage = nil
         sharingState.drafts[index].approvedTranscript = interjection.transcript ?? interjection.displayText ?? ""
         sharingState.drafts[index].representationChoice = originalAudioURL(forShareDraft: id) == nil ? .textOnly : .original
         sharingState.drafts[index].warning = shareAnchorWarning(for: interjection)
@@ -8430,6 +8681,7 @@ final class Gate1AppModel: ObservableObject {
 
     private func recordShareEdit(
         for id: String,
+        renderCleanedAudio: Bool = true,
         mutate: (inout ShareMarginEditState) -> Void
     ) {
         guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }),
@@ -8441,10 +8693,10 @@ final class Gate1AppModel: ObservableObject {
             sharingState.drafts[index].editHistory.prefix(sharingState.drafts[index].editHistoryIndex + 1)
         ) + [state]
         sharingState.drafts[index].editHistoryIndex += 1
-        applyShareEditState(at: index)
+        applyShareEditState(at: index, renderCleanedAudio: renderCleanedAudio)
     }
 
-    private func applyShareEditState(at index: Int) {
+    private func applyShareEditState(at index: Int, renderCleanedAudio: Bool = true) {
         guard sharingState.drafts.indices.contains(index),
               let aligned = sharingState.drafts[index].interjection.alignedTranscript else { return }
         let state = sharingState.drafts[index].currentEditState
@@ -8483,9 +8735,10 @@ final class Gate1AppModel: ObservableObject {
         sharingState.drafts[index].approvedTranscript = hasEdits
             ? core.cleanedTranscript
             : (sharingState.drafts[index].interjection.transcript ?? sharingState.drafts[index].interjection.displayText ?? "")
-        if hasEdits {
+        if hasEdits, renderCleanedAudio {
             renderCleanup(forShareDraft: sharingState.drafts[index].id)
         } else {
+            sharingState.drafts[index].isPreparingCleanup = false
             sharingState.drafts[index].cleanedAudioURL = nil
             sharingState.drafts[index].cleanedAudioDurationMs = nil
             sharingState.drafts[index].representationChoice = originalAudioURL(forShareDraft: sharingState.drafts[index].id) == nil ? .textOnly : .original
@@ -8500,16 +8753,23 @@ final class Gate1AppModel: ObservableObject {
               let sourcePath = sharingState.drafts[index].interjection.audioPath,
               let sourceURL = resolvedInterjectionAudioURL(for: sourcePath) else { return }
         sharingState.drafts[index].isAnalyzingPauses = true
+        let analyzer = shareMarginSilenceAnalysisHandler
         Task.detached { [weak self] in
-            let decisions = (try? InterjectionSilenceDetector.proposePauseEdits(
-                sourceURL: sourceURL,
-                alignedTranscript: aligned
-            )) ?? []
+            let result: ([InterjectionCleanupDecision], String?)
+            do {
+                result = (try analyzer(sourceURL, aligned), nil)
+            } catch {
+                result = ([], error.localizedDescription)
+            }
             await MainActor.run {
                 guard let self,
                       let current = self.sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
                 self.sharingState.drafts[current].isAnalyzingPauses = false
-                self.sharingState.drafts[current].acousticPauseDecisions = decisions
+                self.sharingState.drafts[current].acousticPauseDecisions = result.0
+                if let failure = result.1 {
+                    self.sharingState.drafts[current].preparationMessage =
+                        "Pause analysis was unavailable (\(failure)). Filler and manual text edits remain reviewable."
+                }
                 self.applyShareEditState(at: current)
             }
         }
@@ -8532,17 +8792,16 @@ final class Gate1AppModel: ObservableObject {
         }
         sharingState.drafts[index].renderGeneration += 1
         let generation = sharingState.drafts[index].renderGeneration
-        let destination = root.appending(path: "cleaned-\(id).m4a")
+        sharingState.drafts[index].isPreparingCleanup = true
+        let destination = root.appending(path: "cleaned-\(safePodcastEvidenceComponent(id)).m4a")
+        let renderer = shareMarginAudioCleanupHandler
         Task.detached { [weak self] in
             do {
-                let duration = try await InterjectionAudioCleanupRenderer.render(
-                    sourceURL: sourceURL,
-                    destinationURL: destination,
-                    decisions: decisions
-                )
+                let duration = try await renderer(sourceURL, destination, decisions)
                 await MainActor.run {
                     guard let current = self?.sharingState.drafts.firstIndex(where: { $0.id == id }),
                           self?.sharingState.drafts[current].renderGeneration == generation else { return }
+                    self?.sharingState.drafts[current].isPreparingCleanup = false
                     self?.sharingState.drafts[current].cleanedAudioURL = destination
                     self?.sharingState.drafts[current].cleanedAudioDurationMs = duration
                     self?.sharingState.drafts[current].representationChoice = .cleaned
@@ -8554,9 +8813,13 @@ final class Gate1AppModel: ObservableObject {
                 await MainActor.run {
                     guard let current = self?.sharingState.drafts.firstIndex(where: { $0.id == id }),
                           self?.sharingState.drafts[current].renderGeneration == generation else { return }
+                    self?.sharingState.drafts[current].isPreparingCleanup = false
                     self?.sharingState.drafts[current].cleanedAudioURL = nil
                     self?.sharingState.drafts[current].cleanedAudioDurationMs = nil
-                    self?.sharingState.drafts[current].representationChoice = .original
+                    self?.sharingState.drafts[current].representationChoice =
+                        self?.originalAudioURL(forShareDraft: id) == nil ? .textOnly : .original
+                    self?.sharingState.drafts[current].preparationMessage =
+                        "Cleaned voice could not be prepared. Original voice or reviewed text remains available."
                     if let interjection = self?.sharingState.drafts[current].interjection {
                         self?.sharingState.drafts[current].warning = [
                             self?.shareAnchorWarning(for: interjection),
@@ -8585,6 +8848,10 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func exportSharedInterjections() {
+        guard !sharingState.isBulkPreparing else {
+            sharingState.errorMessage = "Finish or cancel bulk preparation before sharing."
+            return
+        }
         let drafts = sharingState.drafts.filter {
             $0.isIncluded && !$0.approvedTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
