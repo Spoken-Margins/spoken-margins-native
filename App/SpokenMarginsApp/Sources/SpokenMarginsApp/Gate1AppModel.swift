@@ -4030,29 +4030,7 @@ final class Gate1AppModel: ObservableObject {
         guard pendingImportedCommentary == nil,
               playingImportedCommentary == nil,
               current.itemId == selectedItem.id else { return }
-        let activeLayers = selectedItem.importedCommentaryLayers.filter {
-            $0.deletedAt == nil && $0.isEnabled && $0.sourceResolutionStatus == .resolved
-        }
-        let prompts: [ImportedCommentaryPrompt] = activeLayers.flatMap { layer in
-            let layerRecords: [ImportedCommentaryInterjection] =
-                selectedItem.importedCommentaryInterjections[layer.id] ?? []
-            let eligible = layerRecords.filter {
-                Self.isPlayableImportedCommentaryResolution($0.resolution)
-            }
-            let records = eligible.sorted { lhs, rhs in
-                Self.importedCommentaryPosition(lhs) < Self.importedCommentaryPosition(rhs)
-            }
-            return records.enumerated().compactMap { pair -> ImportedCommentaryPrompt? in
-                let (offset, record) = pair
-                guard !announcedImportedInterjectionIDs.contains(record.id) else { return nil }
-                return ImportedCommentaryPrompt(
-                    layer: layer,
-                    interjection: record,
-                    index: offset + 1,
-                    count: records.count
-                )
-            }
-        }
+        let prompts = importedCommentaryPrompts(includeAnnounced: false)
         let crossed = prompts.filter { prompt in
             if let anchor = prompt.interjection.resolution.localMediaTimeMs,
                let before = previous.currentMediaTimeMs,
@@ -4072,8 +4050,39 @@ final class Gate1AppModel: ObservableObject {
         guard let prompt = crossed.first else { return }
         crossed.forEach { announcedImportedInterjectionIDs.insert($0.id) }
         guard prompt.layer.revealMode != .fresh else { return }
-        sourcePausedForImportedCommentaryPrompt = current.status.isPlaybackActive
-        if sourcePausedForImportedCommentaryPrompt { pause() }
+        presentImportedCommentaryPrompt(prompt, sourceWasPlaying: current.status.isPlaybackActive)
+    }
+
+    private func importedCommentaryPrompts(includeAnnounced: Bool) -> [ImportedCommentaryPrompt] {
+        selectedItem.importedCommentaryLayers
+            .filter { $0.deletedAt == nil && $0.isEnabled && $0.sourceResolutionStatus == .resolved }
+            .flatMap { layer in
+                let records = (selectedItem.importedCommentaryInterjections[layer.id] ?? [])
+                    .filter { Self.isPlayableImportedCommentaryResolution($0.resolution) }
+                    .sorted { lhs, rhs in
+                        Self.importedCommentaryPosition(lhs) < Self.importedCommentaryPosition(rhs)
+                    }
+                return records.enumerated().compactMap { pair -> ImportedCommentaryPrompt? in
+                    let (offset, record) = pair
+                    guard includeAnnounced || !announcedImportedInterjectionIDs.contains(record.id) else {
+                        return nil
+                    }
+                    return ImportedCommentaryPrompt(
+                        layer: layer,
+                        interjection: record,
+                        index: offset + 1,
+                        count: records.count
+                    )
+                }
+            }
+    }
+
+    private func presentImportedCommentaryPrompt(
+        _ prompt: ImportedCommentaryPrompt,
+        sourceWasPlaying: Bool
+    ) {
+        sourcePausedForImportedCommentaryPrompt = sourceWasPlaying
+        if sourceWasPlaying, snapshot.status.isPlaybackActive { pause() }
         if !prompt.layer.isMuted { playImportedCommentaryCue() }
         pendingImportedCommentary = prompt
         if prompt.layer.revealMode == .guided {
@@ -4085,6 +4094,29 @@ final class Gate1AppModel: ObservableObject {
                 self?.listenToPendingImportedCommentary()
             }
         }
+    }
+
+    private func jumpToImportedCommentary(interjectionID: String) -> Bool {
+        guard let prompt = importedCommentaryPrompts(includeAnnounced: true)
+            .first(where: { $0.interjection.id == interjectionID }) else {
+            reportFailure("The selected Shared Margin is no longer available.")
+            return false
+        }
+        let sourceWasPlaying = snapshot.status.isPlaybackActive
+        announcedImportedInterjectionIDs.insert(prompt.id)
+        if sourceWasPlaying { pause() }
+        if let mediaTimeMs = prompt.interjection.resolution.localMediaTimeMs {
+            seekMedia(toMediaTimeMs: mediaTimeMs)
+        } else if let charOffset = prompt.interjection.resolution.localStartChar {
+            seekText(toCharOffset: charOffset)
+        } else {
+            reportFailure("The selected Shared Margin does not have a verified local position.")
+            return false
+        }
+        presentImportedCommentaryPrompt(prompt, sourceWasPlaying: sourceWasPlaying)
+        screen = .playback
+        diagnostics["lastSharedMarginNavigation"] = "opened:\(interjectionID)"
+        return true
     }
 
     private nonisolated static func importedCommentaryPosition(
@@ -4374,7 +4406,10 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         guard let command = CompactControlCommand(rawValue: rawCommand) else {
-            if !handleGate2CompactApplicationCommand(rawCommand) {
+            if !handleGate2CompactApplicationCommand(
+                rawCommand,
+                targetID: Gate2CompactCommandURL.chapterId(from: url)
+            ) {
                 reportFailure("Unsupported compact control URL.")
             }
             return
@@ -4766,7 +4801,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     @discardableResult
-    func handleGate2CompactApplicationCommand(_ command: String) -> Bool {
+    func handleGate2CompactApplicationCommand(_ command: String, targetID: String? = nil) -> Bool {
         switch command {
         case Gate2CompactApplicationCommand.summarizeInterjections:
             guard gate2CompactSnapshot?.availableCommands.contains(.generateInterjectionSummary) == true else {
@@ -4791,6 +4826,9 @@ final class Gate1AppModel: ObservableObject {
             guard pendingImportedCommentary != nil else { return false }
             dismissPendingImportedCommentary()
             return true
+        case Gate2CompactApplicationCommand.jumpToSharedMargin:
+            guard let targetID, !targetID.isEmpty else { return false }
+            return jumpToImportedCommentary(interjectionID: targetID)
         default:
             reportFailure("Unsupported compact application command.")
             return false
@@ -5714,8 +5752,8 @@ final class Gate1AppModel: ObservableObject {
                     playbackRate: playbackRate,
                     origin: origin
                 )
-            } applicationCommandHandler: { [weak self] command in
-                self?.handleGate2CompactApplicationCommand(command) ?? false
+            } applicationCommandHandler: { [weak self] command, targetID in
+                self?.handleGate2CompactApplicationCommand(command, targetID: targetID) ?? false
             }
             updateGate2CompactState()
             diagnostics.merge(gate2CompactControls.diagnostics(), uniquingKeysWith: { _, new in new })
@@ -5733,10 +5771,38 @@ final class Gate1AppModel: ObservableObject {
         }
         gate2CompactControls.update(
             snapshot: snapshot,
-            sharedMarginPrompt: sharedMarginPrompt
+            sharedMarginPrompt: sharedMarginPrompt,
+            upcomingSharedMargins: liveActivitySharedMarginNavigationEntries()
         )
         gate2CompactSnapshot = gate2CompactControls.snapshot
         diagnostics.merge(gate2CompactControls.diagnostics(), uniquingKeysWith: { _, new in new })
+    }
+
+    private func liveActivitySharedMarginNavigationEntries() -> [Gate2LiveActivityNavigationEntry] {
+        let currentPercent = snapshot.sourceProgressPercent
+        let mediaDurationMs = snapshot.currentPlaybackDurationMs ?? selectedItem.mediaDurationMs
+        let textLength = selectedItem.text.count
+        return importedCommentaryPrompts(includeAnnounced: false).compactMap { prompt in
+            let positionPercent: Int?
+            if let mediaTimeMs = prompt.interjection.resolution.localMediaTimeMs,
+               let mediaDurationMs,
+               mediaDurationMs > 0 {
+                positionPercent = Int((Double(mediaTimeMs) / Double(mediaDurationMs) * 100).rounded())
+            } else if let charOffset = prompt.interjection.resolution.localStartChar,
+                      textLength > 0 {
+                positionPercent = Int((Double(charOffset) / Double(textLength) * 100).rounded())
+            } else {
+                positionPercent = nil
+            }
+            guard let positionPercent,
+                  positionPercent > currentPercent else { return nil }
+            return Gate2LiveActivityNavigationEntry(
+                kind: .sharedMargin,
+                title: "Shared Margin",
+                targetID: prompt.interjection.id,
+                positionPercent: min(100, max(0, positionPercent))
+            )
+        }
     }
 
     #if SPOKEN_MARGINS_WATCH

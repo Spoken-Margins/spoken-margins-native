@@ -5,12 +5,15 @@ import SessionKit
 import AVFoundation
 #endif
 
-/// Detects acoustic silence from the recording itself, while treating aligned
-/// word ranges as protected speech. This catches leading/trailing gaps and room
-/// tone that speech-recognition timestamps alone do not describe reliably.
+/// Detects removable non-speaking gaps by combining aligned word timing with
+/// acoustic quiet. Alignment remains authoritative speech protection, while
+/// acoustic analysis can additionally find quiet edges and gaps. A sustained
+/// noisy gap is therefore still removable when recognition found no speech in
+/// it; every result remains a sender-reviewed proposal.
 public enum InterjectionSilenceDetector {
     public static let analysisWindowMs = 20
     public static let minimumSilenceMs = 360
+    public static let minimumAlignedNonSpeechMs = 750
     public static let retainedInternalSilenceMs = 140
     public static let retainedEdgeSilenceMs = 80
     public static let protectedSpeechPaddingMs = 50
@@ -73,7 +76,7 @@ public enum InterjectionSilenceDetector {
         }
 
         let durationMs = Int((Double(file.length) / sampleRate * 1_000).rounded())
-        var decisions: [InterjectionCleanupDecision] = []
+        var proposedRemovalRanges: [Range<Int>] = []
         var runStart: Int?
         for index in 0...isSilent.count {
             let silent = index < isSilent.count ? isSilent[index] : false
@@ -97,19 +100,81 @@ public enum InterjectionSilenceDetector {
                     removalEnd = end - flank
                 }
                 guard removalEnd > removalStart else { continue }
-                decisions.append(InterjectionCleanupDecision(
-                    id: "acoustic-pause-\(removalStart)-\(removalEnd)",
-                    kind: .longPause,
-                    startMs: removalStart,
-                    endMs: removalEnd,
-                    accepted: true
-                ))
+                proposedRemovalRanges.append(removalStart..<removalEnd)
             }
         }
-        return decisions
+
+        // Energy alone cannot distinguish speech from a fan, traffic, music, or
+        // other sustained background sound. Word alignment supplies the missing
+        // voice-activity evidence: intervals between recognized words contain no
+        // aligned speech even when their energy is high. Keep a short natural
+        // pause at each boundary and never enter an aligned word range.
+        let alignedSpeechRanges = alignedTranscript.segments
+            .compactMap { segment -> Range<Int>? in
+                let lower = max(0, min(durationMs, segment.startMs))
+                let upper = max(lower, min(durationMs, segment.endMs))
+                return upper > lower ? lower..<upper : nil
+            }
+            .sorted { lhs, rhs in
+                lhs.lowerBound == rhs.lowerBound
+                    ? lhs.upperBound < rhs.upperBound
+                    : lhs.lowerBound < rhs.lowerBound
+            }
+        if let first = alignedSpeechRanges.first,
+           first.lowerBound >= minimumSilenceMs {
+            let end = max(0, first.lowerBound - retainedEdgeSilenceMs)
+            if end > 0 { proposedRemovalRanges.append(0..<end) }
+        }
+        if alignedSpeechRanges.count >= 2 {
+            for index in 0..<(alignedSpeechRanges.count - 1) {
+                let gapStart = alignedSpeechRanges[index].upperBound
+                let gapEnd = alignedSpeechRanges[index + 1].lowerBound
+                guard gapEnd - gapStart >= minimumAlignedNonSpeechMs else { continue }
+                let flank = retainedInternalSilenceMs / 2
+                let removalStart = min(durationMs, gapStart + flank)
+                let removalEnd = max(0, gapEnd - flank)
+                if removalEnd > removalStart {
+                    proposedRemovalRanges.append(removalStart..<removalEnd)
+                }
+            }
+        }
+        if let last = alignedSpeechRanges.last,
+           durationMs - last.upperBound >= minimumSilenceMs {
+            let start = min(durationMs, last.upperBound + retainedEdgeSilenceMs)
+            if start < durationMs { proposedRemovalRanges.append(start..<durationMs) }
+        }
+
+        return merged(proposedRemovalRanges).map { range in
+            InterjectionCleanupDecision(
+                id: "speech-gap-\(range.lowerBound)-\(range.upperBound)",
+                kind: .longPause,
+                startMs: range.lowerBound,
+                endMs: range.upperBound,
+                accepted: true
+            )
+        }
         #else
         return []
         #endif
+    }
+
+    private static func merged(_ ranges: [Range<Int>]) -> [Range<Int>] {
+        let ordered = ranges
+            .filter { !$0.isEmpty }
+            .sorted { lhs, rhs in
+                lhs.lowerBound == rhs.lowerBound
+                    ? lhs.upperBound < rhs.upperBound
+                    : lhs.lowerBound < rhs.lowerBound
+            }
+        var result: [Range<Int>] = []
+        for range in ordered {
+            guard let last = result.last, range.lowerBound <= last.upperBound else {
+                result.append(range)
+                continue
+            }
+            result[result.count - 1] = last.lowerBound..<max(last.upperBound, range.upperBound)
+        }
+        return result
     }
 }
 

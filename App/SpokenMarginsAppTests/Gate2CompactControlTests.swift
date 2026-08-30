@@ -99,9 +99,20 @@ final class Gate2CompactControlTests: XCTestCase {
         model.startItem(id: "item-pill")
         let prompt = Gate2SharedMarginActivityPrompt(senderLabel: "Cole")
 
-        controller.update(snapshot: model.snapshot, sharedMarginPrompt: prompt)
+        let upcoming = Gate2LiveActivityNavigationEntry(
+            kind: .sharedMargin,
+            title: "Shared Margin",
+            targetID: "margin-next",
+            positionPercent: 42
+        )
+        controller.update(
+            snapshot: model.snapshot,
+            sharedMarginPrompt: prompt,
+            upcomingSharedMargins: [upcoming]
+        )
 
         XCTAssertEqual(liveActivity.lastSharedMarginPrompt, prompt)
+        XCTAssertEqual(liveActivity.lastUpcomingSharedMargins, [upcoming])
     }
 
     func testCompactTransportCommandsDelegateAndUpdateDiagnostics() {
@@ -234,6 +245,32 @@ final class Gate2CompactControlTests: XCTestCase {
         )
     }
 
+    func testQueuedSharedMarginNavigationPreservesItsTarget() throws {
+        let suiteName = "Gate2CompactControlTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        XCTAssertTrue(
+            Gate2CompactCommandQueue.enqueue(
+                command: Gate2CompactApplicationCommand.jumpToSharedMargin,
+                chapterId: "received-margin-7",
+                id: "queued-margin",
+                now: Date(timeIntervalSince1970: 84),
+                defaults: defaults
+            )
+        )
+
+        XCTAssertEqual(
+            Gate2CompactCommandQueue.drain(defaults: defaults).first,
+            Gate2QueuedCompactCommand(
+                id: "queued-margin",
+                command: Gate2CompactApplicationCommand.jumpToSharedMargin,
+                chapterId: "received-margin-7",
+                createdAt: 84
+            )
+        )
+    }
+
     func testQueuedCommandDecodesPayloadWrittenBeforeChapterArguments() throws {
         let data = Data("""
         [{"id":"legacy","command":"togglePlayPause","createdAt":42}]
@@ -263,6 +300,7 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertEqual(state.availableCommands, [])
         XCTAssertNil(state.nextChapterTitle)
         XCTAssertNil(state.nextChapterId)
+        XCTAssertNil(state.nextNavigationKind)
         XCTAssertNil(state.sharedMarginSenderLabel)
     }
 
@@ -283,6 +321,28 @@ final class Gate2CompactControlTests: XCTestCase {
         )
 
         XCTAssertEqual(decoded.sharedMarginSenderLabel, "Cole")
+    }
+
+    func testLiveActivityContentStateCarriesSharedMarginNavigationKind() throws {
+        let original = Gate2LiveActivityAttributes.ContentState(
+            title: "Pill",
+            chapterTitle: "Opening",
+            nextChapterTitle: "Shared Margin",
+            nextChapterId: "received-margin-7",
+            nextNavigationKind: .sharedMargin,
+            status: "playing",
+            phase: "itemPlayback",
+            progressPercent: 20,
+            isRecording: false
+        )
+
+        let decoded = try JSONDecoder().decode(
+            Gate2LiveActivityAttributes.ContentState.self,
+            from: JSONEncoder().encode(original)
+        )
+
+        XCTAssertEqual(decoded.nextNavigationKind, .sharedMargin)
+        XCTAssertEqual(decoded.nextChapterId, "received-margin-7")
     }
 
     func testLiveActivityUsesOpenSpaceForTheFollowingSourceChapter() throws {
@@ -326,6 +386,111 @@ final class Gate2CompactControlTests: XCTestCase {
         snapshot.timeline[1].isCurrent = true
         snapshot.chapterTitle = "Analysis"
         XCTAssertNil(Gate2LiveActivityPolicy.nextSourceChapter(from: snapshot))
+    }
+
+    func testLiveActivityOrdersPublisherChaptersAndSharedMarginsBySourcePosition() throws {
+        var snapshot = compactSnapshot(
+            targetType: TargetType.transcriptBackedMedia.rawValue,
+            availableCommands: [.beginInterjection],
+            durationMs: 120_000
+        )
+        snapshot.sourceProgressPercent = 10
+        snapshot.timeline = [
+            CompactTimelineEntry(id: "source-opening", kind: "source_chapter", title: "Opening", chapterId: "opening", percent: 0, isCurrent: true),
+            CompactTimelineEntry(id: "source-analysis", kind: "source_chapter", title: "Analysis", chapterId: "analysis", percent: 60)
+        ]
+        let nearMargin = Gate2LiveActivityNavigationEntry(
+            kind: .sharedMargin,
+            title: "Shared Margin",
+            targetID: "margin-near",
+            positionPercent: 35
+        )
+        let farMargin = Gate2LiveActivityNavigationEntry(
+            kind: .sharedMargin,
+            title: "Shared Margin",
+            targetID: "margin-far",
+            positionPercent: 80
+        )
+
+        let marginFirst = try XCTUnwrap(
+            Gate2LiveActivityPolicy.nextNavigationEntry(
+                from: snapshot,
+                upcomingSharedMargins: [farMargin, nearMargin]
+            )
+        )
+        XCTAssertEqual(marginFirst.kind, .sharedMargin)
+        XCTAssertEqual(marginFirst.targetID, "margin-near")
+
+        let chapterFirst = try XCTUnwrap(
+            Gate2LiveActivityPolicy.nextNavigationEntry(
+                from: snapshot,
+                upcomingSharedMargins: [farMargin]
+            )
+        )
+        XCTAssertEqual(chapterFirst.kind, .sourceChapter)
+        XCTAssertEqual(chapterFirst.targetID, "analysis")
+
+        snapshot.timeline = []
+        XCTAssertEqual(
+            Gate2LiveActivityPolicy.nextNavigationEntry(
+                from: snapshot,
+                upcomingSharedMargins: [nearMargin]
+            )?.targetID,
+            "margin-near"
+        )
+    }
+
+    func testSharedMarginNavigationMovesToVerifiedAnchorAndPublishesPrompt() {
+        let liveActivity = RecordingLiveActivityController()
+        let controller = Gate2CompactControlController(liveActivity: liveActivity)
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            gate2CompactControls: controller
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let layer = ImportedCommentaryLayer(
+            id: "layer-received",
+            itemId: "item-pill",
+            packageDigest: "digest-received",
+            packageId: "package-received",
+            itemIdentity: SharedItemIdentity(itemType: .text, title: "You Can't Inspect the Pill"),
+            displayLabel: "Cole",
+            importedAt: Date(timeIntervalSince1970: 42),
+            sourceResolutionStatus: .resolved,
+            isEnabled: true,
+            isMuted: true,
+            revealMode: .companion
+        )
+        let record = ImportedCommentaryInterjection(
+            id: "received-margin-7",
+            layerId: layer.id,
+            packageScopedId: "margin-7",
+            createdAt: Date(timeIntervalSince1970: 43),
+            anchorEvidence: PortableAnchorEvidence(anchorType: .text, startChar: 120, endChar: 140),
+            approvedTranscript: "Remember this part.",
+            resolution: ImportedAnchorResolution(
+                evidenceClass: .articleTextVerified,
+                localStartChar: 120,
+                localEndChar: 140,
+                confidence: 1
+            )
+        )
+        model.selectedItem.importedCommentaryLayers = [layer]
+        model.selectedItem.importedCommentaryInterjections = [layer.id: [record]]
+
+        XCTAssertTrue(
+            model.handleGate2CompactApplicationCommand(
+                Gate2CompactApplicationCommand.jumpToSharedMargin,
+                targetID: record.id
+            )
+        )
+
+        XCTAssertEqual(model.pendingImportedCommentary?.id, record.id)
+        XCTAssertEqual(model.pendingImportedCommentary?.senderLabel, "Cole")
+        XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertEqual(liveActivity.lastSharedMarginPrompt?.senderLabel, "Cole")
+        XCTAssertEqual(model.diagnostics["lastSharedMarginNavigation"], "opened:received-margin-7")
     }
 
     func testLiveActivityPolicyRejectsFinishedAndStaleSessions() {
@@ -474,13 +639,16 @@ private final class RecordingLiveActivityController: Gate2LiveActivityControllin
     private(set) var endAllCallCount = 0
     private(set) var publishCallCount = 0
     private(set) var lastSharedMarginPrompt: Gate2SharedMarginActivityPrompt?
+    private(set) var lastUpcomingSharedMargins: [Gate2LiveActivityNavigationEntry] = []
 
     func publish(
         _ snapshot: CompactControlSnapshot,
-        sharedMarginPrompt: Gate2SharedMarginActivityPrompt?
+        sharedMarginPrompt: Gate2SharedMarginActivityPrompt?,
+        upcomingSharedMargins: [Gate2LiveActivityNavigationEntry]
     ) {
         publishCallCount += 1
         lastSharedMarginPrompt = sharedMarginPrompt
+        lastUpcomingSharedMargins = upcomingSharedMargins
     }
 
     func endAll() {

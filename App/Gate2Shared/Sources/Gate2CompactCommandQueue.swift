@@ -79,4 +79,5 @@ public enum Gate2CompactApplicationCommand {
     public static let discussInterjections = "discussInterjections"
     public static let listenToSharedMargin = "listenToSharedMargin"
     public static let dismissSharedMargin = "dismissSharedMargin"
+    public static let jumpToSharedMargin = "jumpToSharedMargin"
 }

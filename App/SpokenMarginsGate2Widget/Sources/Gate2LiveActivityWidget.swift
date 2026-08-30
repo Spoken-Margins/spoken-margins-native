@@ -29,9 +29,17 @@ struct Gate2LiveActivityWidget: Widget {
                             Gate2SharedMarginButtons()
                         }
                     } else {
-                        Text(context.state.chapterTitle)
-                            .font(.caption)
-                            .lineLimit(2)
+                        VStack(spacing: 3) {
+                            Text(context.state.chapterTitle)
+                                .font(.caption)
+                                .lineLimit(1)
+                            if let next = context.state.nextChapterTitle {
+                                Text("Next: \(next)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
                     }
                 }
             } compactLeading: {
@@ -109,18 +117,22 @@ private struct Gate2LiveActivitySmallView: View {
                 }
             }
 
-            HStack(alignment: .lastTextBaseline, spacing: 6) {
-                Text(stateText)
-                    .font(.caption2.weight(.bold).monospaced())
-                    .foregroundStyle(state.isRecording ? .red : .white.opacity(0.84))
-                Spacer(minLength: 4)
-                Text("\(max(0, min(100, state.progressPercent)))%")
-                    .font(.caption.weight(.bold).monospacedDigit())
-                    .foregroundStyle(.white)
-            }
+            if state.sharedMarginSenderLabel != nil {
+                Gate2SharedMarginButtons(compact: true)
+            } else {
+                HStack(alignment: .lastTextBaseline, spacing: 6) {
+                    Text(stateText)
+                        .font(.caption2.weight(.bold).monospaced())
+                        .foregroundStyle(state.isRecording ? .red : .white.opacity(0.84))
+                    Spacer(minLength: 4)
+                    Text("\(max(0, min(100, state.progressPercent)))%")
+                        .font(.caption.weight(.bold).monospacedDigit())
+                        .foregroundStyle(.white)
+                }
 
-            ProgressView(value: Double(max(0, min(100, state.progressPercent))), total: 100)
-                .tint(isLuminanceReduced ? .white.opacity(0.72) : .green)
+                ProgressView(value: Double(max(0, min(100, state.progressPercent))), total: 100)
+                    .tint(isLuminanceReduced ? .white.opacity(0.72) : .green)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
@@ -207,30 +219,7 @@ private struct Gate2LiveActivityView: View {
                 }
                 if let nextChapterTitle = state.nextChapterTitle,
                    let nextChapterId = state.nextChapterId {
-                    Button(intent: Gate2NextChapterIntent(chapterId: nextChapterId)) {
-                        HStack(spacing: 8) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("NEXT CHAPTER")
-                                    .font(.caption2.weight(.bold))
-                                    .foregroundStyle(.white.opacity(0.58))
-                                Text(nextChapterTitle)
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.white)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.78)
-                            }
-                            Image(systemName: "chevron.forward")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(.white.opacity(0.8))
-                        }
-                        .padding(.horizontal, 14)
-                        .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
-                        .background(Color.white.opacity(0.12))
-                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .accessibilityLabel("Skip to next chapter, \(nextChapterTitle)")
+                    nextNavigationButton(title: nextChapterTitle, targetID: nextChapterId)
                 }
                 Spacer()
                 if state.canRun("beginInterjection") || state.canRun("finishInterjection") {
@@ -247,23 +236,67 @@ private struct Gate2LiveActivityView: View {
             }
             .buttonStyle(.plain)
     }
+
+    @ViewBuilder
+    private func nextNavigationButton(title: String, targetID: String) -> some View {
+        let label = state.nextNavigationKind == .sharedMargin ? "NEXT MARGIN" : "NEXT CHAPTER"
+        if state.nextNavigationKind == .sharedMargin {
+            Button(intent: Gate2NextSharedMarginIntent(interjectionID: targetID)) {
+                nextNavigationLabel(label: label, title: title)
+            }
+            .buttonStyle(.plain)
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .accessibilityLabel("Skip to next Shared Margin")
+        } else {
+            Button(intent: Gate2NextChapterIntent(chapterId: targetID)) {
+                nextNavigationLabel(label: label, title: title)
+            }
+            .buttonStyle(.plain)
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .accessibilityLabel("Skip to next chapter, \(title)")
+        }
+    }
+
+    private func nextNavigationLabel(label: String, title: String) -> some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.white.opacity(0.58))
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+            }
+            Image(systemName: state.nextNavigationKind == .sharedMargin ? "text.bubble.fill" : "chevron.forward")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.white.opacity(0.8))
+        }
+        .padding(.horizontal, 14)
+        .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+        .background(Color.white.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
 }
 
 private struct Gate2SharedMarginButtons: View {
+    var compact = false
+
     var body: some View {
-        HStack(spacing: 10) {
-            Link(destination: Gate2CompactCommandURL.url(command: Gate2CompactApplicationCommand.listenToSharedMargin)) {
-                Label("Listen", systemImage: "play.fill")
+        HStack(spacing: compact ? 6 : 10) {
+            Button(intent: Gate2SharedMarginActionIntent(command: Gate2CompactApplicationCommand.listenToSharedMargin)) {
+                Label(compact ? "Play" : "Listen", systemImage: "play.fill")
                     .font(.caption.weight(.bold))
-                    .frame(maxWidth: .infinity, minHeight: 38)
+                    .frame(maxWidth: .infinity, minHeight: compact ? 30 : 38)
                     .foregroundStyle(.white)
                     .background(Color.green.opacity(0.28))
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             }
-            Link(destination: Gate2CompactCommandURL.url(command: Gate2CompactApplicationCommand.dismissSharedMargin)) {
-                Label("Dismiss", systemImage: "xmark")
+            Button(intent: Gate2SharedMarginActionIntent(command: Gate2CompactApplicationCommand.dismissSharedMargin)) {
+                Label(compact ? "Skip" : "Dismiss", systemImage: "xmark")
                     .font(.caption.weight(.bold))
-                    .frame(maxWidth: .infinity, minHeight: 38)
+                    .frame(maxWidth: .infinity, minHeight: compact ? 30 : 38)
                     .foregroundStyle(.white)
                     .background(Color.white.opacity(0.14))
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -338,62 +371,6 @@ private struct CompactActionIntentButton: View {
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         }
         .buttonStyle(.plain)
-    }
-}
-
-struct Gate2CompactPlaybackIntent: LiveActivityIntent, AudioPlaybackIntent {
-    static let title: LocalizedStringResource = "Spoken Margins Playback"
-    static let description = IntentDescription("Controls Spoken Margins playback from the Live Activity.")
-    static let openAppWhenRun = false
-
-    @Parameter(title: "Command")
-    var command: String
-
-    init() {
-        command = "togglePlayPause"
-    }
-
-    init(command: String) {
-        self.command = command
-    }
-
-    func perform() async throws -> some IntentResult {
-        guard Gate2CompactCommandQueue.enqueue(command: command) else {
-            throw Gate2CompactPlaybackIntentError.appGroupUnavailable
-        }
-        return .result()
-    }
-}
-
-struct Gate2NextChapterIntent: LiveActivityIntent {
-    static let title: LocalizedStringResource = "Open Next Chapter"
-    static let description = IntentDescription("Opens Spoken Margins and continues from the next chapter.")
-    static let openAppWhenRun = true
-
-    @Parameter(title: "Chapter")
-    var chapterId: String
-
-    init() {
-        chapterId = ""
-    }
-
-    init(chapterId: String) {
-        self.chapterId = chapterId
-    }
-
-    func perform() async throws -> some IntentResult {
-        guard Gate2CompactCommandQueue.enqueue(command: "jumpToChapter", chapterId: chapterId) else {
-            throw Gate2CompactPlaybackIntentError.appGroupUnavailable
-        }
-        return .result()
-    }
-}
-
-private enum Gate2CompactPlaybackIntentError: LocalizedError {
-    case appGroupUnavailable
-
-    var errorDescription: String? {
-        "Spoken Margins controls are unavailable because the shared App Group is not configured."
     }
 }
 

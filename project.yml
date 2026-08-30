@@ -167,6 +167,7 @@ targets:
           - Gate2CompactCommandQueue.swift
           - Gate2CompactCommandURL.swift
           - Gate2LiveActivityAttributes.swift
+          - Gate2LiveActivityIntents.swift
       - path: App/SharedSources
     settings:
       base:

@@ -111,6 +111,32 @@ final class SharingTests: XCTestCase {
         XCTAssertTrue(decisions.allSatisfy { $0.kind == .longPause && $0.accepted })
     }
 
+    func testSpeechAwarePauseDetectionRemovesAHighEnergyGapWithoutTouchingWords() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("speech-noise-gap-speech.m4a")
+        try writeContinuousNoiseM4A(to: url, durationSeconds: 3)
+        let transcript = AlignedInterjectionTranscript(
+            text: "First thought. Second thought.",
+            segments: [
+                .init(id: "first", text: "First thought.", startMs: 200, endMs: 800),
+                .init(id: "second", text: "Second thought.", startMs: 2_200, endMs: 2_800)
+            ]
+        )
+
+        let decisions = try InterjectionSilenceDetector.proposePauseEdits(
+            sourceURL: url,
+            alignedTranscript: transcript
+        )
+
+        XCTAssertTrue(decisions.contains { $0.startMs >= 800 && $0.endMs <= 2_200 && $0.endMs - $0.startMs >= 1_000 })
+        XCTAssertTrue(decisions.allSatisfy { decision in
+            transcript.segments.allSatisfy { segment in
+                decision.endMs <= segment.startMs || decision.startMs >= segment.endMs
+            }
+        })
+    }
+
     func testAnchorContextKeepsNearestBoundedEvidenceAndMachineReferences() {
         let anchor = PortableAnchorEvidence(
             anchorType: .transcript,
@@ -1187,6 +1213,33 @@ final class SharingTests: XCTestCase {
                 samples[frame] = second == 1
                     ? Float(0.25 * sin(2 * .pi * 220 * Double(frame) / sampleRate))
                     : 0
+            }
+            try audioFile.write(from: buffer)
+        }
+        #else
+        throw XCTSkip("AVFoundation is required")
+        #endif
+    }
+
+    private func writeContinuousNoiseM4A(to url: URL, durationSeconds: Int) throws {
+        #if canImport(AVFoundation)
+        let sampleRate = 44_100.0
+        let audioFile = try AVAudioFile(forWriting: url, settings: [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC), AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64_000
+        ])
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
+        for second in 0..<durationSeconds {
+            let frameCount = AVAudioFrameCount(sampleRate)
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount))
+            buffer.frameLength = frameCount
+            let samples = try XCTUnwrap(buffer.floatChannelData?[0])
+            for frame in 0..<Int(frameCount) {
+                let time = Double(frame + second * Int(frameCount)) / sampleRate
+                samples[frame] = Float(
+                    0.18 * sin(2 * .pi * 173 * time)
+                    + 0.12 * sin(2 * .pi * 431 * time)
+                )
             }
             try audioFile.write(from: buffer)
         }

@@ -3,12 +3,18 @@ import Foundation
 #if canImport(ActivityKit)
 import ActivityKit
 
+public enum Gate2LiveActivityNavigationKind: String, Codable, Hashable, Sendable {
+    case sourceChapter = "source_chapter"
+    case sharedMargin = "shared_margin"
+}
+
 public struct Gate2LiveActivityAttributes: ActivityAttributes {
     public struct ContentState: Codable, Hashable, Sendable {
         public var title: String
         public var chapterTitle: String
         public var nextChapterTitle: String?
         public var nextChapterId: String?
+        public var nextNavigationKind: Gate2LiveActivityNavigationKind?
         public var status: String
         public var phase: String
         public var progressPercent: Int
@@ -21,6 +27,7 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
             case chapterTitle
             case nextChapterTitle
             case nextChapterId
+            case nextNavigationKind
             case status
             case phase
             case progressPercent
@@ -34,6 +41,7 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
             chapterTitle: String,
             nextChapterTitle: String? = nil,
             nextChapterId: String? = nil,
+            nextNavigationKind: Gate2LiveActivityNavigationKind? = nil,
             status: String,
             phase: String,
             progressPercent: Int,
@@ -45,6 +53,7 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
             self.chapterTitle = chapterTitle
             self.nextChapterTitle = nextChapterTitle
             self.nextChapterId = nextChapterId
+            self.nextNavigationKind = nextNavigationKind
             self.status = status
             self.phase = phase
             self.progressPercent = progressPercent
@@ -59,6 +68,7 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
             chapterTitle = try container.decode(String.self, forKey: .chapterTitle)
             nextChapterTitle = try container.decodeIfPresent(String.self, forKey: .nextChapterTitle)
             nextChapterId = try container.decodeIfPresent(String.self, forKey: .nextChapterId)
+            nextNavigationKind = try container.decodeIfPresent(Gate2LiveActivityNavigationKind.self, forKey: .nextNavigationKind)
             status = try container.decode(String.self, forKey: .status)
             phase = try container.decode(String.self, forKey: .phase)
             progressPercent = try container.decode(Int.self, forKey: .progressPercent)

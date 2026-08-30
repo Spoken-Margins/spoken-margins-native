@@ -45,10 +45,13 @@ Runtime profiles exercised: phone-tablet-online, lock-screen-widget
 14. Confirm source playback resumes with rollback context after normal in-app interjection.
 15. Deny microphone permission and confirm compact interjection is rejected honestly in the app.
 16. Repeat with AirPods connected and during an audio interruption.
+17. In Companion mode, lock the phone before a verified Shared Margin anchor. After the cue, authenticate and confirm Listen and Dismiss are present and actionable in both medium and supplemental small Live Activity presentations.
+18. With no publisher chapters, confirm the next-navigation entry is the next verified Shared Margin. Then use an item with publisher chapters and confirm the nearer of the next chapter or Shared Margin is shown.
+19. Select a next Shared Margin and confirm playback moves to its verified local anchor, applies the layer's cue/reveal policy, and returns to the source after Listen or Dismiss. Confirm ambiguous and unresolved Margins never appear as navigation targets.
 
 ## Known Issues
 
-- Live Activity command buttons use `LiveActivityIntent`/`AudioPlaybackIntent` plus the shared App Group command queue. A real-device pass still needs to prove that the background audio process drains commands quickly while the phone is locked.
+- Live Activity command buttons use app-and-widget shared `LiveActivityIntent`/`AudioPlaybackIntent` definitions plus the shared App Group command queue. iOS requires authentication before locked-device controls perform actions. A real-device pass still needs to prove that the app process drains commands promptly after authentication while playback is backgrounded.
 - Native media and immediate live speech have separate Now Playing owners. The device pass must prove that switching routes does not duplicate commands or replace the active owner's handlers; an automated build cannot establish this.
 - Real Lock Screen, Live Activity, background audio, route-change, and microphone-permission evidence requires a signed physical-device pass.
 

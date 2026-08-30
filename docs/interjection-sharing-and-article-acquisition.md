@@ -27,8 +27,8 @@ Imported commentary uses recipient-local primary keys in separate `ImportedComme
 
 - case-insensitive removal of `um`, `uhm`, `uh`, `ah`, `ahh`, `er`, and `erm` as whole aligned tokens;
 - removal of “you know” only when timing or punctuation isolates the phrase;
-- transcript-timing fallback for internal pauses longer than 750 ms while retaining 250 ms;
-- acoustic detection of leading, trailing, and internal quiet runs of at least 360 ms, retaining 80 ms at recording edges and 140 ms internally while protecting recognized speech with a 50 ms flank;
+- aligned-speech detection of internal non-speaking intervals of at least 750 ms even when sustained background sound makes the interval acoustically loud, retaining 140 ms of natural spacing and never entering an aligned word range;
+- acoustic detection of additional leading, trailing, and internal quiet runs of at least 360 ms, retaining 80 ms at recording edges and 140 ms internally while protecting recognized speech with a 50 ms flank;
 - sender-selected removal of an aligned word from both reviewed text and cleaned voice, with no route for inserting text that cannot exist in the recording;
 - individually restorable, stable decision IDs.
 
@@ -42,7 +42,34 @@ Article resolution accepts raw offsets only when an exact-edition SHA-256 over t
 
 ## Deferred boundary
 
-The app exposes sender review from the listening Share screen, the system share sheet for the resulting file, recipient disclosure/import, same-device recipient testing, distinct Shared Margins controls, cueing/playback, and Timeline provenance. Item actions are shown before optional Listening Map tools, and the item screen presents only one map-generation route. At an evidence-backed text or podcast anchor, Companion playback pauses the source, sounds a cue, and exposes Listen and Dismiss in the app and Live Activity; either choice returns to source playback. Guided mode sounds the same cue and begins the Margin after it. The playback-level auto-play switch chooses Guided or Companion for enabled layers. It does not implement co-op replies (#19), AI synthesis (#26), accounts, hosted storage, public distribution, offline Listening Map generation, proposal activation, or summary/Skim playback. The one-way v1 manifest deliberately omits conversation and parent-package fields so the later #19 reply model is not frozen by this MVP.
+The app exposes sender review from the listening Share screen, the system share sheet for the resulting file, recipient disclosure/import, same-device recipient testing, distinct Shared Margins controls, cueing/playback, and Timeline provenance. Item actions are shown before optional Listening Map tools, and the item screen presents only one map-generation route. At an evidence-backed text or podcast anchor, Companion playback pauses the source, sounds a cue, and exposes Listen and Dismiss in the app and every actionable Lock Screen Live Activity presentation; either choice returns to source playback. Those controls use shared `LiveActivityIntent`/`AudioPlaybackIntent` definitions so iOS executes their handoff in the app process, while the canonical app model remains the sole audio owner. iOS still requires device authentication before a locked-device button performs its action.
+
+The Live Activity's next-navigation entry is an ordered projection rather than a mutation of source structure. It compares the next publisher chapter with verified upcoming Shared Margins and presents whichever occurs first. With no chapters it can therefore show the next Shared Margin; with chapters, Margins appear between them at their resolved source positions. Selecting a Margin moves to its verified local anchor and explicitly reveals it: Guided begins it after the cue, while Fresh or Companion waits for Listen or Dismiss. Shared Margins are never persisted as publisher chapters, and ambiguous or unresolved anchors are never made navigable. Guided mode sounds the same cue and begins the Margin after it. The playback-level auto-play switch chooses Guided or Companion for enabled layers. It does not implement co-op replies (#19), AI synthesis (#26), accounts, hosted storage, public distribution, offline Listening Map generation, proposal activation, or summary/Skim playback. The one-way v1 manifest deliberately omits conversation and parent-package fields so the later #19 reply model is not frozen by this MVP.
+
+## Experience Overhaul action model
+
+The later Experience Overhaul should preserve the actions and state transitions below without treating today's screen hierarchy or controls as a design constraint.
+
+Sender actions:
+
+1. Capture a Margin and continue listening without losing source position.
+2. Mark a Margin for later sharing and optionally retain a private reminder about why it matters.
+3. Enter sharing from the item or active listening context.
+4. Choose the outgoing Margins, using the prior shortlist as a starting point rather than a binding selection.
+5. Prepare and review each outgoing representation: transcript deletions, filler/non-speaking-gap proposals, Original/Cleaned/Text choice, preview, Undo, and Redo.
+6. Review item transport and make the required rights choice for linkless items.
+7. Confirm the exact package contents, share the file, and retain a recoverable local record of what was approved.
+
+Recipient actions:
+
+1. Inspect who or what the package claims to come from, its unsigned-integrity status, the referenced item, and whether local item acquisition is required.
+2. Import without autoplay, resolve anchors conservatively, and explicitly enable or disable the resulting commentary layer.
+3. Choose a reveal policy for that layer and optionally mute its cue.
+4. While listening, understand the ordered upcoming source events—publisher chapters and verified Shared Margins—without conflating their provenance.
+5. At a Companion cue, choose Listen or Dismiss from the active playback surface or authenticated Lock Screen; in Guided mode, hear the Margin after the cue.
+6. Navigate directly to a verified upcoming Margin, return to the source afterward, and revisit received Margins from item history.
+
+The overhaul can combine, split, reorder, or visually redesign the surfaces, but it should preserve three decision boundaries: no outgoing representation without sender review, no embedded linkless item without the displayed rights basis, and no recipient interruption or navigation for an unresolved anchor.
 
 The explicit item-transport and rights policy is now implemented. External use remains pending product-owner validation; automated tests are developer evidence only.
 
@@ -50,4 +77,4 @@ The explicit item-transport and rights policy is now implemented. External use r
 
 The regression target is broader historical code from `codex/sharingV1` accidentally importing app, playback, reply, article-acquisition, project, or site behavior. The lane audit compares every historical path with this bounded implementation and fails the packet if a forbidden path changes.
 
-The falsification suite covers deterministic archive bytes and digest, preview tampering, malformed archive/JSON, unsupported versions, private-path rejection, invalid audio, destination rollback, transport/rights mismatches, linkless embedding without an assertion, recipient-supplied items, data minimization, unselected-audio omission, immutable revision IDs, cleanup substring and all-filler safety, manual-word undo, acoustic edge-silence detection, context bounds, normalized-hash offset collisions, recipient-controlled activation, recipient-local ID mapping, per-note resolution, duplicate import, SQLite preservation, and resolved/ambiguous/wrong-source/context-only outcomes. The stopping rule is any confidently wrong resolution, undisclosed outgoing field, nondeterministic duplicate, private-original mutation, transport that contradicts the sender disclosure, or need for an unapproved trust decision.
+The falsification suite covers deterministic archive bytes and digest, preview tampering, malformed archive/JSON, unsupported versions, private-path rejection, invalid audio, destination rollback, transport/rights mismatches, linkless embedding without an assertion, recipient-supplied items, data minimization, unselected-audio omission, immutable revision IDs, cleanup substring and all-filler safety, manual-word undo, acoustic edge-silence detection, sustained-noise non-speaking-gap detection without aligned-speech overlap, context bounds, normalized-hash offset collisions, recipient-controlled activation, recipient-local ID mapping, per-note resolution, duplicate import, SQLite preservation, ordered chapter/Margin navigation, and resolved/ambiguous/wrong-source/context-only outcomes. The stopping rule is any confidently wrong resolution, undisclosed outgoing field, nondeterministic duplicate, private-original mutation, transport that contradicts the sender disclosure, navigation to an unresolved Margin, or need for an unapproved trust decision.
