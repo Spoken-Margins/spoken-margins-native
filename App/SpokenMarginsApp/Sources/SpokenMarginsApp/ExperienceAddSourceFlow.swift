@@ -38,6 +38,12 @@ struct ExperienceAddSourceFlow: View {
                 .frame(maxWidth: 720)
                 .frame(maxWidth: .infinity)
             }
+            .contentMargins(
+                .bottom,
+                Build23ExperiencePolishLayout.addSourceBottomClearance,
+                for: .scrollContent
+            )
+            .scrollDismissesKeyboard(.interactively)
             .background(AppColors.bone)
             .navigationTitle("Add Source")
             .navigationBarTitleDisplayMode(.inline)

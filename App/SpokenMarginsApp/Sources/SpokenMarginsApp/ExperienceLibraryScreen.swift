@@ -5,6 +5,7 @@ struct ExperienceLibraryScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Binding var addSourceRoute: AddSourceRoute?
 
     private var continueItem: LibraryItemRow? {
@@ -13,6 +14,13 @@ struct ExperienceLibraryScreen: View {
 
     private var compactItems: [LibraryItemRow] {
         LibraryPresentation.compactItems(model.visibleLibraryItems, excluding: continueItem)
+    }
+
+    private var libraryComposition: Build23ExperiencePolishLayout.LibraryComposition {
+        Build23ExperiencePolishLayout.libraryComposition(
+            isCompactWidth: horizontalSizeClass == .compact,
+            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
+        )
     }
 
     var body: some View {
@@ -126,48 +134,25 @@ struct ExperienceLibraryScreen: View {
 
     private func continueHero(_ item: LibraryItemRow) -> some View {
         Button { model.openItem(id: item.id) } label: {
-            HStack(spacing: 18) {
-                SMExperienceTypeCover(row: item, size: horizontalSizeClass == .regular ? 112 : 88)
-                VStack(alignment: .leading, spacing: 8) {
-                    Label(
-                        model.activePlaybackItemId == item.id ? "Now playing · In your Library" : "Continue listening · In your Library",
-                        systemImage: "play.circle.fill"
-                    )
-                        .font(.caption.weight(.bold))
-                        .textCase(.uppercase)
-                        .foregroundStyle(AppColors.ochre)
-                    Text(item.title)
-                        .font(.system(.title2, design: .serif).weight(.bold))
-                        .foregroundStyle(AppColors.text)
-                        .multilineTextAlignment(.leading)
-                        .lineLimit(3)
-                    if let source = item.sourceTitle ?? item.author {
-                        Text(source)
-                            .font(.subheadline)
-                            .foregroundStyle(AppColors.secondaryText)
-                            .lineLimit(1)
+            Group {
+                switch libraryComposition {
+                case .horizontal:
+                    HStack(spacing: 18) {
+                        SMExperienceTypeCover(row: item, size: horizontalSizeClass == .regular ? 112 : 88)
+                        continueHeroDetails(item)
+                        Spacer(minLength: 0)
+                        continueHeroAction(item)
                     }
-                    if let progress = item.continuationProgressPercent {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ProgressView(value: Double(progress), total: 100)
-                                .tint(AppColors.ochre)
-                            Text("\(progress)% complete")
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(AppColors.secondaryText)
+                case .wrapped:
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack(alignment: .top, spacing: 12) {
+                            SMExperienceTypeCover(row: item, size: 88)
+                            Spacer(minLength: 12)
+                            continueHeroAction(item)
                         }
+                        continueHeroDetails(item)
                     }
                 }
-                Spacer(minLength: 0)
-                Button { model.startItem(id: item.id) } label: {
-                    Image(systemName: "play.fill")
-                        .font(.title3)
-                        .foregroundStyle(.white)
-                        .frame(width: 54, height: 54)
-                        .background(AppColors.evergreen, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Continue \(item.title)")
-                .accessibilityIdentifier("library.continue.\(item.id)")
             }
             .padding(horizontalSizeClass == .regular ? 22 : 16)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -187,6 +172,51 @@ struct ExperienceLibraryScreen: View {
         .buttonStyle(.plain)
         .accessibilityIdentifier("library.row.\(item.id)")
         .accessibilityHint("This item is saved in your Library.")
+    }
+
+    private func continueHeroDetails(_ item: LibraryItemRow) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(
+                model.activePlaybackItemId == item.id ? "Now playing · In your Library" : "Continue listening · In your Library",
+                systemImage: "play.circle.fill"
+            )
+                .font(.caption.weight(.bold))
+                .textCase(.uppercase)
+                .foregroundStyle(AppColors.ochre)
+            Text(item.title)
+                .font(.system(.title2, design: .serif).weight(.bold))
+                .foregroundStyle(AppColors.text)
+                .multilineTextAlignment(.leading)
+                .lineLimit(3)
+            if let source = item.sourceTitle ?? item.author {
+                Text(source)
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .lineLimit(1)
+            }
+            if let progress = item.continuationProgressPercent {
+                VStack(alignment: .leading, spacing: 4) {
+                    ProgressView(value: Double(progress), total: 100)
+                        .tint(AppColors.ochre)
+                    Text("\(progress)% complete")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(AppColors.secondaryText)
+                }
+            }
+        }
+    }
+
+    private func continueHeroAction(_ item: LibraryItemRow) -> some View {
+        Button { model.startItem(id: item.id) } label: {
+            Image(systemName: "play.fill")
+                .font(.title3)
+                .foregroundStyle(.white)
+                .frame(width: 54, height: 54)
+                .background(AppColors.evergreen, in: Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Continue \(item.title)")
+        .accessibilityIdentifier("library.continue.\(item.id)")
     }
 
     private var controls: some View {
@@ -215,16 +245,44 @@ struct ExperienceLibraryScreen: View {
             .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay { RoundedRectangle(cornerRadius: 14).stroke(AppColors.border) }
 
-            ScrollView(.horizontal, showsIndicators: false) {
+            filterControls
+        }
+        .onChange(of: model.libraryQuery) { _, _ in model.libraryQueryChanged() }
+    }
+
+    @ViewBuilder
+    private var filterControls: some View {
+        if libraryComposition == .wrapped {
+            wrappedFilterControls
+        } else {
+            ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) {
                     contentTypeMenu
                     listeningMenu
                     offlineMenu
                     sortMenu
                 }
+                .fixedSize(horizontal: true, vertical: false)
+
+                wrappedFilterControls
             }
         }
-        .onChange(of: model.libraryQuery) { _, _ in model.libraryQueryChanged() }
+    }
+
+    private var wrappedFilterControls: some View {
+        LazyVGrid(columns: wrappedFilterColumns, alignment: .leading, spacing: 8) {
+            contentTypeMenu.frame(maxWidth: .infinity, alignment: .leading)
+            listeningMenu.frame(maxWidth: .infinity, alignment: .leading)
+            offlineMenu.frame(maxWidth: .infinity, alignment: .leading)
+            sortMenu.frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var wrappedFilterColumns: [GridItem] {
+        if dynamicTypeSize.isAccessibilitySize {
+            return [GridItem(.flexible(), spacing: 8, alignment: .leading)]
+        }
+        return [GridItem(.adaptive(minimum: 150), spacing: 8, alignment: .leading)]
     }
 
     private var contentTypeMenu: some View {

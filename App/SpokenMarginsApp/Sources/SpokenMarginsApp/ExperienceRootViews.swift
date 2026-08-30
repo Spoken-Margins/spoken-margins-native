@@ -5,6 +5,29 @@ import UniformTypeIdentifiers
 import UIKit
 #endif
 
+enum Build23ExperiencePolishLayout {
+    enum LibraryComposition: Equatable {
+        case horizontal
+        case wrapped
+    }
+
+    static let addSourceBottomClearance: CGFloat = 32
+    static let persistentMiniPlayerContentClearance: CGFloat = 8
+
+    static func libraryComposition(
+        isCompactWidth: Bool,
+        isAccessibilitySize: Bool
+    ) -> LibraryComposition {
+        isCompactWidth || isAccessibilitySize ? .wrapped : .horizontal
+    }
+
+    static func rootContentBottomClearance(
+        showsPersistentMiniPlayer: Bool
+    ) -> CGFloat {
+        showsPersistentMiniPlayer ? persistentMiniPlayerContentClearance : 0
+    }
+}
+
 struct ExperienceRootTabs: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Binding var navigation: AppNavigationState
@@ -41,6 +64,12 @@ struct ExperienceRootTabs: View {
         }
         .tabViewStyle(.sidebarAdaptable)
         .tint(AppColors.evergreen)
+        .safeAreaPadding(
+            .bottom,
+            Build23ExperiencePolishLayout.rootContentBottomClearance(
+                showsPersistentMiniPlayer: model.shouldShowMiniPlayer
+            )
+        )
         .sheet(item: addSourceRoute) { route in
             ExperienceAddSourceFlow(initialRoute: route)
                 .environmentObject(model)
