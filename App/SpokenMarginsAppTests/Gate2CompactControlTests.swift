@@ -88,6 +88,22 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertTrue(model.gate2CompactSnapshot?.exposedCommands.contains(.beginInterjection) == true)
     }
 
+    func testCompactControllerPublishesPendingSharedMarginToLiveActivity() {
+        let liveActivity = RecordingLiveActivityController()
+        let controller = Gate2CompactControlController(liveActivity: liveActivity)
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            gate2CompactControls: controller
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let prompt = Gate2SharedMarginActivityPrompt(senderLabel: "Cole")
+
+        controller.update(snapshot: model.snapshot, sharedMarginPrompt: prompt)
+
+        XCTAssertEqual(liveActivity.lastSharedMarginPrompt, prompt)
+    }
+
     func testCompactTransportCommandsDelegateAndUpdateDiagnostics() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
@@ -247,6 +263,26 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertEqual(state.availableCommands, [])
         XCTAssertNil(state.nextChapterTitle)
         XCTAssertNil(state.nextChapterId)
+        XCTAssertNil(state.sharedMarginSenderLabel)
+    }
+
+    func testLiveActivityContentStateCarriesPendingSharedMargin() throws {
+        let original = Gate2LiveActivityAttributes.ContentState(
+            title: "Pill",
+            chapterTitle: "Opening",
+            status: "paused",
+            phase: "itemPlayback",
+            progressPercent: 42,
+            isRecording: false,
+            sharedMarginSenderLabel: "Cole"
+        )
+
+        let decoded = try JSONDecoder().decode(
+            Gate2LiveActivityAttributes.ContentState.self,
+            from: JSONEncoder().encode(original)
+        )
+
+        XCTAssertEqual(decoded.sharedMarginSenderLabel, "Cole")
     }
 
     func testLiveActivityUsesOpenSpaceForTheFollowingSourceChapter() throws {
@@ -437,9 +473,14 @@ private final class RecordingLiveActivityController: Gate2LiveActivityControllin
     private(set) var status = "recording"
     private(set) var endAllCallCount = 0
     private(set) var publishCallCount = 0
+    private(set) var lastSharedMarginPrompt: Gate2SharedMarginActivityPrompt?
 
-    func publish(_ snapshot: CompactControlSnapshot) {
+    func publish(
+        _ snapshot: CompactControlSnapshot,
+        sharedMarginPrompt: Gate2SharedMarginActivityPrompt?
+    ) {
         publishCallCount += 1
+        lastSharedMarginPrompt = sharedMarginPrompt
     }
 
     func endAll() {

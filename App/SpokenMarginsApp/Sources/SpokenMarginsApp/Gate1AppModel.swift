@@ -408,7 +408,13 @@ final class Gate1AppModel: ObservableObject {
     @Published var spokenMarginsPackageImportReview: SpokenMarginsPackageImportReview?
     @Published private(set) var isImportingSpokenMarginsPackage = false
     @Published private(set) var spokenMarginsPackageImportError: String?
-    @Published private(set) var pendingImportedCommentary: ImportedCommentaryPrompt?
+    @Published private(set) var pendingImportedCommentary: ImportedCommentaryPrompt? {
+        didSet {
+            if oldValue?.id != pendingImportedCommentary?.id {
+                updateGate2CompactState()
+            }
+        }
+    }
     @Published private(set) var playingImportedCommentary: ImportedCommentaryPrompt?
 
     var displayedExportPreview: String {
@@ -561,6 +567,8 @@ final class Gate1AppModel: ObservableObject {
     #endif
     private var announcedImportedInterjectionIDs: Set<String> = []
     private var sourceShouldResumeAfterImportedCommentary = false
+    private var sourcePausedForImportedCommentaryPrompt = false
+    private var importedCommentaryAutoPlayTask: Task<Void, Never>?
     private var startsRecipientTestSessionAfterImport = false
     private var textAudioPrewarmTasks: [String: Task<Void, Never>] = [:]
     private var sourceImportTask: Task<Void, Never>?
@@ -1124,6 +1132,7 @@ final class Gate1AppModel: ObservableObject {
         sourceImportTask?.cancel()
         quickAccessRefreshTask?.cancel()
         interjectionAudioCompletionTask?.cancel()
+        importedCommentaryAutoPlayTask?.cancel()
     }
 
     private func reconcilePlaybackProgressTicker() {
@@ -3891,6 +3900,18 @@ final class Gate1AppModel: ObservableObject {
         listenToImportedCommentary(prompt)
     }
 
+    func dismissPendingImportedCommentary() {
+        guard pendingImportedCommentary != nil else { return }
+        importedCommentaryAutoPlayTask?.cancel()
+        importedCommentaryAutoPlayTask = nil
+        pendingImportedCommentary = nil
+        let shouldResume = sourcePausedForImportedCommentaryPrompt
+        sourcePausedForImportedCommentaryPrompt = false
+        if shouldResume, snapshot.status == .paused {
+            resumePlayback()
+        }
+    }
+
     func listenToImportedCommentary(layerID: String, interjectionID: String) {
         guard let layer = selectedItem.importedCommentaryLayers.first(where: { $0.id == layerID }),
               let records = selectedItem.importedCommentaryInterjections[layerID],
@@ -3911,12 +3932,16 @@ final class Gate1AppModel: ObservableObject {
         #if canImport(AVFoundation)
         guard let audioPath = prompt.interjection.audioPath,
               FileManager.default.fileExists(atPath: audioPath) else {
-            pendingImportedCommentary = nil
+            dismissPendingImportedCommentary()
             reportFailure("This shared Margin contains reviewed text but no playable voice recording.")
             return
         }
-        sourceShouldResumeAfterImportedCommentary = snapshot.status.isPlaybackActive
-        if sourceShouldResumeAfterImportedCommentary { pause() }
+        importedCommentaryAutoPlayTask?.cancel()
+        importedCommentaryAutoPlayTask = nil
+        sourceShouldResumeAfterImportedCommentary = sourcePausedForImportedCommentaryPrompt
+            || snapshot.status.isPlaybackActive
+        sourcePausedForImportedCommentaryPrompt = false
+        if snapshot.status.isPlaybackActive { pause() }
         stopInterjectionAudioPlayback()
         do {
             #if os(iOS)
@@ -3968,9 +3993,8 @@ final class Gate1AppModel: ObservableObject {
         let prompts: [ImportedCommentaryPrompt] = activeLayers.flatMap { layer in
             let layerRecords: [ImportedCommentaryInterjection] =
                 selectedItem.importedCommentaryInterjections[layer.id] ?? []
-            let eligible = layerRecords.filter { record in
-                Self.isInlinePodcastResolution(record.resolution)
-                    && !record.resolution.isAmbiguous
+            let eligible = layerRecords.filter {
+                Self.isPlayableImportedCommentaryResolution($0.resolution)
             }
             let records = eligible.sorted { lhs, rhs in
                 Self.importedCommentaryPosition(lhs) < Self.importedCommentaryPosition(rhs)
@@ -4005,11 +4029,18 @@ final class Gate1AppModel: ObservableObject {
         guard let prompt = crossed.first else { return }
         crossed.forEach { announcedImportedInterjectionIDs.insert($0.id) }
         guard prompt.layer.revealMode != .fresh else { return }
+        sourcePausedForImportedCommentaryPrompt = current.status.isPlaybackActive
+        if sourcePausedForImportedCommentaryPrompt { pause() }
         if !prompt.layer.isMuted { playImportedCommentaryCue() }
+        pendingImportedCommentary = prompt
         if prompt.layer.revealMode == .guided {
-            listenToImportedCommentary(prompt)
-        } else {
-            pendingImportedCommentary = prompt
+            importedCommentaryAutoPlayTask?.cancel()
+            importedCommentaryAutoPlayTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(420))
+                guard !Task.isCancelled,
+                      self?.pendingImportedCommentary?.id == prompt.id else { return }
+                self?.listenToPendingImportedCommentary()
+            }
         }
     }
 
@@ -4019,6 +4050,23 @@ final class Gate1AppModel: ObservableObject {
         interjection.resolution.localMediaTimeMs
             ?? interjection.resolution.localStartChar
             ?? .max
+    }
+
+    nonisolated static func isPlayableImportedCommentaryResolution(
+        _ resolution: ImportedAnchorResolution
+    ) -> Bool {
+        guard !resolution.isAmbiguous else { return false }
+        if resolution.localMediaTimeMs != nil {
+            return isInlinePodcastResolution(resolution)
+        }
+        guard resolution.localStartChar != nil else { return false }
+        switch resolution.evidenceClass {
+        case .articleTextVerified, .exactEdition, .recipientConfirmed:
+            return true
+        case .transcriptVerified, .acousticVerified, .fused, .mapInterpolated,
+             .timestampFallback, .ambiguous, .absentFromRecipientEdition, .unresolved:
+            return false
+        }
     }
 
     private func playImportedCommentaryCue() {
@@ -4241,9 +4289,14 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleGate2CompactURL(_ url: URL) {
-        guard let rawCommand = Gate2CompactCommandURL.command(from: url),
-              let command = CompactControlCommand(rawValue: rawCommand) else {
+        guard let rawCommand = Gate2CompactCommandURL.command(from: url) else {
             reportFailure("Unsupported compact control URL.")
+            return
+        }
+        guard let command = CompactControlCommand(rawValue: rawCommand) else {
+            if !handleGate2CompactApplicationCommand(rawCommand) {
+                reportFailure("Unsupported compact control URL.")
+            }
             return
         }
         dispatchGate2CompactCommand(
@@ -4648,6 +4701,15 @@ final class Gate1AppModel: ObservableObject {
                 return false
             }
             discuss(followUp: "")
+            return true
+        case Gate2CompactApplicationCommand.listenToSharedMargin:
+            guard pendingImportedCommentary != nil else { return false }
+            listenToPendingImportedCommentary()
+            screen = .playback
+            return true
+        case Gate2CompactApplicationCommand.dismissSharedMargin:
+            guard pendingImportedCommentary != nil else { return false }
+            dismissPendingImportedCommentary()
             return true
         default:
             reportFailure("Unsupported compact application command.")
@@ -5584,7 +5646,15 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func updateGate2CompactState() {
-        gate2CompactControls.update(snapshot: snapshot)
+        let sharedMarginPrompt = pendingImportedCommentary.map {
+            Gate2SharedMarginActivityPrompt(
+                senderLabel: $0.senderLabel
+            )
+        }
+        gate2CompactControls.update(
+            snapshot: snapshot,
+            sharedMarginPrompt: sharedMarginPrompt
+        )
         gate2CompactSnapshot = gate2CompactControls.snapshot
         diagnostics.merge(gate2CompactControls.diagnostics(), uniquingKeysWith: { _, new in new })
     }
@@ -8532,6 +8602,39 @@ final class Gate1AppModel: ObservableObject {
 
     func setImportedCommentaryRevealMode(_ layerID: String, mode: ImportedCommentaryRevealMode) {
         updateImportedCommentaryLayer(layerID) { $0.revealMode = mode }
+    }
+
+    var hasEnabledImportedCommentary: Bool {
+        selectedItem.importedCommentaryLayers.contains {
+            $0.deletedAt == nil && $0.isEnabled && $0.sourceResolutionStatus == .resolved
+        }
+    }
+
+    var importedCommentaryAutoPlayEnabled: Bool {
+        let enabledLayers = selectedItem.importedCommentaryLayers.filter {
+            $0.deletedAt == nil && $0.isEnabled && $0.sourceResolutionStatus == .resolved
+        }
+        return !enabledLayers.isEmpty && enabledLayers.allSatisfy { $0.revealMode == .guided }
+    }
+
+    func setImportedCommentaryAutoPlayEnabled(_ enabled: Bool) {
+        do {
+            let store = try requireStore()
+            let layerIDs = selectedItem.importedCommentaryLayers.compactMap { layer in
+                layer.deletedAt == nil && layer.isEnabled ? layer.id : nil
+            }
+            for layerID in layerIDs {
+                guard var layer = try store.loadImportedCommentaryLayer(id: layerID) else { continue }
+                layer.revealMode = enabled ? .guided : .companion
+                try store.saveImportedCommentaryLayer(layer)
+            }
+            refreshSelectedItem()
+            reportConfirmation(enabled
+                ? "Shared Margins will play automatically after their cue."
+                : "Shared Margins will wait for you to choose Listen or Dismiss.")
+        } catch {
+            reportFailure(error, context: "Shared Margin auto-play setting could not be saved")
+        }
     }
 
     func deleteImportedCommentaryLayer(_ layerID: String) {

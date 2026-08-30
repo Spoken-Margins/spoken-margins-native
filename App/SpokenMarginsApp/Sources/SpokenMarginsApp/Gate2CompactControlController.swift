@@ -206,13 +206,18 @@ enum Gate2NativeMediaNowPlayingPolicy {
 protocol Gate2LiveActivityControlling: AnyObject {
     var status: String { get }
 
-    func publish(_ snapshot: CompactControlSnapshot)
+    func publish(_ snapshot: CompactControlSnapshot, sharedMarginPrompt: Gate2SharedMarginActivityPrompt?)
     func endAll()
+}
+
+struct Gate2SharedMarginActivityPrompt: Equatable, Sendable {
+    let senderLabel: String
 }
 
 @MainActor
 final class Gate2CompactControlController {
     private var dispatcher: CompactControlDispatcher?
+    private var sharedMarginPrompt: Gate2SharedMarginActivityPrompt?
     private var queuedCommandTask: Task<Void, Never>?
     private var queuedCommandHandler: (@MainActor (CompactControlCommand, String, String?, Int?, Double?) -> Void)?
     private var queuedApplicationCommandHandler: (@MainActor (String) -> Bool)?
@@ -253,8 +258,12 @@ final class Gate2CompactControlController {
         lastResult = "configured"
     }
 
-    func update(snapshot _: SessionSnapshot) {
+    func update(
+        snapshot _: SessionSnapshot,
+        sharedMarginPrompt: Gate2SharedMarginActivityPrompt? = nil
+    ) {
         guard dispatcher != nil else { return }
+        self.sharedMarginPrompt = sharedMarginPrompt
         let drainedCommand = drainQueuedWidgetCommands()
         if !drainedCommand {
             publishCurrentSnapshot()
@@ -322,7 +331,7 @@ final class Gate2CompactControlController {
 
     private func publish(_ snapshot: CompactControlSnapshot) {
         liveSpeechNowPlaying.publish(snapshot)
-        liveActivity.publish(snapshot)
+        liveActivity.publish(snapshot, sharedMarginPrompt: sharedMarginPrompt)
     }
 
     private func installQueuedWidgetCommandProcessor() {
@@ -359,7 +368,10 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
     private var activityTask: Task<Void, Never>?
     private(set) var status = "not_started"
 
-    func publish(_ snapshot: CompactControlSnapshot) {
+    func publish(
+        _ snapshot: CompactControlSnapshot,
+        sharedMarginPrompt: Gate2SharedMarginActivityPrompt?
+    ) {
         #if SPOKEN_MARGINS_LEGACY
         status = "unavailable_legacy"
         return
@@ -407,7 +419,8 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
             phase: snapshot.phase.rawValue,
             progressPercent: snapshot.currentPlaybackProgressPercent,
             isRecording: snapshot.isRecording,
-            availableCommands: Gate2LiveActivityPolicy.availableCommands(from: snapshot).map(\.rawValue)
+            availableCommands: Gate2LiveActivityPolicy.availableCommands(from: snapshot).map(\.rawValue),
+            sharedMarginSenderLabel: sharedMarginPrompt?.senderLabel
         )
         activityTask = Task { @MainActor in
             await previousActivityTask?.value

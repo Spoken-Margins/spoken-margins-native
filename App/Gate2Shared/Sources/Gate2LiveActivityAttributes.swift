@@ -14,6 +14,7 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
         public var progressPercent: Int
         public var isRecording: Bool
         public var availableCommands: [String]
+        public var sharedMarginSenderLabel: String?
 
         private enum CodingKeys: String, CodingKey {
             case title
@@ -25,6 +26,7 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
             case progressPercent
             case isRecording
             case availableCommands
+            case sharedMarginSenderLabel
         }
 
         public init(
@@ -36,7 +38,8 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
             phase: String,
             progressPercent: Int,
             isRecording: Bool,
-            availableCommands: [String] = []
+            availableCommands: [String] = [],
+            sharedMarginSenderLabel: String? = nil
         ) {
             self.title = title
             self.chapterTitle = chapterTitle
@@ -47,6 +50,7 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
             self.progressPercent = progressPercent
             self.isRecording = isRecording
             self.availableCommands = availableCommands
+            self.sharedMarginSenderLabel = sharedMarginSenderLabel
         }
 
         public init(from decoder: Decoder) throws {
@@ -60,6 +64,7 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
             progressPercent = try container.decode(Int.self, forKey: .progressPercent)
             isRecording = try container.decode(Bool.self, forKey: .isRecording)
             availableCommands = try container.decodeIfPresent([String].self, forKey: .availableCommands) ?? []
+            sharedMarginSenderLabel = try container.decodeIfPresent(String.self, forKey: .sharedMarginSenderLabel)
         }
     }
 

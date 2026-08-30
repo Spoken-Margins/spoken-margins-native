@@ -66,6 +66,21 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(scrollToElement("chapter.jump.manual-process").exists)
     }
 
+    func testItemScreenShowsListeningActionBeforeAtMostOneMapGenerator() throws {
+        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
+
+        let seededItem = app.buttons["queue.row.item-pill"]
+        XCTAssertTrue(seededItem.waitForExistence(timeout: 4))
+        seededItem.tap()
+        XCTAssertTrue(element("item.screen").waitForExistence(timeout: 4))
+
+        let listen = app.buttons["item.start.button"]
+        XCTAssertTrue(listen.waitForExistence(timeout: 4))
+        XCTAssertTrue(listen.isHittable, "Start or Continue Listening should be available before scrolling.")
+        XCTAssertLessThanOrEqual(app.buttons.matching(identifier: "item.generateMap.button").count, 1)
+        XCTAssertEqual(app.buttons.matching(identifier: "chapters.generateMap.button").count, 0)
+    }
+
     func testGeneratedTurnTimelineRowsAreLabeledAndTappable() throws {
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
         let seededStart = app.buttons["queue.start.item-pill"]

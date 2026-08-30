@@ -10,6 +10,32 @@ import PDFKit
 
 @MainActor
 final class Gate1AppModelWorkflowTests: XCTestCase {
+    func testImportedCommentaryPlaybackAcceptsVerifiedTextAndPodcastAnchors() {
+        XCTAssertTrue(Gate1AppModel.isPlayableImportedCommentaryResolution(
+            ImportedAnchorResolution(
+                evidenceClass: .articleTextVerified,
+                localStartChar: 120,
+                localEndChar: 145
+            )
+        ))
+        XCTAssertTrue(Gate1AppModel.isPlayableImportedCommentaryResolution(
+            ImportedAnchorResolution(
+                evidenceClass: .transcriptVerified,
+                localMediaTimeMs: 45_000
+            )
+        ))
+        XCTAssertFalse(Gate1AppModel.isPlayableImportedCommentaryResolution(
+            ImportedAnchorResolution(
+                evidenceClass: .articleTextVerified,
+                localStartChar: 120,
+                isAmbiguous: true
+            )
+        ))
+        XCTAssertFalse(Gate1AppModel.isPlayableImportedCommentaryResolution(
+            ImportedAnchorResolution(evidenceClass: .unresolved)
+        ))
+    }
+
     func testLinklessTextSharingOffersPrivateRightsOrRecipientSuppliedTransport() throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()

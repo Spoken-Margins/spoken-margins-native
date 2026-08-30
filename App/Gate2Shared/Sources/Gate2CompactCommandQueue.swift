@@ -77,4 +77,6 @@ public enum Gate2CompactCommandQueue {
 public enum Gate2CompactApplicationCommand {
     public static let summarizeInterjections = "summarizeInterjections"
     public static let discussInterjections = "discussInterjections"
+    public static let listenToSharedMargin = "listenToSharedMargin"
+    public static let dismissSharedMargin = "dismissSharedMargin"
 }

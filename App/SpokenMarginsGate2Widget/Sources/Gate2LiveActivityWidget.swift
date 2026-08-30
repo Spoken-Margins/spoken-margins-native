@@ -20,17 +20,31 @@ struct Gate2LiveActivityWidget: Widget {
                         .font(.caption.monospacedDigit())
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    Text(context.state.chapterTitle)
-                        .font(.caption)
-                        .lineLimit(2)
+                    if let sender = context.state.sharedMarginSenderLabel {
+                        VStack(spacing: 8) {
+                            Text("Shared Margin from \(sender)")
+                                .font(.caption.weight(.semibold))
+                                .lineLimit(1)
+                                .privacySensitive()
+                            Gate2SharedMarginButtons()
+                        }
+                    } else {
+                        Text(context.state.chapterTitle)
+                            .font(.caption)
+                            .lineLimit(2)
+                    }
                 }
             } compactLeading: {
-                Image(systemName: context.state.isRecording ? "record.circle.fill" : "waveform")
+                Image(systemName: context.state.sharedMarginSenderLabel != nil
+                    ? "text.bubble.fill"
+                    : (context.state.isRecording ? "record.circle.fill" : "waveform"))
             } compactTrailing: {
-                Text("\(context.state.progressPercent)%")
+                Text(context.state.sharedMarginSenderLabel != nil ? "NEW" : "\(context.state.progressPercent)%")
                     .font(.caption2.monospacedDigit())
             } minimal: {
-                Image(systemName: context.state.isRecording ? "record.circle.fill" : "waveform")
+                Image(systemName: context.state.sharedMarginSenderLabel != nil
+                    ? "text.bubble.fill"
+                    : (context.state.isRecording ? "record.circle.fill" : "waveform"))
             }
         }
         .supplementalActivityFamilies([.small])
@@ -86,11 +100,12 @@ private struct Gate2LiveActivitySmallView: View {
                         .foregroundStyle(.white)
                         .lineLimit(1)
                         .minimumScaleFactor(0.76)
-                    Text(state.chapterTitle)
+                    Text(state.sharedMarginSenderLabel.map { "Margin from \($0)" } ?? state.chapterTitle)
                         .font(.caption2)
                         .foregroundStyle(.white.opacity(0.74))
                         .lineLimit(1)
                         .minimumScaleFactor(0.76)
+                        .privacySensitive(state.sharedMarginSenderLabel != nil)
                 }
             }
 
@@ -139,7 +154,45 @@ private struct Gate2LiveActivityView: View {
             ProgressView(value: Double(max(0, min(100, state.progressPercent))), total: 100)
                 .tint(.green)
 
-            HStack(spacing: 16) {
+            if let sender = state.sharedMarginSenderLabel {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("Shared Margin from \(sender)")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .privacySensitive()
+                    Gate2SharedMarginButtons()
+                }
+            } else {
+                transportControls
+            }
+
+            if state.sharedMarginSenderLabel == nil,
+               state.canRun("generateInterjectionSummary") || state.canRun("submitFollowup") {
+                HStack(spacing: 10) {
+                    if state.canRun("generateInterjectionSummary") {
+                        CompactActionIntentButton(
+                            command: Gate2CompactApplicationCommand.summarizeInterjections,
+                            title: "Summary",
+                            systemImage: "sparkles"
+                        )
+                    }
+
+                    if state.canRun("submitFollowup") {
+                        CompactActionIntentButton(
+                            command: Gate2CompactApplicationCommand.discussInterjections,
+                            title: "Discuss",
+                            systemImage: "text.bubble.fill"
+                        )
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    private var transportControls: some View {
+        HStack(spacing: 16) {
                 if state.canRun("skipBack") {
                     CompactRoundIntentButton(command: "skipBack", systemImage: "gobackward.15", size: 56)
                 }
@@ -193,29 +246,30 @@ private struct Gate2LiveActivityView: View {
                 }
             }
             .buttonStyle(.plain)
+    }
+}
 
-            if state.canRun("generateInterjectionSummary") || state.canRun("submitFollowup") {
-                HStack(spacing: 10) {
-                    if state.canRun("generateInterjectionSummary") {
-                        CompactActionIntentButton(
-                            command: Gate2CompactApplicationCommand.summarizeInterjections,
-                            title: "Summary",
-                            systemImage: "sparkles"
-                        )
-                    }
-
-                    if state.canRun("submitFollowup") {
-                        CompactActionIntentButton(
-                            command: Gate2CompactApplicationCommand.discussInterjections,
-                            title: "Discuss",
-                            systemImage: "text.bubble.fill"
-                        )
-                    }
-                }
+private struct Gate2SharedMarginButtons: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Link(destination: Gate2CompactCommandURL.url(command: Gate2CompactApplicationCommand.listenToSharedMargin)) {
+                Label("Listen", systemImage: "play.fill")
+                    .font(.caption.weight(.bold))
+                    .frame(maxWidth: .infinity, minHeight: 38)
+                    .foregroundStyle(.white)
+                    .background(Color.green.opacity(0.28))
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            }
+            Link(destination: Gate2CompactCommandURL.url(command: Gate2CompactApplicationCommand.dismissSharedMargin)) {
+                Label("Dismiss", systemImage: "xmark")
+                    .font(.caption.weight(.bold))
+                    .frame(maxWidth: .infinity, minHeight: 38)
+                    .foregroundStyle(.white)
+                    .background(Color.white.opacity(0.14))
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .buttonStyle(.plain)
     }
 }
 

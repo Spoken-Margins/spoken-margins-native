@@ -94,6 +94,25 @@ struct ImportedCommentaryPrompt: Identifiable {
     var senderLabel: String { layer.displayLabel?.nilIfEmpty ?? "Unsigned sender" }
 }
 
+private enum MarginReviewToken: Identifiable {
+    case word(AlignedTranscriptSegment)
+    case pause(InterjectionCleanupDecision)
+
+    var id: String {
+        switch self {
+        case .word(let segment): return "word:\(segment.id)"
+        case .pause(let decision): return "pause:\(decision.id)"
+        }
+    }
+
+    var startMs: Int {
+        switch self {
+        case .word(let segment): return segment.startMs
+        case .pause(let decision): return decision.startMs
+        }
+    }
+}
+
 struct SpokenMarginsPackageImportView: View {
     @EnvironmentObject private var model: Gate1AppModel
     let review: SpokenMarginsPackageImportReview
@@ -308,27 +327,44 @@ struct InterjectionSharingView: View {
                 Text("Reviewed transcript")
                     .font(.caption.weight(.semibold))
                 if let aligned = draft.interjection.alignedTranscript {
-                    Text("Tap a word to remove or restore it. Word deletions are applied to both the transcript and Cleaned voice; new words cannot be inserted into recorded audio.")
+                    Text("Tap a word or bracketed pause to remove or restore it. Crossed-out edits are removed from both the transcript and Cleaned voice; new words cannot be inserted into recorded audio.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
-                    MarginWordWrapLayout(spacing: 6) {
-                        ForEach(aligned.segments) { segment in
-                            let deleted = model.isShareDraftWordDeleted(draftID: draft.id, segmentID: segment.id)
-                            Button {
-                                model.toggleShareDraftWord(draftID: draft.id, segmentID: segment.id)
-                            } label: {
-                                Text(segment.text)
-                                    .strikethrough(deleted, color: AppColors.dangerText)
-                                    .padding(.horizontal, 9)
-                                    .padding(.vertical, 6)
-                                    .background(
-                                        deleted ? AppColors.dangerText.opacity(0.15) : AppColors.inputBackground,
-                                        in: Capsule()
+                    MarginWordWrapLayout(horizontalSpacing: 4, verticalSpacing: 6) {
+                        ForEach(reviewTokens(for: draft, aligned: aligned)) { token in
+                            switch token {
+                            case .word(let segment):
+                                let deleted = model.isShareDraftWordDeleted(draftID: draft.id, segmentID: segment.id)
+                                Button {
+                                    model.toggleShareDraftWord(draftID: draft.id, segmentID: segment.id)
+                                } label: {
+                                    Text(segment.text)
+                                        .font(.body)
+                                        .foregroundStyle(deleted ? AppColors.dangerText : AppColors.text)
+                                        .strikethrough(deleted, color: AppColors.dangerText)
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(!draft.isIncluded)
+                                .contentShape(Rectangle())
+                                .accessibilityLabel("\(deleted ? "Restore" : "Remove") \(segment.text)")
+                            case .pause(let decision):
+                                Button {
+                                    model.setCleanupDecision(
+                                        draftID: draft.id,
+                                        decisionID: decision.id,
+                                        accepted: !decision.accepted
                                     )
+                                } label: {
+                                    Text(pauseLabel(decision))
+                                        .font(.body)
+                                        .foregroundStyle(decision.accepted ? AppColors.dangerText : AppColors.secondaryText)
+                                        .strikethrough(decision.accepted, color: AppColors.dangerText)
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(!draft.isIncluded)
+                                .contentShape(Rectangle())
+                                .accessibilityLabel("\(decision.accepted ? "Restore" : "Shorten") pause")
                             }
-                            .buttonStyle(.plain)
-                            .disabled(!draft.isIncluded)
-                            .accessibilityLabel("\(deleted ? "Restore" : "Remove") \(segment.text)")
                         }
                     }
                     HStack {
@@ -381,7 +417,6 @@ struct InterjectionSharingView: View {
                         }
                         .buttonStyle(SecondaryButtonStyle())
                     } else {
-                        cleanupReview(draft)
                         Button("Restore Original") {
                             model.restoreOriginalShareDraft(draft.id)
                         }
@@ -423,53 +458,29 @@ struct InterjectionSharingView: View {
         .opacity(draft.isIncluded ? 1 : 0.62)
     }
 
-    @ViewBuilder
-    private func cleanupReview(_ draft: ShareInterjectionDraft) -> some View {
-        if let decisions = draft.cleanup?.decisions {
-            let automaticDecisions = decisions.filter {
-                $0.kind != .manualWord && (draft.currentEditState.automaticCleanupEnabled || $0.accepted)
-            }
-            if !automaticDecisions.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Proposed edits — turn any edit off to undo it")
-                        .font(.subheadline.weight(.semibold))
-                    ForEach(automaticDecisions) { decision in
-                        Toggle(
-                            decisionLabel(decision),
-                            isOn: Binding(
-                                get: {
-                                    model.sharingState.drafts
-                                        .first(where: { $0.id == draft.id })?
-                                        .cleanup?.decisions.first(where: { $0.id == decision.id })?.accepted ?? false
-                                },
-                                set: {
-                                    model.setCleanupDecision(
-                                        draftID: draft.id,
-                                        decisionID: decision.id,
-                                        accepted: $0
-                                    )
-                                }
-                            )
-                        )
-                        .font(.caption)
-                    }
-                }
-            }
+    private func reviewTokens(
+        for draft: ShareInterjectionDraft,
+        aligned: AlignedInterjectionTranscript
+    ) -> [MarginReviewToken] {
+        let words = aligned.segments.map(MarginReviewToken.word)
+        let pauses = (draft.cleanup?.decisions ?? [])
+            .filter { $0.kind == .longPause }
+            .map(MarginReviewToken.pause)
+        return (words + pauses).sorted {
+            if $0.startMs == $1.startMs { return $0.id < $1.id }
+            return $0.startMs < $1.startMs
         }
     }
 
-    private func decisionLabel(_ decision: InterjectionCleanupDecision) -> String {
-        switch decision.kind {
-        case .filler: return "Remove “\(decision.originalText ?? "filler")”"
-        case .isolatedPhrase: return "Remove isolated “\(decision.originalText ?? "phrase")”"
-        case .longPause: return "Shorten \(max(0, decision.endMs - decision.startMs)) ms pause"
-        case .manualWord: return "Remove “\(decision.originalText ?? "word")”"
-        }
+    private func pauseLabel(_ decision: InterjectionCleanupDecision) -> String {
+        let duration = Double(max(0, decision.endMs - decision.startMs)) / 1_000
+        return String(format: "[%.1fs pause]", duration)
     }
 }
 
 private struct MarginWordWrapLayout: Layout {
-    let spacing: CGFloat
+    let horizontalSpacing: CGFloat
+    let verticalSpacing: CGFloat
 
     func sizeThatFits(
         proposal: ProposedViewSize,
@@ -484,13 +495,13 @@ private struct MarginWordWrapLayout: Layout {
             let size = subview.sizeThatFits(.unspecified)
             if x > 0, x + size.width > width {
                 x = 0
-                y += rowHeight + spacing
+                y += rowHeight + verticalSpacing
                 rowHeight = 0
             }
-            x += size.width + spacing
+            x += size.width + horizontalSpacing
             rowHeight = max(rowHeight, size.height)
         }
-        return CGSize(width: proposal.width ?? max(0, x - spacing), height: y + rowHeight)
+        return CGSize(width: proposal.width ?? max(0, x - horizontalSpacing), height: y + rowHeight)
     }
 
     func placeSubviews(
@@ -506,7 +517,7 @@ private struct MarginWordWrapLayout: Layout {
             let size = subview.sizeThatFits(.unspecified)
             if x > bounds.minX, x + size.width > bounds.maxX {
                 x = bounds.minX
-                y += rowHeight + spacing
+                y += rowHeight + verticalSpacing
                 rowHeight = 0
             }
             subview.place(
@@ -514,7 +525,7 @@ private struct MarginWordWrapLayout: Layout {
                 anchor: .topLeading,
                 proposal: ProposedViewSize(size)
             )
-            x += size.width + spacing
+            x += size.width + horizontalSpacing
             rowHeight = max(rowHeight, size.height)
         }
     }

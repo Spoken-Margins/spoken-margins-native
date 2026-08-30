@@ -1124,6 +1124,7 @@ private struct ItemScreen: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     detailHeader
+                    actions
                     if !model.selectedItem.overview.isEmpty {
                         overview
                     }
@@ -1131,7 +1132,6 @@ private struct ItemScreen: View {
                     chapters
                     sessions
                     importedCommentary
-                    actions
                 }
                 .padding(20)
             }
@@ -1302,24 +1302,8 @@ private struct ItemScreen: View {
             }
             if model.selectedItem.chapters.isEmpty {
                 ProductPanel {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Mapless playback is available.")
-                            .foregroundStyle(AppColors.secondaryText)
-                        if model.canGenerateListeningMap {
-                            Button {
-                                model.generateListeningMap()
-                            } label: {
-                                Label(model.isGeneratingListeningMap ? "Generating Listening Map" : "Generate Listening Map", systemImage: "sparkles")
-                            }
-                            .buttonStyle(SecondaryButtonStyle())
-                            .disabled(model.isGeneratingListeningMap)
-                            .accessibilityIdentifier("chapters.generateMap.button")
-                        } else {
-                            Text(model.listeningMapGenerationAvailabilityDescription)
-                                .font(.caption)
-                                .foregroundStyle(AppColors.secondaryText)
-                        }
-                    }
+                    Text("Mapless playback is available. A Listening Map is optional.")
+                        .foregroundStyle(AppColors.secondaryText)
                 }
             } else {
                 ForEach(model.selectedItem.chapters, id: \.id) { chapter in
@@ -1757,6 +1741,22 @@ private struct PlaybackScreen: View {
 
     @ViewBuilder
     private var importedCommentaryControl: some View {
+        if model.hasEnabledImportedCommentary {
+            Toggle(
+                "Auto-play shared Margins",
+                isOn: Binding(
+                    get: { model.importedCommentaryAutoPlayEnabled },
+                    set: { enabled in
+                        model.setImportedCommentaryAutoPlayEnabled(enabled)
+                    }
+                )
+            )
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.white)
+            .tint(AppColors.accent)
+            .padding(.horizontal, 4)
+            .accessibilityIdentifier("importedCommentary.autoPlay")
+        }
         if let playing = model.playingImportedCommentary {
             VStack(spacing: 8) {
                 Text(playing.senderLabel)
@@ -1788,9 +1788,14 @@ private struct PlaybackScreen: View {
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.85))
                     .lineLimit(3)
-                Button("Listen", action: model.listenToPendingImportedCommentary)
-                    .buttonStyle(PrimaryButtonStyle())
-                    .accessibilityIdentifier("importedCommentary.listen")
+                HStack(spacing: 10) {
+                    Button("Listen", action: model.listenToPendingImportedCommentary)
+                        .buttonStyle(PrimaryButtonStyle())
+                        .accessibilityIdentifier("importedCommentary.listen")
+                    Button("Dismiss", action: model.dismissPendingImportedCommentary)
+                        .buttonStyle(SecondaryButtonStyle())
+                        .accessibilityIdentifier("importedCommentary.dismiss")
+                }
             }
             .padding(12)
             .frame(maxWidth: .infinity)
