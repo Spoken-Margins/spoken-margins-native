@@ -93,6 +93,20 @@ struct Gate1RootView: View {
             HelpScreen()
                 .environmentObject(model)
         }
+        .sheet(isPresented: $model.isSharingInterjectionsPresented) {
+            InterjectionSharingView()
+                .environmentObject(model)
+        }
+        .sheet(isPresented: $model.isSharedSpokenMarginsPackagePresented) {
+            if let packageURL = model.sharedSpokenMarginsPackageURL {
+                SharedSpokenMarginsPackageReadyView(packageURL: packageURL)
+                    .environmentObject(model)
+            }
+        }
+        .sheet(item: $model.spokenMarginsPackageImportReview) { review in
+            SpokenMarginsPackageImportView(review: review)
+                .environmentObject(model)
+        }
         .alert("AI Setup Needed", isPresented: $model.isAISetupNeededPresented) {
             Button("Open AI Settings", action: model.openAISettingsFromSummaryPrompt)
             Button("Not Now", role: .cancel) {}
@@ -1296,7 +1310,18 @@ private struct HomeScreen: View {
                 }
                 .onCompatibleChange(of: model.libraryQuery) { _ in model.libraryQueryChanged() }
             }
-            if model.libraryItems.isEmpty {
+            if let libraryAccessError = model.libraryAccessError {
+                ProductPanel {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label("Your library could not be opened", systemImage: "exclamationmark.triangle.fill")
+                            .font(.headline)
+                            .foregroundStyle(AppColors.dangerText)
+                        Text(libraryAccessError)
+                            .foregroundStyle(AppColors.secondaryText)
+                    }
+                }
+                .accessibilityIdentifier("home.libraryAccessError")
+            } else if model.libraryItems.isEmpty {
                 ProductPanel {
                     VStack(alignment: .leading, spacing: 14) {
                         Text("Your library is empty")
@@ -1441,13 +1466,14 @@ private struct ItemScreen: View {
                     detailHeader
                     SourceFollowSuggestionCard()
                     ManualSourceFollowButton()
+                    actions
                     if !model.selectedItem.overview.isEmpty {
                         overview
                     }
                     listeningMapTools
                     chapters
                     sessions
-                    actions
+                    importedCommentary
                 }
                 .padding(20)
             }
@@ -1597,24 +1623,8 @@ private struct ItemScreen: View {
                 }
             } else if model.selectedItem.chapters.isEmpty {
                 ProductPanel {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Mapless playback is available.")
-                            .foregroundStyle(AppColors.secondaryText)
-                        if model.canGenerateListeningMap {
-                            Button {
-                                model.generateListeningMap()
-                            } label: {
-                                Label(model.isGeneratingListeningMap ? "Generating Listening Map" : "Generate Listening Map", systemImage: "sparkles")
-                            }
-                            .buttonStyle(SecondaryButtonStyle())
-                            .disabled(model.isGeneratingListeningMap)
-                            .accessibilityIdentifier("chapters.generateMap.button")
-                        } else {
-                            Text(model.listeningMapGenerationAvailabilityDescription)
-                                .font(.caption)
-                                .foregroundStyle(AppColors.secondaryText)
-                        }
-                    }
+                    Text("Mapless playback is available. A Listening Map is optional.")
+                        .foregroundStyle(AppColors.secondaryText)
                 }
             } else {
                 ForEach(model.selectedItem.chapters, id: \.id) { chapter in
@@ -1745,6 +1755,12 @@ private struct ItemScreen: View {
             }
             .buttonStyle(SecondaryButtonStyle())
             .accessibilityIdentifier("item.export.button")
+            Button(action: model.prepareShareInterjections) {
+                Label("Share Margins", systemImage: "person.wave.2")
+            }
+            .buttonStyle(SecondaryButtonStyle())
+            .disabled(model.selectedItem.interjections.filter { $0.status == "active" && $0.targetType == .item }.isEmpty)
+            .accessibilityIdentifier("item.shareMargins.button")
             Button {
                 model.copyTargetInterjections(targetType: InterjectionTargetType.item.rawValue, targetId: model.selectedItem.id)
             } label: {
@@ -1754,6 +1770,91 @@ private struct ItemScreen: View {
             .disabled(model.selectedItem.interjections.filter { $0.targetType == .item }.isEmpty)
             .accessibilityIdentifier("item.copyInterjections.button")
         }
+    }
+
+    @ViewBuilder
+    private var importedCommentary: some View {
+        if !model.selectedItem.importedCommentaryLayers.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Shared Margins")
+                    .font(.headline)
+                ForEach(model.selectedItem.importedCommentaryLayers) { layer in
+                    ProductPanel {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(layer.displayLabel?.nilIfEmpty ?? "Unsigned sender")
+                                        .font(.headline)
+                                    Text("Integrity checked · Sender identity unverified")
+                                        .font(.caption)
+                                        .foregroundStyle(AppColors.secondaryText)
+                                }
+                                Spacer()
+                                Text("\(model.selectedItem.importedCommentaryInterjections[layer.id]?.count ?? 0)")
+                                    .font(.title3.bold())
+                            }
+                            Text(importedLayerStatus(layer))
+                                .font(.caption)
+                                .foregroundStyle(layer.sourceResolutionStatus == .ambiguous ? AppColors.dangerText : AppColors.secondaryText)
+
+                            Toggle("Enabled during listening", isOn: Binding(
+                                get: { layer.isEnabled },
+                                set: { model.setImportedCommentaryLayerEnabled(layer.id, enabled: $0) }
+                            ))
+                            Toggle("Mute cue", isOn: Binding(
+                                get: { layer.isMuted },
+                                set: { model.setImportedCommentaryLayerMuted(layer.id, muted: $0) }
+                            ))
+                            Picker("Reveal mode", selection: Binding(
+                                get: { layer.revealMode ?? .companion },
+                                set: { model.setImportedCommentaryRevealMode(layer.id, mode: $0) }
+                            )) {
+                                Text("Fresh").tag(ImportedCommentaryRevealMode.fresh)
+                                Text("Companion").tag(ImportedCommentaryRevealMode.companion)
+                                Text("Guided").tag(ImportedCommentaryRevealMode.guided)
+                            }
+                            .pickerStyle(.segmented)
+
+                            ForEach(model.selectedItem.importedCommentaryInterjections[layer.id] ?? []) { margin in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(margin.approvedTranscript)
+                                        .font(.callout)
+                                    Text(importedAnchorEvidenceLabel(margin.resolution))
+                                        .font(.caption2)
+                                        .foregroundStyle(AppColors.secondaryText)
+                                }
+                            }
+
+                            Button(role: .destructive) {
+                                model.deleteImportedCommentaryLayer(layer.id)
+                            } label: {
+                                Label("Delete Shared Margins", systemImage: "trash")
+                            }
+                            .buttonStyle(SecondaryButtonStyle())
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func importedLayerStatus(_ layer: ImportedCommentaryLayer) -> String {
+        switch layer.sourceResolutionStatus {
+        case .pending: return "Waiting for the recipient podcast download."
+        case .resolved: return "Anchors resolved for this downloaded edition."
+        case .contextOnly: return "Kept for reading; unresolved Margins will not interrupt playback."
+        case .ambiguous: return "Anchor evidence was ambiguous; no automatic placement was made."
+        case .wrongSource: return "This package does not match this source."
+        case .unavailable: return "The referenced passage was not found in this edition."
+        }
+    }
+
+    private func importedAnchorEvidenceLabel(_ resolution: ImportedAnchorResolution) -> String {
+        let label = resolution.evidenceClass.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
+        if let time = resolution.localMediaTimeMs {
+            return "\(label) · \(formatPlaybackTime(time))"
+        }
+        return label
     }
 }
 
@@ -1930,6 +2031,10 @@ private struct PlaybackScreen: View {
                 .tracking(1.4)
                 .foregroundStyle(AppColors.ochre)
             playbackHeader
+            importedCommentaryControl
+            if isUITesting {
+                gate2CompactValidation
+            }
             playbackPosition
             playbackTransport
             playbackRateControl
@@ -2001,6 +2106,73 @@ private struct PlaybackScreen: View {
                 .buttonStyle(SecondaryButtonStyle())
                 .accessibilityIdentifier("timeline.section")
             }
+        }
+    }
+
+    @ViewBuilder
+    private var importedCommentaryControl: some View {
+        if model.hasEnabledImportedCommentary {
+            Toggle(
+                "Auto-play shared Margins",
+                isOn: Binding(
+                    get: { model.importedCommentaryAutoPlayEnabled },
+                    set: { enabled in
+                        model.setImportedCommentaryAutoPlayEnabled(enabled)
+                    }
+                )
+            )
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.white)
+            .tint(AppColors.accent)
+            .padding(.horizontal, 4)
+            .accessibilityIdentifier("importedCommentary.autoPlay")
+        }
+        if let playing = model.playingImportedCommentary {
+            VStack(spacing: 8) {
+                Text(playing.senderLabel)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Text("Shared Margin \(playing.index) of \(playing.count)")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.72))
+                Text("Playing at \(model.playingInterjectionAudioRate.formatted(.number.precision(.fractionLength(0...2))))× to match the item")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.72))
+                Text(playing.interjection.approvedTranscript)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(3)
+                Button("Return to Source", action: model.returnToSourceFromImportedCommentary)
+                    .buttonStyle(PrimaryButtonStyle())
+                    .accessibilityIdentifier("importedCommentary.returnToSource")
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity)
+            .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
+        } else if let pending = model.pendingImportedCommentary {
+            VStack(spacing: 8) {
+                Text(pending.senderLabel)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Text("Shared Margin \(pending.index) of \(pending.count)")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.72))
+                Text(pending.interjection.approvedTranscript)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(3)
+                HStack(spacing: 10) {
+                    Button("Listen", action: model.listenToPendingImportedCommentary)
+                        .buttonStyle(PrimaryButtonStyle())
+                        .accessibilityIdentifier("importedCommentary.listen")
+                    Button("Dismiss", action: model.dismissPendingImportedCommentary)
+                        .buttonStyle(SecondaryButtonStyle())
+                        .accessibilityIdentifier("importedCommentary.dismiss")
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity)
+            .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
         }
     }
 
@@ -2574,21 +2746,39 @@ private struct PlaybackScreen: View {
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("timeline.mediaChapter.jump.\(chapter.id)")
                     case .interjection(let interjection):
+                        TimelineInterjectionRow(
+                            interjectionID: interjection.id,
+                            percent: InterjectionPositionPresentation.timelineBadge(
+                                for: interjection,
+                                durationMs: interjectionMediaDurationMs
+                            ),
+                            subtitle: interjectionPreview(interjection),
+                            isStarred: interjection.isStarredForSharing == true,
+                            privateNote: interjection.privateSharingNote,
+                            open: {
+                                model.recordTimelineInterjectionViewed(interjectionId: interjection.id)
+                                selectedInterjection = interjection
+                            },
+                            toggleStar: {
+                                model.setInterjectionStarredForSharing(
+                                    interjection.id,
+                                    starred: interjection.isStarredForSharing != true
+                                )
+                            }
+                        )
+                        .accessibilityIdentifier("timeline.interjection.\(interjection.id)")
+                    case .importedCommentary(let layer, let margin, _):
                         Button {
-                            model.recordTimelineInterjectionViewed(interjectionId: interjection.id)
-                            selectedInterjection = interjection
+                            model.listenToImportedCommentary(layerID: layer.id, interjectionID: margin.id)
                         } label: {
                             TimelineRow(
-                                percent: InterjectionPositionPresentation.timelineBadge(
-                                    for: interjection,
-                                    durationMs: interjectionMediaDurationMs
-                                ),
-                                title: "Interjection",
-                                subtitle: interjectionPreview(interjection)
+                                percent: margin.resolution.localMediaTimeMs.map(formatPlaybackTime) ?? "SHR",
+                                title: "Shared Margin · \(layer.displayLabel?.nilIfEmpty ?? "Unsigned sender")",
+                                subtitle: margin.approvedTranscript
                             )
                         }
                         .buttonStyle(.plain)
-                        .accessibilityIdentifier("timeline.interjection.\(interjection.id)")
+                        .accessibilityIdentifier("timeline.importedCommentary.\(margin.id)")
                     case .turn(let turn):
                         Button {
                             model.playTurn(turn, fromTimeline: true)
@@ -2631,6 +2821,16 @@ private struct PlaybackScreen: View {
             sourceHeaderEntries = [.sourceItem]
         }
         let mediaDurationMs = max(1, interjectionMediaDurationMs ?? 1)
+        let importedEntries = model.selectedItem.importedCommentaryLayers
+            .filter { $0.deletedAt == nil }
+            .flatMap { layer in
+                (model.selectedItem.importedCommentaryInterjections[layer.id] ?? []).map { margin in
+                    let percent = margin.resolution.localMediaTimeMs.map {
+                        max(0, min(100, Int((Double($0) / Double(mediaDurationMs) * 100).rounded())))
+                    } ?? margin.anchorEvidence.roughPercent ?? 100
+                    return PlaybackTimelineEntry.importedCommentary(layer, margin, percent)
+                }
+            }
         let sourceEntries = (model.selectedItem.chapters.map { PlaybackTimelineEntry.chapter($0) } +
             visibleMediaChapters.map { chapter in
                 PlaybackTimelineEntry.mediaChapter(
@@ -2640,7 +2840,8 @@ private struct PlaybackScreen: View {
                     )))
                 )
             } +
-            model.selectedItem.interjections.filter { $0.targetType == .item }.map { PlaybackTimelineEntry.interjection($0) }
+            model.selectedItem.interjections.filter { $0.targetType == .item }.map { PlaybackTimelineEntry.interjection($0) } +
+            importedEntries
         )
         .sorted { lhs, rhs in
             let lhsPercent = timelinePercent(for: lhs)
@@ -3668,10 +3869,27 @@ private struct ExportScreen: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("Share Session")
+                    Text("Share")
                         .font(.largeTitle.bold())
-                    Text("Choose one listening session, then share or copy a session-isolated handoff. Changes below update the preview automatically.")
+                    Text("Share reviewed Margins with their voice, or export a session handoff as Markdown or JSON.")
                         .foregroundStyle(AppColors.secondaryText)
+                    ProductPanel {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Share Margins")
+                                .font(.headline)
+                            Text("Review the words, voice version, item transport, and anchor evidence that will leave your device.")
+                                .font(.callout)
+                                .foregroundStyle(AppColors.secondaryText)
+                            Button(action: model.prepareShareInterjections) {
+                                Label("Share Margins (\(shareableMarginCount))", systemImage: "person.wave.2")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(PrimaryButtonStyle())
+                            .disabled(shareableMarginCount == 0)
+                        }
+                    }
+                    Text("Export listening session")
+                        .font(.headline)
                     ProductPanel {
                         VStack(alignment: .leading, spacing: 14) {
                             Picker(
@@ -3737,7 +3955,7 @@ private struct ExportScreen: View {
                             Button {
                                 isSharePresented = true
                             } label: {
-                                Label("Share Session", systemImage: "square.and.arrow.up")
+                                Label("Export Session", systemImage: "square.and.arrow.up")
                             }
                             .buttonStyle(PrimaryButtonStyle())
                             .accessibilityIdentifier("export.share.button")
@@ -3749,7 +3967,7 @@ private struct ExportScreen: View {
                             }
                             #else
                             ShareLink(item: model.exportPreview) {
-                                Label("Share Session", systemImage: "square.and.arrow.up")
+                                Label("Export Session", systemImage: "square.and.arrow.up")
                             }
                             .buttonStyle(PrimaryButtonStyle())
                             .accessibilityIdentifier("export.share.button")
@@ -3813,6 +4031,10 @@ private struct ExportScreen: View {
                 }
             }
         }
+    }
+
+    private var shareableMarginCount: Int {
+        model.selectedItem.interjections.filter { $0.status == "active" && $0.targetType == .item }.count
     }
 
     #if canImport(UIKit)
@@ -3969,6 +4191,7 @@ private enum PlaybackTimelineEntry: Identifiable {
     case chapter(Chapter)
     case mediaChapter(MediaTimelineChapter, Int)
     case interjection(Interjection)
+    case importedCommentary(ImportedCommentaryLayer, ImportedCommentaryInterjection, Int)
     case turn(ConversationTurn)
     case turnChapter(ConversationTurn, Chapter)
 
@@ -3979,6 +4202,7 @@ private enum PlaybackTimelineEntry: Identifiable {
         case .chapter(let chapter): return "chapter-\(chapter.id)"
         case .mediaChapter(let chapter, _): return "media-chapter-\(chapter.id)"
         case .interjection(let interjection): return "interjection-\(interjection.id)"
+        case .importedCommentary(_, let margin, _): return "imported-commentary-\(margin.id)"
         case .turn(let turn): return "turn-\(turn.id)"
         case .turnChapter(let turn, let chapter): return "turn-chapter-\(turn.id)-\(chapter.id)"
         }
@@ -3991,6 +4215,7 @@ private enum PlaybackTimelineEntry: Identifiable {
         case .chapter(let chapter): return chapter.percent
         case .mediaChapter(_, let percent): return percent
         case .interjection(let interjection): return interjection.targetType == .item ? interjection.roughPercent : 101
+        case .importedCommentary(_, _, let percent): return percent
         case .turn: return 101
         case .turnChapter: return 101
         }
@@ -4002,14 +4227,18 @@ private enum PlaybackTimelineEntry: Identifiable {
         case .overview: return -1
         case .chapter, .mediaChapter: return 0
         case .interjection(let interjection): return interjection.targetType == .item ? 1 : 4
-        case .turn: return 2
-        case .turnChapter: return 3
+        case .importedCommentary: return 2
+        case .turn: return 3
+        case .turnChapter: return 4
         }
     }
 
     var interjectionMediaTimeMs: Int? {
-        guard case .interjection(let interjection) = self else { return nil }
-        return interjection.anchor.mediaTimeMs
+        switch self {
+        case .interjection(let interjection): return interjection.anchor.mediaTimeMs
+        case .importedCommentary(_, let margin, _): return margin.resolution.localMediaTimeMs
+        default: return nil
+        }
     }
 }
 
@@ -4019,6 +4248,7 @@ private struct InterjectionDetailView: View {
     let interjection: Interjection
     @State private var pendingDeletion: PendingInterjectionDeletion?
     @State private var copied = false
+    @State private var privateSharingNoteDraft = ""
 
     private enum PendingInterjectionDeletion: Equatable {
         case transcript
@@ -4092,6 +4322,40 @@ private struct InterjectionDetailView: View {
                     .disabled(current.transcript == nil && current.cleanedTranscript == nil)
                     .accessibilityIdentifier("interjection.detail.deleteTranscript")
                 }
+                Section("Share later") {
+                    Toggle(
+                        "Star for sharing",
+                        isOn: Binding(
+                            get: { currentInterjection.isStarredForSharing == true },
+                            set: {
+                                model.setInterjectionStarredForSharing(current.id, starred: $0)
+                            }
+                        )
+                    )
+                    .accessibilityIdentifier("interjection.detail.shareStar")
+                    TextField("Private note for sender review", text: $privateSharingNoteDraft, axis: .vertical)
+                        .lineLimit(2...5)
+                        .onCompatibleChange(of: privateSharingNoteDraft) { value in
+                            if value.count > Gate1AppModel.privateSharingNoteCharacterLimit {
+                                privateSharingNoteDraft = String(value.prefix(Gate1AppModel.privateSharingNoteCharacterLimit))
+                            }
+                        }
+                        .accessibilityIdentifier("interjection.detail.privateSharingNote")
+                    HStack {
+                        Text("\(privateSharingNoteDraft.count)/\(Gate1AppModel.privateSharingNoteCharacterLimit)")
+                            .font(.caption2)
+                            .foregroundStyle(AppColors.secondaryText)
+                        Spacer()
+                        Button("Save Note") {
+                            model.setInterjectionPrivateSharingNote(current.id, note: privateSharingNoteDraft)
+                        }
+                        .disabled(privateSharingNoteDraft == (current.privateSharingNote ?? ""))
+                        .accessibilityIdentifier("interjection.detail.savePrivateSharingNote")
+                    }
+                    Text("This note helps you choose what to send. It stays private and is never included in a shared package.")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                }
                 Section("Anchors") {
                     LabeledContent("Context status", value: anchorContextStatusLabel(current))
                     Text("Before")
@@ -4119,7 +4383,14 @@ private struct InterjectionDetailView: View {
                 }
             }
             .navigationTitle("Interjection")
+            .onAppear {
+                privateSharingNoteDraft = current.privateSharingNote ?? ""
+            }
             .onDisappear {
+                if model.selectedItem.interjections.contains(where: { $0.id == current.id }),
+                   privateSharingNoteDraft != (current.privateSharingNote ?? "") {
+                    model.setInterjectionPrivateSharingNote(current.id, note: privateSharingNoteDraft)
+                }
                 model.stopInterjectionAudioPlayback()
             }
             .toolbar {
@@ -4175,7 +4446,7 @@ private func anchorContextText(_ value: String, status: AnchorContextStatus?) ->
     }
 }
 
-private struct ProductPanel<Content: View>: View {
+struct ProductPanel<Content: View>: View {
     let isHighlighted: Bool
     @ViewBuilder let content: Content
 
@@ -4300,6 +4571,63 @@ private struct TimelineRow: View {
             }
         }
         .accessibilityValue(isCurrent ? "Current chapter" : "")
+    }
+}
+
+private struct TimelineInterjectionRow: View {
+    let interjectionID: String
+    let percent: String
+    let subtitle: String
+    let isStarred: Bool
+    let privateNote: String?
+    let open: () -> Void
+    let toggleStar: () -> Void
+
+    var body: some View {
+        ProductPanel {
+            HStack(alignment: .top, spacing: 10) {
+                Button(action: open) {
+                    HStack(alignment: .top, spacing: 14) {
+                        Text(percent)
+                            .font(.headline)
+                            .foregroundStyle(AppColors.green)
+                            .frame(width: 64, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Margin")
+                                .font(.headline)
+                                .foregroundStyle(AppColors.text)
+                            Text(subtitle)
+                                .font(.subheadline)
+                                .foregroundStyle(AppColors.secondaryText)
+                                .lineLimit(3)
+                            if let privateNote = privateNote?.nilIfEmpty {
+                                Label(privateNote, systemImage: "note.text")
+                                    .font(.caption)
+                                    .foregroundStyle(AppColors.secondaryText)
+                                    .lineLimit(2)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open Margin")
+                .accessibilityIdentifier("timeline.interjection.open.\(interjectionID)")
+
+                Button(action: toggleStar) {
+                    Image(systemName: isStarred ? "star.fill" : "star")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(isStarred ? Color.yellow : AppColors.secondaryText)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isStarred ? "Remove sharing star" : "Star Margin for sharing")
+                .accessibilityValue(isStarred ? "Starred" : "Not starred")
+                .accessibilityIdentifier("timeline.interjection.star.\(interjectionID)")
+            }
+        }
     }
 }
 
@@ -4472,7 +4800,7 @@ enum AppColors {
     }
 }
 
-private struct PrimaryButtonStyle: ButtonStyle {
+struct PrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.headline)
@@ -4484,7 +4812,7 @@ private struct PrimaryButtonStyle: ButtonStyle {
     }
 }
 
-private struct SecondaryButtonStyle: ButtonStyle {
+struct SecondaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.headline)

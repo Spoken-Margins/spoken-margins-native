@@ -3,6 +3,7 @@ import Security
 import SessionKit
 import SessionKitAI
 import SessionKitAudio
+import SessionKitSharing
 import SessionKitSupertonic
 import SessionKitPersistence
 #if canImport(UIKit)
@@ -135,6 +136,8 @@ struct ItemDetailState {
     var sessions: [Session] = []
     var sessionRows: [SessionPresentation] = []
     var interjections: [Interjection] = []
+    var importedCommentaryLayers: [ImportedCommentaryLayer] = []
+    var importedCommentaryInterjections: [String: [ImportedCommentaryInterjection]] = [:]
     var turns: [ConversationTurn] = []
 }
 
@@ -354,6 +357,16 @@ typealias PreparedTextAudioPrewarmHandler = @Sendable (
 ) async -> Result<PreparedTextAudio?, Error>
 
 typealias InterjectionTranscriptionHandler = @Sendable (_ audioPath: String) async throws -> String
+typealias AlignedInterjectionTranscriptionHandler = @Sendable (_ audioPath: String) async throws -> AlignedInterjectionTranscript
+typealias ShareMarginSilenceAnalysisHandler = @Sendable (
+    _ sourceURL: URL,
+    _ alignedTranscript: AlignedInterjectionTranscript
+) throws -> [InterjectionCleanupDecision]
+typealias ShareMarginAudioCleanupHandler = @Sendable (
+    _ sourceURL: URL,
+    _ destinationURL: URL,
+    _ decisions: [InterjectionCleanupDecision]
+) async throws -> Int
 
 private struct UITestingAmbiguousSourceLinkResolver: LinkResolutionClient {
     func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult {
@@ -410,8 +423,10 @@ final class Gate1AppModel: ObservableObject {
     private static let supertonicVoicePendingTermsKey = "supertonicVoicePendingTermsV1"
     static let exportPreviewCharacterLimit = 24_000
     nonisolated static let supportedPlaybackRates: [Double] = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
+    static let privateSharingNoteCharacterLimit = 500
     private static var isRunningUnitTests: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || NSClassFromString("XCTestCase") != nil
     }
     private static var supportsSpeechVoiceEnumeration: Bool {
         #if targetEnvironment(simulator)
@@ -474,6 +489,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var isWritingBatchExport = false
     @Published private(set) var retryingInterjectionTranscriptionIds: Set<String> = []
     @Published private(set) var playingInterjectionAudioId: String?
+    @Published private(set) var playingInterjectionAudioRate: Double = 1
     @Published var libraryItems: [LibraryItemRow] = []
     @Published var libraryQuery = LibraryQuery(
         contentType: LibraryContentTypeFilter(rawValue: UserDefaults.standard.string(forKey: "libraryContentTypeFilter") ?? "") ?? .all,
@@ -483,6 +499,7 @@ final class Gate1AppModel: ObservableObject {
     )
     @Published private(set) var sleepTimerState: SleepTimerState = .inactive
     @Published private(set) var sleepTimerRemainingSeconds: Int?
+    @Published private(set) var libraryAccessError: String?
     @Published var recentlyDeletedItems: [LibraryItemRow] = []
     @Published var trashUndo: TrashUndoState?
     @Published var selectedItem = ItemDetailState()
@@ -493,6 +510,21 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var isDismissingMiniPlayer = false
     @Published var requestedTimelineFocusMarginID: String?
     @Published var pastedAssistantResponse = ""
+    @Published var sharingState = InterjectionSharingState()
+    @Published var isSharingInterjectionsPresented = false
+    @Published var sharedSpokenMarginsPackageURL: URL?
+    @Published var isSharedSpokenMarginsPackagePresented = false
+    @Published var spokenMarginsPackageImportReview: SpokenMarginsPackageImportReview?
+    @Published private(set) var isImportingSpokenMarginsPackage = false
+    @Published private(set) var spokenMarginsPackageImportError: String?
+    @Published private(set) var pendingImportedCommentary: ImportedCommentaryPrompt? {
+        didSet {
+            if oldValue?.id != pendingImportedCommentary?.id {
+                updateGate2CompactState()
+            }
+        }
+    }
+    @Published private(set) var playingImportedCommentary: ImportedCommentaryPrompt?
 
     var displayedExportPreview: String {
         guard exportPreview.count > Self.exportPreviewCharacterLimit else { return exportPreview }
@@ -644,7 +676,10 @@ final class Gate1AppModel: ObservableObject {
     private let forcePreparedTextGate: Bool
     private let sourceTranscriptionClient: SourceTranscriptionClient
     private let interjectionTranscriptionHandler: InterjectionTranscriptionHandler
+    private let alignedInterjectionTranscriptionHandler: AlignedInterjectionTranscriptionHandler?
     private let preparedTextAudioPrewarmHandler: PreparedTextAudioPrewarmHandler?
+    private let shareMarginSilenceAnalysisHandler: ShareMarginSilenceAnalysisHandler
+    private let shareMarginAudioCleanupHandler: ShareMarginAudioCleanupHandler
     private let trashUndoDismissDelay: Duration
     #if SPOKEN_MARGINS_WATCH
     private var gate3WatchDispatcher: CompactControlDispatcher?
@@ -661,7 +696,15 @@ final class Gate1AppModel: ObservableObject {
     #if canImport(AVFoundation)
     private var interjectionAudioPlayer: AVPlayer?
     private var interjectionAudioCompletionTask: Task<Void, Never>?
+    private var commentaryCuePlayer: AVAudioPlayer?
     #endif
+    private var announcedImportedInterjectionIDs: Set<String> = []
+    private var sourceShouldResumeAfterImportedCommentary = false
+    private var sourcePausedForImportedCommentaryPrompt = false
+    private var importedCommentaryAutoPlayTask: Task<Void, Never>?
+    private var bulkSharePreparationTask: Task<Void, Never>?
+    private var bulkSharePreparationGeneration = 0
+    private var startsRecipientTestSessionAfterImport = false
     private var textAudioPrewarmTasks: [String: Task<Void, Never>] = [:]
     private var explicitAudioPreparationTask: Task<Void, Never>?
     private var sourceImportTask: Task<Void, Never>?
@@ -869,7 +912,10 @@ final class Gate1AppModel: ObservableObject {
         forcePreparedTextGate: Bool = false,
         sourceTranscriptionClient: SourceTranscriptionClient = SystemSourceTranscriptionClient(),
         interjectionTranscriptionHandler: InterjectionTranscriptionHandler? = nil,
+        alignedInterjectionTranscriptionHandler: AlignedInterjectionTranscriptionHandler? = nil,
         preparedTextAudioPrewarmHandler: PreparedTextAudioPrewarmHandler? = nil,
+        shareMarginSilenceAnalysisHandler: ShareMarginSilenceAnalysisHandler? = nil,
+        shareMarginAudioCleanupHandler: ShareMarginAudioCleanupHandler? = nil,
         gate2CompactControls: Gate2CompactControlController = Gate2CompactControlController(),
         featureFlags: SpokenMarginsFeatureFlags = .release,
         localFoundationModelClient: any LocalFoundationModelClient = AppleFoundationModelClient(),
@@ -902,13 +948,30 @@ final class Gate1AppModel: ObservableObject {
         self.trashUndoDismissDelay = trashUndoDismissDelay
         if let interjectionTranscriptionHandler {
             self.interjectionTranscriptionHandler = interjectionTranscriptionHandler
+            self.alignedInterjectionTranscriptionHandler = alignedInterjectionTranscriptionHandler
         } else {
             let transcriptionClient = SystemSpeechTranscriptionClient()
             self.interjectionTranscriptionHandler = { audioPath in
                 try await transcriptionClient.transcribe(audioPath: audioPath)
             }
+            self.alignedInterjectionTranscriptionHandler = alignedInterjectionTranscriptionHandler ?? { audioPath in
+                try await transcriptionClient.transcribeAligned(audioPath: audioPath)
+            }
         }
         self.preparedTextAudioPrewarmHandler = preparedTextAudioPrewarmHandler
+        self.shareMarginSilenceAnalysisHandler = shareMarginSilenceAnalysisHandler ?? { sourceURL, aligned in
+            try InterjectionSilenceDetector.proposePauseEdits(
+                sourceURL: sourceURL,
+                alignedTranscript: aligned
+            )
+        }
+        self.shareMarginAudioCleanupHandler = shareMarginAudioCleanupHandler ?? { sourceURL, destinationURL, decisions in
+            try await InterjectionAudioCleanupRenderer.render(
+                sourceURL: sourceURL,
+                destinationURL: destinationURL,
+                decisions: decisions
+            )
+        }
         localFoundationModelAvailability = localFoundationModelClient.availability()
         if CommandLine.arguments.contains("--ui-testing") {
             speechVoiceIdentifier = ""
@@ -933,7 +996,9 @@ final class Gate1AppModel: ObservableObject {
         migrateTTSSettingsIfNeeded()
         enforceTermsGateForStoredVoice()
         UserDefaults.standard.removeObject(forKey: "aiExecutionMode")
-        refreshSpeechVoiceOptions()
+        // The system voice catalog is loaded when Settings appears. Eager
+        // enumeration here can block app launch while TextToSpeech services
+        // are still starting, and the catalog is not needed on other screens.
         sanitizeTTSMode()
         settingsValueChanged()
         refreshQuickAccessFolder()
@@ -1239,6 +1304,8 @@ final class Gate1AppModel: ObservableObject {
         sourceImportTask?.cancel()
         quickAccessRefreshTask?.cancel()
         interjectionAudioCompletionTask?.cancel()
+        importedCommentaryAutoPlayTask?.cancel()
+        bulkSharePreparationTask?.cancel()
     }
 
     private func reconcilePlaybackProgressTicker() {
@@ -1263,6 +1330,7 @@ final class Gate1AppModel: ObservableObject {
                     guard let engine = self.engine else { return }
                     do {
                         self.synchronizeStreamingSpeechAnchorIfNeeded()
+                        let previousSnapshot = self.snapshot
                         let previousStatus = self.snapshot.status
                         let previousTargetId = self.snapshot.targetId
                         let previousEngagementProgress = self.snapshot.currentPlaybackProgressPercent
@@ -1288,6 +1356,7 @@ final class Gate1AppModel: ObservableObject {
                            let store = self.store {
                             self.offerFollowSuggestionIfEligible(itemId: itemId, store: store)
                         }
+                        self.reconcileImportedCommentary(previous: previousSnapshot, current: updated)
                         let playedPendingTurn = self.playPendingTurnIfReady(completedCurrentAudio: completedCurrentAudio)
                         if completedCurrentAudio && !playedPendingTurn {
                             self.closeCompletedSessionIfReady()
@@ -1389,6 +1458,7 @@ final class Gate1AppModel: ObservableObject {
         guard libraryItems.isEmpty, store == nil else { return }
         do {
             let store = try requireStore()
+            libraryAccessError = nil
             if let fixtureText = ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"],
                CommandLine.arguments.contains("--ui-testing") {
                 try resetAndSeedUITestingText(
@@ -1462,6 +1532,8 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["libraryBootstrap"] = "loaded:\(rows.count)"
             reportSuccess(rows.isEmpty ? "Add a source to begin." : "Library ready.")
         } catch {
+            libraryAccessError = "This build could not open your existing library. This attempt did not reset it. Do not use Reset Library or delete the app; install a compatible build and try again. Details: \(error.localizedDescription)"
+            diagnostics["libraryBootstrap"] = "failed_without_reset:\(error.localizedDescription)"
             reportFailure(error, context: "Library bootstrap failed")
         }
     }
@@ -3559,6 +3631,8 @@ final class Gate1AppModel: ObservableObject {
     func startNewSession(id: String) {
         guard !rejectNavigationOrSessionMutationWhileRecording("start_new_session") else { return }
         cancelSleepTimer()
+        announcedImportedInterjectionIDs.removeAll()
+        pendingImportedCommentary = nil
         stopSpeechPreviews()
         streamingSpeechQueue.stopAndClear()
         if hasActiveSession, let engine {
@@ -3581,6 +3655,8 @@ final class Gate1AppModel: ObservableObject {
 
     func openSession(_ session: Session) {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_session") else { return }
+        announcedImportedInterjectionIDs.removeAll()
+        pendingImportedCommentary = nil
         stopSpeechPreviews()
         do {
             let store = try requireStore()
@@ -3606,6 +3682,8 @@ final class Gate1AppModel: ObservableObject {
     func resumeSession(_ session: Session) {
         guard !rejectNavigationOrSessionMutationWhileRecording("resume_session") else { return }
         cancelSleepTimer()
+        announcedImportedInterjectionIDs.removeAll()
+        pendingImportedCommentary = nil
         guard !requireTermsDecisionBeforePlayback(.resumeSession(session.id)) else { return }
         stopSpeechPreviews()
         do {
@@ -4782,9 +4860,13 @@ final class Gate1AppModel: ObservableObject {
             try AVAudioSession.sharedInstance().setActive(true)
             #endif
             let item = AVPlayerItem(url: url)
+            item.audioTimePitchAlgorithm = .timeDomain
             let player = AVPlayer(playerItem: item)
+            let rate = Self.marginPlaybackRate(itemPlaybackRate: snapshot.playbackRate)
+            player.defaultRate = Float(rate)
             interjectionAudioPlayer = player
             playingInterjectionAudioId = interjection.id
+            playingInterjectionAudioRate = rate
             interjectionAudioCompletionTask = Task { @MainActor [weak self, weak item] in
                 while !Task.isCancelled, let item {
                     try? await Task.sleep(for: .milliseconds(250))
@@ -4797,7 +4879,7 @@ final class Gate1AppModel: ObservableObject {
                     }
                 }
             }
-            player.play()
+            player.playImmediately(atRate: Float(rate))
         } catch {
             stopInterjectionAudioPlayback()
             reportFailure(error, context: "Interjection playback failed")
@@ -4816,7 +4898,265 @@ final class Gate1AppModel: ObservableObject {
         interjectionAudioCompletionTask = nil
         #endif
         playingInterjectionAudioId = nil
+        playingInterjectionAudioRate = 1
     }
+
+    func listenToPendingImportedCommentary() {
+        guard let prompt = pendingImportedCommentary else { return }
+        listenToImportedCommentary(prompt)
+    }
+
+    func dismissPendingImportedCommentary() {
+        guard pendingImportedCommentary != nil else { return }
+        importedCommentaryAutoPlayTask?.cancel()
+        importedCommentaryAutoPlayTask = nil
+        pendingImportedCommentary = nil
+        let shouldResume = sourcePausedForImportedCommentaryPrompt
+        sourcePausedForImportedCommentaryPrompt = false
+        if shouldResume, snapshot.status == .paused {
+            resumePlayback()
+        }
+    }
+
+    func listenToImportedCommentary(layerID: String, interjectionID: String) {
+        guard let layer = selectedItem.importedCommentaryLayers.first(where: { $0.id == layerID }),
+              let records = selectedItem.importedCommentaryInterjections[layerID],
+              let offset = records.firstIndex(where: { $0.id == interjectionID }) else { return }
+        listenToImportedCommentary(ImportedCommentaryPrompt(
+            layer: layer,
+            interjection: records[offset],
+            index: offset + 1,
+            count: records.count
+        ))
+    }
+
+    func returnToSourceFromImportedCommentary() {
+        stopImportedCommentaryPlayback(resumeSource: true)
+    }
+
+    private func listenToImportedCommentary(_ prompt: ImportedCommentaryPrompt) {
+        #if canImport(AVFoundation)
+        guard let audioPath = prompt.interjection.audioPath,
+              FileManager.default.fileExists(atPath: audioPath) else {
+            dismissPendingImportedCommentary()
+            reportFailure("This shared Margin contains reviewed text but no playable voice recording.")
+            return
+        }
+        importedCommentaryAutoPlayTask?.cancel()
+        importedCommentaryAutoPlayTask = nil
+        sourceShouldResumeAfterImportedCommentary = sourcePausedForImportedCommentaryPrompt
+            || snapshot.status.isPlaybackActive
+        sourcePausedForImportedCommentaryPrompt = false
+        if snapshot.status.isPlaybackActive { pause() }
+        stopInterjectionAudioPlayback()
+        do {
+            #if os(iOS)
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+            try AVAudioSession.sharedInstance().setActive(true)
+            #endif
+            let item = AVPlayerItem(url: URL(fileURLWithPath: audioPath))
+            item.audioTimePitchAlgorithm = .timeDomain
+            let player = AVPlayer(playerItem: item)
+            let rate = Self.marginPlaybackRate(itemPlaybackRate: snapshot.playbackRate)
+            player.defaultRate = Float(rate)
+            interjectionAudioPlayer = player
+            playingInterjectionAudioRate = rate
+            playingImportedCommentary = prompt
+            pendingImportedCommentary = nil
+            interjectionAudioCompletionTask = Task { @MainActor [weak self, weak item] in
+                while !Task.isCancelled, let item {
+                    try? await Task.sleep(for: .milliseconds(200))
+                    guard !Task.isCancelled else { return }
+                    let duration = item.duration.seconds
+                    let current = item.currentTime().seconds
+                    if duration.isFinite, duration > 0, current.isFinite, current >= duration - 0.05 {
+                        self?.stopImportedCommentaryPlayback(resumeSource: true)
+                        return
+                    }
+                }
+            }
+            player.playImmediately(atRate: Float(rate))
+        } catch {
+            stopImportedCommentaryPlayback(resumeSource: false)
+            reportFailure(error, context: "Shared Margin playback failed")
+        }
+        #else
+        reportFailure("Shared Margin playback is unavailable on this device.")
+        #endif
+    }
+
+    private func stopImportedCommentaryPlayback(resumeSource: Bool) {
+        let shouldResume = resumeSource && sourceShouldResumeAfterImportedCommentary
+        stopInterjectionAudioPlayback()
+        playingImportedCommentary = nil
+        sourceShouldResumeAfterImportedCommentary = false
+        if shouldResume, snapshot.status == .paused { resumePlayback() }
+    }
+
+    private func reconcileImportedCommentary(previous: SessionSnapshot, current: SessionSnapshot) {
+        guard pendingImportedCommentary == nil,
+              playingImportedCommentary == nil,
+              current.itemId == selectedItem.id else { return }
+        let prompts = importedCommentaryPrompts(includeAnnounced: false)
+        let crossed = prompts.filter { prompt in
+            if let anchor = prompt.interjection.resolution.localMediaTimeMs,
+               let before = previous.currentMediaTimeMs,
+               let after = current.currentMediaTimeMs {
+                return before <= anchor && after >= anchor && after > before
+            }
+            if let anchor = prompt.interjection.resolution.localStartChar,
+               let before = previous.currentTextStart,
+               let after = current.currentTextStart {
+                return before <= anchor && after >= anchor && after > before
+            }
+            return false
+        }.sorted {
+            Self.importedCommentaryPosition($0.interjection)
+                < Self.importedCommentaryPosition($1.interjection)
+        }
+        guard let prompt = crossed.first else { return }
+        crossed.forEach { announcedImportedInterjectionIDs.insert($0.id) }
+        guard prompt.layer.revealMode != .fresh else { return }
+        presentImportedCommentaryPrompt(prompt, sourceWasPlaying: current.status.isPlaybackActive)
+    }
+
+    private func importedCommentaryPrompts(includeAnnounced: Bool) -> [ImportedCommentaryPrompt] {
+        selectedItem.importedCommentaryLayers
+            .filter { $0.deletedAt == nil && $0.isEnabled && $0.sourceResolutionStatus == .resolved }
+            .flatMap { layer in
+                let records = (selectedItem.importedCommentaryInterjections[layer.id] ?? [])
+                    .filter { Self.isPlayableImportedCommentaryResolution($0.resolution) }
+                    .sorted { lhs, rhs in
+                        Self.importedCommentaryPosition(lhs) < Self.importedCommentaryPosition(rhs)
+                    }
+                return records.enumerated().compactMap { pair -> ImportedCommentaryPrompt? in
+                    let (offset, record) = pair
+                    guard includeAnnounced || !announcedImportedInterjectionIDs.contains(record.id) else {
+                        return nil
+                    }
+                    return ImportedCommentaryPrompt(
+                        layer: layer,
+                        interjection: record,
+                        index: offset + 1,
+                        count: records.count
+                    )
+                }
+            }
+    }
+
+    private func presentImportedCommentaryPrompt(
+        _ prompt: ImportedCommentaryPrompt,
+        sourceWasPlaying: Bool
+    ) {
+        sourcePausedForImportedCommentaryPrompt = sourceWasPlaying
+        if sourceWasPlaying, snapshot.status.isPlaybackActive { pause() }
+        if !prompt.layer.isMuted { playImportedCommentaryCue() }
+        pendingImportedCommentary = prompt
+        if prompt.layer.revealMode == .guided {
+            importedCommentaryAutoPlayTask?.cancel()
+            importedCommentaryAutoPlayTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(420))
+                guard !Task.isCancelled,
+                      self?.pendingImportedCommentary?.id == prompt.id else { return }
+                self?.listenToPendingImportedCommentary()
+            }
+        }
+    }
+
+    private func jumpToImportedCommentary(interjectionID: String) -> Bool {
+        guard let prompt = importedCommentaryPrompts(includeAnnounced: true)
+            .first(where: { $0.interjection.id == interjectionID }) else {
+            reportFailure("The selected Shared Margin is no longer available.")
+            return false
+        }
+        let sourceWasPlaying = snapshot.status.isPlaybackActive
+        announcedImportedInterjectionIDs.insert(prompt.id)
+        if sourceWasPlaying { pause() }
+        if let mediaTimeMs = prompt.interjection.resolution.localMediaTimeMs {
+            seekMedia(toMediaTimeMs: mediaTimeMs)
+        } else if let charOffset = prompt.interjection.resolution.localStartChar {
+            seekText(toCharOffset: charOffset)
+        } else {
+            reportFailure("The selected Shared Margin does not have a verified local position.")
+            return false
+        }
+        presentImportedCommentaryPrompt(prompt, sourceWasPlaying: sourceWasPlaying)
+        screen = .playback
+        diagnostics["lastSharedMarginNavigation"] = "opened:\(interjectionID)"
+        return true
+    }
+
+    private nonisolated static func importedCommentaryPosition(
+        _ interjection: ImportedCommentaryInterjection
+    ) -> Int {
+        interjection.resolution.localMediaTimeMs
+            ?? interjection.resolution.localStartChar
+            ?? .max
+    }
+
+    nonisolated static func isPlayableImportedCommentaryResolution(
+        _ resolution: ImportedAnchorResolution
+    ) -> Bool {
+        guard !resolution.isAmbiguous else { return false }
+        if resolution.localMediaTimeMs != nil {
+            return isInlinePodcastResolution(resolution)
+        }
+        guard resolution.localStartChar != nil else { return false }
+        switch resolution.evidenceClass {
+        case .articleTextVerified, .exactEdition, .recipientConfirmed:
+            return true
+        case .transcriptVerified, .acousticVerified, .fused, .mapInterpolated,
+             .timestampFallback, .ambiguous, .absentFromRecipientEdition, .unresolved:
+            return false
+        }
+    }
+
+    nonisolated static func marginPlaybackRate(itemPlaybackRate: Double) -> Double {
+        guard itemPlaybackRate.isFinite else { return 1 }
+        return max(0.25, min(3, itemPlaybackRate))
+    }
+
+    private func playImportedCommentaryCue() {
+        #if canImport(AVFoundation)
+        do {
+            commentaryCuePlayer = try AVAudioPlayer(data: Self.doubleChimeWAVData())
+            commentaryCuePlayer?.volume = 0.65
+            commentaryCuePlayer?.play()
+        } catch {
+            diagnostics["importedCommentaryCue"] = "failed:\(error.localizedDescription)"
+        }
+        #endif
+    }
+
+    #if canImport(AVFoundation)
+    private static func doubleChimeWAVData() -> Data {
+        let sampleRate = 44_100
+        let segments: [(frequency: Double, seconds: Double)] = [(880, 0.08), (0, 0.08), (1_175, 0.11)]
+        var samples: [Int16] = []
+        for segment in segments {
+            let count = Int(Double(sampleRate) * segment.seconds)
+            for index in 0..<count {
+                guard segment.frequency > 0 else { samples.append(0); continue }
+                let progress = Double(index) / Double(max(1, count - 1))
+                let envelope = sin(.pi * progress)
+                let value = sin(2 * .pi * segment.frequency * Double(index) / Double(sampleRate)) * envelope * 0.30
+                samples.append(Int16(value * Double(Int16.max)))
+            }
+        }
+        let payloadBytes = samples.count * MemoryLayout<Int16>.size
+        var data = Data()
+        func appendASCII(_ value: String) { data.append(contentsOf: value.utf8) }
+        func appendLE<T: FixedWidthInteger>(_ value: T) {
+            var little = value.littleEndian
+            withUnsafeBytes(of: &little) { data.append(contentsOf: $0) }
+        }
+        appendASCII("RIFF"); appendLE(UInt32(36 + payloadBytes)); appendASCII("WAVEfmt ")
+        appendLE(UInt32(16)); appendLE(UInt16(1)); appendLE(UInt16(1)); appendLE(UInt32(sampleRate))
+        appendLE(UInt32(sampleRate * 2)); appendLE(UInt16(2)); appendLE(UInt16(16)); appendASCII("data")
+        appendLE(UInt32(payloadBytes)); samples.forEach { appendLE($0) }
+        return data
+    }
+    #endif
 
     func importPastedAssistantResponse(autoPlay: Bool = true) {
         let text = pastedAssistantResponse.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -4854,6 +5194,38 @@ final class Gate1AppModel: ObservableObject {
             reportSuccess("Deleted interjection.")
         }
         refreshMarginRows()
+    }
+
+    func setInterjectionStarredForSharing(_ interjectionID: String, starred: Bool) {
+        do {
+            let store = try requireStore()
+            guard var interjection = selectedItem.interjections.first(where: { $0.id == interjectionID }) else {
+                throw SessionKitError.persistenceFailed("share_curation_interjection_missing")
+            }
+            interjection.isStarredForSharing = starred ? true : nil
+            try store.saveInterjection(interjection)
+            refreshSelectedItem()
+            diagnostics["shareCuration:\(interjectionID)"] = starred ? "starred" : "unstarred"
+        } catch {
+            reportFailure(error, context: "Margin sharing star could not be saved")
+        }
+    }
+
+    func setInterjectionPrivateSharingNote(_ interjectionID: String, note: String) {
+        do {
+            let store = try requireStore()
+            guard var interjection = selectedItem.interjections.first(where: { $0.id == interjectionID }) else {
+                throw SessionKitError.persistenceFailed("share_curation_interjection_missing")
+            }
+            let bounded = String(note.prefix(Self.privateSharingNoteCharacterLimit))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            interjection.privateSharingNote = bounded.isEmpty ? nil : bounded
+            try store.saveInterjection(interjection)
+            refreshSelectedItem()
+            diagnostics["shareCurationNote:\(interjectionID)"] = bounded.isEmpty ? "empty" : "saved"
+        } catch {
+            reportFailure(error, context: "Private sharing note could not be saved")
+        }
     }
 
     func refreshDiagnostics() {
@@ -5002,9 +5374,17 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleGate2CompactURL(_ url: URL) {
-        guard let rawCommand = Gate2CompactCommandURL.command(from: url),
-              let command = CompactControlCommand(rawValue: rawCommand) else {
+        guard let rawCommand = Gate2CompactCommandURL.command(from: url) else {
             reportFailure("Unsupported compact control URL.")
+            return
+        }
+        guard let command = CompactControlCommand(rawValue: rawCommand) else {
+            if !handleGate2CompactApplicationCommand(
+                rawCommand,
+                targetID: Gate2CompactCommandURL.chapterId(from: url)
+            ) {
+                reportFailure("Unsupported compact control URL.")
+            }
             return
         }
         dispatchGate2CompactCommand(
@@ -5077,7 +5457,266 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    private func stageSpokenMarginsPackageImport(from sourceURL: URL) {
+        var workingDirectory: URL?
+        do {
+            bootstrapLibraryIfNeeded()
+            let didAccess = sourceURL.startAccessingSecurityScopedResource()
+            defer { if didAccess { sourceURL.stopAccessingSecurityScopedResource() } }
+            let root = try applicationSupportDirectory()
+                .appending(path: "SpokenMargins/IncomingPackages/\(UUID().uuidString)", directoryHint: .isDirectory)
+            workingDirectory = root
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let copiedPackage = root.appending(path: "package.spokenmargins")
+            try FileManager.default.copyItem(at: sourceURL, to: copiedPackage)
+            let contents = try SpokenMarginsPackageArchive.read(
+                from: copiedPackage,
+                extractingAssetsTo: root.appending(path: "assets", directoryHint: .isDirectory)
+            )
+            guard let digest = contents.manifest.contentDigest else {
+                throw SpokenMarginsPackageArchiveError.invalidDigest
+            }
+            let store = try requireStore()
+            if let existing = try store.loadImportedCommentaryLayer(packageDigest: digest) {
+                let shouldStartRecipientSession = startsRecipientTestSessionAfterImport
+                if let itemId = existing.itemId {
+                    openItem(id: itemId)
+                    if shouldStartRecipientSession {
+                        startNewSession(id: itemId)
+                        reportConfirmation("Started another recipient test session with the existing imported Margins.")
+                    } else {
+                        reportSuccess("These shared Margins are already in your library.")
+                    }
+                } else {
+                    reportSuccess("These shared Margins are already in your library.")
+                }
+                diagnostics["lastSpokenMarginsPackageImport"] = "duplicate:\(digest)"
+                startsRecipientTestSessionAfterImport = false
+                try? FileManager.default.removeItem(at: root)
+                return
+            }
+            let matchingItemId = try matchingItemID(for: contents.manifest.item, store: store)
+            spokenMarginsPackageImportError = nil
+            spokenMarginsPackageImportReview = SpokenMarginsPackageImportReview(
+                packageURL: copiedPackage,
+                extractionDirectory: root,
+                contents: contents,
+                matchingItemId: matchingItemId
+            )
+            diagnostics["lastSpokenMarginsPackageImport"] = "previewed:\(digest)"
+        } catch {
+            startsRecipientTestSessionAfterImport = false
+            if let workingDirectory { try? FileManager.default.removeItem(at: workingDirectory) }
+            diagnostics["lastSpokenMarginsPackageImport"] = "rejected:\(error.localizedDescription)"
+            reportFailure(error, context: "Shared Margins package could not be opened")
+        }
+    }
+
+    func createRecipientTestSessionFromLastSharedPackage() {
+        guard let packageURL = sharedSpokenMarginsPackageURL else {
+            reportFailure("The last shared package is unavailable.")
+            return
+        }
+        startsRecipientTestSessionAfterImport = true
+        isSharedSpokenMarginsPackagePresented = false
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            self?.stageSpokenMarginsPackageImport(from: packageURL)
+        }
+    }
+
+    func cancelSpokenMarginsPackageImport() {
+        guard !isImportingSpokenMarginsPackage else { return }
+        let directory = spokenMarginsPackageImportReview?.extractionDirectory
+        spokenMarginsPackageImportReview = nil
+        spokenMarginsPackageImportError = nil
+        startsRecipientTestSessionAfterImport = false
+        if let directory { try? FileManager.default.removeItem(at: directory) }
+    }
+
+    func confirmSpokenMarginsPackageImport() {
+        guard let review = spokenMarginsPackageImportReview,
+              !isImportingSpokenMarginsPackage else { return }
+        guard !review.requiresRecipientItem else {
+            spokenMarginsPackageImportError = "This package does not include the item. Add the same text, PDF, or EPUB to your library, then open this .spokenmargins file again."
+            return
+        }
+        isImportingSpokenMarginsPackage = true
+        spokenMarginsPackageImportError = nil
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let store = try self.requireStore()
+                let itemId: String?
+                if let matching = review.matchingItemId {
+                    itemId = matching
+                } else if review.contents.manifest.itemTransport.kind == .embeddedText {
+                    itemId = try self.installEmbeddedItem(from: review.contents, store: store)
+                } else if review.contents.manifest.item.itemType == .podcast {
+                    itemId = try await self.acquirePodcastForImportedPackage(review.contents.manifest.item)
+                } else {
+                    itemId = nil
+                }
+                let item = try itemId.map { try store.loadItem(id: $0) }
+                let localItem = item.map(self.localSharedItemIdentity(for:))
+                let itemText = item?.text
+                let disposition = try SpokenMarginsPackageImporter.importPackage(
+                    review.contents,
+                    itemId: itemId,
+                    localItem: localItem,
+                    itemText: itemText,
+                    repository: store
+                )
+                switch disposition {
+                case .duplicate(let existingLayerId):
+                    self.diagnostics["lastSpokenMarginsPackageImport"] = "duplicate_layer:\(existingLayerId)"
+                case .imported(let layerId, let interjectionIds):
+                    self.diagnostics["lastSpokenMarginsPackageImport"] = "imported:\(layerId):\(interjectionIds.count)"
+                }
+                self.spokenMarginsPackageImportReview = nil
+                self.isImportingSpokenMarginsPackage = false
+                if let itemId {
+                    self.activeItemId = itemId
+                    self.libraryItems = try self.loadLibraryRows(store: store)
+                    self.selectedItem = try self.loadItemDetail(id: itemId, store: store)
+                    self.screen = .item
+                    if let item,
+                       item.media?.sourceType == .remoteStream,
+                       let rawURL = item.media?.url,
+                       let remoteURL = URL(string: rawURL) {
+                        self.podcastDownloadCoordinator?.register(
+                            itemId: itemId,
+                            remoteURL: remoteURL,
+                            userInitiated: true
+                        )
+                    }
+                    if let localURL = self.podcastDownloadCoordinator?.validatedLocalURL(for: itemId) {
+                        self.resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
+                    }
+                }
+                if self.startsRecipientTestSessionAfterImport, let itemId {
+                    self.startsRecipientTestSessionAfterImport = false
+                    self.startNewSession(id: itemId)
+                    self.reportConfirmation("Started a recipient test session with the imported shared Margins.")
+                } else {
+                    self.reportConfirmation("Imported shared Margins. Playback has not started.")
+                }
+            } catch {
+                self.isImportingSpokenMarginsPackage = false
+                self.startsRecipientTestSessionAfterImport = false
+                self.spokenMarginsPackageImportError = error.localizedDescription
+                self.diagnostics["lastSpokenMarginsPackageImport"] = "failed:\(error.localizedDescription)"
+                self.reportFailure(error, context: "Shared Margins import failed")
+            }
+        }
+    }
+
+    private func installEmbeddedItem(
+        from contents: VerifiedSpokenMarginsPackage,
+        store: SQLiteSessionStore
+    ) throws -> String {
+        guard contents.manifest.itemTransport.kind == .embeddedText,
+              let artifactID = contents.manifest.itemTransport.embeddedArtifactId,
+              let embedded = contents.embeddedTextItems.first(where: { $0.id == artifactID }),
+              let digest = contents.manifest.contentDigest else {
+            throw SessionKitError.persistenceFailed("shared_embedded_item_is_unavailable")
+        }
+        let itemID = "item-shared-\(digest.prefix(20))"
+        let item = Item(
+            id: itemID,
+            title: contents.manifest.item.title,
+            mediaType: "text",
+            text: embedded.text,
+            externalReference: "shared-package:\(contents.manifest.packageId)",
+            status: "ready",
+            externalReferenceType: "spoken_margins_package"
+        )
+        try store.seed(item: item)
+        return itemID
+    }
+
+    private func acquirePodcastForImportedPackage(_ item: SharedItemIdentity) async throws -> String {
+        guard let canonicalURL = item.canonicalURL else {
+            throw SessionKitError.persistenceFailed("shared_podcast_item_has_no_reference")
+        }
+        let request = LinkResolutionRequest(
+            id: "shared-package-\(UUID().uuidString)",
+            inputURL: canonicalURL,
+            sourceSurface: "spoken_margins_package",
+            createdAt: Date()
+        )
+        var result = try await PublicPodcastLinkResolver().resolveAsync(request)
+        if result.status == .needsReview {
+            let exactEnclosureMatches = result.candidates.filter {
+                normalizedSharingURL($0.audioURL) == normalizedSharingURL(item.enclosureURL)
+            }
+            let titleDurationMatches = result.candidates.filter {
+                $0.title.compare(item.title, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+                    && durationIsCompatible($0.durationMs, item.durationMs)
+            }
+            let selected = exactEnclosureMatches.count == 1
+                ? exactEnclosureMatches.first
+                : (titleDurationMatches.count == 1 ? titleDurationMatches.first : nil)
+            guard let selected else {
+                throw SessionKitError.persistenceFailed("shared_podcast_item_is_ambiguous")
+            }
+            result.status = .playable
+            result.selectedCandidate = selected
+        }
+        guard result.status == .playable,
+              importResolvedSourceLink(request: request, result: result, startSession: false),
+              let itemId = snapshot.itemId ?? selectedItem.id.nilIfEmpty else {
+            throw SessionKitError.persistenceFailed("shared_podcast_item_not_created")
+        }
+        return itemId
+    }
+
+    private func matchingItemID(
+        for itemIdentity: SharedItemIdentity,
+        store: SQLiteSessionStore
+    ) throws -> String? {
+        let matches = try store.listItems().filter { item in
+            ImportedItemResolver.canRepresentSameWork(itemIdentity, localSharedItemIdentity(for: item))
+        }
+        return matches.count == 1 ? matches[0].id : nil
+    }
+
+    private func localSharedItemIdentity(for item: Item) -> SharedItemIdentity {
+        let isPodcast = item.media?.sourceType == .remoteStream || item.media?.sourceType == .nativeMediaFile
+        let external = item.externalReference.flatMap { normalizedSharingURL($0) == nil ? nil : $0 }
+        let enclosure = item.media?.url.flatMap { normalizedSharingURL($0) == nil ? nil : $0 }
+        return SharedItemIdentity(
+            itemType: sharedItemType(for: item),
+            canonicalURL: external ?? enclosure,
+            originalURL: external,
+            title: item.title,
+            enclosureURL: enclosure,
+            durationMs: item.media?.durationMs,
+            normalizedContentSHA256: isPodcast ? nil : PortableArticleAnchorResolver.normalizedContentSHA256(item.text ?? ""),
+            exactEditionSHA256: isPodcast ? nil : PortableArticleAnchorResolver.exactEditionSHA256(item.text ?? "")
+        )
+    }
+
+    private func normalizedSharingURL(_ value: String?) -> String? {
+        guard let value, var components = URLComponents(string: value),
+              components.scheme?.lowercased() == "https" else { return nil }
+        components.scheme = "https"
+        components.host = components.host?.lowercased()
+        components.fragment = nil
+        while components.path.hasSuffix("/") && components.path.count > 1 { components.path.removeLast() }
+        return components.string
+    }
+
+    private func durationIsCompatible(_ lhs: Int?, _ rhs: Int?) -> Bool {
+        guard let lhs, let rhs else { return false }
+        return abs(lhs - rhs) <= max(2_000, Int((Double(rhs) * 0.005).rounded()))
+    }
+
     func handleIncomingURL(_ url: URL) {
+        if url.isFileURL, url.pathExtension.lowercased() == SpokenMarginsPackageArchive.fileExtension {
+            stageSpokenMarginsPackageImport(from: url)
+            return
+        }
         if url.scheme == Gate5BrowserTextHandoffURL.scheme, url.host == "open" {
             screen = hasActiveSession ? .playback : .home
             return
@@ -5135,7 +5774,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     @discardableResult
-    func handleGate2CompactApplicationCommand(_ command: String) -> Bool {
+    func handleGate2CompactApplicationCommand(_ command: String, targetID: String? = nil) -> Bool {
         switch command {
         case Gate2CompactApplicationCommand.summarizeInterjections:
             guard gate2CompactSnapshot?.availableCommands.contains(.generateInterjectionSummary) == true else {
@@ -5151,6 +5790,18 @@ final class Gate1AppModel: ObservableObject {
             }
             discuss(followUp: "")
             return true
+        case Gate2CompactApplicationCommand.listenToSharedMargin:
+            guard pendingImportedCommentary != nil else { return false }
+            listenToPendingImportedCommentary()
+            screen = .playback
+            return true
+        case Gate2CompactApplicationCommand.dismissSharedMargin:
+            guard pendingImportedCommentary != nil else { return false }
+            dismissPendingImportedCommentary()
+            return true
+        case Gate2CompactApplicationCommand.jumpToSharedMargin:
+            guard let targetID, !targetID.isEmpty else { return false }
+            return jumpToImportedCommentary(interjectionID: targetID)
         default:
             reportFailure("Unsupported compact application command.")
             return false
@@ -5830,8 +6481,8 @@ final class Gate1AppModel: ObservableObject {
                     playbackRate: playbackRate,
                     origin: origin
                 )
-            } applicationCommandHandler: { [weak self] command in
-                self?.handleGate2CompactApplicationCommand(command) ?? false
+            } applicationCommandHandler: { [weak self] command, targetID in
+                self?.handleGate2CompactApplicationCommand(command, targetID: targetID) ?? false
             }
             updateGate2CompactState()
             diagnostics.merge(gate2CompactControls.diagnostics(), uniquingKeysWith: { _, new in new })
@@ -5842,7 +6493,16 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func updateGate2CompactState() {
-        gate2CompactControls.update(snapshot: snapshot)
+        let sharedMarginPrompt = pendingImportedCommentary.map {
+            Gate2SharedMarginActivityPrompt(
+                senderLabel: $0.senderLabel
+            )
+        }
+        gate2CompactControls.update(
+            snapshot: snapshot,
+            sharedMarginPrompt: sharedMarginPrompt,
+            upcomingSharedMargins: liveActivitySharedMarginNavigationEntries()
+        )
         let compactSnapshot = gate2CompactControls.snapshot
         if gate2CompactSnapshot != compactSnapshot {
             gate2CompactSnapshot = compactSnapshot
@@ -5850,6 +6510,33 @@ final class Gate1AppModel: ObservableObject {
         let compactDiagnostics = gate2CompactControls.diagnostics()
         if compactDiagnostics.contains(where: { diagnostics[$0.key] != $0.value }) {
             diagnostics.merge(compactDiagnostics, uniquingKeysWith: { _, new in new })
+        }
+    }
+
+    private func liveActivitySharedMarginNavigationEntries() -> [Gate2LiveActivityNavigationEntry] {
+        let currentPercent = snapshot.sourceProgressPercent
+        let mediaDurationMs = snapshot.currentPlaybackDurationMs ?? selectedItem.mediaDurationMs
+        let textLength = selectedItem.text.count
+        return importedCommentaryPrompts(includeAnnounced: false).compactMap { prompt in
+            let positionPercent: Int?
+            if let mediaTimeMs = prompt.interjection.resolution.localMediaTimeMs,
+               let mediaDurationMs,
+               mediaDurationMs > 0 {
+                positionPercent = Int((Double(mediaTimeMs) / Double(mediaDurationMs) * 100).rounded())
+            } else if let charOffset = prompt.interjection.resolution.localStartChar,
+                      textLength > 0 {
+                positionPercent = Int((Double(charOffset) / Double(textLength) * 100).rounded())
+            } else {
+                positionPercent = nil
+            }
+            guard let positionPercent,
+                  positionPercent > currentPercent else { return nil }
+            return Gate2LiveActivityNavigationEntry(
+                kind: .sharedMargin,
+                title: "Shared Margin",
+                targetID: prompt.interjection.id,
+                positionPercent: min(100, max(0, positionPercent))
+            )
         }
     }
 
@@ -7048,6 +7735,13 @@ final class Gate1AppModel: ObservableObject {
                 )
             }
         }
+        #if canImport(AVFoundation) && canImport(ShazamKit)
+        client.postResumePodcastEvidenceHandler = { [weak self] result in
+            Task { @MainActor [weak self] in
+                self?.handlePostResumePodcastEvidence(result)
+            }
+        }
+        #endif
         mediaPlaybackClient = client
         return client
     }
@@ -8163,6 +8857,8 @@ final class Gate1AppModel: ObservableObject {
         default:
             return
         }
+        let currentInterjection = ((try? store.loadInterjections(sessionId: interjection.sessionId)) ?? [])
+            .first(where: { $0.id == interjection.id }) ?? interjection
         if let storedTimeline = try? store.loadTranscriptTimeline(itemId: item.id)?.timeline,
            let window = Self.sourceContextWindow(
                from: storedTimeline,
@@ -8176,6 +8872,26 @@ final class Gate1AppModel: ObservableObject {
                 diagnostics["sourceWindowTranscription:\(interjection.id)"] = "complete:stored_transcript"
                 diagnostics["sourceWindowContextProvenance:\(interjection.id)"] = "stored_transcript"
             }
+            return
+        }
+        if !(currentInterjection.podcastAnchorEvidence ?? []).isEmpty
+            || currentInterjection.podcastAnchorEvidenceCaptureStatus == .ready {
+            if currentInterjection.anchorContextStatus != .ready {
+                var updated = currentInterjection
+                updated.anchorContextStatus = .unavailable
+                try? store.saveInterjection(updated)
+                refreshSelectedItem()
+            }
+            diagnostics["sourceWindowTranscription:\(interjection.id)"] =
+                "skipped:high_reliability_acoustic_evidence_ready"
+            diagnostics["sourceWindowContextProvenance:\(interjection.id)"] = "acoustic_evidence_only"
+            return
+        }
+        if currentInterjection.podcastAnchorEvidenceCaptureStatus == .pendingPostResumeSample
+            || currentInterjection.podcastAnchorEvidenceCaptureStatus == .pendingExactLocalCapture {
+            diagnostics["sourceWindowTranscription:\(interjection.id)"] =
+                "waiting_for_post_resume_acoustic_evidence"
+            diagnostics["sourceWindowContextProvenance:\(interjection.id)"] = "pending_acoustic_evidence"
             return
         }
         diagnostics["sourceWindowTranscription:\(interjection.id)"] = "scheduled"
@@ -8258,14 +8974,40 @@ final class Gate1AppModel: ObservableObject {
     private func scheduleTranscription(for interjection: Interjection) {
         guard let audioPath = interjection.audioPath else { return }
         recordAnchorCaptureDiagnostics(for: interjection)
+        switch interjection.podcastAnchorEvidenceCaptureStatus {
+        case .pendingPostResumeSample:
+            diagnostics["podcastAnchorEvidence:\(interjection.id)"] = "sampling:decoded_playback_post_resume"
+        case .pendingExactLocalCapture:
+            diagnostics["podcastAnchorEvidence:\(interjection.id)"] = "sampling:exact_local_playback_edition"
+        case .ready:
+            break
+        case .unavailable, nil:
+            schedulePodcastAnchorEvidenceCapture(for: interjection)
+        }
         diagnostics["interjectionAudioAtCapture:\(interjection.id)"] = interjectionAudioEvidence(for: audioPath)
         diagnostics["interjectionTranscription:\(interjection.id)"] = "scheduled"
         Task {
             do {
-                let transcript = try await interjectionTranscriptionHandler(audioPath)
+                let alignedTranscript = try await alignedInterjectionTranscriptionHandler?(audioPath)
+                let transcript: String
+                if let alignedTranscript {
+                    transcript = alignedTranscript.text
+                } else {
+                    transcript = try await interjectionTranscriptionHandler(audioPath)
+                }
                 await MainActor.run {
                     run { engine in
-                        snapshot = try engine.transcriptionCompleted(interjectionId: interjection.id, transcript: transcript)
+                        if let alignedTranscript {
+                            snapshot = try engine.transcriptionCompleted(
+                                interjectionId: interjection.id,
+                                alignedTranscript: alignedTranscript
+                            )
+                        } else {
+                            snapshot = try engine.transcriptionCompleted(
+                                interjectionId: interjection.id,
+                                transcript: transcript
+                            )
+                        }
                         refreshSelectedItem()
                         diagnostics["interjectionTranscription:\(interjection.id)"] = "complete"
                         reportSuccess("Transcribed interjection.")
@@ -8294,6 +9036,1013 @@ final class Gate1AppModel: ObservableObject {
                     scheduleSourceWindowContextIfNeeded(for: interjection)
                 }
             }
+        }
+    }
+
+    private func schedulePodcastAnchorEvidenceCapture(for interjection: Interjection) {
+        guard interjection.targetType == .item,
+              let mediaTimeMs = interjection.anchor.mediaTimeMs,
+              let sourceURL = podcastDownloadCoordinator?.validatedLocalURL(for: interjection.itemId),
+              mediaPlaybackClient?.isUsingPlaybackURL(sourceURL, itemId: interjection.itemId) == true else {
+            markPodcastAnchorEvidenceUnavailable(
+                request: PostResumeAudioSampleRequest(
+                    interjectionId: interjection.id,
+                    sessionId: interjection.sessionId,
+                    itemId: interjection.itemId,
+                    anchorMediaTimeMs: interjection.anchor.mediaTimeMs ?? 0,
+                    targetDurationMs: PodcastAnchorEvidenceGenerator.flankDurationMs
+                ),
+                reason: "no_exact_local_playback_edition"
+            )
+            return
+        }
+        diagnostics["podcastAnchorEvidence:\(interjection.id)"] = "scheduled"
+        let request = PostResumeAudioSampleRequest(
+            interjectionId: interjection.id,
+            sessionId: interjection.sessionId,
+            itemId: interjection.itemId,
+            anchorMediaTimeMs: mediaTimeMs,
+            targetDurationMs: PodcastAnchorEvidenceGenerator.flankDurationMs
+        )
+        guard let root = try? podcastAnchorEvidenceDirectory(for: request) else {
+            markPodcastAnchorEvidenceUnavailable(request: request, reason: "storage_unavailable")
+            return
+        }
+        markPodcastAnchorEvidencePendingLocal(request: request)
+        let evidenceIDPrefix = podcastAnchorEvidenceID(request: request, suffix: "local")
+        Task.detached { [weak self] in
+            do {
+                let digestBeforeCapture = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: sourceURL)
+                let generated = try await PodcastAnchorEvidenceGenerator.generate(
+                    sourceURL: sourceURL,
+                    anchorMediaTimeMs: mediaTimeMs,
+                    outputDirectory: root,
+                    idPrefix: evidenceIDPrefix
+                )
+                let digestAfterCapture = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: sourceURL)
+                guard digestBeforeCapture == digestAfterCapture else {
+                    throw SessionKitError.persistenceFailed("podcast_anchor_source_changed_during_capture")
+                }
+                let captured = generated.map {
+                    CapturedPodcastAnchorEvidence(
+                        id: $0.id,
+                        localPath: $0.fileURL.path,
+                        durationMs: $0.durationMs,
+                        anchorOffsetMs: $0.anchorOffsetMs,
+                        provenance: .exactLocalPlaybackEdition
+                    )
+                }
+                await MainActor.run {
+                    do {
+                        try self?.persistPodcastAnchorEvidence(
+                            request: request,
+                            evidence: captured,
+                            sourceExactEditionSHA256: digestAfterCapture
+                        )
+                        self?.diagnostics["podcastAnchorEvidence:\(interjection.id)"] = "complete:\(captured.count)"
+                    } catch {
+                        self?.markPodcastAnchorEvidenceUnavailable(
+                            request: request,
+                            reason: "local_signature_persistence_failed:\(error.localizedDescription)"
+                        )
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self?.markPodcastAnchorEvidenceUnavailable(
+                        request: request,
+                        reason: "local_signature_failed:\(error.localizedDescription)"
+                    )
+                }
+            }
+        }
+    }
+
+    #if canImport(AVFoundation) && canImport(ShazamKit)
+    private func handlePostResumePodcastEvidence(_ result: PostResumePodcastEvidenceCaptureResult) {
+        switch result {
+        case .captured(let capture):
+            do {
+                let root = try podcastAnchorEvidenceDirectory(for: capture.request)
+                try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+                let evidenceID = podcastAnchorEvidenceID(
+                    request: capture.request,
+                    suffix: "stream-post"
+                )
+                let fileURL = root.appending(path: "\(evidenceID).shazamsignature")
+                try capture.signatureData.write(to: fileURL, options: .atomic)
+                try persistPodcastAnchorEvidence(
+                    request: capture.request,
+                    evidence: [CapturedPodcastAnchorEvidence(
+                        id: evidenceID,
+                        localPath: fileURL.path,
+                        durationMs: capture.durationMs,
+                        anchorOffsetMs: capture.anchorOffsetMs,
+                        provenance: .decodedPlaybackStream
+                    )],
+                    sourceExactEditionSHA256: nil
+                )
+                diagnostics["podcastAnchorEvidence:\(capture.request.interjectionId)"] =
+                    "complete:decoded_playback_post_resume:bytes=\(capture.signatureData.count)"
+            } catch {
+                markPodcastAnchorEvidenceUnavailable(
+                    request: capture.request,
+                    reason: "stream_signature_persistence_failed:\(error.localizedDescription)"
+                )
+            }
+        case .failed(let request, let reason):
+            if let interjection = storedInterjection(request: request) {
+                diagnostics["podcastAnchorEvidence:\(request.interjectionId)"] = "stream_failed:\(reason)"
+                schedulePodcastAnchorEvidenceCapture(for: interjection)
+            } else {
+                markPodcastAnchorEvidenceUnavailable(request: request, reason: reason)
+            }
+        }
+    }
+    #endif
+
+    private func podcastAnchorEvidenceDirectory(for request: PostResumeAudioSampleRequest) throws -> URL {
+        try applicationSupportDirectory()
+            .appending(path: "SpokenMargins/AnchorEvidence", directoryHint: .isDirectory)
+            .appending(path: safePodcastEvidenceComponent(request.sessionId), directoryHint: .isDirectory)
+            .appending(path: safePodcastEvidenceComponent(request.interjectionId), directoryHint: .isDirectory)
+    }
+
+    private func podcastAnchorEvidenceID(
+        request: PostResumeAudioSampleRequest,
+        suffix: String
+    ) -> String {
+        "anchor-\(safePodcastEvidenceComponent(request.sessionId))-\(safePodcastEvidenceComponent(request.interjectionId))-\(suffix)"
+    }
+
+    private func safePodcastEvidenceComponent(_ value: String) -> String {
+        let safe = value.replacingOccurrences(
+            of: #"[^A-Za-z0-9._-]"#,
+            with: "-",
+            options: .regularExpression
+        )
+        return safe.isEmpty ? "unknown" : String(safe.prefix(96))
+    }
+
+    private func storedInterjection(request: PostResumeAudioSampleRequest) -> Interjection? {
+        guard let store,
+              let records = try? store.loadInterjections(sessionId: request.sessionId) else { return nil }
+        return records.first { $0.id == request.interjectionId && $0.itemId == request.itemId }
+    }
+
+    private func persistPodcastAnchorEvidence(
+        request: PostResumeAudioSampleRequest,
+        evidence: [CapturedPodcastAnchorEvidence],
+        sourceExactEditionSHA256: String?
+    ) throws {
+        guard let store,
+              var interjection = try store.loadInterjections(sessionId: request.sessionId)
+                .first(where: { $0.id == request.interjectionId && $0.itemId == request.itemId }) else {
+            throw SessionKitError.persistenceFailed("podcast_anchor_interjection_missing")
+        }
+        interjection.podcastAnchorEvidence = evidence
+        interjection.sourceExactEditionSHA256 = sourceExactEditionSHA256
+        interjection.podcastAnchorEvidenceCaptureStatus = .ready
+        interjection.podcastAnchorEvidenceFailureReason = nil
+        if interjection.anchorContextStatus == .pending {
+            interjection.anchorContextStatus = .unavailable
+        }
+        try store.saveInterjection(interjection)
+        if activeItemId == request.itemId {
+            refreshSelectedItem()
+        }
+    }
+
+    private func markPodcastAnchorEvidenceUnavailable(
+        request: PostResumeAudioSampleRequest,
+        reason: String
+    ) {
+        guard let store,
+              let records = try? store.loadInterjections(sessionId: request.sessionId),
+              var interjection = records.first(where: {
+                  $0.id == request.interjectionId && $0.itemId == request.itemId
+              }) else {
+            diagnostics["podcastAnchorEvidence:\(request.interjectionId)"] = "unavailable:\(reason)"
+            return
+        }
+        interjection.podcastAnchorEvidenceCaptureStatus = .unavailable
+        interjection.podcastAnchorEvidenceFailureReason = reason
+        try? store.saveInterjection(interjection)
+        if activeItemId == request.itemId {
+            refreshSelectedItem()
+        }
+        diagnostics["podcastAnchorEvidence:\(request.interjectionId)"] = "unavailable:\(reason)"
+        scheduleSourceWindowContextIfNeeded(for: interjection)
+    }
+
+    private func markPodcastAnchorEvidencePendingLocal(request: PostResumeAudioSampleRequest) {
+        guard let store,
+              let records = try? store.loadInterjections(sessionId: request.sessionId),
+              var interjection = records.first(where: {
+                  $0.id == request.interjectionId && $0.itemId == request.itemId
+              }) else { return }
+        interjection.podcastAnchorEvidenceCaptureStatus = .pendingExactLocalCapture
+        interjection.podcastAnchorEvidenceFailureReason = nil
+        try? store.saveInterjection(interjection)
+        if activeItemId == request.itemId {
+            refreshSelectedItem()
+        }
+    }
+
+    func prepareShareInterjections() {
+        cancelBulkSharePreparation()
+        let candidates = selectedItem.interjections.filter {
+            $0.status == "active" && $0.targetType == .item
+        }
+        guard !candidates.isEmpty else {
+            reportFailure("Record at least one Margin on this item before sharing.")
+            return
+        }
+        let hasStarredCandidates = candidates.contains { $0.isStarredForSharing == true }
+        sharingState = InterjectionSharingState(isPreparing: true)
+        sharingState.draftFilter = hasStarredCandidates ? .starred : .all
+        isSharingInterjectionsPresented = true
+        if let item = try? requireStore().loadItem(id: selectedItem.id) {
+            let reference = secureSharedItemURL(for: item)
+            sharingState.itemReferenceURL = reference
+            sharingState.isAppAuthoredItem = item.id == Self.welcomeSampleItemId
+            sharingState.canEmbedLinklessItem = reference == nil
+                && sharedItemType(for: item) != .podcast
+                && !(item.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            sharingState.confirmsPrivateSharingRights = sharingState.isAppAuthoredItem
+        }
+        sharingState.drafts = candidates.map { interjection in
+            let transcript = interjection.cleanedTranscript
+                ?? interjection.transcript
+                ?? interjection.displayText
+                ?? ""
+            let hasAudio = interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:)) != nil
+            let context = BoundedAnchorContext.select(
+                before: interjection.anchor.anchorBefore,
+                after: interjection.anchor.anchorAfter
+            )
+            return ShareInterjectionDraft(
+                interjection: interjection,
+                isIncluded: !hasStarredCandidates || interjection.isStarredForSharing == true,
+                approvedTranscript: transcript,
+                representationChoice: hasAudio ? .original : .textOnly,
+                warning: shareAnchorWarning(for: interjection),
+                anchorBefore: context.before,
+                anchorAfter: context.after
+            )
+        }
+        sharingState.isPreparing = false
+    }
+
+    var bulkSharePreparationEligibleCount: Int {
+        sharingState.drafts.filter(isEligibleForBulkSharePreparation).count
+    }
+
+    func prepareAllIncludedShareDrafts() {
+        guard !sharingState.isBulkPreparing else { return }
+        let draftIDs = sharingState.drafts
+            .filter(isEligibleForBulkSharePreparation)
+            .map(\.id)
+        guard !draftIDs.isEmpty else { return }
+
+        bulkSharePreparationGeneration += 1
+        let generation = bulkSharePreparationGeneration
+        sharingState.isBulkPreparing = true
+        sharingState.bulkPreparationCompleted = 0
+        sharingState.bulkPreparationTotal = draftIDs.count
+        sharingState.bulkPreparationFailureCount = 0
+        sharingState.errorMessage = nil
+        diagnostics["bulkSharePreparation"] = "started:total=\(draftIDs.count)"
+
+        bulkSharePreparationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            for draftID in draftIDs {
+                guard !Task.isCancelled,
+                      self.bulkSharePreparationGeneration == generation else { return }
+                let prepared = await self.prepareShareDraftForBulk(
+                    draftID,
+                    generation: generation
+                )
+                guard !Task.isCancelled,
+                      self.bulkSharePreparationGeneration == generation else { return }
+                self.sharingState.bulkPreparationCompleted += 1
+                if !prepared {
+                    self.sharingState.bulkPreparationFailureCount += 1
+                }
+            }
+            guard self.bulkSharePreparationGeneration == generation else { return }
+            self.sharingState.isBulkPreparing = false
+            self.bulkSharePreparationTask = nil
+            self.diagnostics["bulkSharePreparation"] = [
+                "complete",
+                "prepared=\(self.sharingState.bulkPreparationCompleted)",
+                "fallbacks=\(self.sharingState.bulkPreparationFailureCount)"
+            ].joined(separator: ";")
+        }
+    }
+
+    func cancelBulkSharePreparation() {
+        guard sharingState.isBulkPreparing || bulkSharePreparationTask != nil else { return }
+        bulkSharePreparationGeneration += 1
+        bulkSharePreparationTask?.cancel()
+        bulkSharePreparationTask = nil
+        sharingState.isBulkPreparing = false
+        for index in sharingState.drafts.indices {
+            let wasInFlight = sharingState.drafts[index].isAnalyzingPauses
+                || sharingState.drafts[index].isPreparingCleanup
+            sharingState.drafts[index].isAnalyzingPauses = false
+            sharingState.drafts[index].isPreparingCleanup = false
+            if wasInFlight,
+               sharingState.drafts[index].currentEditState.automaticCleanupEnabled,
+               sharingState.drafts[index].canUndoEdit {
+                sharingState.drafts[index].editHistoryIndex -= 1
+                applyShareEditState(at: index, renderCleanedAudio: false)
+            }
+        }
+        diagnostics["bulkSharePreparation"] = [
+            "cancelled",
+            "prepared=\(sharingState.bulkPreparationCompleted)",
+            "total=\(sharingState.bulkPreparationTotal)"
+        ].joined(separator: ";")
+    }
+
+    private func isEligibleForBulkSharePreparation(_ draft: ShareInterjectionDraft) -> Bool {
+        draft.isIncluded
+            && draft.interjection.alignedTranscript != nil
+            && !draft.currentEditState.automaticCleanupEnabled
+    }
+
+    private func prepareShareDraftForBulk(
+        _ id: String,
+        generation: Int
+    ) async -> Bool {
+        guard let initialIndex = sharingState.drafts.firstIndex(where: { $0.id == id }),
+              let aligned = sharingState.drafts[initialIndex].interjection.alignedTranscript else {
+            return false
+        }
+        sharingState.drafts[initialIndex].preparationMessage = nil
+        recordShareEdit(for: id, renderCleanedAudio: false) {
+            $0.automaticCleanupEnabled = true
+        }
+
+        guard let analysisIndex = sharingState.drafts.firstIndex(where: { $0.id == id }) else {
+            return false
+        }
+        let audioPath = sharingState.drafts[analysisIndex].interjection.audioPath
+        let sourceURL = audioPath.flatMap(resolvedInterjectionAudioURL(for:))
+        var analysisFailure: String?
+        if let sourceURL {
+            sharingState.drafts[analysisIndex].isAnalyzingPauses = true
+            let analyzer = shareMarginSilenceAnalysisHandler
+            let analysis = await Task.detached {
+                do {
+                    return (try analyzer(sourceURL, aligned), nil as String?)
+                } catch {
+                    return ([], error.localizedDescription)
+                }
+            }.value
+            guard !Task.isCancelled,
+                  bulkSharePreparationGeneration == generation,
+                  let current = sharingState.drafts.firstIndex(where: { $0.id == id }) else {
+                return false
+            }
+            sharingState.drafts[current].isAnalyzingPauses = false
+            sharingState.drafts[current].acousticPauseDecisions = analysis.0
+            analysisFailure = analysis.1
+            applyShareEditState(at: current, renderCleanedAudio: false)
+        } else if audioPath != nil {
+            analysisFailure = "The saved voice recording is unavailable; reviewed text remains available."
+        }
+
+        guard !Task.isCancelled,
+              bulkSharePreparationGeneration == generation else { return false }
+        let rendered = await renderBulkCleanup(forShareDraft: id, generation: generation)
+        guard bulkSharePreparationGeneration == generation,
+              let finalIndex = sharingState.drafts.firstIndex(where: { $0.id == id }) else {
+            return false
+        }
+        if let analysisFailure {
+            let analysisMessage =
+                "Pause analysis was unavailable (\(analysisFailure)). Filler and manual text edits remain reviewable."
+            if let renderMessage = sharingState.drafts[finalIndex].preparationMessage {
+                sharingState.drafts[finalIndex].preparationMessage = "\(renderMessage) \(analysisMessage)"
+            } else {
+                sharingState.drafts[finalIndex].preparationMessage = analysisMessage
+            }
+        }
+        return rendered && analysisFailure == nil
+    }
+
+    private func renderBulkCleanup(
+        forShareDraft id: String,
+        generation bulkGeneration: Int
+    ) async -> Bool {
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else {
+            return false
+        }
+        guard let decisions = sharingState.drafts[index].cleanup?.decisions else {
+            return true
+        }
+        guard let sourcePath = sharingState.drafts[index].interjection.audioPath,
+              let sourceURL = resolvedInterjectionAudioURL(for: sourcePath) else {
+            sharingState.drafts[index].representationChoice = .textOnly
+            sharingState.drafts[index].preparationMessage =
+                "Cleaned voice could not be prepared because the saved recording is unavailable. Reviewed text remains available."
+            return false
+        }
+        guard let root = try? applicationSupportDirectory()
+            .appending(path: "SpokenMargins/ShareRevisions/\(UUID().uuidString)", directoryHint: .isDirectory) else {
+            sharingState.drafts[index].preparationMessage =
+                "Cleaned voice storage is unavailable. Original voice and reviewed text remain available."
+            return false
+        }
+        sharingState.drafts[index].renderGeneration += 1
+        let renderGeneration = sharingState.drafts[index].renderGeneration
+        sharingState.drafts[index].isPreparingCleanup = true
+        let destination = root.appending(path: "cleaned-\(safePodcastEvidenceComponent(id)).m4a")
+        let renderer = shareMarginAudioCleanupHandler
+        let result: (duration: Int?, failure: String?)
+        do {
+            result = (try await renderer(sourceURL, destination, decisions), nil)
+        } catch {
+            result = (nil, error.localizedDescription)
+        }
+        guard !Task.isCancelled,
+              bulkSharePreparationGeneration == bulkGeneration,
+              let current = sharingState.drafts.firstIndex(where: { $0.id == id }),
+              sharingState.drafts[current].renderGeneration == renderGeneration else {
+            try? FileManager.default.removeItem(at: destination)
+            return false
+        }
+        sharingState.drafts[current].isPreparingCleanup = false
+        if let duration = result.duration {
+            sharingState.drafts[current].cleanedAudioURL = destination
+            sharingState.drafts[current].cleanedAudioDurationMs = duration
+            sharingState.drafts[current].representationChoice = .cleaned
+            return true
+        }
+        sharingState.drafts[current].cleanedAudioURL = nil
+        sharingState.drafts[current].cleanedAudioDurationMs = nil
+        sharingState.drafts[current].representationChoice =
+            originalAudioURL(forShareDraft: id) == nil ? .textOnly : .original
+        sharingState.drafts[current].preparationMessage =
+            "Cleaned voice could not be prepared (\(result.failure ?? "unknown error")). Original voice or reviewed text remains available."
+        return false
+    }
+
+    func setShareDraftIncluded(_ id: String, included: Bool) {
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
+        sharingState.drafts[index].isIncluded = included
+    }
+
+    func setShareDraftRepresentation(_ id: String, choice: ShareMarginRepresentationChoice) {
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
+        if choice == .cleaned, sharingState.drafts[index].cleanedAudioURL == nil { return }
+        if choice == .original, originalAudioURL(forShareDraft: id) == nil { return }
+        sharingState.drafts[index].representationChoice = choice
+    }
+
+    func setShareDraftAnchorBefore(_ id: String, value: String) {
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
+        sharingState.drafts[index].anchorBefore = String(value.suffix(BoundedAnchorContext.maximumCharactersPerSide))
+    }
+
+    func setShareDraftAnchorAfter(_ id: String, value: String) {
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
+        sharingState.drafts[index].anchorAfter = String(value.prefix(BoundedAnchorContext.maximumCharactersPerSide))
+    }
+
+    func originalAudioURL(forShareDraft id: String) -> URL? {
+        sharingState.drafts.first(where: { $0.id == id })?
+            .interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:))
+    }
+
+    func prepareCleanup(forShareDraft id: String) {
+        guard !sharingState.isBulkPreparing else { return }
+        if let index = sharingState.drafts.firstIndex(where: { $0.id == id }) {
+            sharingState.drafts[index].preparationMessage = nil
+        }
+        recordShareEdit(for: id) { $0.automaticCleanupEnabled = true }
+        analyzeAcousticPauses(forShareDraft: id)
+    }
+
+    func setCleanupDecision(draftID: String, decisionID: String, accepted: Bool) {
+        recordShareEdit(for: draftID) { state in
+            if accepted {
+                state.restoredAutomaticDecisionIds.remove(decisionID)
+            } else {
+                state.restoredAutomaticDecisionIds.insert(decisionID)
+            }
+        }
+    }
+
+    func toggleShareDraftWord(draftID: String, segmentID: String) {
+        guard let draft = sharingState.drafts.first(where: { $0.id == draftID }),
+              let aligned = draft.interjection.alignedTranscript,
+              let segment = aligned.segments.first(where: { $0.id == segmentID }) else { return }
+        let overlappingAccepted = draft.cleanup?.decisions.filter {
+            $0.accepted && $0.kind != .longPause && $0.startMs < segment.endMs && $0.endMs > segment.startMs
+        } ?? []
+        recordShareEdit(for: draftID) { state in
+            if state.manuallyDeletedSegmentIds.contains(segmentID) || !overlappingAccepted.isEmpty {
+                state.manuallyDeletedSegmentIds.remove(segmentID)
+                overlappingAccepted.forEach { state.restoredAutomaticDecisionIds.insert($0.id) }
+            } else {
+                state.manuallyDeletedSegmentIds.insert(segmentID)
+            }
+        }
+    }
+
+    func isShareDraftWordDeleted(draftID: String, segmentID: String) -> Bool {
+        guard let draft = sharingState.drafts.first(where: { $0.id == draftID }),
+              let segment = draft.interjection.alignedTranscript?.segments.first(where: { $0.id == segmentID }) else {
+            return false
+        }
+        return draft.cleanup?.decisions.contains {
+            $0.accepted && $0.kind != .longPause && $0.startMs < segment.endMs && $0.endMs > segment.startMs
+        } ?? false
+    }
+
+    func undoShareDraftEdit(_ id: String) {
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }),
+              sharingState.drafts[index].canUndoEdit else { return }
+        sharingState.drafts[index].editHistoryIndex -= 1
+        applyShareEditState(at: index)
+    }
+
+    func redoShareDraftEdit(_ id: String) {
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }),
+              sharingState.drafts[index].canRedoEdit else { return }
+        sharingState.drafts[index].editHistoryIndex += 1
+        applyShareEditState(at: index)
+    }
+
+    func restoreOriginalShareDraft(_ id: String) {
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
+        let interjection = sharingState.drafts[index].interjection
+        sharingState.drafts[index].editHistory = [.original]
+        sharingState.drafts[index].editHistoryIndex = 0
+        sharingState.drafts[index].cleanup = nil
+        sharingState.drafts[index].cleanedAudioURL = nil
+        sharingState.drafts[index].cleanedAudioDurationMs = nil
+        sharingState.drafts[index].isAnalyzingPauses = false
+        sharingState.drafts[index].isPreparingCleanup = false
+        sharingState.drafts[index].preparationMessage = nil
+        sharingState.drafts[index].approvedTranscript = interjection.transcript ?? interjection.displayText ?? ""
+        sharingState.drafts[index].representationChoice = originalAudioURL(forShareDraft: id) == nil ? .textOnly : .original
+        sharingState.drafts[index].warning = shareAnchorWarning(for: interjection)
+    }
+
+    private func recordShareEdit(
+        for id: String,
+        renderCleanedAudio: Bool = true,
+        mutate: (inout ShareMarginEditState) -> Void
+    ) {
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }),
+              sharingState.drafts[index].interjection.alignedTranscript != nil else { return }
+        var state = sharingState.drafts[index].currentEditState
+        mutate(&state)
+        guard state != sharingState.drafts[index].currentEditState else { return }
+        sharingState.drafts[index].editHistory = Array(
+            sharingState.drafts[index].editHistory.prefix(sharingState.drafts[index].editHistoryIndex + 1)
+        ) + [state]
+        sharingState.drafts[index].editHistoryIndex += 1
+        applyShareEditState(at: index, renderCleanedAudio: renderCleanedAudio)
+    }
+
+    private func applyShareEditState(at index: Int, renderCleanedAudio: Bool = true) {
+        guard sharingState.drafts.indices.contains(index),
+              let aligned = sharingState.drafts[index].interjection.alignedTranscript else { return }
+        let state = sharingState.drafts[index].currentEditState
+        let allAutomatic = DeterministicInterjectionCleanup.propose(aligned).decisions.map(\.id)
+        var restored = state.restoredAutomaticDecisionIds
+        if !state.automaticCleanupEnabled {
+            restored.formUnion(allAutomatic)
+            restored.formUnion(sharingState.drafts[index].acousticPauseDecisions.map(\.id))
+        }
+        let core = DeterministicInterjectionCleanup.propose(
+            aligned,
+            restoredDecisionIds: restored,
+            manuallyDeletedSegmentIds: state.manuallyDeletedSegmentIds
+        )
+        let acoustic = sharingState.drafts[index].acousticPauseDecisions.map { decision in
+            InterjectionCleanupDecision(
+                id: decision.id,
+                kind: decision.kind,
+                startMs: decision.startMs,
+                endMs: decision.endMs,
+                originalText: decision.originalText,
+                accepted: !restored.contains(decision.id)
+            )
+        }
+        let visibleCoreDecisions = acoustic.isEmpty
+            ? core.decisions
+            : core.decisions.filter { $0.kind != .longPause }
+        let hasEdits = visibleCoreDecisions.contains { $0.accepted } || acoustic.contains { $0.accepted }
+        sharingState.drafts[index].cleanup = hasEdits
+            ? InterjectionCleanupResult(
+                policyVersion: core.policyVersion,
+                cleanedTranscript: core.cleanedTranscript,
+                decisions: (visibleCoreDecisions + acoustic).sorted { $0.startMs == $1.startMs ? $0.id < $1.id : $0.startMs < $1.startMs }
+            )
+            : nil
+        sharingState.drafts[index].approvedTranscript = hasEdits
+            ? core.cleanedTranscript
+            : (sharingState.drafts[index].interjection.transcript ?? sharingState.drafts[index].interjection.displayText ?? "")
+        if hasEdits, renderCleanedAudio {
+            renderCleanup(forShareDraft: sharingState.drafts[index].id)
+        } else {
+            sharingState.drafts[index].isPreparingCleanup = false
+            sharingState.drafts[index].cleanedAudioURL = nil
+            sharingState.drafts[index].cleanedAudioDurationMs = nil
+            sharingState.drafts[index].representationChoice = originalAudioURL(forShareDraft: sharingState.drafts[index].id) == nil ? .textOnly : .original
+        }
+    }
+
+    private func analyzeAcousticPauses(forShareDraft id: String) {
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }),
+              sharingState.drafts[index].acousticPauseDecisions.isEmpty,
+              !sharingState.drafts[index].isAnalyzingPauses,
+              let aligned = sharingState.drafts[index].interjection.alignedTranscript,
+              let sourcePath = sharingState.drafts[index].interjection.audioPath,
+              let sourceURL = resolvedInterjectionAudioURL(for: sourcePath) else { return }
+        sharingState.drafts[index].isAnalyzingPauses = true
+        let analyzer = shareMarginSilenceAnalysisHandler
+        Task.detached { [weak self] in
+            let result: ([InterjectionCleanupDecision], String?)
+            do {
+                result = (try analyzer(sourceURL, aligned), nil)
+            } catch {
+                result = ([], error.localizedDescription)
+            }
+            await MainActor.run {
+                guard let self,
+                      let current = self.sharingState.drafts.firstIndex(where: { $0.id == id }) else { return }
+                self.sharingState.drafts[current].isAnalyzingPauses = false
+                self.sharingState.drafts[current].acousticPauseDecisions = result.0
+                if let failure = result.1 {
+                    self.sharingState.drafts[current].preparationMessage =
+                        "Pause analysis was unavailable (\(failure)). Filler and manual text edits remain reviewable."
+                }
+                self.applyShareEditState(at: current)
+            }
+        }
+    }
+
+    private func renderCleanup(forShareDraft id: String) {
+        guard let index = sharingState.drafts.firstIndex(where: { $0.id == id }),
+              let sourcePath = sharingState.drafts[index].interjection.audioPath,
+              let sourceURL = resolvedInterjectionAudioURL(for: sourcePath),
+              let decisions = sharingState.drafts[index].cleanup?.decisions,
+              let root = try? applicationSupportDirectory()
+                .appending(path: "SpokenMargins/ShareRevisions/\(UUID().uuidString)", directoryHint: .isDirectory) else {
+            if let index = sharingState.drafts.firstIndex(where: { $0.id == id }) {
+                sharingState.drafts[index].warning = [
+                    shareAnchorWarning(for: sharingState.drafts[index].interjection),
+                    "The cleaned audio preview could not be prepared. You can still share original voice or text."
+                ].compactMap { $0 }.joined(separator: " ")
+            }
+            return
+        }
+        sharingState.drafts[index].renderGeneration += 1
+        let generation = sharingState.drafts[index].renderGeneration
+        sharingState.drafts[index].isPreparingCleanup = true
+        let destination = root.appending(path: "cleaned-\(safePodcastEvidenceComponent(id)).m4a")
+        let renderer = shareMarginAudioCleanupHandler
+        Task.detached { [weak self] in
+            do {
+                let duration = try await renderer(sourceURL, destination, decisions)
+                await MainActor.run {
+                    guard let current = self?.sharingState.drafts.firstIndex(where: { $0.id == id }),
+                          self?.sharingState.drafts[current].renderGeneration == generation else { return }
+                    self?.sharingState.drafts[current].isPreparingCleanup = false
+                    self?.sharingState.drafts[current].cleanedAudioURL = destination
+                    self?.sharingState.drafts[current].cleanedAudioDurationMs = duration
+                    self?.sharingState.drafts[current].representationChoice = .cleaned
+                    if let interjection = self?.sharingState.drafts[current].interjection {
+                        self?.sharingState.drafts[current].warning = self?.shareAnchorWarning(for: interjection)
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    guard let current = self?.sharingState.drafts.firstIndex(where: { $0.id == id }),
+                          self?.sharingState.drafts[current].renderGeneration == generation else { return }
+                    self?.sharingState.drafts[current].isPreparingCleanup = false
+                    self?.sharingState.drafts[current].cleanedAudioURL = nil
+                    self?.sharingState.drafts[current].cleanedAudioDurationMs = nil
+                    self?.sharingState.drafts[current].representationChoice =
+                        self?.originalAudioURL(forShareDraft: id) == nil ? .textOnly : .original
+                    self?.sharingState.drafts[current].preparationMessage =
+                        "Cleaned voice could not be prepared. Original voice or reviewed text remains available."
+                    if let interjection = self?.sharingState.drafts[current].interjection {
+                        self?.sharingState.drafts[current].warning = [
+                            self?.shareAnchorWarning(for: interjection),
+                            "Cleaned audio could not be regenerated. Original voice and reviewed text are still available."
+                        ].compactMap { $0 }.joined(separator: " ")
+                    }
+                }
+            }
+        }
+    }
+
+    private func shareAnchorWarning(for interjection: Interjection) -> String? {
+        guard selectedItem.isNativeAudio && (interjection.podcastAnchorEvidence ?? []).isEmpty else {
+            return nil
+        }
+        switch interjection.podcastAnchorEvidenceCaptureStatus {
+        case .pendingPostResumeSample:
+            return "High-reliability evidence is capturing. Continue podcast playback for about 12 seconds before sharing this Margin."
+        case .pendingExactLocalCapture:
+            return "High-reliability evidence is being prepared from the podcast edition currently playing."
+        case .ready:
+            return nil
+        case .unavailable, nil:
+            return "High-reliability anchor evidence was unavailable at capture. Transcript context may still resolve this Margin; a timestamp alone will not be treated as verified."
+        }
+    }
+
+    func exportSharedInterjections() {
+        guard !sharingState.isBulkPreparing else {
+            sharingState.errorMessage = "Finish or cancel bulk preparation before sharing."
+            return
+        }
+        let drafts = sharingState.drafts.filter {
+            $0.isIncluded && !$0.approvedTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        guard !drafts.isEmpty else {
+            sharingState.errorMessage = "Select at least one Margin with reviewed text."
+            return
+        }
+        sharingState.isExporting = true
+        sharingState.errorMessage = nil
+        do {
+            let store = try requireStore()
+            let item = try store.loadItem(id: selectedItem.id)
+            let itemIdentity = sharedItemIdentity(for: item, drafts: drafts)
+            let itemTransport = reviewedItemTransport(for: item, identity: itemIdentity)
+            var machineEvidence: [ReviewedMachineEvidenceAsset] = []
+            var selections: [ReviewedInterjectionSelection] = []
+
+            for (index, draft) in drafts.enumerated() {
+                let revisionID = "share-revision-\(UUID().uuidString.lowercased())"
+                let cleanedPath = draft.representationChoice == .cleaned ? draft.cleanedAudioURL?.path : nil
+                let revision = InterjectionShareRevision(
+                    id: revisionID,
+                    interjectionId: draft.interjection.id,
+                    itemId: draft.interjection.itemId,
+                    sessionId: draft.interjection.sessionId,
+                    createdAt: Date(),
+                    approvedTranscript: draft.approvedTranscript.trimmingCharacters(in: .whitespacesAndNewlines),
+                    cleanedAudioPath: cleanedPath,
+                    cleanedAudioDurationMs: draft.representationChoice == .cleaned ? draft.cleanedAudioDurationMs : nil,
+                    decisions: draft.cleanup?.decisions ?? [],
+                    anchorBefore: draft.anchorBefore,
+                    anchorAfter: draft.anchorAfter,
+                    status: .senderApproved
+                )
+                try store.saveInterjectionShareRevision(revision)
+
+                let evidence = sharingState.includesAcousticEvidence
+                    ? (draft.interjection.podcastAnchorEvidence ?? []).filter { FileManager.default.fileExists(atPath: $0.localPath) }
+                    : []
+                machineEvidence.append(contentsOf: evidence.map {
+                    ReviewedMachineEvidenceAsset(
+                        id: $0.id,
+                        path: "assets/evidence/\($0.id).shazamsignature",
+                        sourceURL: URL(fileURLWithPath: $0.localPath),
+                        durationMs: $0.durationMs,
+                        anchorOffsetMs: $0.anchorOffsetMs,
+                        provenance: ($0.provenance ?? .exactLocalPlaybackEdition).rawValue
+                    )
+                })
+                let anchor = portableAnchor(
+                    for: draft.interjection,
+                    item: item,
+                    machineEvidenceAssetIds: evidence.map(\.id)
+                )
+                let representation: ReviewedRepresentationSelection
+                switch draft.representationChoice {
+                case .original:
+                    guard let url = draft.interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:)),
+                          let duration = audioDurationMs(at: url) else {
+                        throw SessionKitError.persistenceFailed("selected_original_margin_audio_unavailable")
+                    }
+                    representation = .originalAudio(sourceURL: url, durationMs: duration)
+                case .cleaned:
+                    guard let url = draft.cleanedAudioURL else {
+                        throw SessionKitError.persistenceFailed("selected_cleaned_margin_audio_unavailable")
+                    }
+                    representation = .cleanedAudio(sourceURL: url)
+                case .textOnly:
+                    representation = .textOnly
+                }
+                selections.append(ReviewedInterjectionSelection(
+                    packageScopedId: String(format: "margin-%04d", index + 1),
+                    revision: revision,
+                    anchor: anchor,
+                    representation: representation
+                ))
+            }
+
+            let packageID = "package-\(UUID().uuidString.lowercased())"
+            let prepared = try SpokenMarginsPackageBuilder.prepare(
+                packageId: packageID,
+                createdAt: Date(),
+                item: itemIdentity,
+                itemTransportSelection: itemTransport,
+                selections: selections,
+                machineEvidence: machineEvidence,
+                senderDisplayLabel: sharingState.senderDisplayLabel.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            )
+            let directory = try applicationSupportDirectory()
+                .appending(path: "SpokenMargins/SharedPackages", directoryHint: .isDirectory)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let destination = directory.appending(path: "\(safeShareFilename(item.title))-\(packageID.suffix(8)).spokenmargins")
+            _ = try SpokenMarginsPackageArchive.write(prepared, to: destination)
+            UserDefaults.standard.set(sharingState.senderDisplayLabel, forKey: "sharingSenderDisplayLabel")
+            sharedSpokenMarginsPackageURL = destination
+            sharingState.isExporting = false
+            isSharingInterjectionsPresented = false
+            isSharedSpokenMarginsPackagePresented = true
+            diagnostics["lastSharedPackage"] = "margins=\(drafts.count);evidence=\(machineEvidence.count)"
+        } catch {
+            sharingState.isExporting = false
+            sharingState.errorMessage = error.localizedDescription
+            diagnostics["lastSharedPackageFailure"] = String(describing: error)
+        }
+    }
+
+    private func sharedItemIdentity(
+        for item: Item,
+        drafts: [ShareInterjectionDraft]
+    ) -> SharedItemIdentity {
+        let isPodcast = item.media?.sourceType == .remoteStream || item.media?.sourceType == .nativeMediaFile
+        let external = item.externalReference.flatMap { normalizedSharingURL($0) }
+        let enclosure = item.media?.url.flatMap { URL(string: $0)?.scheme?.lowercased() == "https" ? $0 : nil }
+        let draftDigests = drafts.compactMap { $0.interjection.sourceExactEditionSHA256 }
+        let exactDigest = draftDigests.count == drafts.count && Set(draftDigests).count == 1
+            ? draftDigests.first
+            : nil
+        let articleExact = isPodcast ? nil : PortableArticleAnchorResolver.exactEditionSHA256(item.text ?? "")
+        let articleNormalized = isPodcast ? nil : PortableArticleAnchorResolver.normalizedContentSHA256(item.text ?? "")
+        return SharedItemIdentity(
+            itemType: sharedItemType(for: item),
+            canonicalURL: external ?? enclosure,
+            originalURL: external,
+            title: item.title,
+            enclosureURL: enclosure,
+            durationMs: item.media?.durationMs,
+            normalizedContentSHA256: articleNormalized,
+            exactEditionSHA256: exactDigest ?? articleExact
+        )
+    }
+
+    private func reviewedItemTransport(
+        for item: Item,
+        identity: SharedItemIdentity
+    ) -> ReviewedItemTransportSelection {
+        if identity.canonicalURL != nil {
+            return .reference
+        }
+        let text = item.text ?? ""
+        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           sharingState.isAppAuthoredItem || sharingState.confirmsPrivateSharingRights {
+            return .embeddedText(
+                text: text,
+                originalMediaType: identity.itemType.rawValue,
+                rightsBasis: sharingState.isAppAuthoredItem ? .appAuthored : .senderConfirmedPrivateRights
+            )
+        }
+        return .recipientSupplied
+    }
+
+    private func secureSharedItemURL(for item: Item) -> String? {
+        item.externalReference.flatMap(normalizedSharingURL)
+            ?? item.media?.url.flatMap(normalizedSharingURL)
+    }
+
+    private func sharedItemType(for item: Item) -> SharedItemType {
+        if item.media?.sourceType == .remoteStream || item.media?.sourceType == .nativeMediaFile {
+            return .podcast
+        }
+        let extensionName = URL(fileURLWithPath: item.externalReference ?? "").pathExtension.lowercased()
+        if extensionName == "pdf" { return .pdf }
+        if extensionName == "epub" { return .epub }
+        return .text
+    }
+
+    private func portableAnchor(
+        for interjection: Interjection,
+        item: Item,
+        machineEvidenceAssetIds: [String]
+    ) -> PortableAnchorEvidence {
+        let exactText: String?
+        if !selectedItem.isNativeAudio,
+           interjection.anchor.endChar > interjection.anchor.startChar,
+           interjection.anchor.endChar <= (item.text ?? "").count {
+            let text = item.text ?? ""
+            let lower = text.index(text.startIndex, offsetBy: interjection.anchor.startChar)
+            let upper = text.index(text.startIndex, offsetBy: interjection.anchor.endChar)
+            exactText = String(text[lower..<upper])
+        } else {
+            exactText = nil
+        }
+        let chapter = selectedItem.mediaChapters.last {
+            $0.startMs <= (interjection.anchor.mediaTimeMs ?? -1)
+        }?.title
+        return PortableAnchorEvidence(
+            anchorType: interjection.anchor.anchorType,
+            startChar: selectedItem.isNativeAudio ? nil : interjection.anchor.startChar,
+            endChar: selectedItem.isNativeAudio ? nil : interjection.anchor.endChar,
+            exactText: exactText,
+            prefix: interjection.anchor.anchorBefore,
+            suffix: interjection.anchor.anchorAfter,
+            mediaTimeMs: interjection.anchor.mediaTimeMs,
+            roughPercent: interjection.roughPercent,
+            transcriptSegmentId: interjection.anchor.transcriptSegmentId,
+            chapterTitle: chapter,
+            machineEvidenceAssetIds: machineEvidenceAssetIds
+        )
+    }
+
+    private func audioDurationMs(at url: URL) -> Int? {
+        guard let file = try? AVAudioFile(forReading: url), file.processingFormat.sampleRate > 0 else { return nil }
+        return max(1, Int((Double(file.length) / file.processingFormat.sampleRate * 1_000).rounded()))
+    }
+
+    private func safeShareFilename(_ value: String) -> String {
+        let normalized = value.replacingOccurrences(
+            of: #"[^A-Za-z0-9._-]+"#,
+            with: "-",
+            options: .regularExpression
+        ).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return String((normalized.isEmpty ? "Spoken-Margins" : normalized).prefix(80))
+    }
+
+    func setImportedCommentaryLayerEnabled(_ layerID: String, enabled: Bool) {
+        updateImportedCommentaryLayer(layerID) { $0.isEnabled = enabled }
+    }
+
+    func setImportedCommentaryLayerMuted(_ layerID: String, muted: Bool) {
+        updateImportedCommentaryLayer(layerID) { $0.isMuted = muted }
+    }
+
+    func setImportedCommentaryRevealMode(_ layerID: String, mode: ImportedCommentaryRevealMode) {
+        updateImportedCommentaryLayer(layerID) { $0.revealMode = mode }
+    }
+
+    var hasEnabledImportedCommentary: Bool {
+        selectedItem.importedCommentaryLayers.contains {
+            $0.deletedAt == nil && $0.isEnabled && $0.sourceResolutionStatus == .resolved
+        }
+    }
+
+    var importedCommentaryAutoPlayEnabled: Bool {
+        let enabledLayers = selectedItem.importedCommentaryLayers.filter {
+            $0.deletedAt == nil && $0.isEnabled && $0.sourceResolutionStatus == .resolved
+        }
+        return !enabledLayers.isEmpty && enabledLayers.allSatisfy { $0.revealMode == .guided }
+    }
+
+    func setImportedCommentaryAutoPlayEnabled(_ enabled: Bool) {
+        do {
+            let store = try requireStore()
+            let layerIDs = selectedItem.importedCommentaryLayers.compactMap { layer in
+                layer.deletedAt == nil && layer.isEnabled ? layer.id : nil
+            }
+            for layerID in layerIDs {
+                guard var layer = try store.loadImportedCommentaryLayer(id: layerID) else { continue }
+                layer.revealMode = enabled ? .guided : .companion
+                try store.saveImportedCommentaryLayer(layer)
+            }
+            refreshSelectedItem()
+            reportConfirmation(enabled
+                ? "Shared Margins will play automatically after their cue."
+                : "Shared Margins will wait for you to choose Listen or Dismiss.")
+        } catch {
+            reportFailure(error, context: "Shared Margin auto-play setting could not be saved")
+        }
+    }
+
+    func deleteImportedCommentaryLayer(_ layerID: String) {
+        updateImportedCommentaryLayer(layerID) {
+            $0.deletedAt = Date()
+            $0.isEnabled = false
+        }
+    }
+
+    private func updateImportedCommentaryLayer(
+        _ layerID: String,
+        mutation: (inout ImportedCommentaryLayer) -> Void
+    ) {
+        do {
+            let store = try requireStore()
+            guard var layer = try store.loadImportedCommentaryLayer(id: layerID) else { return }
+            mutation(&layer)
+            try store.saveImportedCommentaryLayer(layer)
+            refreshSelectedItem()
+        } catch {
+            reportFailure(error, context: "Shared Margin settings could not be saved")
         }
     }
 
@@ -9124,6 +10873,11 @@ final class Gate1AppModel: ObservableObject {
                 }.first
             )
         }
+        let importedLayers = try store.loadImportedCommentaryLayers(itemId: id)
+            .filter { $0.deletedAt == nil }
+        let importedInterjections = Dictionary(uniqueKeysWithValues: importedLayers.map { layer in
+            (layer.id, (try? store.loadImportedCommentaryInterjections(layerId: layer.id)) ?? [])
+        })
         return ItemDetailState(
             id: item.id,
             title: item.title,
@@ -9139,6 +10893,8 @@ final class Gate1AppModel: ObservableObject {
             sessions: sessions,
             sessionRows: sessionRows,
             interjections: interjections,
+            importedCommentaryLayers: importedLayers,
+            importedCommentaryInterjections: importedInterjections,
             turns: turns
         )
     }
@@ -10009,6 +11765,7 @@ final class Gate1AppModel: ObservableObject {
         }
         scheduleEmbeddedPublisherChapterImport(itemId: itemId, localURL: url)
         retrySourceWindowContexts(itemId: itemId)
+        resolveImportedPodcastCommentary(itemId: itemId, localURL: url)
         guard pendingMapGenerationItemId == itemId,
               let item = try? store.loadItem(id: itemId) else {
             diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "not_requested"
@@ -10016,6 +11773,126 @@ final class Gate1AppModel: ObservableObject {
         }
         diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "requested_for_listening_map"
         scheduleFullSourceTranscriptionForListeningMap(for: item, localSourceURL: url)
+    }
+
+    private func resolveImportedPodcastCommentary(itemId: String, localURL: URL) {
+        guard let store,
+              let item = try? store.loadItem(id: itemId),
+              let layers = try? store.loadImportedCommentaryLayers(itemId: itemId),
+              !layers.isEmpty else { return }
+        let localItem = localSharedItemIdentity(for: item)
+        let recipientTranscript = try? store.loadTranscriptTimeline(itemId: itemId)?.timeline
+        let work = layers.compactMap { layer -> (ImportedCommentaryLayer, [ImportedCommentaryInterjection])? in
+            guard layer.deletedAt == nil,
+                  layer.itemIdentity.itemType == .podcast,
+                  let records = try? store.loadImportedCommentaryInterjections(layerId: layer.id),
+                  !records.isEmpty else { return nil }
+            return (layer, records)
+        }
+        guard !work.isEmpty else { return }
+        diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "scheduled:\(work.count)"
+        Task.detached { [weak self] in
+            do {
+                var resolvedWork: [(ImportedCommentaryLayer, [ImportedCommentaryInterjection])] = []
+                for (var layer, records) in work {
+                    let queries = records.map { record in
+                        let evidence = (record.podcastAnchorEvidence ?? []).compactMap { asset -> PodcastAcousticEvidenceQuery? in
+                            guard let data = try? Data(contentsOf: URL(fileURLWithPath: asset.localPath)) else { return nil }
+                            return PodcastAcousticEvidenceQuery(
+                                id: asset.id,
+                                signatureData: data,
+                                anchorOffsetMs: asset.anchorOffsetMs
+                            )
+                        }
+                        return PodcastPortableAnchorQuery(
+                            packageScopedId: record.packageScopedId,
+                            senderMediaTimeMs: record.anchorEvidence.mediaTimeMs,
+                            evidence: evidence,
+                            evidenceWasDeclared: !record.anchorEvidence.machineEvidenceAssetIds.isEmpty
+                        )
+                    }
+                    let resolutions = try await PodcastAcousticAnchorResolver.resolve(
+                        queries: queries,
+                        recipientAudioURL: localURL,
+                        senderExactEditionSHA256: layer.itemIdentity.exactEditionSHA256,
+                        senderDurationMs: layer.itemIdentity.durationMs,
+                        strongSourceIdentity: ImportedItemResolver.canRepresentSameWork(
+                            layer.itemIdentity,
+                            localItem
+                        )
+                    )
+                    let fusedResolutions = PodcastAnchorFusionResolver.enforcingMonotonicOrder(
+                        queries: queries,
+                        resolutions: Dictionary(uniqueKeysWithValues: records.map { record in
+                            let transcriptResolution = recipientTranscript.map {
+                                PodcastTranscriptAnchorResolver.resolve(
+                                    anchor: record.anchorEvidence,
+                                    recipientTimeline: $0
+                                )
+                            } ?? ImportedAnchorResolution(
+                                evidenceClass: .unresolved,
+                                algorithmVersion: "podcast-transcript-anchor.v1"
+                            )
+                            let acousticResolution = resolutions[record.packageScopedId]
+                                ?? ImportedAnchorResolution(evidenceClass: .unresolved)
+                            return (
+                                record.packageScopedId,
+                                PodcastAnchorFusionResolver.fuse(
+                                    transcript: transcriptResolution,
+                                    acoustic: acousticResolution
+                                )
+                            )
+                        })
+                    )
+                    var updated = records
+                    for index in updated.indices {
+                        if let resolution = fusedResolutions[updated[index].packageScopedId] {
+                            updated[index].resolution = resolution
+                        }
+                    }
+                    let resolutionValues = updated.map(\.resolution)
+                    if resolutionValues.allSatisfy(Self.isInlinePodcastResolution) {
+                        layer.sourceResolutionStatus = .resolved
+                    } else if resolutionValues.contains(where: { $0.evidenceClass == .ambiguous }) {
+                        layer.sourceResolutionStatus = .ambiguous
+                    } else if resolutionValues.allSatisfy({ $0.evidenceClass == .absentFromRecipientEdition }) {
+                        layer.sourceResolutionStatus = .unavailable
+                    } else {
+                        layer.sourceResolutionStatus = .contextOnly
+                    }
+                    resolvedWork.append((layer, updated))
+                }
+                await MainActor.run {
+                    guard let self, let store = self.store else { return }
+                    do {
+                        for (layer, records) in resolvedWork {
+                            try store.saveImportedCommentaryLayer(layer)
+                            for record in records { try store.saveImportedCommentaryInterjection(record) }
+                        }
+                        if self.selectedItem.id == itemId { self.refreshSelectedItem() }
+                        let resolvedCount = resolvedWork.filter { $0.0.sourceResolutionStatus == .resolved }.count
+                        self.diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "complete:\(resolvedCount)/\(resolvedWork.count)"
+                    } catch {
+                        self.diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "persistence_failed:\(error.localizedDescription)"
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self?.diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "failed:\(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    private nonisolated static func isInlinePodcastResolution(_ resolution: ImportedAnchorResolution) -> Bool {
+        guard resolution.localMediaTimeMs != nil else { return false }
+        switch resolution.evidenceClass {
+        case .exactEdition, .transcriptVerified, .acousticVerified, .fused,
+             .mapInterpolated, .timestampFallback, .recipientConfirmed:
+            return true
+        case .articleTextVerified, .ambiguous, .absentFromRecipientEdition, .unresolved:
+            return false
+        }
     }
 
     private func scheduleEmbeddedPublisherChapterImport(itemId: String, localURL: URL) {

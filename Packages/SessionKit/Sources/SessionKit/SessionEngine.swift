@@ -1178,7 +1178,11 @@ public final class SessionEngine {
             return snapshot
         }
         let count = try repository.loadInterjections(sessionId: session.id).count + 1
-        let interjection = Interjection(
+        let item = try? repository.loadItem(id: session.itemId)
+        let shouldCapturePostResumePodcastEvidence = targetType == .item
+            && anchor.mediaTimeMs != nil
+            && item.map(isNativeAudioSource) == true
+        var interjection = Interjection(
             id: targetType == .assistantTurn ? "ij-ai-\(String(format: "%03d", count))" : "ij-\(String(format: "%03d", count))",
             itemId: session.itemId,
             sessionId: session.id,
@@ -1199,9 +1203,27 @@ public final class SessionEngine {
             cleanedTranscript: nil,
             displayText: nil,
             status: "active",
-            anchorContextStatus: anchor.mediaTimeMs == nil || !anchor.anchorBefore.isEmpty || !anchor.anchorAfter.isEmpty ? .ready : .pending
+            anchorContextStatus: anchor.mediaTimeMs == nil || !anchor.anchorBefore.isEmpty || !anchor.anchorAfter.isEmpty ? .ready : .pending,
+            podcastAnchorEvidenceCaptureStatus: shouldCapturePostResumePodcastEvidence
+                ? .pendingPostResumeSample
+                : nil
         )
         try repository.saveInterjection(interjection)
+        if shouldCapturePostResumePodcastEvidence,
+           let anchorMediaTimeMs = anchor.mediaTimeMs {
+            let armed = audio.armPostResumeAudioSample(PostResumeAudioSampleRequest(
+                interjectionId: interjection.id,
+                sessionId: session.id,
+                itemId: session.itemId,
+                anchorMediaTimeMs: anchorMediaTimeMs,
+                targetDurationMs: 12_000
+            ))
+            if !armed {
+                interjection.podcastAnchorEvidenceCaptureStatus = .unavailable
+                interjection.podcastAnchorEvidenceFailureReason = "decoded_playback_sample_unavailable"
+                try repository.saveInterjection(interjection)
+            }
+        }
         try transcriber.scheduleTranscription(interjection: interjection)
         lastScheduledTranscriptionInterjectionId = interjection.id
         snapshot.lastInterjectionAnchorType = anchor.anchorType
@@ -1700,9 +1722,52 @@ public final class SessionEngine {
     public func transcriptionCompleted(interjectionId: String, transcript: String) throws -> SessionSnapshot {
         try updateInterjection(interjectionId) { interjection in
             interjection.transcript = transcript
+            interjection.alignedTranscript = nil
             interjection.transcriptionStatus = "transcribed"
             interjection.cleanedTranscript = nil
             interjection.displayText = transcript
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func transcriptionCompleted(
+        interjectionId: String,
+        alignedTranscript: AlignedInterjectionTranscript
+    ) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId) { interjection in
+            interjection.transcript = alignedTranscript.text
+            interjection.alignedTranscript = alignedTranscript
+            interjection.transcriptionStatus = "transcribed"
+            interjection.cleanedTranscript = nil
+            interjection.displayText = alignedTranscript.text
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func podcastAnchorEvidenceCompleted(
+        interjectionId: String,
+        evidence: [CapturedPodcastAnchorEvidence],
+        sourceExactEditionSHA256: String?
+    ) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId) { interjection in
+            interjection.podcastAnchorEvidence = evidence
+            interjection.sourceExactEditionSHA256 = sourceExactEditionSHA256
+            interjection.podcastAnchorEvidenceCaptureStatus = .ready
+            interjection.podcastAnchorEvidenceFailureReason = nil
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func podcastAnchorEvidenceFailed(
+        interjectionId: String,
+        reason: String
+    ) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId) { interjection in
+            interjection.podcastAnchorEvidenceCaptureStatus = .unavailable
+            interjection.podcastAnchorEvidenceFailureReason = reason
         }
         return snapshot
     }

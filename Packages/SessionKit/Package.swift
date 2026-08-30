@@ -12,6 +12,7 @@ let package = Package(
         .library(name: "SessionKit", targets: ["SessionKit"]),
         .library(name: "SessionKitPersistence", targets: ["SessionKitPersistence"]),
         .library(name: "SessionKitAudio", targets: ["SessionKitAudio"]),
+        .library(name: "SessionKitSharing", targets: ["SessionKitSharing"]),
         .library(name: "SessionKitAI", targets: ["SessionKitAI"]),
         .library(name: "SessionKitSupertonic", targets: ["SessionKitSupertonic"]),
         .library(name: "SessionKitEPUB", targets: ["SessionKitEPUB"]),
@@ -37,6 +38,13 @@ let package = Package(
         .target(
             name: "SessionKitAudio",
             dependencies: ["SessionKit"]
+        ),
+        .target(
+            name: "SessionKitSharing",
+            dependencies: [
+                "SessionKit",
+                .product(name: "ZIPFoundation", package: "ZIPFoundation")
+            ]
         ),
         .target(
             name: "SessionKitAI",
@@ -65,8 +73,14 @@ let package = Package(
         .testTarget(
             name: "SessionKitTests",
             dependencies: [
-                "SessionKit", "SessionKitPersistence", "SessionKitAudio", "SessionKitAI",
-                "SessionKitSupertonic", "SessionKitEPUB", "SessionKitFeeds",
+                "SessionKit",
+                "SessionKitPersistence",
+                "SessionKitAudio",
+                "SessionKitSharing",
+                "SessionKitAI",
+                "SessionKitSupertonic",
+                "SessionKitEPUB",
+                "SessionKitFeeds",
                 .product(name: "ZIPFoundation", package: "ZIPFoundation")
             ]
         ),

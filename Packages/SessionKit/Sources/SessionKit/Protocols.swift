@@ -1,5 +1,27 @@
 import Foundation
 
+public struct PostResumeAudioSampleRequest: Equatable, Sendable {
+    public let interjectionId: String
+    public let sessionId: String
+    public let itemId: String
+    public let anchorMediaTimeMs: Int
+    public let targetDurationMs: Int
+
+    public init(
+        interjectionId: String,
+        sessionId: String,
+        itemId: String,
+        anchorMediaTimeMs: Int,
+        targetDurationMs: Int
+    ) {
+        self.interjectionId = interjectionId
+        self.sessionId = sessionId
+        self.itemId = itemId
+        self.anchorMediaTimeMs = anchorMediaTimeMs
+        self.targetDurationMs = targetDurationMs
+    }
+}
+
 public protocol ItemRepository {
     func loadItem(id: String) throws -> Item
     func saveItem(_ item: Item) throws
@@ -12,6 +34,18 @@ public protocol ListeningSessionRepository {
     func loadSession(id: String) throws -> Session?
     func saveInterjection(_ interjection: Interjection) throws
     func loadInterjections(sessionId: String) throws -> [Interjection]
+    func saveInterjectionShareRevision(_ revision: InterjectionShareRevision) throws
+    func loadInterjectionShareRevisions(interjectionId: String) throws -> [InterjectionShareRevision]
+    func importCommentaryLayer(
+        _ layer: ImportedCommentaryLayer,
+        interjections: [ImportedCommentaryInterjection]
+    ) throws -> ImportedCommentaryImportDisposition
+    func loadImportedCommentaryLayer(id: String) throws -> ImportedCommentaryLayer?
+    func loadImportedCommentaryLayer(packageDigest: String) throws -> ImportedCommentaryLayer?
+    func loadImportedCommentaryLayers(itemId: String) throws -> [ImportedCommentaryLayer]
+    func loadImportedCommentaryInterjections(layerId: String) throws -> [ImportedCommentaryInterjection]
+    func saveImportedCommentaryLayer(_ layer: ImportedCommentaryLayer) throws
+    func saveImportedCommentaryInterjection(_ interjection: ImportedCommentaryInterjection) throws
     func saveTurn(_ turn: ConversationTurn) throws
     func loadTurns(sessionId: String) throws -> [ConversationTurn]
     func saveAIJob(_ job: AIJob) throws
@@ -119,6 +153,8 @@ public protocol AudioPlaybackClient {
     func playbackStartStatus(targetId: String) -> PlaybackStartStatus
     func playbackTransportState(targetId: String) -> PlaybackTransportState?
     func setRemoteCommandHandlingEnabled(_ enabled: Bool)
+    @discardableResult
+    func armPostResumeAudioSample(_ request: PostResumeAudioSampleRequest) -> Bool
     func pause() throws
     func stop() throws
 }
@@ -182,6 +218,11 @@ public extension AudioPlaybackClient {
     }
 
     func setPlaybackRate(_ rate: Double) throws {}
+
+    @discardableResult
+    func armPostResumeAudioSample(_ request: PostResumeAudioSampleRequest) -> Bool {
+        false
+    }
 
     func stop() throws {
         try pause()

@@ -1,0 +1,24 @@
+{
+  "id": "revision-001",
+  "interjectionId": "ij-001",
+  "itemId": "item-001",
+  "sessionId": "session-001",
+  "createdAt": "2026-08-22T12:00:00Z",
+  "cleanupPolicyVersion": "cleanup.v1",
+  "approvedTranscript": "This is the reviewed thought.",
+  "cleanedAudioPath": "ShareRevisions/ij-001/cleanup-v1.m4a",
+  "cleanedAudioDurationMs": 3200,
+  "decisions": [
+    {
+      "id": "cleanup-v1-filler-0000-0-180",
+      "kind": "filler",
+      "startMs": 0,
+      "endMs": 220,
+      "originalText": "Um",
+      "accepted": true
+    }
+  ],
+  "anchorBefore": "Before",
+  "anchorAfter": "After",
+  "status": "sender_review_pending"
+}

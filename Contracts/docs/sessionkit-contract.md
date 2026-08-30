@@ -198,6 +198,8 @@ Rollback must reorient the listener rather than simply rewind by an implementati
 
 Interjection failures must not end the session. Audio save failure creates an active interjection only if a durable audio reference exists.
 
+A private Interjection may persist optional local share-later curation: a star and a private note capped at 500 characters. This metadata is owner-only selection assistance. It must not enter an immutable reviewed revision, `.spokenmargins` manifest or artifact, imported commentary layer, session export, or recipient display. A star may determine the sender review's initial shortlist, but the explicit per-export Include decision remains authoritative.
+
 ### Summary And Discussion
 
 `generateInterjectionSummary(scope?)` creates an AI job over scoped interjections. The default scope is active interjections against the original item in the current session.
@@ -252,6 +254,28 @@ Exports are session-scoped by default. When one item has multiple sessions, expo
 Interjection audio, raw transcript, cleaned transcript, and user-visible display text have separate lifecycles.
 
 Destructive actions require explicit intent. Removing or replacing one representation must not silently delete the others.
+
+### Reviewed Sharing Foundation
+
+Sharing uses immutable reviewed revisions rather than modifying a private `Interjection`. A revision records the sender-approved transcript, optional cleaned-audio reference, deterministic cleanup decisions, and at most 500 characters of context on either side of the anchor. Draft and review-pending revisions cannot be packaged.
+
+`spoken-margins.package.v1` is the unpublished format's final data-minimized, integrity-checked envelope. The manifest declares source identity, required capabilities, typed artifacts, typed assets, content hashes, and redaction assertions. `spoken-margins.commentary-layer.v1` carries bounded durable anchors and explicitly selected reviewed representations. `spoken-margins.listening-map-proposal.v2` can carry portable scene proposals without treating sender timestamps as recipient-local truth. Raw private captures, unselected representations, complete source text or audio, diagnostics, filesystem paths, and unrelated turns are not package fields. Voice assets use `assets/audio/*.m4a`; acoustic evidence uses `assets/evidence/*.shazamsignature`; local source paths are never serialized.
+
+The content digest covers the canonical sorted-key manifest with its digest omitted, the generated `preview.md`, and each sorted audio path, byte digest, and byte count. Digest success means **integrity checked, unsigned sender**; it is not identity authentication. Only a successful archive read can create the verified-package value accepted by the importer. Malformed archives or JSON, unknown fields, unsafe entries, non-HTTPS source URLs, unsupported schema versions, missing privacy assertions, attachment mismatches, unreadable audio, and digest or preview mismatches are rejected before import. Export replacement and audio extraction use staged same-directory items so failure preserves an existing destination.
+
+Recipient imports persist `ImportedCommentaryLayer` and `ImportedCommentaryInterjection` records separately from local captures. Package and package-scoped IDs are provenance only; recipient-local IDs are the primary keys. The verified package digest is the idempotency key, and a repeated import returns a stable duplicate result without adding records. Sender reveal-mode suggestions remain evidence only: a new layer is disabled and has no active recipient reveal mode. Source resolution is persisted per note and the layer status is derived from those results.
+
+Article resolution distinguishes resolved, ambiguous, wrong-source, and context-only outcomes. Raw character offsets are accepted only when the recipient text has the exact-edition hash captured over the original UTF-8 source and any supplied exact quote matches that range. Normalized hashes identify similar content but never authorize offset reuse. A unique exact quote or unique normalized quote can still resolve cross-edition text. Presentation, playback ownership, co-op replies, accounts, transport, and external enablement are separate work; v1 deliberately contains no reply/conversation fields.
+
+Contract fixture registration:
+
+| Fixture family | Schema | Expected result |
+| --- | --- | --- |
+| `fixtures/interjection-packages/*.json` | `spoken-margins-package.schema.json` | valid |
+| `fixtures/sharing/cleanup-revision.json` | `interjection-share-revision.schema.json` | valid |
+| `fixtures/sharing/commentary-layer.json` | `shared-commentary-layer.schema.json` | valid |
+| `fixtures/sharing/listening-map-proposal.json` | `portable-listening-map-proposal.schema.json` | valid |
+| `fixtures/invalid/interjection-packages/*.json` | `spoken-margins-package.schema.json` | invalid; the validator fails if one passes |
 
 ## Snapshot
 

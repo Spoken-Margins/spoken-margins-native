@@ -85,10 +85,9 @@ struct Gate2NowPlayingTimelineMetadata: Equatable {
 }
 
 enum Gate2LiveActivityPolicy {
-    /// Live Activity intents cannot command the in-process player reliably when
-    /// the app is suspended. Now Playing remains the authoritative transport
-    /// surface; the Live Activity retains only actions that intentionally open or
-    /// hand off to the app, chiefly Interject.
+    /// Now Playing remains the authoritative general transport surface. The Live
+    /// Activity exposes only bounded actions whose shared intents execute in the
+    /// app process and hand off to the canonical player.
     static func availableCommands(from snapshot: CompactControlSnapshot) -> [CompactControlCommand] {
         snapshot.availableCommands.filter {
             switch $0 {
@@ -120,6 +119,29 @@ enum Gate2LiveActivityPolicy {
             ?? chapters.lastIndex(where: { ($0.percent ?? 0) <= snapshot.sourceProgressPercent })
         guard let currentIndex, chapters.indices.contains(currentIndex + 1) else { return nil }
         return chapters[currentIndex + 1]
+    }
+
+    static func nextNavigationEntry(
+        from snapshot: CompactControlSnapshot,
+        upcomingSharedMargins: [Gate2LiveActivityNavigationEntry]
+    ) -> Gate2LiveActivityNavigationEntry? {
+        let sourceChapter = nextSourceChapter(from: snapshot).flatMap { chapter -> Gate2LiveActivityNavigationEntry? in
+            guard let chapterID = chapter.chapterId else { return nil }
+            return Gate2LiveActivityNavigationEntry(
+                kind: .sourceChapter,
+                title: chapter.title,
+                targetID: chapterID,
+                positionPercent: chapter.percent ?? 100
+            )
+        }
+        return ([sourceChapter].compactMap { $0 } + upcomingSharedMargins)
+            .sorted { lhs, rhs in
+                if lhs.positionPercent == rhs.positionPercent {
+                    return lhs.kind == .sourceChapter && rhs.kind == .sharedMargin
+                }
+                return lhs.positionPercent < rhs.positionPercent
+            }
+            .first
     }
 
     static func isEligible(_ snapshot: CompactControlSnapshot) -> Bool {
@@ -206,16 +228,33 @@ enum Gate2NativeMediaNowPlayingPolicy {
 protocol Gate2LiveActivityControlling: AnyObject {
     var status: String { get }
 
-    func publish(_ snapshot: CompactControlSnapshot)
+    func publish(
+        _ snapshot: CompactControlSnapshot,
+        sharedMarginPrompt: Gate2SharedMarginActivityPrompt?,
+        upcomingSharedMargins: [Gate2LiveActivityNavigationEntry]
+    )
     func endAll()
+}
+
+struct Gate2SharedMarginActivityPrompt: Equatable, Sendable {
+    let senderLabel: String
+}
+
+struct Gate2LiveActivityNavigationEntry: Equatable, Sendable {
+    let kind: Gate2LiveActivityNavigationKind
+    let title: String
+    let targetID: String
+    let positionPercent: Int
 }
 
 @MainActor
 final class Gate2CompactControlController {
     private var dispatcher: CompactControlDispatcher?
+    private var sharedMarginPrompt: Gate2SharedMarginActivityPrompt?
+    private var upcomingSharedMargins: [Gate2LiveActivityNavigationEntry] = []
     private var queuedCommandTask: Task<Void, Never>?
     private var queuedCommandHandler: (@MainActor (CompactControlCommand, String, String?, Int?, Double?) -> Void)?
-    private var queuedApplicationCommandHandler: (@MainActor (String) -> Bool)?
+    private var queuedApplicationCommandHandler: (@MainActor (String, String?) -> Bool)?
     private let liveActivity: any Gate2LiveActivityControlling
     private let liveSpeechNowPlaying = Gate2LiveSpeechNowPlayingController()
     private var lastPublishedSnapshot: CompactControlSnapshot?
@@ -237,7 +276,7 @@ final class Gate2CompactControlController {
         surfaceProfile: RuntimeCapabilityProfile,
         skipUnit: String,
         commandHandler: @escaping @MainActor (CompactControlCommand, String, String?, Int?, Double?) -> Void,
-        applicationCommandHandler: @escaping @MainActor (String) -> Bool = { _ in false }
+        applicationCommandHandler: @escaping @MainActor (String, String?) -> Bool = { _, _ in false }
     ) {
         dispatcher = CompactControlDispatcher(
             surfaceProfile: surfaceProfile,
@@ -254,8 +293,14 @@ final class Gate2CompactControlController {
         lastResult = "configured"
     }
 
-    func update(snapshot _: SessionSnapshot) {
+    func update(
+        snapshot _: SessionSnapshot,
+        sharedMarginPrompt: Gate2SharedMarginActivityPrompt? = nil,
+        upcomingSharedMargins: [Gate2LiveActivityNavigationEntry] = []
+    ) {
         guard dispatcher != nil else { return }
+        self.sharedMarginPrompt = sharedMarginPrompt
+        self.upcomingSharedMargins = upcomingSharedMargins
         let drainedCommand = drainQueuedWidgetCommands()
         if !drainedCommand {
             publishCurrentSnapshot()
@@ -330,7 +375,11 @@ final class Gate2CompactControlController {
         }
         lastPublishedSnapshot = snapshot
         liveSpeechNowPlaying.publish(snapshot)
-        liveActivity.publish(snapshot)
+        liveActivity.publish(
+            snapshot,
+            sharedMarginPrompt: sharedMarginPrompt,
+            upcomingSharedMargins: upcomingSharedMargins
+        )
     }
 
     nonisolated static func hasEquivalentSurfaceState(
@@ -366,7 +415,7 @@ final class Gate2CompactControlController {
         for queuedCommand in queuedCommands {
             if let command = CompactControlCommand(rawValue: queuedCommand.command) {
                 queuedCommandHandler(command, "widget_or_live_activity_queue", queuedCommand.chapterId, nil, nil)
-            } else if queuedApplicationCommandHandler?(queuedCommand.command) == true {
+            } else if queuedApplicationCommandHandler?(queuedCommand.command, queuedCommand.chapterId) == true {
                 lastApplicationCommand = queuedCommand.command
             }
         }
@@ -382,7 +431,11 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
     private var activityTask: Task<Void, Never>?
     private(set) var status = "not_started"
 
-    func publish(_ snapshot: CompactControlSnapshot) {
+    func publish(
+        _ snapshot: CompactControlSnapshot,
+        sharedMarginPrompt: Gate2SharedMarginActivityPrompt?,
+        upcomingSharedMargins: [Gate2LiveActivityNavigationEntry]
+    ) {
         #if SPOKEN_MARGINS_LEGACY
         status = "unavailable_legacy"
         return
@@ -420,17 +473,22 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
             }
             return
         }
-        let nextChapter = Gate2LiveActivityPolicy.nextSourceChapter(from: snapshot)
+        let nextNavigation = Gate2LiveActivityPolicy.nextNavigationEntry(
+            from: snapshot,
+            upcomingSharedMargins: upcomingSharedMargins
+        )
         let state = Gate2LiveActivityAttributes.ContentState(
             title: snapshot.title ?? "Spoken Margins",
             chapterTitle: snapshot.chapterTitle ?? "Session",
-            nextChapterTitle: nextChapter?.title,
-            nextChapterId: nextChapter?.chapterId,
+            nextChapterTitle: nextNavigation?.title,
+            nextChapterId: nextNavigation?.targetID,
+            nextNavigationKind: nextNavigation?.kind,
             status: snapshot.status.rawValue,
             phase: snapshot.phase.rawValue,
             progressPercent: snapshot.currentPlaybackProgressPercent,
             isRecording: snapshot.isRecording,
-            availableCommands: Gate2LiveActivityPolicy.availableCommands(from: snapshot).map(\.rawValue)
+            availableCommands: Gate2LiveActivityPolicy.availableCommands(from: snapshot).map(\.rawValue),
+            sharedMarginSenderLabel: sharedMarginPrompt?.senderLabel
         )
         activityTask = Task { @MainActor in
             await previousActivityTask?.value

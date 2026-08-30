@@ -1,0 +1,71 @@
+{
+  "acoustic" : {
+    "confident" : 215,
+    "correctlyDeclinedAbsent" : 6,
+    "declinedEligible" : 11,
+    "evidenceClasses" : {
+      "ambiguous" : 17,
+      "fused" : 215
+    },
+    "evidenceGenerationSeconds" : 7.8734430074691772,
+    "falseConfident" : 0,
+    "p95ErrorMs" : 4,
+    "placementsOver1500Ms" : 0,
+    "resolutionSeconds" : 1.0957539081573486
+  },
+  "anchors" : {
+    "absent" : 6,
+    "eligible" : 226,
+    "total" : 232
+  },
+  "corpus" : {
+    "license" : "Public Domain Mark 1.0",
+    "pairedEditionTransformations" : [
+      "45-second inserted speech advertisement",
+      "20-second publisher correction deletion",
+      "40-second repeated source passage",
+      "6-second silence\/edit deletion",
+      "MP3-to-AAC re-encoding"
+    ],
+    "partition" : "held_out_after_rule_freeze",
+    "source" : "LibriVox \/ Internet Archive: The Adventures of Sherlock Holmes (version 5), chapter 4"
+  },
+  "fusedMonotonic" : {
+    "confident" : 210,
+    "correctlyDeclinedAbsent" : 6,
+    "declinedEligible" : 16,
+    "evidenceClasses" : {
+      "ambiguous" : 22,
+      "fused" : 210
+    },
+    "falseConfident" : 0,
+    "p95ErrorMs" : 4,
+    "placementsOver1500Ms" : 0
+  },
+  "generatedAt" : "2026-08-29T18:11:54Z",
+  "schemaVersion" : "spoken-margins.anchor-benchmark-result.v1",
+  "timestampOnly" : {
+    "confident" : 226,
+    "correctlyDeclinedAbsent" : 0,
+    "declinedEligible" : 0,
+    "evidenceClasses" : {
+      "timestamp_fallback" : 232
+    },
+    "falseConfident" : 188,
+    "p95ErrorMs" : 65000,
+    "placementsOver1500Ms" : 182
+  },
+  "transcript" : {
+    "confident" : 175,
+    "correctlyDeclinedAbsent" : 6,
+    "declinedEligible" : 51,
+    "evidenceClasses" : {
+      "ambiguous" : 8,
+      "transcript_verified" : 175,
+      "unresolved" : 49
+    },
+    "falseConfident" : 95,
+    "p95ErrorMs" : 4560,
+    "placementsOver1500Ms" : 95
+  }
+}

@@ -42,6 +42,8 @@ targets:
       - package: SessionKit
         product: SessionKitAudio
       - package: SessionKit
+        product: SessionKitSharing
+      - package: SessionKit
         product: SessionKitAI
       - package: SessionKit
         product: SessionKitSupertonic
@@ -54,7 +56,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsApp/SpokenMarginsApp.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "22"
+        CURRENT_PROJECT_VERSION: "23"
         DEVELOPMENT_TEAM: J8SWC6J3VY
         INFOPLIST_FILE: App/SpokenMarginsApp/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Spoken Margins
@@ -81,7 +83,24 @@ targets:
           - CFBundleURLName: SpokenMarginsCompactControls
             CFBundleURLSchemes:
               - spokenmargins
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Spoken Margins Package
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Owner
+            LSItemContentTypes:
+              - com.spokenmargins.package
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.spokenmargins.package
+            UTTypeDescription: Spoken Margins Package
+            UTTypeConformsTo:
+              - public.zip-archive
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - spokenmargins
+              public.mime-type:
+                - application/vnd.spokenmargins.package+zip
         LSRequiresIPhoneOS: true
+        LSSupportsOpeningDocumentsInPlace: true
         ITSAppUsesNonExemptEncryption: false
         SMRemoteProviderExperienceEnabled: false
         UILaunchScreen: {}
@@ -116,7 +135,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.gate2widget
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsGate2Widget/SpokenMarginsGate2Widget.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "22"
+        CURRENT_PROJECT_VERSION: "23"
         DEVELOPMENT_TEAM: J8SWC6J3VY
         ENABLE_DEBUG_DYLIB: NO
         MARKETING_VERSION: "0.1"
@@ -144,7 +163,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.browsertext
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsBrowserTextExtension/SpokenMarginsBrowserTextExtension.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "22"
+        CURRENT_PROJECT_VERSION: "23"
         DEVELOPMENT_TEAM: J8SWC6J3VY
         ENABLE_DEBUG_DYLIB: NO
         INFOPLIST_FILE: App/SpokenMarginsBrowserTextExtension/Info.plist
@@ -163,13 +182,14 @@ targets:
           - Gate2CompactCommandQueue.swift
           - Gate2CompactCommandURL.swift
           - Gate2LiveActivityAttributes.swift
+          - Gate2LiveActivityIntents.swift
       - path: App/SharedSources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.share
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsShareExtension/SpokenMarginsShareExtension.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "22"
+        CURRENT_PROJECT_VERSION: "23"
         DEVELOPMENT_TEAM: J8SWC6J3VY
         ENABLE_DEBUG_DYLIB: NO
         INFOPLIST_FILE: App/SpokenMarginsShareExtension/Info.plist

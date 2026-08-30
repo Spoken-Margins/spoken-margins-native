@@ -30,10 +30,10 @@ Only these branches are active development lanes:
 | --- | --- | --- | --- |
 | `main` | Released and accepted integration runtime plus repository governance | Documentation, validation evidence, distributed runtime, and product-owner-accepted release integration | N/A |
 | `codex/testflight-triage` | Active Build 22 rapid-fix lane, based on the accepted Build 21 integration runtime | #84 end-to-end media scrub/seek reconvergence only | `main` after product-owner acceptance; exact verified patch may also enter `codex/build-23-release` |
-| `codex/sharing-next` | One-way sharing source lane | Sharing foundation issues #17, #18, #67, and #68; audit reconciliation #81 | `codex/build-23-release` once, then freeze the source lane |
+| `codex/sharing-next` | One-way sharing source lane | Direct-share gate #14; foundation #17, #18, #67, #68, and #81; cross-edition podcast resolution #27; portable proposal-contract slice of #88 | `codex/build-23-release` once, then freeze the source lane |
 | `codex/quality-of-life-next` | Quality-of-life source lane | Complete non-Watch program: #34, #64, #72, #73, #61, #79, #74, #69, #76, #77, #86, and #87, plus the accepted temporary experience-overhaul integration | `codex/build-23-release` once, then freeze the source lane |
 | `codex/experience-overhaul` | Temporary private-experience integration branch | Native Library, Sources, and local Margins shell; typed intake; item, playback, recording, Timeline, onboarding, and storage presentation over the verified quality-of-life runtime | `codex/quality-of-life-next`, then delete the temporary branch after integration |
-| `codex/build-23-release` | Unified Build 23 integration and release lane | Complete quality-of-life and experience work; one-way sharing foundation; recipient import and provenance presentation; exact verified Build 22 seek patch | `main` only after all Build 23 release gates and product-owner acceptance |
+| `codex/build-23-release` | Unified Build 23 integration and release lane | Complete quality-of-life and experience work; one-way sharing foundation including #27 and the authorized #88 slice; recipient import and provenance presentation; exact verified Build 22 seek patch | `main` only after all Build 23 release gates and product-owner acceptance |
 
 All other local and remote branches are historical and read-only. Their commits may be inspected or deliberately extracted, but work must not resume directly on them without a product-owner plan change. In particular, `codex/sharingV1` is source material for reconciliation into `codex/sharing-next`; it is not an active integration branch.
 
@@ -93,6 +93,7 @@ For each TestFlight cycle:
 
 ### Phase 1: Foundation
 
+- #14: direct-share rights and provenance policy for referenced versus embedded items.
 - #17: reviewed interjection packages and sender preview.
 - #18: recipient import and distinct commentary layers.
 - #67: deterministic cleanup and bounded anchor context for reviewed representations.
@@ -100,6 +101,31 @@ For each TestFlight cycle:
 - #81: reconcile the existing `codex/sharingV1` implementation with current source and record implementation versus verification status.
 
 These issues form one end-to-end boundary: prepare, preview, export, import, and distinguish shared commentary. Rights and provenance decisions from #14 gate external enablement even when implementation remains disabled behind a feature flag.
+
+Product-owner revision, 2026-08-29: package terminology and transport must distinguish a reusable **source** (for example an RSS feed, newsletter, blog, or social feed) from the discrete **item** being listened to. URL-backed items share source/item references and never redistribute the item payload by default. A linkless native-text or document-derived item may be embedded only after the sender explicitly confirms that the share is private and that they have the right to share the item. Declining that confirmation must not block Margin export; the package instead declares that the recipient must supply the same item. App-authored sample text may be embedded without a user rights assertion because its provenance is known. Missing canonical URLs must never be represented by invented public URLs or reported as persistence failures.
+
+Product-owner revision, 2026-08-29 (playback validation): sender review must use one compact, readable inline transcript in which words and bracketed pause markers can be tapped to remove or restore them; it must not duplicate the same edits as a vertical toggle list. Imported-item presentation must show one Listening Map generation request and a play/resume action without requiring a long scroll. Companion playback must sound a cue and expose **Listen** and **Dismiss** on the playback screen and Live Activity when a shared Margin is reached. The playback screen must also expose an auto-play control that selects automatic versus opt-in shared-Margin playback without creating a second persistence model.
+
+Product-owner revision, 2026-08-30 (bulk review and listening rate): sender review must offer one explicit bulk action that prepares every included, eligible Margin for filler removal and pause tightening with bounded work, visible progress, cancellation, and per-Margin fallback to Original voice or Text when preparation is unavailable. Bulk preparation must not mutate private originals or prevent later per-Margin review and Undo/Redo. When a private or received Margin voice is played during an item session, it inherits the item's current playback rate; the notification cue remains at normal speed and source playback resumes at its existing rate.
+
+Product-owner revision, 2026-08-30 (share-later curation and review density): the listening Timeline must let the user visibly star a private Margin for later sharing, and Margin detail may retain a bounded private sharing note. This curation must persist locally, remain private rather than entering a `.spokenmargins` package, and drive a Starred filter plus safe default selection in sender review without replacing the per-export Include control. If any Margins are starred, sender review initially includes and shows only those starred Margins; if none are starred, the existing all-included default remains. Long sender-review transcripts must default to a readable preview of no more than 10 lines and expose an explicit expansion control; short transcripts must not gain unnecessary disclosure chrome.
+
+Product-owner revision, 2026-08-30 (speech-aware gaps and lock-screen navigation): cleanup must use aligned speech timing and acoustic evidence as complementary signals, so sustained background noise inside a recognized non-speaking gap does not preserve that gap merely because it is louder than room tone. Every proposed removal remains sender-reviewed, reversible, and prohibited from overlapping aligned speech. While receiving Shared Margins, the Lock Screen Live Activity must expose actionable **Listen** and **Dismiss** controls whenever a Companion prompt is pending, including compact supplemental presentation, using app-process Live Activity intents rather than a widget-only URL handoff. Its next-navigation affordance must merge publisher chapters and verified upcoming Shared Margins in source order; a Shared Margin remains a distinct commentary event rather than being written into the publisher's chapter data. Selecting an upcoming Shared Margin moves to its verified local anchor and applies that layer's cue and reveal behavior. Locked-device interaction remains subject to iOS authentication.
+
+### Phase 1A: Testable podcast-sharing MVP
+
+The product owner expanded the sharing foundation on 2026-08-29 so it can reach a trusted-tester MVP instead of stopping at package-only infrastructure.
+
+- #27 is authorized first as the cross-edition benchmark and then as the production evidence/resolver gate. Automatic verified placement requires zero false-confident placements in the held-out benchmark and p95 error no greater than 1.5 seconds. The implementation must retain ambiguous, absent, unresolved, and wrong-source outcomes instead of forcing placement.
+- A sender timestamp remains a hint. A silent timestamp fallback is authorized only when strong episode identity and a benchmark-approved duration guard hold, transcript and acoustic evidence are genuinely unavailable, and no evidence contradicts the placement. It is never eligible after ambiguity, absence, digest mismatch, or wrong-source detection.
+- #88 is authorized only for the portable scene-map proposal schema, validation, deterministic `.spokenmargins` transport, and proposal persistence. Offline podcast map generation, proposal activation, summary bridge playback, and Skim controls remain post-MVP and unauthorized.
+- After a recipient confirms an integrity-checked import, the existing podcast download coordinator may treat that explicit import as a user-initiated download. It must show progress/cancel/retry and must not autoplay.
+- Add a same-device "Create recipient test session" route that exercises the real archive, verification, import, persistence, resolver, and commentary-playback path in a distinct local imported layer.
+- Sharing is exposed without a tester-facing Settings toggle in the first dedicated sharing TestFlight build, but incomplete routes remain unregistered until the complete end-to-end path is verified. #14 still gates sharing with other people outside the product owner's own-device validation.
+
+Product-owner revision, 2026-08-30 (stream-efficient sender evidence): podcast evidence capture must not require a continuous rolling buffer or a complete sender-side download. After a podcast Margin finishes, arm one bounded decoded-playback sample for the next approximately 12 seconds, discard all decoded PCM after generating non-playable acoustic evidence, and share no podcast audio. Closely spaced Margins may share the short-lived playback tap while keeping distinct evidence records. If the active stream cannot expose enough decoded audio, or playback seeks or changes items before capture completes, decline acoustic evidence and use the conservative transcript/identity fallback; do not silently promote a timestamp. A separately downloaded dynamic-ad episode is not proof of the edition the sender actually heard.
+
+The `.spokenmargins` package is still unpublished. This lane is authorized to replace its pre-release v1 schema and fixtures in place, without a legacy decoder, before any external user relies on it.
 
 ### Later release: Co-op Replies
 

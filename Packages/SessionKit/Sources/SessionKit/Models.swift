@@ -1035,6 +1035,40 @@ public enum AnchorContextStatus: String, Codable, Equatable, Sendable {
     case unavailable
 }
 
+public enum PodcastAnchorEvidenceCaptureStatus: String, Codable, Equatable, Sendable {
+    case pendingPostResumeSample = "pending_post_resume_sample"
+    case pendingExactLocalCapture = "pending_exact_local_capture"
+    case ready
+    case unavailable
+}
+
+public enum PodcastAnchorEvidenceProvenance: String, Codable, Equatable, Sendable {
+    case decodedPlaybackStream = "decoded_playback_stream"
+    case exactLocalPlaybackEdition = "exact_local_playback_edition"
+}
+
+public struct CapturedPodcastAnchorEvidence: Codable, Equatable, Sendable, Identifiable {
+    public let id: String
+    public let localPath: String
+    public let durationMs: Int
+    public let anchorOffsetMs: Int
+    public let provenance: PodcastAnchorEvidenceProvenance?
+
+    public init(
+        id: String,
+        localPath: String,
+        durationMs: Int,
+        anchorOffsetMs: Int,
+        provenance: PodcastAnchorEvidenceProvenance? = nil
+    ) {
+        self.id = id
+        self.localPath = localPath
+        self.durationMs = durationMs
+        self.anchorOffsetMs = anchorOffsetMs
+        self.provenance = provenance
+    }
+}
+
 public struct Interjection: Codable, Equatable, Sendable {
     public var id: String
     public var itemId: String
@@ -1052,6 +1086,20 @@ public struct Interjection: Codable, Equatable, Sendable {
     public var displayText: String?
     public var status: String
     public var anchorContextStatus: AnchorContextStatus? = nil
+    /// Word/run timing retained from on-device recognition. Optional so records
+    /// created before sharing support remain decodable without migration.
+    public var alignedTranscript: AlignedInterjectionTranscript? = nil
+    /// Non-playable signatures captured from decoded playback or an exact local
+    /// playback edition when this Margin was recorded.
+    public var podcastAnchorEvidence: [CapturedPodcastAnchorEvidence]? = nil
+    public var sourceExactEditionSHA256: String? = nil
+    public var podcastAnchorEvidenceCaptureStatus: PodcastAnchorEvidenceCaptureStatus? = nil
+    public var podcastAnchorEvidenceFailureReason: String? = nil
+    /// Local, private curation metadata. These fields help the owner shortlist
+    /// Margins for sender review and are never copied into reviewed revisions
+    /// or `.spokenmargins` packages.
+    public var isStarredForSharing: Bool? = nil
+    public var privateSharingNote: String? = nil
 
     public init(
         id: String,
@@ -1069,7 +1117,14 @@ public struct Interjection: Codable, Equatable, Sendable {
         cleanedTranscript: String?,
         displayText: String?,
         status: String,
-        anchorContextStatus: AnchorContextStatus? = nil
+        anchorContextStatus: AnchorContextStatus? = nil,
+        alignedTranscript: AlignedInterjectionTranscript? = nil,
+        podcastAnchorEvidence: [CapturedPodcastAnchorEvidence]? = nil,
+        sourceExactEditionSHA256: String? = nil,
+        podcastAnchorEvidenceCaptureStatus: PodcastAnchorEvidenceCaptureStatus? = nil,
+        podcastAnchorEvidenceFailureReason: String? = nil,
+        isStarredForSharing: Bool? = nil,
+        privateSharingNote: String? = nil
     ) {
         self.id = id
         self.itemId = itemId
@@ -1087,6 +1142,13 @@ public struct Interjection: Codable, Equatable, Sendable {
         self.displayText = displayText
         self.status = status
         self.anchorContextStatus = anchorContextStatus
+        self.alignedTranscript = alignedTranscript
+        self.podcastAnchorEvidence = podcastAnchorEvidence
+        self.sourceExactEditionSHA256 = sourceExactEditionSHA256
+        self.podcastAnchorEvidenceCaptureStatus = podcastAnchorEvidenceCaptureStatus
+        self.podcastAnchorEvidenceFailureReason = podcastAnchorEvidenceFailureReason
+        self.isStarredForSharing = isStarredForSharing
+        self.privateSharingNote = privateSharingNote
     }
 }
 

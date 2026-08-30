@@ -3,6 +3,10 @@ import SessionKit
 import SQLite3
 
 public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
+    /// Schema 5 adds record kinds and optional payload fields to the generic
+    /// records table; it does not change the SQLite table layout. Sharing builds
+    /// must accept it so installing this lane over another active lane does not
+    /// make the existing library appear empty.
     public static let currentSchemaVersion = 5
     private static let sessionScopedRecordKinds: Set<String> = ["interjection", "turn", "ai_job"]
     private var db: OpaquePointer?
@@ -143,6 +147,132 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
 
     public func loadInterjections(sessionId: String) throws -> [Interjection] {
         try loadBySession(kind: "interjection", sessionId: sessionId)
+    }
+
+    public func saveInterjectionShareRevision(_ revision: InterjectionShareRevision) throws {
+        try withTransaction {
+            let existing: InterjectionShareRevision? = try loadOptional(
+                kind: "interjection_share_revision",
+                id: revision.id
+            )
+            if let existing {
+                guard try encoder.encode(existing) == encoder.encode(revision) else {
+                    throw SessionKitError.persistenceFailed("interjection_share_revision_immutable_conflict")
+                }
+                return
+            }
+            try save(
+                kind: "interjection_share_revision",
+                id: revision.id,
+                sessionId: revision.sessionId,
+                itemId: revision.itemId,
+                value: revision
+            )
+        }
+    }
+
+    public func loadInterjectionShareRevisions(interjectionId: String) throws -> [InterjectionShareRevision] {
+        let revisions: [InterjectionShareRevision] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at ASC, id ASC;",
+            ["interjection_share_revision"]
+        )
+        return revisions.filter { $0.interjectionId == interjectionId }
+    }
+
+    public func importCommentaryLayer(
+        _ layer: ImportedCommentaryLayer,
+        interjections: [ImportedCommentaryInterjection]
+    ) throws -> ImportedCommentaryImportDisposition {
+        var disposition: ImportedCommentaryImportDisposition?
+        try withTransaction {
+            let existing: ImportedCommentaryLayer? = try loadImportedCommentaryLayer(packageDigest: layer.packageDigest)
+            if let existing {
+                disposition = .duplicate(existingLayerId: existing.id)
+                return
+            }
+            let conflictingLayer: ImportedCommentaryLayer? = try loadOptional(
+                kind: "imported_commentary_layer",
+                id: layer.id
+            )
+            guard conflictingLayer == nil else {
+                throw SessionKitError.persistenceFailed("imported_commentary_local_id_conflict")
+            }
+            for interjection in interjections {
+                let conflict: ImportedCommentaryInterjection? = try loadOptional(
+                    kind: "imported_commentary_interjection",
+                    id: interjection.id
+                )
+                guard conflict == nil else {
+                    throw SessionKitError.persistenceFailed("imported_commentary_local_id_conflict")
+                }
+            }
+            try save(
+                kind: "imported_commentary_layer",
+                id: layer.id,
+                sessionId: nil,
+                itemId: layer.itemId,
+                value: layer
+            )
+            for interjection in interjections {
+                try save(
+                    kind: "imported_commentary_interjection",
+                    id: interjection.id,
+                    sessionId: nil,
+                    itemId: layer.itemId,
+                    value: interjection
+                )
+            }
+            disposition = .imported(layerId: layer.id, interjectionIds: interjections.map(\.id))
+        }
+        guard let disposition else {
+            throw SessionKitError.persistenceFailed("imported_commentary_disposition_missing")
+        }
+        return disposition
+    }
+
+    public func loadImportedCommentaryLayer(id: String) throws -> ImportedCommentaryLayer? {
+        try loadOptional(kind: "imported_commentary_layer", id: id)
+    }
+
+    public func loadImportedCommentaryLayer(packageDigest: String) throws -> ImportedCommentaryLayer? {
+        let layers: [ImportedCommentaryLayer] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at ASC, id ASC;",
+            ["imported_commentary_layer"]
+        )
+        return layers.first { $0.packageDigest == packageDigest }
+    }
+
+    public func loadImportedCommentaryLayers(itemId: String) throws -> [ImportedCommentaryLayer] {
+        try loadByItem(kind: "imported_commentary_layer", itemId: itemId)
+    }
+
+    public func loadImportedCommentaryInterjections(layerId: String) throws -> [ImportedCommentaryInterjection] {
+        let interjections: [ImportedCommentaryInterjection] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at ASC, id ASC;",
+            ["imported_commentary_interjection"]
+        )
+        return interjections.filter { $0.layerId == layerId }
+    }
+
+    public func saveImportedCommentaryLayer(_ layer: ImportedCommentaryLayer) throws {
+        try save(
+            kind: "imported_commentary_layer",
+            id: layer.id,
+            sessionId: nil,
+            itemId: layer.itemId,
+            value: layer
+        )
+    }
+
+    public func saveImportedCommentaryInterjection(_ interjection: ImportedCommentaryInterjection) throws {
+        let layer = try loadImportedCommentaryLayer(id: interjection.layerId)
+        try save(
+            kind: "imported_commentary_interjection",
+            id: interjection.id,
+            sessionId: nil,
+            itemId: layer?.itemId,
+            value: interjection
+        )
     }
 
     public func saveTurn(_ turn: ConversationTurn) throws {

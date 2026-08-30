@@ -56,6 +56,35 @@
     "transcriptionStatus": { "enum": ["pending", "transcribed", "failed"] },
     "transcript": { "type": ["string", "null"] },
     "cleanedTranscript": { "type": ["string", "null"] },
+    "isStarredForSharing": { "type": ["boolean", "null"] },
+    "privateSharingNote": { "type": ["string", "null"], "maxLength": 500 },
+    "alignedTranscript": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["schemaVersion", "text", "segments"],
+      "properties": {
+        "schemaVersion": { "const": "aligned-interjection-transcript.v1" },
+        "text": { "type": "string" },
+        "localeIdentifier": { "type": ["string", "null"] },
+        "segments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "text", "startMs", "endMs"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "text": { "type": "string", "minLength": 1 },
+              "startMs": { "type": "integer", "minimum": 0 },
+              "endMs": { "type": "integer", "minimum": 1 },
+              "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+              "recognitionChunkId": { "type": ["string", "null"], "minLength": 1 },
+              "chunkOffsetMs": { "type": ["integer", "null"], "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
     "status": { "enum": ["active", "deleted"] },
     "error": { "type": ["string", "null"] }
   }

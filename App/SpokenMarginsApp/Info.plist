@@ -10,6 +10,21 @@
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
 	<string>Spoken Margins</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Spoken Margins Package</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.spokenmargins.package</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -39,6 +54,8 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Spoken Margins records spoken interjections during listening sessions.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
@@ -56,6 +73,30 @@
 	<array>
 		<string>audio</string>
 		<string>processing</string>
+	</array>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.zip-archive</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Spoken Margins Package</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.spokenmargins.package</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>spokenmargins</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>application/vnd.spokenmargins.package+zip</string>
+				</array>
+			</dict>
+		</dict>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
