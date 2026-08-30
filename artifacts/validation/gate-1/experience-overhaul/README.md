@@ -1,15 +1,21 @@
-# Build 22 Private-Experience Overhaul Handoff
+# Private-experience overhaul source evidence (Build 23 ancestry)
 
-Status: `implemented` and locally `verified`; not `human_validated`. Product-owner use on physical devices is still required before this gate can be accepted.
+Status: historical source-lane evidence. The overhaul is `implemented` and its
+recorded source checks were locally `verified`; it was not `human_validated` as
+a standalone candidate. The former Build 22 label is superseded. This work
+entered `codex/quality-of-life-next` at `9118c11` and Build 23 at `7d47876`.
+Use the unified Build 23 evidence and Ultra packet for current status and
+validation; do not use this file as a Build 23 release handoff.
 
 ## Candidate
 
-- Version/build: Spoken Margins 0.1 (22)
-- Branch: `codex/experience-overhaul`
+- Historical source setting: Spoken Margins 0.1 (22), superseded by Build 23
+- Historical source branch: `codex/experience-overhaul` (read-only)
 - Original overhaul SHA: `93c9ced93acec8d7a2f18491010bdf6b3a3236d2`
-- Review-remediation base SHA: `cb2f2a0` (current implementation is an uncommitted working tree)
-- Governance SHA: `aec0928`
-- Based on and merges only into: `codex/quality-of-life-next`
+- Source evidence SHA: `fd86f7e`
+- Unified-release governance SHA: `b118e01`
+- Merged into quality-of-life at `9118c11`, then Build 23 at `7d47876`
+- Current Build 23 seam SHA: `fca95cb75b4ef6a1a10091c25433ed12615cf5eb`
 - Supported deployment: iPhone and iPad on iOS/iPadOS 18.0 or later
 - Current automated layout coverage: iPhone 16 Pro, iOS 18.6
 - Current app-unit coverage: iPhone 16 Pro, iOS 18.6
@@ -43,8 +49,12 @@ Status: `implemented` and locally `verified`; not `human_validated`. Product-own
 ## Architecture and boundary audit
 
 - New navigation, Margin, Timeline provenance, storage, and recording types are app-presentation models only.
-- `Gate1AppModel` and the existing SessionKit runtime were extended incrementally; SessionKit packages, commands, snapshots, schemas, and fixtures are unchanged.
-- The final diff contains no Watch, sharing, SessionKit, contract-schema, or generated-command changes.
+- In this historical source slice, `Gate1AppModel` and the existing SessionKit
+  runtime were extended incrementally without new commands, snapshots, schemas,
+  or fixtures. Later Build 23 ancestry adds sharing/audio/persistence changes;
+  the unified integration audit owns that additive union.
+- The historical overhaul diff contains no Watch or sharing implementation.
+  That omission claim does not apply to the combined Build 23 branch.
 - Trust fixes from issues #83-#85 are preserved: canonical playback position, drag ownership, partial-audio honesty, native/system playback continuity, and recording escape prevention.
 - Issue #68 is used only for local provenance distinctions here; imported-person behavior remains in the sharing lane.
 - Issues #88-#90 informed transport composition only. No future-facing UI or command identifier was added.
@@ -64,7 +74,7 @@ Status: `implemented` and locally `verified`; not `human_validated`. Product-own
 | Generated-project generic iOS Simulator build | Pass |
 | Generated-project generic iOS device build | Pass |
 | `git diff --check` | Pass |
-| Sharing/Watch/SessionKit/schema omission audit | Pass; no changed files |
+| Historical sharing/Watch/shared-vocabulary omission audit | Pass for the source slice |
 
 Final result bundles:
 
@@ -109,7 +119,8 @@ No automated gate observed any integration stop condition: recording escape, ses
 
 ## Reset, starter items, and diagnostics
 
-- Clean-install reset: delete Spoken Margins and reinstall Build 22.
+- Historical clean-install reset: delete Spoken Margins and reinstall the source
+  candidate. Use the unified Build 23 handoff for the current reset procedure.
 - Debug build reset: Settings > Developer > Developer tools > Reset Library and Load Sample, then confirm Reset Library.
 - Starter choices: **What Spoken Margins is for** (`Welcome to Spoken Margins`) and **Practice a Margin** (`Guided Tour: Add and Prepare Sources`). Both enter the normal item/player paths and are excluded from user-added onboarding evidence.
 - Replay: Help > Guided Tour > Start or Resume/Replay Guided Tour. Use **Show Progress on Home** to restore the dismissed starter/progress card.
@@ -122,7 +133,7 @@ No automated gate observed any integration stop condition: recording escape, ses
 
 Record PASS or FAIL, elapsed time where requested, and a short note. Store accepted evidence beside this file.
 
-- [ ] Clean install on one supported iPhone and one iPad; record device, OS, install source, and Build 22.
+- [ ] As part of unified Build 23 validation, clean install on one supported iPhone and one iPad; record device, OS, install source, and Build 23.
 - [ ] Try both starter choices, Skip, replay, card restoration, deletion, and relaunch; confirm neither starter counts as a user-added source.
 - [ ] Resume an active and a recent unfinished item; record cold/warm time to resume and confirm the Continue item is not duplicated.
 - [ ] Add a link/podcast, pasted text, Markdown/PDF, EPUB, audiobook, and Quick Folder candidate; record time, errors, duplicate behavior, and whether active playback remains unchanged.
@@ -135,7 +146,9 @@ Record PASS or FAIL, elapsed time where requested, and a short note. Store accep
 - [ ] Lower the storage budget, create reservations/overage, and clear reproducible audio; confirm protected imports, recordings, transcripts, and Margins survive.
 - [ ] Check light/dark mode, Increased Contrast, largest supported Dynamic Type sizes, Reduce Motion, VoiceOver order/labels, and portrait/landscape layouts on iPhone/iPad.
 - [ ] Export one session and a batch; confirm no cross-session note leakage and inspect privacy-safe diagnostics after one induced failure.
-- [ ] Confirm sharing, imported people, recipient preview, Watch, Scenes, and Skim are absent from this branch's product surface and diff.
+- [ ] Validate the unified Build 23 sharing and imported-layer experience against
+  the current handoff; continue to confirm Watch, Scenes, and Skim remain out of
+  scope.
 
 Product-owner result: Pending.
 

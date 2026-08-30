@@ -30,12 +30,17 @@ Only these branches are active development lanes:
 | --- | --- | --- | --- |
 | `main` | Released and accepted integration runtime plus repository governance | Documentation, validation evidence, distributed runtime, and product-owner-accepted release integration | N/A |
 | `codex/testflight-triage` | Active Build 22 rapid-fix lane, based on the accepted Build 21 integration runtime | #84 end-to-end media scrub/seek reconvergence only | `main` after product-owner acceptance; exact verified patch may also enter `codex/build-23-release` |
-| `codex/sharing-next` | One-way sharing source lane | Direct-share gate #14; foundation #17, #18, #67, #68, and #81; cross-edition podcast resolution #27; portable proposal-contract slice of #88 | `codex/build-23-release` once, then freeze the source lane |
-| `codex/quality-of-life-next` | Quality-of-life source lane | Complete non-Watch program: #34, #64, #72, #73, #61, #79, #74, #69, #76, #77, #86, and #87, plus the accepted temporary experience-overhaul integration | `codex/build-23-release` once, then freeze the source lane |
-| `codex/experience-overhaul` | Temporary private-experience integration branch | Native Library, Sources, and local Margins shell; typed intake; item, playback, recording, Timeline, onboarding, and storage presentation over the verified quality-of-life runtime | `codex/quality-of-life-next`, then delete the temporary branch after integration |
 | `codex/build-23-release` | Unified Build 23 integration and release lane | Complete quality-of-life and experience work; one-way sharing foundation including #27 and the authorized #88 slice; recipient import and provenance presentation; exact verified Build 22 seek patch | `main` only after all Build 23 release gates and product-owner acceptance |
 
-All other local and remote branches are historical and read-only. Their commits may be inspected or deliberately extracted, but work must not resume directly on them without a product-owner plan change. In particular, `codex/sharingV1` is source material for reconciliation into `codex/sharing-next`; it is not an active integration branch.
+The source lanes are now frozen ancestry, not implementation targets:
+
+| Frozen source | Integrated through | Build 23 merge evidence |
+| --- | --- | --- |
+| `codex/quality-of-life-next` | `9118c11` after absorbing the temporary overhaul | First parent of the Build 23 line before sharing |
+| `codex/experience-overhaul` | `b118e01`, merged into quality-of-life at `9118c11` | Temporary lane complete; historical after integration |
+| `codex/sharing-next` | `de887f6` | Merged once at `7d47876`; no Build 23 work returns to this lane |
+
+All other local and remote branches are historical and read-only. Their commits may be inspected or deliberately extracted, but work must not resume directly on them without a product-owner plan change. In particular, `codex/sharingV1` is historical source material already reconciled into `codex/sharing-next`; it is not an active integration branch.
 
 ## Merge Direction
 
@@ -59,8 +64,8 @@ codex/build-23-release ────────────────► main 
 Rules:
 
 - Never merge `codex/sharing-next` directly into `codex/quality-of-life-next`, `codex/experience-overhaul`, or the reverse. Their first shared descendant is `codex/build-23-release`.
-- Merge `codex/experience-overhaul` into `codex/quality-of-life-next` before either quality-of-life or sharing work enters `codex/build-23-release`.
-- Merge each source lane into `codex/build-23-release` once. Resolve structural conflicts in favor of the experience overhaul's navigation and presentation composition, preserve sharing's package/import/playback contracts, and regenerate project and package-resolution artifacts from the resolved source rather than manually blending generated files.
+- The required source merges are complete: experience entered quality-of-life at `9118c11`, the verified Build 22 patch entered Build 23 at `81a7c11`, and sharing entered Build 23 at `7d47876`. Do not repeat or reverse those merges.
+- The recorded conflict resolution preserves the experience overhaul's navigation and presentation composition, sharing's package/import/playback contracts, and the additive persistence union. Project and package-resolution artifacts were regenerated from the resolved source rather than hand-blended.
 - Build 22 acceptance remains a separate human decision. If its exact verified patch enters Build 23 before that decision, record it as inherited `verified` evidence and block Build 23 distribution until the Build 22 result is known.
 - Do not move unreleased runtime work from a feature lane into triage merely to make it ship sooner.
 - Dependency ordering inside a lane is represented by issue state, commits, tests, and feature flags—not additional persistent branches.
@@ -89,7 +94,7 @@ For each TestFlight cycle:
 
 ## Sharing Lane
 
-`codex/sharing-next` is the source lane for the one-way Build 23 foundation, not a branch per sharing issue. After its one integration into `codex/build-23-release`, further Build 23 sharing experience work belongs only on the release lane under the frozen seams below.
+`codex/sharing-next` is the frozen source history for the one-way Build 23 foundation, not a current implementation branch. Its one integration into `codex/build-23-release` is complete; all further Build 23 sharing experience work belongs only on the release lane under the frozen seams below.
 
 ### Phase 1: Foundation
 
@@ -135,7 +140,7 @@ The `.spokenmargins` package is still unpublished. This lane is authorized to re
 
 ## Quality-of-Life Lane
 
-`codex/quality-of-life-next` supplies the complete non-Watch quality-of-life program and integrated private experience overhaul to Build 23. All source work remains a per-issue or tightly complementary issue-group commit series on this single branch; do not create issue-specific persistent branches.
+`codex/quality-of-life-next` supplied the complete non-Watch quality-of-life program and integrated private experience overhaul to Build 23. That source lane is frozen after `9118c11`; do not resume work or create issue-specific persistent branches from it.
 
 Earlier Build 21 and Build 22 references on the branch describe local automated evidence only and are superseded: Build 21 is the current internal hotfix line, Build 22 is the renewed #84 triage candidate, and the unified candidate is Build 23.
 
@@ -176,7 +181,7 @@ Explicitly excluded:
 - Watch, new SessionKit commands or snapshot/schema fields, publisher-artwork dependencies, account/profile concepts, remote execution, and speculative disabled controls;
 - distribution or a claim of `human_validated` status without a separate product-owner decision and hands-on validation.
 
-The branch merges only into `codex/quality-of-life-next`. Delete it after that integration; it must not become a persistent release lane. Sharing is composed only after quality-of-life reaches `codex/build-23-release`, where the design overhaul owns navigation and screen composition and sharing owns its reviewed-package, import, provenance, and playback semantics.
+The branch merged only into `codex/quality-of-life-next` at `9118c11` and is now historical. Sharing was composed only after quality-of-life reached `codex/build-23-release`, where the design overhaul owns navigation and screen composition and sharing owns its reviewed-package, import, provenance, and playback semantics.
 
 ## Build 23 Unified Release Lane
 
@@ -200,6 +205,7 @@ The recipient experience is preview, import, then an explicit behavior choice. I
 - Session and persistence integration is an additive union; neither source lane may discard the other lane's durable fields or migrations.
 - `Package.swift` contains each target and ZIP dependency once. `Package.resolved` files and the Xcode project are regenerated after source conflicts are resolved.
 - Root composition, app-model integration, shared SessionKit models/protocols/engine, project generation, contract validators, and release evidence are steward-owned seams during parallel work.
+- The executable adapter and canonical action/projection vocabulary are frozen in `Build23SharingSeams.swift` at `fca95cb`. Gate work may consume but not edit that file. Exact archive round-trip, stale-preview invalidation, and recipient-supplied Add Source reconciliation have focused regression coverage in `Build23SharingSeamsTests.swift`.
 
 ### Release gates and stopping rules
 
@@ -219,6 +225,7 @@ Stop distribution or acceptance if:
 ## Work-In-Progress And Branch Creation Rules
 
 - The repository remains single-agent by default.
+- The one authorized exception is the named Ultra packet in `docs/work-packets/build-23-ultra-handoff.md`. It applies only to `codex/build-23-release`, only from the seam-freeze tag, and only with the named steward, three named gate agents, allowed/forbidden files, and merge order recorded there.
 - Keep one active implementation target at a time unless the product owner explicitly changes the workflow.
 - Do not create branches for individual issues inside an active lane.
 - Temporary recovery or experiment branches require explicit product-owner approval and must name their merge target and deletion condition.

@@ -1,6 +1,11 @@
 # Sharing-next product-owner validation handoff
 
-Status: `implemented` and `verified`; not `human_validated`.
+Status: historical source-lane evidence. The sharing foundation was
+`implemented` and automatically `verified` on this lane; it was not
+`human_validated` as a standalone candidate. It entered Build 23 once at
+`7d47876`. The local Build 21 setting below is obsolete and must not be used for
+distribution or current validation. Use the unified Build 23 evidence and Ultra
+packet for current status.
 
 Branch: `codex/sharing-next`
 
@@ -13,9 +18,12 @@ Implementation commits:
 - `22901aa` (`Curate Margins for sharing from the timeline`)
 - `9c74a57` (`Close shared Margin playback gaps`)
 
-Local build setting: version 0.1 (21)
+Historical local build setting: version 0.1 (21)
 
-Build 21 is already reserved for the accepted hotfix line. Allocate a new build number before distributing this sharing revision through TestFlight. Installing the new build over the existing app is the expected upgrade path; a reset is not required.
+Build 21 was reserved for the accepted hotfix line. This source revision is now
+part of Spoken Margins 0.1 (23); Build 23 distribution remains gated by the
+unified release plan and product-owner validation. Installing the unified build
+over the existing app is the expected upgrade path; a reset is not required.
 
 ## Supported validation environment
 
