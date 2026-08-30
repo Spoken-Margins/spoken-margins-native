@@ -4,7 +4,10 @@ Status: `implemented` and `verified`; not `human_validated`.
 
 Branch: `codex/sharing-next`
 
-Implementation commit: `f96194a` (`Complete testable one-way sharing experience`)
+Implementation commits:
+
+- `f96194a` (`Complete testable one-way sharing experience`)
+- `4d3d311` (`Restore schema five library compatibility`)
 
 Local build setting: version 0.1 (21)
 
@@ -52,6 +55,7 @@ Reveal modes are intentionally different:
 
 ## Reset, sample, and diagnostics
 
+- Do not use reset or uninstall as a response to a library-access or schema-version error. Install the compatible build over the existing app first; see `schema-five-library-recovery.md`.
 - Remove one imported layer from the item's **Shared Margins** section with **Delete Shared Margins**.
 - For a complete DEBUG-build reset, open **Settings → Developer → Developer tools → Reset Library and Load Sample**. Deleting and reinstalling the app also clears the app-owned library and downloaded test media.
 - No podcast or voice fixture is committed. The seeded validation sample is the real package you create from your own locally downloaded podcast and Margin; this avoids committing copyrighted podcast audio or private voice.
