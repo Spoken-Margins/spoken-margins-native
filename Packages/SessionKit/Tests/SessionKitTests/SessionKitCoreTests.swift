@@ -13,7 +13,12 @@ import AVFoundation
 final class SessionKitCoreTests: XCTestCase {
     func testMediaSeekLifecycleTreatsDeclinedCurrentSeekAsTerminal() {
         var lifecycle = MediaSeekLifecycle()
-        let generation = lifecycle.begin(targetId: "episode", mediaTimeMs: 120_000)
+        let generation = lifecycle.begin(
+            targetId: "episode",
+            mediaTimeMs: 120_000,
+            purpose: .navigation
+        )
+        let requestId = lifecycle.pending?.requestId
 
         // AVPlayer's `finished == false` is terminal for this generation. The
         // adapter gives the still-current intent one bounded replacement seek.
@@ -23,6 +28,8 @@ final class SessionKitCoreTests: XCTestCase {
         }
         XCTAssertEqual(replacement.mediaTimeMs, 120_000)
         XCTAssertEqual(replacement.retryCount, 1)
+        XCTAssertEqual(replacement.requestId, requestId, "A retry must acknowledge the original seek request")
+        XCTAssertEqual(replacement.purpose, .navigation)
         XCTAssertEqual(lifecycle.pending, replacement)
 
         XCTAssertEqual(
@@ -42,6 +49,23 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(lifecycle.pending?.mediaTimeMs, 240_000)
         XCTAssertEqual(lifecycle.finish(generation: second, targetId: "episode", completed: true), .completed)
         XCTAssertNil(lifecycle.pending)
+    }
+
+    func testRoutedAudioClientPreservesMediaSeekTransactionThroughProductionBoundary() throws {
+        let speech = RecordingAudioClient()
+        let media = DelayedPositionAudioClient()
+        let routed = RoutedAudioPlaybackClient(speech: speech, media: media)
+
+        try routed.play(targetId: "episode", fromMediaTimeMs: 0)
+        media.confirmLatestRequest()
+        let request = try routed.requestMediaSeek(toMediaTimeMs: 120_000)
+
+        XCTAssertEqual(request.targetId, "episode")
+        XCTAssertEqual(request.requestedMediaTimeMs, 120_000)
+        XCTAssertEqual(routed.mediaSeekResolution(for: request), .pending)
+
+        media.confirmLatestRequest()
+        XCTAssertEqual(routed.mediaSeekResolution(for: request), .accepted(mediaTimeMs: 120_000))
     }
 
     #if canImport(AVFoundation)
@@ -763,7 +787,8 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertTrue(sought.delegatedToCanonicalRuntime)
         XCTAssertEqual(sought.snapshot.currentMediaTimeMs, 45_000)
         XCTAssertEqual(audio.playedTargets.last, mediaURL)
-        XCTAssertEqual(audio.playedOffsets.last, 45_000)
+        XCTAssertEqual(audio.seekRequests.last, 45_000)
+        XCTAssertEqual(audio.playedOffsets.last, 0, "Remote seeking must not restart the active player")
         XCTAssertTrue(rated.delegatedToCanonicalRuntime)
         XCTAssertEqual(rated.snapshot.playbackRate, 1.5)
         XCTAssertEqual(audio.playbackRates.last, 1.5)
@@ -2597,8 +2622,10 @@ final class SessionKitCoreTests: XCTestCase {
         _ = try engine.setPlaybackRate(1.5)
         XCTAssertEqual(audio.playbackRates.last, 1.5)
 
+        let playCountBeforeSeek = audio.playedOffsets.count
         _ = try engine.seekMedia(toMediaTimeMs: 1_000)
-        XCTAssertEqual(audio.playedOffsets.last, 1_000)
+        XCTAssertEqual(audio.seekRequests.last, 1_000)
+        XCTAssertEqual(audio.playedOffsets.count, playCountBeforeSeek)
 
         _ = try engine.beginInterjection()
         _ = try engine.finishInterjection(audioRef: "interjections/generated-text.m4a")
@@ -2853,6 +2880,78 @@ final class SessionKitCoreTests: XCTestCase {
         let forwardProgress = try engine.syncPlaybackProgress()
         XCTAssertEqual(forwardProgress.currentMediaTimeMs, 2_800)
         XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 2_800)
+    }
+
+    func testActiveMediaSeekAcknowledgesThenRejoinsAdvancingPlayerClockWithoutRestartingPlayback() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["native_media"],
+                "interjection": ["record_audio", "capture_media_anchor"]
+            ]
+        )
+        let item = Item(
+            id: "item-transactional-seek",
+            title: "Transactional Seek",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/transactional-seek",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(
+                sourceType: .remoteStream,
+                url: "https://cdn.example.com/transactional-seek.mp3",
+                durationMs: 1_800_000
+            )
+        )
+        let audio = DelayedPositionAudioClient()
+        let repository = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repository, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.confirmLatestRequest()
+        XCTAssertEqual(try engine.syncPlaybackProgress().status, .playing)
+        audio.reportMediaPosition(90_000)
+        _ = try engine.syncPlaybackProgress()
+        let playCount = audio.mediaPlayPositions.count
+
+        let requested = try engine.seekMedia(toMediaTimeMs: 600_000)
+        XCTAssertEqual(requested.status, .playing)
+        XCTAssertEqual(requested.currentMediaTimeMs, 600_000)
+        XCTAssertEqual(audio.mediaPlayPositions.count, playCount, "An in-target seek must not restart playback")
+        XCTAssertEqual(audio.navigationSeekPositions, [600_000])
+        XCTAssertEqual(engine.lastMediaSeekResolution, .pending)
+
+        audio.reportMediaPosition(91_000)
+        let whilePending = try engine.syncPlaybackProgress()
+        XCTAssertEqual(whilePending.status, .playing)
+        XCTAssertEqual(whilePending.currentMediaTimeMs, 600_000)
+
+        audio.confirmLatestRequest()
+        XCTAssertEqual(try engine.syncPlaybackProgress().currentMediaTimeMs, 600_000)
+        XCTAssertEqual(engine.lastMediaSeekResolution, .accepted(mediaTimeMs: 600_000))
+
+        for expected in [600_500, 601_000, 601_500] {
+            audio.reportMediaPosition(expected)
+            let advanced = try engine.syncPlaybackProgress()
+            XCTAssertEqual(advanced.status, .playing)
+            XCTAssertEqual(advanced.currentMediaTimeMs, expected)
+            XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, expected)
+        }
+
+        _ = try engine.seekMedia(toMediaTimeMs: 900_000)
+        audio.failLatestMediaSeek(actualMediaTimeMs: 602_000)
+        let recovered = try engine.syncPlaybackProgress()
+        XCTAssertEqual(recovered.status, .playing, "A declined navigation seek must not stop an audible player")
+        XCTAssertEqual(recovered.currentMediaTimeMs, 602_000)
+        XCTAssertEqual(recovered.lastFailure, "media_seek_failed:test_seek_declined")
+
+        audio.reportMediaPosition(602_500)
+        let postFailureTick = try engine.syncPlaybackProgress()
+        XCTAssertEqual(postFailureTick.status, .playing)
+        XCTAssertEqual(postFailureTick.currentMediaTimeMs, 602_500)
     }
 
     func testLiveTextSeekKeepsRequestedOffsetWhileSpeechReportsOldOffset() throws {
@@ -5127,9 +5226,14 @@ private final class DelayedPositionAudioClient: AudioPlaybackClient {
     private var activeTargetId: String?
     private var startStatus = PlaybackStartStatus.pending
     private var playbackRate = 1.0
+    private var nextMediaSeekRequestId = 0
+    private var latestMediaSeekRequest: MediaSeekRequest?
+    private var mediaSeekResolutions: [Int: MediaSeekResolution] = [:]
 
     private(set) var requestedTextPositions: [Int] = []
     private(set) var requestedMediaPositions: [Int] = []
+    private(set) var navigationSeekPositions: [Int] = []
+    private(set) var mediaPlayPositions: [Int] = []
 
     func prepareSpeechText(_ text: String) throws -> String {
         SpeechTextNormalizer.normalize(text)
@@ -5149,7 +5253,9 @@ private final class DelayedPositionAudioClient: AudioPlaybackClient {
     func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {
         activeTargetId = targetId
         latestRequest = .media(targetId: targetId, timeMs: mediaTimeMs)
+        latestMediaSeekRequest = nil
         requestedMediaPositions.append(mediaTimeMs)
+        mediaPlayPositions.append(mediaTimeMs)
         startStatus = .pending
     }
 
@@ -5171,10 +5277,44 @@ private final class DelayedPositionAudioClient: AudioPlaybackClient {
         case .media(_, let timeMs):
             observedMediaPosition = timeMs
             observedTextPosition = nil
+            if let latestMediaSeekRequest {
+                mediaSeekResolutions[latestMediaSeekRequest.id] = .accepted(mediaTimeMs: timeMs)
+            }
         case nil:
             break
         }
         startStatus = .confirmed
+    }
+
+    func requestMediaSeek(toMediaTimeMs mediaTimeMs: Int) throws -> MediaSeekRequest {
+        nextMediaSeekRequestId += 1
+        let request = MediaSeekRequest(
+            id: nextMediaSeekRequestId,
+            targetId: activeTargetId,
+            requestedMediaTimeMs: mediaTimeMs
+        )
+        latestRequest = .media(targetId: activeTargetId ?? "", timeMs: mediaTimeMs)
+        latestMediaSeekRequest = request
+        mediaSeekResolutions[request.id] = .pending
+        requestedMediaPositions.append(mediaTimeMs)
+        navigationSeekPositions.append(mediaTimeMs)
+        return request
+    }
+
+    func mediaSeekResolution(for request: MediaSeekRequest) -> MediaSeekResolution {
+        mediaSeekResolutions[request.id] ?? .failed(
+            actualMediaTimeMs: observedMediaPosition,
+            reason: "unknown_test_seek"
+        )
+    }
+
+    func failLatestMediaSeek(actualMediaTimeMs: Int, reason: String = "test_seek_declined") {
+        observedMediaPosition = actualMediaTimeMs
+        guard let latestMediaSeekRequest else { return }
+        mediaSeekResolutions[latestMediaSeekRequest.id] = .failed(
+            actualMediaTimeMs: actualMediaTimeMs,
+            reason: reason
+        )
     }
 
     func currentPlaybackPosition() -> PlaybackPosition? {
@@ -5226,6 +5366,7 @@ private final class DelayedPositionAudioClient: AudioPlaybackClient {
     func stop() throws {
         activeTargetId = nil
         latestRequest = nil
+        latestMediaSeekRequest = nil
         startStatus = .pending
     }
 }

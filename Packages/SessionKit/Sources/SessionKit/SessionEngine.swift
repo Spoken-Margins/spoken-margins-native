@@ -18,6 +18,8 @@ public final class SessionEngine {
     public private(set) var lastImportedWatchSyncEvent: WatchSyncEvent?
     public private(set) var lastLinkResolutionResult: LinkResolutionResult?
     public private(set) var pendingWatchEventCount = 0
+    public private(set) var lastMediaSeekRequest: MediaSeekRequest?
+    public private(set) var lastMediaSeekResolution: MediaSeekResolution?
 
     private let repository: SessionRepository
     private let audio: AudioPlaybackClient
@@ -47,6 +49,7 @@ public final class SessionEngine {
         var targetId: String
         var targetType: TargetType
         var position: Position
+        var mediaSeekRequest: MediaSeekRequest?
     }
 
     private struct PlaybackPlan {
@@ -351,6 +354,7 @@ public final class SessionEngine {
             publish(status: snapshot.status, phase: session.phase)
             return snapshot
         }
+        let mediaSeekFailure = try reconcilePendingMediaSeek(for: &session)
         let positionIsPending = hasPendingPlaybackPosition(for: session)
         let playbackCompleted = positionIsPending ? false : audio.isPlaybackComplete(targetId: session.currentTargetId)
         let transportState = audio.playbackTransportState(targetId: session.currentTargetId)
@@ -423,6 +427,12 @@ public final class SessionEngine {
             reconciledStatus = snapshot.status
         }
         publish(status: reconciledStatus, phase: session.phase)
+        if let mediaSeekFailure {
+            snapshot.lastFailure = "media_seek_failed:\(mediaSeekFailure)"
+        } else if case .accepted = lastMediaSeekResolution,
+                  snapshot.lastFailure?.hasPrefix("media_seek_failed:") == true {
+            snapshot.lastFailure = nil
+        }
         return snapshot
     }
 
@@ -557,14 +567,20 @@ public final class SessionEngine {
         let updated = mediaSession(session, movedTo: mediaTimeMs)
         currentSession = updated
         try persistSession(updated)
-        protectPlaybackPosition(for: updated)
-        if snapshot.status.isPlaybackActive {
-            try playCurrentTarget(updated)
-            publishPlaybackContinuation(for: updated)
-        } else {
-            try audio.seek(toMediaTimeMs: updated.position.mediaTimeMs ?? 0)
-            publish(status: snapshot.status, phase: updated.phase)
+        do {
+            let request = try audio.requestMediaSeek(toMediaTimeMs: updated.position.mediaTimeMs ?? 0)
+            protectPlaybackPosition(for: updated, mediaSeekRequest: request)
+            lastMediaSeekRequest = request
+            lastMediaSeekResolution = .pending
+        } catch {
+            currentSession = session
+            try persistSession(session)
+            throw error
         }
+        // Seeking within the active target is navigation, not a new playback
+        // start. Preserve the current transport status while the matching seek
+        // transaction is acknowledged by the audio client.
+        publish(status: snapshot.status, phase: updated.phase)
         return snapshot
     }
 
@@ -3740,6 +3756,34 @@ public final class SessionEngine {
         return updatedSession
     }
 
+    private func reconcilePendingMediaSeek(for session: inout Session) throws -> String? {
+        guard let pendingPlaybackPosition,
+              pendingPlaybackPosition.targetId == session.currentTargetId,
+              pendingPlaybackPosition.targetType == session.currentTargetType,
+              let request = pendingPlaybackPosition.mediaSeekRequest else {
+            return nil
+        }
+        let resolution = audio.mediaSeekResolution(for: request)
+        lastMediaSeekRequest = request
+        lastMediaSeekResolution = resolution
+        switch resolution {
+        case .pending:
+            return nil
+        case .accepted:
+            self.pendingPlaybackPosition = nil
+            return nil
+        case .failed(let actualMediaTimeMs, let reason):
+            self.pendingPlaybackPosition = nil
+            if let actualMediaTimeMs,
+               (session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia) {
+                session = mediaSession(session, movedTo: actualMediaTimeMs)
+                currentSession = session
+                try persistSession(session)
+            }
+            return reason
+        }
+    }
+
     private func syncCurrentPositionFromAudio(_ session: Session) throws -> Session {
         guard !hasPendingPlaybackPosition(for: session) else {
             return session
@@ -3754,11 +3798,15 @@ public final class SessionEngine {
         }
     }
 
-    private func protectPlaybackPosition(for session: Session) {
+    private func protectPlaybackPosition(
+        for session: Session,
+        mediaSeekRequest: MediaSeekRequest? = nil
+    ) {
         pendingPlaybackPosition = PendingPlaybackPosition(
             targetId: session.currentTargetId,
             targetType: session.currentTargetType,
-            position: session.position
+            position: session.position,
+            mediaSeekRequest: mediaSeekRequest
         )
     }
 

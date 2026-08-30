@@ -27,7 +27,7 @@ Only these branches are active development lanes:
 | Branch | Role | Current authorized scope | Merge target |
 | --- | --- | --- | --- |
 | `main` | Released and accepted integration runtime plus repository governance | Documentation, validation evidence, distributed runtime, and product-owner-accepted release integration | N/A |
-| `codex/testflight-triage` | Idle rapid-fix lane, currently aligned with the accepted integration baseline | No active issue; a later reproducible TestFlight regression requires explicit admission | `main` |
+| `codex/testflight-triage` | Active rapid-fix lane, aligned with the accepted integration baseline | #84 end-to-end media scrub/seek reconvergence after the recurring sticky-versus-dislocated regression | `main` |
 | `codex/sharing-next` | Next major numbered feature release | Sharing foundation issues #17, #18, #67, and #68; audit reconciliation #81; then co-op replies #19 | `main` when the numbered sharing release is accepted |
 | `codex/quality-of-life-next` | Next numbered quality-of-life release | Complete non-Watch program: #34, #64, #72, #73, #61, #79, #74, #69, #76, #77, #86, and #87 in the ordered phases below | `main` when the complete numbered quality-of-life release is accepted |
 
@@ -64,7 +64,9 @@ Rules:
 4. Focused regression evidence can be added without claiming product-owner validation.
 5. The change can be described in the next TestFlight handoff with exact in-scope and out-of-scope behavior.
 
-There is no current active triage implementation item. The accepted post-Build-19 fixes through `22788cb` include the bounded playback, recording-continuity, scrubbing, transport, PDF, and podcast-resolution corrections previously tracked through issues #56, #71, #78, #83, #84, and #85. They remain product-owner validation work in Build 21 unless new failing evidence justifies another admitted triage change.
+Issue #84 was explicitly readmitted by the product owner on 2026-08-30 after the scrubber again dislocated from audible playback on current private branches. The bounded triage outcome is one acknowledged media-seek transaction in the shared playback spine, with combined regression evidence proving both historical failure modes in one sequence: periodic playback updates cannot fight an active drag, and after release the accepted player time, app timeline, persisted position, elapsed/remaining labels, and Now Playing state reconverge and continue advancing. This authorization does not add a playback feature, expand available scrub ranges, or claim the device flow is `human_validated`.
+
+The accepted post-Build-19 fixes through `22788cb` include the bounded playback, recording-continuity, scrubbing, transport, PDF, and podcast-resolution corrections previously tracked through issues #56, #71, #78, #83, #84, and #85. The renewed #84 evidence proves that the earlier isolated scrubbing checks were insufficient; the issue remains open until the combined invariant is implemented, automatically verified, and then exercised by the product owner.
 
 For each TestFlight cycle:
 
