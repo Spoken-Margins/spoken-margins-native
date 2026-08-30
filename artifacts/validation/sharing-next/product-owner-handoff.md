@@ -4,94 +4,113 @@ Status: `implemented` and `verified`; not `human_validated`.
 
 Branch: `codex/sharing-next`
 
-Implementation commits:
-
-- `f96194a` (`Complete testable one-way sharing experience`)
-- `4d3d311` (`Restore schema five library compatibility`)
+Implementation commit: `aa187a2` (`Complete rights-aware sharing review flow`)
 
 Local build setting: version 0.1 (21)
 
-Build 21 is already reserved for the accepted hotfix line. This checkout is suitable for a local developer/device build, but a new sharing TestFlight build number must be allocated before upload.
+Build 21 is already reserved for the accepted hotfix line. Allocate a new build number before distributing this sharing revision through TestFlight. Installing the new build over the existing app is the expected upgrade path; a reset is not required.
 
 ## Supported validation environment
 
 - iPhone or iPad running iOS/iPadOS 18.0 or later.
-- The iOS Simulator build is verified, but microphone recording, background podcast download, real ShazamKit matching, and listening experience should be exercised on a physical device.
-- Filler and pause cleanup requires word-timed speech recognition for that Margin. New recordings attempt aligned transcription on supported devices; older recordings without word timing remain eligible for original-voice or text-only sharing.
+- Simulator compilation and focused state tests are verified.
+- Microphone capture, acoustic anchor generation, podcast download matching, and the listening experience require product-owner validation on a physical device.
 
-## In-scope flows
+## Implemented user path
 
-- Select active item-level Margins, review and edit their transcripts, and explicitly choose original voice, cleaned voice, or text only for each Margin.
-- Preview original and cleaned voice before export; accept or undo each proposed filler/pause edit without modifying the private original recording.
-- Export a deterministic `.spokenmargins` archive containing only reviewed Margins, bounded text context, source identity, selected voice files, and optional non-playable acoustic signatures. Podcast audio, full podcast transcripts, unrelated sessions, and diagnostics are excluded.
-- Open a `.spokenmargins` file, inspect its integrity-checked unsigned contents, explicitly confirm import, acquire/download the recipient podcast edition without autoplay, and persist it as a distinct Shared Margins layer.
-- Resolve podcast anchors as exact-edition or conservatively verified cross-edition placements. Ambiguous, absent, unresolved, and wrong-source Margins remain readable but cannot interrupt playback.
-- Use Shared Margins controls per layer: enable/disable, mute cue, Fresh, Companion, Guided, and delete.
-- Review imported Margins and provenance in the item screen and Timeline.
-- Use **Create Recipient Test Session** after export to exercise the real archive, verification, import, persistence, resolver, and playback route on one device in a distinct session.
-- Persist portable Listening Map proposals from the package without activating them.
+From playback, tap the Share icon. The first panel on the resulting **Share** screen is **Share Margins**; session Markdown/JSON remains available separately under **Export listening session**.
 
-Reveal modes are intentionally different:
+The sender review now supports:
 
-- **Fresh** records that the anchor was crossed but does not reveal or play the imported Margin.
-- **Companion** sounds a cue and lets the listener choose whether to listen.
-- **Guided** sounds a cue and plays the Margin automatically, then resumes the source when appropriate.
+- choosing which Margins leave the device;
+- tapping aligned words to remove or restore them, with explicit Undo and Redo and no text-insertion route;
+- automatic filler cleanup plus acoustic leading, trailing, and internal pause tightening;
+- Original voice, Cleaned voice, or Text only, with previews;
+- bounded anchor-context review and optional non-playable podcast acoustic evidence; and
+- the item-transport disclosure described below.
 
-## Out of scope or not yet authorized
+## Item transport and rights behavior
 
-- Sharing with another person remains gated by issue #14 rights/provenance acceptance. This handoff authorizes the product owner's own-device validation, not external distribution.
-- Sender identity is unsigned and explicitly displayed as unverified.
-- Offline phone generation of Listening Maps, proposal activation, chapter/scene summary bridge playback, and Skim controls are not in this MVP.
-- Co-op replies, remote revocation, accounts, trust networks, and AI-generated summaries are not implemented here.
-- There is no silent timestamp-only fallback. A Margin without sufficient matching evidence remains context-only.
+The package now distinguishes a reusable **source** such as a podcast feed from the discrete **item** being listened to.
 
-## Known issues and constraints
+| Sender item | Sender disclosure | Package behavior | Recipient behavior |
+| --- | --- | --- | --- |
+| HTTPS-backed article or podcast episode | No rights toggle | Sends the item reference, never the item payload | Reconstructs or matches the item, then resolves Margins |
+| Linkless pasted text, PDF-derived text, or future EPUB-derived text | “I’m sharing this privately and have the right to share this item” enabled | Includes the exact listened-to text as a digest-covered artifact | Adds or matches that listened-to item, then resolves Margins |
+| Same linkless item | Rights confirmation not enabled | Sends Margins and item identity only | Requires the recipient to add the matching item before import |
+| App-authored welcome sample | Provenance is known by the app | Includes the exact listened-to text without asking the user to attest | Adds or matches the sample item |
 
-- High-reliability acoustic evidence can be captured only when the exact podcast edition is already downloaded locally at the time the Margin is recorded. A Margin captured while only a remote stream is available will warn that it cannot be resolved on a different edition.
+The embedded representation is the exact text Spoken Margins listened to, not the original PDF/EPUB container, its layout, or any podcast audio. Packages that contradict the disclosure—for example a URL-backed item marked recipient-supplied, mismatched PDF/EPUB type, embedded podcast content, absent rights basis, or digest mismatch—are rejected.
+
+The pre-release `.spokenmargins` schema was replaced in place as authorized by the release lane. Packages exported by the earlier sharing prototype are intentionally unsupported. Existing locally imported Shared Margins records do retain a backward decoder so upgrading this branch does not make those records or the rest of the library disappear.
+
+## Podcast anchoring and recipient experience
+
+- Podcast audio is never included.
+- When the exact downloaded sender edition was available during capture, optional ShazamKit signatures provide high-reliability, non-playable cross-edition evidence.
+- Recipient resolution can use exact-edition, transcript, acoustic, and fused evidence. Ambiguous, absent, wrong-item, and unresolved results never become confident interruptions.
+- Recipient import is integrity checked but the sender identity remains unsigned and is labeled unverified.
+- Import does not autoplay. Imported commentary remains a distinct Shared Margins layer with Fresh, Companion, and Guided behavior.
+- **Create Recipient Test Session** still exercises the real archive, verification, import, persistence, resolver, and listening route on one device.
+
+## Cleanup behavior
+
+- Filler and word removal require aligned recognition timing.
+- Acoustic cleanup examines the immutable recording, treats recognized speech as protected, shortens quiet runs of at least 360 ms, retains 80 ms at recording edges and 140 ms internally, and renders a derivative with 15 ms crossfades.
+- The private recording and private transcript are never rewritten.
+- Older Margins without aligned timing remain eligible for original-voice or text-only sharing, but word deletion and automatic cleanup are unavailable for them.
+
+## Out of scope and known constraints
+
+- EPUB ingestion itself belongs to the active quality/completion lane; the sharing schema and transport already represent EPUB-derived listened text once that item type is available to the app.
+- Offline phone generation of Listening Maps, proposal activation, summary bridge playback, and Skim controls remain out of scope. Portable Listening Map proposals may travel but remain inert.
+- Co-op replies, remote revocation, accounts, trust networks, hosted storage, public distribution, and AI-generated summaries are not implemented.
+- High-reliability acoustic podcast evidence is available only when the exact sender edition was downloaded when the Margin was captured. The sender UI preserves the warning when evidence is absent, including after audio cleanup.
 - A text-only Margin is readable but has no voice playback.
-- Automatic cleanup is unavailable for an older Margin without aligned word timing. The sender can still edit its shared transcript and choose original voice or text.
-- The benchmark used one held-out public-domain spoken-work pair with synthetic but representative podcast edits. Representative physical-device runtime, battery, and thermal behavior are not yet measured.
-- An imported package with the same content digest is idempotent. Reusing **Create Recipient Test Session** starts another session with the existing imported layer rather than duplicating the layer.
 
-## Reset, sample, and diagnostics
+## Reset, samples, and diagnostics
 
-- Do not use reset or uninstall as a response to a library-access or schema-version error. Install the compatible build over the existing app first; see `schema-five-library-recovery.md`.
+- Install this build over the existing app. Do not reset or uninstall in response to a schema/library-access error.
 - Remove one imported layer from the item's **Shared Margins** section with **Delete Shared Margins**.
-- For a complete DEBUG-build reset, open **Settings → Developer → Developer tools → Reset Library and Load Sample**. Deleting and reinstalling the app also clears the app-owned library and downloaded test media.
-- No podcast or voice fixture is committed. The seeded validation sample is the real package you create from your own locally downloaded podcast and Margin; this avoids committing copyrighted podcast audio or private voice.
-- In a DEBUG build, open **Settings → Developer → Developer tools**, tap **Refresh Diagnostics**, and inspect `lastSharedPackage`, `lastSpokenMarginsPackageImport`, `podcastAnchorEvidence:<interjection-id>`, and `importedPodcastAnchorResolution:<item-id>`.
-- **Settings → Copy Privacy-Safe Diagnostics** provides the shareable diagnostics export.
+- Only for an intentional complete DEBUG reset: **Settings → Developer → Developer tools → Reset Library and Load Sample**.
+- The app-authored Welcome to Spoken Margins item is a seeded linkless embedding sample.
+- In DEBUG, use **Settings → Developer → Developer tools → Refresh Diagnostics** and inspect `lastSharedPackage`, `lastSpokenMarginsPackageImport`, `podcastAnchorEvidence:<interjection-id>`, and `importedPodcastAnchorResolution:<item-id>`.
+- **Settings → Copy Privacy-Safe Diagnostics** exports diagnostics without package or item payloads.
 
-## Verification summary
+## Automated verification
 
-- Dedicated held-out benchmark: 232 anchors, 226 eligible and 6 deliberately absent; fused/monotonic placement produced 210 confident eligible placements, zero wrong confident placements, 4 ms p95 error, and declined all 6 absent passages.
-- Normal `SharingTests`: 21 passed, 1 dedicated held-out test skipped by design, 0 failed.
 - Contract validator: passed.
 - Surface contract validator: passed.
 - SessionKit build with tests: passed.
-- Generic iOS Simulator `SpokenMarginsApp` build: passed.
+- SharingTests: 26 executed, 25 passed and 1 dedicated held-out benchmark wrapper skipped by design, 0 failed.
+- Focused app-state tests for linkless rights transport and word-delete Undo/Redo: 2 passed, 0 failed.
+- Generic iOS Simulator app build: passed.
+- Generic physical iOS app build: passed.
 - Diff whitespace check: passed.
+- Existing benchmark artifact: 232 anchors, 226 eligible and 6 deliberately absent; fused/monotonic placement had zero wrong confident placements, 4 ms p95 error, and declined all 6 absent passages. See `podcast-anchor-benchmark.md` and `podcast-anchor-benchmark-result.json`.
 
-See `podcast-anchor-benchmark.md` and `podcast-anchor-benchmark-result.json` for method comparisons, falsification history, thresholds, and the reproducible command.
+Automated evidence establishes `verified`, not `human_validated`.
 
 ## Product-owner checklist
 
-Record each item as Pass, Fail, or Not run, with device/OS and notes.
+Record Pass, Fail, or Not run, with device/OS and notes.
 
-1. **Prepare the sender edition.** Add a podcast, wait for its download to finish, start a new session, and confirm normal playback from the downloaded edition. Result: ___
-2. **Capture acoustic evidence.** Record two or more Margins at well-separated passages. Include an intentional “um,” a removable “uh,” a semantic use of “you know,” and a long pause in at least one. Wait for transcription/evidence processing. Result: ___
-3. **Review the package.** Open the item and tap **Share Margins**. Confirm that each selected Margin shows editable text, explicit voice representation, optional acoustic evidence, and bounded context; confirm no podcast audio is disclosed. Result: ___
-4. **Validate cleanup.** Tap **Remove Fillers & Long Pauses**, preview Original and Cleaned, turn individual proposed edits off and on, and verify semantic “you know” is not removed merely because it is a phrase. Restore Original once, reapply cleanup, and choose the version you intend to share. Result: ___
-5. **Export.** Tap **Share Reviewed Margins**. Confirm the package-ready screen appears and **Share File** offers a `.spokenmargins` file. Result: ___
-6. **Exercise the real same-device route.** Tap **Create Recipient Test Session**, inspect the import disclosure, then tap **Import & Resolve Margins**. Confirm import does not autoplay and a separate session is created. Result: ___
-7. **Inspect provenance and status.** On the item, confirm **Shared Margins** says integrity checked, sender identity unverified, and reports resolved/context-only/ambiguous status truthfully. Confirm the imported Margins also appear in Timeline. Result: ___
-8. **Companion experience.** Select Companion, keep cue unmuted, start listening from before the first anchor, and confirm the cue appears at the passage without immediately playing the Margin. Choose Listen, confirm the reviewed representation plays, and confirm source playback resumes. Result: ___
-9. **Guided experience.** Select Guided, cross a later anchor, and confirm the cue, automatic Margin playback, and source resume feel correct. Result: ___
-10. **Fresh and mute controls.** In a new session select Fresh and confirm crossing an anchor does not reveal or play it. In another run use Companion or Guided with Mute cue enabled and confirm only the cue is suppressed. Result: ___
-11. **Persistence and duplication.** Relaunch the app and confirm the layer, mode, mute state, resolution, and Timeline rows persist. Reuse the same package and confirm no duplicate layer is created; if using the same-device button, confirm a new listening session still starts. Result: ___
-12. **Conservative failure behavior.** Try a Margin that warned acoustic evidence was unavailable, or a materially different/edited recipient edition. Confirm unresolved or ambiguous Margins remain readable and never interrupt playback. Any wrong confident interruption is a release-stopping failure. Result: ___
-13. **Deletion and reset.** Delete the Shared Margins layer and confirm it no longer cues, plays, or appears in Timeline. Result: ___
+1. **Upgrade without reset.** Install over the current app. Confirm the existing library and any earlier imported Shared Margins layers remain present. Result: ___
+2. **Open sharing from playback.** Start listening to an item with at least one Margin, tap Share, and confirm **Share Margins** is the primary first option while session export is clearly separate. Result: ___
+3. **Delete words only.** Tap words in a timed Margin, verify they strike through, and verify no insertion control exists. Exercise Undo and Redo. Result: ___
+4. **Tighten voice.** Use **Remove Fillers & Tighten Pauses** on a recording containing “um,” removable “uh,” semantic “you know,” a leading/trailing gap, and an internal pause. Preview Original and Cleaned; turn individual automatic edits off and on. Result: ___
+5. **Validate private immutability.** Restore Original, reopen the Margin outside sharing, and confirm the private recording/transcript was never rewritten. Result: ___
+6. **Linkless rights enabled.** On pasted text or an imported PDF, enable **I’m sharing this privately and have the right to share this item**, export, and import on a clean recipient installation. Confirm the exact listened-to text is added and no original document container is claimed to be included. Result: ___
+7. **Linkless rights declined.** Export the same item without the confirmation. On a recipient without that item, confirm import explains that the matching text/PDF/EPUB is required and cannot attach the Margins. Add the same item, reopen the package, and confirm import becomes available. Result: ___
+8. **App-authored sample.** Share the Welcome sample. Confirm it no longer fails for lack of a canonical URL and that the app-authored disclosure is shown. Result: ___
+9. **Linked item.** Share a URL-backed item. Confirm the disclosure says reference-only and the preview/package never claims to contain the full item. Result: ___
+10. **Podcast cross-edition case.** Download a podcast, record well-separated Margins, export to a recipient edition with different ads, and confirm only evidence-backed placements interrupt. Any wrong confident placement is release stopping. Result: ___
+11. **Recipient listening.** Validate Companion and Guided Margin playback plus return to item playback; validate Fresh and muted-cue behavior. Result: ___
+12. **Persistence and idempotency.** Relaunch and confirm the layer, mode, mute state, resolution, and Timeline rows persist. Reimport the same package and confirm no duplicate layer is created. Result: ___
+13. **System share sheet.** After **Share Reviewed Margins**, tap **Share File** and send the `.spokenmargins` file through the desired real sharing channel. Result: ___
 
-## Acceptance rule
+## Acceptance and stopping rules
 
-The own-device MVP can be marked `human_validated` only after the product owner accepts the sender review, same-device import, at least Companion and Guided listening, persistence, and conservative no-interruption behavior. Any wrong confident cross-edition placement, podcast audio leakage, unreviewed voice/text export, autoplay during import, private-original mutation during cleanup, or duplicate imported layer is a stop condition. External sharing remains blocked until issue #14 is explicitly accepted even if every item above passes.
+Mark the MVP `human_validated` only after accepting the sender disclosure, linkless rights-on and rights-off paths, linked-item reconstruction, word/audio review, a real system-share transfer, recipient import, Companion and Guided listening, persistence, and conservative podcast behavior.
+
+Stop on any wrong confident cross-edition placement, podcast/item-audio leakage, item embedding without the displayed rights basis, transcript insertion, unreviewed representation export, private-original mutation, autoplay during import, duplicate imported layer, or library disappearance after upgrade.
