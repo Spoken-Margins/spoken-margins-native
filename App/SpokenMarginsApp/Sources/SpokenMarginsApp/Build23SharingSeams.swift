@@ -28,20 +28,40 @@ enum Build23RecipientTransport: String, Equatable, Sendable {
     case recipientSupplied = "recipient_supplied"
 }
 
+enum Build23SharingReviewTokenKind: String, Equatable {
+    case word
+    case pause
+}
+
+struct Build23SharingReviewTokenSnapshot: Identifiable, Equatable {
+    let id: String
+    let kind: Build23SharingReviewTokenKind
+    let text: String
+    let isRemoved: Bool
+    let decisionID: String?
+    let segmentID: String?
+}
+
 struct Build23SharingMarginSnapshot: Identifiable, Equatable {
     let id: String
     let reviewedText: String
     let representation: ShareMarginRepresentationChoice
+    let reviewTokens: [Build23SharingReviewTokenSnapshot]
     let isIncluded: Bool
     let isStarred: Bool
     let privateNote: String?
     let warning: String?
+    let preparationMessage: String?
+    let anchorBefore: String
+    let anchorAfter: String
     let canUndo: Bool
     let canRedo: Bool
     let canPrepareCleanup: Bool
     let isPreparing: Bool
     let hasOriginalVoice: Bool
     let hasCleanedVoice: Bool
+    let originalVoiceURL: URL?
+    let cleanedVoiceURL: URL?
 }
 
 struct Build23RecipientPreviewMargin: Identifiable, Equatable, Sendable {
@@ -111,6 +131,27 @@ struct Build23RecipientSourceRequest: Identifiable, Equatable {
     let acceptedSourceKinds: [String]
 }
 
+struct Build23ImportedMarginSnapshot: Identifiable, Equatable {
+    let id: String
+    let reviewedText: String
+    let resolution: AnchorResolutionEvidenceClass
+    let positionDescription: String
+    let isPlayable: Bool
+}
+
+struct Build23ImportedLayerSnapshot: Identifiable, Equatable {
+    let id: String
+    let senderLabel: String
+    let itemTitle: String
+    let integrity: ImportedCommentaryIntegrityStatus
+    let sourceResolution: ImportedSourceResolutionStatus
+    let isEnabled: Bool
+    let isMuted: Bool
+    let revealMode: ImportedCommentaryRevealMode
+    let listeningMapProposalCount: Int
+    let margins: [Build23ImportedMarginSnapshot]
+}
+
 /// Canonical sender actions. Ultra UI work should call these actions rather
 /// than mutating Gate1AppModel or InterjectionSharingState directly.
 enum Build23SenderAction: Equatable {
@@ -146,6 +187,9 @@ enum Build23RecipientAction: Equatable {
     case resumeAfterAddingSource
     case confirmImport
     case cancelImport
+    case setLayerEnabled(id: String, enabled: Bool)
+    case setLayerMuted(id: String, muted: Bool)
+    case setLayerRevealMode(id: String, mode: ImportedCommentaryRevealMode)
 }
 
 @MainActor
@@ -154,6 +198,7 @@ protocol Build23SharingCoordinating: AnyObject {
     var recipientSnapshot: Build23RecipientImportSnapshot? { get }
     var pendingRecipientSourceRequest: Build23RecipientSourceRequest? { get }
     var verifiedShareFileURL: URL? { get }
+    var importedLayers: [Build23ImportedLayerSnapshot] { get }
 
     func send(_ action: Build23SenderAction)
     func send(_ action: Build23RecipientAction)
@@ -189,22 +234,29 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     var snapshot: Build23SharingSnapshot {
         let state = model.sharingState
         let margins = state.drafts.map { draft in
-            Build23SharingMarginSnapshot(
+            let originalVoiceURL = model.originalAudioURL(forShareDraft: draft.id)
+            return Build23SharingMarginSnapshot(
                 id: draft.id,
                 reviewedText: draft.approvedTranscript,
                 representation: draft.representationChoice,
+                reviewTokens: reviewTokens(for: draft),
                 isIncluded: draft.isIncluded,
                 isStarred: draft.interjection.isStarredForSharing == true,
                 privateNote: draft.interjection.privateSharingNote?.nilIfEmpty,
                 warning: draft.warning,
+                preparationMessage: draft.preparationMessage,
+                anchorBefore: draft.anchorBefore,
+                anchorAfter: draft.anchorAfter,
                 canUndo: draft.canUndoEdit,
                 canRedo: draft.canRedoEdit,
                 canPrepareCleanup: draft.isIncluded
                     && draft.interjection.alignedTranscript != nil
                     && !draft.currentEditState.automaticCleanupEnabled,
                 isPreparing: draft.isAnalyzingPauses || draft.isPreparingCleanup,
-                hasOriginalVoice: model.originalAudioURL(forShareDraft: draft.id) != nil,
-                hasCleanedVoice: draft.cleanedAudioURL != nil
+                hasOriginalVoice: originalVoiceURL != nil,
+                hasCleanedVoice: draft.cleanedAudioURL != nil,
+                originalVoiceURL: originalVoiceURL,
+                cleanedVoiceURL: draft.cleanedAudioURL
             )
         }
         let hasReviewedSelection = margins.contains {
@@ -262,6 +314,35 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
 
     var verifiedShareFileURL: URL? {
         snapshot.canShareVerifiedFile ? verifiedPreview?.fileURL : nil
+    }
+
+    var importedLayers: [Build23ImportedLayerSnapshot] {
+        model.selectedItem.importedCommentaryLayers
+            .filter { $0.deletedAt == nil }
+            .map { layer in
+                let margins = model.selectedItem.importedCommentaryInterjections[layer.id, default: []]
+                    .map { margin in
+                        Build23ImportedMarginSnapshot(
+                            id: margin.id,
+                            reviewedText: margin.approvedTranscript,
+                            resolution: margin.resolution.evidenceClass,
+                            positionDescription: Self.positionDescription(for: margin.resolution),
+                            isPlayable: Gate1AppModel.isPlayableImportedCommentaryResolution(margin.resolution)
+                        )
+                    }
+                return Build23ImportedLayerSnapshot(
+                    id: layer.id,
+                    senderLabel: layer.displayLabel?.nilIfEmpty ?? "Unsigned sender",
+                    itemTitle: layer.itemIdentity.title,
+                    integrity: layer.integrityStatus,
+                    sourceResolution: layer.sourceResolutionStatus,
+                    isEnabled: layer.isEnabled,
+                    isMuted: layer.isMuted,
+                    revealMode: layer.revealMode ?? layer.suggestedRevealMode ?? .companion,
+                    listeningMapProposalCount: layer.listeningMapProposals?.count ?? 0,
+                    margins: margins
+                )
+            }
     }
 
     func send(_ action: Build23SenderAction) {
@@ -354,6 +435,12 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         case .cancelImport:
             pendingRecipientSourceRequest = nil
             model.cancelSpokenMarginsPackageImport()
+        case .setLayerEnabled(let id, let enabled):
+            model.setImportedCommentaryLayerEnabled(id, enabled: enabled)
+        case .setLayerMuted(let id, let muted):
+            model.setImportedCommentaryLayerMuted(id, muted: muted)
+        case .setLayerRevealMode(let id, let mode):
+            model.setImportedCommentaryRevealMode(id, mode: mode)
         }
         objectWillChange.send()
     }
@@ -468,6 +555,42 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
+    private func reviewTokens(for draft: ShareInterjectionDraft) -> [Build23SharingReviewTokenSnapshot] {
+        let words = (draft.interjection.alignedTranscript?.segments ?? []).map { segment in
+            Build23SharingReviewTokenSnapshot(
+                id: "word:\(segment.id)",
+                kind: .word,
+                text: segment.text,
+                isRemoved: model.isShareDraftWordDeleted(draftID: draft.id, segmentID: segment.id),
+                decisionID: nil,
+                segmentID: segment.id
+            )
+        }
+        let pauses = (draft.cleanup?.decisions ?? [])
+            .filter { $0.kind == .longPause }
+            .map { decision in
+                let duration = Double(max(0, decision.endMs - decision.startMs)) / 1_000
+                return Build23SharingReviewTokenSnapshot(
+                    id: "pause:\(decision.id)",
+                    kind: .pause,
+                    text: String(format: "[%.1fs pause]", duration),
+                    isRemoved: decision.accepted,
+                    decisionID: decision.id,
+                    segmentID: nil
+                )
+            }
+        let starts = Dictionary(uniqueKeysWithValues: (draft.interjection.alignedTranscript?.segments ?? []).map {
+            ("word:\($0.id)", $0.startMs)
+        } + (draft.cleanup?.decisions ?? []).map {
+            ("pause:\($0.id)", $0.startMs)
+        })
+        return (words + pauses).sorted {
+            let lhsStart = starts[$0.id] ?? 0
+            let rhsStart = starts[$1.id] ?? 0
+            return lhsStart == rhsStart ? $0.id < $1.id : lhsStart < rhsStart
+        }
+    }
+
     nonisolated private static func roundTrippedPreview(fileURL: URL) throws -> Build23VerifiedRecipientPreview {
         let extractionDirectory = FileManager.default.temporaryDirectory
             .appending(path: "build-23-recipient-preview-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -527,6 +650,17 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             return "About \(roughPercent)% through"
         }
         return "Position will be resolved after import"
+    }
+
+    nonisolated private static func positionDescription(for resolution: ImportedAnchorResolution) -> String {
+        if let mediaTimeMs = resolution.localMediaTimeMs {
+            let totalSeconds = max(0, mediaTimeMs / 1_000)
+            return String(format: "%d:%02d", totalSeconds / 60, totalSeconds % 60)
+        }
+        if let start = resolution.localStartChar {
+            return "Text position \(start)"
+        }
+        return resolution.evidenceClass.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
     }
 
     nonisolated private static func transport(_ kind: SharedItemTransportKind) -> Build23RecipientTransport {
