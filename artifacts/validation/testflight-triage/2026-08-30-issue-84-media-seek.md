@@ -3,9 +3,15 @@
 Status: `verified` by the automated evidence below. The physical-device flow is
 not `human_validated` until the product owner completes the checklist.
 
-Branch under test: `codex/testflight-triage`, based on `b6ea36b` plus this
-working tree. No TestFlight build number has been assigned or uploaded by this
-implementation pass.
+Candidate: Spoken Margins 0.1 (22), runtime/configuration commit
+`df9e1b45393a151c81e50093b8e798f1223ed5cf` on
+`codex/testflight-triage`, based on accepted integration commit `b6ea36b` plus
+the verified #84 fix. The candidate has not been archived, uploaded, accepted,
+or distributed by this implementation pass.
+
+Supported destinations: iPhone and iPad on iOS/iPadOS 18.0 or later. The
+automated build gate covered generic iOS Simulator and generic iOS device
+destinations; physical-device behavior remains the product-owner gate below.
 
 ## Failure model
 
@@ -68,7 +74,9 @@ observed player time without changing an audibly playing session to `failed`.
   proves gesture ticks cannot dislocate the thumb while editing and canonical
   ticks immediately advance it after release.
 - Contract and surface-contract validation passed.
-- Generic iOS Simulator and generic iOS device builds passed.
+- Generic iOS Simulator and generic iOS device builds passed again after
+  assigning every app and extension target to Build 22 and regenerating the
+  Xcode project from `project.yml`.
 
 ## Diagnostics and reset
 
