@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "watch-capture-outbox-record.v1",
+  "event": {
+    "schemaVersion": "watch-capture-event.v1",
+    "id": "watch-capture-001",
+    "createdAt": "2026-08-30T21:15:00Z",
+    "audioFileName": "watch-capture-001.m4a",
+    "audioDurationMs": 4800,
+    "anchorReceipt": {
+      "sessionId": "session-walk-001",
+      "itemId": "item-podcast-001",
+      "targetType": "transcript_backed_media",
+      "targetId": "media-podcast-001",
+      "sourceRevision": "episode-edition-sha256-001",
+      "snapshotRevision": "snapshot-001",
+      "mediaTimeMs": 42000,
+      "chapterId": "chapter-001",
+      "transcriptSegmentId": "segment-003",
+      "playbackRateObserved": 1.25,
+      "observedAt": "2026-08-30T21:14:59Z"
+    }
+  },
+  "state": "queued_for_phone",
+  "attemptCount": 0,
+  "updatedAt": "2026-08-30T21:15:01Z",
+  "lastAttemptAt": null,
+  "acknowledgedAt": null,
+  "lastError": null
+}

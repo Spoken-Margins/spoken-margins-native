@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spokenmargins.local/schemas/watch-capture-outbox-record.schema.json",
+  "title": "WatchCaptureOutboxRecord",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "event", "state", "attemptCount", "updatedAt"],
+  "properties": {
+    "schemaVersion": { "const": "watch-capture-outbox-record.v1" },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "id", "createdAt", "audioFileName"],
+      "properties": {
+        "schemaVersion": { "const": "watch-capture-event.v1" },
+        "id": { "type": "string", "minLength": 1 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "audioFileName": { "type": "string", "minLength": 1 },
+        "audioDurationMs": { "type": ["integer", "null"], "minimum": 0 },
+        "anchorReceipt": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": [
+            "sessionId",
+            "itemId",
+            "targetType",
+            "targetId",
+            "snapshotRevision",
+            "playbackRateObserved",
+            "observedAt"
+          ],
+          "properties": {
+            "sessionId": { "type": "string", "minLength": 1 },
+            "itemId": { "type": "string", "minLength": 1 },
+            "targetType": {
+              "enum": [
+                "item_text_tts",
+                "transcript_backed_media",
+                "assistant_turn_tts",
+                "summary_turn_tts",
+                "browser_owned_media"
+              ]
+            },
+            "targetId": { "type": "string", "minLength": 1 },
+            "sourceRevision": { "type": ["string", "null"] },
+            "snapshotRevision": { "type": "string", "minLength": 1 },
+            "mediaTimeMs": { "type": ["integer", "null"], "minimum": 0 },
+            "chapterId": { "type": ["string", "null"] },
+            "transcriptSegmentId": { "type": ["string", "null"] },
+            "playbackRateObserved": { "type": "number", "minimum": 0.25, "maximum": 4 },
+            "observedAt": { "type": "string", "format": "date-time" }
+          }
+        }
+      }
+    },
+    "state": {
+      "enum": [
+        "saved_locally",
+        "queued_for_phone",
+        "transferring_audio",
+        "awaiting_import",
+        "synced",
+        "failed"
+      ]
+    },
+    "attemptCount": { "type": "integer", "minimum": 0 },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "lastAttemptAt": { "type": ["string", "null"], "format": "date-time" },
+    "acknowledgedAt": { "type": ["string", "null"], "format": "date-time" },
+    "lastError": { "type": ["string", "null"] }
+  }
+}

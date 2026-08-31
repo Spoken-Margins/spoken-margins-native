@@ -31,6 +31,7 @@ Only these branches are active development lanes:
 | `main` | Released and accepted integration runtime plus repository governance | Documentation, validation evidence, distributed runtime, and product-owner-accepted release integration | N/A |
 | `codex/testflight-triage` | Active Build 22 rapid-fix lane, based on the accepted Build 21 integration runtime | #84 end-to-end media scrub/seek reconvergence only | `main` after product-owner acceptance; exact verified patch may also enter `codex/build-23-release` |
 | `codex/build-23-release` | Unified Build 23 integration and release lane | Complete quality-of-life and experience work; one-way sharing foundation including #27 and the authorized #88 slice; recipient import and provenance presentation; exact verified Build 22 seek patch | `main` only after all Build 23 release gates and product-owner acceptance |
+| `codex/watch-capture-next` | Post-Build-23 Watch capture and recall lane, based on Build 23 commit `8bca934` | #96; the durable capture/outbox and exact-once import slice of #75; then #92 and #94 after capture integrity is verified | `main` only after Build 23 acceptance, Watch automated verification, and product-owner physical-device validation |
 
 The source lanes are now frozen ancestry, not implementation targets:
 
@@ -59,6 +60,9 @@ codex/experience-overhaul ─────────────► codex/quali
 codex/quality-of-life-next ────────────► codex/build-23-release  (one integration)
 codex/sharing-next ────────────────────► codex/build-23-release  (one integration)
 codex/build-23-release ────────────────► main  (accepted Build 23 only)
+
+codex/build-23-release ────────────────► codex/watch-capture-next  (one initial base; no reverse merge)
+codex/watch-capture-next ─────────────► main  (after Build 23 acceptance and Watch gate acceptance)
 ```
 
 Rules:
@@ -69,6 +73,53 @@ Rules:
 - Build 22 acceptance remains a separate human decision. Its exact verified patch may enter Build 23 as inherited `verified` evidence. Except for the product-owner-authorized internal-only Build 23 upload recorded above, block later or broader Build 23 distribution until the Build 22 result is known.
 - Do not move unreleased runtime work from a feature lane into triage merely to make it ship sooner.
 - Dependency ordering inside a lane is represented by issue state, commits, tests, and feature flags—not additional persistent branches.
+
+## Watch Capture And Recall Lane
+
+The product owner authorized `codex/watch-capture-next` on 2026-08-30 as the
+post-Build-23 lane for the locked-phone walking loop. It begins from Build 23
+commit `8bca934` so it can consume the verified prepared-media, storage,
+playback, and Margin-presentation foundations without placing Watch runtime in
+the Build 23 candidate.
+
+The ordered program is:
+
+1. **Preflight foundation.** Restore a buildable but unexposed Watch target,
+   current source membership, and deterministic capture contracts. Model a
+   Watch-owned recording, a cached phone anchor receipt, durable outbox state,
+   retry attempts, acknowledgement, and exact-once phone import. This phase
+   may establish generic build and automated evidence but must not claim that
+   locked-phone recording or AirPods input works.
+2. **Physical-device feasibility.** On paired physical devices, verify that a
+   Watch-owned audio session can start, persist, and finish while the iPhone is
+   locked. Test AirPods input explicitly. If it is unavailable or unreliable,
+   expose the Watch microphone fallback rather than silently changing routes.
+3. **Capture and reconciliation.** Expose the bounded #96 path only after the
+   recording is durably saved before success is shown. Transfer audio and its
+   stable event through a retryable outbox; retain it until the phone
+   acknowledges an idempotent import against the intended session/item anchor.
+4. **Recall.** After capture integrity is verified, implement #92 summary-first
+   Margin presentation and #94 Margin-text search as the phone-side retrieval
+   surface for increased low-friction capture volume.
+
+The first implementation packet stops after step 1. It explicitly excludes
+full untethered package-library playback from #75, Watch-side TTS, Skim
+(#88-#90), sleep timers, cloud processing, AI execution on Watch, and any claim
+of `human_validated` behavior.
+
+Stopping rules:
+
+- Do not expose Interject until a Watch-owned capture is persisted locally and
+  the UI can distinguish recording, saved, queued, synced, and failed states.
+- Do not treat `WCSession.isReachable` as proof that phone recording or import
+  is available.
+- Do not delete or evict unacknowledged recording audio.
+- Do not silently attach a capture to a stale or mismatched session/item.
+- Do not claim AirPods input, locked-phone capture, background delivery, or
+  end-to-end success from simulator or generic-build evidence.
+- Stop the device phase if Watch-owned capture cannot survive the locked-phone
+  scenario; record the failure and fallback rather than reviving delegated
+  phone recording.
 
 ## TestFlight Triage Lane
 

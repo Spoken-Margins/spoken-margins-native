@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: com.spokenmargins
   deploymentTarget:
     iOS: "18.0"
+    watchOS: "11.0"
 packages:
   SessionKit:
     path: Packages/SessionKit
@@ -214,6 +215,35 @@ targets:
               NSExtensionActivationSupportsFileWithMaxCount: 1
               NSExtensionActivationSupportsWebPageWithMaxCount: 1
               NSExtensionActivationSupportsWebURLWithMaxCount: 1
+  SpokenMarginsWatch:
+    type: application
+    platform: watchOS
+    sources:
+      - path: App/SpokenMarginsWatch/Sources
+    dependencies:
+      - package: SessionKit
+        product: SessionKit
+      - package: SessionKit
+        product: SessionKitAudio
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.watch
+        CODE_SIGN_STYLE: Automatic
+        CURRENT_PROJECT_VERSION: "23"
+        DEVELOPMENT_TEAM: J8SWC6J3VY
+        MARKETING_VERSION: "0.1"
+        SWIFT_VERSION: "6.0"
+        TARGETED_DEVICE_FAMILY: "4"
+    info:
+      path: App/SpokenMarginsWatch/Info.plist
+      properties:
+        CFBundleDisplayName: Spoken Margins
+        CFBundleShortVersionString: "0.1"
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        WKApplication: true
+        WKCompanionAppBundleIdentifier: com.spokenmargins.native
+        WKBackgroundModes:
+          - audio
   SpokenMarginsAppUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -266,3 +296,9 @@ schemes:
       targets:
         - SpokenMarginsAppTests
         - SpokenMarginsAppUITests
+  SpokenMarginsWatch:
+    build:
+      targets:
+        SpokenMarginsWatch: all
+    run:
+      config: Debug

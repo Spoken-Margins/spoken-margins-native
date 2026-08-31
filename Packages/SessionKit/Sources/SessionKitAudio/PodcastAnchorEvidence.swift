@@ -244,7 +244,7 @@ public enum PodcastAcousticAnchorResolver {
                     guard let item = match.mediaItems.first else { continue }
                     let matchedStartMs = Int((item.matchOffset * 1_000).rounded())
                     let confidence: Double
-                    if #available(iOS 18.4, macOS 15.4, *) {
+                    if #available(iOS 18.4, macOS 15.4, watchOS 11.4, *) {
                         confidence = Double(item.confidence)
                     } else {
                         confidence = 0.9

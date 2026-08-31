@@ -25,6 +25,7 @@ PATH_SCHEMA_RULES = [
     ("fixtures/turns/*.json", "conversation-turn.schema.json", "array"),
     ("fixtures/exports/*.json", "session-export.schema.json"),
     ("fixtures/watch/offline-package.json", "watch-audio-package.schema.json"),
+    ("fixtures/watch/capture-*-record.json", "watch-capture-outbox-record.schema.json"),
     ("fixtures/watch/sync-*-event.json", "watch-sync-event.schema.json"),
     ("fixtures/audio/*.json", "audio-asset.schema.json"),
     ("fixtures/link-resolution/*.json", "link-resolution-fixture.schema.json"),

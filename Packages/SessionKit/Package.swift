@@ -6,7 +6,8 @@ let package = Package(
     name: "SessionKit",
     platforms: [
         .iOS("16.4"),
-        .macOS(.v15)
+        .macOS(.v15),
+        .watchOS("11.0")
     ],
     products: [
         .library(name: "SessionKit", targets: ["SessionKit"]),

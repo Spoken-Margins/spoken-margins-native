@@ -189,7 +189,7 @@ public enum InterjectionAudioCleanupRenderer {
         destinationURL: URL,
         decisions: [InterjectionCleanupDecision]
     ) async throws -> Int {
-        #if canImport(AVFoundation)
+        #if canImport(AVFoundation) && !os(watchOS)
         let asset = AVURLAsset(url: sourceURL)
         let duration = try await asset.load(.duration)
         let durationSeconds = CMTimeGetSeconds(duration)
