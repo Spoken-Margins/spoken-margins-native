@@ -1,5 +1,6 @@
 import XCTest
 @testable import SessionKit
+import SessionKitAudio
 import SessionKitPersistence
 import SessionKitSharing
 @testable import SpokenMarginsApp
@@ -211,6 +212,133 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         XCTAssertEqual(model.diagnostics["lastSpokenMarginsPackageRepair"], "reassociated:\(repairedLayer.id):\(importedItem.id)")
     }
 
+    func testImportedAssetPathRebasesAfterApplicationContainerRelocation() throws {
+        let root = try temporaryDirectory(named: "spoken-margins-relocated-assets")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let support = root.appendingPathComponent("Library/Application Support", isDirectory: true)
+        let relativePath = "SpokenMargins/IncomingPackages/package/assets/margin.m4a"
+        let relocated = support.appendingPathComponent(relativePath)
+        try FileManager.default.createDirectory(
+            at: relocated.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("voice".utf8).write(to: relocated)
+        let stalePath = "/old/container/Library/Application Support/\(relativePath)"
+
+        XCTAssertEqual(
+            Gate1AppModel.resolvedApplicationSupportAssetURL(
+                for: stalePath,
+                applicationSupportDirectory: support
+            ),
+            relocated
+        )
+    }
+
+    func testMixedImportedLayerKeepsItsVerifiedMarginsPlaybackEligible() {
+        let layer = ImportedCommentaryLayer(
+            id: "layer",
+            itemId: "item",
+            packageDigest: "digest",
+            packageId: "package",
+            itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Episode"),
+            importedAt: Date(),
+            sourceResolutionStatus: .ambiguous,
+            isEnabled: true
+        )
+        let resolved = ImportedCommentaryInterjection(
+            id: "resolved",
+            layerId: layer.id,
+            packageScopedId: "margin-1",
+            createdAt: Date(),
+            anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 1_000),
+            approvedTranscript: "Resolved",
+            resolution: ImportedAnchorResolution(
+                evidenceClass: .acousticVerified,
+                localMediaTimeMs: 1_050,
+                confidence: 0.9
+            )
+        )
+        let absent = ImportedCommentaryInterjection(
+            id: "absent",
+            layerId: layer.id,
+            packageScopedId: "margin-2",
+            createdAt: Date(),
+            anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 2_000),
+            approvedTranscript: "Absent",
+            resolution: ImportedAnchorResolution(evidenceClass: .absentFromRecipientEdition)
+        )
+
+        XCTAssertTrue(Gate1AppModel.isImportedCommentaryLayerPlaybackEligible(
+            layer,
+            records: [resolved, absent]
+        ))
+        XCTAssertFalse(Gate1AppModel.isImportedCommentaryLayerPlaybackEligible(
+            layer,
+            records: [absent]
+        ))
+    }
+
+    @MainActor
+    func testImportedPodcastRequestsTranscriptFallbackAndResolvesFuzzyContext() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-transcript-fallback")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appendingPathComponent("recipient.sqlite")
+        let packageURL = root.appendingPathComponent("transcript-fallback.spokenmargins")
+        let manifest = try writePodcastPackage(to: packageURL, packageID: "package-transcript-fallback")
+        let transcriber = PackageAnchorTranscriptionClient()
+        let model = Gate1AppModel(
+            sourceLinkResolver: podcastResolver(),
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            sourceTranscriptionClient: transcriber,
+            databaseURLOverride: databaseURL
+        )
+        model.resetAndSeed()
+        model.handleIncomingURL(packageURL)
+        model.confirmSpokenMarginsPackageImport()
+        try await waitForImportToFinish(model)
+
+        let item = try XCTUnwrap(model.libraryItems.first(where: { $0.title == Self.podcastTitle }))
+        let localURL = root.appendingPathComponent("recipient.mp3")
+        try Data("recipient-edition".utf8).write(to: localURL)
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        let digest = try XCTUnwrap(manifest.contentDigest)
+        let importedLayer = try XCTUnwrap(store.loadImportedCommentaryLayer(packageDigest: digest))
+        let importedMargin = try XCTUnwrap(store.loadImportedCommentaryInterjections(layerId: importedLayer.id).first)
+        XCTAssertTrue(PodcastTranscriptAnchorResolver.hasUsableContext(importedMargin.anchorEvidence))
+        model.podcastLocalAssetDidBecomeReady(itemId: item.id, url: localURL)
+        for _ in 0..<250 {
+            if await transcriber.fullRequestCount() > 0 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let fullRequestCount = await transcriber.fullRequestCount()
+        XCTAssertEqual(fullRequestCount, 1)
+
+        for _ in 0..<250 {
+            if (try? store.loadTranscriptTimeline(itemId: item.id)) != nil { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let storedTimeline = try XCTUnwrap(try store.loadTranscriptTimeline(itemId: item.id)?.timeline)
+        let directTranscriptResolution = PodcastTranscriptAnchorResolver.resolve(
+            anchor: importedMargin.anchorEvidence,
+            recipientTimeline: storedTimeline
+        )
+        XCTAssertEqual(directTranscriptResolution.evidenceClass, .transcriptVerified)
+        XCTAssertEqual(directTranscriptResolution.localMediaTimeMs, 5_500)
+
+        for _ in 0..<250 {
+            if try store.loadImportedCommentaryLayer(packageDigest: digest)?.sourceResolutionStatus == .resolved {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let layer = try XCTUnwrap(store.loadImportedCommentaryLayer(packageDigest: digest))
+        let margin = try XCTUnwrap(store.loadImportedCommentaryInterjections(layerId: layer.id).first)
+        XCTAssertEqual(model.diagnostics["sourceTranscriptionAfterDownload:\(item.id)"], "requested_for_imported_commentary")
+        XCTAssertEqual(layer.sourceResolutionStatus, .resolved)
+        XCTAssertEqual(margin.resolution.evidenceClass, .transcriptVerified)
+        XCTAssertEqual(margin.resolution.localMediaTimeMs, 5_500)
+    }
+
     private static let podcastTitle = "Can you spot the imported story?"
     private static let podcastURL = "https://podcasts.example.com/episodes/imported-story"
     private static let podcastAudioURL = "https://cdn.example.com/imported-story.mp3"
@@ -241,8 +369,8 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
             sessionId: "sender-session",
             createdAt: Date(timeIntervalSince1970: 1_777_000_000),
             approvedTranscript: "A sender-reviewed observation.",
-            anchorBefore: "Earlier context.",
-            anchorAfter: "Later context.",
+            anchorBefore: "the durable prefix has exactly enough unique words here",
+            anchorAfter: "the following suffix is also uniquely present right now",
             status: .senderApproved
         )
         let prepared = try SpokenMarginsPackageBuilder.prepare(
@@ -260,7 +388,12 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
             selections: [ReviewedInterjectionSelection(
                 packageScopedId: "margin-001",
                 revision: revision,
-                anchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 5_000),
+                anchor: PortableAnchorEvidence(
+                    anchorType: .transcript,
+                    prefix: "the durable prefix has exactly enough unique words here",
+                    suffix: "the following suffix is also uniquely present right now",
+                    mediaTimeMs: 5_000
+                ),
                 representation: .textOnly
             )],
             senderDisplayLabel: "Cole",
@@ -286,6 +419,36 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         }
         XCTFail("Timed out waiting for the package import to finish: \(model.spokenMarginsPackageImportError ?? "no error")")
         throw SessionKitError.persistenceFailed("package_import_test_timeout")
+    }
+}
+
+private actor PackageAnchorTranscriptionClient: SourceTranscriptionClient {
+    private var requestCount = 0
+
+    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+        requestCount += 1
+        return TranscriptTimeline(
+            segments: [
+                .init(
+                    id: "recipient-prefix",
+                    startMs: 4_000,
+                    endMs: 5_000,
+                    text: "the durable prefix has nearly enough unique words here"
+                ),
+                .init(
+                    id: "recipient-suffix",
+                    startMs: 6_000,
+                    endMs: 7_000,
+                    text: "the following suffix was also uniquely present right now"
+                )
+            ],
+            chapters: [],
+            durationMs: durationMs
+        )
+    }
+
+    func fullRequestCount() -> Int {
+        requestCount
     }
 }
 

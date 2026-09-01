@@ -717,6 +717,9 @@ final class Gate1AppModel: ObservableObject {
     private var pendingAutoPlayQueue = Gate1PlaybackAutoplayQueue()
     private var completedStreamingTurnIds: Set<String> = []
     private var pendingSourceContextInterjectionIds: Set<String> = []
+    private var pendingFullSourceTranscriptionItemIds: Set<String> = []
+    private var importedPodcastResolutionGenerations: [String: Int] = [:]
+    private var importedPodcastRecipientLocalURLs: [String: URL] = [:]
     private var defaultVoiceFallbackSessionIds: Set<String> = []
     private var pendingMapGenerationItemId: String?
     private var pendingProviderJobForConsent: PendingProviderJob?
@@ -3682,6 +3685,7 @@ final class Gate1AppModel: ObservableObject {
                 installEngine(try makeEngine(store: store))
             }
             guard let engine else { return }
+            preparePodcastPlayback(itemId: session.itemId)
             if hasActiveSession {
                 _ = try? engine.stopPlayback()
             }
@@ -3710,6 +3714,7 @@ final class Gate1AppModel: ObservableObject {
                 installEngine(try makeEngine(store: store))
             }
             guard let engine else { return }
+            preparePodcastPlayback(itemId: session.itemId)
             if hasActiveSession {
                 _ = try? engine.stopPlayback()
             }
@@ -4954,7 +4959,7 @@ final class Gate1AppModel: ObservableObject {
     private func listenToImportedCommentary(_ prompt: ImportedCommentaryPrompt) {
         #if canImport(AVFoundation)
         guard let audioPath = prompt.interjection.audioPath,
-              FileManager.default.fileExists(atPath: audioPath) else {
+              let audioURL = resolvedApplicationSupportAssetURL(for: audioPath) else {
             dismissPendingImportedCommentary()
             reportFailure("This shared Margin contains reviewed text but no playable voice recording.")
             return
@@ -4971,7 +4976,7 @@ final class Gate1AppModel: ObservableObject {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
             try AVAudioSession.sharedInstance().setActive(true)
             #endif
-            let item = AVPlayerItem(url: URL(fileURLWithPath: audioPath))
+            let item = AVPlayerItem(url: audioURL)
             item.audioTimePitchAlgorithm = .timeDomain
             let player = AVPlayer(playerItem: item)
             let rate = Self.marginPlaybackRate(itemPlaybackRate: snapshot.playbackRate)
@@ -5039,7 +5044,12 @@ final class Gate1AppModel: ObservableObject {
 
     private func importedCommentaryPrompts(includeAnnounced: Bool) -> [ImportedCommentaryPrompt] {
         selectedItem.importedCommentaryLayers
-            .filter { $0.deletedAt == nil && $0.isEnabled && $0.sourceResolutionStatus == .resolved }
+            .filter { layer in
+                Self.isImportedCommentaryLayerPlaybackEligible(
+                    layer,
+                    records: selectedItem.importedCommentaryInterjections[layer.id] ?? []
+                )
+            }
             .flatMap { layer in
                 let records = (selectedItem.importedCommentaryInterjections[layer.id] ?? [])
                     .filter { Self.isPlayableImportedCommentaryResolution($0.resolution) }
@@ -5526,6 +5536,9 @@ final class Gate1AppModel: ObservableObject {
                importedLayerHasValidItemAssociation(existing, store: store) {
                 if let itemId = existing.itemId {
                     openItem(id: itemId)
+                    if let localURL = podcastDownloadCoordinator?.validatedLocalURL(for: itemId) {
+                        resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
+                    }
                     reportSuccess("These shared Margins are already in your library. Playback has not started.")
                 } else {
                     reportSuccess("These shared Margins are already in your library.")
@@ -8907,10 +8920,12 @@ final class Gate1AppModel: ObservableObject {
               let canonicalURL = URL(string: sourceURLString) else {
             return
         }
+        guard pendingFullSourceTranscriptionItemIds.insert(item.id).inserted else { return }
         let sourceURL = localSourceURL
             ?? podcastDownloadCoordinator?.validatedLocalURL(for: item.id)
             ?? canonicalURL
         guard sourceURL.isFileURL else {
+            pendingFullSourceTranscriptionItemIds.remove(item.id)
             diagnostics["sourceTranscriptionStatus"] = "waiting_for_local_audio"
             return
         }
@@ -8929,10 +8944,12 @@ final class Gate1AppModel: ObservableObject {
                     durationMs: item.media?.durationMs
                 )
                 await MainActor.run {
+                    self.pendingFullSourceTranscriptionItemIds.remove(item.id)
                     self.attachSourceTranscriptTimeline(timeline, itemId: item.id)
                 }
             } catch {
                 await MainActor.run {
+                    self.pendingFullSourceTranscriptionItemIds.remove(item.id)
                     self.diagnostics["sourceTranscriptionStatus"] = "unavailable"
                     self.diagnostics["sourceTranscriptionError"] = String(describing: error)
                     if self.activeItemId == item.id {
@@ -8975,6 +8992,10 @@ final class Gate1AppModel: ObservableObject {
             generateListeningMap()
         }
         retrySourceWindowContexts(itemId: itemId)
+        if let localURL = importedPodcastRecipientLocalURLs[itemId]
+            ?? podcastDownloadCoordinator?.validatedLocalURL(for: itemId) {
+            resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
+        }
     }
 
     private func scheduleSourceWindowContextIfNeeded(for interjection: Interjection) {
@@ -8992,8 +9013,6 @@ final class Gate1AppModel: ObservableObject {
         default:
             return
         }
-        let currentInterjection = ((try? store.loadInterjections(sessionId: interjection.sessionId)) ?? [])
-            .first(where: { $0.id == interjection.id }) ?? interjection
         if let storedTimeline = try? store.loadTranscriptTimeline(itemId: item.id)?.timeline,
            let window = Self.sourceContextWindow(
                from: storedTimeline,
@@ -9007,26 +9026,6 @@ final class Gate1AppModel: ObservableObject {
                 diagnostics["sourceWindowTranscription:\(interjection.id)"] = "complete:stored_transcript"
                 diagnostics["sourceWindowContextProvenance:\(interjection.id)"] = "stored_transcript"
             }
-            return
-        }
-        if !(currentInterjection.podcastAnchorEvidence ?? []).isEmpty
-            || currentInterjection.podcastAnchorEvidenceCaptureStatus == .ready {
-            if currentInterjection.anchorContextStatus != .ready {
-                var updated = currentInterjection
-                updated.anchorContextStatus = .unavailable
-                try? store.saveInterjection(updated)
-                refreshSelectedItem()
-            }
-            diagnostics["sourceWindowTranscription:\(interjection.id)"] =
-                "skipped:high_reliability_acoustic_evidence_ready"
-            diagnostics["sourceWindowContextProvenance:\(interjection.id)"] = "acoustic_evidence_only"
-            return
-        }
-        if currentInterjection.podcastAnchorEvidenceCaptureStatus == .pendingPostResumeSample
-            || currentInterjection.podcastAnchorEvidenceCaptureStatus == .pendingExactLocalCapture {
-            diagnostics["sourceWindowTranscription:\(interjection.id)"] =
-                "waiting_for_post_resume_acoustic_evidence"
-            diagnostics["sourceWindowContextProvenance:\(interjection.id)"] = "pending_acoustic_evidence"
             return
         }
         diagnostics["sourceWindowTranscription:\(interjection.id)"] = "scheduled"
@@ -10171,16 +10170,32 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var hasEnabledImportedCommentary: Bool {
-        selectedItem.importedCommentaryLayers.contains {
-            $0.deletedAt == nil && $0.isEnabled && $0.sourceResolutionStatus == .resolved
+        selectedItem.importedCommentaryLayers.contains { layer in
+            Self.isImportedCommentaryLayerPlaybackEligible(
+                layer,
+                records: selectedItem.importedCommentaryInterjections[layer.id] ?? []
+            )
         }
     }
 
     var importedCommentaryAutoPlayEnabled: Bool {
-        let enabledLayers = selectedItem.importedCommentaryLayers.filter {
-            $0.deletedAt == nil && $0.isEnabled && $0.sourceResolutionStatus == .resolved
+        let enabledLayers = selectedItem.importedCommentaryLayers.filter { layer in
+            Self.isImportedCommentaryLayerPlaybackEligible(
+                layer,
+                records: selectedItem.importedCommentaryInterjections[layer.id] ?? []
+            )
         }
         return !enabledLayers.isEmpty && enabledLayers.allSatisfy { $0.revealMode == .guided }
+    }
+
+    nonisolated static func isImportedCommentaryLayerPlaybackEligible(
+        _ layer: ImportedCommentaryLayer,
+        records: [ImportedCommentaryInterjection]
+    ) -> Bool {
+        guard layer.deletedAt == nil,
+              layer.isEnabled,
+              layer.sourceResolutionStatus != .wrongSource else { return false }
+        return records.contains { isPlayableImportedCommentaryResolution($0.resolution) }
     }
 
     func setImportedCommentaryAutoPlayEnabled(_ enabled: Bool) {
@@ -10258,6 +10273,36 @@ final class Gate1AppModel: ObservableObject {
             return support.appending(path: "SpokenMargins").appending(path: path)
         }
         return support.appending(path: path)
+    }
+
+    private func resolvedApplicationSupportAssetURL(for path: String) -> URL? {
+        Self.resolvedApplicationSupportAssetURL(
+            for: path,
+            applicationSupportDirectory: try? applicationSupportDirectory()
+        )
+    }
+
+    nonisolated static func resolvedApplicationSupportAssetURL(
+        for path: String,
+        applicationSupportDirectory: URL?
+    ) -> URL? {
+        let fileManager = FileManager.default
+        let directURL = URL(fileURLWithPath: path)
+        if directURL.isFileURL, fileManager.fileExists(atPath: directURL.path) {
+            return directURL
+        }
+        guard let applicationSupportDirectory else { return nil }
+        let supportMarker = "/Library/Application Support/"
+        if let markerRange = path.range(of: supportMarker) {
+            let relativePath = String(path[markerRange.upperBound...])
+            let relocatedURL = applicationSupportDirectory.appending(path: relativePath)
+            if fileManager.fileExists(atPath: relocatedURL.path) {
+                return relocatedURL
+            }
+        }
+        let relativePath = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        let relativeURL = applicationSupportDirectory.appending(path: relativePath)
+        return fileManager.fileExists(atPath: relativeURL.path) ? relativeURL : nil
     }
 
     private func recordAnchorCaptureDiagnostics(for interjection: Interjection) {
@@ -11930,6 +11975,7 @@ final class Gate1AppModel: ObservableObject {
 
     func podcastLocalAssetDidBecomeReady(itemId: String, url: URL) {
         guard let engine, let store else { return }
+        importedPodcastRecipientLocalURLs[itemId] = url
         run { _ in
             // Keep an already-playing remote stream intact. Replacing AVPlayer
             // while the app is locked can interrupt the audio session and make
@@ -11945,6 +11991,12 @@ final class Gate1AppModel: ObservableObject {
         scheduleEmbeddedPublisherChapterImport(itemId: itemId, localURL: url)
         retrySourceWindowContexts(itemId: itemId)
         resolveImportedPodcastCommentary(itemId: itemId, localURL: url)
+        if importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store),
+           let item = try? store.loadItem(id: itemId) {
+            diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "requested_for_imported_commentary"
+            scheduleFullSourceTranscriptionForListeningMap(for: item, localSourceURL: url)
+            return
+        }
         guard pendingMapGenerationItemId == itemId,
               let item = try? store.loadItem(id: itemId) else {
             diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "not_requested"
@@ -11969,6 +12021,9 @@ final class Gate1AppModel: ObservableObject {
             return (layer, records)
         }
         guard !work.isEmpty else { return }
+        let generation = (importedPodcastResolutionGenerations[itemId] ?? 0) + 1
+        importedPodcastResolutionGenerations[itemId] = generation
+        let applicationSupportDirectory = try? applicationSupportDirectory()
         diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "scheduled:\(work.count)"
         Task.detached { [weak self] in
             do {
@@ -11976,7 +12031,10 @@ final class Gate1AppModel: ObservableObject {
                 for (var layer, records) in work {
                     let queries = records.map { record in
                         let evidence = (record.podcastAnchorEvidence ?? []).compactMap { asset -> PodcastAcousticEvidenceQuery? in
-                            guard let data = try? Data(contentsOf: URL(fileURLWithPath: asset.localPath)) else { return nil }
+                            guard let assetURL = Self.resolvedApplicationSupportAssetURL(
+                                for: asset.localPath,
+                                applicationSupportDirectory: applicationSupportDirectory
+                            ), let data = try? Data(contentsOf: assetURL) else { return nil }
                             return PodcastAcousticEvidenceQuery(
                                 id: asset.id,
                                 signatureData: data,
@@ -12000,7 +12058,7 @@ final class Gate1AppModel: ObservableObject {
                             localItem
                         )
                     )
-                    let fusedResolutions = PodcastAnchorFusionResolver.enforcingMonotonicOrder(
+                    let monotonicResolutions = PodcastAnchorFusionResolver.enforcingMonotonicOrder(
                         queries: queries,
                         resolutions: Dictionary(uniqueKeysWithValues: records.map { record in
                             let transcriptResolution = recipientTranscript.map {
@@ -12023,6 +12081,10 @@ final class Gate1AppModel: ObservableObject {
                             )
                         })
                     )
+                    let fusedResolutions = PodcastAnchorFusionResolver.interpolatingBetweenVerifiedAnchors(
+                        queries: queries,
+                        resolutions: monotonicResolutions
+                    )
                     var updated = records
                     for index in updated.indices {
                         if let resolution = fusedResolutions[updated[index].packageScopedId] {
@@ -12042,7 +12104,9 @@ final class Gate1AppModel: ObservableObject {
                     resolvedWork.append((layer, updated))
                 }
                 await MainActor.run {
-                    guard let self, let store = self.store else { return }
+                    guard let self,
+                          self.importedPodcastResolutionGenerations[itemId] == generation,
+                          let store = self.store else { return }
                     do {
                         for (layer, records) in resolvedWork {
                             try store.saveImportedCommentaryLayer(layer)
@@ -12057,8 +12121,28 @@ final class Gate1AppModel: ObservableObject {
                 }
             } catch {
                 await MainActor.run {
+                    guard self?.importedPodcastResolutionGenerations[itemId] == generation else { return }
                     self?.diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "failed:\(error.localizedDescription)"
                 }
+            }
+        }
+    }
+
+    private func importedPodcastCommentaryNeedsTranscript(
+        itemId: String,
+        store: SQLiteSessionStore
+    ) -> Bool {
+        guard (try? store.loadTranscriptTimeline(itemId: itemId)) == nil,
+              let layers = try? store.loadImportedCommentaryLayers(itemId: itemId) else { return false }
+        return layers.contains { layer in
+            guard layer.deletedAt == nil,
+                  layer.itemIdentity.itemType == .podcast,
+                  let records = try? store.loadImportedCommentaryInterjections(layerId: layer.id) else {
+                return false
+            }
+            return records.contains { record in
+                !Self.isInlinePodcastResolution(record.resolution)
+                    && PodcastTranscriptAnchorResolver.hasUsableContext(record.anchorEvidence)
             }
         }
     }
@@ -12111,6 +12195,7 @@ final class Gate1AppModel: ObservableObject {
         }
         guard let localURL = coordinator.validatedLocalURL(for: itemId) else { return }
         _ = try? engine?.updatePlaybackTransport(itemId: itemId, playbackURL: localURL.absoluteString)
+        resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
     }
 
     private func archiveLegacyLibraryIfNeeded(at databaseURL: URL) throws -> URL? {

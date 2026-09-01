@@ -140,6 +140,7 @@ struct Build23ImportedMarginSnapshot: Identifiable, Equatable {
     let resolution: AnchorResolutionEvidenceClass
     let positionDescription: String
     let isPlayable: Bool
+    let hasVoice: Bool
 }
 
 struct Build23ImportedLayerSnapshot: Identifiable, Equatable {
@@ -195,6 +196,7 @@ enum Build23RecipientAction: Equatable {
     case setLayerEnabled(id: String, enabled: Bool)
     case setLayerMuted(id: String, muted: Bool)
     case setLayerRevealMode(id: String, mode: ImportedCommentaryRevealMode)
+    case listenToMargin(layerID: String, marginID: String)
 }
 
 @MainActor
@@ -335,7 +337,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                             reviewedText: margin.approvedTranscript,
                             resolution: margin.resolution.evidenceClass,
                             positionDescription: Self.positionDescription(for: margin.resolution),
-                            isPlayable: Gate1AppModel.isPlayableImportedCommentaryResolution(margin.resolution)
+                            isPlayable: Gate1AppModel.isPlayableImportedCommentaryResolution(margin.resolution),
+                            hasVoice: margin.audioPath != nil
                         )
                     }
                 return Build23ImportedLayerSnapshot(
@@ -460,6 +463,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             model.setImportedCommentaryLayerMuted(id, muted: muted)
         case .setLayerRevealMode(let id, let mode):
             model.setImportedCommentaryRevealMode(id, mode: mode)
+        case .listenToMargin(let layerID, let marginID):
+            model.listenToImportedCommentary(layerID: layerID, interjectionID: marginID)
         }
         objectWillChange.send()
     }

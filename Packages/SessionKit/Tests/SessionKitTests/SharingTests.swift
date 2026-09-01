@@ -537,7 +537,8 @@ final class SharingTests: XCTestCase {
             exactDigestContradiction: false
         )
         XCTAssertEqual(partial.evidenceClass, .ambiguous)
-        XCTAssertNil(partial.localMediaTimeMs)
+        XCTAssertEqual(partial.localMediaTimeMs, 71_000)
+        XCTAssertTrue(partial.isAmbiguous)
     }
 
     func testPodcastTimestampFallbackStaysDisabledAfterEqualDurationCounterexample() {
@@ -620,6 +621,34 @@ final class SharingTests: XCTestCase {
             recipientTimeline: repeated
         ).evidenceClass, .ambiguous)
 
+        let fuzzyTimeline = TranscriptTimeline(segments: [
+            .init(
+                id: "fuzzy-pre",
+                startMs: 40_000,
+                endMs: 41_000,
+                text: "the durable prefix has nearly enough unique words here"
+            ),
+            .init(
+                id: "fuzzy-post",
+                startMs: 42_000,
+                endMs: 43_000,
+                text: "the following suffix was also uniquely present right now"
+            )
+        ], chapters: [])
+        let fuzzy = PodcastTranscriptAnchorResolver.resolve(
+            anchor: anchor,
+            recipientTimeline: fuzzyTimeline
+        )
+        XCTAssertEqual(fuzzy.evidenceClass, .transcriptVerified)
+        XCTAssertEqual(fuzzy.localMediaTimeMs, 41_500)
+
+        let transcriptOverAbsentAcoustic = PodcastAnchorFusionResolver.fuse(
+            transcript: fuzzy,
+            acoustic: .init(evidenceClass: .absentFromRecipientEdition)
+        )
+        XCTAssertEqual(transcriptOverAbsentAcoustic.evidenceClass, .transcriptVerified)
+        XCTAssertEqual(transcriptOverAbsentAcoustic.localMediaTimeMs, 41_500)
+
         let queries = [
             PodcastPortableAnchorQuery(packageScopedId: "one", senderMediaTimeMs: 10_000, evidence: []),
             PodcastPortableAnchorQuery(packageScopedId: "two", senderMediaTimeMs: 20_000, evidence: [])
@@ -633,6 +662,32 @@ final class SharingTests: XCTestCase {
         )
         XCTAssertEqual(guarded["one"]?.evidenceClass, .ambiguous)
         XCTAssertEqual(guarded["two"]?.evidenceClass, .ambiguous)
+
+        let interpolationQueries = [
+            PodcastPortableAnchorQuery(packageScopedId: "start", senderMediaTimeMs: 10_000, evidence: []),
+            PodcastPortableAnchorQuery(packageScopedId: "middle", senderMediaTimeMs: 20_000, evidence: []),
+            PodcastPortableAnchorQuery(packageScopedId: "end", senderMediaTimeMs: 30_000, evidence: [])
+        ]
+        let interpolated = PodcastAnchorFusionResolver.interpolatingBetweenVerifiedAnchors(
+            queries: interpolationQueries,
+            resolutions: [
+                "start": .init(evidenceClass: .acousticVerified, localMediaTimeMs: 20_000, confidence: 0.94),
+                "middle": .init(evidenceClass: .unresolved),
+                "end": .init(evidenceClass: .transcriptVerified, localMediaTimeMs: 45_000, confidence: 0.9)
+            ]
+        )
+        XCTAssertEqual(interpolated["middle"]?.evidenceClass, .mapInterpolated)
+        XCTAssertEqual(interpolated["middle"]?.localMediaTimeMs, 32_500)
+
+        let noExtrapolation = PodcastAnchorFusionResolver.interpolatingBetweenVerifiedAnchors(
+            queries: interpolationQueries,
+            resolutions: [
+                "start": .init(evidenceClass: .unresolved),
+                "middle": .init(evidenceClass: .acousticVerified, localMediaTimeMs: 32_500),
+                "end": .init(evidenceClass: .transcriptVerified, localMediaTimeMs: 45_000)
+            ]
+        )
+        XCTAssertEqual(noExtrapolation["start"]?.evidenceClass, .unresolved)
     }
 
     func testPodcastResolverMathBenchmarkHasNoFalseConfidentPlacements() {

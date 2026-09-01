@@ -208,6 +208,18 @@ public enum PodcastAcousticAnchorResolver {
                 ))
             })
         }
+        if queries.allSatisfy({ $0.evidence.isEmpty }) {
+            return Dictionary(uniqueKeysWithValues: queries.map { query in
+                (query.packageScopedId, resolveCandidates(
+                    [],
+                    query: query,
+                    senderDurationMs: senderDurationMs,
+                    recipientDurationMs: nil,
+                    strongSourceIdentity: strongSourceIdentity,
+                    exactDigestContradiction: senderExactEditionSHA256 != nil
+                ))
+            })
+        }
 
         #if canImport(AVFoundation) && canImport(ShazamKit)
         let recipientDurationMs = try await durationMs(of: recipientAudioURL)
@@ -301,8 +313,11 @@ public enum PodcastAcousticAnchorResolver {
             )
         }
         guard query.evidence.count <= 1 || candidates.count == query.evidence.count else {
+            let strongest = candidates.max { lhs, rhs in lhs.confidence < rhs.confidence }
             return ImportedAnchorResolution(
                 evidenceClass: .ambiguous,
+                localMediaTimeMs: strongest.map { max(0, $0.timeMs) },
+                confidence: strongest?.confidence,
                 isAmbiguous: true,
                 algorithmVersion: "podcast-anchor.v1"
             )
@@ -359,11 +374,29 @@ public enum PodcastTranscriptAnchorResolver {
     public static let contextTokenCount = 12
     public static let minimumContextTokenCount = 6
     public static let maximumBoundarySpreadMs = 10_000
+    public static let minimumTokenSimilarity = 0.72
+    public static let minimumUniquenessGap = 0.08
 
     private struct TimedToken {
         let value: String
         let startMs: Int
         let endMs: Int
+    }
+
+    private struct FuzzyMatch {
+        let range: Range<Int>
+        let similarity: Double
+    }
+
+    private enum MatchSelection {
+        case none
+        case unique(FuzzyMatch)
+        case ambiguous
+    }
+
+    public static func hasUsableContext(_ anchor: PortableAnchorEvidence) -> Bool {
+        normalizedTokens(anchor.prefix ?? "").count >= minimumContextTokenCount
+            || normalizedTokens(anchor.suffix ?? "").count >= minimumContextTokenCount
     }
 
     public static func resolve(
@@ -388,48 +421,65 @@ public enum PodcastTranscriptAnchorResolver {
             )
         }
 
-        let prefixMatches = hasPrefix ? matches(prefix, in: recipientTokens) : []
-        let suffixMatches = hasSuffix ? matches(suffix, in: recipientTokens) : []
-        if prefixMatches.count > 1 || suffixMatches.count > 1 {
-            return ImportedAnchorResolution(
-                evidenceClass: .ambiguous,
-                isAmbiguous: true,
-                algorithmVersion: "podcast-transcript-anchor.v1"
-            )
-        }
-        if hasPrefix && prefixMatches.count != 1 || hasSuffix && suffixMatches.count != 1 {
+        let prefixMatches = hasPrefix ? fuzzyMatches(prefix, in: recipientTokens) : []
+        let suffixMatches = hasSuffix ? fuzzyMatches(suffix, in: recipientTokens) : []
+        if hasPrefix, hasSuffix {
+            let pairs = prefixMatches.flatMap { prefixMatch in
+                suffixMatches.compactMap { suffixMatch -> (prefix: FuzzyMatch, suffix: FuzzyMatch, score: Double, timeMs: Int)? in
+                    let prefixEnd = recipientTokens[prefixMatch.range.upperBound - 1].endMs
+                    let suffixStart = recipientTokens[suffixMatch.range.lowerBound].startMs
+                    guard suffixStart >= prefixEnd,
+                          suffixStart - prefixEnd <= maximumBoundarySpreadMs else { return nil }
+                    return (
+                        prefixMatch,
+                        suffixMatch,
+                        (prefixMatch.similarity + suffixMatch.similarity) / 2,
+                        (prefixEnd + suffixStart) / 2
+                    )
+                }
+            }.sorted { lhs, rhs in lhs.score > rhs.score }
+            if let best = pairs.first {
+                if let runnerUp = pairs.dropFirst().first,
+                   runnerUp.score >= best.score - minimumUniquenessGap,
+                   abs(runnerUp.timeMs - best.timeMs) > maximumBoundarySpreadMs {
+                    return ambiguousTranscriptResolution()
+                }
+                return ImportedAnchorResolution(
+                    evidenceClass: .transcriptVerified,
+                    localMediaTimeMs: best.timeMs,
+                    confidence: transcriptConfidence(similarity: best.score, usesBothSides: true),
+                    algorithmVersion: "podcast-transcript-anchor.v2"
+                )
+            }
+            if !prefixMatches.isEmpty || !suffixMatches.isEmpty {
+                return ambiguousTranscriptResolution()
+            }
             return ImportedAnchorResolution(
                 evidenceClass: .unresolved,
-                algorithmVersion: "podcast-transcript-anchor.v1"
+                algorithmVersion: "podcast-transcript-anchor.v2"
             )
         }
 
-        var boundaries: [Int] = []
-        if let match = prefixMatches.first {
-            boundaries.append(recipientTokens[match.upperBound - 1].endMs)
-        }
-        if let match = suffixMatches.first {
-            boundaries.append(recipientTokens[match.lowerBound].startMs)
-        }
-        guard let first = boundaries.min(), let last = boundaries.max() else {
+        let matches = hasPrefix ? prefixMatches : suffixMatches
+        switch selectUniqueMatch(matches, tokenCount: hasPrefix ? prefix.count : suffix.count) {
+        case .none:
             return ImportedAnchorResolution(
                 evidenceClass: .unresolved,
-                algorithmVersion: "podcast-transcript-anchor.v1"
+                algorithmVersion: "podcast-transcript-anchor.v2"
             )
-        }
-        guard last - first <= maximumBoundarySpreadMs else {
+        case .ambiguous:
+            return ambiguousTranscriptResolution()
+        case .unique(let match):
+            let timeMs = hasPrefix
+                ? recipientTokens[match.range.upperBound - 1].endMs
+                : recipientTokens[match.range.lowerBound].startMs
             return ImportedAnchorResolution(
-                evidenceClass: .ambiguous,
-                isAmbiguous: true,
-                algorithmVersion: "podcast-transcript-anchor.v1"
+                evidenceClass: .transcriptVerified,
+                localMediaTimeMs: timeMs,
+                confidence: transcriptConfidence(similarity: match.similarity, usesBothSides: false),
+                algorithmVersion: "podcast-transcript-anchor.v2"
             )
         }
-        return ImportedAnchorResolution(
-            evidenceClass: .transcriptVerified,
-            localMediaTimeMs: (first + last) / 2,
-            confidence: boundaries.count == 2 ? 0.94 : 0.84,
-            algorithmVersion: "podcast-transcript-anchor.v1"
-        )
     }
 
     private static func timedTokens(in timeline: TranscriptTimeline) -> [TimedToken] {
@@ -447,15 +497,81 @@ public enum PodcastTranscriptAnchorResolver {
         }
     }
 
-    private static func matches(
+    private static func fuzzyMatches(
         _ needle: [String],
         in haystack: [TimedToken]
-    ) -> [Range<Int>] {
-        guard !needle.isEmpty, haystack.count >= needle.count else { return [] }
-        return (0...(haystack.count - needle.count)).compactMap { start in
-            let candidate = haystack[start..<(start + needle.count)].map(\.value)
-            return candidate == needle ? start..<(start + needle.count) : nil
+    ) -> [FuzzyMatch] {
+        guard !needle.isEmpty else { return [] }
+        let minimumLength = max(minimumContextTokenCount, needle.count - 2)
+        let maximumLength = needle.count + 2
+        var candidates: [FuzzyMatch] = []
+        for start in haystack.indices {
+            for length in minimumLength...maximumLength where start + length <= haystack.count {
+                let values = haystack[start..<(start + length)].map(\.value)
+                let similarity = tokenSimilarity(needle, values)
+                if similarity >= minimumTokenSimilarity {
+                    candidates.append(FuzzyMatch(range: start..<(start + length), similarity: similarity))
+                }
+            }
         }
+        var clustered: [FuzzyMatch] = []
+        for candidate in candidates.sorted(by: { $0.similarity > $1.similarity }) {
+            let midpoint = (candidate.range.lowerBound + candidate.range.upperBound) / 2
+            let overlapsExisting = clustered.contains { existing in
+                let existingMidpoint = (existing.range.lowerBound + existing.range.upperBound) / 2
+                return candidate.range.overlaps(existing.range)
+                    || abs(midpoint - existingMidpoint) <= max(2, needle.count / 2)
+            }
+            if !overlapsExisting { clustered.append(candidate) }
+        }
+        return clustered.sorted { lhs, rhs in
+            lhs.similarity == rhs.similarity
+                ? lhs.range.lowerBound < rhs.range.lowerBound
+                : lhs.similarity > rhs.similarity
+        }
+    }
+
+    private static func selectUniqueMatch(
+        _ matches: [FuzzyMatch],
+        tokenCount: Int
+    ) -> MatchSelection {
+        guard let best = matches.first else { return .none }
+        if let runnerUp = matches.dropFirst().first,
+           runnerUp.similarity >= best.similarity - minimumUniquenessGap,
+           abs(runnerUp.range.lowerBound - best.range.lowerBound) > tokenCount {
+            return .ambiguous
+        }
+        return .unique(best)
+    }
+
+    private static func tokenSimilarity(_ lhs: [String], _ rhs: [String]) -> Double {
+        guard !lhs.isEmpty || !rhs.isEmpty else { return 1 }
+        var previous = Array(0...rhs.count)
+        for (lhsIndex, lhsToken) in lhs.enumerated() {
+            var current = Array(repeating: 0, count: rhs.count + 1)
+            current[0] = lhsIndex + 1
+            for (rhsIndex, rhsToken) in rhs.enumerated() {
+                current[rhsIndex + 1] = min(
+                    current[rhsIndex] + 1,
+                    previous[rhsIndex + 1] + 1,
+                    previous[rhsIndex] + (lhsToken == rhsToken ? 0 : 1)
+                )
+            }
+            previous = current
+        }
+        return 1 - Double(previous[rhs.count]) / Double(max(lhs.count, rhs.count))
+    }
+
+    private static func transcriptConfidence(similarity: Double, usesBothSides: Bool) -> Double {
+        min(0.98, max(0.7, similarity * (usesBothSides ? 0.96 : 0.86)))
+    }
+
+    private static func ambiguousTranscriptResolution() -> ImportedAnchorResolution {
+        ImportedAnchorResolution(
+            evidenceClass: .ambiguous,
+            isAmbiguous: true,
+            algorithmVersion: "podcast-transcript-anchor.v2"
+        )
     }
 
     private static func normalizedTokens(_ text: String) -> [String] {
@@ -477,6 +593,8 @@ public enum PodcastAnchorFusionResolver {
     /// Transcript segment boundaries are coarse even when their words identify
     /// the right passage. Acoustic evidence remains the timing authority.
     public static let maximumCrossEvidenceSpreadMs = 10_000
+    public static let maximumInterpolationSpanMs = 600_000
+    public static let permittedInterpolationRate = 0.5...1.5
 
     public static func fuse(
         transcript: ImportedAnchorResolution,
@@ -499,10 +617,10 @@ public enum PodcastAnchorFusionResolver {
             )
         }
         if transcriptTime != nil {
-            guard acoustic.evidenceClass != .ambiguous,
-                  acoustic.evidenceClass != .absentFromRecipientEdition else { return ambiguous() }
+            guard acoustic.evidenceClass != .ambiguous else { return ambiguous() }
             return ImportedAnchorResolution(
                 evidenceClass: .transcriptVerified,
+                localMediaTimeMs: transcriptTime,
                 confidence: transcript.confidence,
                 algorithmVersion: "podcast-anchor-fusion.v1"
             )
@@ -547,6 +665,63 @@ public enum PodcastAnchorFusionResolver {
         return resolutions.mapValues { $0 }.merging(
             Dictionary(uniqueKeysWithValues: contradicted.map { ($0, ambiguous()) })
         ) { _, replacement in replacement }
+    }
+
+    /// Fills a still-unresolved margin only when independently verified margins
+    /// bracket it in both sender and recipient time. This deliberately does not
+    /// extrapolate before or after the verified range, and it does not override
+    /// an ambiguous or edition-absence result.
+    public static func interpolatingBetweenVerifiedAnchors(
+        queries: [PodcastPortableAnchorQuery],
+        resolutions: [String: ImportedAnchorResolution]
+    ) -> [String: ImportedAnchorResolution] {
+        let ordered = queries.compactMap { query -> (id: String, sender: Int)? in
+            guard let sender = query.senderMediaTimeMs else { return nil }
+            return (query.packageScopedId, sender)
+        }.sorted { lhs, rhs in
+            lhs.sender == rhs.sender ? lhs.id < rhs.id : lhs.sender < rhs.sender
+        }
+        let verified = ordered.compactMap { query -> (id: String, sender: Int, recipient: Int, confidence: Double)? in
+            guard let resolution = resolutions[query.id],
+                  isDirectlyVerified(resolution),
+                  let recipient = resolution.localMediaTimeMs else { return nil }
+            return (query.id, query.sender, recipient, resolution.confidence ?? 0.9)
+        }
+        guard verified.count >= 2 else { return resolutions }
+
+        var result = resolutions
+        for query in ordered {
+            guard result[query.id]?.evidenceClass == .unresolved,
+                  let lower = verified.last(where: { $0.sender < query.sender }),
+                  let upper = verified.first(where: { $0.sender > query.sender }) else { continue }
+            let senderSpan = upper.sender - lower.sender
+            let recipientSpan = upper.recipient - lower.recipient
+            guard senderSpan > 0,
+                  senderSpan <= maximumInterpolationSpanMs,
+                  recipientSpan > 0 else { continue }
+            let rate = Double(recipientSpan) / Double(senderSpan)
+            guard permittedInterpolationRate.contains(rate) else { continue }
+            let progress = Double(query.sender - lower.sender) / Double(senderSpan)
+            let recipient = lower.recipient + Int((Double(recipientSpan) * progress).rounded())
+            result[query.id] = ImportedAnchorResolution(
+                evidenceClass: .mapInterpolated,
+                localMediaTimeMs: recipient,
+                confidence: min(lower.confidence, upper.confidence) * 0.75,
+                algorithmVersion: "podcast-anchor-interpolation.v1"
+            )
+        }
+        return result
+    }
+
+    private static func isDirectlyVerified(_ resolution: ImportedAnchorResolution) -> Bool {
+        guard !resolution.isAmbiguous else { return false }
+        switch resolution.evidenceClass {
+        case .exactEdition, .transcriptVerified, .acousticVerified, .fused, .recipientConfirmed:
+            return true
+        case .articleTextVerified, .mapInterpolated, .timestampFallback, .ambiguous,
+             .absentFromRecipientEdition, .unresolved:
+            return false
+        }
     }
 
     private static func ambiguous() -> ImportedAnchorResolution {

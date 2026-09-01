@@ -112,7 +112,8 @@ final class Build23RecipientSharingExperienceTests: XCTestCase {
                     reviewedText: "Notice the pause before the answer.",
                     resolution: .transcriptVerified,
                     positionDescription: "Chapter 2 · 08:14",
-                    isPlayable: true
+                    isPlayable: true,
+                    hasVoice: true
                 )
             ]
         )

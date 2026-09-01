@@ -138,7 +138,7 @@ struct Build23ImportedMarginPresentation: View {
                         .foregroundStyle(AppColors.secondaryText)
                 }
 
-                marginRail(layer.margins)
+                marginRail(layer)
             }
         }
     }
@@ -245,25 +245,25 @@ struct Build23ImportedMarginPresentation: View {
     }
 
     @ViewBuilder
-    private func marginRail(_ margins: [Build23ImportedMarginSnapshot]) -> some View {
+    private func marginRail(_ layer: Build23ImportedLayerSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Margin placement")
                 .font(.headline)
                 .foregroundStyle(AppColors.text)
 
-            if margins.isEmpty {
+            if layer.margins.isEmpty {
                 Text("No Margins in this layer")
                     .font(.subheadline)
                     .foregroundStyle(AppColors.secondaryText)
             } else {
-                ForEach(margins) { margin in
-                    marginCard(margin)
+                ForEach(layer.margins) { margin in
+                    marginCard(margin, layerID: layer.id)
                 }
             }
         }
     }
 
-    private func marginCard(_ margin: Build23ImportedMarginSnapshot) -> some View {
+    private func marginCard(_ margin: Build23ImportedMarginSnapshot, layerID: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(margin.reviewedText)
                 .font(.body)
@@ -285,6 +285,16 @@ struct Build23ImportedMarginPresentation: View {
             .accessibilityLabel(
                 Text("Placement resolution. \(Build23ImportedLayerPresentation.marginResolutionLabel(margin.resolution))")
             )
+
+            if margin.hasVoice {
+                Button {
+                    coordinator.send(.listenToMargin(layerID: layerID, marginID: margin.id))
+                } label: {
+                    Label("Listen", systemImage: "play.fill")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .accessibilityIdentifier("build23.imported.margin.\(margin.id).listen")
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
