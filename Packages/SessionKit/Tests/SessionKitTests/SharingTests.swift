@@ -536,9 +536,21 @@ final class SharingTests: XCTestCase {
             strongSourceIdentity: true,
             exactDigestContradiction: false
         )
-        XCTAssertEqual(partial.evidenceClass, .ambiguous)
+        XCTAssertEqual(partial.evidenceClass, .acousticVerified)
         XCTAssertEqual(partial.localMediaTimeMs, 71_000)
-        XCTAssertTrue(partial.isAmbiguous)
+        XCTAssertFalse(partial.isAmbiguous)
+        XCTAssertEqual(partial.algorithmVersion, "podcast-anchor-partial-flank.v2")
+
+        let weakPartial = PodcastAcousticAnchorResolver.resolveCandidates(
+            [(timeMs: 71_000, confidence: 0.72)],
+            query: twoFlanks,
+            senderDurationMs: 100_000,
+            recipientDurationMs: 110_000,
+            strongSourceIdentity: true,
+            exactDigestContradiction: false
+        )
+        XCTAssertEqual(weakPartial.evidenceClass, .ambiguous)
+        XCTAssertTrue(weakPartial.isAmbiguous)
     }
 
     func testPodcastTimestampFallbackStaysDisabledAfterEqualDurationCounterexample() {
@@ -664,27 +676,32 @@ final class SharingTests: XCTestCase {
         XCTAssertEqual(guarded["two"]?.evidenceClass, .ambiguous)
 
         let interpolationQueries = [
-            PodcastPortableAnchorQuery(packageScopedId: "start", senderMediaTimeMs: 10_000, evidence: []),
-            PodcastPortableAnchorQuery(packageScopedId: "middle", senderMediaTimeMs: 20_000, evidence: []),
-            PodcastPortableAnchorQuery(packageScopedId: "end", senderMediaTimeMs: 30_000, evidence: [])
+            PodcastPortableAnchorQuery(packageScopedId: "start", senderMediaTimeMs: 171_225, evidence: []),
+            PodcastPortableAnchorQuery(packageScopedId: "middle-one", senderMediaTimeMs: 286_515, evidence: []),
+            PodcastPortableAnchorQuery(packageScopedId: "middle-two", senderMediaTimeMs: 347_671, evidence: []),
+            PodcastPortableAnchorQuery(packageScopedId: "end", senderMediaTimeMs: 397_596, evidence: [])
         ]
         let interpolated = PodcastAnchorFusionResolver.interpolatingBetweenVerifiedAnchors(
             queries: interpolationQueries,
             resolutions: [
-                "start": .init(evidenceClass: .acousticVerified, localMediaTimeMs: 20_000, confidence: 0.94),
-                "middle": .init(evidenceClass: .unresolved),
-                "end": .init(evidenceClass: .transcriptVerified, localMediaTimeMs: 45_000, confidence: 0.9)
+                "start": .init(evidenceClass: .acousticVerified, localMediaTimeMs: 173_054, confidence: 0.9),
+                "middle-one": .init(evidenceClass: .absentFromRecipientEdition),
+                "middle-two": .init(evidenceClass: .absentFromRecipientEdition),
+                "end": .init(evidenceClass: .fused, localMediaTimeMs: 413_195, confidence: 1)
             ]
         )
-        XCTAssertEqual(interpolated["middle"]?.evidenceClass, .mapInterpolated)
-        XCTAssertEqual(interpolated["middle"]?.localMediaTimeMs, 32_500)
+        XCTAssertEqual(interpolated["middle-one"]?.evidenceClass, .mapInterpolated)
+        XCTAssertEqual(interpolated["middle-one"]?.localMediaTimeMs, 302_114)
+        XCTAssertEqual(interpolated["middle-two"]?.evidenceClass, .mapInterpolated)
+        XCTAssertEqual(interpolated["middle-two"]?.localMediaTimeMs, 363_270)
 
         let noExtrapolation = PodcastAnchorFusionResolver.interpolatingBetweenVerifiedAnchors(
             queries: interpolationQueries,
             resolutions: [
                 "start": .init(evidenceClass: .unresolved),
-                "middle": .init(evidenceClass: .acousticVerified, localMediaTimeMs: 32_500),
-                "end": .init(evidenceClass: .transcriptVerified, localMediaTimeMs: 45_000)
+                "middle-one": .init(evidenceClass: .unresolved),
+                "middle-two": .init(evidenceClass: .acousticVerified, localMediaTimeMs: 363_270),
+                "end": .init(evidenceClass: .transcriptVerified, localMediaTimeMs: 413_195)
             ]
         )
         XCTAssertEqual(noExtrapolation["start"]?.evidenceClass, .unresolved)

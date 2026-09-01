@@ -183,6 +183,7 @@ public enum PodcastAnchorEvidenceGenerator {
 /// full reference signature is generated once and remains on the recipient.
 public enum PodcastAcousticAnchorResolver {
     public static let maximumFusionSpreadMs = 1_500
+    public static let minimumPartialFlankConfidence = 0.9
 
     public static func resolve(
         queries: [PodcastPortableAnchorQuery],
@@ -314,6 +315,18 @@ public enum PodcastAcousticAnchorResolver {
         }
         guard query.evidence.count <= 1 || candidates.count == query.evidence.count else {
             let strongest = candidates.max { lhs, rhs in lhs.confidence < rhs.confidence }
+            if candidates.count == 1,
+               query.evidence.count == 2,
+               strongSourceIdentity,
+               let strongest,
+               strongest.confidence >= minimumPartialFlankConfidence {
+                return ImportedAnchorResolution(
+                    evidenceClass: .acousticVerified,
+                    localMediaTimeMs: max(0, strongest.timeMs),
+                    confidence: strongest.confidence * 0.9,
+                    algorithmVersion: "podcast-anchor-partial-flank.v2"
+                )
+            }
             return ImportedAnchorResolution(
                 evidenceClass: .ambiguous,
                 localMediaTimeMs: strongest.map { max(0, $0.timeMs) },
@@ -667,10 +680,11 @@ public enum PodcastAnchorFusionResolver {
         ) { _, replacement in replacement }
     }
 
-    /// Fills a still-unresolved margin only when independently verified margins
-    /// bracket it in both sender and recipient time. This deliberately does not
-    /// extrapolate before or after the verified range, and it does not override
-    /// an ambiguous or edition-absence result.
+    /// Projects an unresolved or acoustically absent margin only when direct
+    /// anchors bracket it in both sender and recipient time. Dynamic podcast
+    /// editions behave like piecewise timing offsets around inserted/replaced
+    /// segments, so the nearest direct anchor supplies the offset. The result
+    /// remains bounded by the direct anchors and never extrapolates.
     public static func interpolatingBetweenVerifiedAnchors(
         queries: [PodcastPortableAnchorQuery],
         resolutions: [String: ImportedAnchorResolution]
@@ -691,7 +705,8 @@ public enum PodcastAnchorFusionResolver {
 
         var result = resolutions
         for query in ordered {
-            guard result[query.id]?.evidenceClass == .unresolved,
+            guard let currentEvidenceClass = result[query.id]?.evidenceClass,
+                  currentEvidenceClass == .unresolved || currentEvidenceClass == .absentFromRecipientEdition,
                   let lower = verified.last(where: { $0.sender < query.sender }),
                   let upper = verified.first(where: { $0.sender > query.sender }) else { continue }
             let senderSpan = upper.sender - lower.sender
@@ -701,13 +716,16 @@ public enum PodcastAnchorFusionResolver {
                   recipientSpan > 0 else { continue }
             let rate = Double(recipientSpan) / Double(senderSpan)
             guard permittedInterpolationRate.contains(rate) else { continue }
-            let progress = Double(query.sender - lower.sender) / Double(senderSpan)
-            let recipient = lower.recipient + Int((Double(recipientSpan) * progress).rounded())
+            let lowerDistance = query.sender - lower.sender
+            let upperDistance = upper.sender - query.sender
+            let nearest = lowerDistance <= upperDistance ? lower : upper
+            let recipient = query.sender + (nearest.recipient - nearest.sender)
+            guard recipient > lower.recipient, recipient < upper.recipient else { continue }
             result[query.id] = ImportedAnchorResolution(
                 evidenceClass: .mapInterpolated,
                 localMediaTimeMs: recipient,
-                confidence: min(lower.confidence, upper.confidence) * 0.75,
-                algorithmVersion: "podcast-anchor-interpolation.v1"
+                confidence: min(lower.confidence, upper.confidence) * 0.7,
+                algorithmVersion: "podcast-anchor-piecewise-offset.v2"
             )
         }
         return result

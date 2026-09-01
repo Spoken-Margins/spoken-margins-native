@@ -12081,9 +12081,13 @@ final class Gate1AppModel: ObservableObject {
                             )
                         })
                     )
-                    let fusedResolutions = PodcastAnchorFusionResolver.interpolatingBetweenVerifiedAnchors(
+                    let projectedResolutions = PodcastAnchorFusionResolver.interpolatingBetweenVerifiedAnchors(
                         queries: queries,
                         resolutions: monotonicResolutions
+                    )
+                    let fusedResolutions = PodcastAnchorFusionResolver.enforcingMonotonicOrder(
+                        queries: queries,
+                        resolutions: projectedResolutions
                     )
                     var updated = records
                     for index in updated.indices {
