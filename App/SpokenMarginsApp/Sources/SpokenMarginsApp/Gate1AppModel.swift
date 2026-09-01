@@ -2503,13 +2503,8 @@ final class Gate1AppModel: ObservableObject {
             if presentSourceLinkCandidateReviewIfAvailable(request: request, result: result, startSession: startSession) {
                 return false
             }
-            let store = try requireStore()
-            if engine == nil {
-                installEngine(try makeEngine(store: store))
-            }
-            guard let engine else { return false }
             if !startSession {
-                guard let item = try engine.importResolvedSourceLinkInBackground(request, result: result) else {
+                guard let item = try persistResolvedSourceLinkInBackground(request: request, result: result) else {
                     reportFailure(sourceLinkFailureMessage(
                         status: result.status.rawValue,
                         reason: result.failureReason,
@@ -2517,17 +2512,14 @@ final class Gate1AppModel: ObservableObject {
                     ))
                     return false
                 }
-                libraryItems = try loadLibraryRows(store: store)
-                diagnostics["lastBackgroundSourceLinkImport"] = item.id
-                markOnboardingSteps([.addedOwnSource, .addedPodcast])
-                schedulePodcastDownloadIfNeeded(itemId: item.id)
-                scheduleSourceTranscriptImportIfAvailable(
-                    result.selectedCandidate?.transcriptLinks ?? result.candidates.flatMap(\.transcriptLinks),
-                    itemId: item.id
-                )
                 reportConfirmation("Added \(item.title) to Library without changing Now Playing.")
                 return true
             }
+            let store = try requireStore()
+            if engine == nil {
+                installEngine(try makeEngine(store: store))
+            }
+            guard let engine else { return false }
             let imported = try engine.importResolvedSourceLink(request, result: result, startSessionWhenPlayable: startSession)
             snapshot = startSession && imported.linkResolutionStatus == LinkResolutionStatus.playable.rawValue
                 ? try applyPreferredPlaybackRate(to: imported, engine: engine)
@@ -2568,6 +2560,29 @@ final class Gate1AppModel: ObservableObject {
             reportFailure(error, context: "Source link import failed")
             return false
         }
+    }
+
+    private func persistResolvedSourceLinkInBackground(
+        request: LinkResolutionRequest,
+        result: LinkResolutionResult
+    ) throws -> Item? {
+        let store = try requireStore()
+        if engine == nil {
+            installEngine(try makeEngine(store: store))
+        }
+        guard let engine,
+              let item = try engine.importResolvedSourceLinkInBackground(request, result: result) else {
+            return nil
+        }
+        libraryItems = try loadLibraryRows(store: store)
+        diagnostics["lastBackgroundSourceLinkImport"] = item.id
+        markOnboardingSteps([.addedOwnSource, .addedPodcast])
+        schedulePodcastDownloadIfNeeded(itemId: item.id)
+        scheduleSourceTranscriptImportIfAvailable(
+            result.selectedCandidate?.transcriptLinks ?? result.candidates.flatMap(\.transcriptLinks),
+            itemId: item.id
+        )
+        return item
     }
 
     private func presentSourceLinkCandidateReviewIfAvailable(
@@ -5507,7 +5522,8 @@ final class Gate1AppModel: ObservableObject {
                 throw SpokenMarginsPackageArchiveError.invalidDigest
             }
             let store = try requireStore()
-            if let existing = try store.loadImportedCommentaryLayer(packageDigest: digest) {
+            if let existing = try store.loadImportedCommentaryLayer(packageDigest: digest),
+               importedLayerHasValidItemAssociation(existing, store: store) {
                 if let itemId = existing.itemId {
                     openItem(id: itemId)
                     reportSuccess("These shared Margins are already in your library. Playback has not started.")
@@ -5526,7 +5542,11 @@ final class Gate1AppModel: ObservableObject {
                 contents: contents,
                 matchingItemId: matchingItemId
             )
-            diagnostics["lastSpokenMarginsPackageImport"] = "previewed:\(digest)"
+            if try store.loadImportedCommentaryLayer(packageDigest: digest) == nil {
+                diagnostics["lastSpokenMarginsPackageImport"] = "previewed:\(digest)"
+            } else {
+                diagnostics["lastSpokenMarginsPackageImport"] = "repair_previewed:\(digest)"
+            }
             return true
         } catch {
             if let workingDirectory { try? FileManager.default.removeItem(at: workingDirectory) }
@@ -5611,13 +5631,27 @@ final class Gate1AppModel: ObservableObject {
                 let item = try itemId.map { try store.loadItem(id: $0) }
                 let localItem = item.map(self.localSharedItemIdentity(for:))
                 let itemText = item?.text
-                let disposition = try SpokenMarginsPackageImporter.importPackage(
-                    review.contents,
-                    itemId: itemId,
-                    localItem: localItem,
-                    itemText: itemText,
-                    repository: store
-                )
+                let disposition: ImportedCommentaryImportDisposition
+                if let digest = review.contents.manifest.contentDigest,
+                   let existing = try store.loadImportedCommentaryLayer(packageDigest: digest) {
+                    try self.repairImportedLayerAssociation(
+                        existing,
+                        contents: review.contents,
+                        itemId: itemId,
+                        localItem: localItem,
+                        itemText: itemText,
+                        store: store
+                    )
+                    disposition = .duplicate(existingLayerId: existing.id)
+                } else {
+                    disposition = try SpokenMarginsPackageImporter.importPackage(
+                        review.contents,
+                        itemId: itemId,
+                        localItem: localItem,
+                        itemText: itemText,
+                        repository: store
+                    )
+                }
                 switch disposition {
                 case .duplicate(let existingLayerId):
                     self.diagnostics["lastSpokenMarginsPackageImport"] = "duplicate_layer:\(existingLayerId)"
@@ -5689,7 +5723,12 @@ final class Gate1AppModel: ObservableObject {
             sourceSurface: "spoken_margins_package",
             createdAt: Date()
         )
-        var result = try await PublicPodcastLinkResolver().resolveAsync(request)
+        var result: LinkResolutionResult
+        if let sourceLinkResolver {
+            result = try sourceLinkResolver.resolve(request)
+        } else {
+            result = try await PublicPodcastLinkResolver().resolveAsync(request)
+        }
         if result.status == .needsReview {
             let exactEnclosureMatches = result.candidates.filter {
                 normalizedSharingURL($0.audioURL) == normalizedSharingURL(item.enclosureURL)
@@ -5708,11 +5747,58 @@ final class Gate1AppModel: ObservableObject {
             result.selectedCandidate = selected
         }
         guard result.status == .playable,
-              importResolvedSourceLink(request: request, result: result, startSession: false),
-              let itemId = snapshot.itemId ?? selectedItem.id.nilIfEmpty else {
+              let importedItem = try persistResolvedSourceLinkInBackground(request: request, result: result) else {
             throw SessionKitError.persistenceFailed("shared_podcast_item_not_created")
         }
-        return itemId
+        return importedItem.id
+    }
+
+    private func importedLayerHasValidItemAssociation(
+        _ layer: ImportedCommentaryLayer,
+        store: SQLiteSessionStore
+    ) -> Bool {
+        guard layer.sourceResolutionStatus != .wrongSource,
+              let itemId = layer.itemId,
+              let item = try? store.loadItem(id: itemId) else { return false }
+        guard item.deletedAt == nil else { return false }
+        return ImportedItemResolver.canRepresentSameWork(
+            layer.itemIdentity,
+            localSharedItemIdentity(for: item)
+        )
+    }
+
+    private func repairImportedLayerAssociation(
+        _ existing: ImportedCommentaryLayer,
+        contents: VerifiedSpokenMarginsPackage,
+        itemId: String?,
+        localItem: SharedItemIdentity?,
+        itemText: String?,
+        store: SQLiteSessionStore
+    ) throws {
+        guard let itemId,
+              let localItem,
+              let commentary = contents.commentaryLayers.first else {
+            throw SessionKitError.persistenceFailed("shared_package_repair_item_is_unavailable")
+        }
+        let resolution = ImportedItemResolver.resolve(
+            item: contents.manifest.item,
+            interjections: commentary.interjections,
+            against: localItem,
+            itemText: itemText
+        )
+        guard resolution.status != .wrongSource else {
+            throw SessionKitError.persistenceFailed("shared_package_repair_source_did_not_match")
+        }
+        var layer = existing
+        layer.itemId = itemId
+        layer.sourceResolutionStatus = resolution.status
+        try store.saveImportedCommentaryLayer(layer)
+        for var interjection in try store.loadImportedCommentaryInterjections(layerId: layer.id) {
+            interjection.resolution = resolution.anchorsByPackageScopedId[interjection.packageScopedId]
+                ?? ImportedAnchorResolution(evidenceClass: .unresolved)
+            try store.saveImportedCommentaryInterjection(interjection)
+        }
+        diagnostics["lastSpokenMarginsPackageRepair"] = "reassociated:\(layer.id):\(itemId)"
     }
 
     private func matchingItemID(
