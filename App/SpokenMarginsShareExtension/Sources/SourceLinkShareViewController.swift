@@ -33,6 +33,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
     private enum SharedImport: Sendable {
         case sourceLink(String)
         case browserText(BrowserTextSharePayload)
+        case spokenMarginsPackage
     }
 
     private var didProcess = false
@@ -74,6 +75,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         // Safari's preprocessor and local files carry typed content. Prefer those
         // before the generic URL representation supplied by the same share.
         let preferredIdentifiers = [
+            SpokenMarginsPackageHandoffStore.uniformTypeIdentifier,
             UTType.propertyList.identifier,
             UTType.pdf.identifier,
             UTType.fileURL.identifier,
@@ -101,6 +103,24 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         }
         let candidate = candidates[index]
         let candidateType = UTType(candidate.identifier)
+        if Self.isSpokenMarginsPackage(candidate) {
+            candidate.provider.loadFileRepresentation(forTypeIdentifier: candidate.identifier) { url, error in
+                guard let url else {
+                    completion(.failure(error ?? SourceLinkShareError.unsupportedInput))
+                    return
+                }
+                do {
+                    _ = try SpokenMarginsPackageHandoffStore.appGroup().savePackage(
+                        from: url,
+                        suggestedFilename: candidate.provider.suggestedName
+                    )
+                    completion(.success(.spokenMarginsPackage))
+                } catch {
+                    completion(.failure(error))
+                }
+            }
+            return
+        }
         if candidateType?.conforms(to: .pdf) == true || candidateType?.conforms(to: .text) == true {
             candidate.provider.loadFileRepresentation(forTypeIdentifier: candidate.identifier) { [weak self] url, _ in
                 if let url,
@@ -153,6 +173,8 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
             case .success(.browserText(let payload)):
                 try saveBrowserText(payload)
                 showSaved("Sent \(payload.source.title) to Spoken Margins.")
+            case .success(.spokenMarginsPackage):
+                showSaved("Sent shared session to Spoken Margins. Open Spoken Margins to import it.")
             case .failure(let error):
                 throw error
             }
@@ -365,9 +387,19 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
     }
 
     nonisolated private static func acceptsRegisteredIdentifier(_ identifier: String, suggestedName: String?) -> Bool {
+        if identifier == SpokenMarginsPackageHandoffStore.uniformTypeIdentifier
+            || ((suggestedName ?? "") as NSString).pathExtension.lowercased() == SpokenMarginsPackageHandoffStore.fileExtension {
+            return true
+        }
         guard let type = UTType(identifier), type.conforms(to: .text) else { return true }
         let fileExtension = ((suggestedName ?? "") as NSString).pathExtension.lowercased()
         return ["md", "markdown", "txt"].contains(fileExtension)
+    }
+
+    nonisolated private static func isSpokenMarginsPackage(_ candidate: ProviderCandidate) -> Bool {
+        candidate.identifier == SpokenMarginsPackageHandoffStore.uniformTypeIdentifier
+            || ((candidate.provider.suggestedName ?? "") as NSString).pathExtension.lowercased()
+                == SpokenMarginsPackageHandoffStore.fileExtension
     }
 
     nonisolated private static func firstURL(in text: String) -> URL? {
@@ -421,7 +453,7 @@ private enum SourceLinkShareError: Error, LocalizedError {
         case .noInput:
             return "No shared input was provided."
         case .unsupportedInput:
-            return "Spoken Margins could not read this share. Share a web page, podcast link, PDF, Markdown file, or text file."
+            return "Spoken Margins could not read this share. Share a .spokenmargins session, web page, podcast link, PDF, Markdown file, or text file."
         }
     }
 }

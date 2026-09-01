@@ -63,7 +63,6 @@ struct Build23RecipientSharingExperience: View {
 
                 if let snapshot = coordinator.recipientSnapshot {
                     preview(snapshot)
-                    importActions(snapshot)
                 } else {
                     unavailablePreview
                 }
@@ -73,6 +72,17 @@ struct Build23RecipientSharingExperience: View {
             .frame(maxWidth: .infinity)
         }
         .background(AppColors.bone)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if let snapshot = coordinator.recipientSnapshot {
+                VStack(spacing: 12) {
+                    Divider()
+                    importActions(snapshot)
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 12)
+                .background(.ultraThinMaterial)
+            }
+        }
     }
 
     @ViewBuilder

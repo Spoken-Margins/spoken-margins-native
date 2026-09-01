@@ -33,6 +33,7 @@
 		296D3E3B2A4A4E4370DB534A /* SourceLinkPreprocessor.js in Resources */ = {isa = PBXBuildFile; fileRef = C52D1CADC5773F67C398A2B2 /* SourceLinkPreprocessor.js */; };
 		2D1CA28C629CB25D869FF2DA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7C356783B108E75F03704686 /* Assets.xcassets */; };
 		30B562994D489ED9F57C24FE /* SessionMarkdownFileWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 591489743D16AAB9840121FA /* SessionMarkdownFileWriter.swift */; };
+		332A341A90238C9B58E08C3C /* SpokenMarginsPackageHandoff.swift in Sources */ = {isa = PBXBuildFile; fileRef = A79861FBC1FC6F0A5B357A17 /* SpokenMarginsPackageHandoff.swift */; };
 		380BCC8BFE48DC69AFD79B7D /* SharingExperience.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51F8F5E8BBAB7612D98E6BA1 /* SharingExperience.swift */; };
 		3A296D8977ECA7A0803C5ADC /* SessionKit in Frameworks */ = {isa = PBXBuildFile; productRef = FE54D8343C9F4C1377709595 /* SessionKit */; };
 		3A8C7FE2A0DBA57C69F07308 /* Gate1AppModelWorkflowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A741433D6B3E34D30387DBB /* Gate1AppModelWorkflowTests.swift */; };
@@ -61,6 +62,7 @@
 		65126FD4AD9AE90D96C36EC7 /* icon-256.png in Resources */ = {isa = PBXBuildFile; fileRef = 742BEE6988765C9B1F078C8B /* icon-256.png */; };
 		6575ABCB4EA7B017104C63A0 /* ExperienceDesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF1A389C74C5D98191E7D508 /* ExperienceDesignSystem.swift */; };
 		66E8E44AE32BDC8E3D4C22B2 /* OpenAIResponsesClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A941FB9EFF74E039703ED5A9 /* OpenAIResponsesClient.swift */; };
+		6714ABAC98B0EE7B5B6BC3A6 /* SpokenMarginsPackageHandoffTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A15DC350B1B76126DA81084 /* SpokenMarginsPackageHandoffTests.swift */; };
 		6868081D16F070053E862F47 /* browserTextCapture.js in Resources */ = {isa = PBXBuildFile; fileRef = 98C26CB68BDFFFA8A1B7578B /* browserTextCapture.js */; };
 		6B10F1FCD7AADBAAC872D3AE /* SpokenMarginsTerms.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50D91D1B910E2EF0E817503C /* SpokenMarginsTerms.swift */; };
 		6C2E2AE467E044A0E63C7899 /* StreamingSpeechQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EFFA356312CB5D37089484A /* StreamingSpeechQueue.swift */; };
@@ -72,6 +74,7 @@
 		724D32B090D395D1F580422B /* SupertonicSpeechPlaybackClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBBCF88CB3BBA3E1465E524F /* SupertonicSpeechPlaybackClient.swift */; };
 		729F10614CF26D263F8981BC /* ExperienceRootViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07BE3D8FFF489532B30E2C87 /* ExperienceRootViews.swift */; };
 		738C354D0FBFB6BA6FCD1531 /* PodcastDownloadCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB069A5733426E796A80A677 /* PodcastDownloadCoordinatorTests.swift */; };
+		73FAF7D026EB6F9C243149E7 /* SpokenMarginsPackageHandoff.swift in Sources */ = {isa = PBXBuildFile; fileRef = A79861FBC1FC6F0A5B357A17 /* SpokenMarginsPackageHandoff.swift */; };
 		7470A25713E0F8722A24EE2B /* SpokenMarginsTermsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA18A80986464844DBC4C095 /* SpokenMarginsTermsView.swift */; };
 		753422BE0617A8122A91813E /* SupertonicPreparedAudioAssembler.swift in Sources */ = {isa = PBXBuildFile; fileRef = C90FD1B2793835178CD00BB7 /* SupertonicPreparedAudioAssembler.swift */; };
 		765E645CF6DF06498F1BEEE1 /* Build23SharingSeamsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA499BDD3D49FA1CBE899FA1 /* Build23SharingSeamsTests.swift */; };
@@ -124,6 +127,7 @@
 		D6A8DCA36ED03426D6771AEC /* Gate1PlaybackAutoplayQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CECE96EA9D24248FFE111D5D /* Gate1PlaybackAutoplayQueueTests.swift */; };
 		D88CFDF277F2C902B02865C4 /* ExperiencePresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4AE8A8FB30C1E104E32A2BE /* ExperiencePresentationTests.swift */; };
 		D8FED511D7C45D211D991D9E /* popup.css in Resources */ = {isa = PBXBuildFile; fileRef = 1213A7465ECB99E1E9FCE12A /* popup.css */; };
+		DB373900ED2BE94FF0C1CEF4 /* SpokenMarginsPackageHandoff.swift in Sources */ = {isa = PBXBuildFile; fileRef = A79861FBC1FC6F0A5B357A17 /* SpokenMarginsPackageHandoff.swift */; };
 		DCD0BCAD510043A1EB4EF202 /* SpokenMarginsGate2Widget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = E3D5265FADF5995640D6FB31 /* SpokenMarginsGate2Widget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		DCF2AB420A460F475B45C6AF /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = D8F75089EB72A10C4E2E79E1 /* PrivacyInfo.xcprivacy */; };
 		DD3B228B6E2C46345CF9A2A7 /* PublisherPodcastChapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7F47D3EE2D41AC856AA9C6D /* PublisherPodcastChapters.swift */; };
@@ -244,6 +248,7 @@
 		658B2F9486630D76E2155406 /* AddArticleShortcutIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddArticleShortcutIntent.swift; sourceTree = "<group>"; };
 		6832D3C21EF217C605FF3A2D /* SessionMarkdownFileWriterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionMarkdownFileWriterTests.swift; sourceTree = "<group>"; };
 		69050C3D4931DF4FF8E80364 /* SourceLinkHandoff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceLinkHandoff.swift; sourceTree = "<group>"; };
+		6A15DC350B1B76126DA81084 /* SpokenMarginsPackageHandoffTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpokenMarginsPackageHandoffTests.swift; sourceTree = "<group>"; };
 		6D074E551D54E60A6008E4D6 /* LocalFoundationModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalFoundationModelsTests.swift; sourceTree = "<group>"; };
 		742BEE6988765C9B1F078C8B /* icon-256.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "icon-256.png"; sourceTree = "<group>"; };
 		7C356783B108E75F03704686 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -268,6 +273,7 @@
 		A3CB7F6850A2AD331ACAB8CE /* Gate2CompactCommandQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gate2CompactCommandQueue.swift; sourceTree = "<group>"; };
 		A453BD7286850A9FB78ECA4A /* EmojiArticlePlaybackUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmojiArticlePlaybackUITests.swift; sourceTree = "<group>"; };
 		A74F7259F3E40DBC369E570C /* SourceLinkShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceLinkShareViewController.swift; sourceTree = "<group>"; };
+		A79861FBC1FC6F0A5B357A17 /* SpokenMarginsPackageHandoff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpokenMarginsPackageHandoff.swift; sourceTree = "<group>"; };
 		A941FB9EFF74E039703ED5A9 /* OpenAIResponsesClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIResponsesClient.swift; sourceTree = "<group>"; };
 		A9E1C43E1A03A619326E7C23 /* PreparedAudioCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreparedAudioCoordinator.swift; sourceTree = "<group>"; };
 		A9FFEE73193161F428559893 /* ExperienceMarginDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExperienceMarginDetailView.swift; sourceTree = "<group>"; };
@@ -429,6 +435,7 @@
 				3FAD165CE1DA1C12E166B2E7 /* Gate2LiveActivityAttributes.swift */,
 				4C1B2FF8159DFFEC7FFC245C /* Gate2LiveActivityIntents.swift */,
 				69050C3D4931DF4FF8E80364 /* SourceLinkHandoff.swift */,
+				A79861FBC1FC6F0A5B357A17 /* SpokenMarginsPackageHandoff.swift */,
 			);
 			name = Sources;
 			path = App/Gate2Shared/Sources;
@@ -514,6 +521,7 @@
 				7EB7F70F2B16F9E90AF83916 /* PreparedAudioCoordinatorTests.swift */,
 				6832D3C21EF217C605FF3A2D /* SessionMarkdownFileWriterTests.swift */,
 				BBD0F5894DD6C23AA6F999E6 /* SourceLinkImportTests.swift */,
+				6A15DC350B1B76126DA81084 /* SpokenMarginsPackageHandoffTests.swift */,
 				0CC7D97FA0710D0845D16CFE /* SpokenMarginsTermsTests.swift */,
 				993C4712CB9FB906A7799DBE /* StreamingSpeechQueueTests.swift */,
 				1D6C701BA62F6D79A4C8A178 /* SupertonicSpeechTests.swift */,
@@ -965,6 +973,7 @@
 				380BCC8BFE48DC69AFD79B7D /* SharingExperience.swift in Sources */,
 				93CE5B715E61FC3E73806701 /* SourceLinkHandoff.swift in Sources */,
 				0DAA140F81BAE637A596E552 /* SpokenMarginsApp.swift in Sources */,
+				DB373900ED2BE94FF0C1CEF4 /* SpokenMarginsPackageHandoff.swift in Sources */,
 				6B10F1FCD7AADBAAC872D3AE /* SpokenMarginsTerms.swift in Sources */,
 				7470A25713E0F8722A24EE2B /* SpokenMarginsTermsView.swift in Sources */,
 				6C2E2AE467E044A0E63C7899 /* StreamingSpeechQueue.swift in Sources */,
@@ -984,6 +993,7 @@
 				8AB0D551E7082CB8218855C2 /* Gate2LiveActivityIntents.swift in Sources */,
 				BDFC86A1A7E85E4329B0E130 /* Gate2LiveActivityWidget.swift in Sources */,
 				00B0B7C10C1F0C571579625F /* SourceLinkHandoff.swift in Sources */,
+				73FAF7D026EB6F9C243149E7 /* SpokenMarginsPackageHandoff.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1020,6 +1030,7 @@
 				6F1DCB0C1243089B7AB67878 /* PreparedAudioCoordinatorTests.swift in Sources */,
 				A2AF5B9F364DB791BFADF693 /* SessionMarkdownFileWriterTests.swift in Sources */,
 				64DBF59250A264118426066B /* SourceLinkImportTests.swift in Sources */,
+				6714ABAC98B0EE7B5B6BC3A6 /* SpokenMarginsPackageHandoffTests.swift in Sources */,
 				723FD524FC3FBA82AABEF5C4 /* SpokenMarginsTermsTests.swift in Sources */,
 				1449DAE504C4645E3B43C84C /* StreamingSpeechQueueTests.swift in Sources */,
 				C952235E078B051615069C2E /* SupertonicSpeechTests.swift in Sources */,
@@ -1042,6 +1053,7 @@
 				1F5964C90E38F45B26E43C14 /* PDFStructuredTextExtractor.swift in Sources */,
 				CE418CC6B4720266789D08D5 /* SourceLinkHandoff.swift in Sources */,
 				BEADFDE53FCD51A2A0C52BCA /* SourceLinkShareViewController.swift in Sources */,
+				332A341A90238C9B58E08C3C /* SpokenMarginsPackageHandoff.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1081,7 +1093,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsGate2Widget/SpokenMarginsGate2Widget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 23;
+				CURRENT_PROJECT_VERSION = 24;
 				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsGate2Widget/Info.plist;
@@ -1105,7 +1117,7 @@
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsApp/SpokenMarginsApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 23;
+				CURRENT_PROJECT_VERSION = 24;
 				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				INFOPLIST_FILE = App/SpokenMarginsApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Spoken Margins";
@@ -1128,7 +1140,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsShareExtension/SpokenMarginsShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 23;
+				CURRENT_PROJECT_VERSION = 24;
 				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsShareExtension/Info.plist;
@@ -1168,7 +1180,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsGate2Widget/SpokenMarginsGate2Widget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 23;
+				CURRENT_PROJECT_VERSION = 24;
 				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsGate2Widget/Info.plist;
@@ -1192,7 +1204,7 @@
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsApp/SpokenMarginsApp.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 23;
+				CURRENT_PROJECT_VERSION = 24;
 				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				INFOPLIST_FILE = App/SpokenMarginsApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Spoken Margins";
@@ -1312,7 +1324,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsShareExtension/SpokenMarginsShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 23;
+				CURRENT_PROJECT_VERSION = 24;
 				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsShareExtension/Info.plist;
@@ -1408,7 +1420,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsBrowserTextExtension/SpokenMarginsBrowserTextExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 23;
+				CURRENT_PROJECT_VERSION = 24;
 				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsBrowserTextExtension/Info.plist;
@@ -1430,7 +1442,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsBrowserTextExtension/SpokenMarginsBrowserTextExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 23;
+				CURRENT_PROJECT_VERSION = 24;
 				DEVELOPMENT_TEAM = J8SWC6J3VY;
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = App/SpokenMarginsBrowserTextExtension/Info.plist;

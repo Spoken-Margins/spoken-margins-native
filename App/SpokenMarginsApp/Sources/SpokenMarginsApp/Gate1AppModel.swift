@@ -5411,6 +5411,14 @@ final class Gate1AppModel: ObservableObject {
         }
 
         do {
+            try consumePendingSpokenMarginsPackageHandoffs(
+                from: SpokenMarginsPackageHandoffStore.appGroup()
+            )
+        } catch {
+            diagnostics["pendingSpokenMarginsPackageImport"] = "unavailable:\(error.localizedDescription)"
+        }
+
+        do {
             let handoffStore = try resolvedSourceLinkHandoffStore()
             let payloadIDs = try handoffStore.pendingPayloadIDs()
             diagnostics["pendingSourceLinkPayloads"] = "\(payloadIDs.count)"
@@ -5459,7 +5467,27 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func stageSpokenMarginsPackageImport(from sourceURL: URL) {
+    func consumePendingSpokenMarginsPackageHandoffs(
+        from packageStore: SpokenMarginsPackageHandoffStore
+    ) throws {
+        let payloadIDs = try packageStore.pendingPayloadIDs()
+        diagnostics["pendingSpokenMarginsPackages"] = "\(payloadIDs.count)"
+        for payloadID in payloadIDs where spokenMarginsPackageImportReview == nil {
+            do {
+                let packageURL = try packageStore.packageURL(payloadID: payloadID)
+                let didOpen = stageSpokenMarginsPackageImport(from: packageURL)
+                try packageStore.deletePackage(payloadID: payloadID)
+                diagnostics["pendingSpokenMarginsPackage:\(payloadID)"] = didOpen ? "opened" : "rejected"
+            } catch {
+                try? packageStore.deletePackage(payloadID: payloadID)
+                diagnostics["pendingSpokenMarginsPackage:\(payloadID)"] = "rejected:\(error.localizedDescription)"
+                reportFailure(error, context: "Shared Margins package could not be opened")
+            }
+        }
+    }
+
+    @discardableResult
+    private func stageSpokenMarginsPackageImport(from sourceURL: URL) -> Bool {
         var workingDirectory: URL?
         do {
             bootstrapLibraryIfNeeded()
@@ -5488,7 +5516,7 @@ final class Gate1AppModel: ObservableObject {
                 }
                 diagnostics["lastSpokenMarginsPackageImport"] = "duplicate:\(digest)"
                 try? FileManager.default.removeItem(at: root)
-                return
+                return true
             }
             let matchingItemId = try matchingItemID(for: contents.manifest.item, store: store)
             spokenMarginsPackageImportError = nil
@@ -5499,10 +5527,12 @@ final class Gate1AppModel: ObservableObject {
                 matchingItemId: matchingItemId
             )
             diagnostics["lastSpokenMarginsPackageImport"] = "previewed:\(digest)"
+            return true
         } catch {
             if let workingDirectory { try? FileManager.default.removeItem(at: workingDirectory) }
             diagnostics["lastSpokenMarginsPackageImport"] = "rejected:\(error.localizedDescription)"
             reportFailure(error, context: "Shared Margins package could not be opened")
+            return false
         }
     }
 

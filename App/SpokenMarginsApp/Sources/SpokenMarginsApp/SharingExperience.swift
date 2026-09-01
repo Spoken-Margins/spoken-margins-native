@@ -866,10 +866,46 @@ struct SharedSpokenMarginsPackageActivityView: UIViewControllerRepresentable {
     let packageURL: URL
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: [packageURL], applicationActivities: nil)
+        UIActivityViewController(
+            activityItems: [SpokenMarginsPackageActivityItem(packageURL: packageURL)],
+            applicationActivities: nil
+        )
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+final class SpokenMarginsPackageActivityItem: NSObject, UIActivityItemSource {
+    let packageURL: URL
+
+    init(packageURL: URL) {
+        self.packageURL = packageURL
+    }
+
+    func activityViewControllerPlaceholderItem(_ activityViewController: UIActivityViewController) -> Any {
+        packageURL
+    }
+
+    func activityViewController(
+        _ activityViewController: UIActivityViewController,
+        itemForActivityType activityType: UIActivity.ActivityType?
+    ) -> Any? {
+        packageURL
+    }
+
+    func activityViewController(
+        _ activityViewController: UIActivityViewController,
+        dataTypeIdentifierForActivityType activityType: UIActivity.ActivityType?
+    ) -> String {
+        SpokenMarginsPackageHandoffStore.uniformTypeIdentifier
+    }
+
+    func activityViewController(
+        _ activityViewController: UIActivityViewController,
+        subjectForActivityType activityType: UIActivity.ActivityType?
+    ) -> String {
+        "Spoken Margins shared session"
+    }
 }
 
 struct SharedSpokenMarginsPackageReadyView: View {
