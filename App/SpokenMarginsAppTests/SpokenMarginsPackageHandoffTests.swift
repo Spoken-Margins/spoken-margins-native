@@ -314,18 +314,6 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         XCTAssertEqual(fullRequestCount, 1)
 
         for _ in 0..<250 {
-            if (try? store.loadTranscriptTimeline(itemId: item.id)) != nil { break }
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        let storedTimeline = try XCTUnwrap(try store.loadTranscriptTimeline(itemId: item.id)?.timeline)
-        let directTranscriptResolution = PodcastTranscriptAnchorResolver.resolve(
-            anchor: importedMargin.anchorEvidence,
-            recipientTimeline: storedTimeline
-        )
-        XCTAssertEqual(directTranscriptResolution.evidenceClass, .transcriptVerified)
-        XCTAssertEqual(directTranscriptResolution.localMediaTimeMs, 5_500)
-
-        for _ in 0..<250 {
             if try store.loadImportedCommentaryLayer(packageDigest: digest)?.sourceResolutionStatus == .resolved {
                 break
             }
@@ -337,6 +325,8 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         XCTAssertEqual(layer.sourceResolutionStatus, .resolved)
         XCTAssertEqual(margin.resolution.evidenceClass, .transcriptVerified)
         XCTAssertEqual(margin.resolution.localMediaTimeMs, 5_500)
+        XCTAssertNil(try store.loadTranscriptTimeline(itemId: item.id))
+        XCTAssertEqual(model.diagnostics["recipientAlignmentTranscript:\(item.id)"], "consumed_and_deleted")
     }
 
     private static let podcastTitle = "Can you spot the imported story?"
