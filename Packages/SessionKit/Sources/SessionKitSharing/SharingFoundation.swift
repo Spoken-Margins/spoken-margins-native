@@ -87,6 +87,8 @@ public enum SpokenMarginsPackageBuilder {
         itemTransportSelection: ReviewedItemTransportSelection,
         selections: [ReviewedInterjectionSelection],
         mapProposals: [PortableListeningMapProposalArtifact] = [],
+        fingerprintSpines: [EditionFingerprintSpineArtifact] = [],
+        phraseSketches: [TranscriptPhraseSketchArtifact] = [],
         machineEvidence: [ReviewedMachineEvidenceAsset] = [],
         senderDisplayLabel: String? = nil,
         suggestedRevealMode: ImportedCommentaryRevealMode? = nil
@@ -213,6 +215,28 @@ public enum SpokenMarginsPackageBuilder {
                 id: proposal.id,
                 kind: SpokenMarginsArtifactKind.listeningMapProposal,
                 schemaVersion: proposal.schemaVersion,
+                path: path,
+                required: false
+            ))
+        }
+        for (index, spine) in fingerprintSpines.enumerated() {
+            let path = String(format: "artifacts/edition-fingerprint-spine-%04d.json", index + 1)
+            artifactData[path] = try encodeArtifact(spine)
+            artifacts.append(SpokenMarginsArtifactDescriptor(
+                id: spine.id,
+                kind: SpokenMarginsArtifactKind.editionFingerprintSpine,
+                schemaVersion: spine.schemaVersion,
+                path: path,
+                required: false
+            ))
+        }
+        for (index, sketch) in phraseSketches.enumerated() {
+            let path = String(format: "artifacts/transcript-phrase-sketch-%04d.json", index + 1)
+            artifactData[path] = try encodeArtifact(sketch)
+            artifacts.append(SpokenMarginsArtifactDescriptor(
+                id: sketch.id,
+                kind: SpokenMarginsArtifactKind.transcriptPhraseSketch,
+                schemaVersion: sketch.schemaVersion,
                 path: path,
                 required: false
             ))
@@ -365,7 +389,18 @@ public enum SpokenMarginsPackageImporter {
             sourceResolutionStatus: itemResolution.status,
             isEnabled: true,
             revealMode: manifest.suggestedRevealMode ?? .companion,
-            listeningMapProposals: contents.listeningMapProposals
+            listeningMapProposals: contents.listeningMapProposals,
+            editionFingerprintSpines: contents.editionFingerprintSpines,
+            transcriptPhraseSketches: contents.transcriptPhraseSketches,
+            episodeMapEvidencePaths: Dictionary(uniqueKeysWithValues:
+                contents.editionFingerprintSpines
+                    .flatMap(\.landmarks)
+                    .compactMap { landmark in
+                        contents.extractedAssetURLs[landmark.signatureAssetId].map {
+                            (landmark.signatureAssetId, $0.path)
+                        }
+                    }
+            )
         )
         return try repository.importCommentaryLayer(layer, interjections: importedInterjections)
     }

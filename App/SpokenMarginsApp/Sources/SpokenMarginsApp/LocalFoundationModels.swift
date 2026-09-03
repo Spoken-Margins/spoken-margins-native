@@ -42,6 +42,8 @@ enum LocalFoundationModelAvailability: Equatable, Sendable {
 struct LocalListeningMapLabel: Codable, Equatable, Sendable {
     let title: String
     let description: String
+    var eligibility: PortableSceneEligibility? = nil
+    var eligibilityReason: String? = nil
 }
 
 struct LocalInterjectionSummaryRecord: Codable, Equatable, Sendable {
@@ -1081,7 +1083,7 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
     func labelListeningMapChapter(text: String, chapterNumber: Int) async throws -> LocalListeningMapLabel {
         try requireAvailability()
         let prompt = """
-        Label this bounded section of a spoken item. Return only JSON with exactly two string fields: "title" and "description". The title must be at most 8 words. The description must be one sentence and at most 28 words. Describe the topic without quoting long passages or reproducing the transcript.
+        Label this bounded section of a spoken item. Return only JSON with fields "title", "description", "eligibility", and "eligibilityReason". The title must be at most 8 words. The description must be one sentence and at most 28 words. Eligibility must be "eligible", "excluded", or "unknown". Use "excluded" only when the section itself provides positive evidence that it is an advertisement, trailer, credits, or other non-editorial material; a seek or topic change is never sufficient. Use "unknown" when uncertain. Describe the topic without quoting long passages or reproducing the transcript.
 
         SECTION \(chapterNumber):
         \(String(text.prefix(6_000)))
@@ -1970,7 +1972,16 @@ enum LocalListeningMapOutputValidator {
         guard !containsSharedRun(lhs: generatedWords, rhs: sourceWords, length: 10) else {
             throw LocalFoundationModelError.excessiveSourceQuotation
         }
-        return LocalListeningMapLabel(title: title, description: description)
+        let reason = label.eligibilityReason?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard reason.map({ $0.count <= 500 }) ?? true else {
+            throw LocalFoundationModelError.outputTooLong
+        }
+        return LocalListeningMapLabel(
+            title: title,
+            description: description,
+            eligibility: label.eligibility ?? .unknown,
+            eligibilityReason: reason?.isEmpty == true ? nil : reason
+        )
     }
 
     static func validateOverview(_ overview: String) throws -> String {

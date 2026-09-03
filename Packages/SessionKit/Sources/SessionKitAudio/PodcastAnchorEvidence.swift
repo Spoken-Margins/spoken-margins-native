@@ -177,6 +177,58 @@ public enum PodcastAnchorEvidenceGenerator {
         throw PodcastAnchorEvidenceError.unsupported
         #endif
     }
+
+    public static func generateLandmark(
+        sourceURL: URL,
+        sourceStartMs: Int,
+        targetDurationMs: Int = SparseFingerprintSchedule.targetDurationMs,
+        outputDirectory: URL,
+        id: String
+    ) async throws -> GeneratedPodcastAnchorEvidence {
+        #if canImport(AVFoundation) && canImport(ShazamKit)
+        let asset = AVURLAsset(url: sourceURL)
+        let duration = try await asset.load(.duration)
+        let durationMs = Int((CMTimeGetSeconds(duration) * 1_000).rounded())
+        guard durationMs > 0 else { throw PodcastAnchorEvidenceError.invalidSourceDuration }
+        guard let sourceTrack = try await asset.loadTracks(withMediaType: .audio).first else {
+            throw PodcastAnchorEvidenceError.audioTrackMissing
+        }
+        let startMs = max(0, sourceStartMs)
+        let lengthMs = min(targetDurationMs, durationMs - startMs)
+        guard lengthMs >= minimumEvidenceDurationMs else {
+            throw PodcastAnchorEvidenceError.insufficientEvidenceWindow
+        }
+        let composition = AVMutableComposition()
+        guard let track = composition.addMutableTrack(
+            withMediaType: .audio,
+            preferredTrackID: kCMPersistentTrackID_Invalid
+        ) else { throw PodcastAnchorEvidenceError.signatureGenerationFailed }
+        try track.insertTimeRange(
+            CMTimeRange(
+                start: CMTime(value: CMTimeValue(startMs), timescale: 1_000),
+                duration: CMTime(value: CMTimeValue(lengthMs), timescale: 1_000)
+            ),
+            of: sourceTrack,
+            at: .zero
+        )
+        let signature = try await SHSignatureGenerator.signature(from: composition)
+        let data = signature.dataRepresentation
+        guard !data.isEmpty else { throw PodcastAnchorEvidenceError.signatureGenerationFailed }
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        let safeID = id.replacingOccurrences(of: #"[^A-Za-z0-9._-]"#, with: "-", options: .regularExpression)
+        let fileURL = outputDirectory.appending(path: "\(safeID).shazamsignature")
+        try data.write(to: fileURL, options: .atomic)
+        return GeneratedPodcastAnchorEvidence(
+            id: safeID,
+            archivePath: "assets/evidence/\(safeID).shazamsignature",
+            fileURL: fileURL,
+            durationMs: max(1, Int((signature.duration * 1_000).rounded())),
+            anchorOffsetMs: 0
+        )
+        #else
+        throw PodcastAnchorEvidenceError.unsupported
+        #endif
+    }
 }
 
 /// Resolves every Margin against one locally downloaded recipient edition. The
@@ -276,7 +328,7 @@ public enum PodcastAcousticAnchorResolver {
                 exactDigestContradiction: senderExactEditionSHA256 != nil
             )
         }
-        return resolutions
+        return corroboratePartialFlanks(queries: queries, resolutions: resolutions)
         #else
         return Dictionary(uniqueKeysWithValues: queries.map { query in
             (query.packageScopedId, timestampFallback(
@@ -352,6 +404,70 @@ public enum PodcastAcousticAnchorResolver {
             confidence: confidence,
             algorithmVersion: "podcast-anchor.v1"
         )
+    }
+
+    /// A high-confidence single flank remains useful direct evidence, but it
+    /// is not independently verified until neighboring direct landmarks show
+    /// the same local edition offset. This preserves partial-flank recovery
+    /// without confidently placing a Margin inside a deleted passage.
+    static func corroboratePartialFlanks(
+        queries: [PodcastPortableAnchorQuery],
+        resolutions: [String: ImportedAnchorResolution]
+    ) -> [String: ImportedAnchorResolution] {
+        let ordered = queries.compactMap { query -> (id: String, sender: Int)? in
+            guard let sender = query.senderMediaTimeMs else { return nil }
+            return (query.packageScopedId, sender)
+        }.sorted { lhs, rhs in
+            lhs.sender == rhs.sender ? lhs.id < rhs.id : lhs.sender < rhs.sender
+        }
+        var result = resolutions
+        for (index, query) in ordered.enumerated() {
+            guard let partial = result[query.id],
+                  partial.algorithmVersion == "podcast-anchor-partial-flank.v2",
+                  let partialTime = partial.localMediaTimeMs else { continue }
+            let lower = ordered[..<index].reversed().first { candidate in
+                guard let resolution = resolutions[candidate.id] else { return false }
+                return resolution.algorithmVersion != "podcast-anchor-partial-flank.v2"
+                    && resolution.localMediaTimeMs != nil
+                    && !resolution.isAmbiguous
+            }
+            let upper = ordered[ordered.index(after: index)...].first { candidate in
+                guard let resolution = resolutions[candidate.id] else { return false }
+                return resolution.algorithmVersion != "podcast-anchor-partial-flank.v2"
+                    && resolution.localMediaTimeMs != nil
+                    && !resolution.isAmbiguous
+            }
+            guard let lower, let upper,
+                  let lowerTime = resolutions[lower.id]?.localMediaTimeMs,
+                  let upperTime = resolutions[upper.id]?.localMediaTimeMs,
+                  lowerTime < partialTime, partialTime < upperTime else {
+                result[query.id] = ImportedAnchorResolution(
+                    evidenceClass: .unresolved,
+                    algorithmVersion: "podcast-anchor-partial-flank-unconfirmed.v3"
+                )
+                continue
+            }
+            let lowerOffset = lowerTime - lower.sender
+            let upperOffset = upperTime - upper.sender
+            let partialOffset = partialTime - query.sender
+            let offsetTolerance = maximumFusionSpreadMs
+            guard abs(lowerOffset - upperOffset) <= offsetTolerance,
+                  abs(partialOffset - lowerOffset) <= offsetTolerance,
+                  abs(partialOffset - upperOffset) <= offsetTolerance else {
+                result[query.id] = ImportedAnchorResolution(
+                    evidenceClass: .unresolved,
+                    algorithmVersion: "podcast-anchor-partial-flank-unconfirmed.v3"
+                )
+                continue
+            }
+            result[query.id] = ImportedAnchorResolution(
+                evidenceClass: .acousticVerified,
+                localMediaTimeMs: partialTime,
+                confidence: partial.confidence,
+                algorithmVersion: "podcast-anchor-partial-flank-neighbor-corroborated.v3"
+            )
+        }
+        return result
     }
 
     private static func timestampFallback(

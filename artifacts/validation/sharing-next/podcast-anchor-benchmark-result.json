@@ -4,14 +4,15 @@
     "correctlyDeclinedAbsent" : 6,
     "declinedEligible" : 11,
     "evidenceClasses" : {
-      "ambiguous" : 17,
-      "fused" : 215
+      "ambiguous" : 13,
+      "fused" : 215,
+      "unresolved" : 4
     },
-    "evidenceGenerationSeconds" : 7.8734430074691772,
+    "evidenceGenerationSeconds" : 8.5156999826431274,
     "falseConfident" : 0,
     "p95ErrorMs" : 4,
     "placementsOver1500Ms" : 0,
-    "resolutionSeconds" : 1.0957539081573486
+    "resolutionSeconds" : 1.1420069932937622
   },
   "anchors" : {
     "absent" : 6,
@@ -35,14 +36,15 @@
     "correctlyDeclinedAbsent" : 6,
     "declinedEligible" : 16,
     "evidenceClasses" : {
-      "ambiguous" : 22,
-      "fused" : 210
+      "ambiguous" : 19,
+      "fused" : 210,
+      "unresolved" : 3
     },
     "falseConfident" : 0,
     "p95ErrorMs" : 4,
     "placementsOver1500Ms" : 0
   },
-  "generatedAt" : "2026-08-29T18:11:54Z",
+  "generatedAt" : "2026-09-02T16:57:24Z",
   "schemaVersion" : "spoken-margins.anchor-benchmark-result.v1",
   "timestampOnly" : {
     "confident" : 226,
@@ -56,16 +58,16 @@
     "placementsOver1500Ms" : 182
   },
   "transcript" : {
-    "confident" : 175,
+    "confident" : 216,
     "correctlyDeclinedAbsent" : 6,
-    "declinedEligible" : 51,
+    "declinedEligible" : 10,
     "evidenceClasses" : {
-      "ambiguous" : 8,
-      "transcript_verified" : 175,
-      "unresolved" : 49
+      "ambiguous" : 12,
+      "transcript_verified" : 216,
+      "unresolved" : 4
     },
-    "falseConfident" : 95,
+    "falseConfident" : 123,
     "p95ErrorMs" : 4560,
-    "placementsOver1500Ms" : 95
+    "placementsOver1500Ms" : 123
   }
 }

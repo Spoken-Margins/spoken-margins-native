@@ -40,6 +40,17 @@ private struct PendingProviderJob {
     let force: Bool
 }
 
+private struct ResolvedSkimPlaybackPlan {
+    let direction: SkimDirection
+    let itemId: String
+    let originMediaTimeMs: Int
+    let summarySceneId: String
+    let destinationSceneId: String?
+    let destinationMediaTimeMs: Int
+    let summaryAssetId: String
+    let summaryAudioURL: URL
+}
+
 struct LibraryItemRow: Identifiable, Hashable {
     let id: String
     let title: String
@@ -50,6 +61,7 @@ struct LibraryItemRow: Identifiable, Hashable {
     let isCompleted: Bool
     let mediaType: String
     let sourceTitle: String?
+    let sourceURL: String?
     let author: String?
     let sourceReference: String?
     let sourceReferenceType: String?
@@ -68,6 +80,7 @@ struct LibraryItemRow: Identifiable, Hashable {
         isCompleted: Bool = false,
         mediaType: String = "text",
         sourceTitle: String? = nil,
+        sourceURL: String? = nil,
         author: String? = nil,
         sourceReference: String? = nil,
         sourceReferenceType: String? = nil,
@@ -85,6 +98,7 @@ struct LibraryItemRow: Identifiable, Hashable {
         self.isCompleted = isCompleted
         self.mediaType = mediaType
         self.sourceTitle = sourceTitle
+        self.sourceURL = sourceURL
         self.author = author
         self.sourceReference = sourceReference
         self.sourceReferenceType = sourceReferenceType
@@ -463,6 +477,7 @@ final class Gate1AppModel: ObservableObject {
             }
             reconcilePlaybackProgressTicker()
             reconcileTextPlaybackStartupBackgroundTask()
+            updateSkimAvailability()
             updateGate2CompactState()
         }
     }
@@ -598,6 +613,10 @@ final class Gate1AppModel: ObservableObject {
     @Published var automaticAudioPreparationPolicy = AutomaticAudioPreparationPolicy(
         rawValue: UserDefaults.standard.string(forKey: "automaticAudioPreparationPolicy") ?? ""
     ) ?? .off
+    @Published var automaticEpisodeMapPreparationPolicy = AutomaticEpisodeMapPreparationPolicy(
+        rawValue: UserDefaults.standard.string(forKey: "automaticEpisodeMapPreparationPolicy") ?? ""
+    ) ?? .off
+    @Published private(set) var episodeMapPreparationStatus = "Not started"
     @Published private(set) var podcastDownloadRecords: [String: PodcastDownloadRecord] = [:]
     @Published var preparedTextAudioStatus = "Not started"
     @Published private(set) var onDeviceSpeechGenerationStatus = RenderedSpeechGenerationState.inactive.rawValue
@@ -696,6 +715,8 @@ final class Gate1AppModel: ObservableObject {
     #if canImport(AVFoundation)
     private var interjectionAudioPlayer: AVPlayer?
     private var interjectionAudioCompletionTask: Task<Void, Never>?
+    private var skimBridgePlayer: AVPlayer?
+    private var skimBridgeTask: Task<Void, Never>?
     private var commentaryCuePlayer: AVAudioPlayer?
     #endif
     private var announcedImportedInterjectionIDs: Set<String> = []
@@ -709,6 +730,10 @@ final class Gate1AppModel: ObservableObject {
         && ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_FORCE_FIRST_SHARED_SOURCE_MISS"] == "1"
     private var textAudioPrewarmTasks: [String: Task<Void, Never>] = [:]
     private var explicitAudioPreparationTask: Task<Void, Never>?
+    private var episodeMapPreparationTask: Task<Void, Never>?
+    private var episodeMapPreparationItemId: String?
+    private var isUpdatingSkimAvailability = false
+    private var backgroundPreparationPrefersEpisodeMap = true
     private var sourceImportTask: Task<Void, Never>?
     private var quickAccessRefreshTask: Task<Void, Never>?
     private var quickAccessRefreshID = UUID()
@@ -1015,7 +1040,7 @@ final class Gate1AppModel: ObservableObject {
         }
         #if canImport(BackgroundTasks) && canImport(UIKit)
         AudioPreparationBackgroundController.shared.install { [weak self] in
-            await self?.performBackgroundAudioPreparationPass() ?? false
+            await self?.performBackgroundPreparationPass() ?? false
         }
         #endif
     }
@@ -1178,7 +1203,10 @@ final class Gate1AppModel: ObservableObject {
     var canGenerateListeningMap: Bool {
         guard selectedItem.chapters.isEmpty, selectedItem.mediaChapters.isEmpty else { return false }
         guard let item = try? store?.loadItem(id: activeItemId) else { return false }
-        return remoteProviderExperienceEnabled || item.media == nil
+        return item.media?.sourceType == .nativeMediaFile
+            || item.media?.sourceType == .remoteStream
+            || remoteProviderExperienceEnabled
+            || item.media == nil
     }
 
     var listeningMapGenerationAvailabilityDescription: String {
@@ -1191,8 +1219,8 @@ final class Gate1AppModel: ObservableObject {
         guard let item = try? store?.loadItem(id: activeItemId) else {
             return "Listening Map generation is unavailable."
         }
-        if item.media != nil, !remoteProviderExperienceEnabled {
-            return "Publisher chapters appear when available. AI-generated podcast maps are not included in this release."
+        if item.media != nil {
+            return "Prepare a private episode fingerprint map. Supported iOS 26 devices also generate on-device scene summaries."
         }
         return "Listening Map generation is unavailable."
     }
@@ -1464,6 +1492,7 @@ final class Gate1AppModel: ObservableObject {
         do {
             let store = try requireStore()
             libraryAccessError = nil
+            purgeExpiredEpisodeMapPreparationJobs(store: store)
             if let fixtureText = ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"],
                CommandLine.arguments.contains("--ui-testing") {
                 try resetAndSeedUITestingText(
@@ -1631,6 +1660,7 @@ final class Gate1AppModel: ObservableObject {
         gate2CompactControls.reconcileLiveActivities()
         importPendingSourceLinkHandoffs()
         submitAutomaticAudioPreparationIfNeeded()
+        submitAutomaticEpisodeMapPreparationIfNeeded()
         refreshQuickAddFeed(force: false)
     }
 
@@ -1641,6 +1671,15 @@ final class Gate1AppModel: ObservableObject {
         )
         diagnostics["automaticAudioPreparation"] = automaticAudioPreparationPolicy.rawValue
         scheduleAutomaticAudioPreparationIfNeeded()
+    }
+
+    func automaticEpisodeMapPreparationPolicyChanged() {
+        UserDefaults.standard.set(
+            automaticEpisodeMapPreparationPolicy.rawValue,
+            forKey: "automaticEpisodeMapPreparationPolicy"
+        )
+        diagnostics["automaticEpisodeMapPreparation"] = automaticEpisodeMapPreparationPolicy.rawValue
+        submitAutomaticEpisodeMapPreparationIfNeeded()
     }
 
     func offlineStorageBudgetChanged() {
@@ -1752,7 +1791,9 @@ final class Gate1AppModel: ObservableObject {
         let enabled = automaticAudioPreparationPolicy == .whileCharging
         Task { [weak self] in
             if enabled { await self?.enqueueAutomaticAudioPreparationJobs() }
-            AudioPreparationBackgroundController.shared.submitIfEnabled(enabled)
+            AudioPreparationBackgroundController.shared.submitIfEnabled(
+                enabled || self?.automaticEpisodeMapPreparationPolicy == .whileCharging
+            )
         }
         #endif
     }
@@ -1761,11 +1802,59 @@ final class Gate1AppModel: ObservableObject {
         #if canImport(BackgroundTasks) && canImport(UIKit)
         AudioPreparationBackgroundController.shared.submitIfEnabled(
             automaticAudioPreparationPolicy == .whileCharging
+                || automaticEpisodeMapPreparationPolicy == .whileCharging
         )
         #endif
     }
 
+    private func performBackgroundPreparationPass() async -> Bool {
+        guard let store else { return false }
+        let episodeJobs = ((try? store.loadEpisodeMapPreparationJobs()) ?? [])
+            .filter {
+                !$0.isCancelled
+                    && $0.stage != .completed
+                    && ($0.policy == .explicit || automaticEpisodeMapPreparationPolicy == .whileCharging)
+                    && podcastDownloadCoordinator?.validatedLocalURL(for: $0.itemId) != nil
+            }
+            .sorted {
+                if $0.policy != $1.policy { return $0.policy == .explicit }
+                return $0.requestedAt < $1.requestedAt
+            }
+        let hasAudioWork = ((try? store.loadAudioPreparationJobs()) ?? []).contains { !$0.isCancelled }
+        let shouldRunEpisode = !episodeJobs.isEmpty
+            && (!hasAudioWork || backgroundPreparationPrefersEpisodeMap)
+        if shouldRunEpisode,
+           episodeMapPreparationTask == nil,
+           ProcessInfo.processInfo.thermalState != .serious,
+           ProcessInfo.processInfo.thermalState != .critical,
+           !ProcessInfo.processInfo.isLowPowerModeEnabled,
+           let job = episodeJobs.first {
+            prepareEpisodeMap(itemId: job.itemId, policy: job.policy)
+            if let task = episodeMapPreparationTask {
+                await withTaskCancellationHandler {
+                    await task.value
+                } onCancel: {
+                    task.cancel()
+                }
+            }
+            backgroundPreparationPrefersEpisodeMap = false
+            let hasEpisodeWork = ((try? store.loadEpisodeMapPreparationJobs()) ?? []).contains {
+                !$0.isCancelled && $0.stage != .completed
+            }
+            return hasEpisodeWork || hasAudioWork
+        }
+        let audioHasMore = await performBackgroundAudioPreparationPass()
+        if hasAudioWork { backgroundPreparationPrefersEpisodeMap = true }
+        if audioHasMore { return true }
+        if !episodeJobs.isEmpty {
+            backgroundPreparationPrefersEpisodeMap = true
+            return true
+        }
+        return false
+    }
+
     func handleApplicationWillTerminate() {
+        cancelSkimBridge(restoringOrigin: true, resumeSource: false)
         syncPlaybackProgressForLifecycle()
         endTextPlaybackStartupBackgroundTask()
         gate2CompactControls.endLiveActivities()
@@ -2973,6 +3062,10 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func playPause() {
+        if let bridge = snapshot.skimBridgeState {
+            setSkimBridgePaused(bridge.status == .playing)
+            return
+        }
         if snapshot.status.isPlaybackActive {
             pause()
         } else if hasActiveSession {
@@ -2983,6 +3076,10 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func pause() {
+        if snapshot.skimBridgeState != nil {
+            setSkimBridgePaused(true)
+            return
+        }
         synchronizeStreamingSpeechAnchorIfNeeded()
         run { engine in
             snapshot = try engine.pause()
@@ -3148,6 +3245,10 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func resumePlayback() {
+        if snapshot.skimBridgeState != nil {
+            setSkimBridgePaused(false)
+            return
+        }
         guard let sessionId = snapshot.sessionId else {
             reportFailure("There is no listening session to resume.")
             return
@@ -3170,6 +3271,12 @@ final class Gate1AppModel: ObservableObject {
         }
         isGeneratingListeningMap = true
         let selectedItemRecord = try? store?.loadItem(id: activeItemId)
+        if let item = selectedItemRecord,
+           item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream {
+            isGeneratingListeningMap = false
+            prepareEpisodeMap(itemId: item.id, policy: .explicit)
+            return
+        }
         if !remoteProviderExperienceEnabled {
             guard selectedItemRecord?.media == nil else {
                 diagnostics["lastListeningMapMode"] = "on_device_generation_disabled"
@@ -3284,6 +3391,813 @@ final class Gate1AppModel: ObservableObject {
             scheduleTextAudioPrewarmIfNeeded(itemId: activeItemId)
             reportConfirmation("Generated Listening Map.")
         }
+    }
+
+    func prepareEpisodeMap(itemId: String? = nil, policy: PreparationJobPolicy = .explicit) {
+        let requestedItemId = itemId ?? activeItemId
+        guard episodeMapPreparationTask == nil else {
+            reportWarning("An episode map is already being prepared.")
+            return
+        }
+        do {
+            let store = try requireStore()
+            let item = try store.loadItem(id: requestedItemId)
+            guard item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream else {
+                throw SessionKitError.invalidCommandForState("episode_map_requires_native_audio")
+            }
+            let existingJob = (try store.loadEpisodeMapPreparationJobs()).first {
+                $0.itemId == requestedItemId && !$0.isCancelled
+            }
+            var job = existingJob ?? EpisodeMapPreparationJob(
+                id: "episode-map-job-\(safePodcastEvidenceComponent(requestedItemId))",
+                itemId: requestedItemId,
+                policy: policy
+            )
+            job.policy = policy
+            if existingJob == nil {
+                job.stage = .verifySource
+                job.nextUnitIndex = 0
+            }
+            job.lastFailureCode = nil
+            try store.saveEpisodeMapPreparationJob(job)
+
+            guard let localURL = podcastDownloadCoordinator?.validatedLocalURL(for: requestedItemId)
+                ?? item.media?.url.flatMap(URL.init(string:)).flatMap({ $0.isFileURL ? $0 : nil }) else {
+                pendingMapGenerationItemId = requestedItemId
+                episodeMapPreparationStatus = "Waiting for download"
+                diagnostics["episodeMapPreparation:\(requestedItemId)"] = "waiting_for_local_audio"
+                if podcastDownloadCoordinator?.downloadNow(itemId: requestedItemId) != true,
+                   let remote = item.media?.url.flatMap(URL.init(string:)) {
+                    podcastDownloadCoordinator?.register(
+                        itemId: requestedItemId,
+                        remoteURL: remote,
+                        userInitiated: policy == .explicit
+                    )
+                }
+                if policy == .explicit {
+                    reportSuccess("Downloading the episode. Its private Listening Map will continue automatically.")
+                }
+                return
+            }
+            runEpisodeMapPreparation(item: item, localURL: localURL, job: job)
+        } catch {
+            episodeMapPreparationStatus = "Failed"
+            reportFailure(error, context: "Episode map preparation failed")
+        }
+    }
+
+    private func runEpisodeMapPreparation(
+        item: Item,
+        localURL: URL,
+        job initialJob: EpisodeMapPreparationJob
+    ) {
+        episodeMapPreparationStatus = "Preparing"
+        diagnostics["episodeMapPreparation:\(item.id)"] = "started"
+        episodeMapPreparationItemId = item.id
+        episodeMapPreparationTask = Task { [weak self] in
+            guard let self else { return }
+            var job = initialJob
+            defer {
+                self.episodeMapPreparationTask = nil
+                self.episodeMapPreparationItemId = nil
+            }
+            do {
+                let store = try self.requireStore()
+                job.stage = .generateFingerprintSpine
+                try store.saveEpisodeMapPreparationJob(job)
+                let mapDirectory = try self.episodeMapDirectory(itemId: item.id)
+                try FileManager.default.createDirectory(at: mapDirectory, withIntermediateDirectories: true)
+                let digest = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: localURL)
+                let durationMs: Int
+                if let declaredDurationMs = item.media?.durationMs {
+                    durationMs = declaredDurationMs
+                } else if let duration = try? await AVURLAsset(url: localURL).load(.duration) {
+                    durationMs = Int((CMTimeGetSeconds(duration) * 1_000).rounded())
+                } else {
+                    durationMs = 0
+                }
+                var generatedLandmarks: [EpisodeFingerprintLandmark] = []
+                var gridIndex = 0
+                var startMs = SparseFingerprintSchedule.initialMediaTimeMs
+                while gridIndex < job.nextUnitIndex,
+                      startMs + PodcastAnchorEvidenceGenerator.minimumEvidenceDurationMs <= durationMs {
+                    let assetID = "episode-signature-\(self.safePodcastEvidenceComponent(item.id))-downloaded-\(gridIndex)"
+                    let existingURL = mapDirectory.appending(path: "\(assetID).shazamsignature")
+                    guard FileManager.default.fileExists(atPath: existingURL.path) else {
+                        job.nextUnitIndex = gridIndex
+                        break
+                    }
+                    generatedLandmarks.append(EpisodeFingerprintLandmark(
+                        id: "downloaded-landmark-\(gridIndex)",
+                        order: gridIndex,
+                        sourceMediaStartMs: startMs,
+                        sourceMediaEndMs: startMs + SparseFingerprintSchedule.targetDurationMs,
+                        anchorMediaTimeMs: startMs,
+                        continuityEpoch: 0,
+                        trigger: .downloadedPreparation,
+                        provenance: .downloadedSourceReference,
+                        signatureAssetId: assetID
+                    ))
+                    gridIndex += 1
+                    startMs += SparseFingerprintSchedule.periodicIntervalMs
+                }
+                while startMs + PodcastAnchorEvidenceGenerator.minimumEvidenceDurationMs <= durationMs {
+                    try Task.checkCancellation()
+                    let assetID = "episode-signature-\(self.safePodcastEvidenceComponent(item.id))-downloaded-\(gridIndex)"
+                    let ledger: OfflineStorageLedger
+                    if let existingLedger = self.offlineStorageLedger {
+                        ledger = existingLedger
+                    } else {
+                        ledger = OfflineStorageLedger(
+                            repository: store,
+                            rootDirectory: try self.applicationSupportDirectory()
+                        )
+                        self.offlineStorageLedger = ledger
+                    }
+                    let reservation = try await ledger.reserve(
+                        ownerId: "episode-fingerprint-\(item.id)-\(gridIndex)",
+                        byteCount: 2 * 1_024 * 1_024
+                    )
+                    let generated: GeneratedPodcastAnchorEvidence
+                    do {
+                        generated = try await PodcastAnchorEvidenceGenerator.generateLandmark(
+                            sourceURL: localURL,
+                            sourceStartMs: startMs,
+                            outputDirectory: mapDirectory,
+                            id: assetID
+                        )
+                    } catch {
+                        try? await ledger.release(reservationId: reservation.id)
+                        throw error
+                    }
+                    generatedLandmarks.append(EpisodeFingerprintLandmark(
+                        id: "downloaded-landmark-\(gridIndex)",
+                        order: gridIndex,
+                        sourceMediaStartMs: startMs,
+                        sourceMediaEndMs: startMs + generated.durationMs,
+                        anchorMediaTimeMs: startMs,
+                        continuityEpoch: 0,
+                        trigger: .downloadedPreparation,
+                        provenance: .downloadedSourceReference,
+                        signatureAssetId: assetID
+                    ))
+                    try await ledger.commit(reservationId: reservation.id, asset: OwnedOfflineAsset(
+                        id: assetID,
+                        itemId: item.id,
+                        category: .fingerprintMap,
+                        relativePath: "SpokenMargins/EpisodeMaps/\(self.safePodcastEvidenceComponent(item.id))/\(assetID).shazamsignature",
+                        byteCount: Int64((try? Data(contentsOf: generated.fileURL).count) ?? 0),
+                        isReproducible: true,
+                        protections: [.activeEpisodeMapPreparation]
+                    ))
+                    gridIndex += 1
+                    startMs += SparseFingerprintSchedule.periodicIntervalMs
+                    job.nextUnitIndex = gridIndex
+                    try store.saveEpisodeMapPreparationJob(job)
+                    if job.policy == .whileCharging {
+                        self.episodeMapPreparationStatus = "Fingerprinting paused at landmark \(gridIndex)"
+                        self.diagnostics["episodeMapPreparation:\(item.id)"] = "checkpoint:fingerprint_landmark=\(gridIndex)"
+                        return
+                    }
+                }
+
+                job.stage = .transcribe
+                try store.saveEpisodeMapPreparationJob(job)
+                self.episodeMapPreparationStatus = "Transcribing on device"
+                let supportDirectory = try self.applicationSupportDirectory()
+                var timeline: TranscriptTimeline
+                if let relativePath = job.transientTranscriptRelativePath,
+                   let cached = try? Data(contentsOf: supportDirectory.appending(path: relativePath)),
+                   let decoded = try? JSONDecoder().decode(TranscriptTimeline.self, from: cached) {
+                    timeline = decoded
+                } else {
+                    timeline = try await self.sourceTranscriptionClient.transcribeSourceAudio(
+                        url: localURL,
+                        itemId: item.id,
+                        durationMs: durationMs
+                    )
+                    let transcriptData = try JSONEncoder().encode(timeline)
+                    let safeItemID = self.safePodcastEvidenceComponent(item.id)
+                    let relativePath = "SpokenMargins/EpisodeMaps/\(safeItemID)/Transient/timeline.json"
+                    let transcriptURL = supportDirectory.appending(path: relativePath)
+                    try FileManager.default.createDirectory(
+                        at: transcriptURL.deletingLastPathComponent(),
+                        withIntermediateDirectories: true
+                    )
+                    let ledger: OfflineStorageLedger
+                    if let existingLedger = self.offlineStorageLedger {
+                        ledger = existingLedger
+                    } else {
+                        ledger = OfflineStorageLedger(repository: store, rootDirectory: supportDirectory)
+                        self.offlineStorageLedger = ledger
+                    }
+                    let reservation = try await ledger.reserve(
+                        ownerId: "episode-transcript-\(item.id)",
+                        byteCount: Int64(transcriptData.count)
+                    )
+                    do {
+                        try transcriptData.write(to: transcriptURL, options: .atomic)
+                        try await ledger.commit(reservationId: reservation.id, asset: OwnedOfflineAsset(
+                            id: "episode-transcript-\(safeItemID)",
+                            itemId: item.id,
+                            category: .transientEpisodeTranscript,
+                            relativePath: relativePath,
+                            byteCount: Int64(transcriptData.count),
+                            isReproducible: true,
+                            protections: [.activeEpisodeMapPreparation]
+                        ))
+                    } catch {
+                        try? await ledger.release(reservationId: reservation.id)
+                        try? FileManager.default.removeItem(at: transcriptURL)
+                        throw error
+                    }
+                    job.transientTranscriptRelativePath = relativePath
+                    try store.saveEpisodeMapPreparationJob(job)
+                }
+                try self.purgeSourceTranscriptionAudioCaches(itemId: item.id)
+                if let publisherChapters = try store.loadTranscriptTimeline(itemId: item.id)?.timeline.chapters,
+                   !publisherChapters.isEmpty {
+                    timeline.chapters = publisherChapters
+                }
+
+                job.stage = .generatePhraseSketch
+                try store.saveEpisodeMapPreparationJob(job)
+                let sketch = TranscriptPhraseSketchBuilder.makeArtifact(
+                    id: "episode-sketch-\(self.safePodcastEvidenceComponent(item.id))",
+                    itemId: item.id,
+                    timeline: timeline
+                )
+
+                let existingPlaybackLandmarks = try store.loadEditionFingerprintSpine(itemId: item.id)?.landmarks
+                    .filter { $0.provenance == .observedDecodedPlayback } ?? []
+                let allLandmarks = (existingPlaybackLandmarks + generatedLandmarks)
+                    .sorted { $0.sourceMediaStartMs < $1.sourceMediaStartMs }
+                    .enumerated().map { index, landmark in
+                        let sketchWindow = sketch.windows.first {
+                            landmark.anchorMediaTimeMs >= $0.sourceStartMs
+                                && landmark.anchorMediaTimeMs < $0.sourceEndMs
+                        }
+                        return EpisodeFingerprintLandmark(
+                            id: landmark.id,
+                            order: index,
+                            sourceMediaStartMs: landmark.sourceMediaStartMs,
+                            sourceMediaEndMs: landmark.sourceMediaEndMs,
+                            anchorMediaTimeMs: landmark.anchorMediaTimeMs,
+                            continuityEpoch: landmark.continuityEpoch,
+                            trigger: landmark.trigger,
+                            provenance: landmark.provenance,
+                            signatureAssetId: landmark.signatureAssetId,
+                            transcriptSketchWindowId: sketchWindow?.id,
+                            generatorVersion: landmark.generatorVersion
+                        )
+                    }
+                let spine = EditionFingerprintSpineArtifact(
+                    id: "episode-spine-\(self.safePodcastEvidenceComponent(item.id))",
+                    itemId: item.id,
+                    canonicalURL: item.externalReference ?? item.media?.url,
+                    producingEditionDurationMs: durationMs,
+                    producingEditionSHA256: digest,
+                    landmarks: allLandmarks
+                )
+
+                job.stage = .segmentScenes
+                try store.saveEpisodeMapPreparationJob(job)
+                let drafts = EpisodeSceneSegmenter.makeDrafts(timeline: timeline)
+                var scenes: [PortableListeningMapScene] = []
+                job.stage = .generateSummaries
+                try store.saveEpisodeMapPreparationJob(job)
+                for draft in drafts {
+                    try Task.checkCancellation()
+                    let text = timeline.segments
+                        .filter { $0.endMs > draft.startMs && $0.startMs < draft.endMs }
+                        .map(\.text)
+                        .joined(separator: " ")
+                    var label: LocalListeningMapLabel?
+                    if self.localFoundationModelClient.availability().isAvailable, !text.isEmpty {
+                        for _ in 0..<2 where label == nil {
+                            if let candidate = try? await self.localFoundationModelClient.labelListeningMapChapter(
+                                text: text,
+                                chapterNumber: draft.order + 1
+                            ) {
+                                label = try? LocalListeningMapOutputValidator.validate(label: candidate, sourceText: text)
+                            }
+                        }
+                    }
+                    let nearestEvidence = allLandmarks.min {
+                        abs($0.anchorMediaTimeMs - draft.startMs) < abs($1.anchorMediaTimeMs - draft.startMs)
+                    }?.signatureAssetId
+                    let machineEvidence = nearestEvidence.map { [$0] } ?? []
+                    let eligibility = label?.eligibility ?? .unknown
+                    scenes.append(PortableListeningMapScene(
+                        id: draft.id,
+                        order: draft.order,
+                        title: label?.title ?? draft.publisherTitle,
+                        summaryText: label?.description,
+                        summaryAssetId: nil,
+                        summaryProvenance: label == nil ? nil : .modelGenerated,
+                        eligibility: eligibility,
+                        eligibilityReason: label?.eligibilityReason,
+                        startAnchor: PortableAnchorEvidence(
+                            anchorType: .transcript,
+                            mediaTimeMs: draft.startMs,
+                            transcriptSegmentId: draft.startTranscriptSegmentId,
+                            chapterTitle: label?.title ?? draft.publisherTitle,
+                            machineEvidenceAssetIds: machineEvidence
+                        ),
+                        endAnchor: PortableAnchorEvidence(
+                            anchorType: .transcript,
+                            mediaTimeMs: draft.endMs,
+                            transcriptSegmentId: draft.endTranscriptSegmentId,
+                            chapterTitle: label?.title ?? draft.publisherTitle,
+                            machineEvidenceAssetIds: machineEvidence
+                        )
+                    ))
+                }
+                let proposal = PortableListeningMapProposalArtifact(
+                    id: "episode-map-proposal-\(self.safePodcastEvidenceComponent(item.id))",
+                    createdAt: Date(),
+                    generator: self.localFoundationModelClient.availability().isAvailable
+                        ? "on-device-scene-map.v1"
+                        : "deterministic-scene-boundaries.v1",
+                    scenes: scenes
+                )
+
+                job.stage = .renderBridges
+                try store.saveEpisodeMapPreparationJob(job)
+                for scene in scenes where scene.eligibility == .eligible && scene.summaryText?.isEmpty == false {
+                    try Task.checkCancellation()
+                    _ = try await self.prepareSummaryBridgeAsset(
+                        itemId: item.id,
+                        proposalId: proposal.id,
+                        scene: scene,
+                        store: store
+                    )
+                }
+
+                job.stage = .commit
+                try store.saveEpisodeMapPreparationJob(job)
+                try store.saveEditionFingerprintSpine(spine)
+                try store.saveTranscriptPhraseSketch(sketch)
+                try store.savePortableListeningMapProposal(proposal, itemId: item.id)
+                let identityMatches = allLandmarks.map { landmark in
+                    FingerprintLandmarkMatch(
+                        id: "exact-\(landmark.id)",
+                        landmarkId: landmark.id,
+                        sourceMediaTimeMs: landmark.anchorMediaTimeMs,
+                        recipientMediaTimeMs: landmark.anchorMediaTimeMs,
+                        acousticConfidence: 1,
+                        transcriptCorroborated: true,
+                        isUniqueWithinEpisode: true
+                    )
+                }
+                try store.saveResolvedListeningMapProjection(EpisodeFingerprintAlignment.makeProjection(
+                    id: "episode-projection-\(self.safePodcastEvidenceComponent(item.id))",
+                    itemId: item.id,
+                    proposalId: proposal.id,
+                    recipientEditionSHA256: digest,
+                    matches: identityMatches,
+                    exactEdition: true
+                ))
+                for asset in try store.loadOwnedOfflineAssets() where
+                    asset.itemId == item.id && asset.category == .fingerprintMap {
+                    var updated = asset
+                    updated.protections.remove(.activeEpisodeMapPreparation)
+                    try store.saveOwnedOfflineAsset(updated)
+                }
+                try self.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
+                job.stage = .completed
+                try store.saveEpisodeMapPreparationJob(job)
+                try store.deleteEpisodeMapPreparationJob(id: job.id)
+                self.episodeMapPreparationStatus = scenes.contains(where: { $0.summaryText != nil })
+                    ? "Ready with scene summaries"
+                    : "Fingerprint map ready; scene summaries unavailable"
+                self.diagnostics["episodeMapPreparation:\(item.id)"] =
+                    "complete:landmarks=\(allLandmarks.count):scenes=\(scenes.count):transcript_deleted"
+                if item.id == self.activeItemId {
+                    self.updateSkimAvailability()
+                    self.reportConfirmation(self.episodeMapPreparationStatus)
+                }
+            } catch is CancellationError {
+                job.isCancelled = true
+                job.lastFailureCode = "cancelled"
+                try? self.store?.saveEpisodeMapPreparationJob(job)
+                try? self.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
+                self.episodeMapPreparationStatus = "Cancelled"
+            } catch {
+                job.lastFailureCode = String(describing: error)
+                try? self.store?.saveEpisodeMapPreparationJob(job)
+                self.episodeMapPreparationStatus = "Failed"
+                self.diagnostics["episodeMapPreparation:\(item.id)"] = "failed:\(error.localizedDescription)"
+                if item.id == self.activeItemId { self.reportFailure(error, context: "Episode map preparation failed") }
+            }
+        }
+    }
+
+    private func episodeMapDirectory(itemId: String) throws -> URL {
+        try applicationSupportDirectory()
+            .appending(path: "SpokenMargins/EpisodeMaps", directoryHint: .isDirectory)
+            .appending(path: safePodcastEvidenceComponent(itemId), directoryHint: .isDirectory)
+    }
+
+    private func currentSummaryBridgeVoiceKey() -> String {
+        let systemIdentifier = ttsVoiceSelection == .system ? speechVoiceIdentifier : ""
+        return safePodcastEvidenceComponent("\(ttsVoiceSelection.rawValue)-\(systemIdentifier)")
+    }
+
+    private func summaryBridgeAssetID(itemId: String, proposalId: String, sceneId: String) -> String {
+        "summary-bridge-\(safePodcastEvidenceComponent(itemId))-\(safePodcastEvidenceComponent(proposalId))-\(safePodcastEvidenceComponent(sceneId))-\(currentSummaryBridgeVoiceKey())"
+    }
+
+    private func prepareSummaryBridgeAsset(
+        itemId: String,
+        proposalId: String,
+        scene: PortableListeningMapScene,
+        store: SQLiteSessionStore
+    ) async throws -> OwnedOfflineAsset? {
+        guard let summary = scene.summaryText?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !summary.isEmpty else { return nil }
+        let assetID = summaryBridgeAssetID(itemId: itemId, proposalId: proposalId, sceneId: scene.id)
+        if let existing = try store.loadOwnedOfflineAssets().first(where: {
+            $0.id == assetID && $0.integrity == .valid
+        }) { return existing }
+        let directory = try episodeMapDirectory(itemId: itemId)
+            .appending(path: "SummaryBridges", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let ledger: OfflineStorageLedger
+        if let existingLedger = offlineStorageLedger {
+            ledger = existingLedger
+        } else {
+            ledger = OfflineStorageLedger(
+                repository: store,
+                rootDirectory: try applicationSupportDirectory()
+            )
+            offlineStorageLedger = ledger
+        }
+        let reservation = try await ledger.reserve(
+            ownerId: "summary-bridge-\(assetID)",
+            byteCount: 64 * 1_024 * 1_024
+        )
+        do {
+            let sourceURL: URL
+            if let voice = ttsVoiceSelection.supertonicVoice {
+                let renderer = try makeSupertonicRenderer()
+                let result = try await renderer.render(
+                    text: summary,
+                    voice: voice,
+                    language: "en",
+                    speed: Float(speechRate / 0.5),
+                    synthesisSteps: 8
+                )
+                sourceURL = result.audioURL
+            } else {
+                let renderer = SystemTextAudioPreparationClient(
+                    outputDirectory: directory,
+                    voiceIdentifier: speechVoiceIdentifier,
+                    speechRate: Float(speechRate),
+                    allowsSynchronousRendering: true
+                )
+                guard let prepared = try renderer.prepareTextAudio(
+                    itemId: assetID,
+                    title: scene.title ?? "Scene summary",
+                    text: summary
+                ), let value = prepared.media.url, let url = URL(string: value) else {
+                    try? await ledger.release(reservationId: reservation.id)
+                    return nil
+                }
+                sourceURL = url
+            }
+            let destination = directory.appending(path: "\(assetID).\(sourceURL.pathExtension.isEmpty ? "caf" : sourceURL.pathExtension)")
+            if sourceURL.standardizedFileURL != destination.standardizedFileURL {
+                if FileManager.default.fileExists(atPath: destination.path) {
+                    try FileManager.default.removeItem(at: destination)
+                }
+                try FileManager.default.copyItem(at: sourceURL, to: destination)
+            }
+            let bytes = (try destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+            let asset = OwnedOfflineAsset(
+                id: assetID,
+                itemId: itemId,
+                category: .summaryBridge,
+                relativePath: "SpokenMargins/EpisodeMaps/\(safePodcastEvidenceComponent(itemId))/SummaryBridges/\(destination.lastPathComponent)",
+                byteCount: bytes,
+                isReproducible: true
+            )
+            try await ledger.commit(reservationId: reservation.id, asset: asset)
+            return asset
+        } catch {
+            try? await ledger.release(reservationId: reservation.id)
+            throw error
+        }
+    }
+
+    private func updateSkimAvailability() {
+        guard !isUpdatingSkimAvailability else { return }
+        let effectiveTime = snapshot.skimBridgeState?.destinationMediaTimeMs ?? snapshot.currentMediaTimeMs
+        let canForward = effectiveTime.flatMap { resolvedSkimPlaybackPlan(direction: .forward, at: $0) } != nil
+        let canBackward = effectiveTime.flatMap { resolvedSkimPlaybackPlan(direction: .backward, at: $0) } != nil
+        guard snapshot.canSkimForward != canForward || snapshot.canSkimBackward != canBackward else { return }
+        isUpdatingSkimAvailability = true
+        snapshot.canSkimForward = canForward
+        snapshot.canSkimBackward = canBackward
+        isUpdatingSkimAvailability = false
+    }
+
+    private func resolvedSkimPlaybackPlan(
+        direction: SkimDirection,
+        at recipientMediaTimeMs: Int
+    ) -> ResolvedSkimPlaybackPlan? {
+        guard isMediaPlaybackSnapshot,
+              !snapshot.isRecording,
+              let store,
+              let projection = try? store.loadResolvedListeningMapProjection(itemId: activeItemId) else {
+            return nil
+        }
+        let committed = (try? store.loadPortableListeningMapProposals(itemId: activeItemId)) ?? []
+        let imported = ((try? store.loadImportedCommentaryLayers(itemId: activeItemId)) ?? [])
+            .flatMap { $0.listeningMapProposals ?? [] }
+        let proposals = committed + imported
+        guard let proposal = proposals.first(where: { $0.id == projection.proposalId }) ?? proposals.first else {
+            return nil
+        }
+        let scenes = proposal.scenes.sorted { $0.order < $1.order }
+        guard !scenes.isEmpty else { return nil }
+        let exactIdentityProjection = !projection.points.isEmpty && projection.points.allSatisfy {
+            $0.confidence == .verified && $0.recipientMediaTimeMs == $0.sourceMediaTimeMs
+        }
+        func projectedTime(_ sourceTimeMs: Int?) -> Int? {
+            guard let sourceTimeMs else { return nil }
+            return projection.projectedRecipientTime(for: sourceTimeMs)
+                ?? (exactIdentityProjection ? sourceTimeMs : nil)
+        }
+        let sceneStarts = scenes.map { projectedTime($0.startAnchor.mediaTimeMs) }
+        guard let currentIndex = scenes.indices.last(where: {
+            guard let start = sceneStarts[$0] else { return false }
+            return start <= recipientMediaTimeMs
+        }) else { return nil }
+
+        let summaryIndex: Int
+        let destinationSceneId: String?
+        let destinationMediaTimeMs: Int
+        switch direction {
+        case .forward:
+            summaryIndex = currentIndex
+            if scenes.indices.contains(currentIndex + 1) {
+                guard let destination = sceneStarts[currentIndex + 1] else { return nil }
+                destinationSceneId = scenes[currentIndex + 1].id
+                destinationMediaTimeMs = destination
+            } else {
+                guard let duration = snapshot.currentPlaybackDurationMs ?? selectedItem.mediaDurationMs else { return nil }
+                destinationSceneId = nil
+                destinationMediaTimeMs = duration
+            }
+        case .backward:
+            guard currentIndex > 0, let destination = sceneStarts[currentIndex] else { return nil }
+            summaryIndex = currentIndex - 1
+            destinationSceneId = scenes[currentIndex].id
+            destinationMediaTimeMs = destination
+        }
+
+        let summaryScene = scenes[summaryIndex]
+        guard summaryScene.eligibility == .eligible,
+              summaryScene.summaryText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            return nil
+        }
+        let assetID = summaryBridgeAssetID(
+            itemId: activeItemId,
+            proposalId: proposal.id,
+            sceneId: summaryScene.id
+        )
+        guard let asset = (try? store.loadOwnedOfflineAssets())?.first(where: {
+            $0.id == assetID && $0.category == .summaryBridge && $0.integrity == .valid
+        }), let url = resolvedApplicationSupportAssetURL(for: asset.relativePath) else {
+            return nil
+        }
+        return ResolvedSkimPlaybackPlan(
+            direction: direction,
+            itemId: activeItemId,
+            originMediaTimeMs: recipientMediaTimeMs,
+            summarySceneId: summaryScene.id,
+            destinationSceneId: destinationSceneId,
+            destinationMediaTimeMs: destinationMediaTimeMs,
+            summaryAssetId: assetID,
+            summaryAudioURL: url
+        )
+    }
+
+    func skimForward() {
+        performSkim(direction: .forward)
+    }
+
+    func skimBackward() {
+        performSkim(direction: .backward)
+    }
+
+    private func performSkim(direction: SkimDirection) {
+        if let active = snapshot.skimBridgeState {
+            if active.direction != direction {
+                cancelSkimBridge(restoringOrigin: true, resumeSource: false)
+                reportSuccess("Skim cancelled. Press again to skim (direction.rawValue).")
+                return
+            }
+            let pendingDestination = active.destinationMediaTimeMs
+            cancelSkimBridge(restoringOrigin: false, resumeSource: false)
+            if let engine {
+                snapshot = (try? engine.seekMedia(toMediaTimeMs: pendingDestination)) ?? snapshot
+                snapshot = (try? engine.pause()) ?? snapshot
+            }
+        }
+        let effectiveTime = snapshot.currentMediaTimeMs ?? 0
+        guard let plan = resolvedSkimPlaybackPlan(direction: direction, at: effectiveTime) else {
+            reportWarning("Skim is unavailable until a verified scene summary is ready.")
+            return
+        }
+        startSkimBridge(plan)
+    }
+
+    private func startSkimBridge(_ plan: ResolvedSkimPlaybackPlan) {
+        #if canImport(AVFoundation)
+        guard let engine else { return }
+        let wasPlaying = snapshot.status.isPlaybackActive
+        do {
+            snapshot = try engine.pause()
+            var state = SkimBridgeState(
+                direction: plan.direction,
+                itemId: plan.itemId,
+                originMediaTimeMs: plan.originMediaTimeMs,
+                summarySceneId: plan.summarySceneId,
+                destinationSceneId: plan.destinationSceneId,
+                destinationMediaTimeMs: plan.destinationMediaTimeMs,
+                summaryAssetId: plan.summaryAssetId,
+                wasSourcePlaying: wasPlaying,
+                status: .preparing
+            )
+            snapshot.skimBridgeState = state
+            protectSummaryBridgeAsset(plan.summaryAssetId, protected: true)
+            let player = AVPlayer(url: plan.summaryAudioURL)
+            skimBridgePlayer = player
+            state.status = .playing
+            snapshot.skimBridgeState = state
+            player.playImmediately(atRate: Float(max(0.5, min(2, snapshot.playbackRate))))
+            skimBridgeTask?.cancel()
+            skimBridgeTask = Task { @MainActor [weak self, weak player] in
+                while !Task.isCancelled {
+                    guard let self, let player, let item = player.currentItem else { return }
+                    if item.status == .failed {
+                        self.cancelSkimBridge(restoringOrigin: true, resumeSource: false)
+                        self.reportWarning("The scene summary could not be played. Your original position was restored.")
+                        return
+                    }
+                    let duration = CMTimeGetSeconds(item.duration)
+                    let current = CMTimeGetSeconds(player.currentTime())
+                    if duration.isFinite, duration > 0, current >= duration - 0.08 {
+                        self.completeSkimBridge()
+                        return
+                    }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            }
+            reportSuccess(plan.direction == .forward ? "Skimming forward." : "Skimming backward.")
+        } catch {
+            protectSummaryBridgeAsset(plan.summaryAssetId, protected: false)
+            reportFailure(error, context: "Skim failed")
+        }
+        #else
+        reportWarning("Skim audio is unavailable on this device.")
+        #endif
+    }
+
+    private func completeSkimBridge() {
+        guard var bridge = snapshot.skimBridgeState, let engine else { return }
+        bridge.status = .completing
+        snapshot.skimBridgeState = bridge
+        skimBridgePlayer?.pause()
+        skimBridgePlayer = nil
+        skimBridgeTask = nil
+        protectSummaryBridgeAsset(bridge.summaryAssetId, protected: false)
+        do {
+            snapshot.skimBridgeState = nil
+            snapshot = try engine.seekMedia(toMediaTimeMs: bridge.destinationMediaTimeMs)
+            if bridge.destinationSceneId == nil {
+                snapshot = try engine.pause()
+                reportConfirmation("Finished the final scene summary.")
+            } else if bridge.wasSourcePlaying {
+                snapshot = try engine.resumePlayback()
+            } else {
+                snapshot = try engine.pause()
+            }
+            refreshSelectedItem()
+        } catch {
+            cancelSkimBridge(restoringOrigin: true, resumeSource: false)
+            reportFailure(error, context: "Completing Skim failed")
+        }
+    }
+
+    private func setSkimBridgePaused(_ paused: Bool) {
+        #if canImport(AVFoundation)
+        guard var bridge = snapshot.skimBridgeState, let player = skimBridgePlayer else { return }
+        if paused {
+            player.pause()
+            bridge.status = .paused
+        } else {
+            player.playImmediately(atRate: Float(max(0.5, min(2, snapshot.playbackRate))))
+            bridge.status = .playing
+        }
+        snapshot.skimBridgeState = bridge
+        #endif
+    }
+
+    private func cancelSkimBridge(restoringOrigin: Bool, resumeSource: Bool) {
+        guard var bridge = snapshot.skimBridgeState else { return }
+        bridge.status = .cancelled
+        skimBridgePlayer?.pause()
+        skimBridgePlayer = nil
+        skimBridgeTask?.cancel()
+        skimBridgeTask = nil
+        protectSummaryBridgeAsset(bridge.summaryAssetId, protected: false)
+        snapshot.skimBridgeState = nil
+        guard restoringOrigin, let engine else { return }
+        snapshot = (try? engine.seekMedia(toMediaTimeMs: bridge.originMediaTimeMs)) ?? snapshot
+        if resumeSource && bridge.wasSourcePlaying {
+            snapshot = (try? engine.resumePlayback()) ?? snapshot
+        } else {
+            snapshot = (try? engine.pause()) ?? snapshot
+        }
+    }
+
+    private func restoreSkimOriginBeforeCanonicalTransport() {
+        guard let bridge = snapshot.skimBridgeState else { return }
+        cancelSkimBridge(restoringOrigin: true, resumeSource: bridge.wasSourcePlaying)
+    }
+
+    private func protectSummaryBridgeAsset(_ assetID: String, protected: Bool) {
+        guard let store,
+              var asset = (try? store.loadOwnedOfflineAssets())?.first(where: { $0.id == assetID }) else { return }
+        if protected {
+            asset.protections.insert(.activeSummaryBridge)
+        } else {
+            asset.protections.remove(.activeSummaryBridge)
+        }
+        try? store.saveOwnedOfflineAsset(asset)
+    }
+
+    private func purgeTransientEpisodeTranscriptionCaches(itemId: String) throws {
+        try purgeSourceTranscriptionAudioCaches(itemId: itemId)
+        let transientDirectory = try episodeMapDirectory(itemId: itemId)
+            .appending(path: "Transient", directoryHint: .isDirectory)
+        if FileManager.default.fileExists(atPath: transientDirectory.path) {
+            try FileManager.default.removeItem(at: transientDirectory)
+        }
+        if let store {
+            for asset in try store.loadOwnedOfflineAssets() where
+                asset.itemId == itemId && asset.category == .transientEpisodeTranscript {
+                try store.deleteOwnedOfflineAsset(id: asset.id)
+            }
+        }
+    }
+
+    private func purgeSourceTranscriptionAudioCaches(itemId: String) throws {
+        let caches = try FileManager.default.url(
+            for: .cachesDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        for relative in [
+            "SourceAudioTranscriptionChunksV3/\(itemId)",
+            "SourceAudioTranscriptionWindows/\(itemId)"
+        ] {
+            let url = caches.appending(path: relative, directoryHint: .isDirectory)
+            if FileManager.default.fileExists(atPath: url.path) {
+                try FileManager.default.removeItem(at: url)
+            }
+        }
+    }
+
+    private func submitAutomaticEpisodeMapPreparationIfNeeded() {
+        guard automaticEpisodeMapPreparationPolicy == .whileCharging,
+              let store else { return }
+        let candidates = libraryItems.compactMap { row -> Item? in
+            guard (try? store.loadEditionFingerprintSpine(itemId: row.id)) == nil,
+                  let item = try? store.loadItem(id: row.id),
+                  item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream,
+                  podcastDownloadCoordinator?.validatedLocalURL(for: row.id) != nil else { return nil }
+            return item
+        }
+        for item in candidates {
+            let id = "episode-map-job-\(safePodcastEvidenceComponent(item.id))"
+            if let existing = try? store.loadEpisodeMapPreparationJobs().first(where: { $0.id == id && !$0.isCancelled }) {
+                _ = existing
+                continue
+            }
+            try? store.saveEpisodeMapPreparationJob(EpisodeMapPreparationJob(
+                id: id,
+                itemId: item.id,
+                policy: .whileCharging
+            ))
+        }
+        #if canImport(BackgroundTasks) && canImport(UIKit)
+        AudioPreparationBackgroundController.shared.submitIfEnabled(!candidates.isEmpty)
+        #endif
     }
 
     func applyListeningMapJSON() {
@@ -3650,6 +4564,7 @@ final class Gate1AppModel: ObservableObject {
 
     func startNewSession(id: String) {
         guard !rejectNavigationOrSessionMutationWhileRecording("start_new_session") else { return }
+        cancelSkimBridge(restoringOrigin: true, resumeSource: false)
         cancelSleepTimer()
         announcedImportedInterjectionIDs.removeAll()
         pendingImportedCommentary = nil
@@ -3750,6 +4665,7 @@ final class Gate1AppModel: ObservableObject {
             var session: Session
 
             if snapshot.itemId == id, let engine, engine.currentSession != nil {
+                cancelSkimBridge(restoringOrigin: true, resumeSource: false)
                 _ = try? engine.stopPlayback()
                 snapshot = try engine.endSession()
                 streamingSpeechQueue.stopAndClear()
@@ -3962,6 +4878,7 @@ final class Gate1AppModel: ObservableObject {
             }
             podcastDownloadCoordinator?.removeItem(id)
             removeDurableGeneratedAudio(for: item)
+            removeEpisodeMapArtifacts(itemId: id)
             try store.deleteItem(id: id)
             try refreshLibraryRows(store: store)
             guard !libraryItems.contains(where: { $0.id == id }),
@@ -3995,6 +4912,7 @@ final class Gate1AppModel: ObservableObject {
             }
             ids.forEach { podcastDownloadCoordinator?.removeItem($0) }
             items.forEach(removeDurableGeneratedAudio)
+            ids.forEach(removeEpisodeMapArtifacts)
             try store.deleteItems(ids: ids)
             try refreshLibraryRows(store: store)
             guard recentlyDeletedItems.isEmpty,
@@ -4011,6 +4929,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func skipBack() {
+        restoreSkimOriginBeforeCanonicalTransport()
         synchronizeStreamingSpeechAnchorIfNeeded()
         run { engine in
             snapshot = try engine.skipBack(unit: skipUnitForCurrentTarget())
@@ -4021,6 +4940,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func skipBackMedia() {
+        restoreSkimOriginBeforeCanonicalTransport()
         run { engine in
             snapshot = try engine.skipBack(unit: mediaSkipUnit(seconds: mediaSkipBackSeconds))
             refreshSelectedItem()
@@ -4028,6 +4948,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func skipForward() {
+        restoreSkimOriginBeforeCanonicalTransport()
         synchronizeStreamingSpeechAnchorIfNeeded()
         run { engine in
             let unit = skipUnitForCurrentTarget()
@@ -4039,6 +4960,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func skipForwardMedia() {
+        restoreSkimOriginBeforeCanonicalTransport()
         run { engine in
             snapshot = try engine.skipForward(unit: mediaSkipUnit(seconds: mediaSkipForwardSeconds))
             refreshSelectedItem()
@@ -4063,6 +4985,16 @@ final class Gate1AppModel: ObservableObject {
         let clamped = max(0.5, min(2.0, (rate * 4).rounded() / 4))
         mediaPlaybackRate = clamped
         UserDefaults.standard.set(clamped, forKey: "mediaPlaybackRate")
+        if var bridge = snapshot.skimBridgeState {
+            snapshot.playbackRate = clamped
+            if bridge.status == .playing {
+                skimBridgePlayer?.rate = Float(clamped)
+            }
+            bridge.status = snapshot.skimBridgeState?.status ?? bridge.status
+            snapshot.skimBridgeState = bridge
+            diagnostics["mediaPlaybackRate"] = String(format: "%.2f", clamped)
+            return
+        }
         run { engine in
             snapshot = try engine.setPlaybackRate(clamped)
             refreshSelectedItem()
@@ -4071,6 +5003,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func seekMedia(toMediaTimeMs mediaTimeMs: Int) {
+        restoreSkimOriginBeforeCanonicalTransport()
         run { engine in
             snapshot = try engine.seekMedia(toMediaTimeMs: mediaTimeMs)
             recordMediaSeekEvidence(from: engine)
@@ -4242,6 +5175,10 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func beginInterjection() {
+        guard snapshot.skimBridgeState == nil else {
+            reportWarning("Interjections are unavailable while a scene summary is playing. Pause or cancel Skim first.")
+            return
+        }
         guard !recordingNavigationIsLocked else { return }
         isRequestingRecordingPermission = true
         statusMessage = "Starting interjection..."
@@ -4382,6 +5319,7 @@ final class Gate1AppModel: ObservableObject {
         navigateHome: Bool,
         successMessage: String = "Session saved. You can resume it later."
     ) {
+        cancelSkimBridge(restoringOrigin: true, resumeSource: false)
         let closedItemId = snapshot.itemId ?? activeItemId
         run { engine in
             snapshot = try engine.endSession()
@@ -6956,6 +7894,40 @@ final class Gate1AppModel: ObservableObject {
         playbackRate: Double? = nil,
         origin: String = "app_ui"
     ) {
+        if command == .skimForward {
+            skimForward()
+            diagnostics["gate2LastCommand"] = command.rawValue
+            return
+        }
+        if command == .skimBackward {
+            skimBackward()
+            diagnostics["gate2LastCommand"] = command.rawValue
+            return
+        }
+        if snapshot.skimBridgeState != nil {
+            switch command {
+            case .play:
+                setSkimBridgePaused(false)
+                return
+            case .pause:
+                setSkimBridgePaused(true)
+                return
+            case .togglePlayPause:
+                playPause()
+                return
+            case .skipBack, .skipForward, .seekToMediaTime, .jumpToChapter:
+                restoreSkimOriginBeforeCanonicalTransport()
+            case .beginInterjection:
+                reportWarning("Interjections are unavailable while a scene summary is playing.")
+                return
+            case .setPlaybackRate:
+                if let playbackRate { setMediaPlaybackRate(playbackRate) }
+                return
+            case .finishInterjection, .cancelInterjection,
+                 .generateInterjectionSummary, .submitFollowup, .skimBackward, .skimForward:
+                break
+            }
+        }
         if (snapshot.isRecording && command != .finishInterjection && command != .cancelInterjection)
             || (isRequestingRecordingPermission && command != .beginInterjection) {
             diagnostics["recordingNavigationGuard"] = "blocked_compact_\(command.rawValue)"
@@ -7571,6 +8543,37 @@ final class Gate1AppModel: ObservableObject {
         try? FileManager.default.removeItem(at: file)
     }
 
+    private func removeEpisodeMapArtifacts(itemId: String) {
+        if snapshot.itemId == itemId, snapshot.skimBridgeState != nil {
+            cancelSkimBridge(restoringOrigin: true, resumeSource: false)
+        }
+        if episodeMapPreparationItemId == itemId {
+            episodeMapPreparationTask?.cancel()
+        }
+        if let directory = try? episodeMapDirectory(itemId: itemId),
+           FileManager.default.fileExists(atPath: directory.path) {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        try? purgeTransientEpisodeTranscriptionCaches(itemId: itemId)
+        for job in (try? store?.loadEpisodeMapPreparationJobs()) ?? [] where job.itemId == itemId {
+            try? store?.deleteEpisodeMapPreparationJob(id: job.id)
+        }
+    }
+
+    private func purgeExpiredEpisodeMapPreparationJobs(store: SQLiteSessionStore, now: Date = Date()) {
+        let expiration = now.addingTimeInterval(-7 * 24 * 60 * 60)
+        for job in (try? store.loadEpisodeMapPreparationJobs()) ?? [] where
+            job.isCancelled || job.requestedAt < expiration {
+            try? purgeTransientEpisodeTranscriptionCaches(itemId: job.itemId)
+            if (try? store.loadEditionFingerprintSpine(itemId: job.itemId)) == nil,
+               let directory = try? episodeMapDirectory(itemId: job.itemId),
+               FileManager.default.fileExists(atPath: directory.path) {
+                try? FileManager.default.removeItem(at: directory)
+            }
+            try? store.deleteEpisodeMapPreparationJob(id: job.id)
+        }
+    }
+
     private func prepareTextPlaybackBeforeStarting(itemId: String) -> Bool {
         do {
             let store = try requireStore()
@@ -7997,6 +9000,7 @@ final class Gate1AppModel: ObservableObject {
                 isCompleted: (continuation?.completionPercent ?? 0) >= 100,
                 mediaType: item.mediaType,
                 sourceTitle: item.sourceTitle ?? item.externalReference,
+                sourceURL: item.sourceURL,
                 author: item.author,
                 sourceReference: item.externalReference,
                 sourceReferenceType: item.externalReferenceType,
@@ -9040,7 +10044,7 @@ final class Gate1AppModel: ObservableObject {
         Task { [weak self, interjectionId = interjection.id, itemId = item.id, durationMs = item.media?.durationMs, windowBeforeMs = sourceWindowContextBeforeMs, windowAfterMs = sourceWindowContextAfterMs] in
             guard let self else { return }
             do {
-                let timeline = try await self.sourceTranscriptionClient.transcribeSourceAudioWindow(
+                let analysis = try await self.sourceTranscriptionClient.transcribeSourceAudioWindowWithEvidence(
                     url: transcriptionURL,
                     itemId: itemId,
                     anchorMediaTimeMs: anchorMediaTimeMs,
@@ -9048,12 +10052,66 @@ final class Gate1AppModel: ObservableObject {
                     windowBeforeMs: windowBeforeMs,
                     windowAfterMs: windowAfterMs
                 )
+                var referenceEvidence: [CapturedPodcastAnchorEvidence] = []
+                var referenceEvidenceFailure: String?
+                if let localAudioURL = analysis.localAudioURL {
+                    do {
+                        let request = PostResumeAudioSampleRequest(
+                            interjectionId: interjectionId,
+                            sessionId: interjection.sessionId,
+                            itemId: itemId,
+                            anchorMediaTimeMs: anchorMediaTimeMs,
+                            targetDurationMs: PodcastAnchorEvidenceGenerator.flankDurationMs
+                        )
+                        let outputDirectory = try self.podcastAnchorEvidenceDirectory(for: request)
+                        let localAnchorMs = max(0, anchorMediaTimeMs - analysis.sourceStartMs)
+                        let generated = try await PodcastAnchorEvidenceGenerator.generate(
+                            sourceURL: localAudioURL,
+                            anchorMediaTimeMs: localAnchorMs,
+                            outputDirectory: outputDirectory,
+                            idPrefix: self.podcastAnchorEvidenceID(request: request, suffix: "source-window")
+                        )
+                        referenceEvidence = generated.map { generated in
+                            CapturedPodcastAnchorEvidence(
+                                id: generated.id,
+                                localPath: generated.fileURL.path,
+                                durationMs: generated.durationMs,
+                                anchorOffsetMs: generated.anchorOffsetMs,
+                                provenance: analysis.provenance == .downloadedSourceReference
+                                    ? .downloadedSourceReference
+                                    : .sourceWindowReference,
+                                windowRole: generated.id.hasSuffix("-pre")
+                                    ? .sourceWindowBefore
+                                    : .sourceWindowAfter
+                            )
+                        }
+                    } catch {
+                        referenceEvidenceFailure = error.localizedDescription
+                    }
+                    try? FileManager.default.removeItem(at: localAudioURL.deletingLastPathComponent())
+                }
                 await MainActor.run {
                     self.run { engine in
-                        self.snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjectionId, timeline: timeline)
+                        self.snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjectionId, timeline: analysis.timeline)
+                        if !referenceEvidence.isEmpty {
+                            try self.persistPodcastAnchorEvidence(
+                                request: PostResumeAudioSampleRequest(
+                                    interjectionId: interjectionId,
+                                    sessionId: interjection.sessionId,
+                                    itemId: itemId,
+                                    anchorMediaTimeMs: anchorMediaTimeMs,
+                                    targetDurationMs: PodcastAnchorEvidenceGenerator.flankDurationMs
+                                ),
+                                evidence: referenceEvidence,
+                                sourceExactEditionSHA256: nil
+                            )
+                        }
                         self.refreshSelectedItem()
                         self.diagnostics["sourceWindowTranscription:\(interjectionId)"] = "complete:speech_window"
                         self.diagnostics["sourceWindowContextProvenance:\(interjectionId)"] = provenance
+                        self.diagnostics["sourceWindowSignature:\(interjectionId)"] = referenceEvidence.isEmpty
+                            ? "unavailable:\(referenceEvidenceFailure ?? "temporary_audio_unavailable")"
+                            : "complete:\(referenceEvidence.count)"
                         self.pendingSourceContextInterjectionIds.remove(interjectionId)
                     }
                 }
@@ -9223,7 +10281,8 @@ final class Gate1AppModel: ObservableObject {
                         localPath: $0.fileURL.path,
                         durationMs: $0.durationMs,
                         anchorOffsetMs: $0.anchorOffsetMs,
-                        provenance: .exactLocalPlaybackEdition
+                        provenance: .exactLocalPlaybackEdition,
+                        windowRole: $0.id.hasSuffix("-pre") ? .preInterjection : .postResume
                     )
                 }
                 await MainActor.run {
@@ -9261,7 +10320,7 @@ final class Gate1AppModel: ObservableObject {
                 try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
                 let evidenceID = podcastAnchorEvidenceID(
                     request: capture.request,
-                    suffix: "stream-post"
+                    suffix: capture.windowRole == .preInterjection ? "stream-pre" : "stream-post"
                 )
                 let fileURL = root.appending(path: "\(evidenceID).shazamsignature")
                 try capture.signatureData.write(to: fileURL, options: .atomic)
@@ -9272,17 +10331,27 @@ final class Gate1AppModel: ObservableObject {
                         localPath: fileURL.path,
                         durationMs: capture.durationMs,
                         anchorOffsetMs: capture.anchorOffsetMs,
-                        provenance: .decodedPlaybackStream
+                        provenance: .observedDecodedPlayback,
+                        windowRole: capture.windowRole == .preInterjection ? .preInterjection : .postResume
                     )],
                     sourceExactEditionSHA256: nil
                 )
                 diagnostics["podcastAnchorEvidence:\(capture.request.interjectionId)"] =
-                    "complete:decoded_playback_post_resume:bytes=\(capture.signatureData.count)"
+                    "complete:decoded_playback_\(capture.windowRole.rawValue):bytes=\(capture.signatureData.count)"
             } catch {
                 markPodcastAnchorEvidenceUnavailable(
                     request: capture.request,
                     reason: "stream_signature_persistence_failed:\(error.localizedDescription)"
                 )
+            }
+        case .landmark(let landmark):
+            do {
+                try persistSparseEpisodeFingerprintLandmark(landmark)
+                diagnostics["episodeFingerprintSpine:\(landmark.itemId)"] =
+                    "captured:\(landmark.trigger.rawValue):epoch=\(landmark.continuityEpoch)"
+            } catch {
+                diagnostics["episodeFingerprintSpine:\(landmark.itemId)"] =
+                    "persistence_failed:\(error.localizedDescription)"
             }
         case .failed(let request, let reason):
             if let interjection = storedInterjection(request: request) {
@@ -9292,6 +10361,71 @@ final class Gate1AppModel: ObservableObject {
                 markPodcastAnchorEvidenceUnavailable(request: request, reason: reason)
             }
         }
+    }
+    #endif
+
+    #if canImport(AVFoundation) && canImport(ShazamKit)
+    private func persistSparseEpisodeFingerprintLandmark(
+        _ capture: CapturedEpisodeFingerprintLandmark
+    ) throws {
+        guard let store else { throw SessionKitError.persistenceFailed("store_unavailable") }
+        let safeItem = safePodcastEvidenceComponent(capture.itemId)
+        let root = try applicationSupportDirectory()
+            .appending(path: "SpokenMargins/EpisodeMaps", directoryHint: .isDirectory)
+            .appending(path: safeItem, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let suffix = capture.gridIndex.map { "grid-\($0)" }
+            ?? "epoch-\(capture.continuityEpoch)-\(capture.sourceMediaStartMs)"
+        let assetID = "episode-signature-\(safeItem)-\(suffix)"
+        let fileURL = root.appending(path: "\(assetID).shazamsignature")
+        try capture.signatureData.write(to: fileURL, options: .atomic)
+
+        let existing = try store.loadEditionFingerprintSpine(itemId: capture.itemId)
+        var landmarks = existing?.landmarks.filter { $0.signatureAssetId != assetID } ?? []
+        landmarks.append(EpisodeFingerprintLandmark(
+            id: "landmark-\(suffix)",
+            order: landmarks.count,
+            sourceMediaStartMs: capture.sourceMediaStartMs,
+            sourceMediaEndMs: capture.sourceMediaEndMs,
+            anchorMediaTimeMs: capture.anchorMediaTimeMs,
+            continuityEpoch: capture.continuityEpoch,
+            trigger: capture.trigger,
+            provenance: .observedDecodedPlayback,
+            signatureAssetId: assetID
+        ))
+        landmarks = landmarks.sorted { $0.sourceMediaStartMs < $1.sourceMediaStartMs }.enumerated().map { index, value in
+            EpisodeFingerprintLandmark(
+                id: value.id,
+                order: index,
+                sourceMediaStartMs: value.sourceMediaStartMs,
+                sourceMediaEndMs: value.sourceMediaEndMs,
+                anchorMediaTimeMs: value.anchorMediaTimeMs,
+                continuityEpoch: value.continuityEpoch,
+                trigger: value.trigger,
+                provenance: value.provenance,
+                signatureAssetId: value.signatureAssetId,
+                transcriptSketchWindowId: value.transcriptSketchWindowId,
+                generatorVersion: value.generatorVersion
+            )
+        }
+        let item = try? store.loadItem(id: capture.itemId)
+        try store.saveEditionFingerprintSpine(EditionFingerprintSpineArtifact(
+            id: existing?.id ?? "episode-spine-\(safeItem)",
+            itemId: capture.itemId,
+            canonicalURL: item?.externalReference ?? item?.media?.url,
+            producingEditionDurationMs: item?.media?.durationMs,
+            producingEditionSHA256: existing?.producingEditionSHA256,
+            createdAt: existing?.createdAt ?? Date(),
+            landmarks: landmarks
+        ))
+        try store.saveOwnedOfflineAsset(OwnedOfflineAsset(
+            id: assetID,
+            itemId: capture.itemId,
+            category: .fingerprintMap,
+            relativePath: "SpokenMargins/EpisodeMaps/\(safeItem)/\(assetID).shazamsignature",
+            byteCount: Int64(capture.signatureData.count),
+            isReproducible: false
+        ))
     }
     #endif
 
@@ -9334,7 +10468,15 @@ final class Gate1AppModel: ObservableObject {
                 .first(where: { $0.id == request.interjectionId && $0.itemId == request.itemId }) else {
             throw SessionKitError.persistenceFailed("podcast_anchor_interjection_missing")
         }
-        interjection.podcastAnchorEvidence = evidence
+        var merged = interjection.podcastAnchorEvidence ?? []
+        for newEvidence in evidence {
+            merged.removeAll {
+                $0.id == newEvidence.id
+                    || ($0.windowRole == newEvidence.windowRole && $0.provenance == newEvidence.provenance)
+            }
+            merged.append(newEvidence)
+        }
+        interjection.podcastAnchorEvidence = merged.sorted { $0.id < $1.id }
         interjection.sourceExactEditionSHA256 = sourceExactEditionSHA256
         interjection.podcastAnchorEvidenceCaptureStatus = .ready
         interjection.podcastAnchorEvidenceFailureReason = nil
@@ -10020,6 +11162,26 @@ final class Gate1AppModel: ObservableObject {
                 ))
             }
 
+            let mapProposals = try store.loadPortableListeningMapProposals(itemId: item.id)
+            let fingerprintSpines = try store.loadEditionFingerprintSpine(itemId: item.id).map { [$0] } ?? []
+            let phraseSketches = try store.loadTranscriptPhraseSketch(itemId: item.id).map { [$0] } ?? []
+            if let spine = fingerprintSpines.first {
+                let directory = try episodeMapDirectory(itemId: item.id)
+                let existingEvidenceIDs = Set(machineEvidence.map(\.id))
+                for landmark in spine.landmarks where !existingEvidenceIDs.contains(landmark.signatureAssetId) {
+                    let url = directory.appending(path: "\(landmark.signatureAssetId).shazamsignature")
+                    guard FileManager.default.fileExists(atPath: url.path) else { continue }
+                    machineEvidence.append(ReviewedMachineEvidenceAsset(
+                        id: landmark.signatureAssetId,
+                        path: "assets/evidence/\(landmark.signatureAssetId).shazamsignature",
+                        sourceURL: url,
+                        durationMs: max(1, landmark.sourceMediaEndMs - landmark.sourceMediaStartMs),
+                        anchorOffsetMs: 0,
+                        provenance: landmark.provenance.rawValue
+                    ))
+                }
+            }
+
             let packageID = "package-\(UUID().uuidString.lowercased())"
             let prepared = try SpokenMarginsPackageBuilder.prepare(
                 packageId: packageID,
@@ -10027,6 +11189,9 @@ final class Gate1AppModel: ObservableObject {
                 item: itemIdentity,
                 itemTransportSelection: itemTransport,
                 selections: selections,
+                mapProposals: mapProposals,
+                fingerprintSpines: fingerprintSpines,
+                phraseSketches: phraseSketches,
                 machineEvidence: machineEvidence,
                 senderDisplayLabel: sharingState.senderDisplayLabel.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
             )
@@ -10042,7 +11207,7 @@ final class Gate1AppModel: ObservableObject {
                 isSharingInterjectionsPresented = false
                 isSharedSpokenMarginsPackagePresented = true
             }
-            diagnostics["lastSharedPackage"] = "margins=\(drafts.count);evidence=\(machineEvidence.count)"
+            diagnostics["lastSharedPackage"] = "margins=\(drafts.count);evidence=\(machineEvidence.count);map=\(mapProposals.isEmpty ? "preparing_or_unavailable" : "included")"
         } catch {
             sharingState.isExporting = false
             sharingState.errorMessage = error.localizedDescription
@@ -11675,12 +12840,50 @@ final class Gate1AppModel: ObservableObject {
               ["podcast", TargetType.transcriptBackedMedia.rawValue].contains(row.mediaType.lowercased()) else {
             return false
         }
-        let sourceTitle = row.sourceTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !feedSubscriptions.contains { subscription in
-            guard let sourceTitle, !sourceTitle.isEmpty else { return false }
-            return (subscription.source.title ?? subscription.source.host)
-                .caseInsensitiveCompare(sourceTitle) == .orderedSame
+        return !Self.isSourceAlreadyFollowed(
+            sourceURL: row.sourceURL,
+            sourceTitle: row.sourceTitle,
+            subscriptions: feedSubscriptions
+        )
+    }
+
+    nonisolated static func isSourceAlreadyFollowed(
+        sourceURL: String?,
+        sourceTitle: String?,
+        subscriptions: [FeedSubscription]
+    ) -> Bool {
+        if let sourceURL = normalizedFollowSourceURL(sourceURL) {
+            return subscriptions.contains {
+                normalizedFollowSourceURL($0.source.canonicalURL) == sourceURL
+            }
         }
+        guard let sourceTitle = sourceTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !sourceTitle.isEmpty else { return false }
+        return subscriptions.contains {
+            ($0.source.title ?? $0.source.host).caseInsensitiveCompare(sourceTitle) == .orderedSame
+        }
+    }
+
+    private nonisolated static func normalizedFollowSourceURL(_ value: String?) -> String? {
+        guard let value,
+              var components = URLComponents(
+                string: value.trimmingCharacters(in: .whitespacesAndNewlines)
+              ),
+              let scheme = components.scheme?.lowercased(),
+              let host = components.host?.lowercased(),
+              !scheme.isEmpty,
+              !host.isEmpty else { return nil }
+        components.scheme = scheme
+        components.host = host
+        components.fragment = nil
+        if (scheme == "https" && components.port == 443)
+            || (scheme == "http" && components.port == 80) {
+            components.port = nil
+        }
+        if components.path.count > 1, components.path.hasSuffix("/") {
+            components.path.removeLast()
+        }
+        return components.string
     }
 
     func followSelectedSource() {
@@ -11706,16 +12909,22 @@ final class Gate1AppModel: ObservableObject {
                 ).first else {
                     throw FollowedSourceError.noFeedCandidates
                 }
-                let subscribed = Set((try store.loadFeedSubscriptions()).map { $0.source.id })
-                if !subscribed.contains(candidate.source.id) {
-                    _ = try await coordinator.follow(candidate: candidate)
+                let subscriptionsBySourceID = Dictionary(
+                    uniqueKeysWithValues: try store.loadFeedSubscriptions().map { ($0.source.id, $0) }
+                )
+                let subscription = if let existing = subscriptionsBySourceID[candidate.source.id] {
+                    existing
+                } else {
+                    try await coordinator.follow(candidate: candidate)
                 }
-                if item.sourceURL == nil {
-                    var updated = item
-                    updated.sourceURL = candidate.source.canonicalURL
-                    updated.sourceTitle = updated.sourceTitle ?? candidate.source.title
+                var updated = item
+                updated.sourceURL = subscription.source.canonicalURL
+                updated.sourceTitle = updated.sourceTitle ?? subscription.source.title
+                if updated != item {
                     try store.saveItem(updated)
+                    try self.refreshLibraryRows(store: store)
                 }
+                self.feedSubscriptions = try store.loadFeedSubscriptions()
                 await self.refreshFollowedSources(force: true)
                 self.reportConfirmation("Following \(candidate.source.title ?? candidate.source.host).")
             } catch {
@@ -11994,25 +13203,58 @@ final class Gate1AppModel: ObservableObject {
         if importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store),
            let item = try? store.loadItem(id: itemId) {
             diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "requested_for_imported_commentary"
-            scheduleFullSourceTranscriptionForListeningMap(for: item, localSourceURL: url)
+            scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: url)
             return
         }
         guard pendingMapGenerationItemId == itemId,
-              let item = try? store.loadItem(id: itemId) else {
+              (try? store.loadItem(id: itemId)) != nil else {
             diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "not_requested"
             return
         }
-        diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "requested_for_listening_map"
-        scheduleFullSourceTranscriptionForListeningMap(for: item, localSourceURL: url)
+        pendingMapGenerationItemId = nil
+        diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "requested_private_episode_map"
+        prepareEpisodeMap(itemId: itemId, policy: .explicit)
     }
 
-    private func resolveImportedPodcastCommentary(itemId: String, localURL: URL) {
+    private func scheduleTransientRecipientAlignmentTranscript(for item: Item, localSourceURL: URL) {
+        guard pendingFullSourceTranscriptionItemIds.insert(item.id).inserted else { return }
+        diagnostics["recipientAlignmentTranscript:\(item.id)"] = "transcribing_transiently"
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let timeline = try await self.sourceTranscriptionClient.transcribeSourceAudio(
+                    url: localSourceURL,
+                    itemId: item.id,
+                    durationMs: item.media?.durationMs
+                )
+                self.pendingFullSourceTranscriptionItemIds.remove(item.id)
+                self.resolveImportedPodcastCommentary(
+                    itemId: item.id,
+                    localURL: localSourceURL,
+                    recipientTranscriptOverride: timeline
+                )
+                try? self.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
+                self.diagnostics["recipientAlignmentTranscript:\(item.id)"] = "consumed_and_deleted"
+            } catch {
+                self.pendingFullSourceTranscriptionItemIds.remove(item.id)
+                try? self.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
+                self.diagnostics["recipientAlignmentTranscript:\(item.id)"] = "failed_and_deleted:\(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func resolveImportedPodcastCommentary(
+        itemId: String,
+        localURL: URL,
+        recipientTranscriptOverride: TranscriptTimeline? = nil
+    ) {
         guard let store,
               let item = try? store.loadItem(id: itemId),
               let layers = try? store.loadImportedCommentaryLayers(itemId: itemId),
               !layers.isEmpty else { return }
         let localItem = localSharedItemIdentity(for: item)
-        let recipientTranscript = try? store.loadTranscriptTimeline(itemId: itemId)?.timeline
+        let recipientTranscript = recipientTranscriptOverride
+            ?? (try? store.loadTranscriptTimeline(itemId: itemId)?.timeline)
         let work = layers.compactMap { layer -> (ImportedCommentaryLayer, [ImportedCommentaryInterjection])? in
             guard layer.deletedAt == nil,
                   layer.itemIdentity.itemType == .podcast,
@@ -12027,7 +13269,7 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "scheduled:\(work.count)"
         Task.detached { [weak self] in
             do {
-                var resolvedWork: [(ImportedCommentaryLayer, [ImportedCommentaryInterjection])] = []
+                var resolvedWork: [(ImportedCommentaryLayer, [ImportedCommentaryInterjection], ResolvedListeningMapProjection?)] = []
                 for (var layer, records) in work {
                     let queries = records.map { record in
                         let evidence = (record.podcastAnchorEvidence ?? []).compactMap { asset -> PodcastAcousticEvidenceQuery? in
@@ -12105,16 +13347,107 @@ final class Gate1AppModel: ObservableObject {
                     } else {
                         layer.sourceResolutionStatus = .contextOnly
                     }
-                    resolvedWork.append((layer, updated))
+                    var mapProjection: ResolvedListeningMapProjection?
+                    if let spine = layer.editionFingerprintSpines?.first {
+                        let landmarkQueries = spine.landmarks.map { landmark -> PodcastPortableAnchorQuery in
+                            let evidence = layer.episodeMapEvidencePaths?[landmark.signatureAssetId]
+                                .flatMap { path in
+                                    Self.resolvedApplicationSupportAssetURL(
+                                        for: path,
+                                        applicationSupportDirectory: applicationSupportDirectory
+                                    )
+                                }
+                                .flatMap { try? Data(contentsOf: $0) }
+                                .map {
+                                    [PodcastAcousticEvidenceQuery(
+                                        id: landmark.signatureAssetId,
+                                        signatureData: $0,
+                                        anchorOffsetMs: landmark.anchorMediaTimeMs - landmark.sourceMediaStartMs
+                                    )]
+                                } ?? []
+                            return PodcastPortableAnchorQuery(
+                                packageScopedId: landmark.id,
+                                senderMediaTimeMs: landmark.anchorMediaTimeMs,
+                                evidence: evidence,
+                                evidenceWasDeclared: true
+                            )
+                        }
+                        let landmarkResolutions = try await PodcastAcousticAnchorResolver.resolve(
+                            queries: landmarkQueries,
+                            recipientAudioURL: localURL,
+                            senderExactEditionSHA256: spine.producingEditionSHA256,
+                            senderDurationMs: spine.producingEditionDurationMs,
+                            strongSourceIdentity: ImportedItemResolver.canRepresentSameWork(layer.itemIdentity, localItem)
+                        )
+                        let sketch = layer.transcriptPhraseSketches?.first
+                        let salt = sketch.flatMap { Data(base64Encoded: $0.saltBase64) }
+                        let matches = spine.landmarks.compactMap { landmark -> FingerprintLandmarkMatch? in
+                            guard let resolution = landmarkResolutions[landmark.id],
+                                  let localTime = resolution.localMediaTimeMs,
+                                  !resolution.isAmbiguous else { return nil }
+                            var transcriptCorroborated = false
+                            if let recipientTranscript, let sketch, let salt,
+                               let sourceWindow = sketch.windows.first(where: { $0.id == landmark.transcriptSketchWindowId }) {
+                                let localText = recipientTranscript.segments
+                                    .filter { $0.endMs > localTime - 15_000 && $0.startMs < localTime + 15_000 }
+                                    .map(\.text)
+                                    .joined(separator: " ")
+                                let localHashes = TranscriptPhraseSketchBuilder.hashes(for: localText, salt: salt)
+                                let overlap = Set(localHashes).intersection(sourceWindow.hashes).count
+                                transcriptCorroborated = overlap >= 8
+                                    && TranscriptPhraseSketchBuilder.overlapScore(localHashes, sourceWindow.hashes) >= 0.2
+                            }
+                            let exact = resolution.evidenceClass == .exactEdition
+                            let direct = resolution.evidenceClass == .acousticVerified
+                                || resolution.evidenceClass == .fused
+                                || exact
+                            guard direct else { return nil }
+                            return FingerprintLandmarkMatch(
+                                id: "match-\(landmark.id)",
+                                landmarkId: landmark.id,
+                                sourceMediaTimeMs: landmark.anchorMediaTimeMs,
+                                recipientMediaTimeMs: localTime,
+                                acousticConfidence: resolution.confidence ?? (exact ? 1 : 0.9),
+                                transcriptCorroborated: transcriptCorroborated || exact,
+                                isUniqueWithinEpisode: exact || transcriptCorroborated
+                            )
+                        }
+                        mapProjection = EpisodeFingerprintAlignment.makeProjection(
+                            id: "imported-projection-\(layer.id)",
+                            itemId: itemId,
+                            proposalId: layer.listeningMapProposals?.first?.id,
+                            recipientEditionSHA256: try? PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: localURL),
+                            matches: matches,
+                            exactEdition: spine.producingEditionSHA256 != nil
+                                && spine.producingEditionSHA256 == (try? PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: localURL))
+                        )
+                    }
+                    resolvedWork.append((layer, updated, mapProjection))
                 }
                 await MainActor.run {
                     guard let self,
                           self.importedPodcastResolutionGenerations[itemId] == generation,
                           let store = self.store else { return }
                     do {
-                        for (layer, records) in resolvedWork {
+                        for (layer, records, projection) in resolvedWork {
                             try store.saveImportedCommentaryLayer(layer)
                             for record in records { try store.saveImportedCommentaryInterjection(record) }
+                            if let projection { try store.saveResolvedListeningMapProjection(projection) }
+                            if projection != nil, let proposal = layer.listeningMapProposals?.first {
+                                Task { @MainActor [weak self] in
+                                    guard let self else { return }
+                                    for scene in proposal.scenes where
+                                        scene.eligibility == .eligible && scene.summaryText?.isEmpty == false {
+                                        _ = try? await self.prepareSummaryBridgeAsset(
+                                            itemId: itemId,
+                                            proposalId: proposal.id,
+                                            scene: scene,
+                                            store: store
+                                        )
+                                    }
+                                    self.updateSkimAvailability()
+                                }
+                            }
                         }
                         if self.selectedItem.id == itemId { self.refreshSelectedItem() }
                         let resolvedCount = resolvedWork.filter { $0.0.sourceResolutionStatus == .resolved }.count

@@ -74,6 +74,21 @@ final class QualityOfLifeModelsTests: XCTestCase {
         XCTAssertFalse(plan.selectedAssetIds.contains("book"))
     }
 
+    func testEpisodeMapAssetsAreReproducibleButActivePreparationAndPlaybackAreProtected() {
+        let assets = [
+            asset("fingerprint", .fingerprintMap, age: 1),
+            asset("projection", .resolvedListeningMapProjection, age: 2),
+            asset("bridge", .summaryBridge, age: 3, protections: [.activeSummaryBridge]),
+            asset("transcript", .transientEpisodeTranscript, age: 4, protections: [.activeEpisodeMapPreparation])
+        ]
+
+        let plan = OfflineStoragePlanner.evictionPlan(requiredBytes: 10, assets: assets)
+
+        XCTAssertEqual(plan.selectedAssetIds, ["fingerprint", "projection"])
+        XCTAssertFalse(plan.selectedAssetIds.contains("bridge"))
+        XCTAssertFalse(plan.selectedAssetIds.contains("transcript"))
+    }
+
     func testBatteryHorizonStopsAtThirtyMinutesAndNextChapter() {
         let segments = (0..<5).map { index in
             SpeakableSegment(

@@ -370,6 +370,37 @@ final class SharingTests: XCTestCase {
                 endAnchor: .init(anchorType: .transcript, exactText: "question")
             )]
         )
+        let spine = EditionFingerprintSpineArtifact(
+            id: "spine-1",
+            itemId: "episode-one",
+            canonicalURL: podcastItem.canonicalURL,
+            producingEditionDurationMs: podcastItem.durationMs,
+            createdAt: fixedDate,
+            landmarks: [.init(
+                id: "landmark-1",
+                order: 0,
+                sourceMediaStartMs: 9_000,
+                sourceMediaEndMs: 21_000,
+                anchorMediaTimeMs: 15_000,
+                continuityEpoch: 0,
+                trigger: .preInterjection,
+                provenance: .observedDecodedPlayback,
+                signatureAssetId: evidence.id,
+                transcriptSketchWindowId: "sketch-window"
+            )]
+        )
+        let sketch = TranscriptPhraseSketchArtifact(
+            id: "sketch-1",
+            itemId: "episode-one",
+            saltBase64: Data(repeating: 3, count: 32).base64EncodedString(),
+            createdAt: fixedDate,
+            windows: [.init(
+                id: "sketch-window",
+                sourceStartMs: 0,
+                sourceEndMs: 30_000,
+                hashes: [String(repeating: "a", count: 32)]
+            )]
+        )
         let prepared = try SpokenMarginsPackageBuilder.prepare(
             packageId: "map-package", createdAt: fixedDate, item: podcastItem, itemTransportSelection: .reference,
             selections: [.init(
@@ -383,6 +414,8 @@ final class SharingTests: XCTestCase {
                 representation: .textOnly
             )],
             mapProposals: [proposal],
+            fingerprintSpines: [spine],
+            phraseSketches: [sketch],
             machineEvidence: [.init(
                 id: evidence.id,
                 path: evidence.archivePath,
@@ -396,12 +429,35 @@ final class SharingTests: XCTestCase {
         _ = try SpokenMarginsPackageArchive.write(prepared, to: url)
         let verified = try SpokenMarginsPackageArchive.read(from: url, extractingAssetsTo: root.appendingPathComponent("assets"))
         XCTAssertEqual(verified.listeningMapProposals, [proposal])
+        XCTAssertEqual(verified.editionFingerprintSpines, [spine])
+        XCTAssertEqual(verified.transcriptPhraseSketches, [sketch])
         XCTAssertEqual(verified.manifest.artifacts.last?.required, false)
         XCTAssertEqual(verified.manifest.assets.first?.anchorOffsetMs, evidence.anchorOffsetMs)
         XCTAssertEqual(
             verified.manifest.assets.first?.provenance,
             PodcastAnchorEvidenceProvenance.decodedPlaybackStream.rawValue
         )
+        XCTAssertFalse(verified.manifest.artifacts.contains { $0.kind == "full_transcript" })
+        XCTAssertFalse(verified.manifest.assets.contains { $0.path.localizedCaseInsensitiveContains("bridge") })
+
+        let spinePath = try XCTUnwrap(prepared.manifest.artifacts.first {
+            $0.kind == SpokenMarginsArtifactKind.editionFingerprintSpine
+        }?.path)
+        var malformedData = prepared.artifactData
+        var malformedSpine = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: try XCTUnwrap(malformedData[spinePath])) as? [String: Any]
+        )
+        malformedSpine["unexpectedTranscript"] = "must be rejected"
+        malformedData[spinePath] = try JSONSerialization.data(withJSONObject: malformedSpine)
+        let malformed = PreparedSpokenMarginsPackage(
+            manifest: prepared.manifest,
+            artifactData: malformedData,
+            assetFiles: prepared.assetFiles
+        )
+        XCTAssertThrowsError(try SpokenMarginsPackageArchive.write(
+            malformed,
+            to: root.appendingPathComponent("malformed.spokenmargins")
+        ))
 
         let repository = InMemorySessionRepository()
         _ = try SpokenMarginsPackageImporter.importPackage(
@@ -482,7 +538,75 @@ final class SharingTests: XCTestCase {
             XCTAssertLessThan(capture.signatureData.count, 1_048_576)
         case .failed(_, let reason):
             XCTFail("Post-resume signature failed: \(reason)")
+        case .landmark:
+            XCTFail("Expected a per-Margin capture, not a sparse landmark")
         }
+        continuation.finish()
+        #else
+        throw XCTSkip("AVFoundation, MediaToolbox, and ShazamKit are required")
+        #endif
+    }
+
+    func testContinuousEvidenceRingExtractsExactPreWindowAndSeekInvalidatesIt() async throws {
+        #if canImport(AVFoundation) && canImport(ShazamKit) && canImport(MediaToolbox)
+        let (results, continuation) = AsyncStream<PostResumePodcastEvidenceCaptureResult>.makeStream()
+        let context = PostResumePodcastEvidenceTapContext(
+            resultHandler: { continuation.yield($0) },
+            becameIdle: {},
+            continuousCollection: true,
+            itemId: "episode-ring"
+        )
+        let sampleRate = 8_000.0
+        let format = try XCTUnwrap(AVAudioFormat(
+            standardFormatWithSampleRate: sampleRate,
+            channels: 1
+        ))
+        context.prepare(processingFormat: format.streamDescription)
+        for second in 20..<40 {
+            let frameCount = AVAudioFrameCount(sampleRate)
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount))
+            buffer.frameLength = frameCount
+            let samples = try XCTUnwrap(buffer.floatChannelData?[0])
+            for frame in 0..<Int(frameCount) {
+                let phase = Double(frame) / sampleRate
+                samples[frame] = Float(0.2 * sin(2 * .pi * (220 + Double(second)) * phase))
+            }
+            context.process(
+                bufferList: buffer.mutableAudioBufferList,
+                frameCount: CMItemCount(frameCount),
+                timeRange: CMTimeRange(
+                    start: CMTime(value: CMTimeValue(second * 1_000), timescale: 1_000),
+                    duration: CMTime(value: 1_000, timescale: 1_000)
+                )
+            )
+        }
+        let request = PostResumeAudioSampleRequest(
+            interjectionId: "ij-pre",
+            sessionId: "session-pre",
+            itemId: "episode-ring",
+            anchorMediaTimeMs: 40_000,
+            targetDurationMs: 12_000
+        )
+        XCTAssertTrue(context.captureBufferedPreInterjection(request))
+        guard let result = await results.first(where: {
+            if case .captured(let capture) = $0 { return capture.request.interjectionId == request.interjectionId }
+            return false
+        }) else { return XCTFail("Expected buffered pre-interjection evidence") }
+        if case .captured(let capture) = result {
+            XCTAssertEqual(capture.windowRole, .preInterjection)
+            XCTAssertEqual(capture.provenance, .observedDecodedPlayback)
+            XCTAssertEqual(capture.anchorOffsetMs, 17_000)
+            XCTAssertGreaterThanOrEqual(capture.durationMs, 11_500)
+        }
+
+        context.noteSeek()
+        XCTAssertFalse(context.captureBufferedPreInterjection(.init(
+            interjectionId: "ij-after-seek",
+            sessionId: "session-pre",
+            itemId: "episode-ring",
+            anchorMediaTimeMs: 40_000,
+            targetDurationMs: 12_000
+        )))
         continuation.finish()
         #else
         throw XCTSkip("AVFoundation, MediaToolbox, and ShazamKit are required")
@@ -551,6 +675,48 @@ final class SharingTests: XCTestCase {
         )
         XCTAssertEqual(weakPartial.evidenceClass, .ambiguous)
         XCTAssertTrue(weakPartial.isAmbiguous)
+    }
+
+    func testPartialFlankRequiresStableMonotonicNeighborCorroboration() {
+        let queries = [
+            PodcastPortableAnchorQuery(packageScopedId: "lower", senderMediaTimeMs: 100_000, evidence: []),
+            PodcastPortableAnchorQuery(packageScopedId: "partial", senderMediaTimeMs: 200_000, evidence: []),
+            PodcastPortableAnchorQuery(packageScopedId: "upper", senderMediaTimeMs: 300_000, evidence: [])
+        ]
+        let stable = PodcastAcousticAnchorResolver.corroboratePartialFlanks(
+            queries: queries,
+            resolutions: [
+                "lower": .init(evidenceClass: .acousticVerified, localMediaTimeMs: 110_000),
+                "partial": .init(
+                    evidenceClass: .acousticVerified,
+                    localMediaTimeMs: 210_000,
+                    confidence: 0.92,
+                    algorithmVersion: "podcast-anchor-partial-flank.v2"
+                ),
+                "upper": .init(evidenceClass: .acousticVerified, localMediaTimeMs: 310_000)
+            ]
+        )
+        XCTAssertEqual(stable["partial"]?.evidenceClass, .acousticVerified)
+        XCTAssertEqual(
+            stable["partial"]?.algorithmVersion,
+            "podcast-anchor-partial-flank-neighbor-corroborated.v3"
+        )
+
+        let editionChange = PodcastAcousticAnchorResolver.corroboratePartialFlanks(
+            queries: queries,
+            resolutions: [
+                "lower": .init(evidenceClass: .acousticVerified, localMediaTimeMs: 110_000),
+                "partial": .init(
+                    evidenceClass: .acousticVerified,
+                    localMediaTimeMs: 260_000,
+                    confidence: 0.92,
+                    algorithmVersion: "podcast-anchor-partial-flank.v2"
+                ),
+                "upper": .init(evidenceClass: .acousticVerified, localMediaTimeMs: 310_000)
+            ]
+        )
+        XCTAssertEqual(editionChange["partial"]?.evidenceClass, .unresolved)
+        XCTAssertNil(editionChange["partial"]?.localMediaTimeMs)
     }
 
     func testPodcastTimestampFallbackStaysDisabledAfterEqualDurationCounterexample() {

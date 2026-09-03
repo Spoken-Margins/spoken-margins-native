@@ -6,19 +6,22 @@ public struct PostResumeAudioSampleRequest: Equatable, Sendable {
     public let itemId: String
     public let anchorMediaTimeMs: Int
     public let targetDurationMs: Int
+    public let captureDelayMs: Int
 
     public init(
         interjectionId: String,
         sessionId: String,
         itemId: String,
         anchorMediaTimeMs: Int,
-        targetDurationMs: Int
+        targetDurationMs: Int,
+        captureDelayMs: Int = 0
     ) {
         self.interjectionId = interjectionId
         self.sessionId = sessionId
         self.itemId = itemId
         self.anchorMediaTimeMs = anchorMediaTimeMs
         self.targetDurationMs = targetDurationMs
+        self.captureDelayMs = max(0, captureDelayMs)
     }
 }
 
@@ -98,6 +101,20 @@ public protocol PreparedAudioRepository {
     func deleteAudioPreparationJob(id: String) throws
 }
 
+public protocol EpisodeMapRepository {
+    func saveEditionFingerprintSpine(_ spine: EditionFingerprintSpineArtifact) throws
+    func loadEditionFingerprintSpine(itemId: String) throws -> EditionFingerprintSpineArtifact?
+    func saveTranscriptPhraseSketch(_ sketch: TranscriptPhraseSketchArtifact) throws
+    func loadTranscriptPhraseSketch(itemId: String) throws -> TranscriptPhraseSketchArtifact?
+    func savePortableListeningMapProposal(_ proposal: PortableListeningMapProposalArtifact, itemId: String) throws
+    func loadPortableListeningMapProposals(itemId: String) throws -> [PortableListeningMapProposalArtifact]
+    func saveResolvedListeningMapProjection(_ projection: ResolvedListeningMapProjection) throws
+    func loadResolvedListeningMapProjection(itemId: String) throws -> ResolvedListeningMapProjection?
+    func saveEpisodeMapPreparationJob(_ job: EpisodeMapPreparationJob) throws
+    func loadEpisodeMapPreparationJobs() throws -> [EpisodeMapPreparationJob]
+    func deleteEpisodeMapPreparationJob(id: String) throws
+}
+
 public protocol OfflineStorageRepository {
     func saveOfflineStorageBudget(_ budget: OfflineStorageBudget) throws
     func loadOfflineStorageBudget() throws -> OfflineStorageBudget
@@ -130,6 +147,7 @@ public protocol SessionRepository: AnyObject, Sendable,
     CanonicalSourceRepository,
     LocalImportRepository,
     PreparedAudioRepository,
+    EpisodeMapRepository,
     OfflineStorageRepository,
     FollowedSourceRepository {}
 
@@ -155,6 +173,8 @@ public protocol AudioPlaybackClient {
     func setRemoteCommandHandlingEnabled(_ enabled: Bool)
     @discardableResult
     func armPostResumeAudioSample(_ request: PostResumeAudioSampleRequest) -> Bool
+    @discardableResult
+    func captureBufferedPreInterjectionAudioSample(_ request: PostResumeAudioSampleRequest) -> Bool
     func pause() throws
     func stop() throws
 }
@@ -173,6 +193,36 @@ public protocol SourceTranscriptionClient: Sendable {
         windowBeforeMs: Int,
         windowAfterMs: Int
     ) async throws -> TranscriptTimeline
+    func transcribeSourceAudioWindowWithEvidence(
+        url: URL,
+        itemId: String,
+        anchorMediaTimeMs: Int,
+        durationMs: Int?,
+        windowBeforeMs: Int,
+        windowAfterMs: Int
+    ) async throws -> SourceAudioWindowTranscription
+}
+
+public struct SourceAudioWindowTranscription: Sendable {
+    public let timeline: TranscriptTimeline
+    public let localAudioURL: URL?
+    public let sourceStartMs: Int
+    public let sourceEndMs: Int
+    public let provenance: EpisodeFingerprintProvenance
+
+    public init(
+        timeline: TranscriptTimeline,
+        localAudioURL: URL?,
+        sourceStartMs: Int,
+        sourceEndMs: Int,
+        provenance: EpisodeFingerprintProvenance
+    ) {
+        self.timeline = timeline
+        self.localAudioURL = localAudioURL
+        self.sourceStartMs = max(0, sourceStartMs)
+        self.sourceEndMs = max(sourceStartMs, sourceEndMs)
+        self.provenance = provenance
+    }
 }
 
 public extension SourceTranscriptionClient {
@@ -185,6 +235,31 @@ public extension SourceTranscriptionClient {
         windowAfterMs: Int = 60_000
     ) async throws -> TranscriptTimeline {
         throw SessionKitError.persistenceFailed("source_audio_window_transcription_unavailable")
+    }
+
+    func transcribeSourceAudioWindowWithEvidence(
+        url: URL,
+        itemId: String,
+        anchorMediaTimeMs: Int,
+        durationMs: Int?,
+        windowBeforeMs: Int = 60_000,
+        windowAfterMs: Int = 60_000
+    ) async throws -> SourceAudioWindowTranscription {
+        let timeline = try await transcribeSourceAudioWindow(
+            url: url,
+            itemId: itemId,
+            anchorMediaTimeMs: anchorMediaTimeMs,
+            durationMs: durationMs,
+            windowBeforeMs: windowBeforeMs,
+            windowAfterMs: windowAfterMs
+        )
+        return SourceAudioWindowTranscription(
+            timeline: timeline,
+            localAudioURL: nil,
+            sourceStartMs: max(0, anchorMediaTimeMs - windowBeforeMs),
+            sourceEndMs: anchorMediaTimeMs + windowAfterMs,
+            provenance: .sourceWindowReference
+        )
     }
 }
 
@@ -221,6 +296,11 @@ public extension AudioPlaybackClient {
 
     @discardableResult
     func armPostResumeAudioSample(_ request: PostResumeAudioSampleRequest) -> Bool {
+        false
+    }
+
+    @discardableResult
+    func captureBufferedPreInterjectionAudioSample(_ request: PostResumeAudioSampleRequest) -> Bool {
         false
     }
 

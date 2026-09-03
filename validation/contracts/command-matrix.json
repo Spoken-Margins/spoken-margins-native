@@ -50,6 +50,18 @@
       "backendCommand": "SessionEngine.skipBack"
     },
     {
+      "id": "skimForward",
+      "description": "Speak the current verified scene summary, then move to the next scene.",
+      "status": "implemented",
+      "backendCommand": "Gate1AppModel.skimForward"
+    },
+    {
+      "id": "skimBackward",
+      "description": "Speak the previous verified scene summary, then return to the current scene start.",
+      "status": "implemented",
+      "backendCommand": "Gate1AppModel.skimBackward"
+    },
+    {
       "id": "seekToMediaTime",
       "description": "Seek native or transcript-backed media to an absolute media-time position.",
       "status": "implemented",

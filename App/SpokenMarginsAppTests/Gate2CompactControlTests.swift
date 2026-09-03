@@ -528,6 +528,8 @@ final class Gate2CompactControlTests: XCTestCase {
                 .togglePlayPause,
                 .skipBack,
                 .skipForward,
+                .skimBackward,
+                .skimForward,
                 .setPlaybackRate,
                 .beginInterjection,
                 .finishInterjection,
@@ -538,8 +540,58 @@ final class Gate2CompactControlTests: XCTestCase {
 
         XCTAssertEqual(
             Gate2LiveActivityPolicy.availableCommands(from: snapshot),
-            [.beginInterjection, .finishInterjection]
+            [.skimBackward, .skimForward, .beginInterjection, .finishInterjection]
         )
+    }
+
+    func testCompactControllerOverlaysAppOwnedSkimReadinessWithoutRemappingTimeSkips() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "skim-live-activity",
+            displayName: "Skim Live Activity",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["native_media"],
+                "timeline": ["chapter_timing"],
+                "remoteControl": ["display_snapshot", "send_transport_commands"]
+            ]
+        )
+        let repository = InMemorySessionRepository(items: [
+            "episode": Item(
+                id: "episode",
+                title: "Episode",
+                mediaType: "audio",
+                text: nil,
+                externalReference: nil,
+                status: "ready",
+                media: ItemMedia(
+                    sourceType: .nativeMediaFile,
+                    url: "file:///tmp/episode.m4a",
+                    durationMs: 600_000
+                )
+            )
+        ])
+        let engine = SessionEngine(
+            profile: profile,
+            repository: repository,
+            audio: NoopAudioPlaybackClient()
+        )
+        _ = try engine.startSession(itemId: "episode")
+        let controller = Gate2CompactControlController(liveActivity: RecordingLiveActivityController())
+        controller.configure(
+            canonicalRuntime: engine,
+            surfaceProfile: profile,
+            skipUnit: "time_15s",
+            commandHandler: { _, _, _, _, _ in }
+        )
+        var appSnapshot = engine.snapshot
+        appSnapshot.canSkimBackward = true
+        appSnapshot.canSkimForward = true
+        controller.update(snapshot: appSnapshot)
+
+        XCTAssertTrue(controller.snapshot?.availableCommands.contains(.skimBackward) == true)
+        XCTAssertTrue(controller.snapshot?.availableCommands.contains(.skimForward) == true)
+        XCTAssertTrue(controller.snapshot?.availableCommands.contains(.skipBack) == true)
+        XCTAssertTrue(controller.snapshot?.availableCommands.contains(.skipForward) == true)
     }
 
     func testNowPlayingPoliciesKeepNativeMediaMetadataWithoutSharingCommandOwnership() {

@@ -1045,6 +1045,16 @@ public enum PodcastAnchorEvidenceCaptureStatus: String, Codable, Equatable, Send
 public enum PodcastAnchorEvidenceProvenance: String, Codable, Equatable, Sendable {
     case decodedPlaybackStream = "decoded_playback_stream"
     case exactLocalPlaybackEdition = "exact_local_playback_edition"
+    case observedDecodedPlayback = "observed_decoded_playback"
+    case sourceWindowReference = "source_window_reference"
+    case downloadedSourceReference = "downloaded_source_reference"
+}
+
+public enum PodcastAnchorEvidenceWindowRole: String, Codable, Equatable, Sendable {
+    case preInterjection = "pre_interjection"
+    case postResume = "post_resume"
+    case sourceWindowBefore = "source_window_before"
+    case sourceWindowAfter = "source_window_after"
 }
 
 public struct CapturedPodcastAnchorEvidence: Codable, Equatable, Sendable, Identifiable {
@@ -1053,19 +1063,22 @@ public struct CapturedPodcastAnchorEvidence: Codable, Equatable, Sendable, Ident
     public let durationMs: Int
     public let anchorOffsetMs: Int
     public let provenance: PodcastAnchorEvidenceProvenance?
+    public let windowRole: PodcastAnchorEvidenceWindowRole?
 
     public init(
         id: String,
         localPath: String,
         durationMs: Int,
         anchorOffsetMs: Int,
-        provenance: PodcastAnchorEvidenceProvenance? = nil
+        provenance: PodcastAnchorEvidenceProvenance? = nil,
+        windowRole: PodcastAnchorEvidenceWindowRole? = nil
     ) {
         self.id = id
         self.localPath = localPath
         self.durationMs = durationMs
         self.anchorOffsetMs = anchorOffsetMs
         self.provenance = provenance
+        self.windowRole = windowRole
     }
 }
 
@@ -1260,6 +1273,9 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     public var linkResolutionFailureReason: String?
     public var preparedTextAudioStatus: String?
     public var sourceTranscriptStatus: String?
+    public var skimBridgeState: SkimBridgeState?
+    public var canSkimForward: Bool
+    public var canSkimBackward: Bool
 
     public init() {
         sessionId = nil
@@ -1297,5 +1313,8 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         linkResolutionFailureReason = nil
         preparedTextAudioStatus = nil
         sourceTranscriptStatus = nil
+        skimBridgeState = nil
+        canSkimForward = false
+        canSkimBackward = false
     }
 }

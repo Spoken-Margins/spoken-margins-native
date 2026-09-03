@@ -2546,6 +2546,44 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(model.canManuallyFollowSelectedSource)
     }
 
+    func testFollowedSourceIdentityUsesCanonicalURLInsteadOfDisplayTitle() {
+        let subscription = FeedSubscription(
+            id: "show",
+            source: SourceIdentity(
+                id: "source-show",
+                kind: .podcastFeed,
+                canonicalURL: "https://EXAMPLE.com/feed.xml/",
+                host: "example.com",
+                title: "Publisher Feed Title"
+            )
+        )
+
+        XCTAssertTrue(Gate1AppModel.isSourceAlreadyFollowed(
+            sourceURL: "https://example.com/feed.xml",
+            sourceTitle: "Imported Podcast Title",
+            subscriptions: [subscription]
+        ))
+    }
+
+    func testDifferentCanonicalSourceDoesNotHideManualFollowForMatchingTitle() {
+        let subscription = FeedSubscription(
+            id: "other-show",
+            source: SourceIdentity(
+                id: "source-other-show",
+                kind: .podcastFeed,
+                canonicalURL: "https://other.example/feed.xml",
+                host: "other.example",
+                title: "The Show"
+            )
+        )
+
+        XCTAssertFalse(Gate1AppModel.isSourceAlreadyFollowed(
+            sourceURL: "https://example.com/feed.xml",
+            sourceTitle: "The Show",
+            subscriptions: [subscription]
+        ))
+    }
+
     func testPublisherChaptersAreNotPresentedAsANeedForAListeningMap() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.selectedItem = ItemDetailState(

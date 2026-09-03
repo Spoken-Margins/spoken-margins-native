@@ -408,6 +408,11 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
     /// Sender proposals remain inert recipient data until a future explicit
     /// review flow accepts them into a local Listening Map.
     public let listeningMapProposals: [PortableListeningMapProposalArtifact]?
+    /// Private episode-map derivatives included with a user-initiated Margin
+    /// share. Neither structure contains transcript text or playable source audio.
+    public let editionFingerprintSpines: [EditionFingerprintSpineArtifact]?
+    public let transcriptPhraseSketches: [TranscriptPhraseSketchArtifact]?
+    public let episodeMapEvidencePaths: [String: String]?
 
     public init(
         id: String,
@@ -424,7 +429,10 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
         isMuted: Bool = false,
         revealMode: ImportedCommentaryRevealMode? = nil,
         deletedAt: Date? = nil,
-        listeningMapProposals: [PortableListeningMapProposalArtifact]? = nil
+        listeningMapProposals: [PortableListeningMapProposalArtifact]? = nil,
+        editionFingerprintSpines: [EditionFingerprintSpineArtifact]? = nil,
+        transcriptPhraseSketches: [TranscriptPhraseSketchArtifact]? = nil,
+        episodeMapEvidencePaths: [String: String]? = nil
     ) {
         self.id = id
         self.itemId = itemId
@@ -441,13 +449,16 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
         self.revealMode = revealMode
         self.deletedAt = deletedAt
         self.listeningMapProposals = listeningMapProposals
+        self.editionFingerprintSpines = editionFingerprintSpines
+        self.transcriptPhraseSketches = transcriptPhraseSketches
+        self.episodeMapEvidencePaths = episodeMapEvidencePaths
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, itemId, packageDigest, packageId, itemIdentity, sourceIdentity
         case displayLabel, suggestedRevealMode, importedAt, integrityStatus
         case sourceResolutionStatus, isEnabled, isMuted, revealMode, deletedAt
-        case listeningMapProposals
+        case listeningMapProposals, editionFingerprintSpines, transcriptPhraseSketches, episodeMapEvidencePaths
     }
 
     public init(from decoder: Decoder) throws {
@@ -477,6 +488,15 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
             [PortableListeningMapProposalArtifact].self,
             forKey: .listeningMapProposals
         )
+        editionFingerprintSpines = try values.decodeIfPresent(
+            [EditionFingerprintSpineArtifact].self,
+            forKey: .editionFingerprintSpines
+        )
+        transcriptPhraseSketches = try values.decodeIfPresent(
+            [TranscriptPhraseSketchArtifact].self,
+            forKey: .transcriptPhraseSketches
+        )
+        episodeMapEvidencePaths = try values.decodeIfPresent([String: String].self, forKey: .episodeMapEvidencePaths)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -496,6 +516,9 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
         try values.encodeIfPresent(revealMode, forKey: .revealMode)
         try values.encodeIfPresent(deletedAt, forKey: .deletedAt)
         try values.encodeIfPresent(listeningMapProposals, forKey: .listeningMapProposals)
+        try values.encodeIfPresent(editionFingerprintSpines, forKey: .editionFingerprintSpines)
+        try values.encodeIfPresent(transcriptPhraseSketches, forKey: .transcriptPhraseSketches)
+        try values.encodeIfPresent(episodeMapEvidencePaths, forKey: .episodeMapEvidencePaths)
     }
 }
 
@@ -780,6 +803,8 @@ public struct EmbeddedTextItemArtifact: Codable, Equatable, Sendable, Identifiab
 public enum SpokenMarginsArtifactKind {
     public static let commentaryLayer = "commentary_layer"
     public static let listeningMapProposal = "listening_map_proposal"
+    public static let editionFingerprintSpine = "edition_fingerprint_spine"
+    public static let transcriptPhraseSketch = "transcript_phrase_sketch"
     public static let embeddedTextItem = "embedded_text_item"
 }
 

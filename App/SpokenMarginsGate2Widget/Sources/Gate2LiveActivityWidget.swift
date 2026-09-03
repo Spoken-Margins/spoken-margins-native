@@ -205,6 +205,14 @@ private struct Gate2LiveActivityView: View {
 
     private var transportControls: some View {
         HStack(spacing: 16) {
+                if state.canRun("skimBackward") {
+                    CompactRoundIntentButton(
+                        command: "skimBackward",
+                        systemImage: "backward.end.alt.fill",
+                        size: 50,
+                        accessibilityLabel: "Skim backward by scene summary"
+                    )
+                }
                 if state.canRun("skipBack") {
                     CompactRoundIntentButton(command: "skipBack", systemImage: "gobackward.15", size: 56)
                 }
@@ -216,6 +224,14 @@ private struct Gate2LiveActivityView: View {
                 }
                 if state.canRun("skipForward") {
                     CompactRoundIntentButton(command: "skipForward", systemImage: "goforward.15", size: 56)
+                }
+                if state.canRun("skimForward") {
+                    CompactRoundIntentButton(
+                        command: "skimForward",
+                        systemImage: "forward.end.alt.fill",
+                        size: 50,
+                        accessibilityLabel: "Skim forward by scene summary"
+                    )
                 }
                 if let nextChapterTitle = state.nextChapterTitle,
                    let nextChapterId = state.nextChapterId {
@@ -316,6 +332,7 @@ private struct CompactRoundIntentButton: View {
     let command: String
     let systemImage: String
     let size: CGFloat
+    var accessibilityLabel: String? = nil
 
     var body: some View {
         Button(intent: Gate2CompactPlaybackIntent(command: command)) {
@@ -328,6 +345,7 @@ private struct CompactRoundIntentButton: View {
         }
         .frame(width: size, height: size)
         .contentShape(Circle())
+        .accessibilityLabel(accessibilityLabel ?? command)
     }
 }
 

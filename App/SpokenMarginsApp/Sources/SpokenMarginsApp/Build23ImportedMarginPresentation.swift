@@ -29,7 +29,7 @@ enum Build23ImportedLayerPresentation {
     static func sourceResolutionLabel(_ status: ImportedSourceResolutionStatus) -> String {
         switch status {
         case .pending:
-            return "Pending"
+            return "Improving placement while the episode downloads · timestamps are approximate"
         case .resolved:
             return "Resolved"
         case .contextOnly:
@@ -60,7 +60,7 @@ enum Build23ImportedLayerPresentation {
         case .mapInterpolated:
             return "Listening map estimate"
         case .timestampFallback:
-            return "Timestamp fallback"
+            return "Approximate timestamp"
         case .recipientConfirmed:
             return "Recipient confirmed"
         case .ambiguous:

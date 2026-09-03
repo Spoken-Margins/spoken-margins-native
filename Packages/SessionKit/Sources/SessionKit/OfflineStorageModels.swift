@@ -9,6 +9,10 @@ public enum OfflineAssetCategory: String, Codable, Equatable, CaseIterable, Send
     case interjection
     case recording
     case sourceDocument = "source_document"
+    case fingerprintMap = "fingerprint_map"
+    case transientEpisodeTranscript = "transient_episode_transcript"
+    case resolvedListeningMapProjection = "resolved_listening_map_projection"
+    case summaryBridge = "summary_bridge"
     case dormantWatchPackage = "dormant_watch_package"
 }
 
@@ -16,6 +20,8 @@ public enum OfflineProtectionReason: String, Codable, Equatable, Sendable {
     case activePlayback = "active_playback"
     case activeRender = "active_render"
     case activeCommit = "active_commit"
+    case activeEpisodeMapPreparation = "active_episode_map_preparation"
+    case activeSummaryBridge = "active_summary_bridge"
     case recentlyDeleted = "recently_deleted"
     case importedAudiobook = "imported_audiobook"
     case interjection

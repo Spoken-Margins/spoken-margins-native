@@ -91,7 +91,7 @@ enum Gate2LiveActivityPolicy {
     static func availableCommands(from snapshot: CompactControlSnapshot) -> [CompactControlCommand] {
         snapshot.availableCommands.filter {
             switch $0 {
-            case .beginInterjection, .finishInterjection:
+            case .beginInterjection, .finishInterjection, .skimBackward, .skimForward:
                 return true
             case .play, .pause, .togglePlayPause, .skipBack, .skipForward,
                  .seekToMediaTime, .setPlaybackRate, .jumpToChapter,
@@ -258,6 +258,7 @@ final class Gate2CompactControlController {
     private let liveActivity: any Gate2LiveActivityControlling
     private let liveSpeechNowPlaying = Gate2LiveSpeechNowPlayingController()
     private var lastPublishedSnapshot: CompactControlSnapshot?
+    private var latestAppSnapshot: SessionSnapshot?
     private(set) var lastCommand: CompactControlCommand?
     private(set) var lastCommandOrigin = "none"
     private(set) var lastApplicationCommand = "none"
@@ -268,7 +269,7 @@ final class Gate2CompactControlController {
     }
 
     var snapshot: CompactControlSnapshot? {
-        dispatcher?.snapshot()
+        currentSnapshot()
     }
 
     func configure(
@@ -294,16 +295,19 @@ final class Gate2CompactControlController {
     }
 
     func update(
-        snapshot _: SessionSnapshot,
+        snapshot: SessionSnapshot,
         sharedMarginPrompt: Gate2SharedMarginActivityPrompt? = nil,
         upcomingSharedMargins: [Gate2LiveActivityNavigationEntry] = []
     ) {
         guard dispatcher != nil else { return }
+        let activityContextChanged = self.sharedMarginPrompt != sharedMarginPrompt
+            || self.upcomingSharedMargins != upcomingSharedMargins
+        latestAppSnapshot = snapshot
         self.sharedMarginPrompt = sharedMarginPrompt
         self.upcomingSharedMargins = upcomingSharedMargins
         let drainedCommand = drainQueuedWidgetCommands()
         if !drainedCommand {
-            publishCurrentSnapshot()
+            publishCurrentSnapshot(force: activityContextChanged)
         }
     }
 
@@ -363,8 +367,27 @@ final class Gate2CompactControlController {
     }
 
     private func publishCurrentSnapshot(force: Bool = false) {
-        guard let snapshot = dispatcher?.snapshot() else { return }
+        guard let snapshot = currentSnapshot() else { return }
         publish(snapshot, force: force)
+    }
+
+    private func currentSnapshot() -> CompactControlSnapshot? {
+        guard var compact = dispatcher?.snapshot() else { return nil }
+        guard let app = latestAppSnapshot else { return compact }
+        compact.skimBridgeState = app.skimBridgeState
+        compact.canSkimForward = app.canSkimForward
+        compact.canSkimBackward = app.canSkimBackward
+        compact.availableCommands.removeAll {
+            $0 == .skimForward || $0 == .skimBackward
+                || ($0 == .beginInterjection && app.skimBridgeState != nil)
+        }
+        if !app.isRecording, app.canSkimBackward, compact.exposedCommands.contains(.skimBackward) {
+            compact.availableCommands.append(.skimBackward)
+        }
+        if !app.isRecording, app.canSkimForward, compact.exposedCommands.contains(.skimForward) {
+            compact.availableCommands.append(.skimForward)
+        }
+        return compact
     }
 
     private func publish(_ snapshot: CompactControlSnapshot, force: Bool = false) {

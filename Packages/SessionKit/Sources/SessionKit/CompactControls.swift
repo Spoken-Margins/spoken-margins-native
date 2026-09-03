@@ -6,6 +6,8 @@ public enum CompactControlCommand: String, Codable, CaseIterable, Equatable, Sen
     case togglePlayPause
     case skipBack
     case skipForward
+    case skimBackward
+    case skimForward
     case seekToMediaTime
     case setPlaybackRate
     case jumpToChapter
@@ -43,6 +45,9 @@ public struct CompactControlSnapshot: Codable, Equatable, Sendable {
     public var timeline: [CompactTimelineEntry]
     public var compactSurfaceReady: Bool
     public var surfaceProfileId: String
+    public var skimBridgeState: SkimBridgeState?
+    public var canSkimForward: Bool
+    public var canSkimBackward: Bool
 
     public init(
         sessionId: String?,
@@ -70,7 +75,10 @@ public struct CompactControlSnapshot: Codable, Equatable, Sendable {
         availableCommands: [CompactControlCommand]? = nil,
         timeline: [CompactTimelineEntry] = [],
         compactSurfaceReady: Bool,
-        surfaceProfileId: String
+        surfaceProfileId: String,
+        skimBridgeState: SkimBridgeState? = nil,
+        canSkimForward: Bool = false,
+        canSkimBackward: Bool = false
     ) {
         self.sessionId = sessionId
         self.itemId = itemId
@@ -98,6 +106,9 @@ public struct CompactControlSnapshot: Codable, Equatable, Sendable {
         self.timeline = timeline
         self.compactSurfaceReady = compactSurfaceReady
         self.surfaceProfileId = surfaceProfileId
+        self.skimBridgeState = skimBridgeState
+        self.canSkimForward = canSkimForward
+        self.canSkimBackward = canSkimBackward
     }
 }
 
@@ -190,6 +201,8 @@ public final class CompactControlDispatcher {
             updated = try canonicalRuntime.skipBack(unit: unit ?? defaultSkipUnit)
         case .skipForward:
             updated = try canonicalRuntime.skipForward(unit: unit ?? defaultSkipUnit)
+        case .skimBackward, .skimForward:
+            throw SessionKitError.invalidCommandForState("skim_requires_app_bridge")
         case .seekToMediaTime:
             guard let mediaTimeMs else {
                 throw SessionKitError.invalidCommandForState("seekToMediaTime")
@@ -238,6 +251,9 @@ public final class CompactControlDispatcher {
             switch command {
             case .play, .pause, .togglePlayPause, .skipBack, .skipForward:
                 return surfaceProfile.has("remoteControl", "send_transport_commands")
+            case .skimBackward, .skimForward:
+                return surfaceProfile.has("remoteControl", "send_transport_commands")
+                    && surfaceProfile.has("timeline", "chapter_timing")
             case .seekToMediaTime:
                 return surfaceProfile.has("remoteControl", "send_transport_commands")
                     && surfaceProfile.has("timeline", "media_time")
@@ -296,7 +312,10 @@ public final class CompactControlDispatcher {
             availableCommands: availableCommands,
             timeline: canonicalRuntime.compactTimelineEntries(),
             compactSurfaceReady: compactSurfaceReady,
-            surfaceProfileId: surfaceProfile.id
+            surfaceProfileId: surfaceProfile.id,
+            skimBridgeState: snapshot.skimBridgeState,
+            canSkimForward: snapshot.canSkimForward,
+            canSkimBackward: snapshot.canSkimBackward
         )
     }
 
@@ -315,6 +334,10 @@ public final class CompactControlDispatcher {
             return !snapshot.isRecording
         case .skipBack, .skipForward:
             return !snapshot.isRecording
+        case .skimBackward:
+            return !snapshot.isRecording && snapshot.canSkimBackward
+        case .skimForward:
+            return !snapshot.isRecording && snapshot.canSkimForward
         case .seekToMediaTime:
             return !snapshot.isRecording
                 && snapshot.currentPlaybackDurationMs != nil
@@ -330,6 +353,7 @@ public final class CompactControlDispatcher {
             return !snapshot.isRecording
         case .beginInterjection:
             return !snapshot.isRecording
+                && snapshot.skimBridgeState == nil
                 && surfaceProfile.has("interjection", "delegate_interjection_to_canonical_runtime")
         case .finishInterjection, .cancelInterjection:
             return snapshot.isRecording

@@ -2364,48 +2364,73 @@ private struct PlaybackScreen: View {
     }
 
     private var playbackTransport: some View {
-        HStack(spacing: 22) {
-            Button {
-                if model.isMediaPlaybackSnapshot {
-                    model.skipBackMedia()
-                } else {
-                    model.skipBack()
-                }
-            } label: {
-                Image(systemName: model.isMediaPlaybackSnapshot ? "gobackward.\(model.mediaSkipBackSeconds)" : "backward.end.fill")
-            }
-            .buttonStyle(RoundPlaybackButtonStyle())
-            .disabled(!model.hasActiveSession)
-            .accessibilityLabel(model.isMediaPlaybackSnapshot ? "Back \(model.mediaSkipBackSeconds) seconds" : "Previous \(model.skipUnit)")
-            .accessibilityIdentifier("playback.back.button")
-
-            Button(action: model.playPause) {
-                Group {
-                    if model.snapshot.status == .starting {
-                        ProgressView()
-                            .tint(.white)
+        VStack(spacing: 12) {
+            HStack(spacing: 22) {
+                Button {
+                    if model.isMediaPlaybackSnapshot {
+                        model.skipBackMedia()
                     } else {
-                        Image(systemName: model.snapshot.status.isPlaybackActive ? "pause.fill" : "play.fill")
+                        model.skipBack()
+                    }
+                } label: {
+                    Image(systemName: model.isMediaPlaybackSnapshot ? "gobackward.\(model.mediaSkipBackSeconds)" : "backward.end.fill")
+                }
+                .buttonStyle(RoundPlaybackButtonStyle())
+                .disabled(!model.hasActiveSession)
+                .accessibilityLabel(model.isMediaPlaybackSnapshot ? "Back \(model.mediaSkipBackSeconds) seconds" : "Previous \(model.skipUnit)")
+                .accessibilityIdentifier("playback.back.button")
+
+                Button(action: model.playPause) {
+                    Group {
+                        if model.snapshot.status == .starting {
+                            ProgressView()
+                                .tint(.white)
+                        } else {
+                            Image(systemName: model.snapshot.skimBridgeState?.status == .playing
+                                || model.snapshot.status.isPlaybackActive ? "pause.fill" : "play.fill")
+                        }
                     }
                 }
-            }
-            .buttonStyle(MainPlaybackButtonStyle())
-            .accessibilityLabel(model.snapshot.status.isPlaybackActive ? "Pause" : "Play")
-            .accessibilityIdentifier("playback.play.button")
+                .buttonStyle(MainPlaybackButtonStyle())
+                .accessibilityLabel(model.snapshot.skimBridgeState?.status == .playing
+                    || model.snapshot.status.isPlaybackActive ? "Pause" : "Play")
+                .accessibilityIdentifier("playback.play.button")
 
-            Button {
-                if model.isMediaPlaybackSnapshot {
-                    model.skipForwardMedia()
-                } else {
-                    model.skipForward()
+                Button {
+                    if model.isMediaPlaybackSnapshot {
+                        model.skipForwardMedia()
+                    } else {
+                        model.skipForward()
+                    }
+                } label: {
+                    Image(systemName: model.isMediaPlaybackSnapshot ? "goforward.\(model.mediaSkipForwardSeconds)" : "forward.end.fill")
                 }
-            } label: {
-                Image(systemName: model.isMediaPlaybackSnapshot ? "goforward.\(model.mediaSkipForwardSeconds)" : "forward.end.fill")
+                .buttonStyle(RoundPlaybackButtonStyle())
+                .disabled(!model.hasActiveSession)
+                .accessibilityLabel(model.isMediaPlaybackSnapshot ? "Forward \(model.mediaSkipForwardSeconds) seconds" : "Next \(model.skipUnit)")
+                .accessibilityIdentifier("playback.forward.button")
             }
-            .buttonStyle(RoundPlaybackButtonStyle())
-            .disabled(!model.hasActiveSession)
-            .accessibilityLabel(model.isMediaPlaybackSnapshot ? "Forward \(model.mediaSkipForwardSeconds) seconds" : "Next \(model.skipUnit)")
-            .accessibilityIdentifier("playback.forward.button")
+
+            if model.isMediaPlaybackSnapshot,
+               model.snapshot.canSkimBackward || model.snapshot.canSkimForward || model.snapshot.skimBridgeState != nil {
+                HStack(spacing: 14) {
+                    Button(action: model.skimBackward) {
+                        Label("Skim Back", systemImage: "backward.end.alt.fill")
+                    }
+                    .disabled(!model.snapshot.canSkimBackward)
+                    .accessibilityLabel("Skim backward by scene summary")
+                    .accessibilityIdentifier("playback.skim.backward.button")
+
+                    Button(action: model.skimForward) {
+                        Label("Skim Forward", systemImage: "forward.end.alt.fill")
+                    }
+                    .disabled(!model.snapshot.canSkimForward)
+                    .accessibilityLabel("Skim forward by scene summary")
+                    .accessibilityIdentifier("playback.skim.forward.button")
+                }
+                .buttonStyle(.bordered)
+                .font(.caption.weight(.semibold))
+            }
         }
         .disabled(model.snapshot.isRecording)
     }
@@ -3507,6 +3532,18 @@ private struct SettingsScreen: View {
                     .onCompatibleChange(of: model.automaticAudioPreparationPolicy) { _ in
                         model.automaticAudioPreparationPolicyChanged()
                     }
+                    Picker("Automatic Episode Map Preparation", selection: $model.automaticEpisodeMapPreparationPolicy) {
+                        ForEach(AutomaticEpisodeMapPreparationPolicy.allCases, id: \.self) { policy in
+                            Text(policy.displayName).tag(policy)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.automaticEpisodeMapPreparation.picker")
+                    .onCompatibleChange(of: model.automaticEpisodeMapPreparationPolicy) { _ in
+                        model.automaticEpisodeMapPreparationPolicyChanged()
+                    }
+                    Text("Episode maps are private and off by default. While Charging only prepares already-downloaded episodes; full transcripts and temporary audio are deleted after derivative artifacts commit.")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
                     Text("While Charging uses durable jobs and pauses before the next chunk when power, thermal, or storage safety changes. Completion timing is not guaranteed.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)

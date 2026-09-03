@@ -7,26 +7,50 @@ import MediaToolbox
 import ShazamKit
 
 public struct CapturedPostResumePodcastEvidence: Sendable {
+    public enum WindowRole: String, Sendable {
+        case preInterjection = "pre_interjection"
+        case postResume = "post_resume"
+    }
+
     public let request: PostResumeAudioSampleRequest
     public let signatureData: Data
     public let durationMs: Int
     public let anchorOffsetMs: Int
+    public let windowRole: WindowRole
+    public let provenance: EpisodeFingerprintProvenance
 
     public init(
         request: PostResumeAudioSampleRequest,
         signatureData: Data,
         durationMs: Int,
-        anchorOffsetMs: Int
+        anchorOffsetMs: Int,
+        windowRole: WindowRole = .postResume,
+        provenance: EpisodeFingerprintProvenance = .observedDecodedPlayback
     ) {
         self.request = request
         self.signatureData = signatureData
         self.durationMs = durationMs
         self.anchorOffsetMs = anchorOffsetMs
+        self.windowRole = windowRole
+        self.provenance = provenance
     }
+}
+
+public struct CapturedEpisodeFingerprintLandmark: Sendable {
+    public let itemId: String
+    public let sourceMediaStartMs: Int
+    public let sourceMediaEndMs: Int
+    public let anchorMediaTimeMs: Int
+    public let continuityEpoch: Int
+    public let gridIndex: Int?
+    public let trigger: EpisodeFingerprintTrigger
+    public let signatureData: Data
+    public let durationMs: Int
 }
 
 public enum PostResumePodcastEvidenceCaptureResult: Sendable {
     case captured(CapturedPostResumePodcastEvidence)
+    case landmark(CapturedEpisodeFingerprintLandmark)
     case failed(request: PostResumeAudioSampleRequest, reason: String)
 }
 
@@ -39,13 +63,20 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
 
     private final class Accumulator: @unchecked Sendable {
         let request: PostResumeAudioSampleRequest
-        let generator = SHSignatureGenerator()
+        var generator = SHSignatureGenerator()
         var appendedFrames: Int64 = 0
+        var skippedFrames: Int64 = 0
         var firstMediaTimeMs: Int?
 
         init(request: PostResumeAudioSampleRequest) {
             self.request = request
         }
+    }
+
+    private struct RingChunk: @unchecked Sendable {
+        let buffer: AVAudioPCMBuffer
+        let startMediaTimeMs: Int
+        let endMediaTimeMs: Int
     }
 
     private let lock = NSLock()
@@ -55,15 +86,27 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
     )
     private let resultHandler: ResultHandler
     private let becameIdle: @Sendable () -> Void
+    private let continuousCollection: Bool
+    private let itemId: String?
     private var format: AVAudioFormat?
     private var accumulators: [String: Accumulator] = [:]
+    private var ring: [RingChunk] = []
+    private var sparseSchedule = SparseFingerprintSchedule()
+    private var pendingStablePostSeekStartMs: Int?
+    private var generatingLandmarkKeys: Set<String> = []
+
+    var retainsContinuousCollection: Bool { continuousCollection }
 
     init(
         resultHandler: @escaping ResultHandler,
-        becameIdle: @escaping @Sendable () -> Void
+        becameIdle: @escaping @Sendable () -> Void,
+        continuousCollection: Bool = false,
+        itemId: String? = nil
     ) {
         self.resultHandler = resultHandler
         self.becameIdle = becameIdle
+        self.continuousCollection = continuousCollection
+        self.itemId = itemId
     }
 
     func arm(_ request: PostResumeAudioSampleRequest) -> Bool {
@@ -84,6 +127,46 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
             }
         }
         return armed
+    }
+
+    func captureBufferedPreInterjection(_ request: PostResumeAudioSampleRequest) -> Bool {
+        let endMs = request.anchorMediaTimeMs - 5_000
+        let startMs = endMs - request.targetDurationMs
+        guard startMs >= 0 else { return false }
+        guard let chunks = bufferedChunks(startMs: startMs, endMs: endMs),
+              let first = chunks.first, let last = chunks.last,
+              last.endMediaTimeMs - first.startMediaTimeMs >= request.targetDurationMs - 250 else {
+            return false
+        }
+        completionQueue.async { [resultHandler] in
+            do {
+                let signature = try Self.signature(from: chunks.map(\.buffer))
+                resultHandler(.captured(CapturedPostResumePodcastEvidence(
+                    request: request,
+                    signatureData: signature.dataRepresentation,
+                    durationMs: max(1, Int((signature.duration * 1_000).rounded())),
+                    anchorOffsetMs: request.anchorMediaTimeMs - first.startMediaTimeMs,
+                    windowRole: .preInterjection
+                )))
+            } catch {
+                resultHandler(.failed(request: request, reason: "buffered_pre_interjection_signature_failed:\(error.localizedDescription)"))
+            }
+        }
+        return true
+    }
+
+    func noteSeek(at date: Date = Date()) {
+        lock.withLock {
+            sparseSchedule.noteSeek(at: date)
+            pendingStablePostSeekStartMs = nil
+            ring.removeAll(keepingCapacity: true)
+            for accumulator in accumulators.values {
+                accumulator.generator = SHSignatureGenerator()
+                accumulator.appendedFrames = 0
+                accumulator.skippedFrames = 0
+                accumulator.firstMediaTimeMs = nil
+            }
+        }
     }
 
     func prepare(processingFormat: UnsafePointer<AudioStreamBasicDescription>) {
@@ -120,8 +203,27 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
             }
             buffer.frameLength = AVAudioFrameCount(frameCount)
             let mediaTimeMs = Self.mediaTimeMs(timeRange.start)
+            if continuousCollection,
+               let mediaTimeMs,
+               let copy = Self.copy(buffer) {
+                let durationMs = Int((Double(frameCount) / format.sampleRate * 1_000).rounded())
+                ring.append(RingChunk(
+                    buffer: copy,
+                    startMediaTimeMs: mediaTimeMs,
+                    endMediaTimeMs: mediaTimeMs + max(1, durationMs)
+                ))
+                let oldestAllowed = mediaTimeMs + max(1, durationMs) - 20_000
+                ring.removeAll { $0.endMediaTimeMs < oldestAllowed }
+            }
             for (id, accumulator) in accumulators {
                 do {
+                    let delayFrames = Int64(
+                        (Double(accumulator.request.captureDelayMs) * format.sampleRate / 1_000).rounded(.up)
+                    )
+                    if accumulator.skippedFrames < delayFrames {
+                        accumulator.skippedFrames += Int64(frameCount)
+                        continue
+                    }
                     if accumulator.firstMediaTimeMs == nil {
                         accumulator.firstMediaTimeMs = mediaTimeMs
                     }
@@ -157,8 +259,9 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
             resultHandler(.failed(request: accumulator.request, reason: reason))
         }
         if becameEmpty {
-            becameIdle()
+            if !continuousCollection { becameIdle() }
         }
+        scheduleSparseLandmarkIfReady(now: Date())
     }
 
     func cancelAll(reason: String) {
@@ -169,6 +272,10 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
         }
         for accumulator in cancelled {
             resultHandler(.failed(request: accumulator.request, reason: reason))
+        }
+        lock.withLock {
+            ring.removeAll()
+            generatingLandmarkKeys.removeAll()
         }
     }
 
@@ -203,9 +310,112 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
                 request: accumulator.request,
                 signatureData: data,
                 durationMs: max(1, Int((signature.duration * 1_000).rounded())),
-                anchorOffsetMs: accumulator.request.anchorMediaTimeMs - firstMediaTimeMs
+                anchorOffsetMs: accumulator.request.anchorMediaTimeMs - firstMediaTimeMs,
+                windowRole: .postResume
             )))
         }
+    }
+
+    private func bufferedChunks(startMs: Int, endMs: Int) -> [RingChunk]? {
+        lock.withLock {
+            let selected = ring.filter { $0.endMediaTimeMs > startMs && $0.startMediaTimeMs < endMs }
+            guard let first = selected.first, let last = selected.last,
+                  first.startMediaTimeMs <= startMs + 250,
+                  last.endMediaTimeMs >= endMs - 250 else { return nil }
+            return selected
+        }
+    }
+
+    private func scheduleSparseLandmarkIfReady(now: Date) {
+        guard continuousCollection, let itemId else { return }
+        let candidate: (key: String, gridIndex: Int?, trigger: EpisodeFingerprintTrigger, epoch: Int, chunks: [RingChunk])? = lock.withLock {
+            guard sparseSchedule.isSeekStable(at: now), let current = ring.last?.endMediaTimeMs else { return nil }
+            if let grid = sparseSchedule.dueGridIndex(at: current - SparseFingerprintSchedule.targetDurationMs) {
+                let start = SparseFingerprintSchedule.initialMediaTimeMs
+                    + grid * SparseFingerprintSchedule.periodicIntervalMs
+                let end = start + SparseFingerprintSchedule.targetDurationMs
+                let key = "grid-\(grid)"
+                guard !generatingLandmarkKeys.contains(key),
+                      let chunks = bufferedChunksWithoutLock(startMs: start, endMs: end) else { return nil }
+                generatingLandmarkKeys.insert(key)
+                sparseSchedule.markCaptured(gridIndex: grid)
+                return (key, grid, grid == 0 ? .initialPlayback : .periodicPlayback, sparseSchedule.continuityEpoch, chunks)
+            }
+            if sparseSchedule.continuityEpoch > 0 {
+                if pendingStablePostSeekStartMs == nil { pendingStablePostSeekStartMs = ring.first?.startMediaTimeMs }
+                if let start = pendingStablePostSeekStartMs,
+                   current - start >= SparseFingerprintSchedule.targetDurationMs {
+                    let key = "seek-\(sparseSchedule.continuityEpoch)"
+                    guard !generatingLandmarkKeys.contains(key),
+                          let chunks = bufferedChunksWithoutLock(
+                            startMs: start,
+                            endMs: start + SparseFingerprintSchedule.targetDurationMs
+                          ) else { return nil }
+                    generatingLandmarkKeys.insert(key)
+                    pendingStablePostSeekStartMs = nil
+                    return (key, nil, .stablePostSeek, sparseSchedule.continuityEpoch, chunks)
+                }
+            }
+            return nil
+        }
+        guard let candidate, let first = candidate.chunks.first, let last = candidate.chunks.last else { return }
+        completionQueue.async { [weak self, resultHandler] in
+            defer { _ = self?.lock.withLock { self?.generatingLandmarkKeys.remove(candidate.key) } }
+            do {
+                let signature = try Self.signature(from: candidate.chunks.map(\.buffer))
+                resultHandler(.landmark(CapturedEpisodeFingerprintLandmark(
+                    itemId: itemId,
+                    sourceMediaStartMs: first.startMediaTimeMs,
+                    sourceMediaEndMs: last.endMediaTimeMs,
+                    anchorMediaTimeMs: first.startMediaTimeMs,
+                    continuityEpoch: candidate.epoch,
+                    gridIndex: candidate.gridIndex,
+                    trigger: candidate.trigger,
+                    signatureData: signature.dataRepresentation,
+                    durationMs: max(1, Int((signature.duration * 1_000).rounded()))
+                )))
+            } catch {
+                // Sparse landmarks are opportunistic. Per-Margin evidence has
+                // its own explicit failure result and must not be conflated.
+            }
+        }
+    }
+
+    private func bufferedChunksWithoutLock(startMs: Int, endMs: Int) -> [RingChunk]? {
+        let selected = ring.filter { $0.endMediaTimeMs > startMs && $0.startMediaTimeMs < endMs }
+        guard let first = selected.first, let last = selected.last,
+              first.startMediaTimeMs <= startMs + 250,
+              last.endMediaTimeMs >= endMs - 250 else { return nil }
+        return selected
+    }
+
+    private static func signature(from buffers: [AVAudioPCMBuffer]) throws -> SHSignature {
+        let generator = SHSignatureGenerator()
+        for buffer in buffers { try generator.append(buffer, at: nil) }
+        let signature = generator.signature()
+        guard !signature.dataRepresentation.isEmpty else {
+            throw PodcastAnchorEvidenceError.signatureGenerationFailed
+        }
+        return signature
+    }
+
+    private static func copy(_ source: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        guard let destination = AVAudioPCMBuffer(
+            pcmFormat: source.format,
+            frameCapacity: source.frameLength
+        ) else { return nil }
+        destination.frameLength = source.frameLength
+        let sourceBuffers = UnsafeMutableAudioBufferListPointer(source.mutableAudioBufferList)
+        let destinationBuffers = UnsafeMutableAudioBufferListPointer(destination.mutableAudioBufferList)
+        guard sourceBuffers.count == destinationBuffers.count else { return nil }
+        for index in sourceBuffers.indices {
+            guard let sourceData = sourceBuffers[index].mData,
+                  let destinationData = destinationBuffers[index].mData else { return nil }
+            let count = min(Int(sourceBuffers[index].mDataByteSize), Int(destinationBuffers[index].mDataByteSize))
+            memcpy(destinationData, sourceData, count)
+            destinationBuffers[index].mDataByteSize = UInt32(count)
+        }
+        return destination
     }
 
     private static func mediaTimeMs(_ time: CMTime) -> Int? {

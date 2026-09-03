@@ -676,7 +676,12 @@ struct Build23VerifiedRecipientPreviewPanel: View {
                         .font(.headline)
                     Build23StatusLabel(icon: "waveform", title: "\(preview.voiceAssetCount) voice assets")
                     Build23StatusLabel(icon: "waveform.path.ecg", title: "\(preview.acousticEvidenceCount) acoustic evidence records")
-                    Build23StatusLabel(icon: "map", title: "\(preview.listeningMapProposalCount) listening-map proposals")
+                    Build23StatusLabel(
+                        icon: "map",
+                        title: preview.listeningMapProposalCount > 0
+                            ? "Listening Map included"
+                            : "Listening Map still preparing or unavailable; share remains usable"
+                    )
                     Build23StatusLabel(
                         icon: "doc.zipper",
                         title: "\(preview.fileURL.lastPathComponent) · \(ByteCountFormatter.string(fromByteCount: Int64(preview.fileByteCount), countStyle: .file))"

@@ -400,11 +400,17 @@ struct ExperienceItemDetailScreen: View {
                     .accessibilityIdentifier("item.externalReference")
                 }
                 if model.canGenerateListeningMap {
-                    Button(model.isGeneratingListeningMap ? "Generating map…" : "Generate optional listening map", systemImage: "sparkles") {
+                    Button(model.episodeMapPreparationStatus == "Preparing" ? "Preparing Listening Map…" : "Prepare Listening Map", systemImage: "sparkles") {
                         model.generateListeningMap()
                     }
-                    .disabled(model.isGeneratingListeningMap)
+                    .disabled(model.isGeneratingListeningMap || model.episodeMapPreparationStatus == "Preparing")
                     .accessibilityIdentifier("item.generateMap.button")
+                    if model.episodeMapPreparationStatus != "Not started" {
+                        Text(model.episodeMapPreparationStatus)
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .accessibilityIdentifier("item.episodeMap.status")
+                    }
                 } else {
                     Text(model.listeningMapGenerationAvailabilityDescription)
                         .font(.caption)

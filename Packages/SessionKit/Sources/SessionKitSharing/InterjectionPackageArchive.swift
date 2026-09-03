@@ -50,6 +50,8 @@ public struct VerifiedSpokenMarginsPackage: Sendable {
     public let manifest: SpokenMarginsPackageManifest
     public let commentaryLayers: [SharedCommentaryLayerArtifact]
     public let listeningMapProposals: [PortableListeningMapProposalArtifact]
+    public let editionFingerprintSpines: [EditionFingerprintSpineArtifact]
+    public let transcriptPhraseSketches: [TranscriptPhraseSketchArtifact]
     public let embeddedTextItems: [EmbeddedTextItemArtifact]
     public let extractedAssetURLs: [String: URL]
 
@@ -57,12 +59,16 @@ public struct VerifiedSpokenMarginsPackage: Sendable {
         manifest: SpokenMarginsPackageManifest,
         commentaryLayers: [SharedCommentaryLayerArtifact],
         listeningMapProposals: [PortableListeningMapProposalArtifact],
+        editionFingerprintSpines: [EditionFingerprintSpineArtifact],
+        transcriptPhraseSketches: [TranscriptPhraseSketchArtifact],
         embeddedTextItems: [EmbeddedTextItemArtifact],
         extractedAssetURLs: [String: URL]
     ) {
         self.manifest = manifest
         self.commentaryLayers = commentaryLayers
         self.listeningMapProposals = listeningMapProposals
+        self.editionFingerprintSpines = editionFingerprintSpines
+        self.transcriptPhraseSketches = transcriptPhraseSketches
         self.embeddedTextItems = embeddedTextItems
         self.extractedAssetURLs = extractedAssetURLs
     }
@@ -120,6 +126,8 @@ public enum SpokenMarginsPackageArchive {
             manifest,
             commentaryLayers: decoded.commentary,
             proposals: decoded.proposals,
+            fingerprintSpines: decoded.fingerprintSpines,
+            phraseSketches: decoded.phraseSketches,
             embeddedTextItems: decoded.embeddedTextItems,
             requireDigest: false
         )
@@ -127,6 +135,8 @@ public enum SpokenMarginsPackageArchive {
             manifest,
             commentaryLayers: decoded.commentary,
             listeningMapProposals: decoded.proposals,
+            editionFingerprintSpines: decoded.fingerprintSpines,
+            transcriptPhraseSketches: decoded.phraseSketches,
             embeddedTextItems: decoded.embeddedTextItems
         ).utf8)
         manifest.contentDigest = try digest(
@@ -247,6 +257,8 @@ public enum SpokenMarginsPackageArchive {
             manifest,
             commentaryLayers: decoded.commentary,
             proposals: decoded.proposals,
+            fingerprintSpines: decoded.fingerprintSpines,
+            phraseSketches: decoded.phraseSketches,
             embeddedTextItems: decoded.embeddedTextItems,
             requireDigest: true
         )
@@ -265,6 +277,8 @@ public enum SpokenMarginsPackageArchive {
             manifest,
             commentaryLayers: decoded.commentary,
             listeningMapProposals: decoded.proposals,
+            editionFingerprintSpines: decoded.fingerprintSpines,
+            transcriptPhraseSketches: decoded.phraseSketches,
             embeddedTextItems: decoded.embeddedTextItems
         ).utf8)
         guard previewData == expectedPreview else {
@@ -297,6 +311,8 @@ public enum SpokenMarginsPackageArchive {
             manifest: manifest,
             commentaryLayers: decoded.commentary,
             listeningMapProposals: decoded.proposals,
+            editionFingerprintSpines: decoded.fingerprintSpines,
+            transcriptPhraseSketches: decoded.phraseSketches,
             embeddedTextItems: decoded.embeddedTextItems,
             extractedAssetURLs: extractedURLs
         )
@@ -418,10 +434,14 @@ public enum SpokenMarginsPackageArchive {
     ) throws -> (
         commentary: [SharedCommentaryLayerArtifact],
         proposals: [PortableListeningMapProposalArtifact],
+        fingerprintSpines: [EditionFingerprintSpineArtifact],
+        phraseSketches: [TranscriptPhraseSketchArtifact],
         embeddedTextItems: [EmbeddedTextItemArtifact]
     ) {
         var commentary: [SharedCommentaryLayerArtifact] = []
         var proposals: [PortableListeningMapProposalArtifact] = []
+        var fingerprintSpines: [EditionFingerprintSpineArtifact] = []
+        var phraseSketches: [TranscriptPhraseSketchArtifact] = []
         var embeddedTextItems: [EmbeddedTextItemArtifact] = []
         for descriptor in manifest.artifacts {
             guard let data = artifactData[descriptor.path] else {
@@ -447,6 +467,28 @@ public enum SpokenMarginsPackageArchive {
                     throw SpokenMarginsPackageArchiveError.invalidManifest("map descriptor does not match artifact")
                 }
                 proposals.append(value)
+            case SpokenMarginsArtifactKind.editionFingerprintSpine:
+                guard descriptor.schemaVersion == EditionFingerprintSpineArtifact.schemaVersion else {
+                    if descriptor.required { throw SpokenMarginsPackageArchiveError.unsupportedSchema(descriptor.schemaVersion) }
+                    continue
+                }
+                try validateFingerprintSpineJSONShape(data)
+                let value = try decoder().decode(EditionFingerprintSpineArtifact.self, from: data)
+                guard value.id == descriptor.id, value.schemaVersion == descriptor.schemaVersion else {
+                    throw SpokenMarginsPackageArchiveError.invalidManifest("fingerprint spine descriptor does not match artifact")
+                }
+                fingerprintSpines.append(value)
+            case SpokenMarginsArtifactKind.transcriptPhraseSketch:
+                guard descriptor.schemaVersion == TranscriptPhraseSketchArtifact.schemaVersion else {
+                    if descriptor.required { throw SpokenMarginsPackageArchiveError.unsupportedSchema(descriptor.schemaVersion) }
+                    continue
+                }
+                try validatePhraseSketchJSONShape(data)
+                let value = try decoder().decode(TranscriptPhraseSketchArtifact.self, from: data)
+                guard value.id == descriptor.id, value.schemaVersion == descriptor.schemaVersion else {
+                    throw SpokenMarginsPackageArchiveError.invalidManifest("phrase sketch descriptor does not match artifact")
+                }
+                phraseSketches.append(value)
             case SpokenMarginsArtifactKind.embeddedTextItem:
                 guard descriptor.schemaVersion == EmbeddedTextItemArtifact.schemaVersion else {
                     throw SpokenMarginsPackageArchiveError.unsupportedSchema(descriptor.schemaVersion)
@@ -462,13 +504,15 @@ public enum SpokenMarginsPackageArchive {
                 }
             }
         }
-        return (commentary, proposals, embeddedTextItems)
+        return (commentary, proposals, fingerprintSpines, phraseSketches, embeddedTextItems)
     }
 
     private static func validateManifestBoundary(
         _ manifest: SpokenMarginsPackageManifest,
         commentaryLayers: [SharedCommentaryLayerArtifact],
         proposals: [PortableListeningMapProposalArtifact],
+        fingerprintSpines: [EditionFingerprintSpineArtifact],
+        phraseSketches: [TranscriptPhraseSketchArtifact],
         embeddedTextItems: [EmbeddedTextItemArtifact],
         requireDigest: Bool
     ) throws {
@@ -565,6 +609,8 @@ public enum SpokenMarginsPackageArchive {
         }
         for record in layer.interjections { try validate(record, assetsByID: assetsByID) }
         for proposal in proposals { try validate(proposal, assetsByID: assetsByID) }
+        for spine in fingerprintSpines { try validate(spine, assetsByID: assetsByID, item: manifest.item) }
+        for sketch in phraseSketches { try validate(sketch, item: manifest.item) }
     }
 
     private static func validateItem(_ item: SharedItemIdentity) throws {
@@ -585,6 +631,65 @@ public enum SpokenMarginsPackageArchive {
         for digest in [item.normalizedContentSHA256, item.exactEditionSHA256].compactMap({ $0 }) where !isSHA256(digest) {
             throw SpokenMarginsPackageArchiveError.invalidManifest("item digest is invalid")
         }
+    }
+
+    private static func validate(
+        _ spine: EditionFingerprintSpineArtifact,
+        assetsByID: [String: SpokenMarginsAssetDescriptor],
+        item: SharedItemIdentity
+    ) throws {
+        guard (1...500).contains(spine.itemId.count),
+              spine.landmarks.count <= 500,
+              spine.generatorVersion.count <= 200,
+              spine.canonicalURL.map(validHTTPSURL) ?? true,
+              spine.episodeGUID.map({ $0.count <= 1_000 }) ?? true,
+              spine.producingEditionDurationMs.map({ $0 >= 0 }) ?? true,
+              spine.producingEditionSHA256.map(isSHA256) ?? true,
+              Set(spine.landmarks.map(\.id)).count == spine.landmarks.count,
+              spine.landmarks.map(\.order) == Array(0..<spine.landmarks.count) else {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("episode fingerprint spine is out of bounds")
+        }
+        if let expected = item.episodeGUID, let actual = spine.episodeGUID, expected != actual {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("episode fingerprint spine identity conflicts with the item")
+        }
+        for landmark in spine.landmarks {
+            guard landmark.sourceMediaStartMs >= 0,
+                  landmark.sourceMediaEndMs >= landmark.sourceMediaStartMs,
+                  landmark.sourceMediaEndMs - landmark.sourceMediaStartMs <= 30_000,
+                  landmark.anchorMediaTimeMs >= 0,
+                  landmark.continuityEpoch >= 0,
+                  landmark.generatorVersion.count <= 200,
+                  assetsByID[landmark.signatureAssetId]?.role == SpokenMarginsAssetRole.acousticSignature else {
+                throw SpokenMarginsPackageArchiveError.invalidManifest("episode fingerprint landmark is invalid")
+            }
+        }
+    }
+
+    private static func validate(
+        _ sketch: TranscriptPhraseSketchArtifact,
+        item: SharedItemIdentity
+    ) throws {
+        guard (1...500).contains(sketch.itemId.count),
+              sketch.normalizationVersion.count <= 200,
+              sketch.shingleWidth == TranscriptPhraseSketchBuilder.shingleWidth,
+              sketch.maximumHashesPerWindow == TranscriptPhraseSketchBuilder.maximumHashesPerWindow,
+              Data(base64Encoded: sketch.saltBase64)?.count == 32,
+              sketch.windows.count <= 10_000,
+              Set(sketch.windows.map(\.id)).count == sketch.windows.count else {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("transcript phrase sketch is out of bounds")
+        }
+        for window in sketch.windows {
+            guard window.sourceStartMs >= 0,
+                  window.sourceEndMs >= window.sourceStartMs,
+                  window.sourceEndMs - window.sourceStartMs <= TranscriptPhraseSketchBuilder.windowDurationMs,
+                  window.hashes.count <= sketch.maximumHashesPerWindow,
+                  window.hashes.allSatisfy({ hash in
+                      hash.count == 32 && hash.allSatisfy { $0.isHexDigit && !$0.isUppercase }
+                  }) else {
+                throw SpokenMarginsPackageArchiveError.invalidManifest("transcript phrase sketch window is invalid")
+            }
+        }
+        _ = item
     }
 
     private static func validate(
@@ -685,6 +790,48 @@ public enum SpokenMarginsPackageArchive {
         }
         for asset in assets {
             try rejectUnknownKeys(asset, allowed: ["id", "role", "path", "mimeType", "durationMs", "anchorOffsetMs", "provenance", "byteCount", "sha256"], context: "asset descriptor")
+        }
+    }
+
+    private static func validateFingerprintSpineJSONShape(_ data: Data) throws {
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("fingerprint spine root is not an object")
+        }
+        try rejectUnknownKeys(
+            root,
+            allowed: ["id", "schemaVersion", "itemId", "canonicalURL", "episodeGUID", "producingEditionDurationMs", "producingEditionSHA256", "createdAt", "generatorVersion", "landmarks"],
+            context: "fingerprint spine"
+        )
+        guard let landmarks = root["landmarks"] as? [[String: Any]] else {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("fingerprint spine landmarks are absent")
+        }
+        for landmark in landmarks {
+            try rejectUnknownKeys(
+                landmark,
+                allowed: ["id", "order", "sourceMediaStartMs", "sourceMediaEndMs", "anchorMediaTimeMs", "continuityEpoch", "trigger", "provenance", "signatureAssetId", "transcriptSketchWindowId", "generatorVersion"],
+                context: "fingerprint landmark"
+            )
+        }
+    }
+
+    private static func validatePhraseSketchJSONShape(_ data: Data) throws {
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("phrase sketch root is not an object")
+        }
+        try rejectUnknownKeys(
+            root,
+            allowed: ["id", "schemaVersion", "itemId", "languageCode", "saltBase64", "normalizationVersion", "shingleWidth", "maximumHashesPerWindow", "createdAt", "windows"],
+            context: "phrase sketch"
+        )
+        guard let windows = root["windows"] as? [[String: Any]] else {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("phrase sketch windows are absent")
+        }
+        for window in windows {
+            try rejectUnknownKeys(
+                window,
+                allowed: ["id", "sourceStartMs", "sourceEndMs", "hashes"],
+                context: "phrase sketch window"
+            )
         }
     }
 
@@ -846,6 +993,8 @@ public enum SpokenMarginsPackageArchive {
         _ manifest: SpokenMarginsPackageManifest,
         commentaryLayers: [SharedCommentaryLayerArtifact],
         listeningMapProposals: [PortableListeningMapProposalArtifact],
+        editionFingerprintSpines: [EditionFingerprintSpineArtifact] = [],
+        transcriptPhraseSketches: [TranscriptPhraseSketchArtifact] = [],
         embeddedTextItems: [EmbeddedTextItemArtifact] = []
     ) -> String {
         let interjections = commentaryLayers.flatMap(\.interjections)
@@ -860,7 +1009,8 @@ public enum SpokenMarginsPackageArchive {
             "Item audio is not included.",
             "Voice assets: \(manifest.assets.filter { $0.path.hasPrefix("assets/audio/") }.count).",
             "Acoustic signatures: \(manifest.assets.filter { $0.role == SpokenMarginsAssetRole.acousticSignature }.count). These are opaque matching evidence, not item audio.",
-            "Listening Map proposals: \(listeningMapProposals.count). Proposals are not activated automatically.", ""
+            "Listening Map proposals: \(listeningMapProposals.count). Proposals are not activated automatically.",
+            "Episode fingerprint maps: \(editionFingerprintSpines.count). Transcript phrase sketches: \(transcriptPhraseSketches.count). Full episode transcripts and source audio are not included.", ""
         ]
         for (index, interjection) in interjections.enumerated() {
             lines.append("## Margin \(index + 1)")

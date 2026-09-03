@@ -20,6 +20,11 @@ public final class InMemorySessionRepository: SessionRepository, @unchecked Send
     public var canonicalSources: [String: CanonicalSourcePackage]
     public var preparedAudioManifests: [String: PreparedAudioManifest]
     public var audioPreparationJobs: [String: AudioPreparationJob]
+    public var editionFingerprintSpines: [String: EditionFingerprintSpineArtifact]
+    public var transcriptPhraseSketches: [String: TranscriptPhraseSketchArtifact]
+    public var portableListeningMapProposals: [String: (itemId: String, proposal: PortableListeningMapProposalArtifact)]
+    public var resolvedListeningMapProjections: [String: ResolvedListeningMapProjection]
+    public var episodeMapPreparationJobs: [String: EpisodeMapPreparationJob]
     public var offlineStorageBudget: OfflineStorageBudget
     public var ownedOfflineAssets: [String: OwnedOfflineAsset]
     public var offlineStorageReservations: [String: OfflineStorageReservation]
@@ -48,6 +53,11 @@ public final class InMemorySessionRepository: SessionRepository, @unchecked Send
         canonicalSources: [String: CanonicalSourcePackage] = [:],
         preparedAudioManifests: [String: PreparedAudioManifest] = [:],
         audioPreparationJobs: [String: AudioPreparationJob] = [:],
+        editionFingerprintSpines: [String: EditionFingerprintSpineArtifact] = [:],
+        transcriptPhraseSketches: [String: TranscriptPhraseSketchArtifact] = [:],
+        portableListeningMapProposals: [String: (itemId: String, proposal: PortableListeningMapProposalArtifact)] = [:],
+        resolvedListeningMapProjections: [String: ResolvedListeningMapProjection] = [:],
+        episodeMapPreparationJobs: [String: EpisodeMapPreparationJob] = [:],
         offlineStorageBudget: OfflineStorageBudget = OfflineStorageBudget(),
         ownedOfflineAssets: [String: OwnedOfflineAsset] = [:],
         offlineStorageReservations: [String: OfflineStorageReservation] = [:],
@@ -75,6 +85,11 @@ public final class InMemorySessionRepository: SessionRepository, @unchecked Send
         self.canonicalSources = canonicalSources
         self.preparedAudioManifests = preparedAudioManifests
         self.audioPreparationJobs = audioPreparationJobs
+        self.editionFingerprintSpines = editionFingerprintSpines
+        self.transcriptPhraseSketches = transcriptPhraseSketches
+        self.portableListeningMapProposals = portableListeningMapProposals
+        self.resolvedListeningMapProjections = resolvedListeningMapProjections
+        self.episodeMapPreparationJobs = episodeMapPreparationJobs
         self.offlineStorageBudget = offlineStorageBudget
         self.ownedOfflineAssets = ownedOfflineAssets
         self.offlineStorageReservations = offlineStorageReservations
@@ -302,6 +317,38 @@ public final class InMemorySessionRepository: SessionRepository, @unchecked Send
         audioPreparationJobs.values.sorted { $0.requestedAt < $1.requestedAt }
     }
     public func deleteAudioPreparationJob(id: String) throws { audioPreparationJobs[id] = nil }
+
+    public func saveEditionFingerprintSpine(_ spine: EditionFingerprintSpineArtifact) throws {
+        editionFingerprintSpines[spine.itemId] = spine
+    }
+    public func loadEditionFingerprintSpine(itemId: String) throws -> EditionFingerprintSpineArtifact? {
+        editionFingerprintSpines[itemId]
+    }
+    public func saveTranscriptPhraseSketch(_ sketch: TranscriptPhraseSketchArtifact) throws {
+        transcriptPhraseSketches[sketch.itemId] = sketch
+    }
+    public func loadTranscriptPhraseSketch(itemId: String) throws -> TranscriptPhraseSketchArtifact? {
+        transcriptPhraseSketches[itemId]
+    }
+    public func savePortableListeningMapProposal(_ proposal: PortableListeningMapProposalArtifact, itemId: String) throws {
+        portableListeningMapProposals[proposal.id] = (itemId, proposal)
+    }
+    public func loadPortableListeningMapProposals(itemId: String) throws -> [PortableListeningMapProposalArtifact] {
+        portableListeningMapProposals.values.filter { $0.itemId == itemId }.map(\.proposal).sorted { $0.createdAt < $1.createdAt }
+    }
+    public func saveResolvedListeningMapProjection(_ projection: ResolvedListeningMapProjection) throws {
+        resolvedListeningMapProjections[projection.itemId] = projection
+    }
+    public func loadResolvedListeningMapProjection(itemId: String) throws -> ResolvedListeningMapProjection? {
+        resolvedListeningMapProjections[itemId]
+    }
+    public func saveEpisodeMapPreparationJob(_ job: EpisodeMapPreparationJob) throws {
+        episodeMapPreparationJobs[job.id] = job
+    }
+    public func loadEpisodeMapPreparationJobs() throws -> [EpisodeMapPreparationJob] {
+        episodeMapPreparationJobs.values.sorted { $0.requestedAt < $1.requestedAt }
+    }
+    public func deleteEpisodeMapPreparationJob(id: String) throws { episodeMapPreparationJobs[id] = nil }
 
     public func saveOfflineStorageBudget(_ budget: OfflineStorageBudget) throws { offlineStorageBudget = budget }
     public func loadOfflineStorageBudget() throws -> OfflineStorageBudget { offlineStorageBudget }

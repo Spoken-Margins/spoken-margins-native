@@ -1211,14 +1211,17 @@ public final class SessionEngine {
         try repository.saveInterjection(interjection)
         if shouldCapturePostResumePodcastEvidence,
            let anchorMediaTimeMs = anchor.mediaTimeMs {
-            let armed = audio.armPostResumeAudioSample(PostResumeAudioSampleRequest(
+            let evidenceRequest = PostResumeAudioSampleRequest(
                 interjectionId: interjection.id,
                 sessionId: session.id,
                 itemId: session.itemId,
                 anchorMediaTimeMs: anchorMediaTimeMs,
-                targetDurationMs: 12_000
-            ))
-            if !armed {
+                targetDurationMs: 12_000,
+                captureDelayMs: SparseFingerprintSchedule.seekDebounceMs
+            )
+            let capturedPreWindow = audio.captureBufferedPreInterjectionAudioSample(evidenceRequest)
+            let armedPostWindow = audio.armPostResumeAudioSample(evidenceRequest)
+            if !capturedPreWindow && !armedPostWindow {
                 interjection.podcastAnchorEvidenceCaptureStatus = .unavailable
                 interjection.podcastAnchorEvidenceFailureReason = "decoded_playback_sample_unavailable"
                 try repository.saveInterjection(interjection)

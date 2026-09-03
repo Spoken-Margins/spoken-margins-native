@@ -1651,6 +1651,11 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             observeCompletion(for: item)
             installPlayerStateObserver()
             installTimeObserver()
+            if Thread.isMainThread {
+                MainActor.assumeIsolated {
+                    installContinuousPodcastEvidenceTapIfPossible(on: item)
+                }
+            }
         }
         #if os(iOS) || os(watchOS)
         try configureStreamAudioSession()
@@ -1687,7 +1692,11 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     public func requestMediaSeek(toMediaTimeMs mediaTimeMs: Int) throws -> MediaSeekRequest {
         #if canImport(AVFoundation)
-        cancelPostResumeEvidenceCapture(reason: "playback_seeked_during_capture")
+        if let context = postResumeEvidenceTapContext, context.retainsContinuousCollection {
+            context.noteSeek()
+        } else {
+            cancelPostResumeEvidenceCapture(reason: "playback_seeked_during_capture")
+        }
         let seconds = max(0, Double(mediaTimeMs) / 1000)
         lastRequestedMediaTimeMs = max(0, mediaTimeMs)
         guard let player, let activeTargetId else {
@@ -1786,6 +1795,22 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
                 removePostResumeEvidenceTap()
                 return false
             }
+        }
+        #else
+        _ = request
+        return false
+        #endif
+    }
+
+    @discardableResult
+    public func captureBufferedPreInterjectionAudioSample(_ request: PostResumeAudioSampleRequest) -> Bool {
+        #if canImport(AVFoundation) && canImport(MediaToolbox) && canImport(ShazamKit) && !os(watchOS)
+        guard Thread.isMainThread else { return false }
+        return MainActor.assumeIsolated {
+            guard mediaContext?.itemId == request.itemId,
+                  let context = postResumeEvidenceTapContext,
+                  postResumeEvidenceItem === player?.currentItem else { return false }
+            return context.captureBufferedPreInterjection(request)
         }
         #else
         _ = request
@@ -2057,6 +2082,40 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     }
 
     #if canImport(AVFoundation) && canImport(MediaToolbox) && canImport(ShazamKit) && !os(watchOS)
+    @MainActor
+    private func installContinuousPodcastEvidenceTapIfPossible(on item: AVPlayerItem) {
+        guard let mediaContext,
+              mediaContext.targetType == .transcriptBackedMedia,
+              mediaContext.sourceType == .remoteStream || mediaContext.sourceType == .nativeMediaFile,
+              postResumeEvidenceTapContext == nil,
+              let assetTrack = item.tracks.compactMap({ $0.assetTrack }).first(where: { $0.mediaType == .audio }) else {
+            return
+        }
+        let context = PostResumePodcastEvidenceTapContext(
+            resultHandler: { [weak self] result in
+                self?.postResumePodcastEvidenceHandler?(result)
+            },
+            becameIdle: {},
+            continuousCollection: true,
+            itemId: mediaContext.itemId
+        )
+        do {
+            let tap = try PostResumePodcastEvidenceTapFactory.make(context: context)
+            let parameters = AVMutableAudioMixInputParameters(track: assetTrack)
+            parameters.audioTapProcessor = tap
+            let mix = AVMutableAudioMix()
+            mix.inputParameters = [parameters]
+            postResumeEvidenceTap = tap
+            postResumeEvidenceTapContext = context
+            postResumeEvidenceItem = item
+            postResumeEvidenceAudioMix = mix
+            item.audioMix = mix
+        } catch {
+            context.cancelAll(reason: "continuous_decoded_playback_tap_install_failed:\(error.localizedDescription)")
+            removePostResumeEvidenceTap()
+        }
+    }
+
     private func removePostResumeEvidenceTap() {
         let item = postResumeEvidenceItem
         let mix = postResumeEvidenceAudioMix
@@ -3210,6 +3269,53 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         )
         #else
         throw SessionKitError.persistenceFailed("speech_recognition_unavailable")
+        #endif
+    }
+
+    public func transcribeSourceAudioWindowWithEvidence(
+        url: URL,
+        itemId: String,
+        anchorMediaTimeMs: Int,
+        durationMs: Int?,
+        windowBeforeMs: Int,
+        windowAfterMs: Int
+    ) async throws -> SourceAudioWindowTranscription {
+        let timeline = try await transcribeSourceAudioWindow(
+            url: url,
+            itemId: itemId,
+            anchorMediaTimeMs: anchorMediaTimeMs,
+            durationMs: durationMs,
+            windowBeforeMs: windowBeforeMs,
+            windowAfterMs: windowAfterMs
+        )
+        #if canImport(AVFoundation)
+        let caches = try FileManager.default.url(
+            for: .cachesDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let localWindowURL = caches
+            .appending(path: "SourceAudioTranscriptionWindows/\(itemId)", directoryHint: .isDirectory)
+            .appending(path: "window-\(anchorMediaTimeMs)-v3", directoryHint: .isDirectory)
+            .appending(path: "source-window.m4a")
+        let startMs = max(0, anchorMediaTimeMs - windowBeforeMs)
+        let endMs = min(durationMs ?? Int.max, anchorMediaTimeMs + windowAfterMs)
+        return SourceAudioWindowTranscription(
+            timeline: timeline,
+            localAudioURL: FileManager.default.fileExists(atPath: localWindowURL.path) ? localWindowURL : nil,
+            sourceStartMs: startMs,
+            sourceEndMs: max(startMs, endMs),
+            provenance: url.isFileURL ? .downloadedSourceReference : .sourceWindowReference
+        )
+        #else
+        return SourceAudioWindowTranscription(
+            timeline: timeline,
+            localAudioURL: nil,
+            sourceStartMs: max(0, anchorMediaTimeMs - windowBeforeMs),
+            sourceEndMs: anchorMediaTimeMs + windowAfterMs,
+            provenance: .sourceWindowReference
+        )
         #endif
     }
 

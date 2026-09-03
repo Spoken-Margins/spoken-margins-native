@@ -309,6 +309,10 @@ struct OfflineStorageCategoryRow: Identifiable, Equatable, Sendable {
         case .recording: "Recordings"
         case .sourceDocument: "Source documents"
         case .dormantWatchPackage: "Dormant Watch packages"
+        case .fingerprintMap: "Fingerprint maps"
+        case .transientEpisodeTranscript: "Transient transcripts"
+        case .resolvedListeningMapProjection: "Resolved Listening Maps"
+        case .summaryBridge: "Scene summary audio"
         }
     }
 }

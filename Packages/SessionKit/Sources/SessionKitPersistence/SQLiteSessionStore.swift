@@ -440,6 +440,62 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
 
     public func deleteAudioPreparationJob(id: String) throws { try deleteRecord(kind: "audio_preparation_job", id: id) }
 
+    public func saveEditionFingerprintSpine(_ spine: EditionFingerprintSpineArtifact) throws {
+        try withTransaction {
+            try deleteRecords(kind: "edition_fingerprint_spine", itemId: spine.itemId)
+            try save(kind: "edition_fingerprint_spine", id: spine.id, sessionId: nil, itemId: spine.itemId, value: spine)
+        }
+    }
+
+    public func loadEditionFingerprintSpine(itemId: String) throws -> EditionFingerprintSpineArtifact? {
+        let values: [EditionFingerprintSpineArtifact] = try loadByItem(kind: "edition_fingerprint_spine", itemId: itemId)
+        return values.last
+    }
+
+    public func saveTranscriptPhraseSketch(_ sketch: TranscriptPhraseSketchArtifact) throws {
+        try withTransaction {
+            try deleteRecords(kind: "transcript_phrase_sketch", itemId: sketch.itemId)
+            try save(kind: "transcript_phrase_sketch", id: sketch.id, sessionId: nil, itemId: sketch.itemId, value: sketch)
+        }
+    }
+
+    public func loadTranscriptPhraseSketch(itemId: String) throws -> TranscriptPhraseSketchArtifact? {
+        let values: [TranscriptPhraseSketchArtifact] = try loadByItem(kind: "transcript_phrase_sketch", itemId: itemId)
+        return values.last
+    }
+
+    public func savePortableListeningMapProposal(_ proposal: PortableListeningMapProposalArtifact, itemId: String) throws {
+        try save(kind: "portable_listening_map_proposal", id: proposal.id, sessionId: nil, itemId: itemId, value: proposal)
+    }
+
+    public func loadPortableListeningMapProposals(itemId: String) throws -> [PortableListeningMapProposalArtifact] {
+        try loadByItem(kind: "portable_listening_map_proposal", itemId: itemId)
+    }
+
+    public func saveResolvedListeningMapProjection(_ projection: ResolvedListeningMapProjection) throws {
+        try withTransaction {
+            try deleteRecords(kind: "resolved_listening_map_projection", itemId: projection.itemId)
+            try save(kind: "resolved_listening_map_projection", id: projection.id, sessionId: nil, itemId: projection.itemId, value: projection)
+        }
+    }
+
+    public func loadResolvedListeningMapProjection(itemId: String) throws -> ResolvedListeningMapProjection? {
+        let values: [ResolvedListeningMapProjection] = try loadByItem(kind: "resolved_listening_map_projection", itemId: itemId)
+        return values.last
+    }
+
+    public func saveEpisodeMapPreparationJob(_ job: EpisodeMapPreparationJob) throws {
+        try save(kind: "episode_map_preparation_job", id: job.id, sessionId: nil, itemId: job.itemId, value: job)
+    }
+
+    public func loadEpisodeMapPreparationJobs() throws -> [EpisodeMapPreparationJob] {
+        try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at, id;", ["episode_map_preparation_job"])
+    }
+
+    public func deleteEpisodeMapPreparationJob(id: String) throws {
+        try deleteRecord(kind: "episode_map_preparation_job", id: id)
+    }
+
     public func saveOfflineStorageBudget(_ budget: OfflineStorageBudget) throws {
         try save(kind: "offline_storage_budget", id: "default", sessionId: nil, itemId: nil, value: budget)
     }
