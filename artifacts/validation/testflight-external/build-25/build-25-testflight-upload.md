@@ -1,6 +1,6 @@
 # Build 25 internal TestFlight upload and product-owner handoff
 
-Status: authorized for internal-only upload to the existing `Margins` group after the signed archive gate passes. App Store Connect upload, processing, and assignment results are pending.
+Status: uploaded successfully, processed by App Store Connect, and available to the internal `Margins` group with six testers. It was not added to `External Beta` or submitted for Beta App Review.
 
 ## Candidate
 
@@ -12,6 +12,7 @@ Status: authorized for internal-only upload to the existing `Margins` group afte
 - Bundle: `com.spokenmargins.native`
 - Supported devices: iPhone and iPad on iOS/iPadOS 18.0 or later
 - Intended internal group: `Margins`
+- App Store Connect build ID: `9ed3ce56-4aa9-4ff3-92fe-6f81d8e57671`
 
 ## Release scope and boundaries
 
@@ -27,7 +28,17 @@ The product owner has `human_validated` the bounded streamed-podcast sender shar
 - Focused recipient transcript privacy, shared-Margin alignment, and Skim readiness simulator tests: 3 passed, 0 failed.
 - Generic iOS Simulator app build: pass.
 - Generic signed iOS device app build: pass.
-- Release archive, export identity, IPA hash, upload, processing, and internal assignment: pending.
+- Clean Release archive: pass; archived identity is version 0.1 (25), arm64, iOS 18.0 minimum.
+- Archived app and all three embedded extensions passed strict signature verification.
+- Non-uploading App Store Connect export: pass.
+- Exported IPA SHA-256: `5e1fddae62f8b3b1892602e0f7b7e7810092e534785aecca5eafeaf7829ed6e0`.
+- Exported app identity: Apple Distribution, Store provisioning, `beta-reports-active = true`, `get-task-allow = false`, and shared application group `group.com.spokenmargins.native`.
+- Xcode package and SPI analysis: pass; upload completed with `Upload succeeded`.
+- App Store Connect processing: complete for Build 25, created Sep 2, 2026 at 11:41 PM Central.
+- Internal distribution: Build 25 is assigned to `Margins` as an Internal group with six testers.
+- External distribution: Build 25 has no external group and was not submitted for Beta App Review.
+
+Apple emitted the known non-blocking symbol-upload warning because the upstream `onnxruntime.framework` archive has no matching dSYM for UUID `EB36D931-A0CD-32E2-93E6-6B5B31DCFE36`. Application upload and processing succeeded; crashes inside that framework may have limited symbolication.
 
 ## Known issues and stopping rules
 
