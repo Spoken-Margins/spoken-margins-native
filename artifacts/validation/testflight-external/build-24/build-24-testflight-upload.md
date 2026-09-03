@@ -70,6 +70,12 @@ succeeded; crashes inside that framework may have limited symbolication.
 - iOS Share extensions cannot force-launch their containing app. The long-press
   Share fallback stores the exact packet safely; opening Spoken Margins then
   stages the normal recipient import.
+- Finder drag-and-drop and **Share > Simulator** may fail before a file reaches
+  the iOS Files app. The failure is reproducible with an ordinary text control
+  file and is not evidence that `.spokenmargins` ownership failed. Use the
+  [Simulator file-import workaround](../../../../docs/simulator-file-import-workaround.md)
+  for developer testing; physical-device Messages and AirDrop checks remain
+  authoritative.
 - Stop and record FAIL if a fresh message attachment still opens YAML instead of
   Spoken Margins, Spoken Margins is absent from the long-press Share sheet, the
   fallback changes package bytes, Import requires scrolling, successful import

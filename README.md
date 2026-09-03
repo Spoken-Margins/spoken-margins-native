@@ -43,6 +43,12 @@ Bootstrap the repository-local Python environment before running the contract va
 
 The bootstrap installs the pinned development dependencies from `requirements-dev.txt`. The Python tools validate repository contracts only and are not included in the iOS app.
 
+If Finder drag-and-drop or **Share > Simulator** fails to place a test file in
+the iOS Files app, use the documented
+[Simulator file-import workaround](docs/simulator-file-import-workaround.md).
+The workaround bypasses Apple's host transfer path and does not replace
+physical-device validation.
+
 ## First Engineering Move
 
 Preserve the existing playback spine. Changes must pass contract validation, SessionKit tests, an iOS build-for-testing, and the bounded product-owner checks defined in the recovery document. Automated verification is not human validation.
