@@ -160,22 +160,26 @@ struct ExperienceTimelineRailScreen: View {
     private func makeEntries(from item: ItemDetailState) -> [TimelineRailEntry] {
         var result: [TimelineRailEntry] = []
 
-        result.append(
-            TimelineRailEntry(
-                id: "source.beginning",
-                position: 0,
-                rank: 0,
-                provenance: .source,
-                title: "Beginning",
-                detail: item.overview.isEmpty
-                    ? "Start of source"
-                    : TimelineTextPresentation.excerpt(
-                        item.overview,
-                        characterLimit: TimelineTextPresentation.supportingCharacterLimit
-                    ),
-                action: .beginning
+        let sourceAlreadyStartsAtBeginning = item.chapters.contains { $0.percent == 0 }
+            || item.mediaChapters.contains { $0.startMs == 0 }
+        if !sourceAlreadyStartsAtBeginning {
+            result.append(
+                TimelineRailEntry(
+                    id: "source.beginning",
+                    position: 0,
+                    rank: 0,
+                    provenance: .source,
+                    title: "Beginning",
+                    detail: item.overview.isEmpty
+                        ? "Start of source"
+                        : TimelineTextPresentation.excerpt(
+                            item.overview,
+                            characterLimit: TimelineTextPresentation.supportingCharacterLimit
+                        ),
+                    action: .beginning
+                )
             )
-        )
+        }
 
         for chapter in item.chapters {
             result.append(

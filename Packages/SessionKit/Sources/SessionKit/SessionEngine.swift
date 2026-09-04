@@ -2989,12 +2989,13 @@ public final class SessionEngine {
         let item = Item(
             id: itemId,
             title: title,
-            mediaType: "text",
+            mediaType: sourceExtension == "pdf" ? "pdf" : "text",
             text: text,
             externalReference: source,
             status: deterministicMap == nil ? "needs_listening_map" : "ready",
             externalReferenceType: handoff.captureMode == .markdownFile || handoff.captureMode == .plainTextFile ? "file" : "url",
-            createdAt: Date()
+            createdAt: Date(),
+            documentStructure: handoff.documentStructure
         )
         return (item, deterministicMap)
     }

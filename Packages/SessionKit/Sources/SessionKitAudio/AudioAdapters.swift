@@ -934,7 +934,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         playbackStartFailure = nil
         paused = false
         chunksByUtteranceId.removeAll(keepingCapacity: true)
-        let mode = playbackSpeechPreviewMode()
+        let mode = try playbackSpeechPreviewMode()
         for chunk in chunks {
             let utterance = makeUtterance(chunk.spokenText, mode: mode)
             let identifier = ObjectIdentifier(utterance)
@@ -1085,10 +1085,14 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         paused = false
     }
 
-    private func playbackSpeechPreviewMode() -> SpeechPreviewMode {
+    private func playbackSpeechPreviewMode() throws -> SpeechPreviewMode {
         let speechSettings = currentSpeechSettings()
         if readsSpeechSettingsAtPlayback, speechSettings.voiceIdentifier == nil {
             return .spokenContent
+        }
+        if let voiceIdentifier = speechSettings.voiceIdentifier,
+           AVSpeechSynthesisVoice(identifier: voiceIdentifier) == nil {
+            throw SessionKitError.persistenceFailed("selected_speech_voice_unavailable")
         }
         return .appVoice(voiceIdentifier: speechSettings.voiceIdentifier, rate: speechSettings.rate)
     }
@@ -1098,6 +1102,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         switch mode {
         case .spokenContent:
             utterance.rate = currentSpeechSettings().rate
+            utterance.prefersAssistiveTechnologySettings = true
         case .appVoice(let voiceIdentifier, let rate):
             utterance.rate = rate
             if let voiceIdentifier,

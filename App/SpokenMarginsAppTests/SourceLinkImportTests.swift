@@ -116,6 +116,48 @@ final class SourceLinkImportTests: XCTestCase {
         }
     }
 
+    func testSourceLinkStoreCopiesAndDeletesManagedPDF() throws {
+        let store = makePayloadStore()
+        let sourceDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("spoken-margins-shared-pdf-source-\(UUID().uuidString)", isDirectory: true)
+        temporaryDirectories.append(sourceDirectory)
+        try FileManager.default.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
+        let source = sourceDirectory.appendingPathComponent("Readable Report.pdf")
+        try Data("%PDF-1.7 test".utf8).write(to: source)
+
+        let copied = try store.savePDF(from: source, suggestedFilename: "Readable Report.pdf")
+
+        XCTAssertTrue(store.isManagedPDFURL(copied))
+        XCTAssertEqual(copied.lastPathComponent, "Readable Report.pdf")
+        XCTAssertEqual(try Data(contentsOf: copied), Data("%PDF-1.7 test".utf8))
+        store.deleteManagedPDF(at: copied)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copied.path))
+    }
+
+    func testDeletingFailedLocalPDFHandoffRemovesManagedCopy() throws {
+        let store = makePayloadStore()
+        let sourceDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("spoken-margins-failed-pdf-source-\(UUID().uuidString)", isDirectory: true)
+        temporaryDirectories.append(sourceDirectory)
+        try FileManager.default.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
+        let source = sourceDirectory.appendingPathComponent("Failed Report.pdf")
+        try Data("%PDF-1.7 test".utf8).write(to: source)
+        let copied = try store.savePDF(from: source)
+        let handoff = SourceLinkHandoff(
+            id: "failed-local-pdf",
+            inputURL: copied.absoluteString,
+            sourceSurface: "share_sheet_pdf_file",
+            startSession: false
+        )
+        try store.save(handoff)
+        try store.quarantine(payloadID: handoff.id, reason: "Could not read PDF")
+
+        try store.deleteFailed(payloadID: handoff.id)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copied.path))
+        XCTAssertTrue(try store.failedHandoffs().isEmpty)
+    }
+
     func testSourceLinkPayloadStoreQuarantinesAndRetriesFailure() throws {
         let store = makePayloadStore()
         let handoff = SourceLinkHandoff(
@@ -710,6 +752,51 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(interjection.anchorContextStatus, .unavailable)
         XCTAssertEqual(interjection.anchor.anchorBefore, "")
         XCTAssertEqual(interjection.anchor.anchorAfter, "")
+        XCTAssertNil(model.lastError)
+        XCTAssertNotEqual(model.feedbackEvent?.kind, .error)
+    }
+
+    func testOlderPodcastSessionKeepsExactPositionAfterOpeningAndClosingNewSession() throws {
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: "https://example.com/resume-episode", provider: "direct_audio", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://example.com/resume-episode", provider: "direct_audio", role: "audio_file"),
+                title: "Exact Session Resume Episode",
+                durationMs: 3_600_000,
+                audioURL: "https://cdn.example.com/resume-episode.mp3",
+                confidence: 1
+            )
+        ))
+        let audio = WindowContextAudioClient()
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: audio,
+            sourceTranscriptionClient: ThrowingSourceTranscriptionClient()
+        )
+        model.resetAndSeed()
+        XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/resume-episode", sourceSurface: "paste"))
+        let itemID = try XCTUnwrap(model.snapshot.itemId)
+        let olderSessionID = try XCTUnwrap(model.snapshot.sessionId)
+
+        audio.currentMediaTimeValue = 2_100_000
+        model.pause()
+        model.startNewSession(id: itemID)
+        let newerSessionID = try XCTUnwrap(model.snapshot.sessionId)
+        XCTAssertNotEqual(newerSessionID, olderSessionID)
+        model.endSession()
+
+        let olderSession = try XCTUnwrap(
+            model.selectedItem.sessions.first(where: { $0.id == olderSessionID })
+        )
+        model.openSession(olderSession)
+        XCTAssertEqual(model.snapshot.currentMediaTimeMs, 2_100_000)
+        model.resumeSession(olderSession)
+
+        XCTAssertEqual(model.snapshot.sessionId, olderSessionID)
+        XCTAssertEqual(model.snapshot.currentMediaTimeMs, 2_100_000)
+        XCTAssertEqual(audio.currentMediaTimeValue, 2_100_000)
     }
 
     func testConfiguredNativeAudioSkipIntervalsAreAppliedAndPersisted() {

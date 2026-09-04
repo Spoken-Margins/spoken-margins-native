@@ -2,6 +2,11 @@ import Foundation
 import PDFKit
 import UIKit
 
+struct PDFDetectedTableRegion: Equatable {
+    var bounds: CGRect
+    var replacementText: String
+}
+
 enum PDFStructuredTextExtractor {
     enum ExtractionError: LocalizedError {
         case unreadableDocument
@@ -28,6 +33,7 @@ enum PDFStructuredTextExtractor {
         var text: String
         var pointSize: CGFloat
         var isBold: Bool
+        var bounds: CGRect?
     }
 
     static func markdown(from url: URL) throws -> String {
@@ -38,6 +44,13 @@ enum PDFStructuredTextExtractor {
     }
 
     static func markdown(from document: PDFDocument) throws -> String {
+        try markdown(from: document, tableRegionsByPage: [:])
+    }
+
+    static func markdown(
+        from document: PDFDocument,
+        tableRegionsByPage: [Int: [PDFDetectedTableRegion]]
+    ) throws -> String {
         let outline = outlineHeadings(in: document)
         var pages: [[TextLine]] = []
         for pageIndex in 0..<document.pageCount {
@@ -52,35 +65,55 @@ enum PDFStructuredTextExtractor {
         var insertedOutlineHeadingIDs = Set<Int>()
         var output: [String] = []
 
+        if let title = document.documentAttributes?[PDFDocumentAttribute.titleAttribute] as? String {
+            let cleanedTitle = cleaned(title)
+            if !cleanedTitle.isEmpty {
+                appendHeading(cleanedTitle, level: 1, to: &output)
+            }
+        }
+
         for (pageIndex, pageLines) in pages.enumerated() {
             let pageOutline = outline.filter { $0.pageIndex == pageIndex }
+            let tableRegions = tableRegionsByPage[pageIndex, default: []]
             let tableOfContentsLines = tableOfContentsLineIndices(
                 in: pageLines,
                 pageIndex: pageIndex,
                 outline: outline
             )
             let unmatchedPageOutline = pageOutline.filter { heading in
-                !pageLines.contains(where: { normalized($0.text) == normalized(heading.title) })
+                !pageLines.contains(where: { headingKey($0.text) == headingKey(heading.title) })
             }
             for heading in unmatchedPageOutline {
                 appendHeading(heading.title, level: heading.level, to: &output)
                 insertedOutlineHeadingIDs.insert(heading.id)
             }
 
+            var insertedTableRegionIndices = Set<Int>()
             for (lineIndex, line) in pageLines.enumerated() {
-                let key = normalized(line.text)
+                if let tableRegionIndex = tableRegions.indices.first(where: {
+                    lineBelongsToTable(line, region: tableRegions[$0].bounds)
+                }) {
+                    if insertedTableRegionIndices.insert(tableRegionIndex).inserted {
+                        appendParagraph(tableRegions[tableRegionIndex].replacementText, to: &output)
+                    }
+                    continue
+                }
+                let key = headingKey(line.text)
                 if tableOfContentsLines.contains(lineIndex) {
                     appendParagraph(line.text, to: &output)
                 } else if let heading = pageOutline.first(where: {
-                    !insertedOutlineHeadingIDs.contains($0.id) && normalized($0.title) == key
+                    !insertedOutlineHeadingIDs.contains($0.id) && headingKey($0.title) == key
                 }) {
                     insertedOutlineHeadingIDs.insert(heading.id)
                     appendHeading(line.text, level: heading.level, to: &output)
-                } else if isVisualHeading(line, bodySize: bodySize) {
+                } else if outline.isEmpty && isVisualHeading(line, bodySize: bodySize) {
                     appendHeading(line.text, level: visualHeadingLevel(line, bodySize: bodySize), to: &output)
                 } else {
                     appendParagraph(line.text, to: &output)
                 }
+            }
+            for regionIndex in tableRegions.indices where !insertedTableRegionIndices.contains(regionIndex) {
+                appendParagraph(tableRegions[regionIndex].replacementText, to: &output)
             }
         }
 
@@ -96,7 +129,7 @@ enum PDFStructuredTextExtractor {
         guard let attributed = page.attributedString, attributed.length > 0 else {
             return page.string?
                 .components(separatedBy: .newlines)
-                .map { TextLine(text: cleaned($0), pointSize: 0, isBold: false) }
+                .map { TextLine(text: cleaned($0), pointSize: 0, isBold: false, bounds: nil) }
                 .filter { !$0.text.isEmpty } ?? []
         }
         let source = attributed.string as NSString
@@ -109,15 +142,33 @@ enum PDFStructuredTextExtractor {
             if !text.isEmpty {
                 let visibleLocation = firstVisibleLocation(in: source, range: range)
                 let font = attributed.attribute(.font, at: visibleLocation, effectiveRange: nil) as? UIFont
+                let selection = page.selection(for: range)
                 result.append(TextLine(
                     text: text,
                     pointSize: font?.pointSize ?? 0,
-                    isBold: font?.fontDescriptor.symbolicTraits.contains(.traitBold) == true
+                    isBold: font?.fontDescriptor.symbolicTraits.contains(.traitBold) == true,
+                    bounds: selection?.bounds(for: page)
                 ))
             }
             location = NSMaxRange(range)
         }
         return result
+    }
+
+    private static func lineBelongsToTable(_ line: TextLine, region: CGRect) -> Bool {
+        guard let lineBounds = line.bounds,
+              !lineBounds.isNull,
+              lineBounds.width > 0,
+              lineBounds.height > 0 else {
+            return false
+        }
+        let expandedRegion = region.insetBy(dx: -2, dy: -2)
+        if expandedRegion.contains(CGPoint(x: lineBounds.midX, y: lineBounds.midY)) {
+            return true
+        }
+        let overlap = expandedRegion.intersection(lineBounds)
+        guard !overlap.isNull else { return false }
+        return (overlap.width * overlap.height) / (lineBounds.width * lineBounds.height) >= 0.65
     }
 
     private static func firstVisibleLocation(in source: NSString, range: NSRange) -> Int {
@@ -167,9 +218,9 @@ enum PDFStructuredTextExtractor {
         let contentsTitleIndices = lines.indices.filter { isTableOfContentsTitle(lines[$0].text) }
         let firstContentsTitle = contentsTitleIndices.first
         let offDestinationOutlineMatches = lines.indices.filter { lineIndex in
-            let title = normalized(lines[lineIndex].text)
+            let title = headingKey(lines[lineIndex].text)
             return outline.contains { heading in
-                heading.pageIndex != pageIndex && normalized(heading.title) == title
+                heading.pageIndex != pageIndex && headingKey(heading.title) == title
             }
         }
         let contentsEntries = lines.indices.filter { lineIndex in
@@ -267,5 +318,17 @@ enum PDFStructuredTextExtractor {
         cleaned(value)
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
             .replacingOccurrences(of: #"[^\p{L}\p{N}]+"#, with: "", options: .regularExpression)
+    }
+
+    /// PDF bookmarks commonly omit the visible section number (for example,
+    /// bookmark "Introduction" versus page text "1 Introduction"). Treating
+    /// those as different headings duplicates the same authored destination.
+    private static func headingKey(_ value: String) -> String {
+        let withoutSectionNumber = cleaned(value).replacingOccurrences(
+            of: #"^(?:chapter\s+)?(?:\d+(?:\.\d+)*|[ivxlcdm]+)[\s.):-]+"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        return normalized(withoutSectionNumber.isEmpty ? value : withoutSectionNumber)
     }
 }

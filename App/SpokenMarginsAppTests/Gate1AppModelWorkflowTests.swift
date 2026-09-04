@@ -10,6 +10,91 @@ import PDFKit
 
 @MainActor
 final class Gate1AppModelWorkflowTests: XCTestCase {
+    func testResolvedPrivateListeningMapIsLoadedAsVisibleNavigableScenes() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "visible-private-map-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: databaseURL
+        )
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        let item = Item(
+            id: "episode-visible-map",
+            title: "Visible Episode Map",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/visible-map",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(
+                sourceType: .remoteStream,
+                url: "https://cdn.example.com/visible-map.mp3",
+                durationMs: 900_000
+            )
+        )
+        try store.saveItem(item)
+        let proposal = PortableListeningMapProposalArtifact(
+            id: "proposal-visible-map",
+            createdAt: Date(timeIntervalSince1970: 1),
+            generator: "deterministic-scene-boundaries.v1",
+            scenes: [
+                PortableListeningMapScene(
+                    id: "scene-opening",
+                    order: 0,
+                    title: "Opening argument",
+                    summaryText: "The guest frames the central question.",
+                    eligibility: .eligible,
+                    startAnchor: PortableAnchorEvidence(anchorType: .transcript, mediaTimeMs: 0, transcriptSegmentId: "segment-1"),
+                    endAnchor: PortableAnchorEvidence(anchorType: .transcript, mediaTimeMs: 300_000, transcriptSegmentId: "segment-2")
+                ),
+                PortableListeningMapScene(
+                    id: "scene-evidence",
+                    order: 1,
+                    title: "Evidence",
+                    eligibility: .unknown,
+                    startAnchor: PortableAnchorEvidence(anchorType: .transcript, mediaTimeMs: 300_000, transcriptSegmentId: "segment-2"),
+                    endAnchor: PortableAnchorEvidence(anchorType: .transcript, mediaTimeMs: 600_000, transcriptSegmentId: "segment-3")
+                )
+            ]
+        )
+        try store.savePortableListeningMapProposal(proposal, itemId: item.id)
+        try store.saveResolvedListeningMapProjection(ResolvedListeningMapProjection(
+            id: "projection-visible-map",
+            itemId: item.id,
+            proposalId: proposal.id,
+            recipientEditionSHA256: "exact-edition",
+            points: [
+                ResolvedListeningMapPoint(
+                    id: "point-1",
+                    sourceMediaTimeMs: 60_000,
+                    recipientMediaTimeMs: 60_000,
+                    confidence: .exactEdition,
+                    evidenceIds: ["exact-edition"]
+                ),
+                ResolvedListeningMapPoint(
+                    id: "point-2",
+                    sourceMediaTimeMs: 360_000,
+                    recipientMediaTimeMs: 360_000,
+                    confidence: .exactEdition,
+                    evidenceIds: ["exact-edition"]
+                )
+            ],
+            intervals: []
+        ))
+
+        model.openItem(id: item.id)
+
+        XCTAssertEqual(model.selectedItem.listeningMapScenes.map(\.title), ["Opening argument", "Evidence"])
+        XCTAssertEqual(model.selectedItem.listeningMapScenes.map(\.startMs), [0, 300_000])
+        XCTAssertEqual(model.selectedItem.listeningMapScenes.first?.description, "The guest frames the central question.")
+        XCTAssertFalse(model.canGenerateListeningMap)
+        XCTAssertTrue(model.listeningMapGenerationAvailabilityDescription.contains("2 scenes"))
+    }
+
     func testTimedSleepTimerUsesWallClockAndStaysArmedWhilePaused() throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.snapshot.status = .paused
@@ -452,6 +537,42 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.snapshot.chapterTitle = "The Analysis"
 
         XCTAssertEqual(model.playbackHeaderTitle, "Ch. 2: The Analysis")
+    }
+
+    func testPlaybackHeaderInfersCurrentGeneratedChapterWhenSnapshotStillReportsItemTitle() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.selectedItem = ItemDetailState(
+            id: "item-1",
+            title: "A Long Article",
+            chapters: [
+                Chapter(id: "chapter-1", title: "Opening", startChar: 0, endChar: 100, percent: 0),
+                Chapter(id: "chapter-2", title: "The Pivot", startChar: 100, endChar: 200, percent: 50)
+            ]
+        )
+        model.snapshot.targetType = TargetType.itemTextTTS.rawValue
+        model.snapshot.title = "A Long Article"
+        model.snapshot.chapterTitle = "A Long Article"
+        model.snapshot.sourceProgressPercent = 60
+
+        XCTAssertEqual(model.playbackChapterHeaderTitle, "Ch. 2: The Pivot")
+    }
+
+    func testPlaybackHeaderUsesPrivateListeningMapSceneWhenPodcastHasNoPublisherChapters() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.selectedItem = ItemDetailState(
+            id: "episode-1",
+            title: "A Podcast Episode",
+            listeningMapScenes: [
+                MediaTimelineChapter(id: "scene-1", title: "Opening", startMs: 0, transcriptSegmentId: "segment-1"),
+                MediaTimelineChapter(id: "scene-2", title: "The Debate", startMs: 60_000, transcriptSegmentId: "segment-2")
+            ]
+        )
+        model.snapshot.targetType = TargetType.transcriptBackedMedia.rawValue
+        model.snapshot.title = "A Podcast Episode"
+        model.snapshot.chapterTitle = "A Podcast Episode"
+        model.snapshot.currentMediaTimeMs = 90_000
+
+        XCTAssertEqual(model.playbackChapterHeaderTitle, "Ch. 2: The Debate")
     }
 
     func testNativeAudioExportDisablesFullSourceTextOption() {
@@ -1361,6 +1482,140 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         )
     }
 
+    func testActivePlaybackPreparationSortsAheadOfOtherWork() {
+        let explicit = AudioPreparationJob(
+            id: "explicit",
+            itemId: "other-item",
+            manifestId: "other-manifest",
+            policy: .explicit,
+            requestedAt: Date(timeIntervalSince1970: 1)
+        )
+        let active = AudioPreparationJob(
+            id: "active",
+            itemId: "active-item",
+            manifestId: "active-manifest",
+            policy: .whileCharging,
+            requestedAt: Date(timeIntervalSince1970: 2)
+        )
+
+        XCTAssertEqual(
+            [explicit, active].sorted {
+                Gate1AppModel.audioPreparationJobPrecedes($0, $1, activeItemId: "active-item")
+            }.map(\.id),
+            ["active", "explicit"]
+        )
+    }
+
+    func testOpeningBufferSortsAheadOfFullItemPreparation() {
+        let fullItem = AudioPreparationJob(
+            id: "full-item",
+            itemId: "existing-item",
+            manifestId: "existing-manifest",
+            policy: .explicit,
+            requestedAt: Date(timeIntervalSince1970: 1)
+        )
+        let openingBuffer = AudioPreparationJob(
+            id: "opening-buffer",
+            itemId: "new-item",
+            manifestId: "new-manifest",
+            policy: .demandWindow,
+            requestedAt: Date(timeIntervalSince1970: 2),
+            maximumChunkCount: 2
+        )
+
+        XCTAssertEqual(
+            [fullItem, openingBuffer].sorted(by: Gate1AppModel.audioPreparationJobPrecedes).map(\.id),
+            ["opening-buffer", "full-item"]
+        )
+    }
+
+    func testUserQueuePriorityOrdersJobsWithinTheSameTier() {
+        let laterRequestMovedFirst = AudioPreparationJob(
+            id: "moved-first",
+            itemId: "item-2",
+            manifestId: "manifest-2",
+            policy: .whileCharging,
+            requestedAt: Date(timeIntervalSince1970: 2),
+            userPriority: 0
+        )
+        let earlierRequestMovedSecond = AudioPreparationJob(
+            id: "moved-second",
+            itemId: "item-1",
+            manifestId: "manifest-1",
+            policy: .whileCharging,
+            requestedAt: Date(timeIntervalSince1970: 1),
+            userPriority: 1
+        )
+
+        XCTAssertEqual(
+            [earlierRequestMovedSecond, laterRequestMovedFirst]
+                .sorted(by: Gate1AppModel.audioPreparationJobPrecedes)
+                .map(\.id),
+            ["moved-first", "moved-second"]
+        )
+    }
+
+    func testOpeningAudioPreparationStopsAfterTwoChunks() {
+        let plan = (0..<6).map { index in
+            PreparedChunkPlan(
+                index: index,
+                startOffset: index * 240,
+                sourceLength: 240,
+                text: "Chunk \(index)"
+            )
+        }
+
+        XCTAssertEqual(
+            Gate1AppModel.preparationHorizon(plan: plan, maximumChunkCount: 2).map(\.index),
+            [0, 1]
+        )
+        XCTAssertEqual(
+            Gate1AppModel.preparationHorizon(plan: plan, maximumChunkCount: nil).map(\.index),
+            [0, 1, 2, 3, 4, 5]
+        )
+    }
+
+    func testLibraryStartDoesNotOpenPlaybackWhileOpeningAudioIsStillPreparing() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let itemID = "item-pill"
+        guard let index = model.libraryItems.firstIndex(where: { $0.id == itemID }) else {
+            return XCTFail("Missing seeded text item")
+        }
+        model.libraryItems[index].startupAudioState = .preparing
+        model.libraryItems[index].startupAudioTargetChunkCount = 2
+
+        model.startItem(id: itemID)
+
+        XCTAssertNil(model.snapshot.sessionId)
+        XCTAssertTrue(model.statusMessage.contains("opening audio"))
+    }
+
+    func testBackgroundPreparationWindowContinuesOnlyWhileDurableProgressIsMade() async {
+        var results: [BackgroundPreparationWorkResult] = [.continueNow, .continueNow, .finished]
+        var passCount = 0
+
+        let result = await AudioPreparationBackgroundController.drain {
+            passCount += 1
+            return results.removeFirst()
+        }
+
+        XCTAssertEqual(result, .finished)
+        XCTAssertEqual(passCount, 3)
+    }
+
+    func testBackgroundPreparationWindowStopsWhenWorkMustRetryLater() async {
+        var passCount = 0
+
+        let result = await AudioPreparationBackgroundController.drain {
+            passCount += 1
+            return .retryLater
+        }
+
+        XCTAssertEqual(result, .retryLater)
+        XCTAssertEqual(passCount, 1)
+    }
+
     func testTrashUndoAutoDismissesAfterConfiguredDelay() async throws {
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
@@ -1818,7 +2073,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.canPlayLiveSpeechInstead)
     }
 
-    func testTextAudioPreparationSkipsAnyCompletedOrSeventyFivePercentSession() {
+    func testTextAudioPreparationSkipsAnyCompletedOrNinetyPercentSession() {
         let atCutoff = Session(
             id: "session-at-cutoff",
             itemId: "item-native-text",
@@ -1826,8 +2081,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             phase: .itemPlayback,
             currentTargetType: .itemTextTTS,
             currentTargetId: "item-native-text",
-            position: Position(charOffset: 750),
-            completionPercent: 75,
+            position: Position(charOffset: 900),
+            completionPercent: 90,
             playbackRate: 1
         )
         let belowCutoff = Session(
@@ -1837,8 +2092,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             phase: .itemPlayback,
             currentTargetType: .itemTextTTS,
             currentTargetId: "item-native-text",
-            position: Position(charOffset: 740),
-            completionPercent: 74,
+            position: Position(charOffset: 890),
+            completionPercent: 89,
             playbackRate: 1
         )
         var completed = belowCutoff
@@ -2259,6 +2514,137 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.title, "A Structured Report")
         XCTAssertEqual(model.selectedItem.chapters.map(\.title), ["Context", "Evidence", "Tradeoffs", "Recommendations", "Conclusion"])
         XCTAssertEqual(model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.status, "Ready to listen")
+    }
+
+    func testPDFOutlineMatchesNumberedVisibleHeadingWithoutDuplicatingDestination() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "spoken-margins-numbered-outline-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appending(path: "Numbered Report.pdf")
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        try renderer.writePDF(to: file) { context in
+            context.beginPage()
+            ("1 Introduction" as NSString).draw(
+                at: CGPoint(x: 40, y: 40),
+                withAttributes: [.font: UIFont.boldSystemFont(ofSize: 22)]
+            )
+            ("The first section contains ordinary body text." as NSString).draw(
+                at: CGPoint(x: 40, y: 85),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 12)]
+            )
+        }
+        let document = try XCTUnwrap(PDFDocument(url: file))
+        document.documentAttributes = [PDFDocumentAttribute.titleAttribute: "Numbered Report"]
+        let outlineRoot = PDFOutline()
+        let introduction = PDFOutline()
+        introduction.label = "Introduction"
+        introduction.destination = PDFDestination(
+            page: try XCTUnwrap(document.page(at: 0)),
+            at: CGPoint(x: 40, y: 740)
+        )
+        outlineRoot.insertChild(introduction, at: 0)
+        document.outlineRoot = outlineRoot
+
+        let markdown = try PDFStructuredTextExtractor.markdown(from: document)
+
+        XCTAssertTrue(markdown.contains("# Numbered Report"))
+        XCTAssertTrue(markdown.contains("# 1 Introduction"))
+        XCTAssertFalse(markdown.contains("# Introduction"))
+    }
+
+    func testRemotePDFHandoffRoutingRecognizesShareSurfaceAndPDFPath() {
+        XCTAssertTrue(Gate1AppModel.isRemotePDFHandoff(SourceLinkHandoff(
+            id: "surface",
+            inputURL: "https://example.com/download",
+            sourceSurface: "share_sheet_pdf",
+            startSession: false
+        )))
+        XCTAssertTrue(Gate1AppModel.isRemotePDFHandoff(SourceLinkHandoff(
+            id: "extension",
+            inputURL: "https://example.com/card.pdf",
+            sourceSurface: "share_sheet",
+            startSession: false
+        )))
+        XCTAssertFalse(Gate1AppModel.isRemotePDFHandoff(SourceLinkHandoff(
+            id: "podcast",
+            inputURL: "https://example.com/episode",
+            sourceSurface: "share_sheet",
+            startSession: false
+        )))
+        XCTAssertFalse(Gate1AppModel.isRemotePDFHandoff(SourceLinkHandoff(
+            id: "local-pdf",
+            inputURL: "file:///AppGroup/SharedPDFHandoffs/report.pdf",
+            sourceSurface: "share_sheet_pdf_file",
+            startSession: false
+        )))
+    }
+
+    func testPDFTableRegionIsAnnouncedOnceAndFlattenedCellsAreNotSpoken() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "spoken-margins-table-region-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appending(path: "Table Report.pdf")
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        try renderer.writePDF(to: file) { context in
+            context.beginPage()
+            for (text, y) in [("Before table.", 40), ("Alpha 10", 100), ("Beta 20", 125), ("After table.", 190)] {
+                (text as NSString).draw(
+                    at: CGPoint(x: 40, y: y),
+                    withAttributes: [.font: UIFont.systemFont(ofSize: 12)]
+                )
+            }
+        }
+        let document = try XCTUnwrap(PDFDocument(url: file))
+        let page = try XCTUnwrap(document.page(at: 0))
+        let source = try XCTUnwrap(page.attributedString?.string) as NSString
+        let alphaBounds = try XCTUnwrap(page.selection(for: source.range(of: "Alpha 10"))?.bounds(for: page))
+        let betaBounds = try XCTUnwrap(page.selection(for: source.range(of: "Beta 20"))?.bounds(for: page))
+        let announcement = NativePDFDocumentExtractor.tableAnnouncement(pageIndex: 0, rowCount: 2, columnCount: 2)
+
+        let markdown = try PDFStructuredTextExtractor.markdown(
+            from: document,
+            tableRegionsByPage: [0: [PDFDetectedTableRegion(
+                bounds: alphaBounds.union(betaBounds),
+                replacementText: announcement
+            )]]
+        )
+
+        XCTAssertTrue(markdown.contains("Before table."))
+        XCTAssertTrue(markdown.contains("After table."))
+        XCTAssertEqual(markdown.components(separatedBy: announcement).count - 1, 1)
+        XCTAssertFalse(markdown.contains("Alpha 10"))
+        XCTAssertFalse(markdown.contains("Beta 20"))
+    }
+
+    func testNativePDFEnhancementPausesForPowerOrSeriousThermalPressure() {
+        XCTAssertFalse(NativePDFDocumentExtractor.enhancedAnalysisShouldPause(
+            lowPowerMode: false,
+            thermalState: .fair
+        ))
+        XCTAssertTrue(NativePDFDocumentExtractor.enhancedAnalysisShouldPause(
+            lowPowerMode: true,
+            thermalState: .nominal
+        ))
+        XCTAssertTrue(NativePDFDocumentExtractor.enhancedAnalysisShouldPause(
+            lowPowerMode: false,
+            thermalState: .serious
+        ))
+        XCTAssertEqual(
+            NativePDFDocumentExtractor.preferredCellText(
+                recognized: "Violent Ilicit behavior",
+                exactPDFText: "Violent Illicit behavior"
+            ),
+            "Violent Illicit behavior"
+        )
+        XCTAssertEqual(
+            NativePDFDocumentExtractor.preferredCellText(
+                recognized: "gpt-6 astra",
+                exactPDFText: "gpt-6 astr"
+            ),
+            "gpt-6 astra"
+        )
     }
 
     func testPDFOutlineDestinationsBypassContentsEntriesAndPreserveMoreThanTwelveChapters() async throws {

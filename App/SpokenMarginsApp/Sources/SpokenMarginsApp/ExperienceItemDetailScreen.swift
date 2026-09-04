@@ -23,6 +23,7 @@ struct ExperienceItemDetailScreen: View {
                     ManualSourceFollowButton()
                     if !model.selectedItem.overview.isEmpty { overview }
                     structure
+                    if !model.selectedItem.listeningMapScenes.isEmpty { listeningMap }
                     recentMargins
                     sessions
                     readiness
@@ -113,8 +114,22 @@ struct ExperienceItemDetailScreen: View {
         if chapterCount > 0 {
             metadataPill("\(chapterCount) chapters", systemImage: "list.bullet")
         }
+        if !model.selectedItem.listeningMapScenes.isEmpty {
+            let count = model.selectedItem.listeningMapScenes.count
+            metadataPill(
+                "\(count) map scene\(count == 1 ? "" : "s")",
+                systemImage: "map"
+            )
+        }
         if !model.selectedItem.interjections.isEmpty {
             metadataPill("\(model.selectedItem.interjections.count) Margins", systemImage: "quote.bubble")
+        }
+        if let tableCount = model.selectedItem.documentStructure?.tables.count,
+           tableCount > 0 {
+            metadataPill(
+                "\(tableCount) table\(tableCount == 1 ? "" : "s") skipped",
+                systemImage: "tablecells"
+            )
         }
     }
 
@@ -152,15 +167,30 @@ struct ExperienceItemDetailScreen: View {
 
     @ViewBuilder
     private var primaryActionButtons: some View {
-        Button {
-            model.startItem(id: model.selectedItem.id)
-        } label: {
-            Label(model.selectedItemPreferredContinuationSession == nil ? "Start listening" : "Continue listening", systemImage: "play.fill")
-                .frame(maxWidth: .infinity, minHeight: 52)
+        if model.selectedItemStartupAudioState == .preparing {
+            HStack(spacing: 10) {
+                ProgressView()
+                    .tint(.white)
+                Text(model.selectedItemStartupAudioProgressDescription)
+                    .fontWeight(.semibold)
+            }
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .background(AppColors.evergreen, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(model.selectedItemStartupAudioProgressDescription)
+            .accessibilityIdentifier("item.start.preparing")
+        } else {
+            Button {
+                model.startItem(id: model.selectedItem.id)
+            } label: {
+                Label(model.selectedItemPreferredContinuationSession == nil ? "Start listening" : "Continue listening", systemImage: "play.fill")
+                    .frame(maxWidth: .infinity, minHeight: 52)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(AppColors.evergreen)
+            .accessibilityIdentifier("item.start.button")
         }
-        .buttonStyle(.borderedProminent)
-        .tint(AppColors.evergreen)
-        .accessibilityIdentifier("item.start.button")
 
         if model.selectedItemPreferredContinuationSession != nil {
             Button {
@@ -265,6 +295,45 @@ struct ExperienceItemDetailScreen: View {
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
                         .padding(.top, 4)
+                }
+            }
+        }
+    }
+
+    private var listeningMap: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionHeading("Listening Map", detail: "Private scenes prepared on this device")
+            ExperienceSurface(tint: AppColors.evergreen.opacity(0.18)) {
+                VStack(spacing: 0) {
+                    ForEach(Array(model.selectedItem.listeningMapScenes.sorted { $0.startMs < $1.startMs }.enumerated()), id: \.element.id) { index, scene in
+                        if index > 0 { Divider() }
+                        Button { model.jumpToListeningMapScene(scene) } label: {
+                            HStack(spacing: 12) {
+                                Text(formatPlaybackTime(scene.startMs))
+                                    .font(.caption.monospacedDigit().weight(.bold))
+                                    .foregroundStyle(AppColors.evergreen)
+                                    .frame(width: 52, alignment: .leading)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(scene.title)
+                                        .font(.headline)
+                                        .foregroundStyle(AppColors.text)
+                                        .multilineTextAlignment(.leading)
+                                    if let description = scene.description, !description.isEmpty {
+                                        Text(description)
+                                            .font(.caption)
+                                            .foregroundStyle(AppColors.secondaryText)
+                                            .lineLimit(3)
+                                    }
+                                }
+                                Spacer()
+                                Image(systemName: "play.fill")
+                                    .foregroundStyle(AppColors.evergreen)
+                            }
+                            .frame(minHeight: 52)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("listeningMap.scene.jump.\(scene.id)")
+                    }
                 }
             }
         }

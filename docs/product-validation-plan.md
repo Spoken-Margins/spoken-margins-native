@@ -93,7 +93,7 @@ Goal: validate the private Spoken Margins experience and core interaction loop o
 - typed Add Source routes for link/podcast, pasted text, document/book, audiobook, and Quick Folder
 - explicit follow-versus-import behavior, with an inline RSS-feed field in the Sources header and no per-entry Add button
 - two-item starter onboarding, skip, replay, and seeded-item ownership evidence
-- Library resume priority, search, filter, sort, persisted completion, prioritized offline preparation, and recoverable deletion
+- Library resume priority, search, filter, sort, persisted completion, truthful prepared-play iconography, ordered/reorderable offline preparation with recent completion history, and recoverable deletion
 - nested Listening Map navigation and mapless sessions
 - app-owned TTS
 - TTS URL cleanup
@@ -119,8 +119,8 @@ Goal: validate the private Spoken Margins experience and core interaction loop o
 1. Reset the app, choose each starter item in turn, and confirm Skip and replay remain available without counting either starter as user-added content.
 2. Import representative link/podcast, pasted-text, document/book, audiobook, and Quick Folder content; confirm imports do not replace active playback.
 3. Follow a source and confirm following alone does not import, download, or prepare an entry. In the Sources inbox, confirm tap imports and opens, leading swipe imports in place, and trailing swipe dismisses.
-4. Resume an unfinished item below 99% from Library and confirm it is not duplicated in the compact list. Confirm an item at 99% is not suggested in Continue Listening. Leading-swipe another item to mark it complete; confirm it leaves Continue while remaining under the Completed filter. Confirm trailing swipe can prioritize offline work or move the item to Recently Deleted, and that Undo restores a deleted item.
-5. Start playback, move among all three destinations, and confirm the persistent mini-player opens Now Playing and controls playback through separate actions.
+4. Resume an unfinished item below 99% from Library and confirm it is not duplicated in the compact list. Confirm an item at 99% is not suggested in Continue Listening. Leading-swipe another item to mark it complete; confirm it leaves Continue while remaining under the Completed filter. Confirm trailing swipe can prioritize offline work or move the item to Recently Deleted, and that Undo restores a deleted item. Open Offline Rendering, confirm the active item is pinned first, reorder two same-tier jobs, relaunch, and confirm the order and committed-chunk progress persist. Confirm a filled Library play symbol appears only for a verified offline artifact. Add a long pasted-text, Markdown, PDF, or DRM-free EPUB item without opening a session; confirm its play control becomes a spinner, advances from zero to two opening chunks without visible scrolling or animation hitching, and returns before full-item rendering completes. Tap it and confirm playback starts from those cached chunks without the prior playback loading screen.
+5. Start playback, move among all three destinations, and confirm the persistent mini-player opens Now Playing and controls playback through separate actions. Generate a Listening Map during the session and confirm Now Playing continues to show the item title with the current chapter or map scene beneath it.
 6. Confirm URLs are not spoken while source text remains intact, then navigate nested chapters and a mapless item.
 7. Skip and scrub repeatedly, including partial prepared audio, and confirm movement and readiness remain truthful.
 8. Begin recording from each root destination; confirm navigation, session replacement, and unrelated controls are unavailable until Finish or Cancel.
@@ -128,6 +128,8 @@ Goal: validate the private Spoken Margins experience and core interaction loop o
 10. Generate and play an eligible interjection summary, interject into it, and add an addendum or follow-up.
 11. Simulate offline, transcription, preparation, and low-storage failures; confirm work is preserved, protected assets are not clearable, and recovery is understandable.
 12. Export the session and confirm another session's notes do not leak in.
+13. Allow one queued text item to finish during a background processing window, foreground the app, and confirm one completion banner names the item exactly once while Recently Rendered retains it. Record scheduler denial or no launch as inconclusive OS behavior rather than a rendering failure.
+14. Repeat opening-audio preparation with a source short enough to produce one chunk, then under Low Power Mode or serious thermal pressure. Confirm the short source becomes playable after its only committed chunk; constrained work shows a paused state rather than an endless active spinner, and playback remains available through the configured live voice if preparation fails.
 
 ### Pass Criteria
 

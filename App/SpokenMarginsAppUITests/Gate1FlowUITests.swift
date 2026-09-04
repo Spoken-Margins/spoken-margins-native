@@ -409,10 +409,6 @@ final class Gate1FlowUITests: XCTestCase {
         for route in ["linkOrPodcast", "pastedText", "documentOrBook", "audiobook", "quickFolder"] {
             XCTAssertTrue(scrollToElement("addSource.route.\(route)").exists, "Missing typed intake route \(route)")
         }
-        scrollToElement("addSource.route.documentOrBook").tap()
-        XCTAssertTrue(scrollToElement("obsidian.import.button").exists)
-        XCTAssertTrue(scrollToElement("epub.import.button").exists)
-        element("addSource.route.back").tap()
         scrollToElement("addSource.route.audiobook").tap()
         XCTAssertTrue(scrollToElement("audiobook.import.button").exists)
         element("addSource.route.back").tap()

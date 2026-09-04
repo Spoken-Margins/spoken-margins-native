@@ -2,12 +2,20 @@
 import BackgroundTasks
 import Foundation
 
+enum BackgroundPreparationWorkResult: Equatable {
+    case finished
+    case continueNow
+    case retryLater
+
+    var hasRemainingWork: Bool { self != .finished }
+}
+
 @MainActor
 final class AudioPreparationBackgroundController {
     static let shared = AudioPreparationBackgroundController()
     static let identifier = "com.spokenmargins.native.audio-preparation"
 
-    private var work: (@Sendable () async -> Bool)?
+    private var work: (() async -> BackgroundPreparationWorkResult)?
     private var registered = false
 
     private init() {}
@@ -28,7 +36,7 @@ final class AudioPreparationBackgroundController {
         }
     }
 
-    func install(work: @escaping @Sendable () async -> Bool) {
+    func install(work: @escaping () async -> BackgroundPreparationWorkResult) {
         self.work = work
     }
 
@@ -51,13 +59,24 @@ final class AudioPreparationBackgroundController {
             task.setTaskCompleted(success: false)
             return
         }
-        let operation = Task { await work() }
+        let operation = Task { await Self.drain(work: work) }
         task.expirationHandler = { operation.cancel() }
-        let hasRemainingWork = await operation.value
+        let result = await operation.value
         task.setTaskCompleted(success: !operation.isCancelled)
-        if hasRemainingWork && !operation.isCancelled {
+        if result.hasRemainingWork && !operation.isCancelled {
             submitIfEnabled(true)
         }
+    }
+
+    static func drain(
+        work: () async -> BackgroundPreparationWorkResult
+    ) async -> BackgroundPreparationWorkResult {
+        var result = await work()
+        while result == .continueNow, !Task.isCancelled {
+            await Task.yield()
+            result = await work()
+        }
+        return result
     }
 }
 #endif

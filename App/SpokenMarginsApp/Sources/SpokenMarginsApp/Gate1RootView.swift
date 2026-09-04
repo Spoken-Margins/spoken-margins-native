@@ -2875,6 +2875,19 @@ private struct PlaybackScreen: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("timeline.mediaChapter.jump.\(chapter.id)")
+                    case .listeningMapScene(let scene, _):
+                        Button {
+                            model.jumpToListeningMapScene(scene, fromTimeline: true)
+                        } label: {
+                            TimelineRow(
+                                percent: formatPlaybackTime(scene.startMs),
+                                title: scene.title,
+                                subtitle: scene.description ?? "Private Listening Map scene",
+                                isCurrent: model.isCurrentTimelineListeningMapScene(scene)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("timeline.listeningMapScene.jump.\(scene.id)")
                     case .interjection(let interjection):
                         TimelineInterjectionRow(
                             interjectionID: interjection.id,
@@ -2940,7 +2953,9 @@ private struct PlaybackScreen: View {
     }
 
     private var timelineEntries: [PlaybackTimelineEntry] {
-        let hasChapters = !model.selectedItem.chapters.isEmpty || !visibleMediaChapters.isEmpty
+        let hasChapters = !model.selectedItem.chapters.isEmpty
+            || !visibleMediaChapters.isEmpty
+            || !model.selectedItem.listeningMapScenes.isEmpty
         let hasSummary = !model.selectedItem.overview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let sourceHeaderEntries: [PlaybackTimelineEntry]
         if hasSummary {
@@ -2967,6 +2982,14 @@ private struct PlaybackScreen: View {
                     chapter,
                     max(0, min(100, Int(
                         (Double(chapter.startMs) / Double(mediaDurationMs) * 100).rounded()
+                    )))
+                )
+            } +
+            model.selectedItem.listeningMapScenes.map { scene in
+                PlaybackTimelineEntry.listeningMapScene(
+                    scene,
+                    max(0, min(100, Int(
+                        (Double(scene.startMs) / Double(mediaDurationMs) * 100).rounded()
                     )))
                 )
             } +
@@ -4332,6 +4355,7 @@ private enum PlaybackTimelineEntry: Identifiable {
     case overview
     case chapter(Chapter)
     case mediaChapter(MediaTimelineChapter, Int)
+    case listeningMapScene(MediaTimelineChapter, Int)
     case interjection(Interjection)
     case importedCommentary(ImportedCommentaryLayer, ImportedCommentaryInterjection, Int)
     case turn(ConversationTurn)
@@ -4343,6 +4367,7 @@ private enum PlaybackTimelineEntry: Identifiable {
         case .overview: return "overview"
         case .chapter(let chapter): return "chapter-\(chapter.id)"
         case .mediaChapter(let chapter, _): return "media-chapter-\(chapter.id)"
+        case .listeningMapScene(let scene, _): return "listening-map-scene-\(scene.id)"
         case .interjection(let interjection): return "interjection-\(interjection.id)"
         case .importedCommentary(_, let margin, _): return "imported-commentary-\(margin.id)"
         case .turn(let turn): return "turn-\(turn.id)"
@@ -4356,6 +4381,7 @@ private enum PlaybackTimelineEntry: Identifiable {
         case .overview: return 0
         case .chapter(let chapter): return chapter.percent
         case .mediaChapter(_, let percent): return percent
+        case .listeningMapScene(_, let percent): return percent
         case .interjection(let interjection): return interjection.targetType == .item ? interjection.roughPercent : 101
         case .importedCommentary(_, _, let percent): return percent
         case .turn: return 101
@@ -4368,10 +4394,11 @@ private enum PlaybackTimelineEntry: Identifiable {
         case .sourceItem: return -2
         case .overview: return -1
         case .chapter, .mediaChapter: return 0
-        case .interjection(let interjection): return interjection.targetType == .item ? 1 : 4
-        case .importedCommentary: return 2
-        case .turn: return 3
-        case .turnChapter: return 4
+        case .listeningMapScene: return 1
+        case .interjection(let interjection): return interjection.targetType == .item ? 2 : 5
+        case .importedCommentary: return 3
+        case .turn: return 4
+        case .turnChapter: return 5
         }
     }
 

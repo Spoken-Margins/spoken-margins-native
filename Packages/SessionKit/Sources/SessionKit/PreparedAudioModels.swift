@@ -142,7 +142,10 @@ public struct PreparedAudioManifest: Codable, Equatable, Sendable, Identifiable 
         return min(1, Double(chunks.count) / Double(plannedChunkCount))
     }
 
-    public var canStartPartialPlayback: Bool { chunks.count >= 2 }
+    public var canStartPartialPlayback: Bool {
+        let startupTarget = min(2, max(1, plannedChunkCount))
+        return chunks.count >= startupTarget
+    }
     public var advertisesCompleteDuration: Bool { state == .readyOffline && artifact != nil }
 }
 
@@ -216,6 +219,12 @@ public struct AudioPreparationJob: Codable, Equatable, Sendable, Identifiable {
     public var manifestId: String
     public var policy: PreparationJobPolicy
     public var requestedAt: Date
+    /// A user-controlled queue position within the job's policy tier. Older
+    /// persisted jobs decode this as nil and retain their requested-at order.
+    public var userPriority: Int?
+    /// A bounded render horizon for demand work such as the two-chunk opening
+    /// buffer. Nil means the job may continue through the complete plan.
+    public var maximumChunkCount: Int?
     public var nextChunkIndex: Int
     public var isCancelled: Bool
     public var lastFailureCode: String?
@@ -227,6 +236,8 @@ public struct AudioPreparationJob: Codable, Equatable, Sendable, Identifiable {
         manifestId: String,
         policy: PreparationJobPolicy,
         requestedAt: Date = Date(),
+        userPriority: Int? = nil,
+        maximumChunkCount: Int? = nil,
         nextChunkIndex: Int = 0,
         isCancelled: Bool = false,
         lastFailureCode: String? = nil
@@ -237,6 +248,8 @@ public struct AudioPreparationJob: Codable, Equatable, Sendable, Identifiable {
         self.manifestId = manifestId
         self.policy = policy
         self.requestedAt = requestedAt
+        self.userPriority = userPriority.map { max(0, $0) }
+        self.maximumChunkCount = maximumChunkCount.map { max(1, $0) }
         self.nextChunkIndex = max(0, nextChunkIndex)
         self.isCancelled = isCancelled
         self.lastFailureCode = lastFailureCode

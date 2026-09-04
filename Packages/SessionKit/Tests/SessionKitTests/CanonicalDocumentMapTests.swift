@@ -88,5 +88,49 @@ final class CanonicalDocumentMapTests: XCTestCase {
         let map = try XCTUnwrap(repository.loadListeningMap(itemId: "item-browser-pdf"))
 
         XCTAssertEqual(map.chapters.map(\.title), ["Front Matter"] + expectedTitles)
+        XCTAssertEqual(try repository.loadItem(id: "item-browser-pdf").mediaType, "pdf")
+    }
+
+    func testCanonicalPDFProjectionKeepsUsefulTopLevelSectionsWithoutNestedTimelineNoise() throws {
+        var markdown = """
+        # GPT-6 Astra System Card
+
+        OpenAI
+        September 2026
+
+        Contents
+
+        """
+        let sections = [
+            "Safety Overview: GPT-6 Astra",
+            "Model Data and Training",
+            "Internal Deployment of Astra",
+            "Model Safety",
+            "Robustness",
+            "Health",
+            "Hallucinations",
+            "Alignment",
+            "Monitorability",
+            "Preparedness"
+        ]
+        for (index, section) in sections.enumerated() {
+            markdown += "# \(index + 1) \(section)\n\nBody for \(section).\n\n"
+            markdown += "## \(index + 1).1 Nested evidence\n\nNested body.\n\n"
+        }
+
+        let parsed = try ObsidianMarkdownParser.parse(
+            fileName: "gpt-6-astra.pdf",
+            contents: markdown
+        )
+        let map = try XCTUnwrap(parsed.deterministicListeningMap(
+            itemId: "item-astra",
+            policy: .canonicalHeadings
+        ))
+
+        XCTAssertEqual(
+            map.chapters.map(\.title),
+            ["Front Matter"] + sections.enumerated().map { "\($0.offset + 1) \($0.element)" }
+        )
+        XCTAssertFalse(map.chapters.contains(where: { $0.title.contains("Nested evidence") }))
     }
 }

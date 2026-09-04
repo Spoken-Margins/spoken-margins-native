@@ -32,6 +32,8 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
 
     private enum SharedImport: Sendable {
         case sourceLink(String)
+        case remotePDF(String)
+        case localPDF(String)
         case browserText(BrowserTextSharePayload)
         case spokenMarginsPackage
     }
@@ -72,16 +74,28 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
             completion(.failure(SourceLinkShareError.noInput))
             return
         }
-        // Safari's preprocessor and local files carry typed content. Prefer those
-        // before the generic URL representation supplied by the same share.
-        let preferredIdentifiers = [
-            SpokenMarginsPackageHandoffStore.uniformTypeIdentifier,
-            UTType.propertyList.identifier,
-            UTType.pdf.identifier,
-            UTType.fileURL.identifier,
-            UTType.url.identifier
-        ]
+        // Rank the representations per content type so the extension does the
+        // least expensive reliable handoff for each source.
         let candidates = providers.flatMap { provider -> [ProviderCandidate] in
+            let presentsPDF = provider.hasItemConformingToTypeIdentifier(UTType.pdf.identifier)
+            // Safari's PDF viewer can vend both a remote URL and a PDF file.
+            // Hand the URL to the main app first so a large document is not
+            // parsed inside the memory-constrained share extension. Ordinary
+            // webpages still prefer the readable-page property list.
+            let preferredIdentifiers = presentsPDF
+                ? [
+                    SpokenMarginsPackageHandoffStore.uniformTypeIdentifier,
+                    UTType.url.identifier,
+                    UTType.pdf.identifier,
+                    UTType.fileURL.identifier,
+                    UTType.propertyList.identifier
+                ]
+                : [
+                    SpokenMarginsPackageHandoffStore.uniformTypeIdentifier,
+                    UTType.propertyList.identifier,
+                    UTType.fileURL.identifier,
+                    UTType.url.identifier
+                ]
             let identifiers = preferredIdentifiers.filter(provider.hasItemConformingToTypeIdentifier)
                 + provider.registeredTypeIdentifiers.filter {
                     !preferredIdentifiers.contains($0)
@@ -121,7 +135,22 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
             }
             return
         }
-        if candidateType?.conforms(to: .pdf) == true || candidateType?.conforms(to: .text) == true {
+        if candidateType?.conforms(to: .pdf) == true {
+            candidate.provider.loadFileRepresentation(forTypeIdentifier: candidate.identifier) { [weak self] url, _ in
+                if let url, let sharedImport = Self.persistedPDFImport(
+                    from: url,
+                    suggestedName: candidate.provider.suggestedName
+                ) {
+                    completion(.success(sharedImport))
+                } else {
+                    DispatchQueue.main.async {
+                        self?.loadCandidateItem(candidate, candidates: candidates, index: index, completion: completion)
+                    }
+                }
+            }
+            return
+        }
+        if candidateType?.conforms(to: .text) == true {
             candidate.provider.loadFileRepresentation(forTypeIdentifier: candidate.identifier) { [weak self] url, _ in
                 if let url,
                    let payload = Self.browserPayloadFromFile(
@@ -148,7 +177,11 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         completion: @escaping ExtractionCompletion
     ) {
         candidate.provider.loadItem(forTypeIdentifier: candidate.identifier, options: nil) { [weak self] item, _ in
-            if let sharedImport = Self.sharedImport(from: item, identifier: candidate.identifier) {
+            if let sharedImport = Self.sharedImport(
+                from: item,
+                identifier: candidate.identifier,
+                presentsPDF: candidate.provider.hasItemConformingToTypeIdentifier(UTType.pdf.identifier)
+            ) {
                 completion(.success(sharedImport))
             } else {
                 DispatchQueue.main.async {
@@ -169,7 +202,25 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                     startSession: false
                 )
                 _ = try SourceLinkHandoffStore.appGroup().save(handoff)
-                showSaved("Sent podcast link to Spoken Margins.")
+                showSaved("Sent link to Spoken Margins.")
+            case .success(.remotePDF(let inputURL)):
+                let handoff = SourceLinkHandoff(
+                    id: "source-link-\(UUID().uuidString)",
+                    inputURL: inputURL,
+                    sourceSurface: "share_sheet_pdf",
+                    startSession: false
+                )
+                _ = try SourceLinkHandoffStore.appGroup().save(handoff)
+                showSaved("Sent PDF to Spoken Margins.")
+            case .success(.localPDF(let inputURL)):
+                let handoff = SourceLinkHandoff(
+                    id: "source-link-\(UUID().uuidString)",
+                    inputURL: inputURL,
+                    sourceSurface: "share_sheet_pdf_file",
+                    startSession: false
+                )
+                _ = try SourceLinkHandoffStore.appGroup().save(handoff)
+                showSaved("Sent PDF to Spoken Margins.")
             case .success(.browserText(let payload)):
                 try saveBrowserText(payload)
                 showSaved("Sent \(payload.source.title) to Spoken Margins.")
@@ -282,38 +333,68 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         extensionContext?.completeRequest(returningItems: nil)
     }
 
-    nonisolated private static func sharedImport(from item: Any?, identifier: String) -> SharedImport? {
+    nonisolated private static func sharedImport(
+        from item: Any?,
+        identifier: String,
+        presentsPDF: Bool
+    ) -> SharedImport? {
         if identifier == UTType.propertyList.identifier,
            let payload = browserPayloadFromPropertyList(item) {
             return .browserText(payload)
         }
         if let url = item as? URL {
             if url.isFileURL {
+                if url.pathExtension.lowercased() == "pdf" {
+                    return persistedPDFImport(from: url)
+                }
                 return browserPayloadFromFile(url, identifier: identifier).map(SharedImport.browserText)
             }
-            return validatedWebURL(url).map { .sourceLink($0.absoluteString) }
+            return validatedWebURL(url).map { sharedURLImport($0, forcePDF: presentsPDF) }
         }
         if let data = item as? Data,
            let text = String(data: data, encoding: .utf8),
            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if let url = firstURL(in: cleaned), cleaned == url.absoluteString || cleaned.count < url.absoluteString.count + 20 {
-                return .sourceLink(url.absoluteString)
+                return sharedURLImport(url, forcePDF: presentsPDF)
             }
             return nil
         }
         if let dictionary = item as? [String: Any] ?? item as? NSDictionary as? [String: Any],
            let url = firstWebURL(in: dictionary) {
-            return .sourceLink(url.absoluteString)
+            return sharedURLImport(url, forcePDF: presentsPDF)
         }
         if let text = item as? String {
             let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if let url = firstURL(in: cleaned), cleaned == url.absoluteString || cleaned.count < url.absoluteString.count + 20 {
-                return .sourceLink(url.absoluteString)
+                return sharedURLImport(url, forcePDF: presentsPDF)
             }
             return nil
         }
         return nil
+    }
+
+    nonisolated private static func sharedURLImport(_ url: URL, forcePDF: Bool = false) -> SharedImport {
+        forcePDF || url.pathExtension.lowercased() == "pdf"
+            ? .remotePDF(url.absoluteString)
+            : .sourceLink(url.absoluteString)
+    }
+
+    nonisolated private static func persistedPDFImport(
+        from url: URL,
+        suggestedName: String? = nil
+    ) -> SharedImport? {
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess { url.stopAccessingSecurityScopedResource() }
+        }
+        guard let copiedURL = try? SourceLinkHandoffStore.appGroup().savePDF(
+            from: url,
+            suggestedFilename: suggestedName
+        ) else {
+            return nil
+        }
+        return .localPDF(copiedURL.absoluteString)
     }
 
     nonisolated private static func browserPayloadFromFile(
@@ -329,17 +410,13 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         defer {
             if didAccess { url.stopAccessingSecurityScopedResource() }
         }
-        let extractedText: String?
-        if isPDF {
-            extractedText = try? PDFStructuredTextExtractor.markdown(from: url)
-        } else {
-            extractedText = try? String(contentsOf: url, encoding: .utf8)
-        }
+        guard !isPDF else { return nil }
+        let extractedText = try? String(contentsOf: url, encoding: .utf8)
         guard let text = extractedText,
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }
-        let isMarkdown = isPDF || fileExtension == "md" || fileExtension == "markdown"
+        let isMarkdown = fileExtension == "md" || fileExtension == "markdown"
         let sourceFileName = suggestedName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
             ? suggestedName!
             : url.lastPathComponent

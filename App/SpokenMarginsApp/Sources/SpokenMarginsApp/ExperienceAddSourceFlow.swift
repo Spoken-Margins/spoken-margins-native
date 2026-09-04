@@ -15,7 +15,7 @@ struct ExperienceAddSourceFlow: View {
     @FocusState private var focusedField: Field?
 
     private enum Field { case link, title, text }
-    private enum FileRequest { case textOrPDF, epub, audiobook, quickFolder }
+    private enum FileRequest { case documentOrBook, audiobook, quickFolder }
 
     init(initialRoute: AddSourceRoute) {
         _selectedRoute = State(initialValue: initialRoute)
@@ -59,7 +59,7 @@ struct ExperienceAddSourceFlow: View {
             .fileImporter(
                 isPresented: $showsFileImporter,
                 allowedContentTypes: allowedContentTypes,
-                allowsMultipleSelection: fileRequest == .textOrPDF,
+                allowsMultipleSelection: fileRequest == .documentOrBook,
                 onCompletion: handleFileImport
             )
             .onChange(of: model.sourceLinkImportState) { _, state in
@@ -81,33 +81,37 @@ struct ExperienceAddSourceFlow: View {
             )
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                 ForEach(primaryRoutes) { route in
-                Button {
-                    selectedRoute = route
-                    showsRoutePicker = false
-                } label: {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Image(systemName: route.systemImage)
-                            .font(.title2)
-                            .foregroundStyle(AppColors.evergreen)
-                            .frame(width: 46, height: 46)
-                            .background(AppColors.softGreen, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-                        Text(route.title)
-                            .font(.headline)
-                            .foregroundStyle(AppColors.text)
-                            .multilineTextAlignment(.leading)
-                        Text(shortDetail(route))
-                            .font(.caption)
-                            .foregroundStyle(AppColors.secondaryText)
-                            .multilineTextAlignment(.leading)
-                            .lineLimit(3)
+                    Button {
+                        if route == .documentOrBook {
+                            presentFileImporter(.documentOrBook)
+                            return
+                        }
+                        selectedRoute = route
+                        showsRoutePicker = false
+                    } label: {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Image(systemName: route.systemImage)
+                                .font(.title2)
+                                .foregroundStyle(AppColors.evergreen)
+                                .frame(width: 46, height: 46)
+                                .background(AppColors.softGreen, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                            Text(route.title)
+                                .font(.headline)
+                                .foregroundStyle(AppColors.text)
+                                .multilineTextAlignment(.leading)
+                            Text(shortDetail(route))
+                                .font(.caption)
+                                .foregroundStyle(AppColors.secondaryText)
+                                .multilineTextAlignment(.leading)
+                                .lineLimit(3)
+                        }
+                        .padding(15)
+                        .frame(maxWidth: .infinity, minHeight: 156, alignment: .topLeading)
+                        .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .overlay { RoundedRectangle(cornerRadius: 18).stroke(AppColors.border) }
                     }
-                    .padding(15)
-                    .frame(maxWidth: .infinity, minHeight: 156, alignment: .topLeading)
-                    .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .overlay { RoundedRectangle(cornerRadius: 18).stroke(AppColors.border) }
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("addSource.route.\(route.rawValue)")
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("addSource.route.\(route.rawValue)")
                 }
             }
             Divider()
@@ -256,19 +260,13 @@ struct ExperienceAddSourceFlow: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Documents and books stay local and retain authored structure when the format provides it.")
                     .foregroundStyle(AppColors.secondaryText)
-                Button("Choose Text, Markdown, or PDF", systemImage: "doc.badge.plus") {
-                    presentFileImporter(.textOrPDF)
+                Button("Choose Document or Book", systemImage: "doc.badge.plus") {
+                    presentFileImporter(.documentOrBook)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(AppColors.evergreen)
                 .frame(minHeight: 44)
-                .accessibilityIdentifier("obsidian.import.button")
-                Button("Choose DRM-free EPUB", systemImage: "book.closed") {
-                    presentFileImporter(.epub)
-                }
-                .buttonStyle(.bordered)
-                .frame(minHeight: 44)
-                .accessibilityIdentifier("epub.import.button")
+                .accessibilityIdentifier("document.import.button")
             }
         }
     }
@@ -360,10 +358,8 @@ struct ExperienceAddSourceFlow: View {
 
     private var allowedContentTypes: [UTType] {
         switch fileRequest {
-        case .textOrPDF, .none:
-            [UTType(filenameExtension: "md") ?? .plainText, .plainText, .pdf]
-        case .epub:
-            [UTType(filenameExtension: "epub") ?? .data]
+        case .documentOrBook, .none:
+            [UTType(filenameExtension: "md") ?? .plainText, .plainText, .pdf, UTType(filenameExtension: "epub") ?? .data]
         case .audiobook:
             [.mp3, .mpeg4Audio, .mpeg4Movie, UTType(filenameExtension: "m4b") ?? .audio]
         case .quickFolder:
@@ -383,11 +379,17 @@ struct ExperienceAddSourceFlow: View {
         switch result {
         case .success(let urls):
             switch request {
-            case .textOrPDF:
-                model.importObsidianMarkdownFiles(urls: urls)
-                dismiss()
-            case .epub:
-                if let url = urls.first { model.importEPUBFile(url: url, openWhenFinished: false); dismiss() }
+            case .documentOrBook:
+                let epubURLs = urls.filter { $0.pathExtension.lowercased() == "epub" }
+                if epubURLs.isEmpty, !urls.isEmpty {
+                    model.importObsidianMarkdownFiles(urls: urls)
+                    dismiss()
+                } else if urls.count == 1, let epubURL = epubURLs.first {
+                    model.importEPUBFile(url: epubURL, openWhenFinished: false)
+                    dismiss()
+                } else if !urls.isEmpty {
+                    model.reportImportFailure(ExperienceFileImportError.epubMustBeImportedAlone)
+                }
             case .audiobook:
                 if let url = urls.first { model.importAudiobookFile(url: url, openWhenFinished: false); dismiss() }
             case .quickFolder:
@@ -403,5 +405,14 @@ struct ExperienceAddSourceFlow: View {
 
 private enum ExperienceFileImportError: LocalizedError {
     case missingRequest
-    var errorDescription: String? { "File import completed without an active request." }
+    case epubMustBeImportedAlone
+
+    var errorDescription: String? {
+        switch self {
+        case .missingRequest:
+            "File import completed without an active request."
+        case .epubMustBeImportedAlone:
+            "Choose one EPUB at a time, or select PDFs and text documents together."
+        }
+    }
 }

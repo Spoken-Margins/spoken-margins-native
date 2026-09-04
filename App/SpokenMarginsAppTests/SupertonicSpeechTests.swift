@@ -69,9 +69,10 @@ final class SupertonicSpeechTests: XCTestCase {
             fallbackVoiceIdentifier: nil,
             fallbackRate: 0.5,
             fallbackClient: fallback,
-            onFallback: { reason, offset in
+            onFallback: { reason, offset, targetId in
                 XCTAssertEqual(reason, "supertonic_render_failed:Failure")
                 XCTAssertEqual(offset, 17)
+                XCTAssertEqual(targetId, "item")
                 callback.fulfill()
             }
         )
@@ -83,6 +84,57 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(fallback.preparedText, source)
         XCTAssertEqual(fallback.playedOffsets, [17])
         XCTAssertEqual(client.currentCharOffset(), 17)
+    }
+
+    func testResourcePressureStopsGenerationBeforeSystemFallbackBecomesAudible() async throws {
+        let template = try makeTestWAV(duration: 0.2)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let availability = RenderingAvailabilitySequence(allowedChecks: 2)
+        let fallback = RecordingFallbackAudioClient()
+        let callback = expectation(description: "resource-pressure fallback")
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer,
+            voice: .m2,
+            speed: 1,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            maxCharacters: 120,
+            onDeviceRenderingAllowed: { availability.next() },
+            fallbackClient: fallback,
+            onFallback: { reason, offset, targetId in
+                XCTAssertEqual(reason, "supertonic_resource_pressure")
+                XCTAssertEqual(offset, 0)
+                XCTAssertEqual(targetId, "thermal-pressure")
+                callback.fulfill()
+            }
+        )
+        let source = String(repeating: "A sufficiently long sentence creates several generated chunks. ", count: 12)
+        _ = try client.prepareSpeechText(source)
+        try client.play(targetId: "thermal-pressure")
+
+        await fulfillment(of: [callback], timeout: 2)
+        let countAtFallback = await renderer.renderCount
+        try? await Task.sleep(for: .milliseconds(300))
+        let finalRenderCount = await renderer.renderCount
+
+        XCTAssertEqual(countAtFallback, 1)
+        XCTAssertEqual(finalRenderCount, countAtFallback)
+        XCTAssertEqual(fallback.playedOffsets, [0])
+        XCTAssertEqual(client.playbackTransportState(targetId: "thermal-pressure"), .playing)
+        try client.stop()
+    }
+
+    func testUnavailableConfiguredSystemVoiceDoesNotSilentlyUseGenericVoice() throws {
+        let client = SystemSpeechPlaybackClient(
+            voiceIdentifier: "com.spokenmargins.missing-voice",
+            speechRate: 0.5
+        )
+        _ = try client.prepareSpeechText("Keep the configured voice identity truthful.")
+
+        XCTAssertThrowsError(try client.play(targetId: "missing-system-voice")) { error in
+            XCTAssertTrue(error.localizedDescription.contains("selected_speech_voice_unavailable"))
+        }
     }
 
     func testMalformedRenderedAudioFallsBackWithoutAdvancingOffset() async throws {
@@ -99,9 +151,10 @@ final class SupertonicSpeechTests: XCTestCase {
             fallbackVoiceIdentifier: nil,
             fallbackRate: 0.5,
             fallbackClient: fallback,
-            onFallback: { reason, offset in
+            onFallback: { reason, offset, targetId in
                 XCTAssertEqual(reason, "supertonic_playback_failed")
                 XCTAssertEqual(offset, 9)
+                XCTAssertEqual(targetId, "malformed")
                 callback.fulfill()
             }
         )
@@ -403,7 +456,7 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
-    func testPlaybackEndingAfterForwardSeekKeepsBackgroundGenerationVisible() async throws {
+    func testForwardSeekDoesNotWrapRenderingBackToSkippedPrefix() async throws {
         let template = try makeTestWAV(duration: 0.1)
         defer { try? FileManager.default.removeItem(at: template) }
         let renderer = CountingAudioSupertonicRenderer(
@@ -428,16 +481,23 @@ final class SupertonicSpeechTests: XCTestCase {
         }.joined(separator: " ")
 
         _ = try client.prepareSpeechText(source)
-        try client.play(targetId: "forward-seek", from: max(0, source.count - 300))
-        for _ in 0..<50 where !client.debugActiveAudioState().hasURL {
+        let requestedOffset = max(0, source.count - 300)
+        let plan = RenderedSpeechChunker.sourceSlices(from: source)
+        let playbackIndex = plan.lastIndex {
+            $0.startOffset <= requestedOffset
+                && requestedOffset < $0.startOffset + max(1, $0.slice.sourceLength)
+        } ?? max(0, plan.count - 1)
+        let expectedForwardCount = plan.count - playbackIndex
+
+        try client.play(targetId: "forward-seek", from: requestedOffset)
+        for _ in 0..<100 where states.values.last != .ready {
             try? await Task.sleep(for: .milliseconds(20))
         }
-        for _ in 0..<4 where client.debugActiveAudioState().startOffset < source.count {
-            client.debugFinishActiveChunk()
-        }
+        let renderCount = await renderer.renderCount
 
-        XCTAssertEqual(states.values.last, .rendering)
-        XCTAssertFalse(states.values.suffix(2).contains(.inactive))
+        XCTAssertEqual(states.values.last, .ready)
+        XCTAssertEqual(renderCount, expectedForwardCount)
+        XCTAssertLessThan(renderCount, plan.count)
         try client.stop()
     }
 
@@ -1072,6 +1132,23 @@ private final class PlaybackStartCapture: @unchecked Sendable {
 
     func record() {
         lock.withLock { value += 1 }
+    }
+}
+
+private final class RenderingAvailabilitySequence: @unchecked Sendable {
+    private let lock = NSLock()
+    private var allowedChecks: Int
+
+    init(allowedChecks: Int) {
+        self.allowedChecks = allowedChecks
+    }
+
+    func next() -> Bool {
+        lock.withLock {
+            guard allowedChecks > 0 else { return false }
+            allowedChecks -= 1
+            return true
+        }
     }
 }
 

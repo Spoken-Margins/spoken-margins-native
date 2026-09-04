@@ -464,6 +464,127 @@ public struct ItemMedia: Codable, Equatable, Sendable {
     }
 }
 
+public enum PDFDocumentExtractionEngine: String, Codable, Equatable, Sendable {
+    case pdfKit = "pdfkit"
+    case appleVision = "apple_vision_document_recognition"
+}
+
+public enum PDFDocumentAnalysisStatus: String, Codable, Equatable, Sendable {
+    case complete
+    case unavailableOnOS = "unavailable_on_os"
+    case resourceConstrained = "resource_constrained"
+    case partial
+    case failed
+}
+
+public enum PDFTableSpeechDisposition: String, Codable, Equatable, Sendable {
+    case announceAndSkip = "announce_and_skip"
+}
+
+public struct PDFNormalizedRect: Codable, Equatable, Sendable {
+    public var x: Double
+    public var y: Double
+    public var width: Double
+    public var height: Double
+
+    public init(x: Double, y: Double, width: Double, height: Double) {
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+    }
+}
+
+public struct PDFDocumentTableCell: Codable, Equatable, Sendable {
+    public var rowStart: Int
+    public var rowEnd: Int
+    public var columnStart: Int
+    public var columnEnd: Int
+    public var text: String
+
+    public init(
+        rowStart: Int,
+        rowEnd: Int,
+        columnStart: Int,
+        columnEnd: Int,
+        text: String
+    ) {
+        self.rowStart = rowStart
+        self.rowEnd = rowEnd
+        self.columnStart = columnStart
+        self.columnEnd = columnEnd
+        self.text = text
+    }
+}
+
+public struct PDFDocumentTable: Codable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var pageIndex: Int
+    public var rowCount: Int
+    public var columnCount: Int
+    public var bounds: PDFNormalizedRect
+    public var cells: [PDFDocumentTableCell]
+    public var speechDisposition: PDFTableSpeechDisposition
+
+    public init(
+        id: String,
+        pageIndex: Int,
+        rowCount: Int,
+        columnCount: Int,
+        bounds: PDFNormalizedRect,
+        cells: [PDFDocumentTableCell],
+        speechDisposition: PDFTableSpeechDisposition = .announceAndSkip
+    ) {
+        self.id = id
+        self.pageIndex = pageIndex
+        self.rowCount = rowCount
+        self.columnCount = columnCount
+        self.bounds = bounds
+        self.cells = cells
+        self.speechDisposition = speechDisposition
+    }
+}
+
+public struct PDFDocumentPageTitle: Codable, Equatable, Sendable {
+    public var pageIndex: Int
+    public var text: String
+
+    public init(pageIndex: Int, text: String) {
+        self.pageIndex = pageIndex
+        self.text = text
+    }
+}
+
+/// Structured evidence is retained separately from `Item.text`: listening can
+/// skip a visually dense table without throwing away its rows and cells.
+public struct PDFDocumentStructure: Codable, Equatable, Sendable {
+    public var schemaVersion: String
+    public var extractionEngine: PDFDocumentExtractionEngine
+    public var analysisStatus: PDFDocumentAnalysisStatus
+    public var pageCount: Int
+    public var analyzedPageCount: Int
+    public var tables: [PDFDocumentTable]
+    public var pageTitles: [PDFDocumentPageTitle]
+
+    public init(
+        schemaVersion: String = "pdf-document-structure.v1",
+        extractionEngine: PDFDocumentExtractionEngine,
+        analysisStatus: PDFDocumentAnalysisStatus,
+        pageCount: Int,
+        analyzedPageCount: Int,
+        tables: [PDFDocumentTable] = [],
+        pageTitles: [PDFDocumentPageTitle] = []
+    ) {
+        self.schemaVersion = schemaVersion
+        self.extractionEngine = extractionEngine
+        self.analysisStatus = analysisStatus
+        self.pageCount = pageCount
+        self.analyzedPageCount = analyzedPageCount
+        self.tables = tables
+        self.pageTitles = pageTitles
+    }
+}
+
 public struct Item: Codable, Equatable, Sendable {
     public var id: String
     public var title: String
@@ -479,6 +600,7 @@ public struct Item: Codable, Equatable, Sendable {
     public var sourceTitle: String?
     public var sourceURL: String?
     public var createdAt: Date?
+    public var documentStructure: PDFDocumentStructure?
 
     public init(
         id: String,
@@ -494,7 +616,8 @@ public struct Item: Codable, Equatable, Sendable {
         author: String? = nil,
         sourceTitle: String? = nil,
         sourceURL: String? = nil,
-        createdAt: Date? = nil
+        createdAt: Date? = nil,
+        documentStructure: PDFDocumentStructure? = nil
     ) {
         self.id = id
         self.title = title
@@ -510,6 +633,7 @@ public struct Item: Codable, Equatable, Sendable {
         self.sourceTitle = sourceTitle
         self.sourceURL = sourceURL
         self.createdAt = createdAt
+        self.documentStructure = documentStructure
     }
 }
 
@@ -572,6 +696,7 @@ public struct BrowserTextHandoff: Codable, Equatable, Sendable {
     public var contentFormat: BrowserTextContentFormat?
     public var selection: BrowserTextSelection?
     public var requestedContinuation: BrowserTextContinuation
+    public var documentStructure: PDFDocumentStructure?
 
     public init(
         schemaVersion: String = "browser-text-handoff.v1",
@@ -581,7 +706,8 @@ public struct BrowserTextHandoff: Codable, Equatable, Sendable {
         text: String,
         contentFormat: BrowserTextContentFormat? = nil,
         selection: BrowserTextSelection? = nil,
-        requestedContinuation: BrowserTextContinuation = BrowserTextContinuation()
+        requestedContinuation: BrowserTextContinuation = BrowserTextContinuation(),
+        documentStructure: PDFDocumentStructure? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.itemId = itemId
@@ -591,6 +717,7 @@ public struct BrowserTextHandoff: Codable, Equatable, Sendable {
         self.contentFormat = contentFormat
         self.selection = selection
         self.requestedContinuation = requestedContinuation
+        self.documentStructure = documentStructure
     }
 }
 

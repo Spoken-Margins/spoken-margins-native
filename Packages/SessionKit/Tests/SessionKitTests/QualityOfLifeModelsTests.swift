@@ -39,6 +39,33 @@ final class QualityOfLifeModelsTests: XCTestCase {
         XCTAssertEqual(manifest.progress, 2.0 / 3.0, accuracy: 0.0001)
     }
 
+    func testLegacyAudioPreparationJobDecodesWithoutQueueOrHorizonMetadata() throws {
+        let data = Data(#"{"schemaVersion":"audio-preparation-job.v1","id":"job","itemId":"item","manifestId":"manifest","policy":"while_charging","requestedAt":0,"nextChunkIndex":2,"isCancelled":false}"#.utf8)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+
+        let job = try decoder.decode(AudioPreparationJob.self, from: data)
+
+        XCTAssertNil(job.userPriority)
+        XCTAssertNil(job.maximumChunkCount)
+        XCTAssertEqual(job.nextChunkIndex, 2)
+    }
+
+    func testSingleChunkTextBecomesPlayableAfterItsOnlyChunkCommits() {
+        let manifest = PreparedAudioManifest(
+            id: "short-manifest",
+            itemId: "short-item",
+            sourcePackageId: "short-source",
+            signature: signatureFixture(),
+            state: .preparing,
+            plannedChunkCount: 1,
+            chunks: [chunkFixture(index: 0)]
+        )
+
+        XCTAssertTrue(manifest.canStartPartialPlayback)
+        XCTAssertFalse(manifest.advertisesCompleteDuration)
+    }
+
     func testPreparedLocatorMediaRoundTripIsMonotonic() throws {
         let chunks = [
             PreparedAudioChunk(id: "a", index: 0, sourceRange: SourceLocator(documentId: "doc", segmentId: "a", utf8Start: 0, utf8End: 100), relativePath: "a", byteCount: 1, checksumSHA256: "a", durationMs: 10_000),

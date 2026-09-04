@@ -1452,6 +1452,51 @@ final class SessionKitCoreTests: XCTestCase {
 
         XCTAssertEqual(item.id, "legacy")
         XCTAssertNil(item.sourceURL)
+        XCTAssertNil(item.documentStructure)
+    }
+
+    func testPDFDocumentStructureRoundTripsAndSurvivesBrowserImport() throws {
+        let structure = PDFDocumentStructure(
+            extractionEngine: .appleVision,
+            analysisStatus: .complete,
+            pageCount: 2,
+            analyzedPageCount: 2,
+            tables: [PDFDocumentTable(
+                id: "pdf-table-page-2-1",
+                pageIndex: 1,
+                rowCount: 2,
+                columnCount: 2,
+                bounds: PDFNormalizedRect(x: 0.1, y: 0.2, width: 0.8, height: 0.3),
+                cells: [PDFDocumentTableCell(
+                    rowStart: 0,
+                    rowEnd: 0,
+                    columnStart: 0,
+                    columnEnd: 0,
+                    text: "Metric"
+                )]
+            )],
+            pageTitles: [PDFDocumentPageTitle(pageIndex: 0, text: "Report")]
+        )
+        let encoded = try JSONEncoder().encode(structure)
+        XCTAssertEqual(try JSONDecoder().decode(PDFDocumentStructure.self, from: encoded), structure)
+
+        let profile = RuntimeCapabilityProfile(
+            id: "browser-pdf-structure",
+            displayName: "Browser PDF Structure",
+            capabilities: ["sync": ["browser_session_handoff"]]
+        )
+        let repository = InMemorySessionRepository()
+        let engine = SessionEngine(profile: profile, repository: repository)
+        _ = try engine.importBrowserText(BrowserTextHandoff(
+            itemId: "structured-pdf",
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: "file:///Report.pdf", title: "Report"),
+            text: "# Report\n\nBody.",
+            contentFormat: .markdown,
+            documentStructure: structure
+        ))
+
+        XCTAssertEqual(try repository.loadItem(id: "structured-pdf").documentStructure, structure)
     }
 
     func testLegacyFeedEntryWithoutAudioURLStillDecodes() throws {

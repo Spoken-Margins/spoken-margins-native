@@ -43,7 +43,11 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
         case .adaptiveListeningSections:
             selected = headingsAtUsefulDepth(from: ordered)
         case .canonicalHeadings:
-            selected = ordered
+            // Preserve a flat anthology verbatim, but project deeply nested
+            // authored structure at the shallowest useful depth for listening.
+            // The source text still retains every subheading; the Timeline no
+            // longer turns each subsection into a near-duplicate chapter.
+            selected = headingsAtUsefulDepth(from: ordered)
         }
 
         let canonicalPrefix = selected.first.map {

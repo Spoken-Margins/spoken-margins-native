@@ -51,6 +51,14 @@ private struct ResolvedSkimPlaybackPlan {
     let summaryAudioURL: URL
 }
 
+enum NativeTextStartupAudioState: String, Hashable {
+    case notRequired = "not_required"
+    case preparing
+    case ready
+    case paused
+    case failed
+}
+
 struct LibraryItemRow: Identifiable, Hashable {
     let id: String
     let title: String
@@ -66,6 +74,9 @@ struct LibraryItemRow: Identifiable, Hashable {
     let sourceReference: String?
     let sourceReferenceType: String?
     var offlineState: LibraryOfflineStateFilter
+    var startupAudioState: NativeTextStartupAudioState
+    var startupAudioCompletedChunkCount: Int
+    var startupAudioTargetChunkCount: Int
     let addedAt: Date?
     let lastListenedAt: Date?
     let storageRecencyRank: Int
@@ -85,6 +96,9 @@ struct LibraryItemRow: Identifiable, Hashable {
         sourceReference: String? = nil,
         sourceReferenceType: String? = nil,
         offlineState: LibraryOfflineStateFilter = .onlineOnly,
+        startupAudioState: NativeTextStartupAudioState = .notRequired,
+        startupAudioCompletedChunkCount: Int = 0,
+        startupAudioTargetChunkCount: Int = 0,
         addedAt: Date? = nil,
         lastListenedAt: Date? = nil,
         storageRecencyRank: Int = .max
@@ -103,10 +117,42 @@ struct LibraryItemRow: Identifiable, Hashable {
         self.sourceReference = sourceReference
         self.sourceReferenceType = sourceReferenceType
         self.offlineState = offlineState
+        self.startupAudioState = startupAudioState
+        self.startupAudioCompletedChunkCount = max(0, startupAudioCompletedChunkCount)
+        self.startupAudioTargetChunkCount = max(0, startupAudioTargetChunkCount)
         self.addedAt = addedAt
         self.lastListenedAt = lastListenedAt
         self.storageRecencyRank = storageRecencyRank
     }
+}
+
+struct AudioPreparationQueueRow: Identifiable, Hashable {
+    let id: String
+    let itemId: String
+    let title: String
+    let policy: PreparationJobPolicy
+    let state: PreparedAudioState
+    let completedChunkCount: Int
+    let plannedChunkCount: Int
+    let requestedAt: Date
+    let updatedAt: Date
+    let failureCode: String?
+    let isActivePlaybackItem: Bool
+    let canMoveEarlier: Bool
+    let canMoveLater: Bool
+
+    var progress: Double {
+        guard plannedChunkCount > 0 else { return 0 }
+        return min(1, Double(completedChunkCount) / Double(plannedChunkCount))
+    }
+}
+
+struct RecentlyPreparedAudioRow: Identifiable, Hashable {
+    let id: String
+    let itemId: String
+    let title: String
+    let completedAt: Date
+    let durationMs: Int
 }
 
 struct TrashUndoState: Identifiable, Equatable {
@@ -145,8 +191,10 @@ struct ItemDetailState {
     var navigation: [CanonicalNavigationNode] = []
     var chapters: [Chapter] = []
     var mediaChapters: [MediaTimelineChapter] = []
+    var listeningMapScenes: [MediaTimelineChapter] = []
     var mediaDurationMs: Int?
     var isNativeAudio = false
+    var documentStructure: PDFDocumentStructure?
     var sessions: [Session] = []
     var sessionRows: [SessionPresentation] = []
     var interjections: [Interjection] = []
@@ -310,6 +358,11 @@ private struct PreparedObsidianImport: Sendable {
     let listeningMap: ListeningMap?
 }
 
+private struct ImportedSourceText: Sendable {
+    let text: String
+    let documentStructure: PDFDocumentStructure?
+}
+
 private struct ObsidianImportBatch: Sendable {
     let prepared: [PreparedObsidianImport]
     let failures: [String]
@@ -318,6 +371,8 @@ private struct ObsidianImportBatch: Sendable {
 private enum SourceFileImportError: LocalizedError {
     case pdfHasNoExtractableText
     case pdfImportUnavailable
+    case remotePDFInvalidResponse
+    case remotePDFTooLarge
 
     var errorDescription: String? {
         switch self {
@@ -325,6 +380,10 @@ private enum SourceFileImportError: LocalizedError {
             return "This PDF has no extractable text. Scanned PDFs need OCR before they can be imported."
         case .pdfImportUnavailable:
             return "PDF text extraction is unavailable in this build."
+        case .remotePDFInvalidResponse:
+            return "The shared link did not return a readable PDF."
+        case .remotePDFTooLarge:
+            return "This PDF is larger than the 50 MB import limit."
         }
     }
 }
@@ -506,6 +565,8 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var playingInterjectionAudioId: String?
     @Published private(set) var playingInterjectionAudioRate: Double = 1
     @Published var libraryItems: [LibraryItemRow] = []
+    @Published private(set) var audioPreparationQueue: [AudioPreparationQueueRow] = []
+    @Published private(set) var recentlyPreparedAudio: [RecentlyPreparedAudioRow] = []
     @Published var libraryQuery = LibraryQuery(
         contentType: LibraryContentTypeFilter(rawValue: UserDefaults.standard.string(forKey: "libraryContentTypeFilter") ?? "") ?? .all,
         listeningState: LibraryListeningStateFilter(rawValue: UserDefaults.standard.string(forKey: "libraryListeningStateFilter") ?? "") ?? .all,
@@ -729,7 +790,8 @@ final class Gate1AppModel: ObservableObject {
         CommandLine.arguments.contains("--ui-testing")
         && ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_FORCE_FIRST_SHARED_SOURCE_MISS"] == "1"
     private var textAudioPrewarmTasks: [String: Task<Void, Never>] = [:]
-    private var explicitAudioPreparationTask: Task<Void, Never>?
+    private var foregroundAudioPreparationTask: Task<Void, Never>?
+    private var foregroundAudioPreparationGeneration = 0
     private var episodeMapPreparationTask: Task<Void, Never>?
     private var episodeMapPreparationItemId: String?
     private var isUpdatingSkimAvailability = false
@@ -738,6 +800,9 @@ final class Gate1AppModel: ObservableObject {
     private var quickAccessRefreshTask: Task<Void, Never>?
     private var quickAccessRefreshID = UUID()
     private var liveSpeechFallbackItemIds: Set<String> = []
+    private var suppressedAutomaticAudioPreparationItemIds: Set<String> = []
+    private var pendingStartupAudioPreparationItemIds: Set<String> = []
+    private var failedStartupAudioPreparationItemIds: Set<String> = []
     private var isImportingPendingSourceLinkHandoffs = false
     private var pendingAutoPlayQueue = Gate1PlaybackAutoplayQueue()
     private var completedStreamingTurnIds: Set<String> = []
@@ -745,7 +810,6 @@ final class Gate1AppModel: ObservableObject {
     private var pendingFullSourceTranscriptionItemIds: Set<String> = []
     private var importedPodcastResolutionGenerations: [String: Int] = [:]
     private var importedPodcastRecipientLocalURLs: [String: URL] = [:]
-    private var defaultVoiceFallbackSessionIds: Set<String> = []
     private var pendingMapGenerationItemId: String?
     private var pendingProviderJobForConsent: PendingProviderJob?
     private var pendingMapGenerationAfterConsent = false
@@ -756,7 +820,9 @@ final class Gate1AppModel: ObservableObject {
     private var failedWatchPackageRenderItemIds: Set<String> = []
     #endif
     private let preparedTextAudioStarterDurationMs = 30_000
-    static let textAudioPreparationCutoffPercent = 75
+    private static let startupAudioChunkCount = 2
+    static let textAudioPreparationCutoffPercent = 90
+    private static let lastPreparedAudioNoticeDateKey = "lastPreparedAudioNoticeDateV1"
     private let sourceWindowContextBeforeMs = SourceAnchorContextResolver.windowBeforeMs
     private let sourceWindowContextAfterMs = SourceAnchorContextResolver.windowAfterMs
     private let quickAccessFolderBookmarkKey = "quickAccessFolderBookmark"
@@ -1040,7 +1106,7 @@ final class Gate1AppModel: ObservableObject {
         }
         #if canImport(BackgroundTasks) && canImport(UIKit)
         AudioPreparationBackgroundController.shared.install { [weak self] in
-            await self?.performBackgroundPreparationPass() ?? false
+            await self?.performBackgroundPreparationPass() ?? .finished
         }
         #endif
     }
@@ -1201,7 +1267,9 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var canGenerateListeningMap: Bool {
-        guard selectedItem.chapters.isEmpty, selectedItem.mediaChapters.isEmpty else { return false }
+        guard selectedItem.chapters.isEmpty,
+              selectedItem.mediaChapters.isEmpty,
+              selectedItem.listeningMapScenes.isEmpty else { return false }
         guard let item = try? store?.loadItem(id: activeItemId) else { return false }
         return item.media?.sourceType == .nativeMediaFile
             || item.media?.sourceType == .remoteStream
@@ -1210,6 +1278,9 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var listeningMapGenerationAvailabilityDescription: String {
+        if !selectedItem.listeningMapScenes.isEmpty {
+            return "This podcast has a private Listening Map with \(selectedItem.listeningMapScenes.count) scene\(selectedItem.listeningMapScenes.count == 1 ? "" : "s")."
+        }
         if !selectedItem.mediaChapters.isEmpty {
             return "This podcast already includes publisher chapters. A generated Listening Map is unnecessary."
         }
@@ -1333,7 +1404,7 @@ final class Gate1AppModel: ObservableObject {
         onDeviceSpeechGenerationDelayTask?.cancel()
         trashUndoDismissTask?.cancel()
         textAudioPrewarmTasks.values.forEach { $0.cancel() }
-        explicitAudioPreparationTask?.cancel()
+        foregroundAudioPreparationTask?.cancel()
         sourceImportTask?.cancel()
         quickAccessRefreshTask?.cancel()
         interjectionAudioCompletionTask?.cancel()
@@ -1376,10 +1447,6 @@ final class Gate1AppModel: ObservableObject {
                             updated.status == .paused &&
                             previousTargetId == updated.targetId &&
                             updated.currentPlaybackProgressPercent >= 100
-                        if let fallbackSnapshot = self.retryWithDefaultVoiceIfNeeded(updated, engine: engine) {
-                            self.snapshot = fallbackSnapshot
-                            return
-                        }
                         if updated != self.snapshot {
                             self.snapshot = updated
                         }
@@ -1405,27 +1472,6 @@ final class Gate1AppModel: ObservableObject {
     private func stopPlaybackProgressTicker() {
         playbackProgressTask?.cancel()
         playbackProgressTask = nil
-    }
-
-    private func retryWithDefaultVoiceIfNeeded(_ failedSnapshot: SessionSnapshot, engine: SessionEngine) -> SessionSnapshot? {
-        guard failedSnapshot.status == .failed,
-              failedSnapshot.targetType == TargetType.itemTextTTS.rawValue,
-              let sessionId = failedSnapshot.sessionId,
-              !speechVoiceIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !defaultVoiceFallbackSessionIds.contains(sessionId) else {
-            return nil
-        }
-        defaultVoiceFallbackSessionIds.insert(sessionId)
-        do {
-            _ = try engine.updateSpeechPlaybackSettings(voiceIdentifier: nil, rate: Float(speechRate))
-            let resumed = try engine.resumePlayback()
-            diagnostics["speechVoiceFallback:\(sessionId)"] = "default_voice_from_confirmed_offset"
-            reportWarning("The selected voice was unavailable offline. Continuing with the installed default voice.")
-            return resumed
-        } catch {
-            diagnostics["speechVoiceFallback:\(sessionId)"] = "failed:\(error.localizedDescription)"
-            return nil
-        }
     }
 
     func syncPlaybackProgressForLifecycle() {
@@ -1471,6 +1517,7 @@ final class Gate1AppModel: ObservableObject {
         }
         syncPlaybackProgressForLifecycle()
         refreshLockScreenSurfacesForLifecycle()
+        scheduleAutomaticAudioPreparationIfNeeded()
     }
 
     private func reflectTextAudioPrewarmStatusIfActive(itemId: String) {
@@ -1542,6 +1589,10 @@ final class Gate1AppModel: ObservableObject {
             if engine == nil {
                 installEngine(try makeEngine(store: store))
             }
+            // Installing the Supertonic client establishes the current render
+            // signature. Re-project rows so startup readiness never reuses a
+            // manifest from an obsolete voice or model identity.
+            rows = try loadLibraryRows(store: store)
             try reconcileOnboardingEvidence(store: store)
             try recoverInterruptedAIJobs(store: store, rows: rows)
             libraryItems = rows
@@ -1565,6 +1616,9 @@ final class Gate1AppModel: ObservableObject {
             tryRefreshOfflineStorageUsage()
             diagnostics["libraryBootstrap"] = "loaded:\(rows.count)"
             reportSuccess(rows.isEmpty ? "Add a source to begin." : "Library ready.")
+            try refreshAudioPreparationPresentation(store: store, announceNewCompletions: true)
+            scheduleStartupAudioPreparationForLibraryItems()
+            scheduleAutomaticAudioPreparationIfNeeded()
         } catch {
             libraryAccessError = "This build could not open your existing library. This attempt did not reset it. Do not use Reset Library or delete the app; install a compatible build and try again. Details: \(error.localizedDescription)"
             diagnostics["libraryBootstrap"] = "failed_without_reset:\(error.localizedDescription)"
@@ -1659,7 +1713,12 @@ final class Gate1AppModel: ObservableObject {
         syncPlaybackProgressForLifecycle()
         gate2CompactControls.reconcileLiveActivities()
         importPendingSourceLinkHandoffs()
-        submitAutomaticAudioPreparationIfNeeded()
+        if let store {
+            try? refreshLibraryRows(store: store)
+            try? refreshAudioPreparationPresentation(store: store, announceNewCompletions: true)
+        }
+        scheduleStartupAudioPreparationForLibraryItems()
+        scheduleAutomaticAudioPreparationIfNeeded()
         submitAutomaticEpisodeMapPreparationIfNeeded()
         refreshQuickAddFeed(force: false)
     }
@@ -1798,17 +1857,9 @@ final class Gate1AppModel: ObservableObject {
         #endif
     }
 
-    private func submitAutomaticAudioPreparationIfNeeded() {
-        #if canImport(BackgroundTasks) && canImport(UIKit)
-        AudioPreparationBackgroundController.shared.submitIfEnabled(
-            automaticAudioPreparationPolicy == .whileCharging
-                || automaticEpisodeMapPreparationPolicy == .whileCharging
-        )
-        #endif
-    }
-
-    private func performBackgroundPreparationPass() async -> Bool {
-        guard let store else { return false }
+    private func performBackgroundPreparationPass() async -> BackgroundPreparationWorkResult {
+        guard let store else { return .finished }
+        let progressBefore = backgroundPreparationProgressToken(store: store)
         let episodeJobs = ((try? store.loadEpisodeMapPreparationJobs()) ?? [])
             .filter {
                 !$0.isCancelled
@@ -1841,16 +1892,51 @@ final class Gate1AppModel: ObservableObject {
             let hasEpisodeWork = ((try? store.loadEpisodeMapPreparationJobs()) ?? []).contains {
                 !$0.isCancelled && $0.stage != .completed
             }
-            return hasEpisodeWork || hasAudioWork
+            return backgroundPreparationResult(
+                hasRemainingWork: hasEpisodeWork || hasAudioWork,
+                progressBefore: progressBefore,
+                store: store
+            )
         }
         let audioHasMore = await performBackgroundAudioPreparationPass()
         if hasAudioWork { backgroundPreparationPrefersEpisodeMap = true }
-        if audioHasMore { return true }
+        if audioHasMore {
+            return backgroundPreparationResult(
+                hasRemainingWork: true,
+                progressBefore: progressBefore,
+                store: store
+            )
+        }
         if !episodeJobs.isEmpty {
             backgroundPreparationPrefersEpisodeMap = true
-            return true
+            return backgroundPreparationResult(
+                hasRemainingWork: true,
+                progressBefore: progressBefore,
+                store: store
+            )
         }
-        return false
+        return .finished
+    }
+
+    private func backgroundPreparationResult(
+        hasRemainingWork: Bool,
+        progressBefore: [String],
+        store: SQLiteSessionStore
+    ) -> BackgroundPreparationWorkResult {
+        guard hasRemainingWork else { return .finished }
+        return backgroundPreparationProgressToken(store: store) == progressBefore
+            ? .retryLater
+            : .continueNow
+    }
+
+    private func backgroundPreparationProgressToken(store: SQLiteSessionStore) -> [String] {
+        let audio = ((try? store.loadAudioPreparationJobs()) ?? [])
+            .filter { !$0.isCancelled }
+            .map { "audio:\($0.id):\($0.nextChunkIndex)" }
+        let episode = ((try? store.loadEpisodeMapPreparationJobs()) ?? [])
+            .filter { !$0.isCancelled && $0.stage != .completed }
+            .map { "episode:\($0.id):\($0.stage.rawValue):\($0.nextUnitIndex)" }
+        return (audio + episode).sorted()
     }
 
     func handleApplicationWillTerminate() {
@@ -2240,7 +2326,7 @@ final class Gate1AppModel: ObservableObject {
 
         sourceImportTask = Task { [weak self] in
             let batch = await Task.detached(priority: .userInitiated) {
-                Self.prepareObsidianImports(requests)
+                await Self.prepareObsidianImports(requests)
             }.value
             scopedAccess.forEach { entry in
                 if entry.didAccess {
@@ -2257,13 +2343,13 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private nonisolated static func prepareObsidianImports(_ requests: [ObsidianImportRequest]) -> ObsidianImportBatch {
+    private nonisolated static func prepareObsidianImports(_ requests: [ObsidianImportRequest]) async -> ObsidianImportBatch {
         var prepared: [PreparedObsidianImport] = []
         var failures: [String] = []
         for request in requests {
             do {
-                let raw = try importableText(from: request.url)
-                let parsed = try ObsidianMarkdownParser.parse(fileName: request.url.lastPathComponent, contents: raw)
+                let imported = try await importableText(from: request.url)
+                let parsed = try ObsidianMarkdownParser.parse(fileName: request.url.lastPathComponent, contents: imported.text)
                 let mapPolicy: DeterministicListeningMapPolicy = request.url.pathExtension.lowercased() == "pdf"
                     ? .canonicalHeadings
                     : .adaptiveListeningSections
@@ -2279,7 +2365,8 @@ final class Gate1AppModel: ObservableObject {
                     externalReference: parsed.source ?? request.url.lastPathComponent,
                     status: deterministicMap == nil ? "needs_listening_map" : "ready",
                     externalReferenceType: "file",
-                    createdAt: Date()
+                    createdAt: Date(),
+                    documentStructure: imported.documentStructure
                 )
                 prepared.append(PreparedObsidianImport(item: item, listeningMap: deterministicMap))
             } catch {
@@ -2289,13 +2376,20 @@ final class Gate1AppModel: ObservableObject {
         return ObsidianImportBatch(prepared: prepared, failures: failures)
     }
 
-    private nonisolated static func importableText(from url: URL) throws -> String {
+    private nonisolated static func importableText(from url: URL) async throws -> ImportedSourceText {
         guard url.pathExtension.lowercased() == "pdf" else {
-            return try String(contentsOf: url, encoding: .utf8)
+            return ImportedSourceText(
+                text: try String(contentsOf: url, encoding: .utf8),
+                documentStructure: nil
+            )
         }
         #if canImport(PDFKit)
         do {
-            return try PDFStructuredTextExtractor.markdown(from: url)
+            let extracted = try await NativePDFDocumentExtractor.extract(from: url)
+            return ImportedSourceText(
+                text: extracted.markdown,
+                documentStructure: extracted.documentStructure
+            )
         } catch PDFStructuredTextExtractor.ExtractionError.noExtractableText {
             throw SourceFileImportError.pdfHasNoExtractableText
         }
@@ -2361,6 +2455,9 @@ final class Gate1AppModel: ObservableObject {
                 dismissQuickAccessFile(quickAccessFileToDismiss)
             }
             imported.forEach { scheduleTextAudioPrewarmIfNeeded(itemId: $0.id) }
+            if let structure = imported.compactMap(\.documentStructure).last {
+                recordPDFExtractionDiagnostics(structure)
+            }
             diagnostics["lastObsidianImportCount"] = "\(imported.count)"
             diagnostics["lastObsidianImportFailures"] = "\(failures.count)"
             markOnboardingSteps([.addedOwnSource, .addedFromFiles])
@@ -2726,10 +2823,25 @@ final class Gate1AppModel: ObservableObject {
 
     private func importSourceLinkInBackground(_ handoff: SourceLinkHandoff) async throws {
         let trimmed = handoff.inputURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if handoff.sourceSurface == "share_sheet_pdf_file",
+           let fileURL = URL(string: trimmed),
+           fileURL.isFileURL {
+            let handoffStore = try SourceLinkHandoffStore.appGroup()
+            guard handoffStore.isManagedPDFURL(fileURL) else {
+                throw SessionKitError.persistenceFailed("The shared PDF is no longer available to import.")
+            }
+            try await importLocalSharedPDFInBackground(url: fileURL)
+            handoffStore.deleteManagedPDF(at: fileURL)
+            return
+        }
         guard let url = URL(string: trimmed),
               let scheme = url.scheme?.lowercased(),
               ["http", "https"].contains(scheme) else {
             throw SessionKitError.persistenceFailed("This share does not contain a valid podcast, RSS, or audio URL.")
+        }
+        if Self.isRemotePDFHandoff(handoff) {
+            try await importRemotePDFInBackground(url: url)
+            return
         }
         let request = LinkResolutionRequest(
             id: handoff.id,
@@ -2772,6 +2884,75 @@ final class Gate1AppModel: ObservableObject {
         )
     }
 
+    static func isRemotePDFHandoff(_ handoff: SourceLinkHandoff) -> Bool {
+        handoff.sourceSurface == "share_sheet_pdf"
+            || (URL(string: handoff.inputURL)?.isFileURL == false
+                && URL(string: handoff.inputURL)?.pathExtension.lowercased() == "pdf")
+    }
+
+    private func importLocalSharedPDFInBackground(url: URL) async throws {
+        #if canImport(PDFKit)
+        let extracted = try await Task.detached(priority: .userInitiated) {
+            try await NativePDFDocumentExtractor.extract(from: url)
+        }.value
+        let title = url.deletingPathExtension().lastPathComponent
+        let encodedName = url.lastPathComponent.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "shared.pdf"
+        let handoff = BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(
+                url: "shared-file://share-sheet/\(encodedName)",
+                title: title.isEmpty ? "Shared PDF" : title
+            ),
+            text: extracted.markdown,
+            contentFormat: .markdown,
+            documentStructure: extracted.documentStructure
+        )
+        try importBrowserTextInBackground(handoff)
+        diagnostics["lastSharedPDFImport"] = url.lastPathComponent
+        markOnboardingSteps([.addedOwnSource, .addedFromSafari])
+        #else
+        throw SourceFileImportError.pdfImportUnavailable
+        #endif
+    }
+
+    private func importRemotePDFInBackground(url: URL) async throws {
+        #if canImport(PDFKit)
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 30
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let pdfHeader = Data("%PDF-".utf8)
+        guard let response = response as? HTTPURLResponse,
+              (200..<300).contains(response.statusCode),
+              data.prefix(1_024).range(of: pdfHeader) != nil else {
+            throw SourceFileImportError.remotePDFInvalidResponse
+        }
+        guard data.count <= 50 * 1_024 * 1_024 else {
+            throw SourceFileImportError.remotePDFTooLarge
+        }
+        let extracted = try await Task.detached(priority: .userInitiated) {
+            try await NativePDFDocumentExtractor.extract(from: data)
+        }.value
+        let decodedName = url.deletingPathExtension().lastPathComponent.removingPercentEncoding
+            ?? url.deletingPathExtension().lastPathComponent
+        let title = decodedName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let handoff = BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(
+                url: url.absoluteString,
+                title: title.isEmpty ? "Shared PDF" : title
+            ),
+            text: extracted.markdown,
+            contentFormat: .markdown,
+            documentStructure: extracted.documentStructure
+        )
+        try importBrowserTextInBackground(handoff)
+        diagnostics["lastRemotePDFImport"] = url.absoluteString
+        markOnboardingSteps([.addedOwnSource, .addedFromSafari])
+        #else
+        throw SourceFileImportError.pdfImportUnavailable
+        #endif
+    }
+
     private func importBrowserTextInBackground(_ handoff: BrowserTextHandoff) throws {
         let store = try requireStore()
         if engine == nil {
@@ -2784,7 +2965,18 @@ final class Gate1AppModel: ObservableObject {
         libraryItems = try loadLibraryRows(store: store)
         scheduleTextAudioPrewarmIfNeeded(itemId: item.id)
         diagnostics["lastBackgroundBrowserTextImport"] = item.id
+        if let structure = item.documentStructure {
+            recordPDFExtractionDiagnostics(structure)
+        }
         markOnboardingSteps(onboardingSteps(for: handoff))
+    }
+
+    private func recordPDFExtractionDiagnostics(_ structure: PDFDocumentStructure) {
+        diagnostics["lastPDFExtractionEngine"] = structure.extractionEngine.rawValue
+        diagnostics["lastPDFAnalysisStatus"] = structure.analysisStatus.rawValue
+        diagnostics["lastPDFPageCount"] = "\(structure.pageCount)"
+        diagnostics["lastPDFAnalyzedPageCount"] = "\(structure.analyzedPageCount)"
+        diagnostics["lastPDFTableCount"] = "\(structure.tables.count)"
     }
 
     private func onboardingSteps(for handoff: BrowserTextHandoff) -> Set<OnboardingStep> {
@@ -3219,6 +3411,7 @@ final class Gate1AppModel: ObservableObject {
                 reportFailure("There is no active Supertonic generation to stop.")
                 return
             }
+            suppressedAutomaticAudioPreparationItemIds.insert(activeItemId)
             if let coordinator = preparedAudioCoordinator,
                let signature = currentSupertonicRenderSignature {
                 let itemId = activeItemId
@@ -3774,6 +3967,7 @@ final class Gate1AppModel: ObservableObject {
                 self.diagnostics["episodeMapPreparation:\(item.id)"] =
                     "complete:landmarks=\(allLandmarks.count):scenes=\(scenes.count):transcript_deleted"
                 if item.id == self.activeItemId {
+                    self.refreshSelectedItem()
                     self.updateSkimAvailability()
                     self.reportConfirmation(self.episodeMapPreparationStatus)
                 }
@@ -3921,9 +4115,11 @@ final class Gate1AppModel: ObservableObject {
         }
         let scenes = proposal.scenes.sorted { $0.order < $1.order }
         guard !scenes.isEmpty else { return nil }
-        let exactIdentityProjection = !projection.points.isEmpty && projection.points.allSatisfy {
-            $0.confidence == .verified && $0.recipientMediaTimeMs == $0.sourceMediaTimeMs
-        }
+        let exactIdentityProjection = projection.algorithmVersion == "episode-projection.exact-edition.v1"
+            || (!projection.points.isEmpty && projection.points.allSatisfy {
+                ($0.confidence == .exactEdition || $0.confidence == .verified)
+                    && $0.recipientMediaTimeMs == $0.sourceMediaTimeMs
+            })
         func projectedTime(_ sourceTimeMs: Int?) -> Int? {
             guard let sourceTimeMs else { return nil }
             return projection.projectedRecipientTime(for: sourceTimeMs)
@@ -4255,6 +4451,25 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    func jumpToListeningMapScene(_ scene: MediaTimelineChapter, fromTimeline: Bool = false) {
+        guard !requireTermsDecisionBeforePlayback(.jumpToChapter(scene.id, fromTimeline: fromTimeline)) else { return }
+        stopSpeechPreviews()
+        clearPendingAutoPlayTurns()
+        run { engine in
+            _ = try ensureSessionForSelectedItem(engine)
+            snapshot = try engine.seekMedia(toMediaTimeMs: scene.startMs)
+            if !snapshot.status.isPlaybackActive {
+                snapshot = try engine.resumePlayback()
+            }
+            refreshSelectedItem()
+            screen = .playback
+            if fromTimeline {
+                recordTimelineReviewCompleted()
+            }
+            reportSuccess("Jumped to \(scene.title).")
+        }
+    }
+
     func playSourceFromBeginning(fromTimeline: Bool = false) {
         guard !requireTermsDecisionBeforePlayback(.playSourceFromBeginning(fromTimeline: fromTimeline)) else { return }
         stopSpeechPreviews()
@@ -4550,6 +4765,11 @@ final class Gate1AppModel: ObservableObject {
 
     func startItem(id: String) {
         guard !rejectNavigationOrSessionMutationWhileRecording("start_item") else { return }
+        if libraryItems.first(where: { $0.id == id })?.startupAudioState == .preparing {
+            scheduleStartupAudioPreparationIfNeeded(itemId: id)
+            reportConfirmation("Getting the opening audio ready. You can keep using the Library while it finishes.")
+            return
+        }
         do {
             let store = try requireStore()
             if let continuation = Self.preferredContinuationSession(in: try store.loadSessions(itemId: id)) {
@@ -4570,6 +4790,7 @@ final class Gate1AppModel: ObservableObject {
         pendingImportedCommentary = nil
         stopSpeechPreviews()
         streamingSpeechQueue.stopAndClear()
+        suppressedAutomaticAudioPreparationItemIds.remove(id)
         if hasActiveSession, let engine {
             _ = try? engine.endSession()
             snapshot = engine.snapshot
@@ -4600,11 +4821,11 @@ final class Gate1AppModel: ObservableObject {
                 installEngine(try makeEngine(store: store))
             }
             guard let engine else { return }
-            preparePodcastPlayback(itemId: session.itemId)
             if hasActiveSession {
                 _ = try? engine.stopPlayback()
             }
             let inspected = try engine.inspectSession(sessionId: session.id)
+            preparePodcastPlayback(itemId: session.itemId)
             snapshot = try applyPreferredPlaybackRate(to: inspected, engine: engine)
             selectedItem = try loadItemDetail(id: session.itemId, store: store)
             try refreshLibraryRows(store: store)
@@ -4629,11 +4850,11 @@ final class Gate1AppModel: ObservableObject {
                 installEngine(try makeEngine(store: store))
             }
             guard let engine else { return }
-            preparePodcastPlayback(itemId: session.itemId)
             if hasActiveSession {
                 _ = try? engine.stopPlayback()
             }
             _ = try engine.inspectSession(sessionId: session.id)
+            preparePodcastPlayback(itemId: session.itemId)
             do {
                 if session.completionPercent >= 100 {
                     let inspected = try engine.inspectSession(sessionId: session.id)
@@ -6200,6 +6421,9 @@ final class Gate1AppModel: ObservableObject {
             diagnostics.merge(gate2CompactControls.diagnostics(), uniquingKeysWith: { _, new in new })
             settingsValueChanged()
             diagnostics["streamingSpeechPending"] = "\(streamingSpeechQueue.pendingCount)"
+            if let structure = selectedItem.documentStructure {
+                recordPDFExtractionDiagnostics(structure)
+            }
             refreshImportInbox()
             reportSuccess("Diagnostics refreshed.")
         }
@@ -7197,6 +7421,18 @@ final class Gate1AppModel: ObservableObject {
         Self.preferredContinuationSession(in: selectedItem.sessions)
     }
 
+    var selectedItemStartupAudioState: NativeTextStartupAudioState {
+        libraryItems.first(where: { $0.id == selectedItem.id })?.startupAudioState ?? .notRequired
+    }
+
+    var selectedItemStartupAudioProgressDescription: String {
+        guard let row = libraryItems.first(where: { $0.id == selectedItem.id }),
+              row.startupAudioTargetChunkCount > 0 else {
+            return "Preparing opening audio"
+        }
+        return "Preparing opening audio · \(row.startupAudioCompletedChunkCount) of \(row.startupAudioTargetChunkCount) chunks"
+    }
+
     var shouldShowMiniPlayer: Bool {
         hasActiveSession && !isDismissingMiniPlayer && screen != .playback && snapshot.phase != .finished && snapshot.phase != .abandoned
     }
@@ -7296,8 +7532,11 @@ final class Gate1AppModel: ObservableObject {
 
     var playbackHeaderTitle: String {
         let itemTitle = selectedItem.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let snapshotTitle = (snapshot.chapterTitle ?? snapshot.title ?? itemTitle)
+        let reportedTitle = (snapshot.chapterTitle ?? snapshot.title ?? itemTitle)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        let snapshotTitle = reportedTitle.isEmpty || reportedTitle.caseInsensitiveCompare(itemTitle) == .orderedSame
+            ? (inferredPlaybackChapterTitle ?? itemTitle)
+            : reportedTitle
         guard !snapshotTitle.isEmpty else { return itemTitle }
         guard snapshotTitle.caseInsensitiveCompare(itemTitle) != .orderedSame else { return itemTitle }
 
@@ -7308,6 +7547,27 @@ final class Gate1AppModel: ObservableObject {
             return snapshotTitle
         }
         return "Ch. \(chapterIndex + 1): \(snapshotTitle)"
+    }
+
+    private var inferredPlaybackChapterTitle: String? {
+        switch snapshot.targetType {
+        case TargetType.itemTextTTS.rawValue:
+            return currentChapter?.title
+        case TargetType.transcriptBackedMedia.rawValue, TargetType.browserOwnedMedia.rawValue:
+            let mediaTimeMs = snapshot.currentMediaTimeMs ?? 0
+            let authoredChapters = selectedItem.mediaChapters
+                .filter { !$0.id.hasPrefix("ch-transcript-") && !$0.id.contains("-ch-transcript-") }
+                .sorted { $0.startMs < $1.startMs }
+            if let title = authoredChapters.last(where: { $0.startMs <= mediaTimeMs })?.title {
+                return title
+            }
+            return selectedItem.listeningMapScenes
+                .sorted { $0.startMs < $1.startMs }
+                .last(where: { $0.startMs <= mediaTimeMs })?
+                .title
+        default:
+            return nil
+        }
     }
 
     var playbackItemHeaderTitle: String {
@@ -7375,6 +7635,18 @@ final class Gate1AppModel: ObservableObject {
         return snapshot.chapterTitle?.caseInsensitiveCompare(chapter.title) == .orderedSame
     }
 
+    func isCurrentTimelineListeningMapScene(_ scene: MediaTimelineChapter) -> Bool {
+        guard snapshot.targetType == TargetType.transcriptBackedMedia.rawValue
+                || snapshot.targetType == TargetType.browserOwnedMedia.rawValue,
+              let currentTimeMs = snapshot.currentMediaTimeMs else {
+            return false
+        }
+        let scenes = selectedItem.listeningMapScenes.sorted { $0.startMs < $1.startMs }
+        guard let index = scenes.firstIndex(where: { $0.id == scene.id }) else { return false }
+        let endMs = scenes.indices.contains(index + 1) ? scenes[index + 1].startMs : Int.max
+        return currentTimeMs >= scene.startMs && currentTimeMs < endMs
+    }
+
     var hasConfiguredProviderAPIKey: Bool {
         !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -7389,8 +7661,12 @@ final class Gate1AppModel: ObservableObject {
                 .chapters?
                 .map(\.title) ?? []
         case TargetType.transcriptBackedMedia.rawValue, TargetType.browserOwnedMedia.rawValue:
-            return selectedItem.mediaChapters
+            let authoredTitles = selectedItem.mediaChapters
                 .filter { !$0.id.hasPrefix("ch-transcript-") && !$0.id.contains("-ch-transcript-") }
+                .sorted { $0.startMs < $1.startMs }
+                .map(\.title)
+            if !authoredTitles.isEmpty { return authoredTitles }
+            return selectedItem.listeningMapScenes
                 .sorted { $0.startMs < $1.startMs }
                 .map(\.title)
         default:
@@ -8259,6 +8535,10 @@ final class Gate1AppModel: ObservableObject {
     private func rebuildEngineForCurrentSettings() -> Bool {
         guard let store else { return true }
         do {
+            foregroundAudioPreparationTask?.cancel()
+            foregroundAudioPreparationGeneration += 1
+            foregroundAudioPreparationTask = nil
+            pendingStartupAudioPreparationItemIds.removeAll()
             let replacement = try makeEngine(store: store)
             let sessionId = engine?.currentSession?.id ?? snapshot.sessionId
             if engine?.currentSession != nil {
@@ -8266,6 +8546,8 @@ final class Gate1AppModel: ObservableObject {
             }
             let restoredSnapshot = try sessionId.map { try replacement.inspectSession(sessionId: $0) }
             installEngine(replacement)
+            try refreshLibraryRows(store: store)
+            scheduleStartupAudioPreparationForLibraryItems()
             if let restoredSnapshot {
                 snapshot = restoredSnapshot
                 activeItemId = restoredSnapshot.itemId ?? activeItemId
@@ -8337,6 +8619,10 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func scheduleTextAudioPrewarmIfNeeded(itemId: String) {
+        if ttsVoiceSelection.supertonicVoice != nil {
+            scheduleStartupAudioPreparationIfNeeded(itemId: itemId)
+            return
+        }
         // AVSpeechSynthesizer serializes or competes with live utterances on real
         // devices. Only an explicitly injected preparation job may pre-render in
         // the background; production playback must stay on the immediate path.
@@ -8383,6 +8669,121 @@ final class Gate1AppModel: ObservableObject {
             preparedTextAudioStatus = "failed"
             snapshot.preparedTextAudioStatus = "failed"
         }
+    }
+
+    private func scheduleStartupAudioPreparationForLibraryItems() {
+        guard hasAcceptedCurrentTerms, ttsVoiceSelection.supertonicVoice != nil else { return }
+        for itemId in libraryItems.map(\.id) {
+            scheduleStartupAudioPreparationIfNeeded(itemId: itemId)
+        }
+        startForegroundAudioPreparationIfNeeded()
+    }
+
+    private func scheduleStartupAudioPreparationIfNeeded(itemId: String) {
+        guard audioPlaybackClientOverride == nil,
+              hasAcceptedCurrentTerms,
+              ttsVoiceSelection.supertonicVoice != nil,
+              !liveSpeechFallbackItemIds.contains(itemId),
+              !pendingStartupAudioPreparationItemIds.contains(itemId),
+              libraryItems.first(where: { $0.id == itemId })?.startupAudioState != .ready else {
+            return
+        }
+        do {
+            let store = try requireStore()
+            let item = try store.loadItem(id: itemId)
+            guard shouldPrewarmTextAudio(for: item),
+                  item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+                return
+            }
+            pendingStartupAudioPreparationItemIds.insert(itemId)
+            failedStartupAudioPreparationItemIds.remove(itemId)
+            updateLibraryStartupAudioState(itemId: itemId, state: .preparing)
+            diagnostics["startupAudioPreparation:\(itemId)"] = "queued"
+            Task { @MainActor [weak self] in
+                await self?.enqueueStartupAudioPreparation(itemId: itemId)
+            }
+        } catch {
+            failedStartupAudioPreparationItemIds.insert(itemId)
+            updateLibraryStartupAudioState(itemId: itemId, state: .failed)
+            diagnostics["startupAudioPreparation:\(itemId)"] = "enqueue_failed:\(error.localizedDescription)"
+        }
+    }
+
+    private func enqueueStartupAudioPreparation(itemId: String) async {
+        defer { pendingStartupAudioPreparationItemIds.remove(itemId) }
+        do {
+            try Task.checkCancellation()
+            let store = try requireStore()
+            let item = try store.loadItem(id: itemId)
+            guard let sourceText = item.text,
+                  shouldPrewarmTextAudio(for: item),
+                  let voice = ttsVoiceSelection.supertonicVoice,
+                  let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else {
+                updateLibraryStartupAudioState(itemId: itemId, state: .notRequired)
+                return
+            }
+            let plan = await Task.detached(priority: .utility) {
+                Self.preparedChunkPlan(for: sourceText)
+            }.value
+            guard !plan.isEmpty else {
+                updateLibraryStartupAudioState(itemId: itemId, state: .notRequired)
+                return
+            }
+            let assets = SupertonicAssetLocation(rootURL: resourceRoot)
+            let signature = try await Task.detached(priority: .utility) {
+                try SupertonicRenderIdentity.make(assets: assets, voice: voice)
+            }.value
+            try Task.checkCancellation()
+            let support = try applicationSupportDirectory()
+            let coordinator = preparedAudioCoordinator ?? PreparedAudioCoordinator(
+                repository: store,
+                rootDirectory: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
+            )
+            preparedAudioCoordinator = coordinator
+            currentSupertonicRenderSignature = signature
+            let manifest = try await coordinator.begin(
+                itemId: item.id,
+                sourceText: sourceText,
+                signature: signature,
+                plan: plan
+            )
+            let targetChunkCount = min(Self.startupAudioChunkCount, plan.count)
+            if manifest.chunks.count < targetChunkCount {
+                var job = (try store.loadAudioPreparationJobs()).first(where: { $0.manifestId == manifest.id })
+                    ?? AudioPreparationJob(
+                        id: "job-\(manifest.id)",
+                        itemId: item.id,
+                        manifestId: manifest.id,
+                        policy: .demandWindow
+                    )
+                if job.policy == .demandWindow {
+                    job.maximumChunkCount = targetChunkCount
+                }
+                job.isCancelled = false
+                job.lastFailureCode = nil
+                try store.saveAudioPreparationJob(job)
+                diagnostics["startupAudioPreparation:\(itemId)"] = "preparing_0_of_\(targetChunkCount)"
+            } else if let job = try store.loadAudioPreparationJobs().first(where: {
+                $0.manifestId == manifest.id && $0.policy == .demandWindow && $0.maximumChunkCount != nil
+            }) {
+                try store.deleteAudioPreparationJob(id: job.id)
+                diagnostics["startupAudioPreparation:\(itemId)"] = "ready_from_cache"
+            }
+            try refreshLibraryRows(store: store)
+            startForegroundAudioPreparationIfNeeded()
+        } catch is CancellationError {
+            diagnostics["startupAudioPreparation:\(itemId)"] = "cancelled"
+        } catch {
+            failedStartupAudioPreparationItemIds.insert(itemId)
+            updateLibraryStartupAudioState(itemId: itemId, state: .failed)
+            diagnostics["startupAudioPreparation:\(itemId)"] = "failed:\(error.localizedDescription)"
+        }
+    }
+
+    private func updateLibraryStartupAudioState(itemId: String, state: NativeTextStartupAudioState) {
+        guard let index = libraryItems.firstIndex(where: { $0.id == itemId }),
+              libraryItems[index].startupAudioState != state else { return }
+        libraryItems[index].startupAudioState = state
     }
 
     private nonisolated static func prepareTextAudioInBackground(
@@ -8659,10 +9060,8 @@ final class Gate1AppModel: ObservableObject {
             guard let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else {
                 throw SupertonicNarrationError.missingAsset("Supertonic")
             }
-            let signature = try SupertonicRenderIdentity.make(
-                assets: SupertonicAssetLocation(rootURL: resourceRoot),
-                voice: voice
-            )
+            let assets = SupertonicAssetLocation(rootURL: resourceRoot)
+            let signature = try SupertonicRenderIdentity.make(assets: assets, voice: voice)
             let coordinator = PreparedAudioCoordinator(
                 repository: store,
                 rootDirectory: supportDirectory.appending(path: "PreparedAudio", directoryHint: .isDirectory)
@@ -8688,7 +9087,7 @@ final class Gate1AppModel: ObservableObject {
                 renderer: renderer,
                 voice: voice,
                 speed: Float(speechRate / 0.5),
-                fallbackVoiceIdentifier: appleVoiceIsAvailable && !selectedVoice.isEmpty ? selectedVoice : nil,
+                fallbackVoiceIdentifier: selectedVoice.isEmpty ? nil : selectedVoice,
                 fallbackRate: Float(speechRate),
                 diskCache: diskCache,
                 preparedAudioDirectory: supportDirectory.appending(
@@ -8767,15 +9166,25 @@ final class Gate1AppModel: ObservableObject {
                         }
                     }
                 },
-                onFallback: { [weak self] reason, offset in
+                onFallback: { [weak self] reason, offset, itemId in
                     Task { @MainActor [weak self] in
                         guard let self else { return }
+                        self.suppressedAutomaticAudioPreparationItemIds.insert(itemId)
+                        if let coordinator = self.preparedAudioCoordinator,
+                           let signature = self.currentSupertonicRenderSignature {
+                            try? await coordinator.stop(itemId: itemId, signature: signature)
+                        }
                         self.diagnostics["supertonicFallback"] = reason
                         self.diagnostics["supertonicFallbackOffset"] = "\(offset)"
-                        self.statusMessage = "Using the iOS system voice for this playback."
+                        let resourcePressure = reason == "supertonic_resource_pressure"
+                        self.statusMessage = resourcePressure
+                            ? "On-device generation stopped to reduce heat and power use. Using the configured iOS voice."
+                            : "Using the configured iOS voice for this playback."
                         self.feedbackEvent = UserFeedbackEvent(
                             kind: .warning,
-                            message: "Supertonic encountered a rendering failure, so playback continued with the iOS system voice."
+                            message: resourcePressure
+                                ? "Supertonic paused because the device is under resource pressure. Playback continued with the configured iOS voice."
+                                : "Supertonic encountered a rendering failure, so playback continued with the configured iOS voice."
                         )
                     }
                 }
@@ -8975,6 +9384,12 @@ final class Gate1AppModel: ObservableObject {
         let items = try store.listItems()
         let sessionsByItemId = Dictionary(grouping: try store.loadSessions(), by: \.itemId)
         let manifestsByItemId = Dictionary(grouping: try store.loadPreparedAudioManifests(), by: \.itemId)
+        let preparationJobsByManifestId = Dictionary(
+            grouping: try store.loadAudioPreparationJobs().filter { !$0.isCancelled },
+            by: \.manifestId
+        ).compactMapValues { jobs in
+            jobs.max { $0.requestedAt < $1.requestedAt }
+        }
         let podcastDownloadsByItemId = Dictionary(
             grouping: try store.loadPodcastDownloads(),
             by: \.itemId
@@ -8984,9 +9399,24 @@ final class Gate1AppModel: ObservableObject {
         return items.enumerated().map { storageRank, item in
             let sessions = sessionsByItemId[item.id] ?? []
             let continuation = Self.preferredContinuationSession(in: sessions)
-            let latestManifest = manifestsByItemId[item.id]?.max { $0.updatedAt < $1.updatedAt }
+            let compatibleManifests = manifestsByItemId[item.id]?.filter { manifest in
+                currentSupertonicRenderSignature.map { manifest.signature == $0 } ?? true
+            }
+            let latestManifest = compatibleManifests?.max { $0.updatedAt < $1.updatedAt }
+            let preparationJob = latestManifest.flatMap { preparationJobsByManifestId[$0.id] }
+            let startupAudio = libraryStartupAudioPresentation(
+                item: item,
+                manifest: latestManifest,
+                job: preparationJob
+            )
+            let effectivePreparedState: PreparedAudioState? = {
+                guard latestManifest?.state == .preparing, preparationJob == nil else {
+                    return latestManifest?.state
+                }
+                return .notPrepared
+            }()
             let offlineState = Self.libraryOfflineState(
-                preparedState: latestManifest?.state,
+                preparedState: effectivePreparedState,
                 mediaSourceType: item.media?.sourceType,
                 podcastDownloadState: podcastDownloadsByItemId[item.id]?.state
             )
@@ -9005,11 +9435,57 @@ final class Gate1AppModel: ObservableObject {
                 sourceReference: item.externalReference,
                 sourceReferenceType: item.externalReferenceType,
                 offlineState: offlineState,
+                startupAudioState: startupAudio.state,
+                startupAudioCompletedChunkCount: startupAudio.completed,
+                startupAudioTargetChunkCount: startupAudio.target,
                 addedAt: item.createdAt,
                 lastListenedAt: sessions.compactMap { $0.updatedAt ?? $0.createdAt }.max(),
                 storageRecencyRank: storageRank
             )
         }
+    }
+
+    private func libraryStartupAudioPresentation(
+        item: Item,
+        manifest: PreparedAudioManifest?,
+        job: AudioPreparationJob?
+    ) -> (state: NativeTextStartupAudioState, completed: Int, target: Int) {
+        guard hasAcceptedCurrentTerms,
+              ttsVoiceSelection.supertonicVoice != nil,
+              !liveSpeechFallbackItemIds.contains(item.id),
+              item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            return (.notRequired, 0, 0)
+        }
+        if item.media?.sourceType == .generatedTTSPrerendered,
+           isPreparedTextMediaAvailable(item.media),
+           !isStarterPreparedTextMedia(item.media) {
+            return (.ready, Self.startupAudioChunkCount, Self.startupAudioChunkCount)
+        }
+        guard shouldPrewarmTextAudio(for: item) else { return (.notRequired, 0, 0) }
+        guard let manifest else {
+            return failedStartupAudioPreparationItemIds.contains(item.id)
+                ? (.failed, 0, Self.startupAudioChunkCount)
+                : (.preparing, 0, Self.startupAudioChunkCount)
+        }
+        let target = min(Self.startupAudioChunkCount, max(1, manifest.plannedChunkCount))
+        let completed = min(target, manifest.chunks.filter { $0.index < target }.count)
+        if manifest.state == .readyOffline || completed >= target {
+            return (.ready, completed, target)
+        }
+        if failedStartupAudioPreparationItemIds.contains(item.id)
+            || job?.lastFailureCode?.isEmpty == false
+            || manifest.state == .failed
+            || manifest.state == .needsRepreparation
+            || manifest.state == .stopped {
+            return (.failed, completed, target)
+        }
+        if ProcessInfo.processInfo.isLowPowerModeEnabled
+            || ProcessInfo.processInfo.thermalState == .serious
+            || ProcessInfo.processInfo.thermalState == .critical
+            || manifest.state == .pausedForThermal {
+            return (.paused, completed, target)
+        }
+        return (.preparing, completed, target)
     }
 
     nonisolated static func libraryOfflineState(
@@ -9062,6 +9538,138 @@ final class Gate1AppModel: ObservableObject {
     private func refreshLibraryRows(store: SQLiteSessionStore) throws {
         libraryItems = try loadLibraryRows(store: store)
         recentlyDeletedItems = try loadDeletedLibraryRows(store: store)
+        try refreshAudioPreparationPresentation(store: store)
+    }
+
+    func refreshAudioPreparationPresentation() {
+        guard let store else { return }
+        do {
+            try refreshAudioPreparationPresentation(store: store)
+        } catch {
+            diagnostics["audioPreparationPresentation"] = "failed:\(String(describing: type(of: error)))"
+        }
+    }
+
+    private func refreshAudioPreparationPresentation(
+        store: SQLiteSessionStore,
+        announceNewCompletions: Bool = false,
+        now: Date = Date()
+    ) throws {
+        let itemsById = Dictionary(uniqueKeysWithValues: try store.listItems().map { ($0.id, $0) })
+        let manifests = try store.loadPreparedAudioManifests()
+        let manifestsById = Dictionary(uniqueKeysWithValues: manifests.map { ($0.id, $0) })
+        let activeItemId = activePlaybackItemId
+        let jobs = try store.loadAudioPreparationJobs()
+            .filter { !$0.isCancelled }
+            .sorted { lhs, rhs in
+                Self.audioPreparationJobPrecedes(lhs, rhs, activeItemId: activeItemId)
+            }
+
+        audioPreparationQueue = jobs.enumerated().map { index, job in
+            let manifest = manifestsById[job.manifestId]
+            let previous = index > 0 ? jobs[index - 1] : nil
+            let next = jobs.indices.contains(index + 1) ? jobs[index + 1] : nil
+            let isPinnedActive = job.itemId == activeItemId
+            let sharesTier: (AudioPreparationJob?) -> Bool = { neighbor in
+                guard let neighbor else { return false }
+                return neighbor.policy == job.policy
+                    && (neighbor.maximumChunkCount != nil) == (job.maximumChunkCount != nil)
+            }
+            return AudioPreparationQueueRow(
+                id: job.id,
+                itemId: job.itemId,
+                title: itemsById[job.itemId]?.title ?? job.itemId,
+                policy: job.policy,
+                state: manifest?.state ?? .failed,
+                completedChunkCount: min(
+                    manifest?.committedChunkCount ?? job.nextChunkIndex,
+                    job.maximumChunkCount ?? manifest?.plannedChunkCount ?? .max
+                ),
+                plannedChunkCount: min(
+                    manifest?.plannedChunkCount ?? job.maximumChunkCount ?? 0,
+                    job.maximumChunkCount ?? .max
+                ),
+                requestedAt: job.requestedAt,
+                updatedAt: manifest?.updatedAt ?? job.requestedAt,
+                failureCode: job.lastFailureCode ?? manifest?.failureCode,
+                isActivePlaybackItem: isPinnedActive,
+                canMoveEarlier: !isPinnedActive && sharesTier(previous) && previous?.itemId != activeItemId,
+                canMoveLater: !isPinnedActive && sharesTier(next) && next?.itemId != activeItemId
+            )
+        }
+
+        var seenItemIds = Set<String>()
+        recentlyPreparedAudio = manifests
+            .filter { $0.state == .readyOffline && $0.artifact != nil }
+            .sorted { $0.updatedAt > $1.updatedAt }
+            .compactMap { manifest -> RecentlyPreparedAudioRow? in
+                guard seenItemIds.insert(manifest.itemId).inserted else { return nil }
+                return RecentlyPreparedAudioRow(
+                    id: manifest.id,
+                    itemId: manifest.itemId,
+                    title: itemsById[manifest.itemId]?.title ?? manifest.itemId,
+                    completedAt: manifest.updatedAt,
+                    durationMs: manifest.artifact?.durationMs ?? 0
+                )
+            }
+            .prefix(10)
+            .map { $0 }
+
+        guard announceNewCompletions else { return }
+        let defaults = UserDefaults.standard
+        let storedTimestamp = defaults.object(forKey: Self.lastPreparedAudioNoticeDateKey) as? Double
+        let noticeBoundary = storedTimestamp.map(Date.init(timeIntervalSince1970:))
+            ?? now.addingTimeInterval(-24 * 60 * 60)
+        let newlyCompleted = recentlyPreparedAudio.filter { $0.completedAt > noticeBoundary }
+        guard let newest = newlyCompleted.first else { return }
+        defaults.set(newest.completedAt.timeIntervalSince1970, forKey: Self.lastPreparedAudioNoticeDateKey)
+        let message: String
+        if newlyCompleted.count == 1 {
+            message = "Ready offline: \(newest.title)."
+        } else {
+            message = "Ready offline: \(newest.title) and \(newlyCompleted.count - 1) more. Review them in Offline Rendering."
+        }
+        reportConfirmation(message)
+    }
+
+    func moveAudioPreparationJobEarlier(id: String) {
+        moveAudioPreparationJob(id: id, offset: -1)
+    }
+
+    func moveAudioPreparationJobLater(id: String) {
+        moveAudioPreparationJob(id: id, offset: 1)
+    }
+
+    private func moveAudioPreparationJob(id: String, offset: Int) {
+        guard offset == -1 || offset == 1 else { return }
+        do {
+            let store = try requireStore()
+            var allJobs = try store.loadAudioPreparationJobs().filter { !$0.isCancelled }
+            guard let selected = allJobs.first(where: { $0.id == id }),
+                  selected.itemId != activePlaybackItemId else { return }
+            var tier = allJobs
+                .filter {
+                    $0.policy == selected.policy
+                        && ($0.maximumChunkCount != nil) == (selected.maximumChunkCount != nil)
+                        && $0.itemId != activePlaybackItemId
+                }
+                .sorted { Self.audioPreparationJobPrecedes($0, $1, activeItemId: nil) }
+            guard let currentIndex = tier.firstIndex(where: { $0.id == id }) else { return }
+            let destination = currentIndex + offset
+            guard tier.indices.contains(destination) else { return }
+            tier.swapAt(currentIndex, destination)
+            for (priority, var job) in tier.enumerated() {
+                job.userPriority = priority
+                try store.saveAudioPreparationJob(job)
+                if let allIndex = allJobs.firstIndex(where: { $0.id == job.id }) {
+                    allJobs[allIndex] = job
+                }
+            }
+            try refreshAudioPreparationPresentation(store: store)
+            reportConfirmation("Updated the offline rendering order.")
+        } catch {
+            reportFailure(error, context: "Updating the rendering queue failed")
+        }
     }
 
     private func recoverInterruptedAIJobs(store: SQLiteSessionStore, rows: [LibraryItemRow]) throws {
@@ -10124,7 +10732,10 @@ final class Gate1AppModel: ObservableObject {
                         self.snapshot = try engine.sourceWindowContextUnavailable(interjectionId: interjectionId)
                         self.refreshSelectedItem()
                     }
-                    self.reportFailure("Podcast context could not be prepared. Retry the interjection or continue knowing source context is unavailable.")
+                    // Source-window context is redundant, best-effort evidence.
+                    // The Margin and its timestamp are already durable, and the
+                    // Timeline exposes the retry state. Do not turn this expected
+                    // degradation into a global error banner after every Margin.
                 }
             }
         }
@@ -12202,6 +12813,35 @@ final class Gate1AppModel: ObservableObject {
         }
         let mediaTimeline = try store.loadTranscriptTimeline(itemId: id)?.timeline
         let mediaChapters = mediaTimeline?.chapters ?? []
+        let projection = try store.loadResolvedListeningMapProjection(itemId: id)
+        let proposals = try store.loadPortableListeningMapProposals(itemId: id)
+        let proposal = projection.flatMap { projection in
+            proposals.first(where: { $0.id == projection.proposalId })
+        } ?? proposals.first
+        let exactIdentityProjection = projection?.algorithmVersion == "episode-projection.exact-edition.v1"
+            || (projection?.points.isEmpty == false
+                && projection?.points.allSatisfy {
+                    ($0.confidence == .exactEdition || $0.confidence == .verified)
+                        && $0.recipientMediaTimeMs == $0.sourceMediaTimeMs
+                } == true)
+        let listeningMapScenes = proposal?.scenes
+            .sorted { $0.order < $1.order }
+            .compactMap { scene -> MediaTimelineChapter? in
+                guard let sourceStartMs = scene.startAnchor.mediaTimeMs,
+                      let startMs = projection?.projectedRecipientTime(for: sourceStartMs)
+                        ?? (exactIdentityProjection ? sourceStartMs : nil) else {
+                    return nil
+                }
+                let title = scene.title?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let displayTitle = title.flatMap { $0.isEmpty ? nil : $0 } ?? "Scene \(scene.order + 1)"
+                return MediaTimelineChapter(
+                    id: scene.id,
+                    title: displayTitle,
+                    description: scene.summaryText?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+                    startMs: startMs,
+                    transcriptSegmentId: scene.startAnchor.transcriptSegmentId ?? scene.id
+                )
+            } ?? []
         let sessions = try store.loadSessions(itemId: id)
         // A snapshot session is valid only for its own item. Without this
         // ownership check, an asynchronous selection bug can display one
@@ -12277,8 +12917,10 @@ final class Gate1AppModel: ObservableObject {
             navigation: canonicalSource?.navigation ?? [],
             chapters: map?.chapters ?? [],
             mediaChapters: mediaChapters,
+            listeningMapScenes: listeningMapScenes,
             mediaDurationMs: item.media?.durationMs ?? mediaTimeline?.durationMs,
             isNativeAudio: isNativeAudio,
+            documentStructure: item.documentStructure,
             sessions: sessions,
             sessionRows: sessionRows,
             interjections: interjections,
@@ -12344,27 +12986,27 @@ final class Gate1AppModel: ObservableObject {
               !sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let voice = ttsVoiceSelection.supertonicVoice else { return }
         do {
+            suppressedAutomaticAudioPreparationItemIds.remove(item.id)
+            failedStartupAudioPreparationItemIds.remove(item.id)
             let store = try requireStore()
-            guard !Self.shouldSkipTextAudioPreparation(try store.loadSessions(itemId: item.id)) else {
-                reportWarning("Completed or substantially listened items are not queued for offline rendering.")
-                return
-            }
             let support = try applicationSupportDirectory()
             guard let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else {
                 reportFailure("The bundled speech assets are unavailable.")
                 return
             }
-            let signature = try SupertonicRenderIdentity.make(
-                assets: SupertonicAssetLocation(rootURL: resourceRoot),
-                voice: voice
-            )
+            let assets = SupertonicAssetLocation(rootURL: resourceRoot)
+            let signature = try await Task.detached(priority: .utility) {
+                try SupertonicRenderIdentity.make(assets: assets, voice: voice)
+            }.value
             let coordinator = preparedAudioCoordinator ?? PreparedAudioCoordinator(
                 repository: store,
                 rootDirectory: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
             )
             preparedAudioCoordinator = coordinator
             currentSupertonicRenderSignature = signature
-            let plan = Self.preparedChunkPlan(for: sourceText)
+            let plan = await Task.detached(priority: .utility) {
+                Self.preparedChunkPlan(for: sourceText)
+            }.value
             guard !plan.isEmpty else { return }
             let manifest = try await coordinator.begin(
                 itemId: item.id,
@@ -12385,27 +13027,36 @@ final class Gate1AppModel: ObservableObject {
                     policy: .explicit
                 )
             job.policy = .explicit
+            job.userPriority = 0
+            job.maximumChunkCount = nil
             job.requestedAt = Date()
             job.isCancelled = false
             try store.saveAudioPreparationJob(job)
             try refreshLibraryRows(store: store)
             diagnostics["explicitAudioPreparation:\(item.id)"] = "queued"
             reportConfirmation("Prioritized \(item.title) for offline rendering.")
-            startExplicitAudioPreparationIfNeeded()
+            startForegroundAudioPreparationIfNeeded()
         } catch {
             diagnostics["explicitAudioPreparation:\(item.id)"] = "failed:\(error.localizedDescription)"
             reportFailure(error, context: "Offline rendering request failed")
         }
     }
 
-    private func startExplicitAudioPreparationIfNeeded() {
-        guard explicitAudioPreparationTask == nil else { return }
-        explicitAudioPreparationTask = Task { @MainActor [weak self] in
+    private func startForegroundAudioPreparationIfNeeded() {
+        guard foregroundAudioPreparationTask == nil else { return }
+        foregroundAudioPreparationGeneration += 1
+        let generation = foregroundAudioPreparationGeneration
+        foregroundAudioPreparationTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            while !Task.isCancelled, await self.performBackgroundAudioPreparationPass(explicitOnly: true) {
+            while !Task.isCancelled, await self.performBackgroundAudioPreparationPass(foregroundDemandOnly: true) {
                 await Task.yield()
             }
-            self.explicitAudioPreparationTask = nil
+            if self.foregroundAudioPreparationGeneration == generation {
+                self.foregroundAudioPreparationTask = nil
+                if let store = self.store {
+                    try? self.refreshLibraryRows(store: store)
+                }
+            }
         }
     }
 
@@ -12417,10 +13068,10 @@ final class Gate1AppModel: ObservableObject {
             let store = try requireStore()
             let support = try applicationSupportDirectory()
             guard let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else { return }
-            let signature = try SupertonicRenderIdentity.make(
-                assets: SupertonicAssetLocation(rootURL: resourceRoot),
-                voice: voice
-            )
+            let assets = SupertonicAssetLocation(rootURL: resourceRoot)
+            let signature = try await Task.detached(priority: .utility) {
+                try SupertonicRenderIdentity.make(assets: assets, voice: voice)
+            }.value
             let coordinator = preparedAudioCoordinator ?? PreparedAudioCoordinator(
                 repository: store,
                 rootDirectory: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
@@ -12431,12 +13082,15 @@ final class Gate1AppModel: ObservableObject {
             for row in libraryItems {
                 guard let item = try? store.loadItem(id: row.id),
                       let text = item.text,
-                      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      !suppressedAutomaticAudioPreparationItemIds.contains(item.id) else { continue }
                 guard !Self.shouldSkipTextAudioPreparation(sessionsByItemId[item.id] ?? []) else {
                     diagnostics["automaticAudioPreparation:\(item.id)"] = "skipped_existing_progress"
                     continue
                 }
-                let plan = Self.preparedChunkPlan(for: text)
+                let plan = await Task.detached(priority: .utility) {
+                    Self.preparedChunkPlan(for: text)
+                }.value
                 guard !plan.isEmpty else { continue }
                 let manifest = try await coordinator.begin(
                     itemId: item.id,
@@ -12447,18 +13101,25 @@ final class Gate1AppModel: ObservableObject {
                 guard manifest.state != .readyOffline else { continue }
                 var job = (try store.loadAudioPreparationJobs()).first(where: { $0.manifestId == manifest.id })
                     ?? AudioPreparationJob(id: "job-\(manifest.id)", itemId: item.id, manifestId: manifest.id, policy: .whileCharging)
-                job.policy = .whileCharging
+                let unfinishedStartupHorizon = job.policy == .demandWindow
+                    && job.maximumChunkCount.map { manifest.chunks.count < $0 } == true
+                if !unfinishedStartupHorizon {
+                    job.policy = .whileCharging
+                    job.maximumChunkCount = nil
+                }
                 job.isCancelled = false
                 try store.saveAudioPreparationJob(job)
             }
+            try refreshAudioPreparationPresentation(store: store)
             diagnostics["automaticAudioPreparationQueue"] = "queued"
         } catch {
             diagnostics["automaticAudioPreparationQueue"] = "failed:\(error.localizedDescription)"
         }
     }
 
-    private func performBackgroundAudioPreparationPass(explicitOnly: Bool = false) async -> Bool {
-        guard (explicitOnly || automaticAudioPreparationPolicy == .whileCharging),
+    private func performBackgroundAudioPreparationPass(foregroundDemandOnly: Bool = false) async -> Bool {
+        var attemptedJob: AudioPreparationJob?
+        guard (foregroundDemandOnly || automaticAudioPreparationPolicy == .whileCharging),
               !ProcessInfo.processInfo.isLowPowerModeEnabled,
               ProcessInfo.processInfo.thermalState != .serious,
               ProcessInfo.processInfo.thermalState != .critical,
@@ -12469,25 +13130,36 @@ final class Gate1AppModel: ObservableObject {
             let store = try requireStore()
             var queuedJobs = try store.loadAudioPreparationJobs()
                 .filter({ !$0.isCancelled })
-            if explicitOnly {
-                queuedJobs = queuedJobs.filter { $0.policy == .explicit }
+            if foregroundDemandOnly {
+                queuedJobs = queuedJobs.filter {
+                    $0.policy == .explicit || $0.maximumChunkCount != nil
+                }
             }
-            queuedJobs.sort(by: Self.audioPreparationJobPrecedes)
-            if queuedJobs.isEmpty, !explicitOnly {
+            queuedJobs.sort {
+                Self.audioPreparationJobPrecedes($0, $1, activeItemId: activePlaybackItemId)
+            }
+            if queuedJobs.isEmpty, !foregroundDemandOnly {
                 await enqueueAutomaticAudioPreparationJobs()
                 queuedJobs = try store.loadAudioPreparationJobs()
                     .filter { !$0.isCancelled }
-                    .sorted(by: Self.audioPreparationJobPrecedes)
+                    .sorted {
+                        Self.audioPreparationJobPrecedes($0, $1, activeItemId: activePlaybackItemId)
+                    }
             }
             let hasMoreMatchingJobs = {
                 let remaining = try store.loadAudioPreparationJobs().filter { !$0.isCancelled }
-                return explicitOnly ? remaining.contains(where: { $0.policy == .explicit }) : !remaining.isEmpty
+                return foregroundDemandOnly
+                    ? remaining.contains(where: { $0.policy == .explicit || $0.maximumChunkCount != nil })
+                    : !remaining.isEmpty
             }
             guard var job = queuedJobs.first,
                   var manifest = try store.loadPreparedAudioManifest(id: job.manifestId),
                   let item = try? store.loadItem(id: job.itemId),
                   let sourceText = item.text else { return false }
-            if Self.shouldSkipTextAudioPreparation(try store.loadSessions(itemId: item.id)) {
+            attemptedJob = job
+            if job.policy != .explicit,
+               job.maximumChunkCount == nil,
+               Self.shouldSkipTextAudioPreparation(try store.loadSessions(itemId: item.id)) {
                 manifest.state = .notPrepared
                 manifest.updatedAt = Date()
                 try store.savePreparedAudioManifest(manifest)
@@ -12497,10 +13169,12 @@ final class Gate1AppModel: ObservableObject {
             }
             let support = try applicationSupportDirectory()
             guard let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else {
-                return !explicitOnly
+                return !foregroundDemandOnly
             }
             let assets = SupertonicAssetLocation(rootURL: resourceRoot)
-            let signature = try SupertonicRenderIdentity.make(assets: assets, voice: voice)
+            let signature = try await Task.detached(priority: .utility) {
+                try SupertonicRenderIdentity.make(assets: assets, voice: voice)
+            }.value
             guard manifest.signature == signature else {
                 manifest.state = .needsRepreparation
                 manifest.updatedAt = Date()
@@ -12508,9 +13182,15 @@ final class Gate1AppModel: ObservableObject {
                 try store.deleteAudioPreparationJob(id: job.id)
                 return try hasMoreMatchingJobs()
             }
-            let plan = Self.preparedChunkPlan(for: sourceText)
+            let plan = await Task.detached(priority: .utility) {
+                Self.preparedChunkPlan(for: sourceText)
+            }.value
+            let eligiblePlan = Self.preparationHorizon(
+                plan: plan,
+                maximumChunkCount: job.maximumChunkCount
+            )
             let completedIndexes = Set(manifest.chunks.map(\.index))
-            guard let next = plan.first(where: { !completedIndexes.contains($0.index) }) else {
+            guard let next = eligiblePlan.first(where: { !completedIndexes.contains($0.index) }) else {
                 try store.deleteAudioPreparationJob(id: job.id)
                 return try hasMoreMatchingJobs()
             }
@@ -12554,7 +13234,7 @@ final class Gate1AppModel: ObservableObject {
             guard let updated = try store.loadPreparedAudioManifest(id: manifest.id),
                   let committed = updated.chunks.first(where: { $0.index == next.index }) else {
                 try? await ledger.release(reservationId: reservation.id)
-                return !explicitOnly
+                return !foregroundDemandOnly
             }
             try await ledger.commit(
                 reservationId: reservation.id,
@@ -12568,9 +13248,11 @@ final class Gate1AppModel: ObservableObject {
                     isReproducible: true
                 )
             )
+            job = (try store.loadAudioPreparationJobs()).first(where: { $0.id == job.id }) ?? job
             job.nextChunkIndex = updated.chunks.count
-            try store.saveAudioPreparationJob(job)
+            job.lastFailureCode = nil
             if updated.chunks.count == plan.count {
+                try store.saveAudioPreparationJob(job)
                 try await finishBackgroundPreparedAudio(
                     item: item,
                     sourceText: sourceText,
@@ -12583,19 +13265,50 @@ final class Gate1AppModel: ObservableObject {
                     coordinator: coordinator,
                     support: support
                 )
+            } else if let maximumChunkCount = job.maximumChunkCount {
+                let completed = Set(updated.chunks.map(\.index))
+                let horizon = plan.prefix(min(maximumChunkCount, plan.count))
+                if horizon.allSatisfy({ completed.contains($0.index) }) {
+                    if automaticAudioPreparationPolicy == .whileCharging {
+                        job.policy = .whileCharging
+                        job.maximumChunkCount = nil
+                        try store.saveAudioPreparationJob(job)
+                    } else {
+                        try store.deleteAudioPreparationJob(id: job.id)
+                    }
+                    diagnostics["startupAudioPreparation:\(item.id)"] = "ready_\(horizon.count)_of_\(plan.count)"
+                } else {
+                    try store.saveAudioPreparationJob(job)
+                }
+            } else {
+                try store.saveAudioPreparationJob(job)
             }
+            try refreshLibraryRows(store: store)
             let hasMore = try hasMoreMatchingJobs()
             diagnostics["backgroundAudioPreparation"] = hasMore ? "chunk_committed" : "complete"
             return hasMore
         } catch is CancellationError {
+            if var job = attemptedJob, let store {
+                job.lastFailureCode = "background_time_expired"
+                try? store.saveAudioPreparationJob(job)
+                try? refreshAudioPreparationPresentation(store: store)
+            }
             diagnostics["backgroundAudioPreparation"] = "expired"
-            return !explicitOnly
+            return !foregroundDemandOnly
         } catch {
+            if var job = attemptedJob, let store {
+                job.lastFailureCode = String(describing: type(of: error))
+                try? store.saveAudioPreparationJob(job)
+                if job.maximumChunkCount != nil {
+                    failedStartupAudioPreparationItemIds.insert(job.itemId)
+                }
+                try? refreshLibraryRows(store: store)
+            }
             diagnostics["backgroundAudioPreparation"] = "paused:\(error.localizedDescription)"
-            if explicitOnly {
+            if attemptedJob?.policy == .explicit {
                 reportWarning("Offline rendering paused: \(error.localizedDescription)")
             }
-            return !explicitOnly
+            return false
         }
     }
 
@@ -12603,8 +13316,31 @@ final class Gate1AppModel: ObservableObject {
         _ lhs: AudioPreparationJob,
         _ rhs: AudioPreparationJob
     ) -> Bool {
+        audioPreparationJobPrecedes(lhs, rhs, activeItemId: nil)
+    }
+
+    nonisolated static func audioPreparationJobPrecedes(
+        _ lhs: AudioPreparationJob,
+        _ rhs: AudioPreparationJob,
+        activeItemId: String?
+    ) -> Bool {
+        if let activeItemId, (lhs.itemId == activeItemId) != (rhs.itemId == activeItemId) {
+            return lhs.itemId == activeItemId
+        }
+        let lhsIsOpeningBuffer = lhs.policy == .demandWindow && lhs.maximumChunkCount != nil
+        let rhsIsOpeningBuffer = rhs.policy == .demandWindow && rhs.maximumChunkCount != nil
+        if lhsIsOpeningBuffer != rhsIsOpeningBuffer {
+            return lhsIsOpeningBuffer
+        }
         if (lhs.policy == .explicit) != (rhs.policy == .explicit) {
             return lhs.policy == .explicit
+        }
+        if lhs.policy != rhs.policy {
+            if lhs.policy == .demandWindow { return true }
+            if rhs.policy == .demandWindow { return false }
+        }
+        if lhs.userPriority != rhs.userPriority {
+            return (lhs.userPriority ?? .max) < (rhs.userPriority ?? .max)
         }
         if lhs.requestedAt != rhs.requestedAt {
             return lhs.requestedAt < rhs.requestedAt
@@ -12697,6 +13433,13 @@ final class Gate1AppModel: ObservableObject {
                     text: planned.slice.text
                 )
         }
+    }
+
+    nonisolated static func preparationHorizon(
+        plan: [PreparedChunkPlan],
+        maximumChunkCount: Int?
+    ) -> [PreparedChunkPlan] {
+        Array(plan.prefix(min(maximumChunkCount ?? plan.count, plan.count)))
     }
 
     private func configureOfflineServices(store: SQLiteSessionStore) throws {

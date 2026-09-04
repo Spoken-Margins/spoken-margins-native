@@ -338,6 +338,9 @@ public struct ResolvedListeningMapProjection: Codable, Equatable, Sendable, Iden
     }
 
     public func projectedRecipientTime(for sourceMediaTimeMs: Int) -> Int? {
+        if algorithmVersion == "episode-projection.exact-edition.v1" {
+            return max(0, sourceMediaTimeMs)
+        }
         if let exact = points.first(where: { $0.sourceMediaTimeMs == sourceMediaTimeMs && $0.confidence != .unresolved }) {
             return exact.recipientMediaTimeMs
         }
@@ -476,6 +479,9 @@ public enum EpisodeFingerprintAlignment {
             proposalId: proposalId,
             recipientEditionSHA256: recipientEditionSHA256,
             createdAt: createdAt,
+            algorithmVersion: exactEdition
+                ? "episode-projection.exact-edition.v1"
+                : "episode-projection.v1",
             points: points,
             intervals: intervals
         )

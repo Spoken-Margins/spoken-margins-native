@@ -3,6 +3,22 @@ import SessionKit
 import XCTest
 
 final class EpisodeMapModelsTests: XCTestCase {
+    func testExactEditionProjectionMapsSceneTimesWithoutSparseLandmarks() {
+        let projection = EpisodeFingerprintAlignment.makeProjection(
+            id: "short-exact-edition",
+            itemId: "short-episode",
+            proposalId: "short-map",
+            recipientEditionSHA256: "same-bytes",
+            matches: [],
+            exactEdition: true
+        )
+
+        XCTAssertEqual(projection.algorithmVersion, "episode-projection.exact-edition.v1")
+        XCTAssertTrue(projection.points.isEmpty)
+        XCTAssertEqual(projection.projectedRecipientTime(for: 0), 0)
+        XCTAssertEqual(projection.projectedRecipientTime(for: 45_000), 45_000)
+    }
+
     func testPhraseSketchIsDeterministicBoundedAndContainsNoTranscriptText() throws {
         let salt = Data(repeating: 0x2a, count: 32)
         let transcript = "Distributed episode maps keep spoken margins aligned across dynamic editions"

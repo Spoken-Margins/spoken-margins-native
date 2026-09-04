@@ -9,7 +9,7 @@
     "schemaVersion": { "const": "item.v1" },
     "id": { "type": "string", "minLength": 1 },
     "title": { "type": "string", "minLength": 1 },
-    "mediaType": { "enum": ["text", "transcript_backed_media"] },
+    "mediaType": { "enum": ["text", "pdf", "transcript_backed_media"] },
     "text": { "type": ["string", "null"] },
     "media": {
       "type": ["object", "null"],
@@ -23,13 +23,81 @@
       }
     },
     "externalReference": { "type": ["string", "null"] },
+    "documentStructure": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["schemaVersion", "extractionEngine", "analysisStatus", "pageCount", "analyzedPageCount", "tables", "pageTitles"],
+      "properties": {
+        "schemaVersion": { "const": "pdf-document-structure.v1" },
+        "extractionEngine": { "enum": ["pdfkit", "apple_vision_document_recognition"] },
+        "analysisStatus": { "enum": ["complete", "unavailable_on_os", "resource_constrained", "partial", "failed"] },
+        "pageCount": { "type": "integer", "minimum": 0 },
+        "analyzedPageCount": { "type": "integer", "minimum": 0 },
+        "tables": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "pageIndex", "rowCount", "columnCount", "bounds", "cells", "speechDisposition"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "pageIndex": { "type": "integer", "minimum": 0 },
+              "rowCount": { "type": "integer", "minimum": 0 },
+              "columnCount": { "type": "integer", "minimum": 0 },
+              "bounds": { "$ref": "#/$defs/normalizedRect" },
+              "cells": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["rowStart", "rowEnd", "columnStart", "columnEnd", "text"],
+                  "properties": {
+                    "rowStart": { "type": "integer", "minimum": 0 },
+                    "rowEnd": { "type": "integer", "minimum": 0 },
+                    "columnStart": { "type": "integer", "minimum": 0 },
+                    "columnEnd": { "type": "integer", "minimum": 0 },
+                    "text": { "type": "string" }
+                  }
+                }
+              },
+              "speechDisposition": { "const": "announce_and_skip" }
+            }
+          }
+        },
+        "pageTitles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["pageIndex", "text"],
+            "properties": {
+              "pageIndex": { "type": "integer", "minimum": 0 },
+              "text": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
     "sourceURL": { "type": ["string", "null"], "format": "uri" },
-    "externalReferenceType": { "enum": ["obsidian", "url", "plain", "none"] },
+    "externalReferenceType": { "enum": ["obsidian", "url", "file", "plain", "none"] },
     "createdAt": { "type": "string", "format": "date-time" },
     "updatedAt": { "type": "string", "format": "date-time" },
     "deletedAt": { "type": ["string", "null"], "format": "date-time" },
     "status": { "enum": ["needs_listening_map", "ready", "in_progress", "finished", "map_needs_repair"] },
     "listeningMapId": { "type": ["string", "null"] },
     "transcriptId": { "type": ["string", "null"] }
+  },
+  "$defs": {
+    "normalizedRect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": { "type": "number", "minimum": 0, "maximum": 1 },
+        "y": { "type": "number", "minimum": 0, "maximum": 1 },
+        "width": { "type": "number", "minimum": 0, "maximum": 1 },
+        "height": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    }
   }
 }

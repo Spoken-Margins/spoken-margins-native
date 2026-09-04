@@ -777,13 +777,18 @@ Preserve canonical PDF chapters and distinguish table of contents/front matter
 
 Text-based PDF imports can expose a real chapter title in both the table of contents and at the chapter's destination. The extractor previously matched outline titles globally, so the contents-page occurrence could consume the heading and make the chapter begin at the title/author/contents pages. Separately, deterministic maps merged canonical PDF headings down to a hard maximum of 12 chapters even when the document contained more.
 
+PDFKit also exposes visually structured tables as a flat stream of text. Speaking that stream loses row/column relationships and is usually less useful than a concise announcement that the table was skipped. Browser and Files shares must not solve this by parsing a large PDF inside the memory-constrained Share extension.
+
 A representative regression is an anthology such as G. K. Chesterton's *Tremendous Trifles*: selecting “A Piece of Chalk” should start at that story, not at the book title or contents, and all later stories should remain available.
 
 ## Failure model
 
 - **Extraction:** PDF encodings and line geometry vary; outline destinations are stronger evidence than title text alone.
-- **Canonical structure:** authored PDF outline/heading boundaries must not be treated like optional listening-length suggestions.
+- **Canonical structure:** authored PDF outline/heading boundaries remain source evidence; the listening timeline projects them at a useful depth instead of flattening every nested subsection into a peer chapter.
 - **Listening structure:** title, authors, summary, and contents may be useful but must not be silently folded into the first story.
+- **Layout structure:** embedded PDF text remains the canonical prose source; on iOS 26, Vision document recognition may add on-device table cells and page-title evidence without requiring Apple Intelligence or a server.
+- **Narration:** table structure is retained separately from speakable text so announcing/skipping a table does not destroy its source data.
+- **Resources:** pages are analyzed sequentially in the main app, and enhanced analysis stops under Low Power Mode or serious/critical thermal pressure while PDFKit remains available.
 - **Verification:** generated fixtures and a representative real-world corpus are needed because one PDF shape cannot falsify the heuristics.
 
 ## Required behavior
@@ -791,9 +796,14 @@ A representative regression is an anthology such as G. K. Chesterton's *Tremendo
 - Match an outline title only at its destination page/position rather than the first same-title occurrence in the document.
 - Treat an explicit Contents/Table of Contents label, repeated off-destination outline-title matches, dot leaders, and trailing page numbers as contents evidence rather than chapter starts.
 - Preserve nonempty material before the first canonical chapter as a separate `Front Matter` entry.
-- Preserve every detected canonical PDF heading without a fixed 12-chapter ceiling.
+- Preserve every detected canonical PDF heading in the canonical source map without a fixed 12-chapter ceiling.
+- Project nested outlines at the shallowest useful listening depth; preserve every peer heading for flat anthologies.
 - Keep ranges ordered, contiguous, and anchored to the real chapter text.
 - Retain adaptive merge/split behavior for ordinary Markdown; this bug concerns canonical PDF structure.
+- Route browser and local-file PDF shares into the main app before parsing; do not extract PDF text in the Share extension.
+- On iOS 26 and later, augment PDFKit with Apple's on-device Vision document-layout recognition and persist normalized tables, merged-cell ranges, cells, and bounded page-title evidence on the item.
+- On iOS 18 through 25, retain the PDFKit-only path. This feature must not require an Apple Intelligence-capable device or upload a document.
+- Replace flattened table narration with one page/row/column announcement and “Skipped during listening,” while keeping the structured table available for future visual or interactive reading.
 
 ## Acceptance criteria
 
@@ -802,8 +812,12 @@ A representative regression is an anthology such as G. K. Chesterton's *Tremendo
 - [ ] Contents entries do not appear as duplicate chapters.
 - [ ] Numbered headings on an ordinary content page are not suppressed without additional contents evidence.
 - [ ] Duplicate/similar titles remain associated with their own destinations.
+- [ ] The GPT-6 Astra system card produces `Front Matter` plus its ten top-level sections, without promoting its 50 nested subsections into peer timeline chapters.
 - [ ] PDFs without usable outlines continue to use conservative visual-heading fallback.
-- [ ] Scanned/image-only PDFs continue to fail clearly unless OCR has already supplied text.
+- [ ] A generated table fixture is announced exactly once, its flattened cells are absent from narration, and its structured rows/cells survive item persistence.
+- [ ] An iPhone 13 Pro on iOS 26 can take the Vision-enhanced route without Apple Intelligence; iOS 18–25 uses PDFKit-only extraction.
+- [ ] Scanned/image-only PDFs use Vision OCR on iOS 26 when document recognition succeeds and fail clearly on the PDFKit-only path.
+- [ ] Low Power Mode or serious/critical thermal pressure stops enhanced page analysis without losing PDFKit-importable prose.
 
 ## Audit / stopping rule
 
@@ -811,7 +825,7 @@ Evaluate a small corpus spanning publisher outlines, visual headings only, conte
 
 ## Implementation status
 
-Implemented on the main working tree with focused package coverage and a generated 20-story PDF regression fixture. Keep this issue open until the product owner validates the flow on a representative PDF.
+Implemented on the main working tree with focused package coverage, generated outline and table-region fixtures, app-group PDF handoff, and an iOS 26 Vision-enhanced extraction path. The exact 117-page GPT-6 Astra PDF has 60 authored outline entries (10 top-level sections) and 22 labeled tables; a native Vision request against its first benchmark page returned one 9-row, 5-column table. Table structure is persisted independently from announce-and-skip narration. The exact page check is developer evidence, not iPhone human validation. Keep this issue open until the product owner validates sharing, extraction, Timeline structure, table narration, and fallback behavior on a representative physical device.
 ```
 
 ---

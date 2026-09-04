@@ -326,8 +326,20 @@ private extension RenderedSpeechSourceSlice {
     }
 }
 
+enum SupertonicResourcePolicy {
+    static func allowsRendering(processInfo: ProcessInfo = .processInfo) -> Bool {
+        #if os(iOS)
+        return !processInfo.isLowPowerModeEnabled
+            && processInfo.thermalState != .serious
+            && processInfo.thermalState != .critical
+        #else
+        return true
+        #endif
+    }
+}
+
 final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unchecked Sendable {
-    typealias FallbackHandler = @Sendable (_ reason: String, _ charOffset: Int) -> Void
+    typealias FallbackHandler = @Sendable (_ reason: String, _ charOffset: Int, _ targetId: String) -> Void
     typealias GenerationStateHandler = @Sendable (RenderedSpeechGenerationState) -> Void
     typealias GenerationProgressHandler = @Sendable (RenderedSpeechGenerationProgress) -> Void
     typealias PreparedAudioHandler = @Sendable (_ itemId: String, _ prepared: PreparedTextAudio) -> Void
@@ -407,6 +419,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let audioSessionActivator: (@Sendable () throws -> Void)?
     private let audioPlayerStarter: (@Sendable (AVPlayer, Float) -> Void)?
     private let observesPlayerLifecycle: Bool
+    private let onDeviceRenderingAllowed: @Sendable () -> Bool
     private let lock = NSLock()
     private let maxCharacters: Int
     private let startupBufferChunkCount: Int
@@ -465,6 +478,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         audioSessionActivator: (@Sendable () throws -> Void)? = nil,
         audioPlayerStarter: (@Sendable (AVPlayer, Float) -> Void)? = nil,
         observesPlayerLifecycle: Bool = true,
+        onDeviceRenderingAllowed: @escaping @Sendable () -> Bool = { SupertonicResourcePolicy.allowsRendering() },
         fallbackClient: AudioPlaybackClient? = nil,
         interruptionHandler: InterruptionHandler? = nil,
         onGenerationStateChange: GenerationStateHandler? = nil,
@@ -478,15 +492,26 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.renderer = renderer
         self.voice = voice
         self.playbackRate = max(0.25, min(2.0, speed))
-        self.fallback = fallbackClient ?? SystemSpeechPlaybackClient(
-            voiceIdentifier: fallbackVoiceIdentifier,
-            speechRate: fallbackRate
-        )
+        if let fallbackClient {
+            self.fallback = fallbackClient
+        } else if let identifier = fallbackVoiceIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !identifier.isEmpty {
+            self.fallback = SystemSpeechPlaybackClient(
+                voiceIdentifier: identifier,
+                speechRate: fallbackRate
+            )
+        } else {
+            // The default client follows the user's Spoken Content setting.
+            // Constructing the explicit initializer with a nil identifier
+            // instead selects Apple's generic app voice.
+            self.fallback = SystemSpeechPlaybackClient()
+        }
         self.diskCache = diskCache
         self.audioSessionNotificationCenter = audioSessionNotificationCenter
         self.audioSessionActivator = audioSessionActivator
         self.audioPlayerStarter = audioPlayerStarter
         self.observesPlayerLifecycle = observesPlayerLifecycle
+        self.onDeviceRenderingAllowed = onDeviceRenderingAllowed
         self.interruptionHandler = interruptionHandler
         self.maxCharacters = maxCharacters
         self.startupBufferChunkCount = max(1, startupBufferChunkCount)
@@ -977,10 +1002,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         } ?? max(0, plan.count - 1)
         let playbackRequest = plan[playbackIndex]
         let forward = Array(plan[playbackIndex...])
-        let prefix = playbackIndex > 0 ? Array(plan[..<playbackIndex]) : []
         lock.withLock {
             generationPlan = plan
-            generationRenderOrder = forward + prefix
+            // Navigation is also a demand signal. Render from the new playhead
+            // forward and leave skipped material for an explicit offline job;
+            // wrapping to the prefix keeps the model hot for audio the listener
+            // just chose not to hear.
+            generationRenderOrder = forward
             initialPlaybackOffset = playbackRequest.startOffset
             initialRequestedSpokenOffset = spokenOffset
             currentStartOffset = spokenOffset
@@ -1051,6 +1079,14 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             return true
         }
         guard shouldStart else { return }
+        guard onDeviceRenderingAllowed() else {
+            renderFailed(
+                request: request,
+                shouldPlayWhenReady: shouldPlayWhenReady,
+                reason: "supertonic_resource_pressure"
+            )
+            return
+        }
         reportGenerationState(.rendering)
         let task = Task { [weak self, renderer, voice] in
             do {
@@ -1105,6 +1141,18 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                     } else {
                         result = rendered
                     }
+                }
+                try Task.checkCancellation()
+                guard self?.onDeviceRenderingAllowed() != false else {
+                    await renderer.discardGeneratedAudio(at: result.audioURL)
+                    await MainActor.run {
+                        self?.renderFailed(
+                            request: request,
+                            shouldPlayWhenReady: shouldPlayWhenReady,
+                            reason: "supertonic_resource_pressure"
+                        )
+                    }
+                    return
                 }
                 await MainActor.run {
                     self?.renderCompleted(
@@ -1189,13 +1237,16 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             } else {
                 next = nil
             }
+            let completedRenderOrderCount = generationRenderOrder.reduce(into: 0) { count, planned in
+                if generationResults[planned.startOffset] != nil { count += 1 }
+            }
             return (
                 true,
                 autoplay,
                 next,
-                generationResults.count,
-                generationPlan.count,
-                generationResults.count == generationPlan.count
+                completedRenderOrderCount,
+                generationRenderOrder.count,
+                completedRenderOrderCount == generationRenderOrder.count
             )
         }
         guard action.valid else {
@@ -1231,7 +1282,14 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             enqueueRender(next, shouldPlayWhenReady: false)
         }
         if action.complete {
-            assemblePreparedAudioIfComplete(generation: request.generation)
+            let hasCompleteSource = lock.withLock {
+                generationResults.count == generationPlan.count
+            }
+            if hasCompleteSource {
+                assemblePreparedAudioIfComplete(generation: request.generation)
+            } else {
+                reportGenerationState(.ready)
+            }
         } else {
             reportGenerationState(.rendering)
         }
@@ -1279,6 +1337,36 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         let source = lock.withLock { preparedSourceText }
         do {
             _ = try fallback.prepareSpeechText(source)
+            removePlaybackEndObserver()
+            let stopped = lock.withLock { () -> (urls: [URL], renderControl: RenderTaskControl?) in
+                generation = UUID()
+                let renderControl = activeRenderControl
+                activeRenderControl = nil
+                generationDisabledTargetIds.insert(targetId)
+                player?.pause()
+                player?.replaceCurrentItem(with: nil)
+                player = nil
+                let urls = Set(
+                    renderedCache.values.map(\.url)
+                        + generationResults.values.map(\.audioURL)
+                        + [activeAudioURL].compactMap { $0 }
+                )
+                activeAudioURL = nil
+                activeAudioDuration = 0
+                renderedCache.removeAll()
+                inFlightOffsets.removeAll()
+                pendingAutoplayOffset = nil
+                generationPlan.removeAll()
+                generationRenderOrder.removeAll()
+                generationResults.removeAll()
+                failedRenderReasons.removeAll()
+                initialPlaybackOffset = nil
+                initialRequestedSpokenOffset = nil
+                preparedAudioAssemblyStarted = false
+                return (Array(urls), renderControl)
+            }
+            stopped.renderControl?.cancel()
+            for url in stopped.urls { discardAudio(url) }
             try fallback.play(targetId: targetId, from: sourceOffset)
             let spokenOffset = spokenOffset(forSourceOffset: sourceOffset)
             lock.withLock {
@@ -1292,7 +1380,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 transportIntent = .playing
             }
             reportGenerationState(.stopped)
-            onFallback?(reason, sourceOffset)
+            onFallback?(reason, sourceOffset, targetId)
         } catch {
             lock.withLock {
                 fallbackIsActive = false

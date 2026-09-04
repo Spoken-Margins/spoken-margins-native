@@ -7,6 +7,7 @@ struct ExperienceLibraryScreen: View {
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Binding var addSourceRoute: AddSourceRoute?
+    @State private var isAudioPreparationQueuePresented = false
 
     private var continueItem: LibraryItemRow? {
         LibraryPresentation.continueItem(in: model.libraryItems, activeItemId: model.activePlaybackItemId)
@@ -60,6 +61,10 @@ struct ExperienceLibraryScreen: View {
 
                 controls
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
+                if !model.audioPreparationQueue.isEmpty || !model.recentlyPreparedAudio.isEmpty {
+                    preparationSummary
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                }
                 items
             }
             .background(AppColors.bone)
@@ -72,6 +77,10 @@ struct ExperienceLibraryScreen: View {
             .toolbar { toolbarContent }
         }
         .accessibilityIdentifier("library.screen")
+        .sheet(isPresented: $isAudioPreparationQueuePresented) {
+            ExperienceAudioPreparationQueueScreen()
+                .environmentObject(model)
+        }
     }
 
     @ToolbarContentBuilder
@@ -81,6 +90,9 @@ struct ExperienceLibraryScreen: View {
                 Button("Settings", systemImage: "gearshape", action: model.openSettings)
                 Button("Help", systemImage: "questionmark.circle", action: model.openHelp)
                 Divider()
+                Button("Offline Rendering", systemImage: "waveform.badge.magnifyingglass") {
+                    isAudioPreparationQueuePresented = true
+                }
                 Button("Export Sessions", systemImage: "square.and.arrow.up.on.square", action: model.openBatchExport)
             } label: {
                 Image(systemName: "ellipsis.circle")
@@ -97,6 +109,45 @@ struct ExperienceLibraryScreen: View {
             }
             .accessibilityIdentifier("home.addSource.button")
         }
+    }
+
+    private var preparationSummary: some View {
+        Button {
+            isAudioPreparationQueuePresented = true
+        } label: {
+            ExperienceSurface(tint: AppColors.ochre.opacity(0.65)) {
+                HStack(spacing: 12) {
+                    Image(systemName: model.audioPreparationQueue.isEmpty ? "checkmark.circle.fill" : "waveform.badge.magnifyingglass")
+                        .font(.title3)
+                        .foregroundStyle(AppColors.ochre)
+                        .frame(width: 40, height: 40)
+                        .background(AppColors.ochre.opacity(0.12), in: Circle())
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Offline rendering")
+                            .font(.headline)
+                        Text(preparationSummaryDetail)
+                            .font(.subheadline)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .multilineTextAlignment(.leading)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .foregroundStyle(AppColors.secondaryText)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("library.offlineRendering.button")
+    }
+
+    private var preparationSummaryDetail: String {
+        let queued = model.audioPreparationQueue.count
+        let recent = model.recentlyPreparedAudio.count
+        if queued > 0, recent > 0 {
+            return "\(queued) queued · \(recent) recently ready"
+        }
+        if queued > 0 { return "\(queued) item\(queued == 1 ? "" : "s") queued" }
+        return "\(recent) item\(recent == 1 ? "" : "s") recently ready"
     }
 
     private var onboardingStrip: some View {
@@ -207,16 +258,34 @@ struct ExperienceLibraryScreen: View {
     }
 
     private func continueHeroAction(_ item: LibraryItemRow) -> some View {
-        Button { model.startItem(id: item.id) } label: {
-            Image(systemName: "play.fill")
-                .font(.title3)
-                .foregroundStyle(.white)
-                .frame(width: 54, height: 54)
-                .background(AppColors.evergreen, in: Circle())
+        Group {
+            if item.startupAudioState == .preparing {
+                ProgressView()
+                    .controlSize(.regular)
+                    .tint(AppColors.evergreen)
+                    .frame(width: 54, height: 54)
+                    .background(AppColors.softGreen, in: Circle())
+                    .accessibilityLabel("Preparing opening audio for \(item.title)")
+                    .accessibilityValue(startupProgressDescription(item))
+            } else {
+                Button { model.startItem(id: item.id) } label: {
+                    Image(systemName: "play.fill")
+                        .font(.title3)
+                        .foregroundStyle(item.offlineState == .readyOffline ? .white : AppColors.evergreen)
+                        .frame(width: 54, height: 54)
+                        .background(item.offlineState == .readyOffline ? AppColors.evergreen : AppColors.softGreen, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Continue \(item.title)")
+                .accessibilityValue(item.offlineState == .readyOffline ? "Ready offline" : "Opening audio ready")
+                .accessibilityIdentifier("library.continue.\(item.id)")
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Continue \(item.title)")
-        .accessibilityIdentifier("library.continue.\(item.id)")
+    }
+
+    private func startupProgressDescription(_ item: LibraryItemRow) -> String {
+        let target = max(1, item.startupAudioTargetChunkCount)
+        return "\(min(item.startupAudioCompletedChunkCount, target)) of \(target) opening chunks ready"
     }
 
     private var controls: some View {
@@ -436,15 +505,28 @@ private struct ExperienceLibraryCompactRow: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("library.row.\(row.id)")
 
-            Button(action: onPlay) {
-                Image(systemName: row.hasContinuationSession ? "play.fill" : "play")
-                    .foregroundStyle(AppColors.evergreen)
-                    .frame(width: 40, height: 40)
-                    .background(AppColors.softGreen, in: Circle())
+            Group {
+                if row.startupAudioState == .preparing {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(AppColors.evergreen)
+                        .frame(width: 40, height: 40)
+                        .background(AppColors.softGreen, in: Circle())
+                        .accessibilityLabel("Preparing opening audio for \(row.title)")
+                        .accessibilityValue(startupProgressDescription)
+                        .accessibilityIdentifier("queue.preparing.\(row.id)")
+                } else {
+                    Button(action: onPlay) {
+                        Image(systemName: row.offlineState == .readyOffline ? "play.fill" : "play")
+                            .foregroundStyle(AppColors.evergreen)
+                            .frame(width: 40, height: 40)
+                            .background(AppColors.softGreen, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(playActionTitle)
+                    .accessibilityIdentifier("queue.start.\(row.id)")
+                }
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(playActionTitle)
-            .accessibilityIdentifier("queue.start.\(row.id)")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
@@ -453,7 +535,9 @@ private struct ExperienceLibraryCompactRow: View {
         .background(AppColors.panel)
         .contextMenu {
             Button("Open", systemImage: "arrow.right", action: onOpen)
-            Button(playActionTitle, systemImage: "play", action: onPlay)
+            if row.startupAudioState != .preparing {
+                Button(playActionTitle, systemImage: "play", action: onPlay)
+            }
             if !row.isCompleted {
                 Button("Mark Complete", systemImage: "checkmark.circle", action: onComplete)
             }
@@ -515,11 +599,28 @@ private struct ExperienceLibraryCompactRow: View {
     }
 
     private var offlineDetailLabel: String? {
-        switch row.offlineState {
+        switch row.startupAudioState {
+        case .preparing:
+            return "Opening audio \(startupProgressDescription.lowercased())"
+        case .ready where row.offlineState != .readyOffline:
+            return "Ready to start"
+        case .paused:
+            return "Opening audio paused"
+        case .failed:
+            return "Live voice available"
+        case .notRequired, .ready:
+            break
+        }
+        return switch row.offlineState {
         case .readyOffline: "Offline"
         case .preparing: "Preparing"
         case .needsRepreparation: "Needs update"
         case .onlineOnly, .all: nil
         }
+    }
+
+    private var startupProgressDescription: String {
+        let target = max(1, row.startupAudioTargetChunkCount)
+        return "\(min(row.startupAudioCompletedChunkCount, target)) of \(target) chunks"
     }
 }

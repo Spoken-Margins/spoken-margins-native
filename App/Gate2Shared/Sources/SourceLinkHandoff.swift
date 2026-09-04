@@ -62,6 +62,7 @@ public struct SourceLinkHandoffStore {
 
     private static let payloadDirectoryName = "SourceLinkHandoffs"
     private static let failedPayloadDirectoryName = "FailedSourceLinkHandoffs"
+    private static let pdfDirectoryName = "SharedPDFHandoffs"
     private let baseDirectory: URL
     private let fileManager: FileManager
 
@@ -140,6 +141,47 @@ public struct SourceLinkHandoffStore {
         try? fileManager.removeItem(at: url)
     }
 
+    /// Copies a share-extension file representation into the App Group while
+    /// the provider URL is still valid. The main app performs all PDF parsing.
+    public func savePDF(from sourceURL: URL, suggestedFilename: String? = nil) throws -> URL {
+        let values = try sourceURL.resourceValues(forKeys: [.fileSizeKey])
+        if let fileSize = values.fileSize, fileSize > 50 * 1_024 * 1_024 {
+            throw SourceLinkHandoffStoreError.invalidPayload("PDF is larger than the 50 MB import limit")
+        }
+        let directory = baseDirectory.appendingPathComponent(Self.pdfDirectoryName, isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let rawName = (suggestedFilename ?? sourceURL.lastPathComponent) as NSString
+        let stem = rawName.deletingPathExtension
+            .replacingOccurrences(of: #"[^A-Za-z0-9._ -]+"#, with: "-", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let safeStem = stem.isEmpty ? "Shared PDF" : stem
+        let handoffDirectory = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fileManager.createDirectory(at: handoffDirectory, withIntermediateDirectories: true)
+        let destination = handoffDirectory.appendingPathComponent(safeStem).appendingPathExtension("pdf")
+        do {
+            try fileManager.copyItem(at: sourceURL, to: destination)
+        } catch {
+            try? fileManager.removeItem(at: handoffDirectory)
+            throw error
+        }
+        return destination
+    }
+
+    public func isManagedPDFURL(_ url: URL) -> Bool {
+        guard url.isFileURL, url.pathExtension.lowercased() == "pdf" else { return false }
+        let directory = baseDirectory
+            .appendingPathComponent(Self.pdfDirectoryName, isDirectory: true)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let candidate = url.standardizedFileURL.resolvingSymlinksInPath()
+        return candidate.path.hasPrefix(directory.path + "/")
+    }
+
+    public func deleteManagedPDF(at url: URL) {
+        guard isManagedPDFURL(url) else { return }
+        try? fileManager.removeItem(at: url.deletingLastPathComponent())
+    }
+
     public func quarantine(payloadID: String, reason: String) throws {
         let handoff = try handoff(payloadID: payloadID)
         let failed = FailedSourceLinkHandoff(
@@ -171,10 +213,15 @@ public struct SourceLinkHandoffStore {
     public func retryFailed(payloadID: String) throws {
         let failed = try failedHandoff(payloadID: payloadID)
         try save(failed.handoff)
-        try deleteFailed(payloadID: payloadID)
+        try? fileManager.removeItem(at: failedPayloadURL(payloadID: payloadID))
     }
 
     public func deleteFailed(payloadID: String) throws {
+        if let failed = try? failedHandoff(payloadID: payloadID),
+           failed.handoff.sourceSurface == "share_sheet_pdf_file",
+           let fileURL = URL(string: failed.handoff.inputURL) {
+            deleteManagedPDF(at: fileURL)
+        }
         try? fileManager.removeItem(at: failedPayloadURL(payloadID: payloadID))
     }
 
