@@ -10,6 +10,48 @@ import PDFKit
 
 @MainActor
 final class Gate1AppModelWorkflowTests: XCTestCase {
+    func testMixedAudioIsExplicitPerSessionAndRestoresDefaultSystemOwnership() {
+        let defaults = UserDefaults.standard
+        let priorAvailability = defaults.object(forKey: "showsMixWithOtherAudioOption")
+        let priorVolume = defaults.object(forKey: "mixedPlaybackVolume")
+        defer {
+            if let priorAvailability {
+                defaults.set(priorAvailability, forKey: "showsMixWithOtherAudioOption")
+            } else {
+                defaults.removeObject(forKey: "showsMixWithOtherAudioOption")
+            }
+            if let priorVolume {
+                defaults.set(priorVolume, forKey: "mixedPlaybackVolume")
+            } else {
+                defaults.removeObject(forKey: "mixedPlaybackVolume")
+            }
+        }
+        let audio = MixedAudioPolicyRecordingClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio)
+        model.resetAndSeed()
+        model.showsMixWithOtherAudioOption = true
+        model.mixWithOtherAudioAvailabilityChanged()
+        model.startItem(id: "item-pill")
+
+        XCTAssertFalse(model.mixesWithOtherAudio)
+
+        model.setMixesWithOtherAudio(true)
+        model.mixedPlaybackVolume = 0.35
+        model.mixedPlaybackVolumeChanged()
+
+        XCTAssertTrue(model.mixesWithOtherAudio)
+        XCTAssertEqual(audio.mixingStates.last, true)
+        XCTAssertEqual(audio.playbackVolumes.last ?? 0, 0.35, accuracy: 0.001)
+        XCTAssertEqual(audio.remoteCommandHandlingStates.last, false)
+
+        model.endSession()
+
+        XCTAssertFalse(model.mixesWithOtherAudio)
+        XCTAssertEqual(audio.mixingStates.last, false)
+        XCTAssertEqual(audio.playbackVolumes.last, 1)
+        XCTAssertEqual(audio.remoteCommandHandlingStates.last, true)
+    }
+
     func testResolvedPrivateListeningMapIsLoadedAsVisibleNavigableScenes() throws {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "visible-private-map-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -3213,6 +3255,32 @@ private final class WorkflowRecordingAudioClient: AudioPlaybackClient {
             textEnd: currentOffset + 1,
             anchorConfidence: .textRange
         )
+    }
+}
+
+private final class MixedAudioPolicyRecordingClient: AudioPlaybackClient {
+    var mixingStates: [Bool] = []
+    var playbackVolumes: [Float] = []
+    var remoteCommandHandlingStates: [Bool] = []
+
+    func prepareSpeechText(_ text: String) throws -> String {
+        SpeechTextNormalizer.normalize(text)
+    }
+
+    func play(targetId: String) throws {}
+
+    func pause() throws {}
+
+    func setMixesWithOtherAudio(_ enabled: Bool) throws {
+        mixingStates.append(enabled)
+    }
+
+    func setPlaybackVolume(_ volume: Float) throws {
+        playbackVolumes.append(volume)
+    }
+
+    func setRemoteCommandHandlingEnabled(_ enabled: Bool) {
+        remoteCommandHandlingStates.append(enabled)
     }
 }
 

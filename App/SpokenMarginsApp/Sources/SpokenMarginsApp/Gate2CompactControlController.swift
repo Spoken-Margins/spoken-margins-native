@@ -257,6 +257,7 @@ final class Gate2CompactControlController {
     private var queuedApplicationCommandHandler: (@MainActor (String, String?) -> Bool)?
     private let liveActivity: any Gate2LiveActivityControlling
     private let liveSpeechNowPlaying = Gate2LiveSpeechNowPlayingController()
+    private var nowPlayingEnabled = true
     private var lastPublishedSnapshot: CompactControlSnapshot?
     private var latestAppSnapshot: SessionSnapshot?
     private(set) var lastCommand: CompactControlCommand?
@@ -341,6 +342,16 @@ final class Gate2CompactControlController {
         publishCurrentSnapshot(force: true)
     }
 
+    func setNowPlayingEnabled(_ enabled: Bool) {
+        guard nowPlayingEnabled != enabled else { return }
+        nowPlayingEnabled = enabled
+        if enabled {
+            publishCurrentSnapshot(force: true)
+        } else {
+            liveSpeechNowPlaying.end()
+        }
+    }
+
     func endLiveActivities() {
         lastPublishedSnapshot = nil
         liveActivity.endAll()
@@ -353,6 +364,7 @@ final class Gate2CompactControlController {
             "gate2CompactSurface": snapshot?.compactSurfaceReady == true ? "ready" : "not_ready",
             "gate2SurfaceProfile": snapshot?.surfaceProfileId ?? "none",
             "gate2NowPlaying": liveSpeechNowPlaying.status,
+            "gate2NowPlayingEnabled": nowPlayingEnabled ? "true" : "false",
             "gate2NowPlayingOwner": snapshot.map(Gate2LiveSpeechNowPlayingPolicy.isLiveSpeech) == true ? "live_speech_coordinator" : "media_coordinator",
             "gate2LastRemoteCommand": liveSpeechNowPlaying.lastRemoteCommand,
             "gate2LastRemoteCommandDetail": liveSpeechNowPlaying.lastRemoteCommandDetail,
@@ -397,7 +409,11 @@ final class Gate2CompactControlController {
             return
         }
         lastPublishedSnapshot = snapshot
-        liveSpeechNowPlaying.publish(snapshot)
+        if nowPlayingEnabled {
+            liveSpeechNowPlaying.publish(snapshot)
+        } else {
+            liveSpeechNowPlaying.end()
+        }
         liveActivity.publish(
             snapshot,
             sharedMarginPrompt: sharedMarginPrompt,

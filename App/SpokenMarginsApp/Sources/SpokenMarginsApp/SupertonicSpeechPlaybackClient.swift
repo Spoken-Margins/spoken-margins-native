@@ -424,6 +424,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let maxCharacters: Int
     private let startupBufferChunkCount: Int
     private var playbackRate: Float
+    private var mixesWithOtherAudio = false
+    private var playbackVolume: Float = 1
     private var preparedSourceText = ""
     private var preparedSpeechProjection = NormalizedSpeechText(
         text: "",
@@ -690,6 +692,29 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             try fallback.setPlaybackRate(Double(clamped))
         } else if state.activePlayer?.timeControlStatus == .playing {
             state.activePlayer?.rate = clamped
+        }
+    }
+
+    func setMixesWithOtherAudio(_ enabled: Bool) throws {
+        let state = lock.withLock { () -> (usesFallback: Bool, hasActivePlayer: Bool) in
+            mixesWithOtherAudio = enabled
+            return (fallbackIsActive, player != nil)
+        }
+        try fallback.setMixesWithOtherAudio(enabled)
+        if state.hasActivePlayer, !state.usesFallback {
+            try activateAudioSession()
+        }
+    }
+
+    func setPlaybackVolume(_ volume: Float) throws {
+        let clamped = max(0, min(1, volume))
+        let state = lock.withLock { () -> (usesFallback: Bool, activePlayer: AVPlayer?) in
+            playbackVolume = clamped
+            return (fallbackIsActive, player)
+        }
+        try fallback.setPlaybackVolume(clamped)
+        if !state.usesFallback {
+            state.activePlayer?.volume = clamped
         }
     }
 
@@ -1415,6 +1440,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             let item = AVPlayerItem(url: audioURL)
             item.audioTimePitchAlgorithm = .timeDomain
             let nextPlayer = AVPlayer(playerItem: item)
+            nextPlayer.volume = lock.withLock { playbackVolume }
             if observesPlayerLifecycle {
                 installPlaybackObservers(for: item, request: request)
             }
@@ -1669,11 +1695,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             return
         }
         #if os(iOS)
-        // Now Playing eligibility requires a non-mixable playback session.
-        // `.duckOthers` implicitly makes this session mixable, which lets audio
-        // play while preventing iOS from promoting the app to the system media
-        // controls.
-        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [])
+        let options: AVAudioSession.CategoryOptions = lock.withLock {
+            mixesWithOtherAudio ? [.mixWithOthers] : []
+        }
+        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: options)
         try AVAudioSession.sharedInstance().setActive(true)
         #endif
     }

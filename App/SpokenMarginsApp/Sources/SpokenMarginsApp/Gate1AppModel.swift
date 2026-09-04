@@ -494,6 +494,8 @@ final class Gate1AppModel: ObservableObject {
     private static let dismissedQuickAccessFilesKey = "dismissedQuickAccessFilesV1"
     private static let supertonicTTSMigrationKey = "supertonicTTSMigrationV1"
     private static let supertonicVoicePendingTermsKey = "supertonicVoicePendingTermsV1"
+    private static let showsMixWithOtherAudioOptionKey = "showsMixWithOtherAudioOption"
+    private static let mixedPlaybackVolumeKey = "mixedPlaybackVolume"
     static let exportPreviewCharacterLimit = 24_000
     nonisolated static let supportedPlaybackRates: [Double] = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
     static let privateSharingNoteCharacterLimit = 500
@@ -663,6 +665,16 @@ final class Gate1AppModel: ObservableObject {
         let rawRate = stored == 0 ? 1.0 : stored
         return max(0.5, min(2.0, (rawRate * 4).rounded() / 4))
     }()
+    @Published var showsMixWithOtherAudioOption = UserDefaults.standard.bool(
+        forKey: Gate1AppModel.showsMixWithOtherAudioOptionKey
+    )
+    @Published private(set) var mixesWithOtherAudio = false
+    @Published var mixedPlaybackVolume: Double = {
+        guard UserDefaults.standard.object(forKey: Gate1AppModel.mixedPlaybackVolumeKey) != nil else {
+            return 1
+        }
+        return max(0, min(1, UserDefaults.standard.double(forKey: Gate1AppModel.mixedPlaybackVolumeKey)))
+    }()
     @Published var podcastCacheLimitGB = PodcastCacheLimitGB(
         rawValue: UserDefaults.standard.integer(forKey: "podcastCacheLimitGB")
     )?.rawValue ?? PodcastCacheLimitGB.defaultValue.rawValue
@@ -736,6 +748,7 @@ final class Gate1AppModel: ObservableObject {
     private let openAIResponsesClient = OpenAIResponsesClient()
     private let streamingSpeechQueue = StreamingSpeechQueue()
     private var speechPlaybackClient: AudioPlaybackClient?
+    private var sessionAudioPlaybackClient: AudioPlaybackClient?
     private var supertonicRenderer: SupertonicNarrationRenderer?
     private var preparedAudioCoordinator: PreparedAudioCoordinator?
     private var currentSupertonicRenderSignature: TTSRenderSignature?
@@ -3191,6 +3204,9 @@ final class Gate1AppModel: ObservableObject {
 
     func start() {
         guard !requireTermsDecisionBeforePlayback(.startCurrentItem) else { return }
+        if !hasActiveSession {
+            resetMixWithOtherAudioForNewSession()
+        }
         stopSpeechPreviews()
         streamingSpeechQueue.stopAndClear()
         scheduleTextAudioPrewarmIfNeeded(itemId: activeItemId)
@@ -4494,6 +4510,7 @@ final class Gate1AppModel: ObservableObject {
     @discardableResult
     private func ensureSessionForSelectedItem(_ engine: SessionEngine) throws -> Bool {
         guard engine.currentSession?.itemId != activeItemId else { return false }
+        resetMixWithOtherAudioForNewSession()
         if engine.currentSession != nil {
             snapshot = try engine.endSession()
         }
@@ -4784,6 +4801,7 @@ final class Gate1AppModel: ObservableObject {
 
     func startNewSession(id: String) {
         guard !rejectNavigationOrSessionMutationWhileRecording("start_new_session") else { return }
+        resetMixWithOtherAudioForNewSession()
         cancelSkimBridge(restoringOrigin: true, resumeSource: false)
         cancelSleepTimer()
         announcedImportedInterjectionIDs.removeAll()
@@ -4811,6 +4829,7 @@ final class Gate1AppModel: ObservableObject {
 
     func openSession(_ session: Session) {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_session") else { return }
+        resetMixWithOtherAudioForNewSession()
         announcedImportedInterjectionIDs.removeAll()
         pendingImportedCommentary = nil
         stopSpeechPreviews()
@@ -4838,6 +4857,7 @@ final class Gate1AppModel: ObservableObject {
 
     func resumeSession(_ session: Session) {
         guard !rejectNavigationOrSessionMutationWhileRecording("resume_session") else { return }
+        resetMixWithOtherAudioForNewSession()
         cancelSleepTimer()
         announcedImportedInterjectionIDs.removeAll()
         pendingImportedCommentary = nil
@@ -4891,6 +4911,7 @@ final class Gate1AppModel: ObservableObject {
                 snapshot = try engine.endSession()
                 streamingSpeechQueue.stopAndClear()
                 gate2CompactControls.endLiveActivities()
+                resetMixWithOtherAudioForNewSession()
             }
 
             if let existing = try store.loadSessions(itemId: id).first {
@@ -5244,6 +5265,80 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    func mixWithOtherAudioAvailabilityChanged() {
+        UserDefaults.standard.set(
+            showsMixWithOtherAudioOption,
+            forKey: Self.showsMixWithOtherAudioOptionKey
+        )
+        if !showsMixWithOtherAudioOption, mixesWithOtherAudio {
+            setMixesWithOtherAudio(false)
+        }
+        diagnostics["mixWithOtherAudioAvailable"] = showsMixWithOtherAudioOption ? "true" : "false"
+    }
+
+    func setMixesWithOtherAudio(_ enabled: Bool) {
+        guard enabled != mixesWithOtherAudio else { return }
+        guard !enabled || showsMixWithOtherAudioOption else {
+            reportFailure("Enable Mix with Other Audio in Settings before using it for a listening session.")
+            return
+        }
+        let audio = sessionAudioPlaybackClient ?? audioPlaybackClientOverride
+        do {
+            if enabled {
+                gate2CompactControls.setNowPlayingEnabled(false)
+                audio?.setRemoteCommandHandlingEnabled(false)
+                try audio?.setMixesWithOtherAudio(true)
+                try audio?.setPlaybackVolume(Float(mixedPlaybackVolume))
+            } else {
+                try audio?.setMixesWithOtherAudio(false)
+                try audio?.setPlaybackVolume(1)
+                audio?.setRemoteCommandHandlingEnabled(true)
+                gate2CompactControls.setNowPlayingEnabled(true)
+            }
+            mixesWithOtherAudio = enabled
+            diagnostics["mixWithOtherAudio"] = enabled ? "enabled_for_session" : "disabled"
+            diagnostics["spokenMarginsPlaybackVolume"] = String(format: "%.2f", enabled ? mixedPlaybackVolume : 1)
+            updateGate2CompactState()
+        } catch {
+            if enabled {
+                try? audio?.setMixesWithOtherAudio(false)
+                try? audio?.setPlaybackVolume(1)
+                audio?.setRemoteCommandHandlingEnabled(true)
+                gate2CompactControls.setNowPlayingEnabled(true)
+            } else {
+                gate2CompactControls.setNowPlayingEnabled(false)
+                audio?.setRemoteCommandHandlingEnabled(false)
+                try? audio?.setMixesWithOtherAudio(true)
+                try? audio?.setPlaybackVolume(Float(mixedPlaybackVolume))
+            }
+            reportFailure(error, context: "Audio mixing update failed")
+        }
+    }
+
+    func mixedPlaybackVolumeChanged() {
+        mixedPlaybackVolume = max(0, min(1, mixedPlaybackVolume))
+        UserDefaults.standard.set(mixedPlaybackVolume, forKey: Self.mixedPlaybackVolumeKey)
+        guard mixesWithOtherAudio else { return }
+        do {
+            try (sessionAudioPlaybackClient ?? audioPlaybackClientOverride)?.setPlaybackVolume(
+                Float(mixedPlaybackVolume)
+            )
+            diagnostics["spokenMarginsPlaybackVolume"] = String(format: "%.2f", mixedPlaybackVolume)
+        } catch {
+            reportFailure(error, context: "Spoken Margins volume update failed")
+        }
+    }
+
+    private func resetMixWithOtherAudioForNewSession() {
+        if mixesWithOtherAudio {
+            setMixesWithOtherAudio(false)
+        } else {
+            sessionAudioPlaybackClient?.setRemoteCommandHandlingEnabled(true)
+            gate2CompactControls.setNowPlayingEnabled(true)
+        }
+        diagnostics["mixWithOtherAudio"] = "default_off_for_session"
+    }
+
     nonisolated static func nextPlaybackRate(after current: Double) -> Double {
         supportedPlaybackRates.first(where: { $0 > current + 0.001 }) ?? supportedPlaybackRates[0]
     }
@@ -5553,6 +5648,7 @@ final class Gate1AppModel: ObservableObject {
         }
         streamingSpeechQueue.stopAndClear()
         gate2CompactControls.endLiveActivities()
+        resetMixWithOtherAudioForNewSession()
         if let renderer = supertonicRenderer {
             Task { await renderer.unload() }
         }
@@ -7846,6 +7942,7 @@ final class Gate1AppModel: ObservableObject {
             } applicationCommandHandler: { [weak self] command, targetID in
                 self?.handleGate2CompactApplicationCommand(command, targetID: targetID) ?? false
             }
+            gate2CompactControls.setNowPlayingEnabled(!mixesWithOtherAudio)
             updateGate2CompactState()
             diagnostics.merge(gate2CompactControls.diagnostics(), uniquingKeysWith: { _, new in new })
         } catch {
@@ -9031,6 +9128,8 @@ final class Gate1AppModel: ObservableObject {
     private func makeAudioPlaybackClient() throws -> AudioPlaybackClient {
         if let audioPlaybackClientOverride {
             diagnostics["sessionTTS"] = "Test audio override"
+            try configureAudioPlaybackPolicy(audioPlaybackClientOverride)
+            sessionAudioPlaybackClient = audioPlaybackClientOverride
             return audioPlaybackClientOverride
         }
         sanitizeTTSMode()
@@ -9040,8 +9139,16 @@ final class Gate1AppModel: ObservableObject {
             speech: speech,
             media: makeMediaPlaybackClient()
         )
+        try configureAudioPlaybackPolicy(routed)
+        sessionAudioPlaybackClient = routed
         streamingSpeechQueue.configureSpeechClient(routed)
         return routed
+    }
+
+    private func configureAudioPlaybackPolicy(_ audio: AudioPlaybackClient) throws {
+        try audio.setMixesWithOtherAudio(mixesWithOtherAudio)
+        try audio.setPlaybackVolume(mixesWithOtherAudio ? Float(mixedPlaybackVolume) : 1)
+        audio.setRemoteCommandHandlingEnabled(!mixesWithOtherAudio)
     }
 
     private func makeSpeechPlaybackClient() throws -> AudioPlaybackClient {

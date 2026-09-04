@@ -16,6 +16,27 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertNil(AppTTSVoiceSelection.system.supertonicVoice)
     }
 
+    func testIdleSupertonicMixPolicyForwardsWithoutActivatingAnAudioSession() throws {
+        let fallback = RecordingFallbackAudioClient()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: FailingSupertonicRenderer(),
+            voice: .m2,
+            speed: 1,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            audioSessionActivator: {
+                throw NSError(domain: "unexpected_idle_audio_session_activation", code: 1)
+            },
+            fallbackClient: fallback
+        )
+
+        try client.setMixesWithOtherAudio(true)
+        try client.setPlaybackVolume(0.35)
+
+        XCTAssertEqual(fallback.mixingStates, [true])
+        XCTAssertEqual(fallback.playbackVolumes, [0.35])
+    }
+
     func testChunkerPrefersSentenceThenCommaThenWhitespaceAndCapsLength() {
         let sentence = String(repeating: "opening words ", count: 8) + "finished. More text follows."
         let sentenceSlice = RenderedSpeechChunker.selectChunkPrefix(sentence, maxCharacters: 150)
@@ -1341,6 +1362,8 @@ private final class RecordingFallbackAudioClient: AudioPlaybackClient, @unchecke
     var preparedText = ""
     var playedOffsets: [Int] = []
     var playbackRates: [Double] = []
+    var mixingStates: [Bool] = []
+    var playbackVolumes: [Float] = []
     var pauseCount = 0
     var offset = 0
 
@@ -1362,6 +1385,14 @@ private final class RecordingFallbackAudioClient: AudioPlaybackClient, @unchecke
 
     func setPlaybackRate(_ rate: Double) throws {
         playbackRates.append(rate)
+    }
+
+    func setMixesWithOtherAudio(_ enabled: Bool) throws {
+        mixingStates.append(enabled)
+    }
+
+    func setPlaybackVolume(_ volume: Float) throws {
+        playbackVolumes.append(volume)
     }
 
     func pause() throws {

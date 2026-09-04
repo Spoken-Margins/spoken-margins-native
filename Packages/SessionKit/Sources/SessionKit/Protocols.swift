@@ -162,6 +162,8 @@ public protocol AudioPlaybackClient {
     func requestMediaSeek(toMediaTimeMs mediaTimeMs: Int) throws -> MediaSeekRequest
     func mediaSeekResolution(for request: MediaSeekRequest) -> MediaSeekResolution
     func setPlaybackRate(_ rate: Double) throws
+    func setMixesWithOtherAudio(_ enabled: Bool) throws
+    func setPlaybackVolume(_ volume: Float) throws
     func currentPlaybackPosition() -> PlaybackPosition?
     func currentCharOffset() -> Int?
     func currentRecoveryCharOffset() -> Int?
@@ -293,6 +295,10 @@ public extension AudioPlaybackClient {
     }
 
     func setPlaybackRate(_ rate: Double) throws {}
+
+    func setMixesWithOtherAudio(_ enabled: Bool) throws {}
+
+    func setPlaybackVolume(_ volume: Float) throws {}
 
     @discardableResult
     func armPostResumeAudioSample(_ request: PostResumeAudioSampleRequest) -> Bool {

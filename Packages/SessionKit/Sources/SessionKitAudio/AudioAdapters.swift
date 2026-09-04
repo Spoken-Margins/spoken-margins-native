@@ -826,6 +826,8 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
     private var paused = false
     private var voiceIdentifier: String?
     private var speechRate: Float
+    private var mixesWithOtherAudio = false
+    private var playbackVolume: Float = 1
     private let readsSpeechSettingsAtPlayback: Bool
     #if canImport(AVFoundation)
     private weak var activeUtterance: AVSpeechUtterance?
@@ -920,7 +922,11 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
             replaceSynthesizer()
         }
         #if os(iOS)
-        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [])
+        try AVAudioSession.sharedInstance().setCategory(
+            .playback,
+            mode: .spokenAudio,
+            options: mixesWithOtherAudio ? [.mixWithOthers] : []
+        )
         try AVAudioSession.sharedInstance().setActive(true)
         #endif
         lastTargetId = targetId
@@ -1005,6 +1011,32 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
             paused = true
             replaceSynthesizer()
         }
+        #endif
+    }
+
+    public func setMixesWithOtherAudio(_ enabled: Bool) throws {
+        mixesWithOtherAudio = enabled
+        #if canImport(AVFoundation) && os(iOS)
+        guard synthesizer.isSpeaking || paused || !chunksByUtteranceId.isEmpty else { return }
+        try AVAudioSession.sharedInstance().setCategory(
+            .playback,
+            mode: .spokenAudio,
+            options: enabled ? [.mixWithOthers] : []
+        )
+        try AVAudioSession.sharedInstance().setActive(true)
+        #endif
+    }
+
+    public func setPlaybackVolume(_ volume: Float) throws {
+        let clamped = max(0, min(1, volume))
+        guard playbackVolume != clamped else { return }
+        playbackVolume = clamped
+        #if canImport(AVFoundation)
+        guard synthesizer.isSpeaking,
+              !paused,
+              let targetId = lastTargetId else { return }
+        let restartOffset = currentOffset ?? lastStartOffset
+        try play(targetId: targetId, from: restartOffset)
         #endif
     }
 
@@ -1099,6 +1131,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
 
     private func makeUtterance(_ text: String, mode: SpeechPreviewMode) -> AVSpeechUtterance {
         let utterance = AVSpeechUtterance(string: text)
+        utterance.volume = playbackVolume
         switch mode {
         case .spokenContent:
             utterance.rate = currentSpeechSettings().rate
@@ -1212,6 +1245,8 @@ public final class PreparedAudioPlaybackClient: NSObject, AudioPlaybackClient, @
     private var activeTargetId: String?
     private var lastRequestedMediaTimeMs = 0
     private var playbackRate: Double = 1
+    private var mixesWithOtherAudio = false
+    private var playbackVolume: Float = 1
 
     public override init() {
         super.init()
@@ -1255,6 +1290,7 @@ public final class PreparedAudioPlaybackClient: NSObject, AudioPlaybackClient, @
             let nextPlayer = try AVAudioPlayer(contentsOf: url)
             nextPlayer.delegate = self
             nextPlayer.enableRate = true
+            nextPlayer.volume = playbackVolume
             nextPlayer.prepareToPlay()
             player = nextPlayer
             activeTargetId = targetId
@@ -1300,6 +1336,22 @@ public final class PreparedAudioPlaybackClient: NSObject, AudioPlaybackClient, @
         if player?.isPlaying == true {
             player?.rate = Float(playbackRate)
         }
+        #endif
+    }
+
+    public func setMixesWithOtherAudio(_ enabled: Bool) throws {
+        mixesWithOtherAudio = enabled
+        #if canImport(AVFoundation) && (os(iOS) || os(watchOS))
+        guard player != nil else { return }
+        try configurePreparedAudioSession()
+        try AVAudioSession.sharedInstance().setActive(true)
+        #endif
+    }
+
+    public func setPlaybackVolume(_ volume: Float) throws {
+        playbackVolume = max(0, min(1, volume))
+        #if canImport(AVFoundation)
+        player?.volume = playbackVolume
         #endif
     }
 
@@ -1382,7 +1434,11 @@ public final class PreparedAudioPlaybackClient: NSObject, AudioPlaybackClient, @
         #if os(watchOS)
         try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [])
         #else
-        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [])
+        try AVAudioSession.sharedInstance().setCategory(
+            .playback,
+            mode: .spokenAudio,
+            options: mixesWithOtherAudio ? [.mixWithOthers] : []
+        )
         #endif
     }
     #endif
@@ -1555,7 +1611,10 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private var navigationSeekResolutionOrder: [Int] = []
     private var knownDurations: [String: Int] = [:]
     private var playbackRate: Double = 1
+    private var mixesWithOtherAudio = false
+    private var playbackVolume: Float = 1
     private var paused = true
+    private var remoteCommandHandlingEnabled = true
     private var interruptionResumePolicy = AudioPlaybackInterruptionResumePolicy()
     private var preferredSkipBackSeconds: Int
     private var preferredSkipForwardSeconds: Int
@@ -1581,11 +1640,30 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     }
 
     public func setRemoteCommandHandlingEnabled(_ enabled: Bool) {
+        remoteCommandHandlingEnabled = enabled
         if enabled {
             installRemoteCommandHandlers()
+            publishNowPlaying(isPlaying: !paused)
         } else {
             removeRemoteCommandHandlers()
+            clearNowPlaying()
         }
+    }
+
+    public func setMixesWithOtherAudio(_ enabled: Bool) throws {
+        mixesWithOtherAudio = enabled
+        #if canImport(AVFoundation) && (os(iOS) || os(watchOS))
+        guard player != nil else { return }
+        try configureStreamAudioSession()
+        try AVAudioSession.sharedInstance().setActive(true)
+        #endif
+    }
+
+    public func setPlaybackVolume(_ volume: Float) throws {
+        playbackVolume = max(0, min(1, volume))
+        #if canImport(AVFoundation)
+        player?.volume = playbackVolume
+        #endif
     }
 
     public func setPreferredSkipIntervals(backSeconds: Int, forwardSeconds: Int) {
@@ -1650,6 +1728,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             removeTimeObserver()
             let item = AVPlayerItem(url: url)
             player = AVPlayer(playerItem: item)
+            player?.volume = playbackVolume
             player?.automaticallyWaitsToMinimizeStalling = true
             activeTargetId = targetId
             activePlaybackURL = url
@@ -2313,6 +2392,10 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     private func publishNowPlaying(isPlaying: Bool) {
         #if canImport(MediaPlayer) && os(iOS)
+        guard remoteCommandHandlingEnabled else {
+            clearNowPlaying()
+            return
+        }
         guard activeTargetId != nil || mediaContext != nil else { return }
         let targetId = activeTargetId ?? mediaContext?.targetId
         let durationSeconds = targetId.flatMap { durationMs(for: $0) }.map { max(0, Double($0) / 1000) }
@@ -2450,7 +2533,11 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         #if os(watchOS)
         try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [])
         #else
-        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [])
+        try AVAudioSession.sharedInstance().setCategory(
+            .playback,
+            mode: .spokenAudio,
+            options: mixesWithOtherAudio ? [.mixWithOthers] : []
+        )
         #endif
     }
     #endif
@@ -2465,6 +2552,7 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
     private let speech: AudioPlaybackClient
     private let media: AudioPlaybackClient
     private var activeRoute: Route?
+    private var remoteCommandHandlingEnabled = true
 
     public init(speech: AudioPlaybackClient, media: AudioPlaybackClient) {
         self.speech = speech
@@ -2478,7 +2566,7 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
             media.setRemoteCommandHandlingEnabled(false)
             try speech.configureMediaContext(nil)
         } else {
-            media.setRemoteCommandHandlingEnabled(true)
+            media.setRemoteCommandHandlingEnabled(remoteCommandHandlingEnabled)
         }
     }
 
@@ -2507,7 +2595,7 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
     public func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {
         activeRoute = .media
         try speech.stop()
-        media.setRemoteCommandHandlingEnabled(true)
+        media.setRemoteCommandHandlingEnabled(remoteCommandHandlingEnabled)
         try media.play(targetId: targetId, fromMediaTimeMs: mediaTimeMs)
     }
 
@@ -2564,6 +2652,16 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
         }
     }
 
+    public func setMixesWithOtherAudio(_ enabled: Bool) throws {
+        try speech.setMixesWithOtherAudio(enabled)
+        try media.setMixesWithOtherAudio(enabled)
+    }
+
+    public func setPlaybackVolume(_ volume: Float) throws {
+        try speech.setPlaybackVolume(volume)
+        try media.setPlaybackVolume(volume)
+    }
+
     public func isPlaybackComplete(targetId: String) -> Bool {
         speech.isPlaybackComplete(targetId: targetId) || media.isPlaybackComplete(targetId: targetId)
     }
@@ -2596,6 +2694,7 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
     }
 
     public func setRemoteCommandHandlingEnabled(_ enabled: Bool) {
+        remoteCommandHandlingEnabled = enabled
         switch activeRoute {
         case .speech:
             speech.setRemoteCommandHandlingEnabled(enabled)
@@ -2636,6 +2735,7 @@ public final class SystemRecordingClient: RecordingClient {
     private let fileManager: FileManager
     private let baseDirectory: URL?
     private let deactivateSessionOnFinish: Bool
+    private var shouldNotifyOtherAudioOnFinish = false
 
     public init(baseDirectory: URL? = nil, fileManager: FileManager = .default, deactivateSessionOnFinish: Bool = false) {
         self.baseDirectory = baseDirectory
@@ -2736,10 +2836,11 @@ public final class SystemRecordingClient: RecordingClient {
         }
         #endif
         #if os(iOS) || os(watchOS)
+        shouldNotifyOtherAudioOnFinish = session.categoryOptions.contains(.mixWithOthers)
         #if os(watchOS)
-        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.allowBluetoothHFP, .duckOthers])
+        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.allowBluetoothHFP])
         #else
-        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetoothHFP, .duckOthers])
+        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetoothHFP])
         #endif
         try session.setActive(true)
         #endif
@@ -2774,9 +2875,10 @@ public final class SystemRecordingClient: RecordingClient {
         self.recorder = nil
         self.currentURL = nil
         #if os(iOS) || os(watchOS)
-        if deactivateSessionOnFinish {
+        if deactivateSessionOnFinish || shouldNotifyOtherAudioOnFinish {
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         }
+        shouldNotifyOtherAudioOnFinish = false
         #endif
         return relativeRecordingPath(for: currentURL)
         #else
@@ -2791,6 +2893,7 @@ public final class SystemRecordingClient: RecordingClient {
         recorder?.deleteRecording()
         recorder = nil
         currentURL = nil
+        shouldNotifyOtherAudioOnFinish = false
         if let url {
             try? fileManager.removeItem(at: url)
         }

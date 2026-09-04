@@ -160,6 +160,29 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(media.remoteCommandHandlingStates.last, false)
     }
 
+    func testRoutedPlaybackAppliesMixingAndVolumeToEveryRouteWithoutReclaimingRemoteCommands() throws {
+        let speech = RecordingAudioClient()
+        let media = RecordingAudioClient()
+        let routed = RoutedAudioPlaybackClient(speech: speech, media: media)
+
+        try routed.setMixesWithOtherAudio(true)
+        try routed.setPlaybackVolume(0.35)
+        routed.setRemoteCommandHandlingEnabled(false)
+        try routed.configureMediaContext(PlaybackMediaContext(
+            itemId: "item",
+            targetType: .transcriptBackedMedia,
+            targetId: "media",
+            title: "Media"
+        ))
+        try routed.play(targetId: "media", fromMediaTimeMs: 0)
+
+        XCTAssertEqual(speech.mixingStates, [true])
+        XCTAssertEqual(media.mixingStates, [true])
+        XCTAssertEqual(speech.playbackVolumes, [0.35])
+        XCTAssertEqual(media.playbackVolumes, [0.35])
+        XCTAssertEqual(media.remoteCommandHandlingStates.last, false)
+    }
+
     #if canImport(Speech)
     func testSpeechRecognitionRequestsAreAlwaysOnDeviceOnly() {
         let request = makeOnDeviceSpeechRecognitionRequest(url: URL(fileURLWithPath: "/tmp/context.m4a"))
@@ -5541,6 +5564,8 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     var transportState: PlaybackTransportState?
     var configuredSpeechSettings: [(String?, Float)] = []
     var remoteCommandHandlingStates: [Bool] = []
+    var mixingStates: [Bool] = []
+    var playbackVolumes: [Float] = []
     var acceptsPostResumeSamples = false
     var postResumeSampleRequests: [PostResumeAudioSampleRequest] = []
     var eventLog: [String] = []
@@ -5588,6 +5613,14 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     func setPlaybackRate(_ rate: Double) throws {
         playbackRate = rate
         playbackRates.append(rate)
+    }
+
+    func setMixesWithOtherAudio(_ enabled: Bool) throws {
+        mixingStates.append(enabled)
+    }
+
+    func setPlaybackVolume(_ volume: Float) throws {
+        playbackVolumes.append(volume)
     }
 
     func pause() throws {

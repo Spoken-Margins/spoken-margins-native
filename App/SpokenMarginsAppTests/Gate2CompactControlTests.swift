@@ -644,6 +644,44 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertEqual(model.diagnostics["lockScreenLifecycleRefresh"], model.snapshot.targetType ?? "none")
     }
 
+    func testSessionMixingPolicyCanRelinquishAndRestoreNowPlaying() {
+        let profile = RuntimeCapabilityProfile(
+            id: "mixing-now-playing",
+            displayName: "Mixing Now Playing",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["tts"],
+                "remoteControl": ["display_snapshot", "send_transport_commands"]
+            ]
+        )
+        let repository = InMemorySessionRepository(items: [
+            "text": Item(
+                id: "text",
+                title: "Text",
+                mediaType: "text",
+                text: "Listen while music continues.",
+                externalReference: nil,
+                status: "ready"
+            )
+        ])
+        let engine = SessionEngine(profile: profile, repository: repository, audio: NoopAudioPlaybackClient())
+        _ = try? engine.startSession(itemId: "text")
+        let controller = Gate2CompactControlController(liveActivity: RecordingLiveActivityController())
+        controller.configure(
+            canonicalRuntime: engine,
+            surfaceProfile: profile,
+            skipUnit: "paragraph",
+            commandHandler: { _, _, _, _, _ in }
+        )
+
+        controller.setNowPlayingEnabled(false)
+        XCTAssertEqual(controller.diagnostics()["gate2NowPlayingEnabled"], "false")
+        XCTAssertEqual(controller.diagnostics()["gate2NowPlaying"], "ended")
+
+        controller.setNowPlayingEnabled(true)
+        XCTAssertEqual(controller.diagnostics()["gate2NowPlayingEnabled"], "true")
+    }
+
     func testPeriodicCompactRefreshIgnoresRawElapsedTimeButRetainsMeaningfulChanges() {
         var first = compactSnapshot(
             targetType: TargetType.transcriptBackedMedia.rawValue,

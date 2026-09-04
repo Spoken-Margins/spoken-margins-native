@@ -2101,6 +2101,7 @@ private struct PlaybackScreen: View {
             playbackPosition
             playbackTransport
             playbackRateControl
+            mixedAudioControl
             onDeviceSpeechGenerationControl
             interjectionControls
         }
@@ -2503,6 +2504,62 @@ private struct PlaybackScreen: View {
         .foregroundStyle(.white)
         .buttonStyle(.bordered)
         .tint(AppColors.watchControl)
+    }
+
+    @ViewBuilder
+    private var mixedAudioControl: some View {
+        if model.showsMixWithOtherAudioOption {
+            VStack(alignment: .leading, spacing: 10) {
+                Toggle(
+                    "Mix with Other Audio",
+                    isOn: Binding(
+                        get: { model.mixesWithOtherAudio },
+                        set: { model.setMixesWithOtherAudio($0) }
+                    )
+                )
+                .font(.subheadline.weight(.semibold))
+                .tint(AppColors.ochre)
+                .accessibilityIdentifier("playback.mixWithOtherAudio.toggle")
+
+                if model.mixesWithOtherAudio {
+                    HStack {
+                        Label("Spoken Margins level", systemImage: "speaker.wave.2")
+                        Spacer()
+                        Text(model.mixedPlaybackVolume, format: .percent.precision(.fractionLength(0)))
+                            .monospacedDigit()
+                    }
+                    .font(.caption.weight(.semibold))
+
+                    Slider(
+                        value: $model.mixedPlaybackVolume,
+                        in: 0...1,
+                        step: 0.05,
+                        onEditingChanged: { isEditing in
+                            if !isEditing {
+                                model.mixedPlaybackVolumeChanged()
+                            }
+                        }
+                    )
+                    .tint(AppColors.ochre)
+                    .accessibilityLabel("Spoken Margins level")
+                    .accessibilityValue(
+                        Text(model.mixedPlaybackVolume, format: .percent.precision(.fractionLength(0)))
+                    )
+                    .accessibilityIdentifier("playback.mixedAudioVolume.slider")
+
+                    Text("Other audio can continue. Control Spoken Margins here; Lock Screen and headphone controls may control the other app.")
+                        .font(.caption2)
+                        .foregroundStyle(AppColors.watchSecondary)
+                }
+            }
+            .padding(14)
+            .foregroundStyle(.white)
+            .background(AppColors.watchControl.opacity(0.72))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .disabled(model.snapshot.isRecording)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("playback.mixedAudio.control")
+        }
     }
 
     @ViewBuilder
@@ -3406,6 +3463,20 @@ private struct SettingsScreen: View {
                     }
                     .accessibilityIdentifier("settings.playbackControlStyle.picker")
                     Text("Labeled controls show Text, Sleep Timer, and playback speed. Compact controls show icons only.")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                    Toggle(
+                        "Show “Mix with Other Audio”",
+                        isOn: Binding(
+                            get: { model.showsMixWithOtherAudioOption },
+                            set: { enabled in
+                                model.showsMixWithOtherAudioOption = enabled
+                                model.mixWithOtherAudioAvailabilityChanged()
+                            }
+                        )
+                    )
+                    .accessibilityIdentifier("settings.mixWithOtherAudio.toggle")
+                    Text("Adds a per-session option to the listening screen. It lets music or other audio continue, but Lock Screen and headphone controls may control the other app. Each listening session starts with this option off.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
                     Picker("App Voice", selection: $model.ttsVoiceSelection) {
