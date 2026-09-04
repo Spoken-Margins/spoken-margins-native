@@ -44,6 +44,11 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(audio.playbackVolumes.last ?? 0, 0.35, accuracy: 0.001)
         XCTAssertEqual(audio.remoteCommandHandlingStates.last, false)
 
+        model.mixedPlaybackVolume = 1.5
+        model.mixedPlaybackVolumeChanged()
+
+        XCTAssertEqual(audio.playbackVolumes.last ?? 0, 1.5, accuracy: 0.001)
+
         model.endSession()
 
         XCTAssertFalse(model.mixesWithOtherAudio)
@@ -1524,6 +1529,91 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         )
     }
 
+    func testClearAudioPreparationQueueKeepsLibraryItemsAndRemovesEveryJob() throws {
+        let defaults = UserDefaults.standard
+        let suppressionKey = "suppressedAudioPreparationItemIdsV1"
+        let priorSuppression = defaults.array(forKey: suppressionKey)
+        defer {
+            if let priorSuppression {
+                defaults.set(priorSuppression, forKey: suppressionKey)
+            } else {
+                defaults.removeObject(forKey: suppressionKey)
+            }
+        }
+        defaults.removeObject(forKey: suppressionKey)
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "queue-bankruptcy-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: databaseURL
+        )
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        for index in 0..<200 {
+            let itemId = index.isMultiple(of: 2) ? "item-pill" : "item-essay"
+            try store.saveAudioPreparationJob(AudioPreparationJob(
+                id: "clear-\(index)",
+                itemId: itemId,
+                manifestId: "manifest-\(index)",
+                policy: index.isMultiple(of: 2) ? .demandWindow : .whileCharging,
+                maximumChunkCount: index.isMultiple(of: 2) ? 2 : nil
+            ))
+        }
+        model.refreshAudioPreparationPresentation()
+        let itemCount = model.libraryItems.count
+        XCTAssertEqual(model.audioPreparationQueue.count, 200)
+
+        model.clearAudioPreparationQueue()
+
+        XCTAssertTrue(try store.loadAudioPreparationJobs().isEmpty)
+        XCTAssertEqual(model.libraryItems.count, itemCount)
+        XCTAssertEqual(Set(defaults.stringArray(forKey: suppressionKey) ?? []), ["item-pill", "item-essay"])
+    }
+
+    func testCompletedItemIsLabeledCompleteAndPurgedFromPreparationQueue() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "completed-queue-purge-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: databaseURL
+        )
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        try store.saveSession(Session(
+            id: "completed-item-session",
+            itemId: "item-pill",
+            status: "in_progress",
+            phase: .itemPlayback,
+            currentTargetType: .itemTextTTS,
+            currentTargetId: "item-pill",
+            position: Position(charOffset: 990),
+            completionPercent: 99,
+            playbackRate: 1
+        ))
+        try store.saveAudioPreparationJob(AudioPreparationJob(
+            id: "completed-item-job",
+            itemId: "item-pill",
+            manifestId: "completed-item-manifest",
+            policy: .explicit
+        ))
+
+        let reloadedModel = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: databaseURL
+        )
+        reloadedModel.bootstrapLibraryIfNeeded()
+
+        XCTAssertEqual(reloadedModel.libraryItems.first(where: { $0.id == "item-pill" })?.isCompleted, true)
+        XCTAssertFalse(reloadedModel.audioPreparationQueue.contains(where: { $0.itemId == "item-pill" }))
+        XCTAssertFalse(try store.loadAudioPreparationJobs().contains(where: { $0.itemId == "item-pill" }))
+    }
+
     func testActivePlaybackPreparationSortsAheadOfOtherWork() {
         let explicit = AudioPreparationJob(
             id: "explicit",
@@ -1617,7 +1707,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         )
     }
 
-    func testLibraryStartDoesNotOpenPlaybackWhileOpeningAudioIsStillPreparing() {
+    func testLibraryStartOpensPlaybackWhileOpeningAudioIsStillPreparing() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         let itemID = "item-pill"
@@ -1629,8 +1719,12 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         model.startItem(id: itemID)
 
-        XCTAssertNil(model.snapshot.sessionId)
-        XCTAssertTrue(model.statusMessage.contains("opening audio"))
+        XCTAssertNotNil(model.snapshot.sessionId)
+        XCTAssertEqual(model.screen, .playback)
+        XCTAssertEqual(
+            model.diagnostics["startupAudioPlayback:\(itemID)"],
+            "started_without_waiting_for_opening_buffer"
+        )
     }
 
     func testBackgroundPreparationWindowContinuesOnlyWhileDurableProgressIsMade() async {
@@ -2115,7 +2209,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.canPlayLiveSpeechInstead)
     }
 
-    func testTextAudioPreparationSkipsAnyCompletedOrNinetyPercentSession() {
+    func testTextAudioPreparationSkipsAnyCompletedOrGreaterThanNinetyEightPercentSession() {
         let atCutoff = Session(
             id: "session-at-cutoff",
             itemId: "item-native-text",
@@ -2123,8 +2217,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             phase: .itemPlayback,
             currentTargetType: .itemTextTTS,
             currentTargetId: "item-native-text",
-            position: Position(charOffset: 900),
-            completionPercent: 90,
+            position: Position(charOffset: 990),
+            completionPercent: 99,
             playbackRate: 1
         )
         let belowCutoff = Session(
@@ -2134,8 +2228,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             phase: .itemPlayback,
             currentTargetType: .itemTextTTS,
             currentTargetId: "item-native-text",
-            position: Position(charOffset: 890),
-            completionPercent: 89,
+            position: Position(charOffset: 980),
+            completionPercent: 98,
             playbackRate: 1
         )
         var completed = belowCutoff
@@ -2152,6 +2246,9 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(Gate1AppModel.shouldSkipTextAudioPreparation([completed]))
         XCTAssertTrue(Gate1AppModel.shouldSkipTextAudioPreparation([completedAtOnly]))
         XCTAssertTrue(Gate1AppModel.shouldSkipTextAudioPreparation([belowCutoff, completed]))
+        XCTAssertFalse(Gate1AppModel.itemIsCompleted([belowCutoff]))
+        XCTAssertTrue(Gate1AppModel.itemIsCompleted([atCutoff]))
+        XCTAssertTrue(Gate1AppModel.itemIsCompleted([completed]))
     }
 
     func testResumeCompletedSessionAfterExportRequiresExplicitRestart() throws {

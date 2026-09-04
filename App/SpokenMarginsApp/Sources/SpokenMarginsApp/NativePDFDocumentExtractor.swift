@@ -36,6 +36,23 @@ enum NativePDFDocumentExtractor {
         return try await extract(from: document)
     }
 
+    /// Returns embedded PDF text and authored/visual headings without waiting
+    /// for Vision document analysis. Import paths use this bounded first pass
+    /// so even a large PDF becomes navigable and playable immediately.
+    static func extractBaseline(from url: URL) throws -> NativePDFImportExtraction {
+        guard let document = PDFDocument(url: url) else {
+            throw PDFStructuredTextExtractor.ExtractionError.unreadableDocument
+        }
+        return try baselineExtraction(from: document)
+    }
+
+    static func extractBaseline(from data: Data) throws -> NativePDFImportExtraction {
+        guard let document = PDFDocument(data: data) else {
+            throw PDFStructuredTextExtractor.ExtractionError.unreadableDocument
+        }
+        return try baselineExtraction(from: document)
+    }
+
     static func tableAnnouncement(pageIndex: Int, rowCount: Int, columnCount: Int) -> String {
         let rowLabel = rowCount == 1 ? "row" : "rows"
         let columnLabel = columnCount == 1 ? "column" : "columns"
@@ -106,6 +123,21 @@ enum NativePDFDocumentExtractor {
         }
 
         return try await enhancedExtraction(from: document, baselineMarkdown: baselineMarkdown)
+    }
+
+    private static func baselineExtraction(from document: PDFDocument) throws -> NativePDFImportExtraction {
+        NativePDFImportExtraction(
+            markdown: try PDFStructuredTextExtractor.markdown(from: document),
+            documentStructure: PDFDocumentStructure(
+                extractionEngine: .pdfKit,
+                analysisStatus: {
+                    if #available(iOS 26.0, *) { return .partial }
+                    return .unavailableOnOS
+                }(),
+                pageCount: document.pageCount,
+                analyzedPageCount: 0
+            )
+        )
     }
 
     @available(iOS 26.0, *)

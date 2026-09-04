@@ -440,6 +440,16 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
 
     public func deleteAudioPreparationJob(id: String) throws { try deleteRecord(kind: "audio_preparation_job", id: id) }
 
+    public func deleteAudioPreparationJobs(ids: [String]) throws {
+        let uniqueIds = Array(Set(ids))
+        guard !uniqueIds.isEmpty else { return }
+        try withTransaction {
+            for id in uniqueIds {
+                try deleteRecord(kind: "audio_preparation_job", id: id)
+            }
+        }
+    }
+
     public func saveEditionFingerprintSpine(_ spine: EditionFingerprintSpineArtifact) throws {
         try withTransaction {
             try deleteRecords(kind: "edition_fingerprint_spine", itemId: spine.itemId)

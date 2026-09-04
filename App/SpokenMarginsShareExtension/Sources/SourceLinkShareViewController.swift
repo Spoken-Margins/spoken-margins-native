@@ -177,12 +177,28 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         completion: @escaping ExtractionCompletion
     ) {
         candidate.provider.loadItem(forTypeIdentifier: candidate.identifier, options: nil) { [weak self] item, _ in
+            let presentsPDF = candidate.provider.hasItemConformingToTypeIdentifier(UTType.pdf.identifier)
             if let sharedImport = Self.sharedImport(
                 from: item,
                 identifier: candidate.identifier,
-                presentsPDF: candidate.provider.hasItemConformingToTypeIdentifier(UTType.pdf.identifier)
+                presentsPDF: presentsPDF,
+                suggestedName: candidate.provider.suggestedName
             ) {
                 completion(.success(sharedImport))
+            } else if presentsPDF {
+                candidate.provider.loadDataRepresentation(forTypeIdentifier: candidate.identifier) { data, _ in
+                    if let data,
+                       let sharedImport = Self.persistedPDFImport(
+                           from: data,
+                           suggestedName: candidate.provider.suggestedName
+                       ) {
+                        completion(.success(sharedImport))
+                    } else {
+                        DispatchQueue.main.async {
+                            self?.loadFirstSharedImport(candidates, index: index + 1, completion: completion)
+                        }
+                    }
+                }
             } else {
                 DispatchQueue.main.async {
                     self?.loadFirstSharedImport(candidates, index: index + 1, completion: completion)
@@ -336,13 +352,14 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
     nonisolated private static func sharedImport(
         from item: Any?,
         identifier: String,
-        presentsPDF: Bool
+        presentsPDF: Bool,
+        suggestedName: String? = nil
     ) -> SharedImport? {
         if identifier == UTType.propertyList.identifier,
            let payload = browserPayloadFromPropertyList(item) {
             return .browserText(payload)
         }
-        if let url = item as? URL {
+        if let url = SourceLinkShareRepresentation.url(from: item) {
             if url.isFileURL {
                 if url.pathExtension.lowercased() == "pdf" {
                     return persistedPDFImport(from: url)
@@ -350,6 +367,10 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                 return browserPayloadFromFile(url, identifier: identifier).map(SharedImport.browserText)
             }
             return validatedWebURL(url).map { sharedURLImport($0, forcePDF: presentsPDF) }
+        }
+        if let data = item as? Data, presentsPDF,
+           let persisted = persistedPDFImport(from: data, suggestedName: suggestedName) {
+            return persisted
         }
         if let data = item as? Data,
            let text = String(data: data, encoding: .utf8),
@@ -390,6 +411,19 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         }
         guard let copiedURL = try? SourceLinkHandoffStore.appGroup().savePDF(
             from: url,
+            suggestedFilename: suggestedName
+        ) else {
+            return nil
+        }
+        return .localPDF(copiedURL.absoluteString)
+    }
+
+    nonisolated private static func persistedPDFImport(
+        from data: Data,
+        suggestedName: String? = nil
+    ) -> SharedImport? {
+        guard let copiedURL = try? SourceLinkHandoffStore.appGroup().savePDF(
+            data: data,
             suggestedFilename: suggestedName
         ) else {
             return nil

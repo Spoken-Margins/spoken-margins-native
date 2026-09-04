@@ -165,8 +165,7 @@ struct ExperienceLibraryScreen: View {
                         .foregroundStyle(AppColors.secondaryText)
                     HStack {
                         Button("Hear overview") { model.startItem(id: Gate1AppModel.welcomeSampleItemId) }
-                            .buttonStyle(.borderedProminent)
-                            .tint(AppColors.evergreen)
+                            .buttonStyle(PrimaryButtonStyle())
                         Button("Practice") { model.startGuidedOnboarding() }
                             .buttonStyle(.bordered)
                     }
@@ -258,29 +257,30 @@ struct ExperienceLibraryScreen: View {
     }
 
     private func continueHeroAction(_ item: LibraryItemRow) -> some View {
-        Group {
-            if item.startupAudioState == .preparing {
-                ProgressView()
-                    .controlSize(.regular)
-                    .tint(AppColors.evergreen)
+        Button { model.startItem(id: item.id) } label: {
+            ZStack(alignment: .bottomTrailing) {
+                Image(systemName: "play.fill")
+                    .font(.title3)
+                    .foregroundStyle(item.offlineState == .readyOffline ? .white : AppColors.evergreen)
                     .frame(width: 54, height: 54)
-                    .background(AppColors.softGreen, in: Circle())
-                    .accessibilityLabel("Preparing opening audio for \(item.title)")
-                    .accessibilityValue(startupProgressDescription(item))
-            } else {
-                Button { model.startItem(id: item.id) } label: {
-                    Image(systemName: "play.fill")
-                        .font(.title3)
-                        .foregroundStyle(item.offlineState == .readyOffline ? .white : AppColors.evergreen)
-                        .frame(width: 54, height: 54)
-                        .background(item.offlineState == .readyOffline ? AppColors.evergreen : AppColors.softGreen, in: Circle())
+                    .background(item.offlineState == .readyOffline ? AppColors.evergreen : AppColors.softGreen, in: Circle())
+                if item.startupAudioState == .preparing {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .tint(AppColors.evergreen)
+                        .padding(4)
+                        .background(AppColors.panel, in: Circle())
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Continue \(item.title)")
-                .accessibilityValue(item.offlineState == .readyOffline ? "Ready offline" : "Opening audio ready")
-                .accessibilityIdentifier("library.continue.\(item.id)")
             }
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Continue \(item.title)")
+        .accessibilityValue(
+            item.startupAudioState == .preparing
+                ? "\(startupProgressDescription(item)). Playback can start now."
+                : (item.offlineState == .readyOffline ? "Ready offline" : "Opening audio ready")
+        )
+        .accessibilityIdentifier("library.continue.\(item.id)")
     }
 
     private func startupProgressDescription(_ item: LibraryItemRow) -> String {
@@ -505,28 +505,29 @@ private struct ExperienceLibraryCompactRow: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("library.row.\(row.id)")
 
-            Group {
-                if row.startupAudioState == .preparing {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(AppColors.evergreen)
+            Button(action: onPlay) {
+                ZStack(alignment: .bottomTrailing) {
+                    Image(systemName: row.offlineState == .readyOffline ? "play.fill" : "play")
+                        .foregroundStyle(AppColors.evergreen)
                         .frame(width: 40, height: 40)
                         .background(AppColors.softGreen, in: Circle())
-                        .accessibilityLabel("Preparing opening audio for \(row.title)")
-                        .accessibilityValue(startupProgressDescription)
-                        .accessibilityIdentifier("queue.preparing.\(row.id)")
-                } else {
-                    Button(action: onPlay) {
-                        Image(systemName: row.offlineState == .readyOffline ? "play.fill" : "play")
-                            .foregroundStyle(AppColors.evergreen)
-                            .frame(width: 40, height: 40)
-                            .background(AppColors.softGreen, in: Circle())
+                    if row.startupAudioState == .preparing {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .tint(AppColors.evergreen)
+                            .padding(2)
+                            .background(AppColors.panel, in: Circle())
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(playActionTitle)
-                    .accessibilityIdentifier("queue.start.\(row.id)")
                 }
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel(playActionTitle)
+            .accessibilityValue(
+                row.startupAudioState == .preparing
+                    ? "\(startupProgressDescription). Playback can start now."
+                    : (row.offlineState == .readyOffline ? "Ready offline" : "Ready to start")
+            )
+            .accessibilityIdentifier("queue.start.\(row.id)")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
@@ -535,9 +536,7 @@ private struct ExperienceLibraryCompactRow: View {
         .background(AppColors.panel)
         .contextMenu {
             Button("Open", systemImage: "arrow.right", action: onOpen)
-            if row.startupAudioState != .preparing {
-                Button(playActionTitle, systemImage: "play", action: onPlay)
-            }
+            Button(playActionTitle, systemImage: "play", action: onPlay)
             if !row.isCompleted {
                 Button("Mark Complete", systemImage: "checkmark.circle", action: onComplete)
             }

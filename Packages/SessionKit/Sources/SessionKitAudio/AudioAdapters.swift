@@ -1585,6 +1585,9 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private var postResumeEvidenceAudioMix: AVAudioMix?
     public var postResumePodcastEvidenceHandler: (@Sendable (PostResumePodcastEvidenceCaptureResult) -> Void)?
     #endif
+    #if canImport(AVFoundation) && canImport(MediaToolbox) && !os(watchOS)
+    private var playbackGainAudioMix: PlaybackGainAudioMix?
+    #endif
     private let remoteCommandHandler: (@Sendable (CompactControlCommand, Int?, Double?) -> Void)?
     private let interruptionHandler: (@Sendable (AudioPlaybackInterruptionEvent) -> Void)?
     private let audioSessionNotificationCenter: NotificationCenter
@@ -1649,9 +1652,12 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     }
 
     public func setPlaybackVolume(_ volume: Float) throws {
-        playbackVolume = max(0, min(1, volume))
+        playbackVolume = max(0, min(2, volume))
         #if canImport(AVFoundation)
-        player?.volume = playbackVolume
+        player?.volume = min(1, playbackVolume)
+        #if canImport(MediaToolbox) && !os(watchOS)
+        playbackGainAudioMix?.update(gain: playbackVolume)
+        #endif
         #endif
     }
 
@@ -1717,7 +1723,23 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             removeTimeObserver()
             let item = AVPlayerItem(url: url)
             player = AVPlayer(playerItem: item)
-            player?.volume = playbackVolume
+            player?.volume = min(1, playbackVolume)
+            #if canImport(MediaToolbox) && !os(watchOS)
+            playbackGainAudioMix = nil
+            if mediaContext?.sourceType == .generatedTTSPrerendered, Thread.isMainThread {
+                let level = playbackVolume
+                playbackGainAudioMix = MainActor.assumeIsolated {
+                    guard let assetTrack = item.tracks
+                        .compactMap({ $0.assetTrack })
+                        .first(where: { $0.mediaType == .audio }),
+                          let gainMix = try? PlaybackGainAudioMix(assetTrack: assetTrack, gain: level) else {
+                        return nil
+                    }
+                    item.audioMix = gainMix.audioMix
+                    return gainMix
+                }
+            }
+            #endif
             player?.automaticallyWaitsToMinimizeStalling = true
             activeTargetId = targetId
             activePlaybackURL = url

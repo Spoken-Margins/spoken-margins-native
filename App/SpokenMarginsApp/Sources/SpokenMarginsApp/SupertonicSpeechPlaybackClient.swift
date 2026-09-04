@@ -434,6 +434,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     )
     private var activeSourceText = ""
     private var player: AVPlayer?
+    private var playbackGainAudioMix: PlaybackGainAudioMix?
     private var playbackEndObserver: NSObjectProtocol?
     private var playerItemStatusObservation: NSKeyValueObservation?
     private var audioSessionObservers: [NSObjectProtocol] = []
@@ -707,14 +708,15 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     func setPlaybackVolume(_ volume: Float) throws {
-        let clamped = max(0, min(1, volume))
+        let clamped = max(0, min(2, volume))
         let state = lock.withLock { () -> (usesFallback: Bool, activePlayer: AVPlayer?) in
             playbackVolume = clamped
             return (fallbackIsActive, player)
         }
-        try fallback.setPlaybackVolume(clamped)
+        try fallback.setPlaybackVolume(min(1, clamped))
         if !state.usesFallback {
-            state.activePlayer?.volume = clamped
+            state.activePlayer?.volume = min(1, clamped)
+            playbackGainAudioMix?.update(gain: clamped)
         }
     }
 
@@ -1440,12 +1442,29 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             let item = AVPlayerItem(url: audioURL)
             item.audioTimePitchAlgorithm = .timeDomain
             let nextPlayer = AVPlayer(playerItem: item)
-            nextPlayer.volume = lock.withLock { playbackVolume }
+            let level = lock.withLock { playbackVolume }
+            nextPlayer.volume = min(1, level)
+            let installGainMix = {
+                MainActor.assumeIsolated { () -> PlaybackGainAudioMix? in
+                    guard let assetTrack = item.tracks
+                        .compactMap({ $0.assetTrack })
+                        .first(where: { $0.mediaType == .audio }),
+                          let gainMix = try? PlaybackGainAudioMix(assetTrack: assetTrack, gain: level) else {
+                        return nil
+                    }
+                    item.audioMix = gainMix.audioMix
+                    return gainMix
+                }
+            }
+            let gainMix = Thread.isMainThread
+                ? installGainMix()
+                : DispatchQueue.main.sync(execute: installGainMix)
             if observesPlayerLifecycle {
                 installPlaybackObservers(for: item, request: request)
             }
             lock.withLock {
                 player = nextPlayer
+                playbackGainAudioMix = gainMix
                 activeAudioURL = audioURL
                 activeAudioDuration = duration
                 currentTargetId = request.targetId

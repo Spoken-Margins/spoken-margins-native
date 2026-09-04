@@ -68,7 +68,7 @@ struct ExperienceFilterChip<Content: View>: View {
     var body: some View {
         content
             .font(.subheadline.weight(.semibold))
-            .foregroundStyle(isActive ? Color.white : AppColors.text)
+            .foregroundStyle(isActive ? AppColors.onEvergreen : AppColors.text)
             .padding(.horizontal, 13)
             .frame(minHeight: 38)
             .background(isActive ? AppColors.evergreen : AppColors.panel)

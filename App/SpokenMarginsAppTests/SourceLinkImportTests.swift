@@ -98,6 +98,13 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(parsed.startSession, false)
     }
 
+    func testShareRepresentationAcceptsObjectiveCURLVendedBySafari() throws {
+        let expected = try XCTUnwrap(URL(string: "https://example.com/report.pdf"))
+        let representation: Any = expected as NSURL
+
+        XCTAssertEqual(SourceLinkShareRepresentation.url(from: representation), expected)
+    }
+
     func testSourceLinkPayloadStoreRoundTripsAndDeletes() throws {
         let store = makePayloadStore()
         let handoff = SourceLinkHandoff(
@@ -132,6 +139,25 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: copied), Data("%PDF-1.7 test".utf8))
         store.deleteManagedPDF(at: copied)
         XCTAssertFalse(FileManager.default.fileExists(atPath: copied.path))
+    }
+
+    func testSourceLinkStorePersistsPDFDataRepresentation() throws {
+        let store = makePayloadStore()
+        let data = Data("%PDF-1.7 browser data representation".utf8)
+
+        let copied = try store.savePDF(data: data, suggestedFilename: "Browser Report")
+
+        XCTAssertEqual(copied.pathExtension, "pdf")
+        XCTAssertEqual(copied.deletingPathExtension().lastPathComponent, "Browser Report")
+        XCTAssertEqual(try Data(contentsOf: copied), data)
+        store.deleteManagedPDF(at: copied)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copied.path))
+    }
+
+    func testSourceLinkStoreRejectsNonPDFDataRepresentation() throws {
+        let store = makePayloadStore()
+
+        XCTAssertThrowsError(try store.savePDF(data: Data("not a pdf".utf8)))
     }
 
     func testDeletingFailedLocalPDFHandoffRemovesManagedCopy() throws {

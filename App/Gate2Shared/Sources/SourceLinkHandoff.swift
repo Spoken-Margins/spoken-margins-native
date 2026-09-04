@@ -1,5 +1,17 @@
 import Foundation
 
+public enum SourceLinkShareRepresentation {
+    public static func url(from item: Any?) -> URL? {
+        if let url = item as? URL { return url }
+        if let url = item as? NSURL { return url as URL }
+        return nil
+    }
+
+    public static func isPDFData(_ data: Data) -> Bool {
+        data.prefix(1_024).range(of: Data("%PDF-".utf8)) != nil
+    }
+}
+
 public struct SourceLinkHandoff: Codable, Equatable, Sendable {
     public var id: String
     public var schemaVersion: String
@@ -148,16 +160,10 @@ public struct SourceLinkHandoffStore {
         if let fileSize = values.fileSize, fileSize > 50 * 1_024 * 1_024 {
             throw SourceLinkHandoffStoreError.invalidPayload("PDF is larger than the 50 MB import limit")
         }
-        let directory = baseDirectory.appendingPathComponent(Self.pdfDirectoryName, isDirectory: true)
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        let rawName = (suggestedFilename ?? sourceURL.lastPathComponent) as NSString
-        let stem = rawName.deletingPathExtension
-            .replacingOccurrences(of: #"[^A-Za-z0-9._ -]+"#, with: "-", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let safeStem = stem.isEmpty ? "Shared PDF" : stem
-        let handoffDirectory = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try fileManager.createDirectory(at: handoffDirectory, withIntermediateDirectories: true)
-        let destination = handoffDirectory.appendingPathComponent(safeStem).appendingPathExtension("pdf")
+        let destination = try makePDFDestination(
+            suggestedFilename: suggestedFilename ?? sourceURL.lastPathComponent
+        )
+        let handoffDirectory = destination.deletingLastPathComponent()
         do {
             try fileManager.copyItem(at: sourceURL, to: destination)
         } catch {
@@ -165,6 +171,38 @@ public struct SourceLinkHandoffStore {
             throw error
         }
         return destination
+    }
+
+    /// Persists providers that vend a PDF as bytes instead of a temporary file.
+    public func savePDF(data: Data, suggestedFilename: String? = nil) throws -> URL {
+        guard data.count <= 50 * 1_024 * 1_024 else {
+            throw SourceLinkHandoffStoreError.invalidPayload("PDF is larger than the 50 MB import limit")
+        }
+        guard SourceLinkShareRepresentation.isPDFData(data) else {
+            throw SourceLinkHandoffStoreError.invalidPayload("Shared data is not a PDF")
+        }
+        let destination = try makePDFDestination(suggestedFilename: suggestedFilename ?? "Shared PDF.pdf")
+        let handoffDirectory = destination.deletingLastPathComponent()
+        do {
+            try data.write(to: destination, options: [.atomic])
+        } catch {
+            try? fileManager.removeItem(at: handoffDirectory)
+            throw error
+        }
+        return destination
+    }
+
+    private func makePDFDestination(suggestedFilename: String) throws -> URL {
+        let directory = baseDirectory.appendingPathComponent(Self.pdfDirectoryName, isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let rawName = suggestedFilename as NSString
+        let stem = rawName.deletingPathExtension
+            .replacingOccurrences(of: #"[^A-Za-z0-9._ -]+"#, with: "-", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let safeStem = stem.isEmpty ? "Shared PDF" : stem
+        let handoffDirectory = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fileManager.createDirectory(at: handoffDirectory, withIntermediateDirectories: true)
+        return handoffDirectory.appendingPathComponent(safeStem).appendingPathExtension("pdf")
     }
 
     public func isManagedPDFURL(_ url: URL) -> Bool {

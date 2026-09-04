@@ -3,19 +3,64 @@ import SwiftUI
 
 struct ExperienceAudioPreparationQueueScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
+
+    var body: some View {
+        AudioPreparationQueueContent(
+            automaticPolicy: model.automaticAudioPreparationPolicy,
+            queue: model.audioPreparationQueue,
+            recentlyPrepared: model.recentlyPreparedAudio,
+            setAutomaticPolicy: { policy in
+                model.automaticAudioPreparationPolicy = policy
+                model.automaticAudioPreparationPolicyChanged()
+            },
+            moveEarlier: model.moveAudioPreparationJobEarlier,
+            moveLater: model.moveAudioPreparationJobLater,
+            renderNow: model.prioritizeOfflinePreparation,
+            skip: model.skipAudioPreparationJob,
+            clear: model.clearAudioPreparationQueue,
+            refresh: model.refreshAudioPreparationPresentation,
+            openItem: model.openItem
+        )
+        .equatable()
+    }
+}
+
+private struct AudioPreparationQueueContent: View, @preconcurrency Equatable {
+    let automaticPolicy: AutomaticAudioPreparationPolicy
+    let queue: [AudioPreparationQueueRow]
+    let recentlyPrepared: [RecentlyPreparedAudioRow]
+    let setAutomaticPolicy: (AutomaticAudioPreparationPolicy) -> Void
+    let moveEarlier: (String) -> Void
+    let moveLater: (String) -> Void
+    let renderNow: (String) -> Void
+    let skip: (String) -> Void
+    let clear: () -> Void
+    let refresh: () -> Void
+    let openItem: (String) -> Void
+
     @Environment(\.dismiss) private var dismiss
+    @State private var isConfirmingQueueClear = false
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.automaticPolicy == rhs.automaticPolicy
+            && lhs.queue == rhs.queue
+            && lhs.recentlyPrepared == rhs.recentlyPrepared
+    }
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    Picker("Automatic audio preparation", selection: $model.automaticAudioPreparationPolicy) {
+                    Picker(
+                        "Automatic audio preparation",
+                        selection: Binding(
+                            get: { automaticPolicy },
+                            set: { policy in setAutomaticPolicy(policy) }
+                        )
+                    ) {
                         ForEach(AutomaticAudioPreparationPolicy.allCases, id: \.self) { policy in
                             Text(policy.displayName).tag(policy)
                         }
-                    }
-                    .onChange(of: model.automaticAudioPreparationPolicy) { _, _ in
-                        model.automaticAudioPreparationPolicyChanged()
                     }
 
                     Text(policyExplanation)
@@ -26,7 +71,7 @@ struct ExperienceAudioPreparationQueueScreen: View {
                 }
 
                 Section {
-                    if model.audioPreparationQueue.isEmpty {
+                    if queue.isEmpty {
                         ContentUnavailableView(
                             "Nothing queued",
                             systemImage: "moon.zzz",
@@ -34,30 +79,43 @@ struct ExperienceAudioPreparationQueueScreen: View {
                         )
                         .listRowBackground(Color.clear)
                     } else {
-                        ForEach(model.audioPreparationQueue) { row in
-                            AudioPreparationQueueItemRow(row: row)
-                                .environmentObject(model)
+                        ForEach(queue) { row in
+                            AudioPreparationQueueItemRow(
+                                row: row,
+                                moveEarlier: { moveEarlier(row.id) },
+                                moveLater: { moveLater(row.id) },
+                                renderNow: { renderNow(row.itemId) },
+                                skip: { skip(row.id) }
+                            )
                         }
                     }
                 } header: {
                     HStack {
                         Text("Queue")
                         Spacer()
-                        Text("\(model.audioPreparationQueue.count)")
+                        Text("\(queue.count)")
                     }
                 } footer: {
-                    Text("The item you are listening to is pinned first. Within each remaining priority tier, use the arrows to change what iOS should prepare next.")
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("The item you are listening to is pinned first. Within each remaining priority tier, use the arrows to change what iOS should prepare next.")
+                        if !queue.isEmpty {
+                            Button("Clear Queue", role: .destructive) {
+                                isConfirmingQueueClear = true
+                            }
+                            .accessibilityHint("Cancels queued rendering while keeping Library items and completed audio")
+                        }
+                    }
                 }
 
                 Section("Recently rendered") {
-                    if model.recentlyPreparedAudio.isEmpty {
+                    if recentlyPrepared.isEmpty {
                         Text("Completed items will appear here after their final audio file is verified.")
                             .foregroundStyle(.secondary)
                     } else {
-                        ForEach(model.recentlyPreparedAudio) { row in
+                        ForEach(recentlyPrepared) { row in
                             Button {
                                 dismiss()
-                                model.openItem(id: row.itemId)
+                                openItem(row.itemId)
                             } label: {
                                 HStack(spacing: 12) {
                                     Image(systemName: "checkmark.circle.fill")
@@ -87,10 +145,22 @@ struct ExperienceAudioPreparationQueueScreen: View {
                 }
             }
             .refreshable {
-                model.refreshAudioPreparationPresentation()
+                refresh()
             }
             .task {
-                model.refreshAudioPreparationPresentation()
+                refresh()
+            }
+            .confirmationDialog(
+                "Clear every offline rendering job?",
+                isPresented: $isConfirmingQueueClear,
+                titleVisibility: .visible
+            ) {
+                Button("Clear Queue", role: .destructive) {
+                    clear()
+                }
+                Button("Keep Queue", role: .cancel) {}
+            } message: {
+                Text("This keeps your Library items and audio that has already finished rendering. Items will not be queued again unless you explicitly choose Prepare Offline.")
             }
         }
         .presentationDetents([.medium, .large])
@@ -98,15 +168,15 @@ struct ExperienceAudioPreparationQueueScreen: View {
     }
 
     private var policyExplanation: String {
-        if model.automaticAudioPreparationPolicy == .whileCharging {
-            return "Queued text items may render while the phone is idle, connected to power, out of Low Power Mode, and within storage and thermal limits. iOS decides when background work runs, so overnight completion is not guaranteed."
+        if automaticPolicy == .whileCharging {
+            return "Newly queued text items may continue rendering while the phone is idle, connected to power, out of Low Power Mode, and within storage and thermal limits. iOS decides when background work runs, so overnight completion is not guaranteed."
         }
         return "Automatic rendering is off. Existing automatic jobs remain visible but will wait unless you render one now or turn While Charging back on."
     }
 
     private var emptyQueueDescription: String {
-        model.automaticAudioPreparationPolicy == .whileCharging
-            ? "Eligible text items are added when the library refreshes. iOS may then prepare them while charging."
+        automaticPolicy == .whileCharging
+            ? "New text items prepare an opening buffer when added. Choose Prepare Offline on an item to queue the rest."
             : "Choose While Charging, or use Prepare Offline on a Library item to render it now."
     }
 
@@ -123,8 +193,11 @@ struct ExperienceAudioPreparationQueueScreen: View {
 }
 
 private struct AudioPreparationQueueItemRow: View {
-    @EnvironmentObject private var model: Gate1AppModel
     let row: AudioPreparationQueueRow
+    let moveEarlier: () -> Void
+    let moveLater: () -> Void
+    let renderNow: () -> Void
+    let skip: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -139,12 +212,12 @@ private struct AudioPreparationQueueItemRow: View {
                 Spacer(minLength: 8)
                 HStack(spacing: 2) {
                     Button("Move earlier", systemImage: "arrow.up") {
-                        model.moveAudioPreparationJobEarlier(id: row.id)
+                        moveEarlier()
                     }
                     .labelStyle(.iconOnly)
                     .disabled(!row.canMoveEarlier)
                     Button("Move later", systemImage: "arrow.down") {
-                        model.moveAudioPreparationJobLater(id: row.id)
+                        moveLater()
                     }
                     .labelStyle(.iconOnly)
                     .disabled(!row.canMoveLater)
@@ -157,18 +230,24 @@ private struct AudioPreparationQueueItemRow: View {
                     .tint(AppColors.ochre)
             }
 
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(statusDetail)
-                    .font(.caption)
-                    .foregroundStyle(AppColors.secondaryText)
-                Spacer(minLength: 8)
+            Text(statusDetail)
+                .font(.caption)
+                .foregroundStyle(AppColors.secondaryText)
+
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
                 if row.policy != .explicit {
                     Button("Render Now") {
-                        model.prioritizeOfflinePreparation(id: row.itemId)
+                        renderNow()
                     }
                     .font(.caption.weight(.semibold))
                     .buttonStyle(.bordered)
                 }
+                Button("Don't Render", role: .destructive) {
+                    skip()
+                }
+                .font(.caption.weight(.semibold))
+                .buttonStyle(.bordered)
             }
         }
         .padding(.vertical, 4)

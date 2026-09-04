@@ -121,8 +121,10 @@
 		C80F9BCDB1A1DECD77D0B501 /* Gate2LiveActivityIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C1B2FF8159DFFEC7FFC245C /* Gate2LiveActivityIntents.swift */; };
 		C8B391661A0CEE58E1A55C26 /* Build23RecipientSharingExperienceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D03FD05441B838EA7D00343 /* Build23RecipientSharingExperienceTests.swift */; };
 		C952235E078B051615069C2E /* SupertonicSpeechTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D6C701BA62F6D79A4C8A178 /* SupertonicSpeechTests.swift */; };
+		CB78BF0B13970944EF62E6EB /* ExperienceColorContrastTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C15B723D5556B6571741B2A /* ExperienceColorContrastTests.swift */; };
 		CC0AD39630C14AEC9A9A8573 /* SessionKitEPUB in Frameworks */ = {isa = PBXBuildFile; productRef = 62C6DAFDEEEE7BC12B1CDE55 /* SessionKitEPUB */; };
 		CC6A33EA5ED33F43E7A818A4 /* emoji-article-crash-regression.txt in Resources */ = {isa = PBXBuildFile; fileRef = 1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */; };
+		CCF9FFFB61006B5325EB6C08 /* ExperienceColorContrast.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C0E1208A638FC1576CA2E5E /* ExperienceColorContrast.swift */; };
 		CE418CC6B4720266789D08D5 /* SourceLinkHandoff.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69050C3D4931DF4FF8E80364 /* SourceLinkHandoff.swift */; };
 		CE6654AD4A7C75198C2D1BB4 /* SessionKitFeeds in Frameworks */ = {isa = PBXBuildFile; productRef = 159EF73AA9CDF755A67A5EFA /* SessionKitFeeds */; };
 		D6A8DCA36ED03426D6771AEC /* Gate1PlaybackAutoplayQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CECE96EA9D24248FFE111D5D /* Gate1PlaybackAutoplayQueueTests.swift */; };
@@ -257,6 +259,8 @@
 		7C356783B108E75F03704686 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		7EB7F70F2B16F9E90AF83916 /* PreparedAudioCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreparedAudioCoordinatorTests.swift; sourceTree = "<group>"; };
 		81E959BC7AF01B8811EF6CF3 /* FollowedSourceCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FollowedSourceCoordinator.swift; sourceTree = "<group>"; };
+		8C0E1208A638FC1576CA2E5E /* ExperienceColorContrast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExperienceColorContrast.swift; sourceTree = "<group>"; };
+		8C15B723D5556B6571741B2A /* ExperienceColorContrastTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExperienceColorContrastTests.swift; sourceTree = "<group>"; };
 		8C1BFB86196C5C1BE2E52BEF /* Defuddle-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Defuddle-LICENSE.txt"; sourceTree = "<group>"; };
 		8EFFA356312CB5D37089484A /* StreamingSpeechQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingSpeechQueue.swift; sourceTree = "<group>"; };
 		8F7F8E49CA642502095FF5EF /* Build23ImportedMarginPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Build23ImportedMarginPresentation.swift; sourceTree = "<group>"; };
@@ -509,6 +513,7 @@
 				1982AF0766C2F0C1CA7EF826 /* Build23SenderSharingExperienceTests.swift */,
 				CA499BDD3D49FA1CBE899FA1 /* Build23SharingSeamsTests.swift */,
 				DA1DE63D41008127F34297B7 /* EmojiArticleRegressionFixture.swift */,
+				8C15B723D5556B6571741B2A /* ExperienceColorContrastTests.swift */,
 				B4AE8A8FB30C1E104E32A2BE /* ExperiencePresentationTests.swift */,
 				2A741433D6B3E34D30387DBB /* Gate1AppModelWorkflowTests.swift */,
 				2F27E8BBF188ABCD2B2A7B0F /* Gate1DiscussionContextTests.swift */,
@@ -558,6 +563,7 @@
 				1F04BCB2671DE0E5E8AEAD58 /* ExperienceAddSourceFlow.swift */,
 				01B8F9D72E9240D0529F9793 /* ExperienceAudioPreparationQueueScreen.swift */,
 				A057DD9C49BAC064EDC8CD6C /* ExperienceCanonicalNavigationTree.swift */,
+				8C0E1208A638FC1576CA2E5E /* ExperienceColorContrast.swift */,
 				FF1A389C74C5D98191E7D508 /* ExperienceDesignSystem.swift */,
 				D905A893BF811E43BF1E1E3A /* ExperienceItemDetailScreen.swift */,
 				50ABAE0742CE474460581B0A /* ExperienceLibraryScreen.swift */,
@@ -939,6 +945,7 @@
 				86E4BD46F231F3A47E1B5744 /* ExperienceAddSourceFlow.swift in Sources */,
 				BDA408F88A3E21BDA648C61C /* ExperienceAudioPreparationQueueScreen.swift in Sources */,
 				DE4F2E4626B88D011FA11335 /* ExperienceCanonicalNavigationTree.swift in Sources */,
+				CCF9FFFB61006B5325EB6C08 /* ExperienceColorContrast.swift in Sources */,
 				6575ABCB4EA7B017104C63A0 /* ExperienceDesignSystem.swift in Sources */,
 				3D98E9A312A0993D4EACED61 /* ExperienceItemDetailScreen.swift in Sources */,
 				E550D2606912F1A9AD20770F /* ExperienceLibraryScreen.swift in Sources */,
@@ -1022,6 +1029,7 @@
 				14E7CB523CB00CE9E8333E9B /* Build23SenderSharingExperienceTests.swift in Sources */,
 				765E645CF6DF06498F1BEEE1 /* Build23SharingSeamsTests.swift in Sources */,
 				076C742DA8D8D5CD54F432AE /* EmojiArticleRegressionFixture.swift in Sources */,
+				CB78BF0B13970944EF62E6EB /* ExperienceColorContrastTests.swift in Sources */,
 				D88CFDF277F2C902B02865C4 /* ExperiencePresentationTests.swift in Sources */,
 				3A8C7FE2A0DBA57C69F07308 /* Gate1AppModelWorkflowTests.swift in Sources */,
 				A330A5CDB08329DA0454A8CB /* Gate1DiscussionContextTests.swift in Sources */,
