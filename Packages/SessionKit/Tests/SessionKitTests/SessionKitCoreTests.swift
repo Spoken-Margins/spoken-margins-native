@@ -292,6 +292,76 @@ final class SessionKitCoreTests: XCTestCase {
         )
     }
 
+    func testSpeechNormalizationReducesDefuddleSocialCardToAuthoredPost() throws {
+        let source = """
+        Before the post.
+
+        [
+
+        ![X avatar for @netflix](https://cdn.example/avatar.jpg)
+
+        Netflix@netflix
+
+        DANG!, a new adult animated series, premieres September 8, until their high-achieving sister Ruthie wants
+
+        <video controls="" src="https://video.example/trailer.mp4"></video>
+
+        3:00 PM · Aug 11, 2026 · 29.7M Views
+
+        ---
+
+        1.42K Replies · 975 Reposts · 23.3K Likes
+
+        ](https://x.com/netflix/status/2087192315823538471)
+
+        After the post.
+        """
+
+        let normalized = SpeechTextNormalizer.normalizeWithSourceOffsets(source)
+
+        XCTAssertEqual(
+            normalized.text,
+            "Before the post. Post from Netflix. DANG!, a new adult animated series, premieres September 8, until their high-achieving sister Ruthie wants. Media attached. After the post."
+        )
+        XCTAssertFalse(normalized.text.localizedCaseInsensitiveContains("video"))
+        XCTAssertFalse(normalized.text.contains("29.7M"))
+        XCTAssertFalse(normalized.text.localizedCaseInsensitiveContains("Replies"))
+        XCTAssertFalse(normalized.text.localizedCaseInsensitiveContains("x.com"))
+        let spokenAfter = try XCTUnwrap(normalized.text.range(of: "After the post."))
+        let sourceAfter = try XCTUnwrap(source.range(of: "After the post."))
+        let spokenOffset = normalized.text.distance(from: normalized.text.startIndex, to: spokenAfter.lowerBound)
+        let sourceOffset = source.distance(from: source.startIndex, to: sourceAfter.lowerBound)
+        XCTAssertEqual(normalized.sourceOffset(atSpokenCharacterOffset: spokenOffset), sourceOffset)
+        XCTAssertTrue(zip(normalized.sourceOffsets, normalized.sourceOffsets.dropFirst()).allSatisfy { $0 <= $1 })
+    }
+
+    func testSpeechNormalizationLabelsQuotedSocialPostAndPreservesOrdinaryMetrics() {
+        let source = """
+        [
+
+        Writer@writer
+
+        This is the writer's response.
+
+        ![](https://cdn.example/quoted-avatar.jpg)
+
+        Netflix @netflix
+
+        This is the quoted post.
+
+        24 Replies · 30 Reposts · 401 Likes
+
+        ](https://twitter.com/writer/status/1)
+
+        The trailer received 29.7M Views in ordinary article prose.
+        """
+
+        XCTAssertEqual(
+            SpeechTextNormalizer.normalize(source),
+            "Post from Writer. This is the writer's response. Quoted post from Netflix. This is the quoted post. The trailer received 29.7M Views in ordinary article prose."
+        )
+    }
+
     func testSpeechNormalizationMapsSpokenTextBackToSourceOffsets() {
         let source = "Read [the reference](https://example.com/x) now."
         let normalized = SpeechTextNormalizer.normalizeWithSourceOffsets(source)
@@ -374,6 +444,54 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertTrue(SpeechTextNormalizer.isSystemSpeechSafe(chunk.spokenText))
         XCTAssertEqual(chunk.sourceOffset(atSpokenUTF16Offset: spokenRange.location), expected)
         XCTAssertGreaterThanOrEqual(chunk.sourceOffset(atSpokenUTF16Offset: spokenRange.location + spokenRange.length), expected)
+    }
+
+    func testSystemSpeechPlannerReducesSocialCardBeforeChunkingLongPost() {
+        let postBody = String(repeating: "This social post sentence remains audible and attributable. ", count: 24)
+        let source = """
+        Opening article prose.
+
+        [
+
+        Writer@writer
+
+        \(postBody)
+
+        <video controls="" src="https://video.example/post.mp4"></video>
+
+        3:00 PM · Aug 11, 2026 · 29.7M Views
+
+        1.42K Replies · 975 Reposts · 23.3K Likes
+
+        ](https://x.com/writer/status/1)
+
+        Closing article prose.
+        """
+
+        let chunks = SpeechPlaybackPlanner.chunks(in: source, from: 0, targetChunkCharacters: 300)
+        let spoken = chunks.map(\.spokenText).joined(separator: " ")
+
+        XCTAssertGreaterThan(chunks.count, 2)
+        XCTAssertTrue(spoken.contains("Post from Writer."))
+        XCTAssertTrue(spoken.contains("Media attached."))
+        XCTAssertTrue(spoken.contains("Closing article prose."))
+        XCTAssertFalse(spoken.localizedCaseInsensitiveContains("video"))
+        XCTAssertFalse(spoken.contains("29.7M"))
+        XCTAssertFalse(spoken.localizedCaseInsensitiveContains("Replies"))
+        XCTAssertEqual(chunks.last?.sourceEnd, source.count)
+        XCTAssertTrue(zip(chunks, chunks.dropFirst()).allSatisfy { $0.sourceEnd == $1.sourceStart })
+
+        let metadataOffset = source.distance(
+            from: source.startIndex,
+            to: source.range(of: "3:00 PM")!.lowerBound
+        )
+        let resumedSpoken = SpeechPlaybackPlanner.chunks(in: source, from: metadataOffset)
+            .map(\.spokenText)
+            .joined(separator: " ")
+        XCTAssertEqual(resumedSpoken, "Closing article prose.")
+        XCTAssertFalse(resumedSpoken.contains("29.7M"))
+        XCTAssertFalse(resumedSpoken.localizedCaseInsensitiveContains("Replies"))
+        XCTAssertFalse(resumedSpoken.localizedCaseInsensitiveContains("x.com"))
     }
 
     func testSystemSpeechProjectionGuaranteesOneUTF16UnitPerSpokenCharacter() {

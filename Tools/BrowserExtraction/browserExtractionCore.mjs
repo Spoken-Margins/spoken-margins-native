@@ -4,6 +4,74 @@ export function normalizeWhitespace(text) {
   return String(text || "").replace(/\s+/g, " ").trim();
 }
 
+const SOCIAL_CARD_LINK_PATTERN = /^[ \t]*\[[ \t]*\r?\n([\s\S]*?)\r?\n\]\((https?:\/\/(?:www\.)?(?:x\.com|twitter\.com|bsky\.app|threads\.net|instagram\.com)\/[^)\r\n\s]+)\)[ \t]*$/gim;
+const SOCIAL_AUTHOR_PATTERN = /^(.*?)\s*@([A-Za-z0-9_]{1,30})$/;
+const SOCIAL_METRIC_PATTERN = /^\d[\d,.]*[KMBT]?\s+(?:views?|replies?|reposts?|likes?|bookmarks?|quotes?)$/i;
+const SOCIAL_TIME_PATTERN = /^\d{1,2}:\d{2}(?::\d{2})?\s*(?:am|pm)?$/i;
+const SOCIAL_DATE_PATTERN = /^(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2},\s+\d{4}$/i;
+
+function isSocialMetadataLine(line) {
+  const atoms = line.split(/[·•]/).map(part => part.trim()).filter(Boolean);
+  if (!atoms.length || !atoms.some(atom => SOCIAL_METRIC_PATTERN.test(atom))) {
+    return false;
+  }
+  return atoms.every(atom =>
+    SOCIAL_METRIC_PATTERN.test(atom)
+      || SOCIAL_TIME_PATTERN.test(atom)
+      || SOCIAL_DATE_PATTERN.test(atom)
+  );
+}
+
+function renderSocialCard(content) {
+  const withoutMedia = content
+    .replace(/<\s*(?:video|audio|iframe)\b[^>]*>[\s\S]*?<\s*\/\s*(?:video|audio|iframe)\s*>/gi, "\nMedia attached.\n")
+    .replace(/<\s*(?:video|audio|iframe)\b[^>]*\/?\s*>/gi, "\nMedia attached.\n")
+    .replace(/!\[[^\]]*\]\([^\n)]*\)/g, "\n")
+    .replace(/<[^>]+>/g, " ");
+  let authorCount = 0;
+  const parts = [];
+  const punctuatePreviousPart = () => {
+    const previous = parts.at(-1);
+    if (previous && !/[.!?][\"')\]]?$/.test(previous)) {
+      parts[parts.length - 1] = `${previous}.`;
+    }
+  };
+  for (const rawLine of withoutMedia.split(/\r?\n/)) {
+    const line = normalizeWhitespace(rawLine);
+    if (!line || /^(?:---|___|\*\*\*)$/.test(line) || isSocialMetadataLine(line)) {
+      continue;
+    }
+    const author = line.match(SOCIAL_AUTHOR_PATTERN);
+    if (author) {
+      if (authorCount > 0) {
+        punctuatePreviousPart();
+      }
+      const name = normalizeWhitespace(author[1]) || `@${author[2]}`;
+      parts.push(`${authorCount++ === 0 ? "Post" : "Quoted post"} from ${name}.`);
+      continue;
+    }
+    if (line === "Media attached." && parts.at(-1) === line) {
+      continue;
+    }
+    if (line === "Media attached.") {
+      punctuatePreviousPart();
+    }
+    parts.push(line);
+  }
+  let rendered = parts.join(" ").trim();
+  if (rendered && !/[.!?][\"')\]]?$/.test(rendered)) {
+    rendered += ".";
+  }
+  return rendered;
+}
+
+export function normalizeSocialEmbedsForReading(markdown) {
+  return String(markdown || "").replace(
+    SOCIAL_CARD_LINK_PATTERN,
+    (_match, content) => renderSocialCard(content)
+  );
+}
+
 function metaContent(documentRef, selectors) {
   for (const selector of selectors) {
     const node = documentRef.querySelector(selector);
@@ -86,7 +154,9 @@ export function extractReadableMarkdown(documentRef) {
     useAsync: false,
     url: documentURL(documentRef)
   }).parse();
-  const markdown = String(result.contentMarkdown || result.content || "").trim();
+  const markdown = normalizeSocialEmbedsForReading(
+    String(result.contentMarkdown || result.content || "")
+  ).trim();
   if (!markdown || markdown.startsWith("Partial conversion completed with errors.")) {
     throw new Error("No readable page text was found.");
   }

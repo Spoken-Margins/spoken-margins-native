@@ -13989,7 +13989,7 @@ final class Gate1AppModel: ObservableObject {
                     } else {
                         let store = try self.requireStore()
                         let backgroundEngine = try self.makeEngine(store: store)
-                        _ = try backgroundEngine.importBrowserText(handoff)
+                        _ = try backgroundEngine.importBrowserText(Self.sanitizedBrowserTextHandoff(handoff))
                         self.libraryItems = try self.loadLibraryRows(store: store)
                         self.markOnboardingSteps([.addedOwnSource])
                         imported = true

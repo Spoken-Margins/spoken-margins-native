@@ -47,7 +47,7 @@ test("popup and manifest reference flattened bundled resources", () => {
 });
 
 function loadCapture(documentRef) {
-  const source = fs.readFileSync("App/SpokenMarginsBrowserTextExtension/Resources/Scripts/browserTextCapture.js", "utf8");
+  const source = fs.readFileSync("App/SharedResources/browserTextCapture.js", "utf8");
   const context = {
     document: documentRef,
     navigator: { userAgent: "test" },
@@ -62,8 +62,8 @@ function loadCapture(documentRef) {
 }
 
 test("readable page bundle contains the pinned local extractor", () => {
-  const source = fs.readFileSync("App/SpokenMarginsBrowserTextExtension/Resources/Scripts/browserTextCapture.js", "utf8");
-  const license = fs.readFileSync("App/SpokenMarginsBrowserTextExtension/Resources/Defuddle-LICENSE.txt", "utf8");
+  const source = fs.readFileSync("App/SharedResources/browserTextCapture.js", "utf8");
+  const license = fs.readFileSync("App/SharedResources/Defuddle-LICENSE.txt", "utf8");
 
   assert.match(source, /Bundled Defuddle 0\.19\.1/);
   assert.match(source, /networkFallback/);

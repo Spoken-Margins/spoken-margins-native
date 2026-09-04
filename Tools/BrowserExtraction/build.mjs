@@ -4,7 +4,7 @@ import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 const builds = [
   {
     entryPoints: ["Tools/BrowserExtraction/browserTextCapture.entry.mjs"],
-    outfile: "App/SpokenMarginsBrowserTextExtension/Resources/Scripts/browserTextCapture.js"
+    outfile: "App/SharedResources/browserTextCapture.js"
   },
   {
     entryPoints: ["Tools/BrowserExtraction/sourceLinkPreprocessor.entry.mjs"],
@@ -38,7 +38,7 @@ for (const configuration of builds) {
 }
 
 for (const directory of [
-  "App/SpokenMarginsBrowserTextExtension/Resources",
+  "App/SharedResources",
   "App/SpokenMarginsShareExtension/Resources"
 ]) {
   await mkdir(directory, { recursive: true });

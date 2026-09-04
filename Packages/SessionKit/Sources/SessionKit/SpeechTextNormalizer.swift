@@ -47,7 +47,7 @@ public enum SpeechTextNormalizer {
     public static func normalizeWithSourceOffsets(_ source: String) -> NormalizedSpeechText {
         var rendered = source.enumerated().map { MappedCharacter(character: $0.element, sourceOffset: $0.offset) }
 
-        rendered = removeLinks(in: rendered)
+        rendered = projectAudibleContent(rendered)
         return finish(rendered, sourceLength: source.count)
     }
 
@@ -57,19 +57,7 @@ public enum SpeechTextNormalizer {
     public static func projectForSystemSpeech(_ source: String) -> NormalizedSpeechText {
         var rendered = source.enumerated().map { MappedCharacter(character: $0.element, sourceOffset: $0.offset) }
 
-        let unspokenBlockPattern = #"(?is)<\s*(script|style|video|audio|figure|svg)\b[^>]*>.*?<\s*/\s*\1\s*>"#
-        rendered = replace(pattern: unspokenBlockPattern, in: rendered, replacement: spaceReplacement)
-
-        let unspokenStandalonePattern = #"(?is)<\s*(?:source|img)\b[^>]*>"#
-        rendered = replace(pattern: unspokenStandalonePattern, in: rendered, replacement: spaceReplacement)
-
-        let remainingTagPattern = #"(?s)<[^>]*>"#
-        rendered = replace(pattern: remainingTagPattern, in: rendered, replacement: spaceReplacement)
-
-        let markdownImagePattern = #"!\[[^\]]*\]\([^)]*\)"#
-        rendered = replace(pattern: markdownImagePattern, in: rendered, replacement: spaceReplacement)
-
-        rendered = removeLinks(in: rendered)
+        rendered = projectAudibleContent(rendered)
         rendered = rendered.flatMap(systemSpeechCharacters)
         return finish(rendered, sourceLength: source.count)
     }
@@ -81,6 +69,194 @@ public enum SpeechTextNormalizer {
             )
             return projected.count == 1 && projected[0].character == character
         }
+    }
+
+    private static func projectAudibleContent(_ input: [MappedCharacter]) -> [MappedCharacter] {
+        var rendered = reduceSocialCards(in: input)
+        rendered = removeSocialInterfaceLines(in: rendered)
+
+        let unspokenBlockPattern = #"(?is)<\s*(script|style|video|audio|figure|svg|iframe|canvas|noscript)\b[^>]*>.*?<\s*/\s*\1\s*>"#
+        rendered = replace(pattern: unspokenBlockPattern, in: rendered, replacement: spaceReplacement)
+
+        let unspokenStandalonePattern = #"(?is)<\s*(?:source|img|video|audio|iframe)\b[^>]*>"#
+        rendered = replace(pattern: unspokenStandalonePattern, in: rendered, replacement: spaceReplacement)
+
+        let remainingTagPattern = #"(?s)<[^>]*>"#
+        rendered = replace(pattern: remainingTagPattern, in: rendered, replacement: spaceReplacement)
+
+        let markdownImagePattern = #"!\[[^\]]*\]\([^)]*\)"#
+        rendered = replace(pattern: markdownImagePattern, in: rendered, replacement: spaceReplacement)
+
+        return removeLinks(in: rendered)
+    }
+
+    private static func removeSocialInterfaceLines(in input: [MappedCharacter]) -> [MappedCharacter] {
+        var result: [MappedCharacter] = []
+        var line: [MappedCharacter] = []
+
+        func appendLine(endingWith newline: MappedCharacter?) {
+            let trimmed = trimWhitespace(in: line)
+            let text = String(trimmed.map(\.character))
+            let danglingDestination = wholeMatch(
+                #"\]\(https?://(?:www\.)?(?:x\.com|twitter\.com|bsky\.app|threads\.net|instagram\.com)/[^)\r\n\s]+\)"#,
+                in: text
+            )
+            if !isSocialMetadataLine(text) && !danglingDestination {
+                result.append(contentsOf: line)
+            }
+            if let newline {
+                result.append(newline)
+            }
+            line.removeAll(keepingCapacity: true)
+        }
+
+        for character in input {
+            if character.character == "\n" {
+                appendLine(endingWith: character)
+            } else {
+                line.append(character)
+            }
+        }
+        appendLine(endingWith: nil)
+        return result
+    }
+
+    private static func reduceSocialCards(in input: [MappedCharacter]) -> [MappedCharacter] {
+        let socialCardPattern = #"(?ims)^[ \t]*\[[ \t]*\r?\n(.*?)\r?\n\]\((https?://(?:www\.)?(?:x\.com|twitter\.com|bsky\.app|threads\.net|instagram\.com)/[^)\r\n\s]+)\)[ \t]*$"#
+        return replace(pattern: socialCardPattern, in: input) { match, text, characters in
+            guard match.numberOfRanges > 1,
+                  let contentRange = Range(match.range(at: 1), in: text) else {
+                return []
+            }
+            let lower = text.distance(from: text.startIndex, to: contentRange.lowerBound)
+            let upper = text.distance(from: text.startIndex, to: contentRange.upperBound)
+            return renderSocialCard(Array(characters[lower..<upper]))
+        }
+    }
+
+    private static func renderSocialCard(_ content: [MappedCharacter]) -> [MappedCharacter] {
+        var rendered = content
+        let mediaBlockPattern = #"(?is)<\s*(video|audio|iframe)\b[^>]*>.*?<\s*/\s*\1\s*>"#
+        rendered = replace(pattern: mediaBlockPattern, in: rendered, replacement: mediaAttachedReplacement)
+        let standaloneMediaPattern = #"(?is)<\s*(?:video|audio|iframe)\b[^>]*\/?>"#
+        rendered = replace(pattern: standaloneMediaPattern, in: rendered, replacement: mediaAttachedReplacement)
+        let markdownImagePattern = #"!\[[^\]]*\]\([^\n)]*\)"#
+        rendered = replace(pattern: markdownImagePattern, in: rendered, replacement: spaceReplacement)
+        rendered = replace(pattern: #"(?s)<[^>]*>"#, in: rendered, replacement: spaceReplacement)
+
+        var lines: [[MappedCharacter]] = [[]]
+        for character in rendered {
+            if character.character == "\n" {
+                lines.append([])
+            } else {
+                lines[lines.count - 1].append(character)
+            }
+        }
+
+        var result: [MappedCharacter] = []
+        var authorCount = 0
+        var previousPartWasMedia = false
+        for rawLine in lines {
+            let line = trimWhitespace(in: rawLine)
+            guard let first = line.first else { continue }
+            let text = String(line.map(\.character))
+            if ["---", "___", "***"].contains(text) || isSocialMetadataLine(text) {
+                continue
+            }
+
+            let author = socialAuthorDisplayName(text)
+            let part: [MappedCharacter]
+            if let author {
+                let label = authorCount == 0 ? "Post" : "Quoted post"
+                part = mappedCharacters("\(label) from \(author).", sourceOffset: first.sourceOffset)
+                authorCount += 1
+            } else {
+                part = line
+            }
+
+            let isMedia = String(part.map(\.character)) == "Media attached."
+            if isMedia && previousPartWasMedia { continue }
+            if !result.isEmpty,
+               (isMedia || (author != nil && authorCount > 1)),
+               !socialCardEndsWithSentencePunctuation(String(result.map(\.character))),
+               let previous = result.last {
+                result.append(MappedCharacter(character: ".", sourceOffset: previous.sourceOffset))
+            }
+            if !result.isEmpty {
+                result.append(MappedCharacter(character: " ", sourceOffset: first.sourceOffset))
+            }
+            result.append(contentsOf: part)
+            previousPartWasMedia = isMedia
+        }
+
+        if let last = result.last,
+           !socialCardEndsWithSentencePunctuation(String(result.map(\.character))) {
+            result.append(MappedCharacter(character: ".", sourceOffset: last.sourceOffset))
+        }
+        return result
+    }
+
+    private static func mediaAttachedReplacement(
+        _ match: NSTextCheckingResult,
+        _ text: String,
+        _ characters: [MappedCharacter]
+    ) -> [MappedCharacter] {
+        guard let range = Range(match.range, in: text) else { return [] }
+        let offset = text.distance(from: text.startIndex, to: range.lowerBound)
+        guard offset < characters.count else { return [] }
+        return mappedCharacters("\nMedia attached.\n", sourceOffset: characters[offset].sourceOffset)
+    }
+
+    private static func mappedCharacters(_ text: String, sourceOffset: Int) -> [MappedCharacter] {
+        text.map { MappedCharacter(character: $0, sourceOffset: sourceOffset) }
+    }
+
+    private static func socialAuthorDisplayName(_ line: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: #"^(.*?)\s*@([A-Za-z0-9_]{1,30})$"#),
+              let match = regex.firstMatch(
+                in: line,
+                range: NSRange(line.startIndex..<line.endIndex, in: line)
+              ),
+              let displayRange = Range(match.range(at: 1), in: line),
+              let handleRange = Range(match.range(at: 2), in: line) else {
+            return nil
+        }
+        let display = line[displayRange].trimmingCharacters(in: .whitespacesAndNewlines)
+        return display.isEmpty ? "@\(line[handleRange])" : display
+    }
+
+    private static func isSocialMetadataLine(_ line: String) -> Bool {
+        let atoms = line
+            .split(whereSeparator: { $0 == "·" || $0 == "•" })
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !atoms.isEmpty, atoms.contains(where: isSocialMetric) else { return false }
+        return atoms.allSatisfy { atom in
+            isSocialMetric(atom)
+                || wholeMatch(#"\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?"#, in: atom)
+                || wholeMatch(#"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},\s+\d{4}"#, in: atom)
+        }
+    }
+
+    private static func isSocialMetric(_ value: String) -> Bool {
+        wholeMatch(
+            #"\d[\d,.]*[KMBT]?\s+(?:Views?|Replies?|Reposts?|Likes?|Bookmarks?|Quotes?)"#,
+            in: value
+        )
+    }
+
+    private static func wholeMatch(_ pattern: String, in value: String) -> Bool {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else {
+            return false
+        }
+        let range = NSRange(value.startIndex..<value.endIndex, in: value)
+        return regex.firstMatch(in: value, range: range)?.range == range
+    }
+
+    private static func socialCardEndsWithSentencePunctuation(_ value: String) -> Bool {
+        let closingCharacters = CharacterSet(charactersIn: "\"'”’)]")
+        let stripped = value.trimmingCharacters(in: closingCharacters)
+        return stripped.last.map { ".!?".contains($0) } ?? true
     }
 
     private static func removeLinks(in input: [MappedCharacter]) -> [MappedCharacter] {

@@ -13,7 +13,7 @@ struct PreparedChunkPlan: Equatable, Sendable {
 
 enum SupertonicRenderIdentity {
     static let modelRevision = "supertonic-3-int8"
-    static let normalizationVersion = "speech-normalizer.v1"
+    static let normalizationVersion = "speech-normalizer.v2"
     static let chunkingVersion = "rendered-speech-chunker.v1"
 
     static func make(

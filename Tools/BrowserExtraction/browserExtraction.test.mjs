@@ -4,7 +4,8 @@ import test from "node:test";
 import { parseHTML } from "linkedom";
 import {
   captureReadablePage,
-  fallbackReadableMarkdown
+  fallbackReadableMarkdown,
+  normalizeSocialEmbedsForReading
 } from "./browserExtractionCore.mjs";
 import {
   capturePageText,
@@ -24,6 +25,63 @@ function articleDocument() {
   globalThis.window = window;
   return document;
 }
+
+test("social cards retain authored commentary and omit listening-hostile interface metadata", () => {
+  const markdown = `Before the post.
+
+[
+
+![X avatar for @netflix](https://cdn.example/avatar.jpg)
+
+Netflix@netflix
+
+DANG!, a new adult animated series, premieres September 8, until their high-achieving sister Ruthie wants
+
+<video controls="" src="https://video.example/trailer.mp4"></video>
+
+3:00 PM · Aug 11, 2026 · 29.7M Views
+
+---
+
+1.42K Replies · 975 Reposts · 23.3K Likes
+
+](https://x.com/netflix/status/2087192315823538471)
+
+After the post.`;
+
+  const normalized = normalizeSocialEmbedsForReading(markdown);
+
+  assert.equal(
+    normalized,
+    "Before the post.\n\nPost from Netflix. DANG!, a new adult animated series, premieres September 8, until their high-achieving sister Ruthie wants. Media attached.\n\nAfter the post."
+  );
+  assert.doesNotMatch(normalized, /video|29\.7M|Replies|Reposts|Likes|x\.com|\[|\]/i);
+});
+
+test("social-card cleanup preserves quoted posts and ordinary audience prose", () => {
+  const markdown = `[
+
+Writer@writer
+
+This is the writer's response.
+
+![](https://cdn.example/quoted-avatar.jpg)
+
+Netflix @netflix
+
+This is the quoted post.
+
+24 Replies · 30 Reposts · 401 Likes
+
+](https://twitter.com/writer/status/1)
+
+The trailer received 29.7M Views in ordinary article prose.`;
+
+  assert.equal(
+    normalizeSocialEmbedsForReading(markdown),
+    "Post from Writer. This is the writer's response. Quoted post from Netflix. This is the quoted post.\n\nThe trailer received 29.7M Views in ordinary article prose."
+  );
+});
 
 test("readable capture falls back to local semantic Markdown when the test DOM cannot run Defuddle", () => {
   const document = articleDocument();
@@ -131,7 +189,7 @@ test("injected dispatcher invokes the initialized page capture directly", () => 
 });
 
 test("built resources contain the pinned extractor and Safari preprocessor", () => {
-  const capture = fs.readFileSync("App/SpokenMarginsBrowserTextExtension/Resources/Scripts/browserTextCapture.js", "utf8");
+  const capture = fs.readFileSync("App/SharedResources/browserTextCapture.js", "utf8");
   const popup = fs.readFileSync("App/SpokenMarginsBrowserTextExtension/Resources/Scripts/popup.js", "utf8");
   const preprocessor = fs.readFileSync("App/SpokenMarginsShareExtension/Resources/SourceLinkPreprocessor.js", "utf8");
   assert.match(capture, /Bundled Defuddle 0\.19\.1/);

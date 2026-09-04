@@ -752,58 +752,47 @@ enum SpeechPlaybackPlanner {
         from requestedOffset: Int,
         targetChunkCharacters: Int = 700
     ) -> [SpeechPlaybackChunk] {
-        let characters = Array(source)
-        let start = max(0, min(requestedOffset, characters.count))
+        let sourceCharacters = Array(source)
+        let start = max(0, min(requestedOffset, sourceCharacters.count))
+        let remainingSource = String(sourceCharacters[start...])
+        let projection = SpeechTextNormalizer.projectForSystemSpeech(remainingSource)
+        let characters = Array(projection.text)
+        guard !characters.isEmpty else { return [] }
+        let sourceOffsets = projection.sourceOffsets.map { start + $0 }
         let target = max(240, targetChunkCharacters)
         var chunks: [SpeechPlaybackChunk] = []
-        var fragment: [Character] = []
-        var fragmentStart = start
+        var fragmentStart = 0
 
-        func appendFragment() {
-            var lower = 0
-            var upper = fragment.count
-            while lower < upper, fragment[lower].isWhitespace { lower += 1 }
-            while upper > lower, fragment[upper - 1].isWhitespace { upper -= 1 }
-            guard lower < upper else {
-                if !chunks.isEmpty {
-                    chunks[chunks.count - 1].sourceEnd = fragmentStart + fragment.count
-                }
-                fragment.removeAll(keepingCapacity: true)
-                return
-            }
-            let sourceStart = fragmentStart + lower
-            let sourceEnd = fragmentStart + fragment.count
-            let trimmed = String(fragment[lower..<upper])
-            let normalized = SpeechTextNormalizer.projectForSystemSpeech(trimmed)
-            guard !normalized.text.isEmpty else {
-                fragment.removeAll(keepingCapacity: true)
-                return
-            }
+        func appendFragment(through end: Int) {
+            guard fragmentStart < end else { return }
+            let spokenText = String(characters[fragmentStart..<end])
+            let spokenSourceOffsets = Array(sourceOffsets[fragmentStart..<end])
+            guard let sourceStart = spokenSourceOffsets.first,
+                  let finalSourceOffset = spokenSourceOffsets.last else { return }
             chunks.append(SpeechPlaybackChunk(
                 sourceStart: sourceStart,
-                // Treat whitespace removed at the end of the fragment as
-                // consumed source so the final chunk reaches document EOF.
-                sourceEnd: sourceEnd,
-                spokenText: normalized.text,
-                spokenSourceOffsets: normalized.sourceOffsets.map { sourceStart + $0 }
+                sourceEnd: min(sourceCharacters.count, finalSourceOffset + 1),
+                spokenText: spokenText,
+                spokenSourceOffsets: spokenSourceOffsets
             ))
-            fragment.removeAll(keepingCapacity: true)
+            fragmentStart = end
         }
 
-        for offset in start..<characters.count {
-            if fragment.isEmpty { fragmentStart = offset }
+        for offset in characters.indices {
             let character = characters[offset]
-            fragment.append(character)
-            let previous = fragment.dropLast().last
-            let paragraphBoundary = character == "\n" && previous == "\n" && fragment.count >= 24
-            let sentenceBoundary = ".!?".contains(character) && fragment.count >= target / 2
-            let lengthBoundary = fragment.count >= target && character.isWhitespace
-            let hardBoundary = fragment.count >= target * 2
-            if paragraphBoundary || sentenceBoundary || lengthBoundary || hardBoundary {
-                appendFragment()
+            let fragmentLength = offset - fragmentStart + 1
+            let sentenceBoundary = ".!?".contains(character) && fragmentLength >= target / 2
+            let lengthBoundary = fragmentLength >= target && character.isWhitespace
+            let hardBoundary = fragmentLength >= target * 2
+            if sentenceBoundary || lengthBoundary || hardBoundary {
+                appendFragment(through: offset + 1)
             }
         }
-        appendFragment()
+        appendFragment(through: characters.count)
+        for index in chunks.indices.dropLast() {
+            chunks[index].sourceEnd = chunks[index + 1].sourceStart
+        }
+        chunks[chunks.count - 1].sourceEnd = sourceCharacters.count
         return chunks
     }
 }
