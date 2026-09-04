@@ -15,7 +15,7 @@ If a GitHub label, issue comment, local branch name, older planning document, or
 - Largest distributed audience: external TestFlight Build 19, version 0.1 (19).
 - External TestFlight source commit: `738c743e202f5e700f4d6975adee52862f63c69f`, preserved by tag `testflight/0.1-build-19`.
 - Upload evidence: `artifacts/validation/testflight-external/build-19/build-19-testflight-upload.md`.
-- Accepted integration baseline: `main` at `b6ea36b0e08ebe457c9feb7d207694f8fca2224e` contains the released runtime plus product-owner-accepted integration and repository-governance changes. It is not an assertion that every later commit has reached the external audience; exact distributed binaries are identified by immutable TestFlight tags and upload evidence.
+- Accepted integration runtime baseline: `main` at `b6ea36b0e08ebe457c9feb7d207694f8fca2224e` contains the released runtime plus product-owner-accepted integration. Governance-only commits may follow it. This is not an assertion that every later commit has reached the external audience; exact distributed binaries are identified by immutable TestFlight tags and upload evidence.
 - Current internal baseline: version 0.1 (25) at `3294438ffba790fa281509bc1fa7b51e379a6c71`, preserved by tag `testflight/0.1-build-25`, was uploaded successfully on 2026-09-02, completed App Store Connect processing, and is available to the internal `Margins` group with six testers. The product owner reconfirmed that assignment on 2026-09-04. See `artifacts/validation/testflight-external/build-25/build-25-testflight-upload.md`. It was not added to `External Beta` or submitted for Beta App Review. Builds 20, 21, 23, and 24 are superseded internal candidates; do not submit them externally.
 - Build 25 validation boundary: the product owner has `human_validated` the bounded sender share, recipient import, provisional-to-matched alignment, reconstruction, and listening flow using the Ajeya Cotra episode identified in the Build 25 handoff. Overnight preparation, physical-device resource profiling, local scene generation, and Skim remain pending internal testing. This decision does not clear issue #14 or authorize external sharing or distribution.
 - Build 24 boundary: its bounded delta is `.spokenmargins` document ownership and outgoing type metadata for direct Messages/AirDrop opening, an exact-byte Share-extension handoff fallback, recipient import staging, and import controls that remain available without scrolling. This internal-only distribution does not clear issue #14, authorize external distribution, or establish `human_validated` behavior.
@@ -31,7 +31,7 @@ Only these branches are active development lanes:
 | Branch | Role | Current authorized scope | Merge target |
 | --- | --- | --- | --- |
 | `main` | Released and accepted integration runtime plus repository governance | Exact externally distributed source identified by TestFlight tags; product-owner-accepted integration; governance and validation evidence | N/A |
-| `codex/testflight-triage` | Current internal TestFlight baseline and bounded stabilization lane | Exact Build 25 source initially; reproducible regressions in the current internal binary and narrowly scoped fixes only | `main` only when the exact candidate is product-owner accepted, accepted by Apple for external TestFlight, and available to the external group; exact fixes may also enter `codex/provisional-next` |
+| `codex/testflight-triage` | Current internal TestFlight baseline and bounded stabilization lane | Runtime tree matching exact Build 25 source, with governance-only documentation permitted on top; reproducible regressions in the current internal binary and narrowly scoped fixes only | `main` only when the exact candidate is product-owner accepted, accepted by Apple for external TestFlight, and available to the external group; exact fixes may also enter `codex/provisional-next` |
 | `codex/provisional-next` | Feature-development lane pending product-owner validation | Post-Build-25 feature improvements authorized below; no claim of internal distribution, external distribution, or complete human validation | Cut to `codex/testflight-triage` only as an exact, tagged internal upload candidate; later promote the externally accepted exact source to `main` |
 
 The source lanes are now frozen ancestry, not implementation targets:
@@ -96,7 +96,7 @@ The accepted post-Build-19 fixes through `22788cb` include the earlier playback,
 
 For each TestFlight cycle:
 
-1. Point triage at the exact tagged source of the newest internal TestFlight build.
+1. Base triage on the exact tagged source of the newest internal TestFlight build. Governance-only documentation may follow without changing the runtime identity.
 2. Add only admitted regression fixes.
 3. Run proportional automated verification, cut a new build number if the binary changes, and prepare the product-owner handoff.
 4. Upload the exact candidate internally and update the internal tag, evidence, and triage pointer together.
