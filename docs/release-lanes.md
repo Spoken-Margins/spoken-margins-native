@@ -12,14 +12,15 @@ If a GitHub label, issue comment, local branch name, older planning document, or
 
 ## Released Baseline
 
-- Largest distributed audience: TestFlight Build 19, version 0.1 (19).
-- Released source commit: `738c743e202f5e700f4d6975adee52862f63c69f`.
+- Largest distributed audience: external TestFlight Build 19, version 0.1 (19).
+- External TestFlight source commit: `738c743e202f5e700f4d6975adee52862f63c69f`, preserved by tag `testflight/0.1-build-19`.
 - Upload evidence: `artifacts/validation/testflight-external/build-19/build-19-testflight-upload.md`.
-- Accepted integration baseline: TestFlight triage fixes through `22788cb96a6763d186a607961ee229c5b01d6156` have been accepted into `main` by explicit product-owner direction. Their automated evidence is `verified`; this record does not invent physical-device validation or claim that a later build has reached the largest distributed audience.
-- Current internal candidate: version 0.1 (24) from `codex/build-23-release` at `a7c9e29ceab6831ff24a3376c4b21f1f9ae39e59` was uploaded successfully on 2026-09-01, completed App Store Connect processing, and is available to the internal `Margins` group with six testers; see `artifacts/validation/testflight-external/build-24/build-24-testflight-upload.md`. Builds 20, 21, and 23 are superseded internal candidates; do not submit them externally.
+- Accepted integration runtime baseline: `main` at `b6ea36b0e08ebe457c9feb7d207694f8fca2224e` contains the released runtime plus product-owner-accepted integration. Governance-only commits may follow it. This is not an assertion that every later commit has reached the external audience; exact distributed binaries are identified by immutable TestFlight tags and upload evidence.
+- Current internal baseline: version 0.1 (25) at `3294438ffba790fa281509bc1fa7b51e379a6c71`, preserved by tag `testflight/0.1-build-25`, was uploaded successfully on 2026-09-02, completed App Store Connect processing, and is available to the internal `Margins` group with six testers. The product owner reconfirmed that assignment on 2026-09-04. See `artifacts/validation/testflight-external/build-25/build-25-testflight-upload.md`. It was not added to `External Beta` or submitted for Beta App Review. Builds 20, 21, 23, and 24 are superseded internal candidates; do not submit them externally.
+- Build 25 validation boundary: the product owner has `human_validated` the bounded sender share, recipient import, provisional-to-matched alignment, reconstruction, and listening flow using the Ajeya Cotra episode identified in the Build 25 handoff. Overnight preparation, physical-device resource profiling, local scene generation, and Skim remain pending internal testing. This decision does not clear issue #14 or authorize external sharing or distribution.
 - Build 24 boundary: its bounded delta is `.spokenmargins` document ownership and outgoing type metadata for direct Messages/AirDrop opening, an exact-byte Share-extension handoff fallback, recipient import staging, and import controls that remain available without scrolling. This internal-only distribution does not clear issue #14, authorize external distribution, or establish `human_validated` behavior.
-- Next bounded candidate: Build 22 is reserved for the renewed #84 media-seek reconvergence fix on `codex/testflight-triage`. Its automated evidence is `verified`; it is not accepted into `main`, uploaded, distributed, or `human_validated` until the product owner completes the recorded device checklist and makes that release decision.
-- Current integrated candidate: Build 23 combines the complete quality-of-life program, the private experience overhaul, and the one-way sharing foundation on `codex/build-23-release`. On 2026-08-30 the product owner explicitly authorized this candidate for an internal-only App Store Connect/TestFlight upload to the `Margins` group before the separate Build 22 human decision; that upload and assignment are complete. This bounded override does not accept Build 22, authorize external distribution, clear the rights and provenance gate in #14, or make any `human_validated` claim. Sharing remains unavailable outside the product owner's own-device/internal validation until #14 is accepted.
+- Build 22 is an unshipped historical candidate preserved by tag `candidate/0.1-build-22`; its #84 media-seek fix is already in the ancestry of Build 25. It is not a current release lane or distribution target.
+- Current provisional work lives on `codex/provisional-next`, descends from the exact Build 25 source, and contains feature improvements that are not yet fully product-owner validated or distributed. It remains versioned as build 25 until a new internal upload candidate is deliberately cut; the next available upload number is Build 26.
 - `main` represents the released runtime plus explicitly accepted release-integration changes. Governance- or evidence-only commits may follow the released source commit; runtime changes may enter `main` only through a recorded product-owner release decision.
 - When a later build reaches the largest distributed audience, update this section in the same change that advances the release lanes.
 
@@ -29,9 +30,9 @@ Only these branches are active development lanes:
 
 | Branch | Role | Current authorized scope | Merge target |
 | --- | --- | --- | --- |
-| `main` | Released and accepted integration runtime plus repository governance | Documentation, validation evidence, distributed runtime, and product-owner-accepted release integration | N/A |
-| `codex/testflight-triage` | Active Build 22 rapid-fix lane, based on the accepted Build 21 integration runtime | #84 end-to-end media scrub/seek reconvergence only | `main` after product-owner acceptance; exact verified patch may also enter `codex/build-23-release` |
-| `codex/build-23-release` | Unified Build 23 integration lane and authorized internal follow-ups | Complete quality-of-life and experience work; one-way sharing foundation; recipient import and provenance presentation; exact verified Build 22 seek patch; `.spokenmargins` open/share/import usability fixes; Build 25 redundant podcast-anchor recovery, private episode maps, on-device scene generation, and bounded app/Live Activity Skim work under #27, #88, #89, and #90 | `main` only after the applicable release gates and product-owner acceptance |
+| `main` | Released and accepted integration runtime plus repository governance | Exact externally distributed source identified by TestFlight tags; product-owner-accepted integration; governance and validation evidence | N/A |
+| `codex/testflight-triage` | Current internal TestFlight baseline and bounded stabilization lane | Runtime tree matching exact Build 25 source, with governance-only documentation permitted on top; reproducible regressions in the current internal binary and narrowly scoped fixes only | `main` only when the exact candidate is product-owner accepted, accepted by Apple for external TestFlight, and available to the external group; exact fixes may also enter `codex/provisional-next` |
+| `codex/provisional-next` | Feature-development lane pending product-owner validation | Post-Build-25 feature improvements authorized below; no claim of internal distribution, external distribution, or complete human validation | Cut to `codex/testflight-triage` only as an exact, tagged internal upload candidate; later promote the externally accepted exact source to `main` |
 
 The source lanes are now frozen ancestry, not implementation targets:
 
@@ -40,42 +41,50 @@ The source lanes are now frozen ancestry, not implementation targets:
 | `codex/quality-of-life-next` | `9118c11` after absorbing the temporary overhaul | First parent of the Build 23 line before sharing |
 | `codex/experience-overhaul` | `b118e01`, merged into quality-of-life at `9118c11` | Temporary lane complete; historical after integration |
 | `codex/sharing-next` | `de887f6` | Merged once at `7d47876`; no Build 23 work returns to this lane |
+| `codex/build-23-release` | `e0c12f3` before governance realignment | Historical integration lineage through Builds 23, 24, and 25; continued as `codex/provisional-next` without rewriting history |
 
 All other local and remote branches are historical and read-only. Their commits may be inspected or deliberately extracted, but work must not resume directly on them without a product-owner plan change. In particular, `codex/sharingV1` is historical source material already reconciled into `codex/sharing-next`; it is not an active integration branch.
+
+Product-owner revision, 2026-09-03 (PDF import, navigation, and generated-speech continuity): the active provisional lane is authorized to reopen #78 and address the observed GPT-6 Astra system-card flow end to end. Browser-shared PDFs must enter the document-import path instead of podcast-link resolution; the document picker must expose one direct document action for supported text, PDF, and DRM-free EPUB files; and the listening Timeline must project useful authored sections without duplicating cover, contents, outline, or nested visual headings near the beginning. When generated speech cannot satisfy the current playhead promptly, fallback playback must use the user's configured system voice, cancel or reprioritize obsolete generation after seeks, and avoid continuing background inference that can worsen resource or thermal pressure while fallback is audible. Automated evidence may establish `verified`; only the product owner can establish `human_validated` behavior on a physical device.
+
+Product-owner revision, 2026-09-03 (private native PDF understanding): PDF extraction on the active provisional lane must remain serverless. On iOS 26 and later, Spoken Margins may use Apple's on-device Vision document-recognition API to recover page structure, especially tables, while retaining PDFKit embedded text and authored outlines as canonical evidence. Devices on iOS 18 through 25 must retain a PDFKit-only path. Analysis must run in the main app rather than the Share extension, be bounded for memory and thermal safety, and preserve structured table/source information separately from the later decision to narrate or skip it. This authorization does not introduce cloud extraction, document upload, or an Apple Intelligence device requirement.
+
+Product-owner revision, 2026-09-04 (native-text startup preparation): on the active provisional lane, every newly added native-text item must enter the Library before playback and immediately prepare its first two durable audio chunks without requiring the user to open a session or enable charging-only full-item preparation. Import and metadata completion remain distinct from startup-audio readiness: the Library row must expose a truthful localized preparing state in place of its play affordance until the two-chunk startup window is committed, then become playable. Resource-intensive synthesis must remain serial, run outside SwiftUI rendering and animation work, respect cancellation, storage, thermal, and Low Power Mode safeguards, and yield to active playback demand. Failure or inability to prepare must not trap the user in a loading screen or make the source unavailable; the row must expose a retry or supported live-speech fallback. Full-item and overnight preparation remain separate policies governed by #73 and #74.
+
+Product-owner revision, 2026-09-04 (optional per-session simultaneous audio): the active provisional lane may add a default-off setting that exposes a per-listening-session **Mix with Other Audio** control. Every newly opened listening session must begin in the existing exclusive playback mode with Spoken Margins owning Now Playing and remote transport controls. A deliberate session opt-in may switch app-owned speech or media playback to the system's pure `mixWithOthers` policy, expose an in-app Spoken Margins volume control, and relinquish Spoken Margins Now Playing metadata and remote-command ownership so another audio app may remain the system media owner. The app must not attempt to control the other app's volume, and this feature must not use continuous `duckOthers` as a substitute for mixing. Recording an interjection must temporarily use an exclusive recording configuration to avoid capturing concurrently playing speaker audio, then restore the session's selected playback policy. Automated checks may establish `verified`; only the product owner can establish `human_validated` simultaneous playback, route behavior, recording restoration, or Lock Screen behavior on a physical device.
+
+Product-owner revision, 2026-09-04 (native-text social embeds): the active provisional lane may improve deterministic listening projections for readable-page items, especially social-media posts embedded in followed-source articles. The authored post body and useful attribution must remain audible while raw HTML/media elements, avatar scaffolding, destination URLs, timestamps, dates, engagement counts, and other social-card interface metadata are omitted. Every readable-page intake route must apply the same sanitation boundary, and system speech, generated live speech, prepared audio, and Watch rendering must share an equivalent source-offset-preserving projection so existing imported items also benefit. This work must remain local and deterministic, with no Apple Intelligence or server-AI dependency. Removal heuristics must be scoped to evidenced embed structure and must not erase matching dates, counts, or words in ordinary article prose. Automated checks may establish `verified`; only the product owner can establish `human_validated` listening quality.
 
 ## Merge Direction
 
 Permitted flow:
 
 ```text
-codex/testflight-triage ───────────────► main  (Build 22 acceptance only)
-                 │
-                 └─────────────────────► codex/build-23-release  (exact verified patch)
+main ──────────────────────────────────► codex/provisional-next  (accepted ancestry only)
 
-main ──────────────────────────────────► codex/sharing-next
-main ──────────────────────────────────► codex/quality-of-life-next
-codex/quality-of-life-next ────────────► codex/experience-overhaul
+codex/testflight-triage ───────────────► codex/provisional-next  (exact verified stabilization fixes)
 
-codex/experience-overhaul ─────────────► codex/quality-of-life-next  (temporary integration only)
-codex/quality-of-life-next ────────────► codex/build-23-release  (one integration)
-codex/sharing-next ────────────────────► codex/build-23-release  (one integration)
-codex/build-23-release ────────────────► main  (accepted Build 23 only)
+codex/provisional-next ────────────────► codex/testflight-triage
+                                          only when an exact tagged commit is uploaded internally
+
+codex/testflight-triage ───────────────► main
+                                          only at the exact externally accepted source
 ```
 
 Rules:
 
-- Never merge `codex/sharing-next` directly into `codex/quality-of-life-next`, `codex/experience-overhaul`, or the reverse. Their first shared descendant is `codex/build-23-release`.
-- The required source merges are complete: experience entered quality-of-life at `9118c11`, the verified Build 22 patch entered Build 23 at `81a7c11`, and sharing entered Build 23 at `7d47876`. Do not repeat or reverse those merges.
+- The historical source merges are complete: experience entered quality-of-life at `9118c11`, the verified Build 22 patch entered the integrated lineage at `81a7c11`, and sharing entered it at `7d47876`. Do not repeat or reverse those merges.
 - The recorded conflict resolution preserves the experience overhaul's navigation and presentation composition, sharing's package/import/playback contracts, and the additive persistence union. Project and package-resolution artifacts were regenerated from the resolved source rather than hand-blended.
-- Build 22 acceptance remains a separate human decision. Its exact verified patch may enter Build 23 as inherited `verified` evidence. The product-owner-authorized internal-only Build 23 upload and bounded Build 24 follow-up recorded above are the only distribution exceptions; block broader distribution until the Build 22 result is known.
-- Do not move unreleased runtime work from a feature lane into triage merely to make it ship sooner.
+- Build 25 is the current internal baseline. Do not move unreleased feature work into triage merely to make it ship sooner; advance triage only to the exact source of a successfully uploaded internal build.
+- A triage fix may rejoin `codex/provisional-next` only as the exact verified patch. A provisional candidate may advance triage only after the matching archive has been uploaded and its identity verified.
+- Promotion to `main` requires the exact source commit distributed externally, product-owner acceptance, and Apple external TestFlight acceptance. A successful build or internal upload alone is insufficient.
 - Dependency ordering inside a lane is represented by issue state, commits, tests, and feature flags—not additional persistent branches.
 
 ## TestFlight Triage Lane
 
 `codex/testflight-triage` accepts a change only when all of the following are true:
 
-1. The behavior exists in the released TestFlight baseline.
+1. The behavior exists in the current internal TestFlight baseline.
 2. The defect is reproducible or supported by specific tester/device evidence.
 3. The fix is bounded and does not introduce a new product feature, schema family, or architecture.
 4. Focused regression evidence can be added without claiming product-owner validation.
@@ -87,15 +96,16 @@ The accepted post-Build-19 fixes through `22788cb` include the earlier playback,
 
 For each TestFlight cycle:
 
-1. Start triage from the currently recorded released baseline.
+1. Base triage on the exact tagged source of the newest internal TestFlight build. Governance-only documentation may follow without changing the runtime identity.
 2. Add only admitted regression fixes.
-3. Run proportional automated verification and prepare the product-owner handoff.
-4. Merge accepted fixes into `main` and record the new distributed build and source SHA.
-5. Recreate `codex/testflight-triage` from the new `main` so it does not become a permanent divergent product version.
+3. Run proportional automated verification, cut a new build number if the binary changes, and prepare the product-owner handoff.
+4. Upload the exact candidate internally and update the internal tag, evidence, and triage pointer together.
+5. After product-owner acceptance and Apple external TestFlight acceptance, fast-forward `main` to the exact externally available source and record the distribution evidence.
+6. Leave triage at that exact distributed source until a newer internal build is uploaded.
 
 ## Sharing Lane
 
-`codex/sharing-next` is the frozen source history for the one-way Build 23 foundation, not a current implementation branch. Its one integration into `codex/build-23-release` is complete; all further Build 23 sharing experience work belongs only on the release lane under the frozen seams below.
+`codex/sharing-next` is frozen source history for the one-way sharing foundation, not a current implementation branch. Its one integration at `7d47876` is complete; all authorized follow-up sharing work belongs only on `codex/provisional-next` under the frozen seams below.
 
 ### Phase 1: Foundation
 
@@ -192,7 +202,9 @@ Explicitly excluded:
 
 The branch merged only into `codex/quality-of-life-next` at `9118c11` and is now historical. Sharing was composed only after quality-of-life reached `codex/build-23-release`, where the design overhaul owns navigation and screen composition and sharing owns its reviewed-package, import, provenance, and playback semantics.
 
-## Build 23 Unified Release Lane
+## Historical Build 23 Unified Release Lane
+
+This section preserves the Build 23 integration contract and evidence. The branch name is historical; its integrated ancestry continues on `codex/provisional-next`, and this section does not override the current routing table above.
 
 `codex/build-23-release` is the only branch where the quality-of-life/experience source and sharing source may be composed. It exists to complete a coherent release, not to preserve both branches' duplicate screens.
 
@@ -243,7 +255,7 @@ Stop distribution or acceptance if:
 ## Work-In-Progress And Branch Creation Rules
 
 - The repository remains single-agent by default.
-- The one authorized exception is the named Ultra packet in `docs/work-packets/build-23-ultra-handoff.md`. It applies only to `codex/build-23-release`, only from the seam-freeze tag, and only with the named steward, three named gate agents, allowed/forbidden files, and merge order recorded there.
+- The historical Ultra packet in `docs/work-packets/build-23-ultra-handoff.md` is closed and does not authorize new parallel work.
 - Keep one active implementation target at a time unless the product owner explicitly changes the workflow.
 - Do not create branches for individual issues inside an active lane.
 - Temporary recovery or experiment branches require explicit product-owner approval and must name their merge target and deletion condition.
