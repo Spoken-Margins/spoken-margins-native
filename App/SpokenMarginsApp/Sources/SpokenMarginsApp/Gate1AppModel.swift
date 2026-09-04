@@ -51,6 +51,12 @@ private struct ResolvedSkimPlaybackPlan {
     let summaryAudioURL: URL
 }
 
+enum SummaryBridgeRatePolicy {
+    /// Summary audio is synthesized at the user's selected rate, so AVPlayer
+    /// must transport that prepared asset at unity instead of applying it twice.
+    static let preparedAssetTransportRate: Float = 1
+}
+
 enum NativeTextStartupAudioState: String, Hashable {
     case notRequired = "not_required"
     case preparing
@@ -4257,7 +4263,9 @@ final class Gate1AppModel: ObservableObject {
             skimBridgePlayer = player
             state.status = .playing
             snapshot.skimBridgeState = state
-            player.playImmediately(atRate: Float(max(0.5, min(2, snapshot.playbackRate))))
+            // Summary assets are rendered at the selected speech rate. Applying
+            // the same rate again here compounded 1.75× into roughly 3.06×.
+            player.playImmediately(atRate: SummaryBridgeRatePolicy.preparedAssetTransportRate)
             skimBridgeTask?.cancel()
             skimBridgeTask = Task { @MainActor [weak self, weak player] in
                 while !Task.isCancelled {
@@ -4319,7 +4327,7 @@ final class Gate1AppModel: ObservableObject {
             player.pause()
             bridge.status = .paused
         } else {
-            player.playImmediately(atRate: Float(max(0.5, min(2, snapshot.playbackRate))))
+            player.playImmediately(atRate: SummaryBridgeRatePolicy.preparedAssetTransportRate)
             bridge.status = .playing
         }
         snapshot.skimBridgeState = bridge
@@ -5235,9 +5243,6 @@ final class Gate1AppModel: ObservableObject {
         UserDefaults.standard.set(clamped, forKey: "mediaPlaybackRate")
         if var bridge = snapshot.skimBridgeState {
             snapshot.playbackRate = clamped
-            if bridge.status == .playing {
-                skimBridgePlayer?.rate = Float(clamped)
-            }
             bridge.status = snapshot.skimBridgeState?.status ?? bridge.status
             snapshot.skimBridgeState = bridge
             diagnostics["mediaPlaybackRate"] = String(format: "%.2f", clamped)

@@ -1721,24 +1721,23 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             removePlayerStateObserver()
             removeCompletionObserver()
             removeTimeObserver()
+            #if canImport(MediaToolbox) && !os(watchOS)
+            let configureItem = {
+                MainActor.assumeIsolated {
+                    PlaybackGainAudioMix.configuredPlayerItem(url: url, gain: self.playbackVolume)
+                }
+            }
+            let configuredItem = mediaContext?.sourceType == .generatedTTSPrerendered
+                ? (Thread.isMainThread ? configureItem() : DispatchQueue.main.sync(execute: configureItem))
+                : nil
+            let item = configuredItem?.item ?? AVPlayerItem(url: url)
+            #else
             let item = AVPlayerItem(url: url)
+            #endif
             player = AVPlayer(playerItem: item)
             player?.volume = min(1, playbackVolume)
             #if canImport(MediaToolbox) && !os(watchOS)
-            playbackGainAudioMix = nil
-            if mediaContext?.sourceType == .generatedTTSPrerendered, Thread.isMainThread {
-                let level = playbackVolume
-                playbackGainAudioMix = MainActor.assumeIsolated {
-                    guard let assetTrack = item.tracks
-                        .compactMap({ $0.assetTrack })
-                        .first(where: { $0.mediaType == .audio }),
-                          let gainMix = try? PlaybackGainAudioMix(assetTrack: assetTrack, gain: level) else {
-                        return nil
-                    }
-                    item.audioMix = gainMix.audioMix
-                    return gainMix
-                }
-            }
+            playbackGainAudioMix = configuredItem?.gainMix
             #endif
             player?.automaticallyWaitsToMinimizeStalling = true
             activeTargetId = targetId

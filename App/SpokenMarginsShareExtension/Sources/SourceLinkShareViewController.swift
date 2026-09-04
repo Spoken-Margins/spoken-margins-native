@@ -112,7 +112,8 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         completion: @escaping ExtractionCompletion
     ) {
         guard index < candidates.count else {
-            completion(.failure(SourceLinkShareError.unsupportedInput))
+            let identifiers = Array(Set(candidates.map(\.identifier))).sorted().joined(separator: ", ")
+            completion(.failure(SourceLinkShareError.unsupportedInput(identifiers)))
             return
         }
         let candidate = candidates[index]
@@ -120,7 +121,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         if Self.isSpokenMarginsPackage(candidate) {
             candidate.provider.loadFileRepresentation(forTypeIdentifier: candidate.identifier) { url, error in
                 guard let url else {
-                    completion(.failure(error ?? SourceLinkShareError.unsupportedInput))
+                    completion(.failure(error ?? SourceLinkShareError.unsupportedInput()))
                     return
                 }
                 do {
@@ -355,9 +356,22 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         presentsPDF: Bool,
         suggestedName: String? = nil
     ) -> SharedImport? {
-        if identifier == UTType.propertyList.identifier,
-           let payload = browserPayloadFromPropertyList(item) {
-            return .browserText(payload)
+        if identifier == UTType.propertyList.identifier {
+            if let results = browserResultsFromPropertyList(item),
+               browserResultsDescribePDF(results),
+               let url = firstWebURL(in: results) {
+                return .remotePDF(url.absoluteString)
+            }
+            if let payload = browserPayloadFromPropertyList(item) {
+                return .browserText(payload)
+            }
+            if let results = browserResultsFromPropertyList(item),
+               let url = firstWebURL(in: results) {
+                return sharedURLImport(
+                    url,
+                    forcePDF: presentsPDF || browserResultsDescribePDF(results)
+                )
+            }
         }
         if let url = SourceLinkShareRepresentation.url(from: item) {
             if url.isFileURL {
@@ -469,11 +483,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
     }
 
     nonisolated private static func browserPayloadFromPropertyList(_ item: Any?) -> BrowserTextSharePayload? {
-        guard let dictionary = item as? [String: Any] ?? item as? NSDictionary as? [String: Any] else { return nil }
-        let rawResults = dictionary[NSExtensionJavaScriptPreprocessingResultsKey]
-            ?? dictionary["NSExtensionJavaScriptPreprocessingResultsKey"]
-            ?? dictionary
-        guard let results = rawResults as? [String: Any] ?? rawResults as? NSDictionary as? [String: Any] else { return nil }
+        guard let results = browserResultsFromPropertyList(item) else { return nil }
         let markdown = (results["markdown"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let fallbackText = (results["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let content = markdown.isEmpty ? fallbackText : markdown
@@ -495,6 +505,26 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
             ),
             text: content
         )
+    }
+
+    nonisolated private static func browserResultsFromPropertyList(_ item: Any?) -> [String: Any]? {
+        guard let dictionary = item as? [String: Any] ?? item as? NSDictionary as? [String: Any] else { return nil }
+        let rawResults = dictionary[NSExtensionJavaScriptPreprocessingResultsKey]
+            ?? dictionary["NSExtensionJavaScriptPreprocessingResultsKey"]
+            ?? dictionary
+        return rawResults as? [String: Any] ?? rawResults as? NSDictionary as? [String: Any]
+    }
+
+    nonisolated private static func browserResultsDescribePDF(_ results: [String: Any]) -> Bool {
+        if (results["isPDFDocument"] as? Bool) == true { return true }
+        if let contentType = results["contentType"] as? String,
+           contentType.lowercased().split(separator: ";", maxSplits: 1).first == "application/pdf" {
+            return true
+        }
+        return ["canonicalURL", "url", "documentURL"]
+            .compactMap { results[$0] as? String }
+            .compactMap(URL.init(string:))
+            .contains { $0.pathExtension.lowercased() == "pdf" }
     }
 
     nonisolated private static func acceptsRegisteredIdentifier(_ identifier: String, suggestedName: String?) -> Bool {
@@ -557,14 +587,15 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
 
 private enum SourceLinkShareError: Error, LocalizedError {
     case noInput
-    case unsupportedInput
+    case unsupportedInput(String = "")
 
     var errorDescription: String? {
         switch self {
         case .noInput:
             return "No shared input was provided."
-        case .unsupportedInput:
-            return "Spoken Margins could not read this share. Share a .spokenmargins session, web page, podcast link, PDF, Markdown file, or text file."
+        case .unsupportedInput(let identifiers):
+            let representationNote = identifiers.isEmpty ? "" : " Safari supplied: \(identifiers)."
+            return "Spoken Margins could not read this share. Share a .spokenmargins session, web page, podcast link, PDF, Markdown file, or text file.\(representationNote)"
         }
     }
 }

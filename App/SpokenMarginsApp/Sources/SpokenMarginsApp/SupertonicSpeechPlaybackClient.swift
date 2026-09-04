@@ -1439,26 +1439,20 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         do {
             try fallback.stop()
             try activateAudioSession()
-            let item = AVPlayerItem(url: audioURL)
-            item.audioTimePitchAlgorithm = .timeDomain
-            let nextPlayer = AVPlayer(playerItem: item)
             let level = lock.withLock { playbackVolume }
-            nextPlayer.volume = min(1, level)
-            let installGainMix = {
-                MainActor.assumeIsolated { () -> PlaybackGainAudioMix? in
-                    guard let assetTrack = item.tracks
-                        .compactMap({ $0.assetTrack })
-                        .first(where: { $0.mediaType == .audio }),
-                          let gainMix = try? PlaybackGainAudioMix(assetTrack: assetTrack, gain: level) else {
-                        return nil
-                    }
-                    item.audioMix = gainMix.audioMix
-                    return gainMix
+            let configureItem = {
+                MainActor.assumeIsolated {
+                    PlaybackGainAudioMix.configuredPlayerItem(url: audioURL, gain: level)
                 }
             }
-            let gainMix = Thread.isMainThread
-                ? installGainMix()
-                : DispatchQueue.main.sync(execute: installGainMix)
+            let configuredItem = Thread.isMainThread
+                ? configureItem()
+                : DispatchQueue.main.sync(execute: configureItem)
+            let item = configuredItem.item
+            item.audioTimePitchAlgorithm = .timeDomain
+            let nextPlayer = AVPlayer(playerItem: item)
+            nextPlayer.volume = min(1, level)
+            let gainMix = configuredItem.gainMix
             if observesPlayerLifecycle {
                 installPlaybackObservers(for: item, request: request)
             }

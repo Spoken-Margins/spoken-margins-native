@@ -10,6 +10,10 @@ import PDFKit
 
 @MainActor
 final class Gate1AppModelWorkflowTests: XCTestCase {
+    func testPreparedSkimSummaryUsesUnityTransportRate() {
+        XCTAssertEqual(SummaryBridgeRatePolicy.preparedAssetTransportRate, 1)
+    }
+
     func testMixedAudioIsExplicitPerSessionAndRestoresDefaultSystemOwnership() {
         let defaults = UserDefaults.standard
         let priorAvailability = defaults.object(forKey: "showsMixWithOtherAudioOption")

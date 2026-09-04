@@ -115,6 +115,24 @@ public final class PlaybackGainAudioMix: @unchecked Sendable {
         self.audioMix = mix
     }
 
+    /// Builds the player item and gain tap from the same asset. `AVPlayerItem(url:)`
+    /// can report no item tracks during immediate setup, silently omitting the
+    /// above-unity tap even though attenuation through `AVPlayer.volume` works.
+    @MainActor
+    public static func configuredPlayerItem(
+        url: URL,
+        gain: Float
+    ) -> (item: AVPlayerItem, gainMix: PlaybackGainAudioMix?) {
+        let asset = AVURLAsset(url: url)
+        let item = AVPlayerItem(asset: asset)
+        guard let assetTrack = asset.tracks(withMediaType: .audio).first,
+              let gainMix = try? PlaybackGainAudioMix(assetTrack: assetTrack, gain: gain) else {
+            return (item, nil)
+        }
+        item.audioMix = gainMix.audioMix
+        return (item, gainMix)
+    }
+
     public func update(gain: Float) {
         context.update(gain: gain)
     }

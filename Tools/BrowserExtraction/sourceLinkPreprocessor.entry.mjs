@@ -12,6 +12,8 @@ globalThis.SourceLinkPreprocessor.prototype = {
         url: window.location.href,
         documentURL: document.URL,
         canonicalURL: canonicalElement?.href || "",
+        contentType: document.contentType || "",
+        isPDFDocument: String(document.contentType || "").toLowerCase() === "application/pdf",
         title: source.title,
         author: source.author,
         publishedAt: source.publishedAt,
@@ -26,6 +28,8 @@ globalThis.SourceLinkPreprocessor.prototype = {
       argumentsObject.completionFunction({
         url: window.location.href,
         documentURL: document.URL,
+        contentType: document.contentType || "",
+        isPDFDocument: String(document.contentType || "").toLowerCase() === "application/pdf",
         title: document.title || "Shared Web Page",
         text: fallbackText,
         contentFormat: "plain_text",
@@ -36,3 +40,7 @@ globalThis.SourceLinkPreprocessor.prototype = {
 
   finalize() {}
 };
+
+// Safari looks up this exact global instance after evaluating the configured
+// NSExtensionJavaScriptPreprocessingFile.
+globalThis.ExtensionPreprocessingJS = new globalThis.SourceLinkPreprocessor();

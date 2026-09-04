@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
+import vm from "node:vm";
 import { parseHTML } from "linkedom";
 import {
   captureReadablePage,
@@ -199,4 +200,32 @@ test("built resources contain the pinned extractor and Safari preprocessor", () 
   assert.match(preprocessor, /Bundled Defuddle 0\.19\.1/);
   assert.match(preprocessor, /SourceLinkPreprocessor/);
   assert.match(preprocessor, /plain_text/);
+});
+
+test("Safari preprocessor identifies a PDF document even when it has no readable body", () => {
+  const preprocessorSource = fs.readFileSync(
+    "App/SpokenMarginsShareExtension/Resources/SourceLinkPreprocessor.js",
+    "utf8"
+  );
+  const context = {
+    console,
+    document: {
+      URL: "https://example.com/brief.pdf",
+      contentType: "application/pdf",
+      title: "Brief PDF",
+      body: null,
+      querySelector: () => null
+    },
+    window: { location: { href: "https://example.com/brief.pdf" } }
+  };
+  vm.runInNewContext(preprocessorSource, context);
+  assert.ok(context.ExtensionPreprocessingJS);
+  let payload;
+  context.ExtensionPreprocessingJS.run({
+    completionFunction: (value) => { payload = value; }
+  });
+
+  assert.equal(payload.contentType, "application/pdf");
+  assert.equal(payload.isPDFDocument, true);
+  assert.equal(payload.documentURL, "https://example.com/brief.pdf");
 });

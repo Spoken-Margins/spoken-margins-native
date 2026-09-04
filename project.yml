@@ -208,12 +208,16 @@ targets:
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).SourceLinkShareViewController
           NSExtensionAttributes:
             NSExtensionJavaScriptPreprocessingFile: SourceLinkPreprocessor
-            NSExtensionActivationRule:
-              NSExtensionActivationSupportsAttachmentsWithMaxCount: 1
-              NSExtensionActivationSupportsAttachmentsWithMinCount: 1
-              NSExtensionActivationSupportsFileWithMaxCount: 1
-              NSExtensionActivationSupportsWebPageWithMaxCount: 1
-              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+            NSExtensionActivationRule: >-
+              SUBQUERY(extensionItems, $extensionItem,
+              SUBQUERY($extensionItem.attachments, $attachment,
+              ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "com.spokenmargins.package" ||
+              ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "com.adobe.pdf" ||
+              ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.url" ||
+              ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.text" ||
+              ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "com.apple.property-list"
+              ).@count == $extensionItem.attachments.@count
+              ).@count == 1
   SpokenMarginsAppUITests:
     type: bundle.ui-testing
     platform: iOS
