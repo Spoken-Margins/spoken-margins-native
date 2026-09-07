@@ -191,7 +191,9 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
                             speed: max(0.7, min(2.0, speed)),
                             silenceDuration: 0.3,
                             paceAfterInference: { [weak self] inferenceDuration in
+                                guard !cancellation.isCancelled else { throw CancellationError() }
                                 self?.paceBackgroundInference(after: inferenceDuration)
+                                guard !cancellation.isCancelled else { throw CancellationError() }
                             }
                         )
                         guard !cancellation.isCancelled else { throw CancellationError() }

@@ -163,6 +163,8 @@ public protocol AudioPlaybackClient {
     func mediaSeekResolution(for request: MediaSeekRequest) -> MediaSeekResolution
     func setPlaybackRate(_ rate: Double) throws
     func setMixesWithOtherAudio(_ enabled: Bool) throws
+    /// Opt-in attenuation of other apps, effective only during mixed playback.
+    func setLowersBackgroundAudio(_ enabled: Bool) throws
     func setPlaybackVolume(_ volume: Float) throws
     func currentPlaybackPosition() -> PlaybackPosition?
     func currentCharOffset() -> Int?
@@ -297,6 +299,8 @@ public extension AudioPlaybackClient {
     func setPlaybackRate(_ rate: Double) throws {}
 
     func setMixesWithOtherAudio(_ enabled: Bool) throws {}
+
+    func setLowersBackgroundAudio(_ enabled: Bool) throws {}
 
     func setPlaybackVolume(_ volume: Float) throws {}
 

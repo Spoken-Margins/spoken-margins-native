@@ -51,7 +51,7 @@ actor FollowedSourceCoordinator {
         return try await follow(candidate: candidate)
     }
 
-    func discover(urlString: String) async throws -> [SourceCandidateEvidence] {
+    func discover(urlString: String, requiringItemMembership: Bool = false) async throws -> [SourceCandidateEvidence] {
         guard let url = URL(string: urlString.trimmingCharacters(in: .whitespacesAndNewlines)) else { throw FollowedSourceError.invalidURL }
         guard url.scheme?.lowercased() == "https", let host = url.host?.lowercased() else { throw FollowedSourceError.insecureURL }
         contactedHosts = [host]
@@ -71,10 +71,27 @@ actor FollowedSourceCoordinator {
         var candidates: [SourceCandidateEvidence] = []
         for (candidateURL, relation, confidence) in evidence.prefix(8) {
             guard let parsed = try? await fetch(url: candidateURL, subscription: nil) else { continue }
-            candidates.append(candidate(url: candidateURL, parsed: parsed, relation: relation, confidence: confidence))
+            // Discovery is evidence of membership, not merely a feed on the
+            // same host. Unmatched heuristics must never become follow consent.
+            guard !requiringItemMembership || parsed.items.contains(where: {
+                Self.itemURLKey($0.url) == Self.itemURLKey(url.absoluteString)
+                    || Self.itemURLKey($0.audioURL) == Self.itemURLKey(url.absoluteString)
+            }) else { continue }
+            let found = candidate(url: candidateURL, parsed: parsed, relation: relation, confidence: confidence)
+            if !candidates.contains(where: { $0.source.id == found.source.id }) {
+                candidates.append(found)
+            }
         }
         guard !candidates.isEmpty else { throw FollowedSourceError.noFeedCandidates }
         return candidates
+    }
+
+    private static func itemURLKey(_ raw: String?) -> String? {
+        guard let raw, var url = URLComponents(string: raw) else { return nil }
+        url.fragment = nil
+        url.host = url.host?.lowercased()
+        url.scheme = url.scheme?.lowercased()
+        return url.string
     }
 
     func follow(candidate: SourceCandidateEvidence) async throws -> FeedSubscription {

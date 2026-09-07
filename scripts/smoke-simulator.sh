@@ -1,61 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEVICE_UDID="${DEVICE_UDID:-}"
-
-cd "$ROOT"
-
-xcodegen generate
-xcodebuild \
-  -project SpokenMarginsNative.xcodeproj \
-  -scheme SpokenMarginsApp \
-  -configuration Debug \
-  -sdk iphonesimulator \
-  -destination 'generic/platform=iOS Simulator' \
-  CODE_SIGNING_ALLOWED=YES \
-  CODE_SIGN_IDENTITY='-' \
-  -quiet \
-  clean build
-
-if [[ -z "$DEVICE_UDID" ]]; then
-  DEVICE_UDID="$(xcrun simctl list devices available | awk '/iPhone 17 \\(/ { gsub(/[()]/, "", $NF); print $NF; exit }')"
+"$ROOT/scripts/bootstrap-python-tools.sh"
+PYTHON="$ROOT/.venv/bin/python"
+DEVICE_ARGS=()
+if [[ -n "${PHONE_UDID:-${DEVICE_UDID:-}}" ]]; then
+  DEVICE_ARGS=(--device "${PHONE_UDID:-$DEVICE_UDID}")
 fi
-
-if [[ -z "$DEVICE_UDID" ]]; then
-  echo "No available iPhone simulator found. Set DEVICE_UDID explicitly." >&2
-  exit 1
-fi
-
-APP="$(find "$HOME/Library/Developer/Xcode/DerivedData" -path '*Debug-iphonesimulator/SpokenMarginsApp.app' -type d | tail -1)"
-if [[ -z "$APP" ]]; then
-  echo "Built app not found in DerivedData." >&2
-  exit 1
-fi
-
-if [[ -d "$APP/Resources" ]]; then
-  echo "Invalid iOS bundle: top-level Resources/ directory triggers simulator install failure." >&2
-  exit 1
-fi
-
-xcrun simctl boot "$DEVICE_UDID" 2>/dev/null || true
-xcrun simctl bootstatus "$DEVICE_UDID" -b
-xcrun simctl install "$DEVICE_UDID" "$APP"
-xcrun simctl launch "$DEVICE_UDID" com.spokenmargins.native
-sleep 3
-
-DEVICE_LINE="$(xcrun simctl list devices | grep "$DEVICE_UDID" | head -1 || true)"
-DEVICE_NAME="${DEVICE_LINE% (*}"
-DEVICE_NAME="${DEVICE_NAME#"${DEVICE_NAME%%[![:space:]]*}"}"
-SCREENSHOT_NAME="${SCREENSHOT_NAME:-}"
-if [[ -z "$SCREENSHOT_NAME" ]]; then
-  if [[ "$DEVICE_NAME" == iPad* ]]; then
-    SCREENSHOT_NAME="ipad-launch.png"
-  else
-    SCREENSHOT_NAME="iphone-launch.png"
-  fi
-fi
-
-mkdir -p "$ROOT/artifacts/gate1"
-xcrun simctl io "$DEVICE_UDID" screenshot "$ROOT/artifacts/gate1/$SCREENSHOT_NAME" >/dev/null
-echo "Simulator smoke passed on ${DEVICE_NAME:-$DEVICE_UDID}. Screenshot: $ROOT/artifacts/gate1/$SCREENSHOT_NAME"
+# XCUITest proves the Library is reachable/hittable and attaches its screenshot.
+# The runner builds into an exact path and reuses compatible test products.
+"$PYTHON" "$ROOT/scripts/verify-tests.py" --plan smoke "${DEVICE_ARGS[@]}"

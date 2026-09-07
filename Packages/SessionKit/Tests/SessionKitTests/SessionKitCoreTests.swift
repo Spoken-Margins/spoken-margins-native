@@ -166,6 +166,7 @@ final class SessionKitCoreTests: XCTestCase {
         let routed = RoutedAudioPlaybackClient(speech: speech, media: media)
 
         try routed.setMixesWithOtherAudio(true)
+        try routed.setLowersBackgroundAudio(true)
         try routed.setPlaybackVolume(0.35)
         routed.setRemoteCommandHandlingEnabled(false)
         try routed.configureMediaContext(PlaybackMediaContext(
@@ -176,6 +177,8 @@ final class SessionKitCoreTests: XCTestCase {
         ))
         try routed.play(targetId: "media", fromMediaTimeMs: 0)
 
+        XCTAssertEqual(speech.backgroundAudioStates, [true])
+        XCTAssertEqual(media.backgroundAudioStates, [true])
         XCTAssertEqual(speech.mixingStates, [true])
         XCTAssertEqual(media.mixingStates, [true])
         XCTAssertEqual(speech.playbackVolumes, [0.35])
@@ -4887,6 +4890,32 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.chapterTitle, "Interjection Summary 1")
     }
 
+    func testAssistantSeekAndPausedSkipPreserveSourceCompletionAndPersistTarget() throws {
+        let profile = RuntimeCapabilityProfile(id: "phone", displayName: "Phone", capabilities: ["sync": ["canonical_persistence"], "playback": ["assistant_turn_tts", "skip_sentence"]])
+        let item = Item(id: "source", title: "Source", mediaType: "text", text: "Source complete.", externalReference: nil, status: "ready")
+        let session = Session(id: "session", itemId: item.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 100, playbackRate: 1)
+        let text = "First sentence. Second sentence. Third sentence. Fourth sentence."
+        let turn = ConversationTurn(id: "response", sessionId: session.id, role: "assistant", turnType: "assistant_response", status: "complete", summary: nil, text: text, rawText: nil, chapters: nil, sourceInterjectionIds: [])
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session], turns: [turn.id: turn])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+        _ = try engine.inspectSession(sessionId: session.id)
+        _ = try engine.playTurn(turnId: turn.id)
+        _ = try engine.pause()
+        let sought = try engine.seekText(toCharOffset: 18)
+        XCTAssertEqual(sought.status, .paused)
+        XCTAssertEqual(sought.currentTextStart, 18)
+        XCTAssertEqual(sought.sourceProgressPercent, 100)
+        let skipped = try engine.skipForward(unit: "sentence")
+        XCTAssertEqual(skipped.status, .paused)
+        XCTAssertGreaterThan(skipped.currentTextStart ?? 0, 18)
+        XCTAssertEqual(try repo.loadSession(id: session.id)?.position.charOffset, skipped.currentTextStart)
+        XCTAssertEqual(try repo.loadSession(id: session.id)?.completionPercent, 100)
+        XCTAssertNotNil(try repo.loadItem(id: item.id).sourceCompletedAt)
+        _ = try engine.seekText(toCharOffset: 4)
+        XCTAssertEqual(try repo.loadSession(id: session.id)?.position.charOffset, 4)
+    }
+
     func testSummaryTurnCompletionPausesWithoutChangingSourceCompletion() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
@@ -5683,6 +5712,7 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     var configuredSpeechSettings: [(String?, Float)] = []
     var remoteCommandHandlingStates: [Bool] = []
     var mixingStates: [Bool] = []
+    var backgroundAudioStates: [Bool] = []
     var playbackVolumes: [Float] = []
     var acceptsPostResumeSamples = false
     var postResumeSampleRequests: [PostResumeAudioSampleRequest] = []
@@ -5735,6 +5765,10 @@ private final class RecordingAudioClient: AudioPlaybackClient {
 
     func setMixesWithOtherAudio(_ enabled: Bool) throws {
         mixingStates.append(enabled)
+    }
+
+    func setLowersBackgroundAudio(_ enabled: Bool) throws {
+        backgroundAudioStates.append(enabled)
     }
 
     func setPlaybackVolume(_ volume: Float) throws {

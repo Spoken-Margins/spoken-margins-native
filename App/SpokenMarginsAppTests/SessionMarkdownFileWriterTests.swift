@@ -62,6 +62,8 @@ final class BatchSessionExportWorkflowTests: XCTestCase {
         let defaults = UserDefaults.standard
         let bookmarkKey = "batchExportFolderBookmark"
         let nameKey = "batchExportFolderName"
+        let speechKeys = ["ttsVoiceSelection", "ttsMode", "speechVoiceIdentifier", "supertonicVoicePendingTermsV1"]
+        let priorSpeechPreferences = Dictionary(uniqueKeysWithValues: speechKeys.map { ($0, defaults.object(forKey: $0)) })
         let priorBookmark = defaults.data(forKey: bookmarkKey)
         let priorName = defaults.string(forKey: nameKey)
         let root = FileManager.default.temporaryDirectory
@@ -69,6 +71,10 @@ final class BatchSessionExportWorkflowTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer {
             try? FileManager.default.removeItem(at: root)
+            for key in speechKeys {
+                if let value = priorSpeechPreferences[key] ?? nil { defaults.set(value, forKey: key) }
+                else { defaults.removeObject(forKey: key) }
+            }
             if let priorBookmark {
                 defaults.set(priorBookmark, forKey: bookmarkKey)
             } else {
@@ -83,6 +89,8 @@ final class BatchSessionExportWorkflowTests: XCTestCase {
 
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
+        // Export requires a session, independent of persisted first-run voice consent.
+        model.declineCurrentTerms()
         model.importTitle = "Batch Export Article"
         model.importText = "A source passage that should survive the Markdown export."
         model.importTextItem()

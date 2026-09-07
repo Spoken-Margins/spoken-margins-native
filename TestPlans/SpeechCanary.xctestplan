@@ -1,0 +1,28 @@
+{
+  "configurations": [
+    {
+      "id": "14389864-c467-50dc-a342-2202628c81a3",
+      "name": "Default",
+      "options": {}
+    }
+  ],
+  "defaultOptions": {
+    "testTimeoutsEnabled": true,
+    "defaultTestExecutionTimeAllowance": 900,
+    "maximumTestExecutionTimeAllowance": 900
+  },
+  "testTargets": [
+    {
+      "target": {
+        "containerPath": "container:SpokenMarginsNative.xcodeproj",
+        "identifier": "62CEABDB2B6F38CA17ED8324",
+        "name": "SpokenMarginsAppUITests"
+      },
+      "selectedTests": [
+        "EmojiArticlePlaybackUITests"
+      ],
+      "parallelizable": false
+    }
+  ],
+  "version": 1
+}

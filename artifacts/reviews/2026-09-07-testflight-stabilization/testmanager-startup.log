@@ -1,0 +1,167 @@
+Timestamp               Ty Process[PID:TID]
+2026-09-07 12:00:38.885 Df testmanagerd[49331:90e19] [com.apple.xpc:connection] [0x101a48180] invalidated because the client process (pid 50522) either cancelled the connection or exited
+2026-09-07 12:00:38.886 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] Test process connection invalidated or interrupted, closing test session <XCTestSession: 0x101a18000> pid 50522.
+2026-09-07 12:00:38.886 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] Closed <XCTestSession: 0x101a18000> pid 50522, removing from (
+    "<XCTestSession: 0x101a18000> pid 50522"
+)
+2026-09-07 12:00:38.886 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] Tearing down <XCTestSession: 0x101a18000> pid 50522.
+2026-09-07 12:00:38.886 Df testmanagerd[49331:90e19] [com.apple.locationd.Core:Simulation] {"msg":"getDaemonProxy called"}
+2026-09-07 12:00:38.886 Df testmanagerd[49331:90e18] [com.apple.dt.xctest:Default] DTXSocketTransport for socket 4 disconnected, owner is <XCIDESession: 0x1013b1080> (socket 4) created Monday, September 7, 2026 at 11:54:33 Eastern Daylight Time
+2026-09-07 12:00:38.886 Df testmanagerd[49331:90e18] [com.apple.dt.xctest:Default] XCIDESession is responsible for cleaning up its socket
+2026-09-07 12:00:38.886 Df testmanagerd[49331:90e19] [com.apple.locationd.Core:Simulation] {"msg":"no existing connection, trying to get one"}
+2026-09-07 12:00:38.886 Df testmanagerd[49331:90e19] [com.apple.xpc:connection] [0x101984640] activating connection: mach=true listener=false peer=false name=com.apple.locationd.simulation
+2026-09-07 12:00:38.886 Df testmanagerd[49331:90e19] [com.apple.locationd.Core:Simulation] {"msg":"Do we have a proxy?", "proxy":<__NSXPCInterfaceProxy_CLSimulationXPCServerInterface: 0x1019f4af0>, "connection":<NSXPCConnection: 0x1018d52c0> connection to service named com.apple.locationd.simulation}
+2026-09-07 12:00:38.887 Df testmanagerd[49331:90e19] [com.apple.locationd.Core:Simulation] {"msg":"getDaemonProxy called"}
+2026-09-07 12:00:38.887 Df testmanagerd[49331:90e19] [com.apple.locationd.Core:Simulation] {"msg":"Do we have a proxy?", "proxy":<__NSXPCInterfaceProxy_CLSimulationXPCServerInterface: 0x1019f4b40>, "connection":<NSXPCConnection: 0x1018d52c0> connection to service named com.apple.locationd.simulation}
+2026-09-07 12:00:38.887 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] disableAutomationModeForClient
+2026-09-07 12:00:38.887 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] Removed Automation Mode client <XCTestSession: 0x101a18000> pid 50522. Total clients: 0
+2026-09-07 12:00:38.887 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] Disabling Automation Mode...
+2026-09-07 12:00:38.887 Df testmanagerd[49331:90e19] [com.apple.xpc:connection] [0x101984780] activating connection: mach=true listener=false peer=false name=com.apple.dt.automationmode.writer
+2026-09-07 12:00:38.887 Df testmanagerd[49331:90e19] [com.apple.dt.automationmode:Default] Created new connection <NSXPCConnection: 0x1018d5360> connection to service named com.apple.dt.automationmode.writer.
+2026-09-07 12:00:38.905 Df testmanagerd[49331:90e1a] [com.apple.dt.automationmode:Default] Handling posted change notification (com.apple.dt.automationmode.state-changed)
+2026-09-07 12:00:38.905 Df testmanagerd[49331:90e1a] [com.apple.dt.automationmode:Default] XAM shared observer connecting to com.apple.dt.automationmode.reader
+2026-09-07 12:00:38.905 Df testmanagerd[49331:90e1a] [com.apple.xpc:connection] [0x1019848c0] activating connection: mach=true listener=false peer=false name=com.apple.dt.automationmode.reader
+2026-09-07 12:00:38.905 Df testmanagerd[49331:90e19] [com.apple.dt.automationmode:Default] Invalidating connection <NSXPCConnection: 0x1018d5360> connection to service with pid 50209 named com.apple.dt.automationmode.writer.
+2026-09-07 12:00:38.905 Df testmanagerd[49331:90e19] [com.apple.xpc:connection] [0x101984780] invalidated because the current process cancelled the connection by calling xpc_connection_cancel()
+2026-09-07 12:00:38.905 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] Finished disabling Automation Mode
+2026-09-07 12:00:38.905 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] XCTestSession is responsible for cleaning up its socket from an XCIDESession
+2026-09-07 12:00:38.905 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] Invalidating <XCTDAutomationServicesProvider: 0x1019f40f0>.
+2026-09-07 12:00:38.905 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] Tearing down <XCTDApplicationLauncher: 0x101885080>.
+2026-09-07 12:00:38.905 Df testmanagerd[49331:90e19] [com.apple.FrontBoard:InterfaceOrientationObserver] <0x101885b90> Invalidating client.
+2026-09-07 12:00:38.905 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] Tearing down <XCTDSiriInterface: 0x101885aa0>.
+2026-09-07 12:00:38.905 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] Deallocating <XCTouchGesturePerformer: 0x1018a94c0>.
+2026-09-07 12:00:38.906 Df testmanagerd[49331:90e18] [com.apple.dt.xctest:Default] XCTDAuthorizedProcessTracker has cancelled dispatch source for pid 50522 and removed it from its list of dispatch sources to track
+2026-09-07 12:00:38.906 Df testmanagerd[49331:90e18] [com.apple.dt.xctest:Default] Current mappings: {
+}
+2026-09-07 12:00:38.906 Df testmanagerd[49331:90e19] [com.apple.iohid:oversized] Released connection: 45956CDF-48D8-4D02-B3FE-DE69DBAFA0E3
+{
+    UUID = "45956CDF-48D8-4D02-B3FE-DE69DBAFA0E3";
+    caller = "testmanagerd: -[XCTouchGesturePerformer initWithUserTestingNotificationProvider:] + 60";
+    dispatchQueue = 0;
+    eventCount = 0;
+    eventMask = 0;
+    port = 12803;
+    resetCount = 0;
+    runloop = 0;
+    services =     (
+        778835616971358211,
+        778835616971358210,
+        778835616971358212,
+        778835616971358213,
+        778835616971358214,
+        778835616971358209,
+        778835616971358208,
+        778835616971358215
+    );
+    virtualServices =     (
+    );
+}
+2026-09-07 12:00:38.906 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] Invalidating <XCAXManager_iOS: 0x1019f4690>
+2026-09-07 12:00:38.906 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] Invalidated <XCTDAccessibilitySessionToken: 0x101a84180>. Remaining XCTDAccessibilitySessionToken instances: {(
+)}
+2026-09-07 12:00:38.906 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] Unloading accessibility
+2026-09-07 12:00:38.906 Df testmanagerd[49331:90e1a] [com.apple.xpc:connection] [0x1019848c0] invalidated because the current process cancelled the connection by calling xpc_connection_cancel()
+2026-09-07 12:00:38.906 Df testmanagerd[49331:90e1a] [com.apple.dt.automationmode:Default] Comparing previous enabled state (1) to current enabled state (0)
+2026-09-07 12:00:38.909 A  testmanagerd[49331:90e18] (RunningBoardServices) assertionsDidInvalidate
+2026-09-07 12:00:38.909 Df testmanagerd[49331:90e19] [com.apple.Accessibility:AXSupportCommon] AXS AccessibilityEnabled: (app ax: 1), ax settings: 1, cached: 1
+2026-09-07 12:00:38.909 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] Turning off automation
+2026-09-07 12:00:38.909 Df testmanagerd[49331:90e19] [com.apple.Accessibility:AXSupportCommon] Setting automation enabled: 0
+2026-09-07 12:00:38.912 A  testmanagerd[49331:90e30] (RunningBoardServices) observedProcessStatesDidChange
+2026-09-07 12:00:38.912 Df testmanagerd[49331:90e30] [com.apple.runningboard:monitor] Received state update for 50522 (app<com.spokenmargins.native.uitests.xctrunner((null))>, none-NotVisible
+2026-09-07 12:00:38.912 Df testmanagerd[49331:90e30] [com.apple.dt.xctest:Default] Process monitor update handler invoked for com.spokenmargins.native
+2026-09-07 12:00:38.912 Df testmanagerd[49331:90e30] [com.apple.dt.xctest:Default] Computed display ID com.spokenmargins.native.uitests.xctrunner from embeddedApplicationIdentifier: com.spokenmargins.native.uitests.xctrunner, xpcServiceIdentifier: (null), bundleID: com.spokenmargins.native.uitests.xctrunner
+2026-09-07 12:00:38.912 Df testmanagerd[49331:90e30] [com.apple.dt.xctest:Default] <XCTDProcessMonitor: 0x1018a9340> passing update com.spokenmargins.native.uitests.xctrunner@/Users/colemiller/Library/Developer/CoreSimulator/Devices/4AAAFEBA-6DA8-4166-8347-4106165C38C2/data/Containers/Bundle/Application/6D67C3ED-FF11-49D5-8580-3BE18F7B7608/SpokenMarginsAppUITests-Runner.app processName: SpokenMarginsAp pid: 50522 state: not running to <XCTDProcessManagementServicesProvider: 0x101884d20>
+2026-09-07 12:00:38.912 Df testmanagerd[49331:90e30] [com.apple.dt.xctest:Default] <XCTestSession: 0x101a18000> pid 50522 com.spokenmargins.native.uitests.xctrunner@/Users/colemiller/Library/Developer/CoreSimulator/Devices/4AAAFEBA-6DA8-4166-8347-4106165C38C2/data/Containers/Bundle/Application/6D67C3ED-FF11-49D5-8580-3BE18F7B7608/SpokenMarginsAppUITests-Runner.app processName: SpokenMarginsAp pid: 50522 state: not running
+2026-09-07 12:00:38.914 A  testmanagerd[49331:90e30] (RunningBoardServices) observedProcessStatesDidChange
+2026-09-07 12:00:38.915 Df testmanagerd[49331:90e19] [com.apple.Accessibility:AXSupportCommon] AXS AccessibilityEnabled: (app ax: 1), ax settings: 1, cached: 1
+2026-09-07 12:00:38.916 Df testmanagerd[49331:90e30] [com.apple.runningboard:monitor] Received state update for 50522 (app<com.spokenmargins.native.uitests.xctrunner((null))>, none-NotVisible
+2026-09-07 12:00:38.919 Df testmanagerd[49331:90e19] [com.apple.Accessibility:AXSupportCommon] Application accessibility enabled: 0, (
+	0   libAccessibility.dylib              0x0000000192a7d6d4 _AXSApplicationAccessibilitySetEnabled + 80
+	1   libAccessibility.dylib              0x0000000192a86b14 _AXSSetAutomationEnabled + 208
+	2   testmanagerd                        0x00000001001fd148 -[XCTDAccessibilitySystem _queue_unloadAccessibility] + 260
+	3   testmanagerd                        0x00000001001fd6c4 __43-[XCTDAccessibilitySystem invalidateToken:]_block_invoke + 236
+	4   libdispatch.dylib                   0x00000001801a0e98 _dispatch_client_callout + 12
+	5   libdispatch.dylib                   0x0000000180196a10 _dispatch_lane_barrier_sync_invoke_and_complete + 92
+	6   testmanagerd                        0x00000001001fd5b8 -[XCTDAccessibilitySystem invalidateToken:] + 124
+	7   testmanagerd                        0x00000001001fd918 -[XCTDAccessibilitySessionToken invalidate] + 44
+	8   testmanagerd                        0x00000001001f98ac __29-[XCAXManager_iOS invalidate]_block_invoke + 160
+	9   libdispatch.dylib
+2026-09-07 12:00:38.920 Df testmanagerd[49331:8b562] [com.apple.dt.xctest:Default] Handling kAXPidStatusChangedNotification from AX element pid: 48989, elementOrHash.elementID: 0.0 (0x1019f4690)
+2026-09-07 12:00:38.920 Df testmanagerd[49331:90e19] [com.apple.Accessibility:AXSupportCommon] Stored App AX setting: 0
+2026-09-07 12:00:38.924 Df testmanagerd[49331:90e19] [com.apple.Accessibility:AXSupportCommon] AXS AccessibilityEnabled: (app ax: 0), ax settings: 0, cached: 1
+2026-09-07 12:00:38.925 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] Invalidating previous process assertion for pid 49331.
+2026-09-07 12:00:38.926 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] Invalidating <XCTDProcessManagementServicesProvider: 0x101884d20>
+2026-09-07 12:00:38.926 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] Invalidating <XCTDProcessMonitor: 0x1018a9340>
+2026-09-07 12:00:38.926 Df testmanagerd[49331:90e19] [com.apple.runningboard:monitor] unsubscribing configuration of monitor M49331-2
+2026-09-07 12:00:38.926 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] Tearing down <XCTDProcessAssertionManager: 0x101884f00>
+2026-09-07 12:00:38.926 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] Session summary: 0 test sessions, 0 sessions with identifiers, 0 unidentified sessions, 0 remote automation sessions, has control sessions
+2026-09-07 12:00:38.926 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] Control sessions: (
+    "<XCIDESession: 0x1013b1080> (socket 4) created Monday, September 7, 2026 at 11:54:33 Eastern Daylight Time"
+)
+2026-09-07 12:00:38.927 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] Closing session <XCIDESession: 0x1013b1080> (socket 4) created Monday, September 7, 2026 at 11:54:33 Eastern Daylight Time
+2026-09-07 12:00:38.927 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] Control session closed, will disconnect from matching testing client.
+2026-09-07 12:00:38.927 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] Tearing down <XCIDESession: 0x1013b1080> (socket 4) created Monday, September 7, 2026 at 11:54:33 Eastern Daylight Time.
+2026-09-07 12:00:38.928 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] Session summary: 0 test sessions, 0 sessions with identifiers, 0 unidentified sessions, 0 remote automation sessions, does not have control sessions
+2026-09-07 12:00:38.928 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] XCTDAuthorizedProcessTracker is cancelling dispatch sources as part of its dealloc routine
+2026-09-07 12:00:38.928 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] XCTDAuthorizedProcessTracker has cancelled dispatch sources as part of its dealloc routine
+2026-09-07 12:00:38.928 Df testmanagerd[49331:90e19] [com.apple.dt.xctest:Default] Canceled monitoring for (null)
+2026-09-07 12:00:38.928 Df testmanagerd[49331:90bee] [com.apple.dt.xctest:Default] Canceled monitoring for (null)
+2026-09-07 12:01:37.696 Df testmanagerd[49331:8fc84] [com.apple.Accessibility:AXSupportCommon] Read CategoryName: per-app = 1, category name = (null)
+2026-09-07 12:01:37.699 Df testmanagerd[49331:8fc84] [com.apple.Accessibility:AXSupportCommon] Read CategoryName: per-app = 0, category name = (null)
+2026-09-07 12:01:37.726 Df testmanagerd[49331:8fcd2] [com.apple.dt.xctest:Screenshot] Taking screenshot for request: ScreenshotRequest(screenID: 1, rect: nil, orientation: .up, encoding: Encoding(uniformTypeIdentifier: public.jpeg, compressionQuality: 0.700000), options: [.showPointer])
+2026-09-07 12:01:37.727 Df testmanagerd[49331:908af] [com.apple.dt.xctest:Screenshot] Taking screenshot for request: ScreenshotRequest(screenID: 1, rect: nil, orientation: .up, encoding: Encoding(uniformTypeIdentifier: public.jpeg, compressionQuality: 0.700000), options: [.showPointer])
+2026-09-07 12:01:37.727 Df testmanagerd[49331:8fc84] [com.apple.dt.xctest:ScreenRecording] Did start screen recording session with request screenID 1, rect {{0.0, 0.0}, {0.0, 0.0}}, encoding 'VideoEncoding(codec: H.264, frameRate: 30.000000)', destinationURL file:///Users/colemiller/Library/Developer/CoreSimulator/Devices/4AAAFEBA-6DA8-4166-8347-4106165C38C2/data/Containers/Data/InternalDaemon/3856FA94-4747-4346-9B01-C570D28E36C3/tmp/Attachments/315CCB90-D8AC-4AF8-9341-33C0BAD6E7A3.
+2026-09-07 12:01:37.727 Df testmanagerd[49331:8fc84] [com.apple.dt.xctest:Default] [XCTestSession] Received recording request result with error: (null)
+2026-09-07 12:01:37.727 Df testmanagerd[49331:8fc84] [com.apple.dt.xctest:Default] [XCTestSession] Stopping brand new recording request after session invalidation.
+2026-09-07 12:01:37.731 E  testmanagerd[49331:8fc84] [com.apple.dt.xctest:Default] Error 41: Not authorized for performing UI testing actions.
+2026-09-07 12:01:37.731 Df testmanagerd[49331:8fcd2] [com.apple.xpc:connection] [0x101984c80] activating connection: mach=true listener=false peer=false name=com.apple.IOSurface.Remote
+2026-09-07 12:01:37.738 Df testmanagerd[49331:8b562] [com.apple.UIKit:UIScreen] Evaluated capturing state as 0 on <UIScreen: 0x1019848c0> for initial
+2026-09-07 12:01:37.740 Df testmanagerd[49331:8b562] [com.apple.UIKit:UIScreen] Evaluated capturing state as 0 on <UIScreen: 0x1019848c0> for CADisplay KVO
+2026-09-07 12:01:37.745 Df testmanagerd[49331:8b562] [com.apple.BackBoard:Display] [FBSDisplaySource 1-3] silently connecting raw configuration: <FBSDisplayConfiguration: 0x10193c400; Main; mode: "402x874@3x 60Hz p3 SDR">
+2026-09-07 12:01:37.761 Df testmanagerd[49331:8fcd2] [com.apple.dt.xctest:Default] Deallocating <XCTestSession: 0x101a18000> pid 50522.
+2026-09-07 12:01:37.761 Df testmanagerd[49331:8fcd2] [com.apple.dt.xctest:Default] Deallocating <XCTDAutomationServicesProvider: 0x1019f40f0>.
+2026-09-07 12:01:38.719 Df testmanagerd[49331:8fc84] [com.apple.dt.xctest:Screenshot] Successfully wrote non-finalized image to disk (file:///Users/colemiller/Library/Developer/CoreSimulator/Devices/4AAAFEBA-6DA8-4166-8347-4106165C38C2/data/Containers/Data/InternalDaemon/3856FA94-4747-4346-9B01-C570D28E36C3/tmp/Attachments/835081EB-386C-41D5-804B-326D7F33820C).
+2026-09-07 12:01:38.719 Df testmanagerd[49331:8fc84] [com.apple.dt.xctest:Screenshot] Notifying all IDE sessions that attachment future with UUID 835081EB-386C-41D5-804B-326D7F33820C was written to disk.
+2026-09-07 12:01:38.736 Df testmanagerd[49331:8fcd2] [com.apple.dt.xctest:Screenshot] Successfully wrote non-finalized image to disk (file:///Users/colemiller/Library/Developer/CoreSimulator/Devices/4AAAFEBA-6DA8-4166-8347-4106165C38C2/data/Containers/Data/InternalDaemon/3856FA94-4747-4346-9B01-C570D28E36C3/tmp/Attachments/555FDAB0-6546-4E2F-B387-FE3D4964E34D).
+2026-09-07 12:01:38.736 Df testmanagerd[49331:8fcd2] [com.apple.dt.xctest:Screenshot] Notifying all IDE sessions that attachment future with UUID 555FDAB0-6546-4E2F-B387-FE3D4964E34D was written to disk.
+2026-09-07 12:01:42.926 Df testmanagerd[49331:8fc84] [com.apple.xpc:connection] [0x101984280] invalidated because the current process cancelled the connection by calling xpc_connection_cancel()
+2026-09-07 12:02:02.804 Df testmanagerd[49331:908af] [com.apple.dt.xctest:Default] IDE connected over socket 4
+2026-09-07 12:02:02.805 Df testmanagerd[49331:908af] [com.apple.dt.xctest:Default] Created session with socket 4
+2026-09-07 12:02:02.818 Df testmanagerd[49331:908af] [com.apple.dt.xctest:Default] Adding <XCIDESession: 0x101a18180> (socket 4) created Monday, September 7, 2026 at 12:02:02 Eastern Daylight Time to the set of unidentified IDE sessions
+2026-09-07 12:02:02.824 Df testmanagerd[49331:9270d] [com.apple.dt.xctest:Default] Handled a proxy request from the IDE with session <XCIDESession: 0x101a18180> (socket 4) created Monday, September 7, 2026 at 12:02:02 Eastern Daylight Time proxy <_DTXProxy: 0x101a84050>
+2026-09-07 12:02:02.828 Df testmanagerd[49331:8b562] [com.apple.dt.xctest:Default] Initiating control session with IDE capabilities <XCTCapabilities: 0x101a84120>: {
+}
+2026-09-07 12:02:02.828 Df testmanagerd[49331:8b562] [com.apple.dt.xctest:Default] Adding control session <XCIDESession: 0x101a18180> (socket 4) created Monday, September 7, 2026 at 12:02:02 Eastern Daylight Time with capabilities <XCTCapabilities: 0x101a84120>: {
+}
+2026-09-07 12:02:02.837 Df testmanagerd[49331:8b562] [com.apple.dt.xctest:Default] Received request to collect crash reports in directories '/Users/colemiller/Library/Logs/DiagnosticReports', '/Library/Logs/DiagnosticReports' for processes with names 'FrontBoard', 'assertiond', 'runningboardd', 'testmanagerd', 'debugserver', 'DTServiceHub', 'SpokenMarginsAppTests', 'backboardd', 'xctest', 'SpringBoard', 'SpokenMarginsApp'
+2026-09-07 12:02:02.837 Df testmanagerd[49331:8b562] [com.apple.dt.xctest:Default] Initializing crash report observer for /Users/colemiller/Library/Logs/DiagnosticReports
+2026-09-07 12:02:02.837 Df testmanagerd[49331:8b562] [com.apple.dt.xctest:Default] Getting files in /Users/colemiller/Library/Logs/DiagnosticReports
+2026-09-07 12:02:02.838 Df testmanagerd[49331:9270d] [com.apple.dt.xctest:Default] IDE connected over socket 6
+2026-09-07 12:02:02.838 Df testmanagerd[49331:9270d] [com.apple.dt.xctest:Default] Created session with socket 6
+2026-09-07 12:02:02.839 Df testmanagerd[49331:9270d] [com.apple.dt.xctest:Default] Adding <XCIDESession: 0x101a18000> (socket 6) created Monday, September 7, 2026 at 12:02:02 Eastern Daylight Time to the set of unidentified IDE sessions
+2026-09-07 12:02:02.839 Df testmanagerd[49331:908af] [com.apple.dt.xctest:Default] Handled a proxy request from the IDE with session <XCIDESession: 0x101a18000> (socket 6) created Monday, September 7, 2026 at 12:02:02 Eastern Daylight Time proxy <_DTXProxy: 0x101a840a0>
+2026-09-07 12:02:02.847 Df testmanagerd[49331:8b562] [com.apple.dt.xctest:Default] Found 13 non-empty files in /Users/colemiller/Library/Logs/DiagnosticReports
+2026-09-07 12:02:02.847 Df testmanagerd[49331:8b562] [com.apple.dt.xctest:Default] Started monitoring /Users/colemiller/Library/Logs/DiagnosticReports
+2026-09-07 12:02:02.847 Df testmanagerd[49331:8b562] [com.apple.dt.xctest:Default] Initializing crash report observer for /Library/Logs/DiagnosticReports
+2026-09-07 12:02:02.847 Df testmanagerd[49331:8b562] [com.apple.dt.xctest:Default] Getting files in /Library/Logs/DiagnosticReports
+2026-09-07 12:02:02.857 Df testmanagerd[49331:8b562] [com.apple.dt.xctest:Default] Found empty file in /Library/Logs/DiagnosticReports/.com.apple.MobileSoftwareUpdate.UpdateBrainService_2026-06-22-230549_MacBook-Pro-2.diag
+2026-09-07 12:02:02.875 Df testmanagerd[49331:8b562] [com.apple.dt.xctest:Default] Found 57 non-empty files in /Library/Logs/DiagnosticReports
+2026-09-07 12:02:02.875 Df testmanagerd[49331:8b562] [com.apple.dt.xctest:Default] Started monitoring /Library/Logs/DiagnosticReports
+2026-09-07 12:02:02.876 Df testmanagerd[49331:8b562] [com.apple.dt.xctest:Default] Initiating session with identifier 21B475CE-686C-4EAC-A9EF-FE3D45C92984 and IDE capabilities <XCTCapabilities: 0x101a840f0>: {
+    "XCTIssue capability" = 1;
+    "daemon container sandbox extension" = 1;
+    "delayed attachment transfer" = 1;
+    "expected failure test capability" = 1;
+    "in-process test parallelization capability" = 1;
+    "request diagnostics for specific devices" = 1;
+    "runner plan" = 1;
+    "skipped suite capability" = 1;
+    "skipped test capability" = 1;
+    "test case run configurations" = 1;
+    "test iterations" = 2;
+    "test timeout capability" = 1;
+    traits = 1;
+    "ubiquitous test identifiers" = 1;
+    "unified issue recorded" = 1;
+}
+2026-09-07 12:02:02.876 Df testmanagerd[49331:908af] [com.apple.dt.xctest:Default] Setting session <XCIDESession: 0x101a18000> (socket 6) created Monday, September 7, 2026 at 12:02:02 Eastern Daylight Time waiting to pair with test session 21B475CE-686C-4EAC-A9EF-FE3D45C92984 for identifier 21B475CE-686C-4EAC-A9EF-FE3D45C92984

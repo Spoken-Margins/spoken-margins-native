@@ -1,0 +1,121 @@
+"""Shared, fail-closed test selection and contract inventory for local verification."""
+import importlib.util
+import json
+import re
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def swift_tests(directory):
+    tests = set()
+    for path in sorted(directory.rglob('*.swift')):
+        # These suites use XCTestCase directly. Unknown test syntax is caught by
+        # execution-vs-selection reconciliation, not silently counted as passing.
+        source = path.read_text()
+        classes = list(re.finditer(r'\bclass\s+(\w+)\s*:\s*XCTestCase\b', source))
+        for index, match in enumerate(classes):
+            end = classes[index + 1].start() if index + 1 < len(classes) else len(source)
+            for method in re.findall(r'\bfunc\s+(test\w+)\s*\(', source[match.end():end]):
+                tests.add(f'{match[1]}/{method}')
+    return tests
+
+
+def target_tests(root, name):
+    if name == 'SpokenMarginsAppTests':
+        return swift_tests(root / 'App/SpokenMarginsAppTests') - swift_tests_in_file(
+            root / 'App/SpokenMarginsAppTests/Gate4WatchPackageRenderTests.swift')
+    if name == 'SpokenMarginsAppUITests':
+        return swift_tests(root / 'App/SpokenMarginsAppUITests')
+    raise ValueError(f'Unclassified test target: {name}')
+
+
+def swift_tests_in_file(path):
+    source = path.read_text()
+    name = re.search(r'\bclass\s+(\w+)\s*:\s*XCTestCase\b', source).group(1)
+    return {f'{name}/{m}' for m in re.findall(r'\bfunc\s+(test\w+)\s*\(', source)}
+
+
+def matches(test, selector):
+    selector = selector.removesuffix('()')
+    return test == selector or test.startswith(selector + '/')
+
+
+def plan_tests(root, name):
+    plan = json.loads((root / f'TestPlans/{name}.xctestplan').read_text())
+    selected = set()
+    for target in plan['testTargets']:
+        if target.get('skipped', False):
+            raise ValueError(f'{name}: skipping an entire target needs explicit disposition')
+        target_name = target['target']['name']
+        available = target_tests(root, target_name)
+        for field in ('selectedTests', 'skippedTests'):
+            for selector in target.get(field, []):
+                if not any(matches(test, selector) for test in available):
+                    raise ValueError(f'{name}: stale {field} selector {selector}')
+        included = target.get('selectedTests')
+        skipped = target.get('skippedTests', [])
+        selected.update(f'{target_name}/{test}' for test in available
+                        if (included is None or any(matches(test, s) for s in included))
+                        and not any(matches(test, s) for s in skipped))
+    if not selected:
+        raise ValueError(f'{name}: selects no tests')
+    return selected
+
+
+def validate(root=ROOT):
+    errors = []
+    inventory = json.loads((root / 'validation/test-inventory.json').read_text())
+    traces = {p.stem for p in (root / 'Contracts/traces').glob('*.json')}
+    dispositions = inventory['traces']
+    if traces != set(dispositions):
+        errors.append(f'Trace disposition mismatch: {sorted(traces ^ set(dispositions))}')
+    harness = (root / 'Packages/SessionKit/Tests/SessionKitTraceTests/TraceReplayTests.swift').read_text()
+    mappings = dict(re.findall(r'func (test\w+)\(\) throws \{ try TraceHarness\(traceName: "([^"]+)"\)', harness))
+    active = {name: spec['test'].split('/')[-1] for name, spec in dispositions.items() if spec['status'] == 'active'}
+    if {name: method for method, name in mappings.items()} != active:
+        errors.append('Executable trace methods differ from active trace inventory')
+    for name, spec in dispositions.items():
+        if spec['status'] not in ('active', 'deferred', 'archived'):
+            errors.append(f'{name}: unknown disposition')
+        if spec['status'] != 'active' and not spec.get('reason', '').strip():
+            errors.append(f'{name}: missing omission reason')
+    spec = importlib.util.spec_from_file_location('contract_validator', root / 'scripts/validate-contracts.py')
+    validator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(validator)
+    contracts = root / 'Contracts'
+    covered = {p for rule in validator.PATH_SCHEMA_RULES + validator.NEGATIVE_PATH_SCHEMA_RULES
+               for p in contracts.glob(rule[0])}
+    unclassified = set(contracts.glob('fixtures/**/*.json')) - covered
+    if unclassified:
+        errors.append('Fixtures without schema coverage: ' + ', '.join(str(p) for p in sorted(unclassified)))
+    persistence = contracts / 'fixtures/persistence'
+    described = {persistence / json.loads(p.read_text())['database'] for p in persistence.glob('*.json')}
+    if set(persistence.glob('*.sqlite')) != described:
+        errors.append('Prior-build database fixture/provenance mismatch')
+    for pattern, *_ in validator.PATH_SCHEMA_RULES:
+        if not list(contracts.glob(pattern)) and not inventory.get('emptySchemaSelections', {}).get(pattern):
+            errors.append(f'Empty fixture/schema selection: {pattern}')
+    try:
+        behavior, adapters = (plan_tests(root, p) for p in ('AppBehavior', 'AudioAdapters'))
+        all_app = {f'SpokenMarginsAppTests/{t}' for t in target_tests(root, 'SpokenMarginsAppTests')}
+        if behavior & adapters or behavior | adapters != all_app:
+            errors.append('AppBehavior and AudioAdapters must partition all active app tests')
+        release = plan_tests(root, 'Release')
+        all_ui = {f'SpokenMarginsAppUITests/{t}' for t in target_tests(root, 'SpokenMarginsAppUITests')}
+        if release != all_app | all_ui:
+            errors.append('Release must include all active app and UI tests')
+        for plan in ('UISeams', 'SpeechCanary', 'Smoke'):
+            if not plan_tests(root, plan) <= all_ui:
+                errors.append(f'{plan}: non-UI test selected')
+    except (ValueError, KeyError) as error:
+        errors.append(str(error))
+    return errors
+
+
+if __name__ == '__main__':
+    failures = validate()
+    for failure in failures:
+        print(failure)
+    print('Test inventory: ' + ('FAILED' if failures else 'passed'))
+    raise SystemExit(bool(failures))

@@ -1,0 +1,33 @@
+{
+  "configurations": [
+    {
+      "id": "7b14645c-f868-5eb0-94ee-04dab52536d9",
+      "name": "Default",
+      "options": {}
+    }
+  ],
+  "defaultOptions": {
+    "testTimeoutsEnabled": true,
+    "defaultTestExecutionTimeAllowance": 900,
+    "maximumTestExecutionTimeAllowance": 900
+  },
+  "testTargets": [
+    {
+      "target": {
+        "containerPath": "container:SpokenMarginsNative.xcodeproj",
+        "identifier": "0C1262C036365A89EA21B9E9",
+        "name": "SpokenMarginsAppTests"
+      },
+      "parallelizable": false
+    },
+    {
+      "target": {
+        "containerPath": "container:SpokenMarginsNative.xcodeproj",
+        "identifier": "62CEABDB2B6F38CA17ED8324",
+        "name": "SpokenMarginsAppUITests"
+      },
+      "parallelizable": false
+    }
+  ],
+  "version": 1
+}

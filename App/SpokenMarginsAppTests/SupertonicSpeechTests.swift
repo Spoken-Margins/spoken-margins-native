@@ -31,8 +31,10 @@ final class SupertonicSpeechTests: XCTestCase {
         )
 
         try client.setMixesWithOtherAudio(true)
+        try client.setLowersBackgroundAudio(true)
         try client.setPlaybackVolume(0.35)
 
+        XCTAssertEqual(fallback.backgroundAudioStates, [true])
         XCTAssertEqual(fallback.mixingStates, [true])
         XCTAssertEqual(fallback.playbackVolumes, [0.35])
     }
@@ -121,6 +123,7 @@ final class SupertonicSpeechTests: XCTestCase {
             fallbackVoiceIdentifier: nil,
             fallbackRate: 0.5,
             maxCharacters: 120,
+            startupBufferChunkCount: 2,
             onDeviceRenderingAllowed: { availability.next() },
             fallbackClient: fallback,
             onFallback: { reason, offset, targetId in
@@ -146,10 +149,40 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    func testStalledRendererFallsBackWithinBoundAndCanRetryCurrentTarget() async throws {
+        let template = try makeTestWAV(duration: 0.5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template, firstRenderDelay: .seconds(1))
+        let fallback = RecordingFallbackAudioClient()
+        let timedOut = expectation(description: "bounded fallback")
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in }, observesPlayerLifecycle: false,
+            fallbackClient: fallback,
+            onFallback: { reason, offset, _ in
+                XCTAssertEqual(reason, "supertonic_render_timeout")
+                XCTAssertEqual(offset, 17)
+                timedOut.fulfill()
+            }, renderWaitLimit: .milliseconds(100)
+        )
+        _ = try client.prepareSpeechText("A long response that must remain playable when generation does not finish promptly.")
+        try client.play(targetId: "response-timeout", from: 17)
+        await fulfillment(of: [timedOut], timeout: 2)
+        XCTAssertEqual(fallback.playedOffsets, [17])
+        XCTAssertTrue(try client.retryOnDeviceRendering())
+        let retried = await waitForRenderCount(renderer, minimum: 2)
+        XCTAssertGreaterThanOrEqual(retried, 2)
+        try client.stop()
+    }
+
     func testUnavailableConfiguredSystemVoiceDoesNotSilentlyUseGenericVoice() throws {
         let client = SystemSpeechPlaybackClient(
             voiceIdentifier: "com.spokenmargins.missing-voice",
-            speechRate: 0.5
+            speechRate: 0.5,
+            isVoiceAvailable: { identifier in
+                XCTAssertEqual(identifier, "com.spokenmargins.missing-voice")
+                return false
+            }
         )
         _ = try client.prepareSpeechText("Keep the configured voice identity truthful.")
 
@@ -288,6 +321,53 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    func testDefaultPlaybackStartsWithFirstChunkWhileLaterChunkIsStillRendering() async throws {
+        let template = try makeTestWAV(duration: 0.5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template, renderDelays: [2: .seconds(1)])
+        let starts = PlaybackStartCapture()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            maxCharacters: 120, audioSessionActivator: {}, audioPlayerStarter: { _, _ in starts.record() },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient()
+        )
+        _ = try client.prepareSpeechText(String(repeating: "A sentence long enough to produce several useful audio chunks. ", count: 12))
+        try client.play(targetId: "progressive")
+        _ = await waitForRenderCount(renderer, minimum: 2)
+        XCTAssertEqual(starts.count, 1, "The first chunk must be playable before chunk two completes")
+        try client.stop()
+    }
+
+    func testManifestAndChunkCommitFinishBeforeRenderingAdvances() async throws {
+        let template = try makeTestWAV(duration: 0.5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let committed = expectation(description: "first commit finished")
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            maxCharacters: 120, audioSessionActivator: {}, audioPlayerStarter: { _, _ in },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
+            onPreparationPlan: { _, _, _ in
+                try? await Task.sleep(for: .milliseconds(100))
+                let count = await renderer.renderCount
+                XCTAssertEqual(count, 0, "Rendering must wait for the manifest")
+            },
+            onPreparedChunk: { _, _, plan, _, _ in
+                guard plan.index == 0 else { return }
+                try? await Task.sleep(for: .milliseconds(100))
+                let count = await renderer.renderCount
+                XCTAssertEqual(count, 1, "The next chunk must wait for the prior commit")
+                committed.fulfill()
+            }
+        )
+        _ = try client.prepareSpeechText(String(repeating: "A sentence long enough to produce several useful audio chunks. ", count: 12))
+        try client.play(targetId: "ordered-preparation")
+        await fulfillment(of: [committed], timeout: 3)
+        let count = await waitForRenderCount(renderer, minimum: 2)
+        XCTAssertGreaterThanOrEqual(count, 2)
+        try client.stop()
+    }
+
     func testPlaybackStartsOnlyAfterTwoSupertonicChunksAreReady() async throws {
         let template = try makeTestWAV(duration: 0.2)
         defer { try? FileManager.default.removeItem(at: template) }
@@ -302,6 +382,7 @@ final class SupertonicSpeechTests: XCTestCase {
             speed: 1,
             fallbackVoiceIdentifier: nil,
             fallbackRate: 0.5,
+            startupBufferChunkCount: 2,
             audioSessionActivator: {},
             audioPlayerStarter: { _, _ in starts.record() },
             observesPlayerLifecycle: false,
@@ -553,7 +634,12 @@ final class SupertonicSpeechTests: XCTestCase {
     func testSeekingCancelsObsoleteRenderBeforeStartingReplacementGeneration() async throws {
         let template = try makeTestWAV(duration: 0.5)
         defer { try? FileManager.default.removeItem(at: template) }
-        let renderer = CancellationAwareSupertonicRenderer(templateURL: template)
+        let started = expectation(description: "obsolete render started")
+        let cancelled = expectation(description: "obsolete render cancelled")
+        let ready = expectation(description: "replacement render committed")
+        let renderer = CancellationAwareSupertonicRenderer(
+            templateURL: template, onStart: { started.fulfill() }, onCancel: { cancelled.fulfill() }
+        )
         let fallback = RecordingFallbackAudioClient()
         let client = SupertonicSpeechPlaybackClient(
             renderer: renderer,
@@ -565,7 +651,8 @@ final class SupertonicSpeechTests: XCTestCase {
             audioSessionActivator: {},
             audioPlayerStarter: { _, _ in },
             observesPlayerLifecycle: false,
-            fallbackClient: fallback
+            fallbackClient: fallback,
+            onGenerationStateChange: { state in if state == .ready { ready.fulfill() } }
         )
         let source = String(
             repeating: "A stable sentence supports repeated navigation without obsolete inference. ",
@@ -573,14 +660,10 @@ final class SupertonicSpeechTests: XCTestCase {
         )
         _ = try client.prepareSpeechText(source)
         try client.play(targetId: "seek-cancellation", from: 0)
-        for _ in 0..<50 where await renderer.startedCount == 0 {
-            try? await Task.sleep(for: .milliseconds(20))
-        }
+        await fulfillment(of: [started], timeout: 2)
 
         try client.play(targetId: "seek-cancellation", from: source.count / 2)
-        for _ in 0..<100 where !client.debugActiveAudioState().hasURL {
-            try? await Task.sleep(for: .milliseconds(20))
-        }
+        await fulfillment(of: [cancelled, ready], timeout: 3)
 
         let cancelledCount = await renderer.cancelledCount
         XCTAssertEqual(cancelledCount, 1)
@@ -592,11 +675,14 @@ final class SupertonicSpeechTests: XCTestCase {
     func testBackgroundingDuringInitialRenderPreservesSelectedSupertonicVoice() async throws {
         let template = try makeTestWAV(duration: 0.5)
         defer { try? FileManager.default.removeItem(at: template) }
+        let (renderGate, releaseRender) = AsyncStream<Void>.makeStream()
+        defer { releaseRender.finish() }
         let renderer = CountingAudioSupertonicRenderer(
             templateURL: template,
-            firstRenderDelay: .milliseconds(300)
+            firstRenderGate: renderGate
         )
         let fallback = RecordingFallbackAudioClient()
+        let playbackStarted = expectation(description: "selected voice playback started")
         let client = SupertonicSpeechPlaybackClient(
             renderer: renderer,
             voice: .m2,
@@ -604,6 +690,7 @@ final class SupertonicSpeechTests: XCTestCase {
             fallbackVoiceIdentifier: nil,
             fallbackRate: 0.5,
             audioSessionActivator: {},
+            audioPlayerStarter: { _, _ in playbackStarted.fulfill() },
             observesPlayerLifecycle: false,
             fallbackClient: fallback
         )
@@ -614,7 +701,8 @@ final class SupertonicSpeechTests: XCTestCase {
 
         XCTAssertFalse(client.ensurePlaybackStartsBeforeBackgrounding())
 
-        try await Task.sleep(for: .milliseconds(350))
+        releaseRender.finish()
+        await fulfillment(of: [playbackStarted], timeout: 5)
         XCTAssertTrue(fallback.playedOffsets.isEmpty)
         XCTAssertEqual(client.playbackStartStatus(targetId: "background-start"), .confirmed)
         XCTAssertNotEqual(client.playbackTransportState(targetId: "background-start"), .stopped)
@@ -663,6 +751,11 @@ final class SupertonicSpeechTests: XCTestCase {
         try? await Task.sleep(for: .milliseconds(350))
         let finalRenderCount = await renderer.renderCount
         XCTAssertEqual(finalRenderCount, countAfterStop, "Stopping must not schedule another chunk")
+        XCTAssertTrue(try client.retryOnDeviceRendering())
+        let retryCount = await waitForRenderCount(renderer, minimum: countAfterStop + 1)
+        XCTAssertGreaterThan(retryCount, countAfterStop)
+        XCTAssertEqual(fallback.playedOffsets, [19, 120], "Retry must return to Supertonic now")
+
         try client.stop()
     }
 
@@ -1267,6 +1360,7 @@ private struct FixedAudioSupertonicRenderer: SupertonicRendering {
 private actor CountingAudioSupertonicRenderer: SupertonicRendering {
     let templateURL: URL
     let firstRenderDelay: Duration?
+    let firstRenderGate: AsyncStream<Void>?
     let renderDelays: [Int: Duration]
     private(set) var renderCount = 0
     private(set) var discardCount = 0
@@ -1275,10 +1369,12 @@ private actor CountingAudioSupertonicRenderer: SupertonicRendering {
     init(
         templateURL: URL,
         firstRenderDelay: Duration? = nil,
+        firstRenderGate: AsyncStream<Void>? = nil,
         renderDelays: [Int: Duration] = [:]
     ) {
         self.templateURL = templateURL
         self.firstRenderDelay = firstRenderDelay
+        self.firstRenderGate = firstRenderGate
         self.renderDelays = renderDelays
     }
 
@@ -1291,6 +1387,10 @@ private actor CountingAudioSupertonicRenderer: SupertonicRendering {
     ) async throws -> SupertonicNarrationResult {
         renderCount += 1
         requestedSpeeds.append(speed)
+        if renderCount == 1, let firstRenderGate {
+            for await _ in firstRenderGate {}
+            try Task.checkCancellation()
+        }
         if renderCount == 1, let firstRenderDelay {
             try await Task.sleep(for: firstRenderDelay)
         } else if let delay = renderDelays[renderCount] {
@@ -1320,8 +1420,14 @@ private actor CancellationAwareSupertonicRenderer: SupertonicRendering {
     private(set) var startedCount = 0
     private(set) var cancelledCount = 0
 
-    init(templateURL: URL) {
+    private let onStart: @Sendable () -> Void
+    private let onCancel: @Sendable () -> Void
+    private var gate: AsyncStream<Void>.Continuation?
+
+    init(templateURL: URL, onStart: @escaping @Sendable () -> Void, onCancel: @escaping @Sendable () -> Void) {
         self.templateURL = templateURL
+        self.onStart = onStart
+        self.onCancel = onCancel
     }
 
     func render(
@@ -1333,10 +1439,16 @@ private actor CancellationAwareSupertonicRenderer: SupertonicRendering {
     ) async throws -> SupertonicNarrationResult {
         startedCount += 1
         if startedCount == 1 {
+            let stream = AsyncStream<Void> { gate = $0 }
+            onStart()
+            // Remain suspended until cancellation, without a wall-clock delay.
+            for await _ in stream {}
+            gate = nil
             do {
-                try await Task.sleep(for: .seconds(5))
+                try Task.checkCancellation()
             } catch {
                 cancelledCount += 1
+                onCancel()
                 throw error
             }
         }
@@ -1363,6 +1475,7 @@ private final class RecordingFallbackAudioClient: AudioPlaybackClient, @unchecke
     var playedOffsets: [Int] = []
     var playbackRates: [Double] = []
     var mixingStates: [Bool] = []
+    var backgroundAudioStates: [Bool] = []
     var playbackVolumes: [Float] = []
     var pauseCount = 0
     var offset = 0
@@ -1389,6 +1502,10 @@ private final class RecordingFallbackAudioClient: AudioPlaybackClient, @unchecke
 
     func setMixesWithOtherAudio(_ enabled: Bool) throws {
         mixingStates.append(enabled)
+    }
+
+    func setLowersBackgroundAudio(_ enabled: Bool) throws {
+        backgroundAudioStates.append(enabled)
     }
 
     func setPlaybackVolume(_ volume: Float) throws {

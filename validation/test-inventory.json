@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "traces": {
+    "original-playback-five-interjections": {
+      "status": "active",
+      "test": "TraceReplayTests/testOriginalPlaybackFiveInterjections"
+    },
+    "semantic-navigation-and-rollback": {
+      "status": "active",
+      "test": "TraceReplayTests/testSemanticNavigationAndRollback"
+    },
+    "tts-link-normalization": {
+      "status": "active",
+      "test": "TraceReplayTests/testTtsLinkNormalization"
+    },
+    "phone-offline-deferred-ai": {
+      "status": "active",
+      "test": "TraceReplayTests/testPhoneOfflineDeferredAi"
+    },
+    "mapless-session-export": {
+      "status": "active",
+      "test": "TraceReplayTests/testMaplessSessionExport"
+    },
+    "session-isolated-export": {
+      "status": "active",
+      "test": "TraceReplayTests/testSessionIsolatedExport"
+    },
+    "interject-into-summary-then-discuss": {
+      "status": "active",
+      "test": "TraceReplayTests/testInterjectIntoSummaryThenDiscuss"
+    },
+    "scoped-interjection-summary": {
+      "status": "active",
+      "test": "TraceReplayTests/testScopedInterjectionSummary"
+    },
+    "ai-response-interjection": {
+      "status": "active",
+      "test": "TraceReplayTests/testAiResponseInterjection"
+    },
+    "ai-provider-failure-retry": {
+      "status": "active",
+      "test": "TraceReplayTests/testAiProviderFailureRetry"
+    },
+    "ai-malformed-structure-preserves-text": {
+      "status": "active",
+      "test": "TraceReplayTests/testAiMalformedStructurePreservesText"
+    },
+    "external-assistant-response-import": {
+      "status": "active",
+      "test": "TraceReplayTests/testExternalAssistantResponseImport"
+    },
+    "stable-streaming-speech": {
+      "status": "active",
+      "test": "TraceReplayTests/testStableStreamingSpeech"
+    },
+    "interjection-representation-lifecycles": {
+      "status": "active",
+      "test": "TraceReplayTests/testInterjectionRepresentationLifecycles"
+    },
+    "lock-screen-widget-controls": {
+      "status": "active",
+      "test": "TraceReplayTests/testLockScreenWidgetControls"
+    },
+    "browser-text-session": {
+      "status": "active",
+      "test": "TraceReplayTests/testBrowserTextSession"
+    },
+    "browser-readable-text-session": {
+      "status": "active",
+      "test": "TraceReplayTests/testBrowserReadableTextSession"
+    },
+    "listening-map-ingestion-and-repair": {
+      "status": "deferred",
+      "reason": "Map ingestion is covered by app/package tests; this proposed trace uses operations not yet supported by replay. No replay claim."
+    },
+    "watch-offline-prerendered-session": {
+      "status": "archived",
+      "reason": "Not part of the active release surface; see docs/release-lanes.md."
+    },
+    "watch-chapter-navigation": {
+      "status": "archived",
+      "reason": "Not part of the active release surface; see docs/release-lanes.md."
+    },
+    "car-basic-controls": {
+      "status": "deferred",
+      "reason": "Not part of the active release surface; see docs/release-lanes.md."
+    },
+    "browser-video-1_75x-session": {
+      "status": "deferred",
+      "reason": "Not part of the active release surface; see docs/release-lanes.md."
+    },
+    "watch-sync-interjections-after-reconnect": {
+      "status": "archived",
+      "reason": "Not part of the active release surface; see docs/release-lanes.md."
+    }
+  },
+  "emptySchemaSelections": {
+    "fixtures/link-resolution/*.json": "Reserved schema family; resolver examples are currently constructed in SourceLinkImportTests, not JSON fixtures."
+  }
+}

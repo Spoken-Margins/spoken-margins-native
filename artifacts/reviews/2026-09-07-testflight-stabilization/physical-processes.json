@@ -1,0 +1,39 @@
+{
+  "info": {
+    "arguments": [
+      "devicectl",
+      "device",
+      "info",
+      "processes",
+      "--device",
+      "F9855B5E-675A-5050-8010-4B17AE843875",
+      "--json-output",
+      "artifacts/reviews/2026-09-07-testflight-stabilization/physical-processes.json"
+    ],
+    "commandType": "devicectl.device.info.processes",
+    "environment": {
+      "TERM": "dumb"
+    },
+    "jsonVersion": 3,
+    "outcome": "success",
+    "version": "518.33"
+  },
+  "result": {
+    "deviceIdentifier": "F9855B5E-675A-5050-8010-4B17AE843875",
+    "runningProcesses": [
+      {
+        "executable": "file:///private/var/containers/Bundle/Application/55B01602-B5D1-4447-B62B-F7314793FA77/SpokenMarginsApp.app/SpokenMarginsApp",
+        "processIdentifier": 21538
+      },
+      {
+        "executable": "file:///private/var/containers/Bundle/Application/55B01602-B5D1-4447-B62B-F7314793FA77/SpokenMarginsApp.app/PlugIns/SpokenMarginsGate2Widget.appex/SpokenMarginsGate2Widget",
+        "processIdentifier": 21539
+      },
+      {
+        "executable": "file:///private/var/containers/Bundle/Application/55B01602-B5D1-4447-B62B-F7314793FA77/SpokenMarginsApp.app/PlugIns/SpokenMarginsShareExtension.appex/SpokenMarginsShareExtension",
+        "processIdentifier": 21643
+      }
+    ]
+  },
+  "reviewFilter": "Only SpokenMargins executable records retained"
+}

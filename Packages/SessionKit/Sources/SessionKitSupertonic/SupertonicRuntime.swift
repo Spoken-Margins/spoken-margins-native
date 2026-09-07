@@ -556,12 +556,12 @@ struct Style {
 }
 
 private func runPacedInference<T>(
-    _ paceAfterInference: ((TimeInterval) -> Void)?,
+    _ paceAfterInference: ((TimeInterval) throws -> Void)?,
     operation: () throws -> T
 ) rethrows -> T {
     let startedAt = ProcessInfo.processInfo.systemUptime
     let result = try operation()
-    paceAfterInference?(max(0, ProcessInfo.processInfo.systemUptime - startedAt))
+    try paceAfterInference?(max(0, ProcessInfo.processInfo.systemUptime - startedAt))
     return result
 }
 
@@ -592,7 +592,7 @@ class TextToSpeech {
         _ style: Style,
         _ totalStep: Int,
         speed: Float = 1.05,
-        paceAfterInference: ((TimeInterval) -> Void)? = nil
+        paceAfterInference: ((TimeInterval) throws -> Void)? = nil
     ) throws -> (wav: [Float], duration: [Float]) {
         let bsz = textList.count
 
@@ -736,7 +736,7 @@ class TextToSpeech {
         _ totalStep: Int,
         speed: Float = 1.05,
         silenceDuration: Float = 0.3,
-        paceAfterInference: ((TimeInterval) -> Void)? = nil
+        paceAfterInference: ((TimeInterval) throws -> Void)? = nil
     ) throws -> (wav: [Float], duration: Float) {
         let maxLen = (lang == "ko" || lang == "ja") ? 120 : 300
         let chunks = chunkText(text, maxLen: maxLen)

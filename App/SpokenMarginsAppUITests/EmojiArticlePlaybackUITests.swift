@@ -51,7 +51,12 @@ final class EmojiArticlePlaybackUITests: XCTestCase {
                 }
                 if percent == 100 {
                     XCTAssertTrue(didExerciseCrashPointResume)
-                    XCTAssertTrue(app.descendants(matching: .any)["playback.screen"].exists)
+                    // Completion may close the session between reading progress and the screen.
+                    let completion = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                        app.descendants(matching: .any)["playback.screen"].exists ||
+                        app.descendants(matching: .any)["home.screen"].exists
+                    }, object: nil)
+                    XCTAssertEqual(XCTWaiter().wait(for: [completion], timeout: 5), .completed)
                     return
                 }
             } else if app.descendants(matching: .any)["home.screen"].exists {

@@ -1,5 +1,6 @@
 import XCTest
 import SessionKit
+import SessionKitPersistence
 @testable import SpokenMarginsApp
 #if canImport(UIKit)
 import UIKit
@@ -15,6 +16,34 @@ final class SourceLinkImportTests: XCTestCase {
         }
         temporaryDirectories.removeAll()
         try super.tearDownWithError()
+    }
+
+    func testFeedEntryImportPreservesTitleAndSourceWithoutChangingActivePlayback() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        temporaryDirectories.append(root)
+        let databaseURL = root.appending(path: "library.sqlite")
+        let audioURL = "https://audio.example/episode.mp3"
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(requestId: "ignored", status: .playable, originalLink: SourceLink(url: audioURL, role: "discovery"), selectedCandidate: LinkResolutionCandidate(sourceLink: SourceLink(url: audioURL, role: "media"), title: "audio", durationMs: 300_000, audioURL: audioURL, confidence: 1)))
+        let model = Gate1AppModel(sourceLinkResolver: resolver, audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let activeSession = model.snapshot.sessionId
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        let subscription = FeedSubscription(id: "subscription", source: SourceIdentity(id: "source", kind: .podcastFeed, canonicalURL: "https://publisher.example/feed", host: "publisher.example", title: "Actual Publisher"), lastRefreshAt: Date())
+        try store.saveFeedSubscription(subscription)
+        let entry = FeedEntry(id: "entry", subscriptionId: subscription.id, canonicalURL: "https://publisher.example/episode", audioURL: audioURL, title: "Actual episode title", author: "Actual author")
+        try store.saveFeedEntry(entry)
+        model.importFollowedSourceEntry(entry)
+        try await waitFor("feed entry import") { model.libraryItems.contains { $0.title == entry.title } }
+        let row = try XCTUnwrap(model.libraryItems.first { $0.title == entry.title })
+        let persisted = try store.loadItem(id: row.id)
+        XCTAssertEqual(persisted.sourceTitle, "Actual Publisher")
+        XCTAssertEqual(persisted.sourceURL, subscription.source.canonicalURL)
+        XCTAssertEqual(persisted.externalReference, entry.canonicalURL)
+        XCTAssertEqual(persisted.author, "Actual author")
+        XCTAssertEqual(model.snapshot.sessionId, activeSession)
+        XCTAssertEqual(model.selectedItem.id, "item-pill")
     }
 
     func testFollowedSourceAcceptsLargeFeedAndRetainsOnlyNewestTwentyFiveSuggestions() async throws {
@@ -643,7 +672,7 @@ final class SourceLinkImportTests: XCTestCase {
         )
     }
 
-    func testDefaultReleaseDoesNotTranscribePodcastForAIGeneratedListeningMap() async throws {
+    func testPrivateEpisodeMapRequiresExplicitRequestBeforeDownloadTranscription() async throws {
         let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
             requestId: "ignored",
             status: .playable,
@@ -667,13 +696,11 @@ final class SourceLinkImportTests: XCTestCase {
 
         XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/episode", sourceSurface: "paste"))
         let itemId = try XCTUnwrap(model.snapshot.itemId)
-        XCTAssertFalse(model.canGenerateListeningMap)
+        XCTAssertTrue(model.canGenerateListeningMap)
+        let requestsBeforeConsent = await transcriber.fullRequestCount()
+        XCTAssertEqual(requestsBeforeConsent, 0)
         model.generateListeningMap()
-        XCTAssertEqual(model.diagnostics["lastListeningMapMode"], "on_device_generation_disabled")
-        XCTAssertEqual(
-            model.lastError,
-            "Publisher chapters appear when available. AI-generated podcast maps are reserved for a future server-hosted option."
-        )
+        XCTAssertNil(model.lastError)
 
         let localURL = FileManager.default.temporaryDirectory.appendingPathComponent("mapped.mp3")
         model.podcastLocalAssetDidBecomeReady(itemId: itemId, url: localURL)
@@ -683,7 +710,7 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(fullRequestCount, 0)
         XCTAssertEqual(
             model.diagnostics["sourceTranscriptionAfterDownload:\(itemId)"],
-            "not_requested"
+            "requested_private_episode_map"
         )
     }
 
@@ -2120,6 +2147,12 @@ private struct ThrowingSourceTranscriptionClient: SourceTranscriptionClient {
 }
 
 private final class WindowContextAudioClient: AudioPlaybackClient {
+    private var durationMs = 300_000
+
+    func configureMediaContext(_ context: PlaybackMediaContext?) throws {
+        if let duration = context?.durationMs { durationMs = duration }
+    }
+
     var currentMediaTimeValue: Int?
     private var activeTargetId: String?
 
@@ -2144,7 +2177,7 @@ private final class WindowContextAudioClient: AudioPlaybackClient {
             targetType: .transcriptBackedMedia,
             targetId: activeTargetId,
             mediaTimeMs: currentMediaTimeValue,
-            durationMs: 300_000,
+            durationMs: durationMs,
             playbackRate: 1,
             anchorConfidence: .mediaTime
         )

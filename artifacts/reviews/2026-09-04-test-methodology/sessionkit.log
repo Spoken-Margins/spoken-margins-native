@@ -1,0 +1,524 @@
+[0/1] Planning build
+Building for debugging...
+[0/2] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (1.14s)
+Test Suite 'All tests' started at 2026-09-04 17:20:40.390.
+Test Suite 'SessionKitPackageTests.xctest' started at 2026-09-04 17:20:40.392.
+Test Suite 'CanonicalDocumentMapTests' started at 2026-09-04 17:20:40.392.
+Test Case '-[SessionKitTests.CanonicalDocumentMapTests testCanonicalHeadingPolicyDoesNotInventFrontMatterForDocumentTitleAlone]' started.
+Test Case '-[SessionKitTests.CanonicalDocumentMapTests testCanonicalHeadingPolicyDoesNotInventFrontMatterForDocumentTitleAlone]' passed (0.013 seconds).
+Test Case '-[SessionKitTests.CanonicalDocumentMapTests testCanonicalHeadingPolicyPreservesFrontMatterAndAllTwentyChapters]' started.
+Test Case '-[SessionKitTests.CanonicalDocumentMapTests testCanonicalHeadingPolicyPreservesFrontMatterAndAllTwentyChapters]' passed (0.022 seconds).
+Test Case '-[SessionKitTests.CanonicalDocumentMapTests testCanonicalPDFProjectionKeepsUsefulTopLevelSectionsWithoutNestedTimelineNoise]' started.
+Test Case '-[SessionKitTests.CanonicalDocumentMapTests testCanonicalPDFProjectionKeepsUsefulTopLevelSectionsWithoutNestedTimelineNoise]' passed (0.018 seconds).
+Test Case '-[SessionKitTests.CanonicalDocumentMapTests testPDFBrowserHandoffSelectsCanonicalHeadingPolicy]' started.
+Test Case '-[SessionKitTests.CanonicalDocumentMapTests testPDFBrowserHandoffSelectsCanonicalHeadingPolicy]' passed (0.042 seconds).
+Test Suite 'CanonicalDocumentMapTests' passed at 2026-09-04 17:20:40.488.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.095 (0.096) seconds
+Test Suite 'EPUBSafetyTests' started at 2026-09-04 17:20:40.488.
+Test Case '-[SessionKitTests.EPUBSafetyTests testEncryptedPackageIsRejectedBeforePublication]' started.
+Test Case '-[SessionKitTests.EPUBSafetyTests testEncryptedPackageIsRejectedBeforePublication]' passed (0.011 seconds).
+Test Case '-[SessionKitTests.EPUBSafetyTests testMissingContainerDoesNotPublishPartialPackage]' started.
+Test Case '-[SessionKitTests.EPUBSafetyTests testMissingContainerDoesNotPublishPartialPackage]' passed (0.002 seconds).
+Test Case '-[SessionKitTests.EPUBSafetyTests testNestedNavigationAndUTF8LocatorsArePreserved]' started.
+Test Case '-[SessionKitTests.EPUBSafetyTests testNestedNavigationAndUTF8LocatorsArePreserved]' passed (0.003 seconds).
+Test Case '-[SessionKitTests.EPUBSafetyTests testOversizedExpansionIsRejected]' started.
+Test Case '-[SessionKitTests.EPUBSafetyTests testOversizedExpansionIsRejected]' passed (0.001 seconds).
+Test Suite 'EPUBSafetyTests' passed at 2026-09-04 17:20:40.506.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.018 (0.018) seconds
+Test Suite 'EpisodeMapModelsTests' started at 2026-09-04 17:20:40.506.
+Test Case '-[SessionKitTests.EpisodeMapModelsTests testAlignmentDropsOutOfOrderRepeatedAudioCandidate]' started.
+Test Case '-[SessionKitTests.EpisodeMapModelsTests testAlignmentDropsOutOfOrderRepeatedAudioCandidate]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.EpisodeMapModelsTests testAlignmentInterpolatesOnlyInsideStableCorroboratedIntervals]' started.
+Test Case '-[SessionKitTests.EpisodeMapModelsTests testAlignmentInterpolatesOnlyInsideStableCorroboratedIntervals]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.EpisodeMapModelsTests testExactEditionProjectionMapsSceneTimesWithoutSparseLandmarks]' started.
+Test Case '-[SessionKitTests.EpisodeMapModelsTests testExactEditionProjectionMapsSceneTimesWithoutSparseLandmarks]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.EpisodeMapModelsTests testMonotonicNeighborVerifiesDirectPointsButCannotEnableInterpolationWithoutTranscript]' started.
+Test Case '-[SessionKitTests.EpisodeMapModelsTests testMonotonicNeighborVerifiesDirectPointsButCannotEnableInterpolationWithoutTranscript]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.EpisodeMapModelsTests testPhraseSketchIsDeterministicBoundedAndContainsNoTranscriptText]' started.
+Test Case '-[SessionKitTests.EpisodeMapModelsTests testPhraseSketchIsDeterministicBoundedAndContainsNoTranscriptText]' passed (0.003 seconds).
+Test Case '-[SessionKitTests.EpisodeMapModelsTests testPhraseSketchRejectsStopwordOnlyAndDoesNotMatchReorderedSpeech]' started.
+Test Case '-[SessionKitTests.EpisodeMapModelsTests testPhraseSketchRejectsStopwordOnlyAndDoesNotMatchReorderedSpeech]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.EpisodeMapModelsTests testPublicSaltPermitsDictionaryConfirmationAndIsNotCryptographicAnonymity]' started.
+Test Case '-[SessionKitTests.EpisodeMapModelsTests testPublicSaltPermitsDictionaryConfirmationAndIsNotCryptographicAnonymity]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.EpisodeMapModelsTests testSceneSegmentationPreservesPublisherBoundsAndSplitsOnlyLongChapters]' started.
+Test Case '-[SessionKitTests.EpisodeMapModelsTests testSceneSegmentationPreservesPublisherBoundsAndSplitsOnlyLongChapters]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.EpisodeMapModelsTests testSceneSegmentationUsesDeterministicTranscriptChangePointNearTarget]' started.
+Test Case '-[SessionKitTests.EpisodeMapModelsTests testSceneSegmentationUsesDeterministicTranscriptChangePointNearTarget]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.EpisodeMapModelsTests testSkimBridgeStateRoundTripsWithoutChangingSourcePosition]' started.
+Test Case '-[SessionKitTests.EpisodeMapModelsTests testSkimBridgeStateRoundTripsWithoutChangingSourcePosition]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.EpisodeMapModelsTests testSparseScheduleDebouncesSeeksAndCoalescesGridTriggers]' started.
+Test Case '-[SessionKitTests.EpisodeMapModelsTests testSparseScheduleDebouncesSeeksAndCoalescesGridTriggers]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.EpisodeMapModelsTests testUniqueAcousticMatchAloneRemainsApproximateWithoutIndependentCorroboration]' started.
+Test Case '-[SessionKitTests.EpisodeMapModelsTests testUniqueAcousticMatchAloneRemainsApproximateWithoutIndependentCorroboration]' passed (0.000 seconds).
+Test Suite 'EpisodeMapModelsTests' passed at 2026-09-04 17:20:40.515.
+	 Executed 12 tests, with 0 failures (0 unexpected) in 0.007 (0.008) seconds
+Test Suite 'QualityOfLifeModelsTests' started at 2026-09-04 17:20:40.515.
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testBatteryHorizonStopsAtThirtyMinutesAndNextChapter]' started.
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testBatteryHorizonStopsAtThirtyMinutesAndNextChapter]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testDefaultFeedLimitAcceptsLegitimateFeedLargerThanTwoMegabytes]' started.
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testDefaultFeedLimitAcceptsLegitimateFeedLargerThanTwoMegabytes]' passed (0.031 seconds).
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testDefaultFeedLimitStillRejectsResponsesAboveSixteenMegabytes]' started.
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testDefaultFeedLimitStillRejectsResponsesAboveSixteenMegabytes]' passed (0.003 seconds).
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testDeterministicEvictionProtectsIrreplaceableMediaAndOrdersReproducibleAssets]' started.
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testDeterministicEvictionProtectsIrreplaceableMediaAndOrdersReproducibleAssets]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testEpisodeMapAssetsAreReproducibleButActivePreparationAndPlaybackAreProtected]' started.
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testEpisodeMapAssetsAreReproducibleButActivePreparationAndPlaybackAreProtected]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testFeedParserBoundsEntriesAndSanitizesMarkup]' started.
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testFeedParserBoundsEntriesAndSanitizesMarkup]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testLegacyAudioPreparationJobDecodesWithoutQueueOrHorizonMetadata]' started.
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testLegacyAudioPreparationJobDecodesWithoutQueueOrHorizonMetadata]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testLegacyPlaybackPositionDecodesWithoutSourceLocator]' started.
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testLegacyPlaybackPositionDecodesWithoutSourceLocator]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testLibraryPersistedSelectionDropsSearchQuery]' started.
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testLibraryPersistedSelectionDropsSearchQuery]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testPreparedLocatorMediaRoundTripIsMonotonic]' started.
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testPreparedLocatorMediaRoundTripIsMonotonic]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testPreparedManifestNeverAdvertisesCompleteDurationWhilePartial]' started.
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testPreparedManifestNeverAdvertisesCompleteDurationWhilePartial]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testRenderSignatureEncodingContainsNoPlaybackRate]' started.
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testRenderSignatureEncodingContainsNoPlaybackRate]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testSingleChunkTextBecomesPlayableAfterItsOnlyChunkCommits]' started.
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testSingleChunkTextBecomesPlayableAfterItsOnlyChunkCommits]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testUTF8LocatorRoundTripsUnicodeCharacterOffset]' started.
+Test Case '-[SessionKitTests.QualityOfLifeModelsTests testUTF8LocatorRoundTripsUnicodeCharacterOffset]' passed (0.001 seconds).
+Test Suite 'QualityOfLifeModelsTests' passed at 2026-09-04 17:20:40.555.
+	 Executed 14 tests, with 0 failures (0 unexpected) in 0.039 (0.040) seconds
+Test Suite 'SQLiteSessionStoreSafetyTests' started at 2026-09-04 17:20:40.555.
+Test Case '-[SessionKitTests.SQLiteSessionStoreSafetyTests testConcurrentReadsAndWritesShareOneConnectionSafely]' started.
+Test Case '-[SessionKitTests.SQLiteSessionStoreSafetyTests testConcurrentReadsAndWritesShareOneConnectionSafely]' passed (1.043 seconds).
+Test Case '-[SessionKitTests.SQLiteSessionStoreSafetyTests testCorruptRecordIsMovedToQuarantineWithoutHidingHealthyItems]' started.
+Test Case '-[SessionKitTests.SQLiteSessionStoreSafetyTests testCorruptRecordIsMovedToQuarantineWithoutHidingHealthyItems]' passed (0.009 seconds).
+Test Case '-[SessionKitTests.SQLiteSessionStoreSafetyTests testSessionScopedLogicalIDsDoNotOverwriteRecordsFromAnotherSession]' started.
+Test Case '-[SessionKitTests.SQLiteSessionStoreSafetyTests testSessionScopedLogicalIDsDoNotOverwriteRecordsFromAnotherSession]' passed (0.008 seconds).
+Test Case '-[SessionKitTests.SQLiteSessionStoreSafetyTests testStoreWritesCurrentSchemaVersion]' started.
+Test Case '-[SessionKitTests.SQLiteSessionStoreSafetyTests testStoreWritesCurrentSchemaVersion]' passed (0.006 seconds).
+Test Case '-[SessionKitTests.SQLiteSessionStoreSafetyTests testVersionFiveLibraryOpensWithoutRewritingKnownOrUnknownRecords]' started.
+Test Case '-[SessionKitTests.SQLiteSessionStoreSafetyTests testVersionFiveLibraryOpensWithoutRewritingKnownOrUnknownRecords]' passed (0.009 seconds).
+Test Case '-[SessionKitTests.SQLiteSessionStoreSafetyTests testVersionThreeMigrationScopesExistingSessionRecordKeys]' started.
+Test Case '-[SessionKitTests.SQLiteSessionStoreSafetyTests testVersionThreeMigrationScopesExistingSessionRecordKeys]' passed (0.009 seconds).
+Test Case '-[SessionKitTests.SQLiteSessionStoreSafetyTests testVersionTwoMigrationBackfillsSessionTimestampsWithoutLosingTheSession]' started.
+Test Case '-[SessionKitTests.SQLiteSessionStoreSafetyTests testVersionTwoMigrationBackfillsSessionTimestampsWithoutLosingTheSession]' passed (0.011 seconds).
+Test Suite 'SQLiteSessionStoreSafetyTests' passed at 2026-09-04 17:20:41.651.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 1.094 (1.096) seconds
+Test Suite 'SessionKitCoreTests' started at 2026-09-04 17:20:41.651.
+Test Case '-[SessionKitTests.SessionKitCoreTests testActiveMediaSeekAcknowledgesThenRejoinsAdvancingPlayerClockWithoutRestartingPlayback]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testActiveMediaSeekAcknowledgesThenRejoinsAdvancingPlayerClockWithoutRestartingPlayback]' passed (0.004 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testAICompletionParsesSummaryResponseAndChapters]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testAICompletionParsesSummaryResponseAndChapters]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testAIJobCompletedPreservesActivePlaybackPhase]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testAIJobCompletedPreservesActivePlaybackPhase]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testAIStreamingEmitsEachStableSentenceOnceAndFlushesFinalFragment]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testAIStreamingEmitsEachStableSentenceOnceAndFlushesFinalFragment]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testAssistantInterjectionResumesAtExactRecordedTurnOffset]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testAssistantInterjectionResumesAtExactRecordedTurnOffset]' passed (0.002 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testAssistantPlayableTextSpeaksSummaryBeforeResponse]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testAssistantPlayableTextSpeaksSummaryBeforeResponse]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testAssistantTurnCompletionPausesInAIResponsePlayback]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testAssistantTurnCompletionPausesInAIResponsePlayback]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testAssistantTurnExportRehydratesLegacyAnchorsAndUsesContextualLayout]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testAssistantTurnExportRehydratesLegacyAnchorsAndUsesContextualLayout]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testAttachingProviderListeningMapUpdatesActiveSessionChapterNavigation]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testAttachingProviderListeningMapUpdatesActiveSessionChapterNavigation]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testAudioInterruptionResumePolicyOnlyResumesUntouchedPlayingAudio]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testAudioInterruptionResumePolicyOnlyResumesUntouchedPlayingAudio]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testBackgroundBrowserImportDoesNotReplaceActiveSession]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testBackgroundBrowserImportDoesNotReplaceActiveSession]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testBrowserTextImportCanStartSessionWhenRequested]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testBrowserTextImportCanStartSessionWhenRequested]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testBrowserTextImportCreatesURLBackedTextItem]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testBrowserTextImportCreatesURLBackedTextItem]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testBrowserTextImportRequiresSyncImportCapability]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testBrowserTextImportRequiresSyncImportCapability]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testCancelAssistantInterjectionResumesAtExactRecordedTurnOffsetWithoutSavingInterjection]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testCancelAssistantInterjectionResumesAtExactRecordedTurnOffsetWithoutSavingInterjection]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testCancelInterjectionDoesNotCreateInterjectionAndResumes]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testCancelInterjectionDoesNotCreateInterjectionAndResumes]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testCapabilityGateRejectsUnsupportedCommand]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testCapabilityGateRejectsUnsupportedCommand]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testChapterJumpAlwaysStartsSelectedChapterPlayback]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testChapterJumpAlwaysStartsSelectedChapterPlayback]' passed (0.002 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testCompactControlCommandsDelegateToCanonicalRuntime]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testCompactControlCommandsDelegateToCanonicalRuntime]' passed (0.003 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testCompactControlKeepsDiscussionAvailableAfterSkippingToSourceEnd]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testCompactControlKeepsDiscussionAvailableAfterSkippingToSourceEnd]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testCompactControlRejectsUnsupportedSurfaceCommands]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testCompactControlRejectsUnsupportedSurfaceCommands]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testCompactControlsCanonicallyPauseAndResumeStreamingAssistantPlayback]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testCompactControlsCanonicallyPauseAndResumeStreamingAssistantPlayback]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testCompactControlSnapshotExposesOnlyDelegatedCommands]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testCompactControlSnapshotExposesOnlyDelegatedCommands]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testCompactControlSummaryOnlyProfileDoesNotExposeDiscussion]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testCompactControlSummaryOnlyProfileDoesNotExposeDiscussion]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testCompactLockScreenDelegatesMediaSeekAndPlaybackRate]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testCompactLockScreenDelegatesMediaSeekAndPlaybackRate]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testCompletedPodcastDownloadDefersTransportReplacementUntilResume]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testCompletedPodcastDownloadDefersTransportReplacementUntilResume]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testDeletedInterjectionInvalidatesItsDerivedSummaryAndCannotBeResummarized]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testDeletedInterjectionInvalidatesItsDerivedSummaryAndCannotBeResummarized]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testDeterministicListeningMapMergesHeaderExplosionWithinHardCap]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testDeterministicListeningMapMergesHeaderExplosionWithinHardCap]' passed (0.069 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testDeterministicListeningMapNumbersRepeatedSplitsWithoutRecursiveLabels]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testDeterministicListeningMapNumbersRepeatedSplitsWithoutRecursiveLabels]' passed (0.618 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testDeterministicListeningMapSplitsVeryLongSectionsAtNaturalBoundaries]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testDeterministicListeningMapSplitsVeryLongSectionsAtNaturalBoundaries]' passed (0.087 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testDeterministicListeningMapStopsAtUsefulShallowHeadingDepth]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testDeterministicListeningMapStopsAtUsefulShallowHeadingDepth]' passed (0.067 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testDirectAICommandsRejectProfilesWithoutAIOrDeferralCapability]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testDirectAICommandsRejectProfilesWithoutAIOrDeferralCapability]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testEndDetachesCompactSessionAndKeepsItResumable]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testEndDetachesCompactSessionAndKeepsItResumable]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testFailedInterjectionSummaryBecomesRetryableWithoutRemainingPending]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testFailedInterjectionSummaryBecomesRetryableWithoutRemainingPending]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testFinishInterjectionSchedulesTranscriptionAfterAudioIsSaved]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testFinishInterjectionSchedulesTranscriptionAfterAudioIsSaved]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testFirstChapterJumpSkipsListeningMapSummaryPreface]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testFirstChapterJumpSkipsListeningMapSummaryPreface]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testFullSessionExportAndCompactTimelinePreserveInterjectionsWhoseTurnRecordIsMissing]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testFullSessionExportAndCompactTimelinePreserveInterjectionsWhoseTurnRecordIsMissing]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testGeneratedTurnPauseSavesOffsetForResume]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testGeneratedTurnPauseSavesOffsetForResume]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testHSAStyleMapKeepsNumberedSectionsAndMergesShortCallouts]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testHSAStyleMapKeepsNumberedSectionsAndMergesShortCallouts]' passed (0.075 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testImportAssistantResponseCreatesCompletedPlayableTurn]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testImportAssistantResponseCreatesCompletedPlayableTurn]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testImportedAssistantResponseInterjectionResumesAtExactCapturedOffset]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testImportedAssistantResponseInterjectionResumesAtExactCapturedOffset]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testImportedNativeAudioItemStartsMediaPlayback]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testImportedNativeAudioItemStartsMediaPlayback]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testImportSourceLinkCreatesPlayableNativeAudioItem]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testImportSourceLinkCreatesPlayableNativeAudioItem]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testImportSourceLinkRequiresCanonicalPersistence]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testImportSourceLinkRequiresCanonicalPersistence]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testImportSourceLinkUnsupportedDoesNotCreateItem]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testImportSourceLinkUnsupportedDoesNotCreateItem]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testInMemoryRepositoryListsWatchPackagesByItem]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testInMemoryRepositoryListsWatchPackagesByItem]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testInspectNormalizesLegacyPrematureFinishedSession]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testInspectNormalizesLegacyPrematureFinishedSession]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testInspectSessionDoesNotStartPlayback]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testInspectSessionDoesNotStartPlayback]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testInspectSessionPromotesRestoredLiveTextToCompletePreparedAudio]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testInspectSessionPromotesRestoredLiveTextToCompletePreparedAudio]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testInspectSessionRepairsMediaPercentagesFromDurableTimestamps]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testInspectSessionRepairsMediaPercentagesFromDurableTimestamps]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testInterjectionDuringExternallyStreamedSpeechTargetsCurrentAssistantSentenceWithoutDoubleResume]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testInterjectionDuringExternallyStreamedSpeechTargetsCurrentAssistantSentenceWithoutDoubleResume]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testInterjectionsOnAssistantTurnCanBeSummarizedAfterItemSummary]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testInterjectionsOnAssistantTurnCanBeSummarizedAfterItemSummary]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testInterjectionSummaryRegenerationRequiresNewInterjectionAndReplacesCurrentTargetSummary]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testInterjectionSummaryRegenerationRequiresNewInterjectionAndReplacesCurrentTargetSummary]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testJumpToAssistantTurnChapterUsesSummaryPrefaceOffset]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testJumpToAssistantTurnChapterUsesSummaryPrefaceOffset]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testJumpToChapterFromSummaryPlaybackReturnsToItemText]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testJumpToChapterFromSummaryPlaybackReturnsToItemText]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testLegacyFeedEntryWithoutAudioURLStillDecodes]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testLegacyFeedEntryWithoutAudioURLStillDecodes]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testLegacyItemWithoutCanonicalSourceURLStillDecodes]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testLegacyItemWithoutCanonicalSourceURLStillDecodes]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testLegacySpeechChunksFallBackToThirtySecondsWhenNoSilenceExists]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testLegacySpeechChunksFallBackToThirtySecondsWhenNoSilenceExists]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testLegacySpeechChunksUseNearbySustainedSilenceWithoutOverlapOrGaps]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testLegacySpeechChunksUseNearbySustainedSilenceWithoutOverlapOrGaps]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testLinkResolutionContractCanRepresentResolvedPodcastEpisode]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testLinkResolutionContractCanRepresentResolvedPodcastEpisode]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testListeningMapSummaryPrefaceProgressIsSummaryLocal]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testListeningMapSummaryPrefaceProgressIsSummaryLocal]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testLiveSpeechPlannerBoundsLongDocumentsWithoutTreatingFirstChunkAsCompletion]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testLiveSpeechPlannerBoundsLongDocumentsWithoutTreatingFirstChunkAsCompletion]' passed (0.021 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testLiveTextSeekKeepsRequestedOffsetWhileSpeechReportsOldOffset]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testLiveTextSeekKeepsRequestedOffsetWhileSpeechReportsOldOffset]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testLocalPodcastTransportSwitchPreservesCanonicalTargetTimeAndRate]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testLocalPodcastTransportSwitchPreservesCanonicalTargetTimeAndRate]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testLongFormSpeechAccumulatorIgnoresEmptyResultsWithoutReplacingPriorPassages]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testLongFormSpeechAccumulatorIgnoresEmptyResultsWithoutReplacingPriorPassages]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testLongFormSpeechAccumulatorPreservesEveryFinalizedPassage]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testLongFormSpeechAccumulatorPreservesEveryFinalizedPassage]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testMalformedAIChaptersPreserveResponseText]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testMalformedAIChaptersPreserveResponseText]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testManualListeningMapGenerationPersistsMapAndEnablesChapterJump]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testManualListeningMapGenerationPersistsMapAndEnablesChapterJump]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testMarkdownBrowserImportCreatesDeterministicListeningMap]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testMarkdownBrowserImportCreatesDeterministicListeningMap]' passed (0.052 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testMarkdownEmbedsNearbyInterjectionsInOneSharedSourcePassage]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testMarkdownEmbedsNearbyInterjectionsInOneSharedSourcePassage]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testMarkdownPreservesContextBetweenTextInterjectionsWithoutMediaTimestamps]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testMarkdownPreservesContextBetweenTextInterjectionsWithoutMediaTimestamps]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testMediaChapterJumpKeepsRequestedPositionWhileTransportReportsOldPosition]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testMediaChapterJumpKeepsRequestedPositionWhileTransportReportsOldPosition]' passed (0.003 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testMediaCompletionAcceptsTerminalPlayerPauseWithinLastSecond]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testMediaCompletionAcceptsTerminalPlayerPauseWithinLastSecond]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testMediaCompletionDoesNotMistakeUserPauseOrPendingSeekForCompletion]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testMediaCompletionDoesNotMistakeUserPauseOrPendingSeekForCompletion]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testMediaPlaybackPositionPublishesTimelineAnchorAndDuration]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testMediaPlaybackPositionPublishesTimelineAnchorAndDuration]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testMediaSeekLifecycleIgnoresSupersededSeekCompletion]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testMediaSeekLifecycleIgnoresSupersededSeekCompletion]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testMediaSeekLifecycleTreatsDeclinedCurrentSeekAsTerminal]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testMediaSeekLifecycleTreatsDeclinedCurrentSeekAsTerminal]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testMediaTimelineResolverUsesBoundaryToleranceAndFallback]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testMediaTimelineResolverUsesBoundaryToleranceAndFallback]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testMissingPreparedTextAudioCacheFallsBackToLiveTextPlayback]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testMissingPreparedTextAudioCacheFallsBackToLiveTextPlayback]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testNativeAudioExportReResolvesLegacyOversizedAnchorsFromStoredTimeline]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testNativeAudioExportReResolvesLegacyOversizedAnchorsFromStoredTimeline]' passed (0.002 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testNativeAudioInterjectionFreezesClockBeforeSavingAndResumesAtExactAnchor]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testNativeAudioInterjectionFreezesClockBeforeSavingAndResumesAtExactAnchor]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testNativeAudioPlaybackRatePropagatesToAudioClientAndSnapshot]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testNativeAudioPlaybackRatePropagatesToAudioClientAndSnapshot]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testNativeAudioSkipAcceptsConfiguredTimeUnits]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testNativeAudioSkipAcceptsConfiguredTimeUnits]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testNativeAudioSkipForwardAtCompletedEndStaysAtEndAndPauses]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testNativeAudioSkipForwardAtCompletedEndStaysAtEndAndPauses]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testNativeAudioSkipForwardThatReachesEndClampsWithoutRestartingPlayback]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testNativeAudioSkipForwardThatReachesEndClampsWithoutRestartingPlayback]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testNativeAudioSkipWorksWithoutWatchPackage]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testNativeAudioSkipWorksWithoutWatchPackage]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testNativeTextInterjectionsResumeAtExactBoundaryWithoutAccumulatingDrift]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testNativeTextInterjectionsResumeAtExactBoundaryWithoutAccumulatingDrift]' passed (0.004 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testObservedPlayerDurationCorrectsUnderestimatedFeedDurationAndPercentages]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testObservedPlayerDurationCorrectsUnderestimatedFeedDurationAndPercentages]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testObservedPlayerDurationIsPersistedAndUsedForMediaInterjectionPercent]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testObservedPlayerDurationIsPersistedAndUsedForMediaInterjectionPercent]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testObsidianHeadingsPrebuildDeterministicListeningMap]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testObsidianHeadingsPrebuildDeterministicListeningMap]' passed (0.004 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testObsidianWebClipperImportCleansBlogMarkdownLinks]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testObsidianWebClipperImportCleansBlogMarkdownLinks]' passed (0.002 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testObsidianWebClipperImportCleansTranscriptTimestampsAndMetadata]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testObsidianWebClipperImportCleansTranscriptTimestampsAndMetadata]' passed (0.004 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testParagraphSkipFallsBackToSentenceForSingleParagraphText]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testParagraphSkipFallsBackToSentenceForSingleParagraphText]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testPartialStarterGeneratedTextAudioCompletionDoesNotCompleteSource]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testPartialStarterGeneratedTextAudioCompletionDoesNotCompleteSource]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testPauseAndResumePreserveSourcePosition]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testPauseAndResumePreserveSourcePosition]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testPDFDocumentStructureRoundTripsAndSurvivesBrowserImport]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testPDFDocumentStructureRoundTripsAndSurvivesBrowserImport]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testPendingPlaybackStartStillPublishesAndPersistsLiveTextPosition]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testPendingPlaybackStartStillPublishesAndPersistsLiveTextPosition]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testPendingResumeDoesNotPublishPausedBeforePlaybackConfirms]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testPendingResumeDoesNotPublishPausedBeforePlaybackConfirms]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testPlaybackProgressReconcilesSystemInitiatedPause]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testPlaybackProgressReconcilesSystemInitiatedPause]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testPlaybackStartFailurePublishesFailedWithoutClaimingPlaying]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testPlaybackStartFailurePublishesFailedWithoutClaimingPlaying]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testPlaybackStartPendingTimesOutAsFailure]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testPlaybackStartPendingTimesOutAsFailure]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testPlaybackStartRemainsStartingUntilAudioConfirms]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testPlaybackStartRemainsStartingUntilAudioConfirms]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testPlaySourceFromBeginningWorksWithoutListeningMap]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testPlaySourceFromBeginningWorksWithoutListeningMap]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testPlayTurnPreparesTurnTextInsteadOfReusingItemText]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testPlayTurnPreparesTurnTextInsteadOfReusingItemText]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testPodcastCacheEvictionIsLRUAndProtectsActiveAndDownloadingItems]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testPodcastCacheEvictionIsLRUAndProtectsActiveAndDownloadingItems]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testPodcastDownloadPolicyNeverAutomaticallyDownloadsOnCellular]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testPodcastDownloadPolicyNeverAutomaticallyDownloadsOnCellular]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testPodcastInterjectionArmsBoundedPostResumeSampleBeforePlaybackRestarts]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testPodcastInterjectionArmsBoundedPostResumeSampleBeforePlaybackRestarts]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testPodcastPublisherChaptersUsePrecedencePersistAndNavigateWithoutTranscript]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testPodcastPublisherChaptersUsePrecedencePersistAndNavigateWithoutTranscript]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testPreparedTextAudioAttachmentDoesNotReplaceActiveLiveTextSession]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testPreparedTextAudioAttachmentDoesNotReplaceActiveLiveTextSession]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testPreparedTextAudioAttachmentReplacesStarterMediaWithoutLosingPlayhead]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testPreparedTextAudioAttachmentReplacesStarterMediaWithoutLosingPlayhead]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testPreparedTextAudioUsesMediaPlaybackAndTranscriptAnchors]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testPreparedTextAudioUsesMediaPlaybackAndTranscriptAnchors]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testPublisherChapterSourcesUpgradeInDeclaredOrder]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testPublisherChapterSourcesUpgradeInDeclaredOrder]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testRecordingInterjectionIgnoresPausedSpeechCompletion]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testRecordingInterjectionIgnoresPausedSpeechCompletion]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testRecordingInterjectionRejectsTimelineNavigationAndPreservesMediaAnchor]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testRecordingInterjectionRejectsTimelineNavigationAndPreservesMediaAnchor]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testRepeatedFollowupsCreateDistinctAssistantTurnsAndJobs]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testRepeatedFollowupsCreateDistinctAssistantTurnsAndJobs]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testRepeatedMediaSeekInterjectionResumeCyclesKeepOneAdvancingClock]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testRepeatedMediaSeekInterjectionResumeCyclesKeepOneAdvancingClock]' passed (0.002 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testRepeatedStartsCreateDistinctSessionsForSameItem]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testRepeatedStartsCreateDistinctSessionsForSameItem]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testRestartPlaybackFromCurrentPositionReplaysTextFromSyncedOffset]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testRestartPlaybackFromCurrentPositionReplaysTextFromSyncedOffset]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testRoutedAudioClientPreservesMediaSeekTransactionThroughProductionBoundary]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testRoutedAudioClientPreservesMediaSeekTransactionThroughProductionBoundary]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testRoutedPlaybackAppliesMixingAndVolumeToEveryRouteWithoutReclaimingRemoteCommands]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testRoutedPlaybackAppliesMixingAndVolumeToEveryRouteWithoutReclaimingRemoteCommands]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testRoutedPlaybackGivesRemoteCommandOwnershipOnlyToActiveMediaRoute]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testRoutedPlaybackGivesRemoteCommandOwnershipOnlyToActiveMediaRoute]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSameTargetPlaybackRestartCanConfirmAfterOriginalDeadline]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSameTargetPlaybackRestartCanConfirmAfterOriginalDeadline]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSameTargetPlaybackRestartResetsPendingStartTimeout]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSameTargetPlaybackRestartResetsPendingStartTimeout]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testScopedExportFiltersTargetInterjectionsAndMarkdown]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testScopedExportFiltersTargetInterjectionsAndMarkdown]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSeekTextMovesAndRestartsActiveNativeTextPlayback]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSeekTextMovesAndRestartsActiveNativeTextPlayback]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSkipBackUsesCurrentAudioPositionAndPreviousBoundaryIsStrict]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSkipBackUsesCurrentAudioPositionAndPreviousBoundaryIsStrict]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSkipForwardCanRequireMinimumDistanceForChunkedPlayback]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSkipForwardCanRequireMinimumDistanceForChunkedPlayback]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSkipForwardUsesCurrentAudioPositionWhenAvailable]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSkipForwardUsesCurrentAudioPositionWhenAvailable]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSourceAnchorContextSlicesOneWholeEpisodeSegmentByMediaTime]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSourceAnchorContextSlicesOneWholeEpisodeSegmentByMediaTime]' passed (0.002 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSourceTranscriptTimelineAnchorsNativeAudioAndGeneratesListeningMap]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSourceTranscriptTimelineAnchorsNativeAudioAndGeneratesListeningMap]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSourceWindowContextUpdatesMediaInterjectionAnchorWithoutChangingNoteTranscript]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSourceWindowContextUpdatesMediaInterjectionAnchorWithoutChangingNoteTranscript]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSpeechNormalizationLabelsQuotedSocialPostAndPreservesOrdinaryMetrics]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSpeechNormalizationLabelsQuotedSocialPostAndPreservesOrdinaryMetrics]' passed (0.002 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSpeechNormalizationMapsSourceSeeksAcrossRemovedContent]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSpeechNormalizationMapsSourceSeeksAcrossRemovedContent]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSpeechNormalizationMapsSpokenTextBackToSourceOffsets]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSpeechNormalizationMapsSpokenTextBackToSourceOffsets]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSpeechNormalizationPreservesDecimalClaimAndSectionReferences]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSpeechNormalizationPreservesDecimalClaimAndSectionReferences]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSpeechNormalizationPreservesSource]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSpeechNormalizationPreservesSource]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSpeechNormalizationReducesDefuddleSocialCardToAuthoredPost]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSpeechNormalizationReducesDefuddleSocialCardToAuthoredPost]' passed (0.002 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSpeechRecognitionRequestsAreAlwaysOnDeviceOnly]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSpeechRecognitionRequestsAreAlwaysOnDeviceOnly]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSQLiteStoreBulkDeleteRemovesTrashedGraphsAndPreservesActiveItems]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSQLiteStoreBulkDeleteRemovesTrashedGraphsAndPreservesActiveItems]' passed (0.007 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSQLiteStoreListsAndDeletesItemScopedRecords]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSQLiteStoreListsAndDeletesItemScopedRecords]' passed (0.005 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSQLiteStorePersistsCoreRecords]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSQLiteStorePersistsCoreRecords]' passed (0.005 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSQLiteStorePersistsWatchPackageEventsAndRequests]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSQLiteStorePersistsWatchPackageEventsAndRequests]' passed (0.005 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSQLiteStoreReplacesListeningMapForItem]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSQLiteStoreReplacesListeningMapForItem]' passed (0.008 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSQLiteStoreTrashRestoreAndPermanentDeleteLifecycle]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSQLiteStoreTrashRestoreAndPermanentDeleteLifecycle]' passed (0.006 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testStartSessionSpeaksListeningMapOverviewBeforeItemText]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testStartSessionSpeaksListeningMapOverviewBeforeItemText]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testStopPlaybackPersistsLatestSourcePositionForResume]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testStopPlaybackPersistsLatestSourcePositionForResume]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testStreamingTurnPausesPriorAudioAndFinishesAtItsOwnEnd]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testStreamingTurnPausesPriorAudioAndFinishesAtItsOwnEnd]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSummaryPlaybackPublishesCurrentTargetProgressSeparateFromSourceProgress]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSummaryPlaybackPublishesCurrentTargetProgressSeparateFromSourceProgress]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSummaryTurnCompletionPausesWithoutChangingSourceCompletion]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSummaryTurnCompletionPausesWithoutChangingSourceCompletion]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSustainedSilenceDetectorFindsPauseBetweenSpokenAudio]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSustainedSilenceDetectorFindsPauseBetweenSpokenAudio]' passed (1.757 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSyncPlaybackProgressMarksItemFinishedWhenAudioCompletes]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSyncPlaybackProgressMarksItemFinishedWhenAudioCompletes]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSyncPlaybackProgressPublishesCurrentAudioPosition]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSyncPlaybackProgressPublishesCurrentAudioPosition]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSystemInitiatedPauseReconcilesPendingStartWithoutRepause]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSystemInitiatedPauseReconcilesPendingStartWithoutRepause]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSystemSpeechChunkRemovesEmojiAndURLsBeforeMappingRanges]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSystemSpeechChunkRemovesEmojiAndURLsBeforeMappingRanges]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSystemSpeechPlannerReducesSocialCardBeforeChunkingLongPost]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSystemSpeechPlannerReducesSocialCardBeforeChunkingLongPost]' passed (0.013 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSystemSpeechPlaybackRateReportsEffectiveTransportMultiplier]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSystemSpeechPlaybackRateReportsEffectiveTransportMultiplier]' passed (0.141 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSystemSpeechProjectionGuaranteesOneUTF16UnitPerSpokenCharacter]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSystemSpeechProjectionGuaranteesOneUTF16UnitPerSpokenCharacter]' passed (0.002 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testSystemSpeechProjectionRemovesMarkupAndUnsafeGraphemeClusters]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSystemSpeechProjectionRemovesMarkupAndUnsafeGraphemeClusters]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testTechnicalTranscriptSegmentsDoNotBecomePlaybackChapterTitles]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testTechnicalTranscriptSegmentsDoNotBecomePlaybackChapterTitles]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testTextInterjectionAnchorUsesFullWordsAndFourSentenceShoulders]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testTextInterjectionAnchorUsesFullWordsAndFourSentenceShoulders]' passed (0.002 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testTextPlaybackPositionMapsInterjectionToSourceContext]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testTextPlaybackPositionMapsInterjectionToSourceContext]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testTitleOverrideKeepsFirstPastedHeadingAsAChapter]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testTitleOverrideKeepsFirstPastedHeadingAsAChapter]' passed (0.002 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testTranscriptlessNativeAudioInterjectionAnchorsToMediaTime]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testTranscriptlessNativeAudioInterjectionAnchorsToMediaTime]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SessionKitCoreTests testTwentyFiveMinuteMediaPositionSurvivesInterjectionDismissAndResume]' started.
+Test Case '-[SessionKitTests.SessionKitCoreTests testTwentyFiveMinuteMediaPositionSurvivesInterjectionDismissAndResume]' passed (0.000 seconds).
+Test Suite 'SessionKitCoreTests' passed at 2026-09-04 17:20:44.714.
+	 Executed 164 tests, with 0 failures (0 unexpected) in 3.049 (3.063) seconds
+Test Suite 'SharingTests' started at 2026-09-04 17:20:44.714.
+Test Case '-[SessionKitTests.SharingTests testAcousticPauseDetectionFindsEdgesAndProtectsAlignedSpeech]' started.
+Test Case '-[SessionKitTests.SharingTests testAcousticPauseDetectionFindsEdgesAndProtectsAlignedSpeech]' passed (0.088 seconds).
+Test Case '-[SessionKitTests.SharingTests testAcousticResolverDeclinesConflictingSyntheticMatchesAcrossInsertedAd]' started.
+Test Case '-[SessionKitTests.SharingTests testAcousticResolverDeclinesConflictingSyntheticMatchesAcrossInsertedAd]' passed (1.742 seconds).
+Test Case '-[SessionKitTests.SharingTests testAlignedTranscriptionPersistsTimingAndLegacyCompletionClearsIt]' started.
+Test Case '-[SessionKitTests.SharingTests testAlignedTranscriptionPersistsTimingAndLegacyCompletionClearsIt]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SharingTests testAnchorContextKeepsNearestBoundedEvidenceAndMachineReferences]' started.
+Test Case '-[SessionKitTests.SharingTests testAnchorContextKeepsNearestBoundedEvidenceAndMachineReferences]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SharingTests testArchiveRejectsPreReleaseV1AndTamperedArtifact]' started.
+Test Case '-[SessionKitTests.SharingTests testArchiveRejectsPreReleaseV1AndTamperedArtifact]' passed (0.010 seconds).
+Test Case '-[SessionKitTests.SharingTests testArchiveRoundTripAndBytesAreDeterministic]' started.
+Test Case '-[SessionKitTests.SharingTests testArchiveRoundTripAndBytesAreDeterministic]' passed (0.009 seconds).
+Test Case '-[SessionKitTests.SharingTests testArticleResolverDistinguishesWrongAmbiguousAndVerified]' started.
+Test Case '-[SessionKitTests.SharingTests testArticleResolverDistinguishesWrongAmbiguousAndVerified]' passed (0.002 seconds).
+Test Case '-[SessionKitTests.SharingTests testBuilderIncludesOnlyExplicitlySelectedOriginalOrCleanedVoice]' started.
+Test Case '-[SessionKitTests.SharingTests testBuilderIncludesOnlyExplicitlySelectedOriginalOrCleanedVoice]' passed (0.007 seconds).
+Test Case '-[SessionKitTests.SharingTests testBuilderProducesFinalEnvelopeAndTextCommentaryArtifact]' started.
+Test Case '-[SessionKitTests.SharingTests testBuilderProducesFinalEnvelopeAndTextCommentaryArtifact]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SharingTests testBuilderRejectsDraftDuplicateAndMismatchedCleanedAudio]' started.
+Test Case '-[SessionKitTests.SharingTests testBuilderRejectsDraftDuplicateAndMismatchedCleanedAudio]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SharingTests testCleanupIsDeterministicAndDoesNotMutatePrivateCapture]' started.
+Test Case '-[SessionKitTests.SharingTests testCleanupIsDeterministicAndDoesNotMutatePrivateCapture]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SharingTests testCleanupPreservesSemanticYouKnowAndSupportsPerEditUndo]' started.
+Test Case '-[SessionKitTests.SharingTests testCleanupPreservesSemanticYouKnowAndSupportsPerEditUndo]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SharingTests testCleanupShortensLongPauseButNeverDeletesAllSpeech]' started.
+Test Case '-[SessionKitTests.SharingTests testCleanupShortensLongPauseButNeverDeletesAllSpeech]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SharingTests testContinuousEvidenceRingExtractsExactPreWindowAndSeekInvalidatesIt]' started.
+Test Case '-[SessionKitTests.SharingTests testContinuousEvidenceRingExtractsExactPreWindowAndSeekInvalidatesIt]' passed (0.044 seconds).
+Test Case '-[SessionKitTests.SharingTests testEmbeddedAndRecipientSuppliedItemTransportsDoNotRequireInventedURL]' started.
+Test Case '-[SessionKitTests.SharingTests testEmbeddedAndRecipientSuppliedItemTransportsDoNotRequireInventedURL]' passed (0.009 seconds).
+Test Case '-[SessionKitTests.SharingTests testExistingImportedLayerDecodesLegacySourceIdentityWithoutLosingTheLibraryRecord]' started.
+Test Case '-[SessionKitTests.SharingTests testExistingImportedLayerDecodesLegacySourceIdentityWithoutLosingTheLibraryRecord]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SharingTests testExistingPrivateInterjectionDecodesWithoutNewSharingFields]' started.
+Test Case '-[SessionKitTests.SharingTests testExistingPrivateInterjectionDecodesWithoutNewSharingFields]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SharingTests testHeldOutPublicDomainPodcastAnchorCorpus]' started.
+/Users/colemiller/Documents/GitHub/spoken-margins-native/Packages/SessionKit/Tests/SessionKitTests/SharingTests.swift:971: -[SessionKitTests.SharingTests testHeldOutPublicDomainPodcastAnchorCorpus] : Test skipped - Run scripts/run-podcast-anchor-benchmark.sh to execute the held-out corpus.
+Test Case '-[SessionKitTests.SharingTests testHeldOutPublicDomainPodcastAnchorCorpus]' skipped (0.001 seconds).
+Test Case '-[SessionKitTests.SharingTests testImportUsesDistinctLocalIDsAndIsIdempotentInMemoryAndSQLite]' started.
+Test Case '-[SessionKitTests.SharingTests testImportUsesDistinctLocalIDsAndIsIdempotentInMemoryAndSQLite]' passed (0.014 seconds).
+Test Case '-[SessionKitTests.SharingTests testManualWordDeletionUsesAlignedRangeAndCanBeRestored]' started.
+Test Case '-[SessionKitTests.SharingTests testManualWordDeletionUsesAlignedRangeAndCanBeRestored]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SharingTests testPartialFlankRequiresStableMonotonicNeighborCorroboration]' started.
+Test Case '-[SessionKitTests.SharingTests testPartialFlankRequiresStableMonotonicNeighborCorroboration]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SharingTests testPodcastResolverFusesConsistentEvidenceAndRejectsAmbiguity]' started.
+Test Case '-[SessionKitTests.SharingTests testPodcastResolverFusesConsistentEvidenceAndRejectsAmbiguity]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SharingTests testPodcastResolverMathBenchmarkHasNoFalseConfidentPlacements]' started.
+Test Case '-[SessionKitTests.SharingTests testPodcastResolverMathBenchmarkHasNoFalseConfidentPlacements]' passed (0.001 seconds).
+Test Case '-[SessionKitTests.SharingTests testPodcastTimestampFallbackStaysDisabledAfterEqualDurationCounterexample]' started.
+Test Case '-[SessionKitTests.SharingTests testPodcastTimestampFallbackStaysDisabledAfterEqualDurationCounterexample]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SharingTests testPodcastTranscriptResolutionFusionAndMonotonicGuard]' started.
+Test Case '-[SessionKitTests.SharingTests testPodcastTranscriptResolutionFusionAndMonotonicGuard]' passed (0.015 seconds).
+Test Case '-[SessionKitTests.SharingTests testPortableListeningMapProposalAndPodcastEvidenceImportWithoutActivatingMap]' started.
+Test Case '-[SessionKitTests.SharingTests testPortableListeningMapProposalAndPodcastEvidenceImportWithoutActivatingMap]' passed (0.418 seconds).
+Test Case '-[SessionKitTests.SharingTests testPostResumePodcastEvidenceUsesOnlyArmedDecodedAudioWindow]' started.
+Test Case '-[SessionKitTests.SharingTests testPostResumePodcastEvidenceUsesOnlyArmedDecodedAudioWindow]' passed (0.028 seconds).
+Test Case '-[SessionKitTests.SharingTests testPrivateShareCurationPersistsButCannotEnterReviewedRevisionOrSessionExport]' started.
+Test Case '-[SessionKitTests.SharingTests testPrivateShareCurationPersistsButCannotEnterReviewedRevisionOrSessionExport]' passed (0.007 seconds).
+Test Case '-[SessionKitTests.SharingTests testShareRevisionIDsRemainImmutableInMemoryAndSQLite]' started.
+Test Case '-[SessionKitTests.SharingTests testShareRevisionIDsRemainImmutableInMemoryAndSQLite]' passed (0.005 seconds).
+Test Case '-[SessionKitTests.SharingTests testSpeechAwarePauseDetectionRemovesAHighEnergyGapWithoutTouchingWords]' started.
+Test Case '-[SessionKitTests.SharingTests testSpeechAwarePauseDetectionRemovesAHighEnergyGapWithoutTouchingWords]' passed (0.073 seconds).
+Test Case '-[SessionKitTests.SharingTests testUnknownOptionalArtifactIsSkippedAndUnknownRequiredArtifactIsRejected]' started.
+Test Case '-[SessionKitTests.SharingTests testUnknownOptionalArtifactIsSkippedAndUnknownRequiredArtifactIsRejected]' passed (0.007 seconds).
+Test Suite 'SharingTests' passed at 2026-09-04 17:20:47.202.
+	 Executed 31 tests, with 1 test skipped and 0 failures (0 unexpected) in 2.485 (2.488) seconds
+Test Suite 'SupertonicNarrationTests' started at 2026-09-04 17:20:47.202.
+Test Case '-[SessionKitTests.SupertonicNarrationTests testAssetValidationRequiresModelsUnicodeConfigurationAndAllTenStyles]' started.
+Test Case '-[SessionKitTests.SupertonicNarrationTests testAssetValidationRequiresModelsUnicodeConfigurationAndAllTenStyles]' passed (0.007 seconds).
+Test Case '-[SessionKitTests.SupertonicNarrationTests testBackgroundInferencePacingLeavesSafetyMarginBelowIOSCPUQuota]' started.
+Test Case '-[SessionKitTests.SupertonicNarrationTests testBackgroundInferencePacingLeavesSafetyMarginBelowIOSCPUQuota]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SupertonicNarrationTests testCanonicalVoiceIDsRoundTripWithoutDisplayNames]' started.
+Test Case '-[SessionKitTests.SupertonicNarrationTests testCanonicalVoiceIDsRoundTripWithoutDisplayNames]' passed (0.000 seconds).
+Test Case '-[SessionKitTests.SupertonicNarrationTests testRendererRejectsEmptyTextAndUnsupportedStepCountBeforeInference]' started.
+Test Case '-[SessionKitTests.SupertonicNarrationTests testRendererRejectsEmptyTextAndUnsupportedStepCountBeforeInference]' passed (0.005 seconds).
+Test Suite 'SupertonicNarrationTests' passed at 2026-09-04 17:20:47.215.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.012 (0.013) seconds
+Test Suite 'TraceReplayTests' started at 2026-09-04 17:20:47.215.
+Test Case '-[SessionKitTraceTests.TraceReplayTests testGate1TracesReplay]' started.
+Test Case '-[SessionKitTraceTests.TraceReplayTests testGate1TracesReplay]' passed (0.046 seconds).
+Test Case '-[SessionKitTraceTests.TraceReplayTests testGate2TracesReplay]' started.
+Test Case '-[SessionKitTraceTests.TraceReplayTests testGate2TracesReplay]' passed (0.005 seconds).
+Test Case '-[SessionKitTraceTests.TraceReplayTests testGate5TracesReplay]' started.
+Test Case '-[SessionKitTraceTests.TraceReplayTests testGate5TracesReplay]' passed (0.004 seconds).
+Test Suite 'TraceReplayTests' passed at 2026-09-04 17:20:47.270.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.055 (0.055) seconds
+Test Suite 'SessionKitPackageTests.xctest' passed at 2026-09-04 17:20:47.271.
+	 Executed 243 tests, with 1 test skipped and 0 failures (0 unexpected) in 6.854 (6.878) seconds
+Test Suite 'All tests' passed at 2026-09-04 17:20:47.271.
+	 Executed 243 tests, with 1 test skipped and 0 failures (0 unexpected) in 6.854 (6.880) seconds

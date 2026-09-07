@@ -1,0 +1,32 @@
+{
+  "configurations": [
+    {
+      "id": "9c73426c-dff7-512e-8e73-f93cb931e1a9",
+      "name": "Default",
+      "options": {}
+    }
+  ],
+  "defaultOptions": {
+    "testTimeoutsEnabled": true,
+    "defaultTestExecutionTimeAllowance": 120,
+    "maximumTestExecutionTimeAllowance": 180
+  },
+  "testTargets": [
+    {
+      "target": {
+        "containerPath": "container:SpokenMarginsNative.xcodeproj",
+        "identifier": "62CEABDB2B6F38CA17ED8324",
+        "name": "SpokenMarginsAppUITests"
+      },
+      "selectedTests": [
+        "Gate1FlowUITests/testLibraryCompactRowStaysDense()",
+        "Gate1FlowUITests/testRecordingExclusivelyOwnsTheAccessibleExperience()",
+        "Gate1FlowUITests/testAmbiguousPodcastImportImmediatelyReplacesAddSourceWithEpisodePicker()",
+        "Gate1FlowUITests/testBuild23RecipientMissingSourceReturnsWithoutAutoplayAndShowsProvenance()",
+        "Gate1FlowUITests/testBuild23LayoutRegressionsRemainOperableAtAccessibilityType()"
+      ],
+      "parallelizable": false
+    }
+  ],
+  "version": 1
+}

@@ -30,7 +30,7 @@ public final class SessionEngine {
     private let textAudio: TextAudioPreparationClient?
     private let playbackStartTimeout: TimeInterval
     private let now: () -> Date
-    private var recordingAnchor: Anchor?
+    private(set) var recordingAnchor: Anchor?
     private var recordingTargetType: InterjectionTargetType?
     private var recordingTargetId: String?
     private var priorPhase: SessionPhase?
@@ -588,6 +588,29 @@ public final class SessionEngine {
     public func seekText(toCharOffset charOffset: Int) throws -> SessionSnapshot {
         try requireNavigationAllowed("seekText")
         try requirePlayback("seekText")
+        if var turnSession = currentSession,
+           turnSession.currentTargetType == .assistantTurnTTS || turnSession.currentTargetType == .summaryTurnTTS {
+            guard let turn = try repository.loadTurns(sessionId: turnSession.id).first(where: { $0.id == turnSession.currentTargetId }) else {
+                throw SessionKitError.invalidCommandForState("seekText")
+            }
+            let text = generatedTurnNavigationText(for: turn)
+            guard !text.isEmpty else { throw SessionKitError.invalidCommandForState("seekText") }
+            let wasPlaying = snapshot.status.isPlaybackActive
+            externallyStreamedTurnId = nil
+            turnSession.position = Position(charOffset: max(0, min(charOffset, text.count)))
+            turnSession.position.chapterId = turn.chapters?.last(where: { $0.startChar <= turnSession.position.charOffset })?.id
+            currentSession = turnSession
+            try persistSession(turnSession)
+            protectPlaybackPosition(for: turnSession)
+            if wasPlaying, turnSession.position.charOffset < text.count {
+                try playCurrentTarget(turnSession)
+                publishPlaybackContinuation(for: turnSession)
+            } else {
+                try audio.pause()
+                publish(status: .paused, phase: turnSession.phase)
+            }
+            return snapshot
+        }
         guard var session = currentSession,
               session.currentTargetType == .itemTextTTS,
               let item = currentItem ?? (try? repository.loadItem(id: session.itemId)),
@@ -3082,7 +3105,7 @@ public final class SessionEngine {
         }
     }
 
-    private func buildAnchor(for session: Session, targetType: InterjectionTargetType, targetId: String) -> Anchor {
+    func buildAnchor(for session: Session, targetType: InterjectionTargetType, targetId: String) -> Anchor {
         let playbackPosition = playbackPosition(for: session)
         if session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia {
             let resolved = resolveMediaAnchor(for: session, playbackPosition: playbackPosition)
@@ -4356,6 +4379,13 @@ public final class SessionEngine {
             stamped.completedAt = timestamp
         }
         try repository.saveSession(stamped)
+        if stamped.completionPercent > 98,
+           var item = try? repository.loadItem(id: stamped.itemId),
+           item.sourceCompletedAt == nil {
+            item.sourceCompletedAt = timestamp
+            try repository.saveItem(item)
+            if currentItem?.id == item.id { currentItem = item }
+        }
         if currentSession?.id == stamped.id {
             currentSession = stamped
         }

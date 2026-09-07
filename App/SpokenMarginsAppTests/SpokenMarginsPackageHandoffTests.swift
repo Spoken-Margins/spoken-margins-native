@@ -116,6 +116,9 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let databaseURL = root.appendingPathComponent("recipient.sqlite")
         let packageURL = root.appendingPathComponent("different-episode.spokenmargins")
         let manifest = try writePodcastPackage(to: packageURL, packageID: "package-different-episode")
+        // Opening a store migrates/writes metadata. Prepare the inspection connection
+        // before asynchronous model work, then read the actual persisted import below.
+        let store = try SQLiteSessionStore(path: databaseURL.path)
         let model = Gate1AppModel(
             sourceLinkResolver: podcastResolver(),
             audioPlaybackClient: NoopAudioPlaybackClient(),
@@ -132,7 +135,6 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         try await waitForImportToFinish(model)
 
         let importedItem = try XCTUnwrap(model.libraryItems.first(where: { $0.title == Self.podcastTitle }))
-        let store = try SQLiteSessionStore(path: databaseURL.path)
         let layer = try XCTUnwrap(store.loadImportedCommentaryLayer(packageDigest: try XCTUnwrap(manifest.contentDigest)))
         XCTAssertNotEqual(importedItem.id, previouslySelectedItemID)
         XCTAssertEqual(layer.itemId, importedItem.id)

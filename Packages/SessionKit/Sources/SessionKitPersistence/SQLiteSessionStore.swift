@@ -703,7 +703,7 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
             bind(statement, index: 4, value: itemId)
             bind(statement, index: 5, value: payload)
             guard sqlite3_step(statement) == SQLITE_DONE else {
-                throw SessionKitError.persistenceFailed("step_save")
+                throw SessionKitError.persistenceFailed("step_save:\(sqlite3_extended_errcode(db)):\(String(cString: sqlite3_errmsg(db)))")
             }
         }
     }

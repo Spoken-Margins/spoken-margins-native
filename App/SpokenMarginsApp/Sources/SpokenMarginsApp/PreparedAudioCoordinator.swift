@@ -93,7 +93,8 @@ actor PreparedAudioCoordinator {
         itemId: String,
         sourceText: String,
         signature: TTSRenderSignature,
-        plan: [PreparedChunkPlan]
+        plan: [PreparedChunkPlan],
+        schedulesJob: Bool = true
     ) throws -> PreparedAudioManifest {
         try fileManager.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
         let manifestId = "prepared-\(itemId)-\(signature.digest.prefix(16))"
@@ -115,9 +116,17 @@ actor PreparedAudioCoordinator {
                 segments: [SpeakableSegment(id: locator.segmentId, text: sourceText, locator: locator)]
             ))
         }
-        if let existing = try repository.loadPreparedAudioManifest(id: manifestId),
+        if var existing = try repository.loadPreparedAudioManifest(id: manifestId),
            existing.signature == signature,
            existing.plannedChunkCount == plan.count {
+            // Eligibility/Stop is separate from artifact identity. Resume a
+            // compatible partial representation without discarding its chunks.
+            if existing.state == .notPrepared || existing.state == .stopped {
+                existing.state = .preparing
+                existing.failureCode = nil
+                existing.updatedAt = Date()
+                try repository.savePreparedAudioManifest(existing)
+            }
             return existing
         }
         for old in try repository.loadPreparedAudioManifests(itemId: itemId) where old.id != manifestId {
@@ -135,12 +144,14 @@ actor PreparedAudioCoordinator {
             plannedChunkCount: plan.count
         )
         try repository.savePreparedAudioManifest(manifest)
-        try repository.saveAudioPreparationJob(AudioPreparationJob(
-            id: "job-\(manifestId)",
-            itemId: itemId,
-            manifestId: manifestId,
-            policy: .demandWindow
-        ))
+        if schedulesJob {
+            try repository.saveAudioPreparationJob(AudioPreparationJob(
+                id: "job-\(manifestId)",
+                itemId: itemId,
+                manifestId: manifestId,
+                policy: .demandWindow
+            ))
+        }
         return manifest
     }
 
@@ -231,6 +242,7 @@ actor PreparedAudioCoordinator {
     func retry(itemId: String, signature: TTSRenderSignature) throws {
         let manifestId = "prepared-\(itemId)-\(signature.digest.prefix(16))"
         guard var manifest = try repository.loadPreparedAudioManifest(id: manifestId) else { return }
+        guard manifest.state != .readyOffline else { return }
         manifest.state = .preparing
         manifest.failureCode = nil
         manifest.updatedAt = Date()

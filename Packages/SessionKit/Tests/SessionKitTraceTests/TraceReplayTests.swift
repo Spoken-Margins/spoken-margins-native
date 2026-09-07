@@ -3,60 +3,58 @@ import XCTest
 @testable import SessionKit
 
 final class TraceReplayTests: XCTestCase {
-    func testGate1TracesReplay() throws {
-        for traceName in TraceHarness.gate1TraceNames {
-            let harness = try TraceHarness(traceName: traceName)
-            try harness.replay()
+    func testOriginalPlaybackFiveInterjections() throws { try TraceHarness(traceName: "original-playback-five-interjections").replay() }
+    func testSemanticNavigationAndRollback() throws { try TraceHarness(traceName: "semantic-navigation-and-rollback").replay() }
+    func testTtsLinkNormalization() throws { try TraceHarness(traceName: "tts-link-normalization").replay() }
+    func testPhoneOfflineDeferredAi() throws { try TraceHarness(traceName: "phone-offline-deferred-ai").replay() }
+    func testMaplessSessionExport() throws { try TraceHarness(traceName: "mapless-session-export").replay() }
+    func testSessionIsolatedExport() throws { try TraceHarness(traceName: "session-isolated-export").replay() }
+    func testInterjectIntoSummaryThenDiscuss() throws { try TraceHarness(traceName: "interject-into-summary-then-discuss").replay() }
+    func testScopedInterjectionSummary() throws { try TraceHarness(traceName: "scoped-interjection-summary").replay() }
+    func testAiResponseInterjection() throws { try TraceHarness(traceName: "ai-response-interjection").replay() }
+    func testAiProviderFailureRetry() throws { try TraceHarness(traceName: "ai-provider-failure-retry").replay() }
+    func testAiMalformedStructurePreservesText() throws { try TraceHarness(traceName: "ai-malformed-structure-preserves-text").replay() }
+    func testExternalAssistantResponseImport() throws { try TraceHarness(traceName: "external-assistant-response-import").replay() }
+    func testStableStreamingSpeech() throws { try TraceHarness(traceName: "stable-streaming-speech").replay() }
+    func testInterjectionRepresentationLifecycles() throws { try TraceHarness(traceName: "interjection-representation-lifecycles").replay() }
+    func testLockScreenWidgetControls() throws { try TraceHarness(traceName: "lock-screen-widget-controls").replay() }
+    func testBrowserTextSession() throws { try TraceHarness(traceName: "browser-text-session").replay() }
+    func testBrowserReadableTextSession() throws { try TraceHarness(traceName: "browser-readable-text-session").replay() }
+
+    func testTextAnchorExpectationRejectsMissingRecordingAnchor() throws {
+        let harness = try TraceHarness(traceName: "semantic-navigation-and-rollback")
+        let snapshot = try harness.engine.startSession(itemId: "item-pill")
+        XCTAssertNil(harness.engine.recordingAnchor)
+        let options = XCTExpectedFailure.Options()
+        options.issueMatcher = { $0.compactDescription.contains("XCTAssertEqual failed") }
+        try XCTExpectFailure("Counterexample: text expectation must reject a missing captured anchor", options: options) {
+            XCTAssertNoThrow(try harness.assert(step: ["expect": ["capturedAnchorType": "text"]], snapshot: snapshot))
         }
     }
 
-    func testGate2TracesReplay() throws {
-        for traceName in TraceHarness.gate2TraceNames {
-            let harness = try TraceHarness(traceName: traceName)
-            try harness.replay()
+    func testSourcePreservationExpectationRejectsChangedSourceText() throws {
+        let harness = try TraceHarness(traceName: "tts-link-normalization")
+        let snapshot = try harness.engine.startSession(itemId: "item-links-001")
+        var item = try harness.repository.loadItem(id: "item-links-001")
+        item.text = (item.text ?? "") + " Unrequested source mutation."
+        try harness.repository.saveItem(item)
+        let options = XCTExpectedFailure.Options()
+        options.issueMatcher = { $0.compactDescription.contains("XCTAssertEqual failed") }
+        try XCTExpectFailure("Counterexample: preserving one URL is not preserving source text", options: options) {
+            XCTAssertNoThrow(try harness.assert(step: ["expect": ["sourceTextUnchanged": true]], snapshot: snapshot))
         }
     }
 
-    func testGate5TracesReplay() throws {
-        for traceName in TraceHarness.gate5TraceNames {
-            let harness = try TraceHarness(traceName: traceName)
-            try harness.replay()
-        }
-    }
 }
 
 final class TraceHarness {
-    static let gate1TraceNames = [
-        "original-playback-five-interjections",
-        "semantic-navigation-and-rollback",
-        "tts-link-normalization",
-        "phone-offline-deferred-ai",
-        "mapless-session-export",
-        "session-isolated-export",
-        "interject-into-summary-then-discuss",
-        "scoped-interjection-summary",
-        "ai-response-interjection",
-        "ai-provider-failure-retry",
-        "ai-malformed-structure-preserves-text",
-        "external-assistant-response-import",
-        "stable-streaming-speech",
-        "interjection-representation-lifecycles"
-    ]
-
-    static let gate2TraceNames = [
-        "lock-screen-widget-controls"
-    ]
-
-    static let gate5TraceNames = [
-        "browser-text-session",
-        "browser-readable-text-session"
-    ]
-
     let trace: [String: Any]
     let repository: InMemorySessionRepository
     let engine: SessionEngine
     private let compactDispatcher: CompactControlDispatcher?
     private var lastCompactResult: CompactControlResult?
+    private var originalSourceTexts: [String: String] = [:]
+    private var priorInterjection: Interjection?
     private var spokenUnitCounts: [String: Int] = [:]
 
     init(traceName: String) throws {
@@ -67,6 +65,7 @@ final class TraceHarness {
         let repo = InMemorySessionRepository()
         try Fixtures.seed(trace: trace, into: repo)
         self.repository = repo
+        self.originalSourceTexts = repo.items.compactMapValues(\.text)
         if runtimeProfile == "lock-screen-widget" || runtimeProfile == "watch-tethered" {
             let canonicalProfile = try Fixtures.profile(id: "phone-tablet-online")
             let surfaceProfile = try Fixtures.profile(id: runtimeProfile)
@@ -82,7 +81,10 @@ final class TraceHarness {
 
     func replay() throws {
         let steps = try XCTUnwrap(trace["steps"] as? [[String: Any]])
-        for step in steps {
+        for (index, step) in steps.enumerated() {
+            print("Trace \(trace["name"] ?? "unknown") step \(index + 1)")
+            let args = step["args"] as? [String: Any] ?? [:]
+            priorInterjection = (args["interjectionId"] as? String).flatMap { repository.interjections[$0] }
             if compactDispatcher != nil {
                 let snapshot = try applyCompact(step: step)
                 try assertCompact(step: step, snapshot: snapshot)
@@ -208,7 +210,7 @@ final class TraceHarness {
         return engine.snapshot
     }
 
-    private func assert(step: [String: Any], snapshot: SessionSnapshot) throws {
+    fileprivate func assert(step: [String: Any], snapshot: SessionSnapshot) throws {
         let expect = step["expect"] as? [String: Any] ?? [:]
         for (key, value) in expect {
             switch key {
@@ -235,8 +237,13 @@ final class TraceHarness {
                 XCTAssertEqual(snapshot.isRecording, value as? Bool)
             case "activeInterjectionCount":
                 XCTAssertEqual(snapshot.activeInterjectionCount, value as? Int)
-            case "lastInterjectionAnchorType", "capturedAnchorType", "anchorType":
-                XCTAssertTrue(snapshot.lastInterjectionAnchorType?.rawValue == value as? String || value as? String == "text")
+            case "lastInterjectionAnchorType":
+                XCTAssertEqual(snapshot.lastInterjectionAnchorType?.rawValue, value as? String)
+            case "capturedAnchorType":
+                XCTAssertEqual(engine.recordingAnchor?.anchorType.rawValue, value as? String)
+            case "anchorType":
+                let session = try XCTUnwrap(engine.currentSession)
+                XCTAssertEqual(engine.buildAnchor(for: session, targetType: .item, targetId: session.itemId).anchorType.rawValue, value as? String)
             case "lastInterjectionTargetType":
                 XCTAssertEqual(snapshot.lastInterjectionTargetType?.rawValue, value as? String)
             case "recordingTargetId":
@@ -278,7 +285,7 @@ final class TraceHarness {
                 let strings = value as? [String] ?? []
                 for string in strings { XCTAssertEqual(engine.lastSpokenText?.contains(string), false) }
             case "sourceTextUnchanged":
-                XCTAssertEqual(repository.items["item-links-001"]?.text?.contains("https://example.com/a/b?c=d"), true)
+                XCTAssertEqual(repository.items.compactMapValues(\.text) == originalSourceTexts, value as? Bool)
             case "exportContains":
                 let export = try XCTUnwrap(engine.lastExport)
                 let searchable = [
@@ -349,7 +356,9 @@ final class TraceHarness {
             case "preservedFields":
                 try assertAIJobPreservedFields(value as? [String] ?? [])
             case "chapters":
-                XCTAssertEqual((value as? [Any] ?? []).isEmpty, true)
+                let expectedChapters = try XCTUnwrap(value as? [[String: Any]])
+                let actualChapters = try currentTurn(step: step).chapters ?? []
+                XCTAssertEqual(actualChapters.map(\.id), expectedChapters.compactMap { $0["id"] as? String })
             case "turnText":
                 try assertCurrentTurnText(step: step, equals: value as? String, nonEmpty: false)
             case "audioPreserved":
@@ -363,13 +372,23 @@ final class TraceHarness {
             case "cleanedTranscriptSaved":
                 try assertInterjection(step: step) { XCTAssertNotNil($0.cleanedTranscript) }
             case "requiresExplicitIntent":
-                XCTAssertEqual(value as? Bool, true)
+                let before = try XCTUnwrap(priorInterjection)
+                let after = try XCTUnwrap(repository.interjections[before.id])
+                // This trace owns the explicit delete command, not a UI confirmation.
+                XCTAssertEqual(step["command"] as? String, "deleteRepresentation")
+                XCTAssertNotNil(before.cleanedTranscript)
+                XCTAssertNil(after.cleanedTranscript)
+                XCTAssertEqual(after.transcript, before.transcript)
+                XCTAssertEqual(after.audioPath, before.audioPath)
             case "interjectionPreserved":
                 try assertInterjection(step: step) { XCTAssertEqual($0.status, "active") }
             case "noCrossSessionInterjections":
                 try assertSummaryCandidatesStayInRequestedSession(step: step, expected: value as? Bool ?? true)
             case "explicitSelectionOverridesDefaultScope":
-                XCTAssertEqual(value as? Bool, true)
+                let args = try XCTUnwrap(step["args"] as? [String: Any])
+                let scope = try XCTUnwrap(args["scope"] as? [String: Any])
+                let selected = try XCTUnwrap(scope["interjectionIds"] as? [String])
+                XCTAssertEqual(Set(engine.lastSummaryCandidates.map(\.id)) == Set(selected), value as? Bool)
             case "doesNotContainOtherSessionSourceNotes":
                 try assertExportDoesNotLeakOtherSessionNotes(kind: .item)
             case "doesNotContainOtherSessionAiNotes":

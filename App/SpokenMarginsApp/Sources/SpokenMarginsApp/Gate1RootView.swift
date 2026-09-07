@@ -2095,9 +2095,6 @@ private struct PlaybackScreen: View {
                 .foregroundStyle(AppColors.ochre)
             playbackHeader
             importedCommentaryControl
-            if isUITesting {
-                gate2CompactValidation
-            }
             playbackPosition
             playbackTransport
             playbackRateControl
@@ -2311,7 +2308,7 @@ private struct PlaybackScreen: View {
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(AppColors.watchSecondary)
-        } else if model.snapshot.targetType == TargetType.itemTextTTS.rawValue,
+        } else if !model.isMediaPlaybackSnapshot,
                   textLength > 0,
                   model.canShowFullPlaybackScrubber {
             HStack(spacing: 8) {
@@ -2506,6 +2503,49 @@ private struct PlaybackScreen: View {
         .tint(AppColors.watchControl)
     }
 
+    private var mixedAudioVolumeSlider: some View {
+        VStack(spacing: 4) {
+            Slider(
+                value: $model.mixedPlaybackVolume,
+                in: 0...Gate1AppModel.mixedPlaybackVolumeMaximum,
+                step: 0.05,
+                onEditingChanged: { isEditing in
+                    if !isEditing {
+                        model.mixedPlaybackVolumeChanged()
+                    }
+                }
+            )
+            .tint(AppColors.ochre)
+            .accessibilityLabel("Spoken Margins level")
+            .accessibilityValue(
+                Text(model.mixedPlaybackVolume, format: .percent.precision(.fractionLength(0)))
+            )
+            .accessibilityIdentifier("playback.mixedAudioVolume.slider")
+            HStack {
+                Text("Muted")
+                Spacer()
+                Text("100%")
+            }
+            .font(.caption2)
+            .foregroundStyle(AppColors.watchSecondary)
+        }
+    }
+
+    private var lowerBackgroundAudioToggle: some View {
+        Toggle(
+            "Lower Background Audio",
+            isOn: Binding(
+                get: { model.lowersBackgroundAudio },
+                set: { model.setLowersBackgroundAudio($0) }
+            )
+        )
+        .font(.subheadline.weight(.semibold))
+        .tint(AppColors.ochre)
+        .accessibilityIdentifier("playback.lowerBackgroundAudio.toggle")
+        .accessibilityHint("Lowers other apps’ audio while Spoken Margins plays. Starts off for each session.")
+        .toggleStyle(.button)
+    }
+
     @ViewBuilder
     private var mixedAudioControl: some View {
         if model.showsMixWithOtherAudioOption {
@@ -2530,32 +2570,20 @@ private struct PlaybackScreen: View {
                     }
                     .font(.caption.weight(.semibold))
 
-                    Slider(
-                        value: $model.mixedPlaybackVolume,
-                        in: 0...Gate1AppModel.mixedPlaybackVolumeMaximum,
-                        step: 0.05,
-                        onEditingChanged: { isEditing in
-                            if !isEditing {
-                                model.mixedPlaybackVolumeChanged()
-                            }
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 12) {
+                            mixedAudioVolumeSlider.frame(minWidth: 120)
+                            lowerBackgroundAudioToggle.fixedSize(horizontal: true, vertical: false)
                         }
-                    )
-                    .tint(AppColors.ochre)
-                    .accessibilityLabel("Spoken Margins level")
-                    .accessibilityValue(
-                        Text(model.mixedPlaybackVolume, format: .percent.precision(.fractionLength(0)))
-                    )
-                    .accessibilityIdentifier("playback.mixedAudioVolume.slider")
-
-                    HStack {
-                        Text("Quieter")
-                        Spacer()
-                        Text("Normal")
-                        Spacer()
-                        Text("Louder")
+                        VStack(alignment: .leading, spacing: 10) {
+                            mixedAudioVolumeSlider
+                            lowerBackgroundAudioToggle
+                        }
                     }
-                    .font(.caption2)
-                    .foregroundStyle(AppColors.watchSecondary)
+
+                    Text("Make Spoken Margins easier to hear by lowering other apps while listening. Their volume returns when you pause or turn this off.")
+                        .font(.caption2)
+                        .foregroundStyle(AppColors.watchSecondary)
 
                     Text("Other audio can continue. Control Spoken Margins here; Lock Screen and headphone controls may control the other app.")
                         .font(.caption2)
@@ -2873,7 +2901,15 @@ private struct PlaybackScreen: View {
     }
 
     private var textLength: Int {
-        model.selectedItem.text.count
+        if model.snapshot.targetType == TargetType.assistantTurnTTS.rawValue || model.snapshot.targetType == TargetType.summaryTurnTTS.rawValue,
+           let turn = model.selectedItem.turns.first(where: { $0.id == model.snapshot.targetId }) {
+            let text = turn.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !text.isEmpty { return text.count }
+            let summary = turn.summary?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !summary.isEmpty { return summary.count }
+            return (turn.rawText ?? "").count
+        }
+        return model.selectedItem.text.count
     }
 
     private var canonicalTextOffset: Double {

@@ -34,10 +34,17 @@ Routine development should prefer fast checks:
 
 ```bash
 ./scripts/bootstrap-python-tools.sh
-.venv/bin/python scripts/validate-contracts.py
-.venv/bin/python scripts/validate-surface-contracts.py
-swift build --build-tests --package-path Packages/SessionKit
+.venv/bin/python scripts/verify-tests.py --plan fast
 ```
+
+The fast plan executes the complete package and browser suites, validators, and
+test-inventory checks. Compilation alone is not test execution. For app changes,
+also run `--plan app`; for OS audio/inference changes run `--plan adapters` and,
+when speech input or playback changes, `--plan speech-canary`. Use `--plan ui`
+for the scoped UI seams and `--plan release` before release handoff. See
+`docs/testing.md` for exact selections, build reuse, device selection, timeout
+behavior and machine-readable evidence. Missing tests or unexpected skips fail
+the gate; never count an interrupted run as passed.
 
 Use app builds when app, Watch, widget, extension, project, signing, or package integration changes need verification:
 

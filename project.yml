@@ -270,3 +270,34 @@ schemes:
       targets:
         - SpokenMarginsAppTests
         - SpokenMarginsAppUITests
+
+  SpokenMarginsAppBehavior:
+    build:
+      targets:
+        SpokenMarginsApp: [test]
+    test:
+      config: Debug
+      testPlans:
+        - path: TestPlans/AppBehavior.xctestplan
+          defaultPlan: true
+        - path: TestPlans/AudioAdapters.xctestplan
+  SpokenMarginsUISeams:
+    build:
+      targets:
+        SpokenMarginsApp: [test]
+    test:
+      config: Debug
+      testPlans:
+        - path: TestPlans/UISeams.xctestplan
+          defaultPlan: true
+        - path: TestPlans/Smoke.xctestplan
+        - path: TestPlans/SpeechCanary.xctestplan
+  SpokenMarginsReleaseTests:
+    build:
+      targets:
+        SpokenMarginsApp: [test]
+    test:
+      config: Debug
+      testPlans:
+        - path: TestPlans/Release.xctestplan
+          defaultPlan: true

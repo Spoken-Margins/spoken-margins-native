@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PYTHON="$ROOT/.venv/bin/python"
-
 "$ROOT/scripts/bootstrap-python-tools.sh"
-"$PYTHON" "$ROOT/scripts/validate-contracts.py"
-"$PYTHON" "$ROOT/scripts/validate-surface-contracts.py"
-"$ROOT/scripts/run-sessionkit-tests.sh"
+PYTHON="$ROOT/.venv/bin/python"
+DEVICE_ARGS=()
+if [[ -n "${PHONE_UDID:-${DEVICE_UDID:-}}" ]]; then
+  DEVICE_ARGS=(--device "${PHONE_UDID:-$DEVICE_UDID}")
+fi
+"$PYTHON" "$ROOT/scripts/verify-tests.py" --plan fast
+"$PYTHON" "$ROOT/scripts/verify-tests.py" --plan app "${DEVICE_ARGS[@]}"

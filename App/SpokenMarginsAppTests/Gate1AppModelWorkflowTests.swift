@@ -10,6 +10,27 @@ import PDFKit
 
 @MainActor
 final class Gate1AppModelWorkflowTests: XCTestCase {
+    #if canImport(UIKit)
+    func testDiagnosticsCopyPublishesSafePayloadAndSuccessFeedback() throws {
+        let priorClipboard = UIPasteboard.general.items
+        defer { UIPasteboard.general.items = priorClipboard }
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.diagnostics = [
+            "runtimeProfile": "test-profile",
+            "lastBrowserTextSource": "private source content"
+        ]
+        model.copyDiagnosticsExport()
+        let text = try XCTUnwrap(UIPasteboard.general.string)
+        let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: String])
+        XCTAssertEqual(payload["schemaVersion"], "spoken-margins.diagnostics.v1")
+        XCTAssertEqual(payload["runtimeProfile"], "test-profile")
+        XCTAssertNil(payload["lastBrowserTextSource"])
+        XCTAssertFalse(text.contains("private source content"))
+        XCTAssertEqual(model.feedbackEvent?.kind, .success)
+        XCTAssertEqual(model.feedbackEvent?.message, "Copied privacy-safe diagnostics.")
+    }
+    #endif
+
     func testPreparedSkimSummaryUsesUnityTransportRate() {
         XCTAssertEqual(SummaryBridgeRatePolicy.preparedAssetTransportRate, 1)
     }
@@ -30,6 +51,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
                 defaults.removeObject(forKey: "mixedPlaybackVolume")
             }
         }
+        defaults.set(2.0, forKey: "mixedPlaybackVolume")
         let audio = MixedAudioPolicyRecordingClient()
         let model = Gate1AppModel(audioPlaybackClient: audio)
         model.resetAndSeed()
@@ -38,8 +60,16 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.startItem(id: "item-pill")
 
         XCTAssertFalse(model.mixesWithOtherAudio)
+        XCTAssertFalse(model.lowersBackgroundAudio)
+        XCTAssertEqual(model.mixedPlaybackVolume, 1)
+        model.setLowersBackgroundAudio(true)
+        XCTAssertFalse(model.lowersBackgroundAudio)
 
         model.setMixesWithOtherAudio(true)
+        XCTAssertFalse(model.lowersBackgroundAudio)
+        model.setLowersBackgroundAudio(true)
+        XCTAssertTrue(model.lowersBackgroundAudio)
+        XCTAssertEqual(audio.backgroundAudioStates.last, true)
         model.mixedPlaybackVolume = 0.35
         model.mixedPlaybackVolumeChanged()
 
@@ -51,12 +81,19 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.mixedPlaybackVolume = 1.5
         model.mixedPlaybackVolumeChanged()
 
-        XCTAssertEqual(audio.playbackVolumes.last ?? 0, 1.5, accuracy: 0.001)
+        XCTAssertEqual(audio.playbackVolumes.last ?? 0, 1, accuracy: 0.001)
+        XCTAssertTrue(model.lowersBackgroundAudio)
+        model.setLowersBackgroundAudio(false)
+        XCTAssertEqual(audio.backgroundAudioStates.last, false)
+        XCTAssertTrue(model.mixesWithOtherAudio)
+        model.setLowersBackgroundAudio(true)
 
         model.endSession()
 
         XCTAssertFalse(model.mixesWithOtherAudio)
         XCTAssertEqual(audio.mixingStates.last, false)
+        XCTAssertFalse(model.lowersBackgroundAudio)
+        XCTAssertEqual(audio.backgroundAudioStates.last, false)
         XCTAssertEqual(audio.playbackVolumes.last, 1)
         XCTAssertEqual(audio.remoteCommandHandlingStates.last, true)
     }
@@ -1476,39 +1513,43 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.resetAndSeed()
         model.startItem(id: "item-pill")
 
+        let history = model.selectedItem.sessions
         model.markItemCompleted(id: "item-pill")
 
         let row = try XCTUnwrap(model.libraryItems.first(where: { $0.id == "item-pill" }))
         XCTAssertTrue(row.isCompleted)
-        XCTAssertEqual(row.continuationProgressPercent, 100)
-        XCTAssertNil(LibraryPresentation.continueItem(in: model.libraryItems, activeItemId: model.activePlaybackItemId))
-
         model.openItem(id: "item-pill")
-        let session = try XCTUnwrap(model.selectedItem.sessions.first)
-        XCTAssertEqual(session.status, "finished")
-        XCTAssertEqual(session.phase, .finished)
-        XCTAssertEqual(session.completionPercent, 100)
-        XCTAssertNotNil(session.completedAt)
+        XCTAssertEqual(model.selectedItem.sessions, history, "Mark Complete must not fabricate listening history")
+        model.libraryQuery.listeningState = .completed
+        XCTAssertTrue(model.visibleLibraryItems.contains { $0.id == "item-pill" })
+        model.libraryQuery.listeningState = .inProgress
+        XCTAssertFalse(model.visibleLibraryItems.contains { $0.id == "item-pill" })
+        model.libraryQuery.listeningState = .unplayed
+        XCTAssertFalse(model.visibleLibraryItems.contains { $0.id == "item-pill" })
     }
 
     func testUnplayedItemCanBeMarkedCompletedWithoutStartingPlayback() throws {
-        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
         model.resetAndSeed()
         model.importTitle = "Read Later"
         model.importText = "A source that the listener finished somewhere else."
         model.importTextItem(startListening: false)
         let itemID = try XCTUnwrap(model.libraryItems.first(where: { $0.title == "Read Later" })?.id)
-
+        model.openItem(id: itemID)
+        let history = model.selectedItem.sessions
         model.markItemCompleted(id: itemID)
         model.openItem(id: itemID)
 
-        let row = try XCTUnwrap(model.libraryItems.first(where: { $0.id == itemID }))
-        let session = try XCTUnwrap(model.selectedItem.sessions.first)
-        XCTAssertTrue(row.isCompleted)
-        XCTAssertEqual(session.status, "finished")
-        XCTAssertEqual(session.completionPercent, 100)
-        XCTAssertNotNil(session.completedAt)
+        XCTAssertTrue(try XCTUnwrap(model.libraryItems.first { $0.id == itemID }).isCompleted)
+        XCTAssertEqual(model.selectedItem.sessions, history)
         XCTAssertFalse(model.snapshot.status.isPlaybackActive)
+        let reopened = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        reopened.bootstrapLibraryIfNeeded()
+        XCTAssertTrue(try XCTUnwrap(reopened.libraryItems.first { $0.id == itemID }).isCompleted)
     }
 
     func testExplicitOfflinePreparationJobsSortAheadOfAutomaticWork() {
@@ -1604,7 +1645,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             id: "completed-item-job",
             itemId: "item-pill",
             manifestId: "completed-item-manifest",
-            policy: .explicit
+            policy: .demandWindow
         ))
 
         let reloadedModel = Gate1AppModel(
@@ -2847,7 +2888,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         model.importObsidianMarkdownFiles(urls: [file])
-        try await waitFor("PDF contents import to finish") {
+        try await waitFor("PDF contents import to finish", timeoutNanoseconds: 5_000_000_000) {
             !model.isImportingSources
         }
 
@@ -2894,6 +2935,42 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.itemId, "item-pill")
         XCTAssertEqual(model.selectedItem.id, "item-pill")
         XCTAssertNotNil(model.libraryItems.first(where: { $0.title == "Long Import" }))
+    }
+
+    func testLateFollowDiscoveryCannotPublishUnderAnotherItem() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        var pending: [String: CheckedContinuation<[SourceCandidateEvidence], Never>] = [:]
+        model.followCandidateDiscoveryHandler = { item, _ in
+            await withCheckedContinuation { pending[item.id] = $0 }
+        }
+        for id in ["alpha", "bravo"] {
+            try store.saveItem(Item(id: id, title: id, mediaType: "text", text: "Source text.", externalReference: "https://\(id).example/article", status: "ready"))
+            try store.saveSession(Session(id: "session-\(id)", itemId: id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: id, position: Position(charOffset: 4), completionPercent: 40, playbackRate: 1))
+        }
+        model.openHome()
+        model.openItem(id: "alpha")
+        model.offerFollowSuggestionIfEligible(itemId: "alpha", store: store)
+        try await waitFor("alpha discovery") { pending["alpha"] != nil }
+        model.openItem(id: "bravo")
+        model.offerFollowSuggestionIfEligible(itemId: "bravo", store: store)
+        try await waitFor("bravo discovery") { pending["bravo"] != nil }
+        let candidate: (String) -> SourceCandidateEvidence = { id in
+            SourceCandidateEvidence(id: id, source: SourceIdentity(id: id, kind: .articleFeed, canonicalURL: "https://\(id).example/feed", host: "\(id).example", title: id), evidenceURL: "https://\(id).example/article", relation: "html_alternate", confidence: 1)
+        }
+        pending.removeValue(forKey: "bravo")?.resume(returning: [candidate("bravo")])
+        try await waitFor("bravo suggestion") { model.sourceFollowSuggestionCandidates.map(\.id) == ["bravo"] }
+        pending.removeValue(forKey: "alpha")?.resume(returning: [candidate("alpha")])
+        try await waitFor("stale discovery rejected") { model.diagnostics["sourceFollowSuggestion"] == "discarded_stale_origin" }
+        XCTAssertEqual(model.sourceFollowSuggestionCandidates.map(\.id), ["bravo"])
+        model.openItem(id: "alpha")
+        XCTAssertTrue(model.sourceFollowSuggestionCandidates.isEmpty)
+        XCTAssertNil(try store.loadSourceSuggestionDecision(sourceId: "alpha"))
     }
 
     func testSourceSuggestionEngagementUsesLivePlaybackProgressBeforeLibraryRefresh() {
@@ -3361,6 +3438,7 @@ private final class WorkflowRecordingAudioClient: AudioPlaybackClient {
 
 private final class MixedAudioPolicyRecordingClient: AudioPlaybackClient {
     var mixingStates: [Bool] = []
+    var backgroundAudioStates: [Bool] = []
     var playbackVolumes: [Float] = []
     var remoteCommandHandlingStates: [Bool] = []
 
@@ -3374,6 +3452,10 @@ private final class MixedAudioPolicyRecordingClient: AudioPlaybackClient {
 
     func setMixesWithOtherAudio(_ enabled: Bool) throws {
         mixingStates.append(enabled)
+    }
+
+    func setLowersBackgroundAudio(_ enabled: Bool) throws {
+        backgroundAudioStates.append(enabled)
     }
 
     func setPlaybackVolume(_ volume: Float) throws {

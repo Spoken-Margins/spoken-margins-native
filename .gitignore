@@ -9,3 +9,6 @@ dist/
 coverage/
 .venv/
 artifacts/releases/
+
+artifacts/test-runs/
+__pycache__/

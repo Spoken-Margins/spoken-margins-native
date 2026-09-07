@@ -1,0 +1,3 @@
+Sampling process 51283 for 1 second with 1 millisecond of run time between samples
+Sampling completed, processing symbols...
+Sample analysis of process 51283 written to file artifacts/reviews/2026-09-07-testflight-stabilization/test-startup-sample.txt

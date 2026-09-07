@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import hashlib
 import subprocess
 import sys
 from pathlib import Path
@@ -13,6 +14,7 @@ SCHEMAS = CONTRACTS / "schemas"
 
 
 PATH_SCHEMA_RULES = [
+    ("fixtures/persistence/*.json", "persistence-fixture.schema.json"),
     ("fixtures/capabilities/*.json", "runtime-capability-profile.schema.json"),
     ("fixtures/items/*.json", "item.schema.json"),
     ("fixtures/maps/*.json", "listening-map.schema.json"),
@@ -94,6 +96,11 @@ def main() -> int:
         schema_path = SCHEMAS / schema_name
         for path in sorted(CONTRACTS.glob(pattern)):
             errors.extend(validate_file(path, schema_path, mode))
+            if pattern == "fixtures/persistence/*.json":
+                metadata = load_json(path)
+                database = path.parent / metadata["database"]
+                if not database.is_file() or hashlib.sha256(database.read_bytes()).hexdigest() != metadata["sha256"]:
+                    errors.append(f"{path}: prior-build database missing or digest changed")
             if pattern == "traces/*.json":
                 errors.extend(validate_trace_references(path))
 

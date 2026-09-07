@@ -601,6 +601,8 @@ public struct Item: Codable, Equatable, Sendable {
     public var sourceURL: String?
     public var createdAt: Date?
     public var documentStructure: PDFDocumentStructure?
+    /// Source completion survives replay and independent assistant-turn playback.
+    public var sourceCompletedAt: Date? = nil
 
     public init(
         id: String,

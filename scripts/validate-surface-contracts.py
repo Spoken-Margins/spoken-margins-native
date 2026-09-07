@@ -7,6 +7,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 
 ROOT = Path(__file__).resolve().parents[1]
+CONTRACTS = ROOT / "Contracts"
 SCHEMA_PATH = ROOT / "schemas" / "surface-contract.schema.json"
 SURFACE_CONTRACTS = ROOT / "validation" / "surface-contracts"
 COMMAND_MATRIX = ROOT / "validation" / "contracts" / "command-matrix.json"
@@ -41,7 +42,7 @@ def validate_contract_references(path: Path, contract: dict) -> list[str]:
     delegation_modes = ids_from_matrix(DELEGATION_MODES, "modes")
 
     profile = contract["runtimeProfile"]
-    profile_path = ROOT / "fixtures" / "capabilities" / f"{profile}.json"
+    profile_path = CONTRACTS / "fixtures" / "capabilities" / f"{profile}.json"
     if not profile_path.exists():
         errors.append(f"{path}: runtimeProfile {profile!r} has no capability fixture")
     else:
@@ -62,7 +63,7 @@ def validate_contract_references(path: Path, contract: dict) -> list[str]:
             errors.append(f"{path}: delegation mode {mode!r} is not listed in {DELEGATION_MODES}")
 
     for trace in contract["traces"]:
-        trace_path = ROOT / trace
+        trace_path = CONTRACTS / trace
         if not trace_path.exists():
             errors.append(f"{path}: trace {trace!r} does not exist")
             continue
@@ -74,7 +75,7 @@ def validate_contract_references(path: Path, contract: dict) -> list[str]:
             )
 
     for fixture in contract["fixtures"]:
-        if not (ROOT / fixture).exists():
+        if not (CONTRACTS / fixture).exists():
             errors.append(f"{path}: fixture {fixture!r} does not exist")
 
     return errors

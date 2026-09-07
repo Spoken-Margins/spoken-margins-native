@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sourceRevision",
+    "sourceTag",
+    "database",
+    "schemaVersion",
+    "sha256",
+    "origin",
+    "generator"
+  ],
+  "properties": {
+    "sourceRevision": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "sourceTag": {
+      "type": "string",
+      "minLength": 1
+    },
+    "database": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+\\.sqlite$"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "origin": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generator": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

@@ -21,6 +21,31 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         let secondChunk = try await reconstructed.committedChunk(itemId: "item", signature: signature("one"), plan: plan[1])
         XCTAssertNotNil(firstChunk)
         XCTAssertNotNil(secondChunk)
+        let artifact = fixture.prepared.appending(path: "complete.wav")
+        try Data([1, 2, 3, 4, 5, 6]).write(to: artifact)
+        try await reconstructed.complete(itemId: "item", signature: signature("one"), prepared: PreparedTextAudio(
+            normalizedText: "First chunk. Second chunk.",
+            media: ItemMedia(sourceType: .generatedTTSPrerendered, url: artifact.absoluteString, durationMs: 2_000),
+            timeline: TranscriptTimeline(segments: [], chapters: [], durationMs: 2_000)
+        ))
+        try await reconstructed.retry(itemId: "item", signature: signature("one"))
+        let reopened = try await reconstructed.begin(itemId: "item", sourceText: "First chunk. Second chunk.", signature: signature("one"), plan: plan)
+        XCTAssertEqual(reopened.state, .readyOffline)
+        XCTAssertEqual(reopened.chunks, manifest.chunks)
+        XCTAssertTrue(try fixture.store.loadAudioPreparationJobs().isEmpty, "Reopening/retrying compatible complete audio must not enqueue synthesis")
+    }
+
+    func testLivePlaybackCommitsWithoutCreatingSpeculativeJob() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
+        let plan = plans()
+        let manifest = try await coordinator.begin(itemId: "item", sourceText: "First chunk. Second chunk.", signature: signature("one"), plan: plan, schedulesJob: false)
+        try await commit(plan[0], data: Data([1, 2, 3]), coordinator: coordinator, fixture: fixture)
+        XCTAssertEqual(try fixture.store.loadPreparedAudioManifest(id: manifest.id)?.committedChunkCount, 1)
+        XCTAssertTrue(try fixture.store.loadAudioPreparationJobs().isEmpty)
+        let recovered = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[0])
+        XCTAssertNotNil(recovered)
     }
 
     func testIdentityMutationInvalidatesPriorManifestWithoutDeletingChunks() async throws {
@@ -65,6 +90,13 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         XCTAssertEqual(try fixture.store.loadPreparedAudioManifest(id: manifest.id)?.state, .stopped)
         XCTAssertEqual(try fixture.store.loadPreparedAudioManifest(id: manifest.id)?.chunks.count, 1)
         XCTAssertEqual(try fixture.store.loadAudioPreparationJobs().first?.isCancelled, true)
+        try await coordinator.retry(itemId: "item", signature: signature("one"))
+        try await commit(plan[1], data: Data([2]), coordinator: coordinator, fixture: fixture)
+        let resumed = try XCTUnwrap(fixture.store.loadPreparedAudioManifest(id: manifest.id))
+        XCTAssertEqual(resumed.chunks.map(\.index), [0, 1])
+        let retained = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[0])
+        XCTAssertNotNil(retained)
+
     }
 
     private func commit(_ plan: PreparedChunkPlan, data: Data, coordinator: PreparedAudioCoordinator, fixture: Fixture) async throws {

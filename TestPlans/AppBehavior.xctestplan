@@ -1,0 +1,30 @@
+{
+  "configurations": [
+    {
+      "id": "38a93d1e-2fe2-5652-b4c1-5e3803de532d",
+      "name": "Default",
+      "options": {}
+    }
+  ],
+  "defaultOptions": {
+    "testTimeoutsEnabled": true,
+    "defaultTestExecutionTimeAllowance": 120,
+    "maximumTestExecutionTimeAllowance": 180
+  },
+  "testTargets": [
+    {
+      "target": {
+        "containerPath": "container:SpokenMarginsNative.xcodeproj",
+        "identifier": "0C1262C036365A89EA21B9E9",
+        "name": "SpokenMarginsAppTests"
+      },
+      "skippedTests": [
+        "MediaPlaybackInterruptionTests",
+        "MixedPlaybackAudioSessionTests",
+        "SupertonicSpeechTests/testBundledRendererSynthesizesJamesAndLilyAndReusesSessions()"
+      ],
+      "parallelizable": false
+    }
+  ],
+  "version": 1
+}

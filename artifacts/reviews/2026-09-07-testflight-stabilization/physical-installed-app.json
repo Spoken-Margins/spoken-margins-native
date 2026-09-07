@@ -1,0 +1,46 @@
+{
+  "info": {
+    "arguments": [
+      "devicectl",
+      "device",
+      "info",
+      "apps",
+      "--device",
+      "F9855B5E-675A-5050-8010-4B17AE843875",
+      "--filter",
+      "bundleIdentifier == \"com.spokenmargins.native\"",
+      "--json-output",
+      "artifacts/reviews/2026-09-07-testflight-stabilization/physical-installed-app.json"
+    ],
+    "commandType": "devicectl.device.info.apps",
+    "environment": {
+      "TERM": "dumb"
+    },
+    "jsonVersion": 3,
+    "outcome": "success",
+    "version": "518.33"
+  },
+  "result": {
+    "apps": [
+      {
+        "appClip": false,
+        "builtByDeveloper": true,
+        "bundleIdentifier": "com.spokenmargins.native",
+        "bundleVersion": "25",
+        "defaultApp": false,
+        "hidden": false,
+        "internalApp": false,
+        "name": "Spoken Margins",
+        "removable": true,
+        "url": "file:///private/var/containers/Bundle/Application/55B01602-B5D1-4447-B62B-F7314793FA77/SpokenMarginsApp.app/",
+        "version": "0.1"
+      }
+    ],
+    "defaultAppsIncluded": false,
+    "deviceIdentifier": "F9855B5E-675A-5050-8010-4B17AE843875",
+    "hiddenAppsIncluded": false,
+    "internalAppsIncluded": false,
+    "removableAppsIncluded": true
+  },
+  "reviewFilter": "Only com.spokenmargins.native retained"
+}

@@ -816,8 +816,10 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
     private var voiceIdentifier: String?
     private var speechRate: Float
     private var mixesWithOtherAudio = false
+    private var lowersBackgroundAudio = false
     private var playbackVolume: Float = 1
     private let readsSpeechSettingsAtPlayback: Bool
+    private let isVoiceAvailable: (String) -> Bool
     #if canImport(AVFoundation)
     private weak var activeUtterance: AVSpeechUtterance?
     private var chunksByUtteranceId: [ObjectIdentifier: SpeechPlaybackChunk] = [:]
@@ -828,16 +830,22 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         self.voiceIdentifier = nil
         self.speechRate = AVSpeechUtteranceDefaultSpeechRate
         self.readsSpeechSettingsAtPlayback = true
+        self.isVoiceAvailable = { AVSpeechSynthesisVoice(identifier: $0) != nil }
         super.init()
         #if canImport(AVFoundation)
         installSynthesizerDelegate()
         #endif
     }
 
-    public init(voiceIdentifier: String? = nil, speechRate: Float = AVSpeechUtteranceDefaultSpeechRate) {
+    public init(
+        voiceIdentifier: String? = nil,
+        speechRate: Float = AVSpeechUtteranceDefaultSpeechRate,
+        isVoiceAvailable: @escaping (String) -> Bool = { AVSpeechSynthesisVoice(identifier: $0) != nil }
+    ) {
         self.voiceIdentifier = voiceIdentifier?.isEmpty == true ? nil : voiceIdentifier
         self.speechRate = speechRate
         self.readsSpeechSettingsAtPlayback = false
+        self.isVoiceAvailable = isVoiceAvailable
         super.init()
         #if canImport(AVFoundation)
         installSynthesizerDelegate()
@@ -914,7 +922,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         try AVAudioSession.sharedInstance().setCategory(
             .playback,
             mode: .spokenAudio,
-            options: mixesWithOtherAudio ? [.mixWithOthers] : []
+            options: PlaybackAudioSessionPolicy.options(mixes: mixesWithOtherAudio, lowersBackground: lowersBackgroundAudio)
         )
         try AVAudioSession.sharedInstance().setActive(true)
         #endif
@@ -999,6 +1007,9 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         if synthesizer.isSpeaking || !chunksByUtteranceId.isEmpty {
             paused = true
             replaceSynthesizer()
+            #if os(iOS)
+            if mixesWithOtherAudio, lowersBackgroundAudio { try PlaybackAudioSessionPolicy.releaseDucking() }
+            #endif
         }
         #endif
     }
@@ -1006,14 +1017,19 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
     public func setMixesWithOtherAudio(_ enabled: Bool) throws {
         mixesWithOtherAudio = enabled
         #if canImport(AVFoundation) && os(iOS)
-        guard synthesizer.isSpeaking || paused || !chunksByUtteranceId.isEmpty else { return }
+        guard !paused, synthesizer.isSpeaking || !chunksByUtteranceId.isEmpty else { return }
         try AVAudioSession.sharedInstance().setCategory(
             .playback,
             mode: .spokenAudio,
-            options: enabled ? [.mixWithOthers] : []
+            options: PlaybackAudioSessionPolicy.options(mixes: enabled, lowersBackground: lowersBackgroundAudio)
         )
         try AVAudioSession.sharedInstance().setActive(true)
         #endif
+    }
+
+    public func setLowersBackgroundAudio(_ enabled: Bool) throws {
+        lowersBackgroundAudio = enabled
+        try setMixesWithOtherAudio(mixesWithOtherAudio)
     }
 
     public func setPlaybackVolume(_ volume: Float) throws {
@@ -1061,6 +1077,9 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
         playbackStartFailure = nil
         currentOffset = nil
         currentRangeLength = 0
+        #if os(iOS)
+        if mixesWithOtherAudio, lowersBackgroundAudio { try? PlaybackAudioSessionPolicy.releaseDucking() }
+        #endif
         #if os(iOS) || os(watchOS)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         #endif
@@ -1112,7 +1131,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
             return .spokenContent
         }
         if let voiceIdentifier = speechSettings.voiceIdentifier,
-           AVSpeechSynthesisVoice(identifier: voiceIdentifier) == nil {
+           !isVoiceAvailable(voiceIdentifier) {
             throw SessionKitError.persistenceFailed("selected_speech_voice_unavailable")
         }
         return .appVoice(voiceIdentifier: speechSettings.voiceIdentifier, rate: speechSettings.rate)
@@ -1200,6 +1219,9 @@ extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
             finalUtteranceId = nil
             completedTargetId = lastTargetId
             playbackComplete = true
+            #if os(iOS)
+            if mixesWithOtherAudio, lowersBackgroundAudio { try? PlaybackAudioSessionPolicy.releaseDucking() }
+            #endif
         }
         pendingStartTargetId = nil
     }
@@ -1235,6 +1257,7 @@ public final class PreparedAudioPlaybackClient: NSObject, AudioPlaybackClient, @
     private var lastRequestedMediaTimeMs = 0
     private var playbackRate: Double = 1
     private var mixesWithOtherAudio = false
+    private var lowersBackgroundAudio = false
     private var playbackVolume: Float = 1
 
     public override init() {
@@ -1331,10 +1354,15 @@ public final class PreparedAudioPlaybackClient: NSObject, AudioPlaybackClient, @
     public func setMixesWithOtherAudio(_ enabled: Bool) throws {
         mixesWithOtherAudio = enabled
         #if canImport(AVFoundation) && (os(iOS) || os(watchOS))
-        guard player != nil else { return }
+        guard player?.isPlaying == true else { return }
         try configurePreparedAudioSession()
         try AVAudioSession.sharedInstance().setActive(true)
         #endif
+    }
+
+    public func setLowersBackgroundAudio(_ enabled: Bool) throws {
+        lowersBackgroundAudio = enabled
+        try setMixesWithOtherAudio(mixesWithOtherAudio)
     }
 
     public func setPlaybackVolume(_ volume: Float) throws {
@@ -1401,7 +1429,11 @@ public final class PreparedAudioPlaybackClient: NSObject, AudioPlaybackClient, @
 
     public func pause() throws {
         #if canImport(AVFoundation)
+        let wasPlaying = player?.isPlaying == true
         player?.pause()
+        #if os(iOS)
+        if wasPlaying, mixesWithOtherAudio, lowersBackgroundAudio { try PlaybackAudioSessionPolicy.releaseDucking() }
+        #endif
         #endif
     }
 
@@ -1412,6 +1444,9 @@ public final class PreparedAudioPlaybackClient: NSObject, AudioPlaybackClient, @
         activeTargetId = nil
         playbackComplete = false
         completedTargetId = nil
+        #if os(iOS)
+        if mixesWithOtherAudio, lowersBackgroundAudio { try? PlaybackAudioSessionPolicy.releaseDucking() }
+        #endif
         #if os(iOS) || os(watchOS)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         #endif
@@ -1426,7 +1461,7 @@ public final class PreparedAudioPlaybackClient: NSObject, AudioPlaybackClient, @
         try AVAudioSession.sharedInstance().setCategory(
             .playback,
             mode: .spokenAudio,
-            options: mixesWithOtherAudio ? [.mixWithOthers] : []
+            options: PlaybackAudioSessionPolicy.options(mixes: mixesWithOtherAudio, lowersBackground: lowersBackgroundAudio)
         )
         #endif
     }
@@ -1436,8 +1471,12 @@ public final class PreparedAudioPlaybackClient: NSObject, AudioPlaybackClient, @
 #if canImport(AVFoundation)
 extension PreparedAudioPlaybackClient: AVAudioPlayerDelegate {
     public func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        guard self.player === player else { return }
         playbackComplete = flag
         completedTargetId = activeTargetId
+        #if os(iOS)
+        if mixesWithOtherAudio, lowersBackgroundAudio { try? PlaybackAudioSessionPolicy.releaseDucking() }
+        #endif
     }
 }
 #endif
@@ -1585,9 +1624,6 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private var postResumeEvidenceAudioMix: AVAudioMix?
     public var postResumePodcastEvidenceHandler: (@Sendable (PostResumePodcastEvidenceCaptureResult) -> Void)?
     #endif
-    #if canImport(AVFoundation) && canImport(MediaToolbox) && !os(watchOS)
-    private var playbackGainAudioMix: PlaybackGainAudioMix?
-    #endif
     private let remoteCommandHandler: (@Sendable (CompactControlCommand, Int?, Double?) -> Void)?
     private let interruptionHandler: (@Sendable (AudioPlaybackInterruptionEvent) -> Void)?
     private let audioSessionNotificationCenter: NotificationCenter
@@ -1604,6 +1640,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private var knownDurations: [String: Int] = [:]
     private var playbackRate: Double = 1
     private var mixesWithOtherAudio = false
+    private var lowersBackgroundAudio = false
     private var playbackVolume: Float = 1
     private var paused = true
     private var remoteCommandHandlingEnabled = true
@@ -1645,19 +1682,21 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     public func setMixesWithOtherAudio(_ enabled: Bool) throws {
         mixesWithOtherAudio = enabled
         #if canImport(AVFoundation) && (os(iOS) || os(watchOS))
-        guard player != nil else { return }
+        guard player != nil, !paused, !playbackComplete else { return }
         try configureStreamAudioSession()
         try AVAudioSession.sharedInstance().setActive(true)
         #endif
     }
 
+    public func setLowersBackgroundAudio(_ enabled: Bool) throws {
+        lowersBackgroundAudio = enabled
+        try setMixesWithOtherAudio(mixesWithOtherAudio)
+    }
+
     public func setPlaybackVolume(_ volume: Float) throws {
-        playbackVolume = max(0, min(2, volume))
+        playbackVolume = max(0, min(1, volume))
         #if canImport(AVFoundation)
         player?.volume = min(1, playbackVolume)
-        #if canImport(MediaToolbox) && !os(watchOS)
-        playbackGainAudioMix?.update(gain: playbackVolume)
-        #endif
         #endif
     }
 
@@ -1721,24 +1760,9 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             removePlayerStateObserver()
             removeCompletionObserver()
             removeTimeObserver()
-            #if canImport(MediaToolbox) && !os(watchOS)
-            let configureItem = {
-                MainActor.assumeIsolated {
-                    PlaybackGainAudioMix.configuredPlayerItem(url: url, gain: self.playbackVolume)
-                }
-            }
-            let configuredItem = mediaContext?.sourceType == .generatedTTSPrerendered
-                ? (Thread.isMainThread ? configureItem() : DispatchQueue.main.sync(execute: configureItem))
-                : nil
-            let item = configuredItem?.item ?? AVPlayerItem(url: url)
-            #else
             let item = AVPlayerItem(url: url)
-            #endif
             player = AVPlayer(playerItem: item)
-            player?.volume = min(1, playbackVolume)
-            #if canImport(MediaToolbox) && !os(watchOS)
-            playbackGainAudioMix = configuredItem?.gainMix
-            #endif
+            player?.volume = playbackVolume
             player?.automaticallyWaitsToMinimizeStalling = true
             activeTargetId = targetId
             activePlaybackURL = url
@@ -1957,12 +1981,23 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     }
 
     public func isPlaybackComplete(targetId: String) -> Bool {
-        effectivePlaybackComplete(targetId: targetId)
+        let complete = effectivePlaybackComplete(targetId: targetId)
+        if complete { releaseBackgroundAudio() }
+        return complete
+    }
+
+    private func releaseBackgroundAudio() {
+        #if os(iOS)
+        if player != nil, mixesWithOtherAudio, lowersBackgroundAudio {
+            try? PlaybackAudioSessionPolicy.releaseDucking()
+        }
+        #endif
     }
 
     public func playbackStartStatus(targetId: String) -> PlaybackStartStatus {
         guard activeTargetId == targetId else { return .pending }
         if let mediaSeekFailure {
+            releaseBackgroundAudio()
             return .failed(mediaSeekFailure)
         }
         if mediaSeekLifecycle.pending?.targetId == targetId {
@@ -1970,6 +2005,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         }
         #if canImport(AVFoundation)
         if let error = player?.currentItem?.error {
+            releaseBackgroundAudio()
             return .failed(error.localizedDescription)
         }
         switch player?.timeControlStatus {
@@ -1992,6 +2028,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     public func playbackTransportState(targetId: String) -> PlaybackTransportState? {
         guard activeTargetId == targetId else { return .stopped }
         if mediaSeekFailure != nil {
+            releaseBackgroundAudio()
             return .failed
         }
         if mediaSeekLifecycle.pending?.targetId == targetId {
@@ -1999,6 +2036,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         }
         #if canImport(AVFoundation)
         if player?.currentItem?.error != nil {
+            releaseBackgroundAudio()
             return .failed
         }
         switch player?.timeControlStatus {
@@ -2026,6 +2064,9 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         interruptionResumePolicy.cancelAutomaticResume()
         paused = true
         player?.pause()
+        #if os(iOS)
+        if player != nil, mixesWithOtherAudio, lowersBackgroundAudio { try? PlaybackAudioSessionPolicy.releaseDucking() }
+        #endif
         publishNowPlaying(isPlaying: false)
         #endif
     }
@@ -2047,6 +2088,9 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         mediaSeekFailure = nil
         paused = true
         clearNowPlaying()
+        #if os(iOS)
+        if mixesWithOtherAudio, lowersBackgroundAudio { try? PlaybackAudioSessionPolicy.releaseDucking() }
+        #endif
         #if os(iOS) || os(watchOS)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         #endif
@@ -2279,6 +2323,11 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             object: item,
             queue: .main
         ) { [weak self] _ in
+            #if os(iOS)
+            if self?.mixesWithOtherAudio == true, self?.lowersBackgroundAudio == true {
+                try? PlaybackAudioSessionPolicy.releaseDucking()
+            }
+            #endif
             self?.playbackComplete = true
             self?.completedTargetId = self?.activeTargetId
             self?.paused = true
@@ -2378,6 +2427,9 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         guard interruptionResumePolicy.began(wasPlaying: wasPlaying) else { return }
         paused = true
         player?.pause()
+        #if os(iOS)
+        if player != nil, mixesWithOtherAudio, lowersBackgroundAudio { try? PlaybackAudioSessionPolicy.releaseDucking() }
+        #endif
         publishNowPlaying(isPlaying: false)
         interruptionHandler?(.began)
     }
@@ -2546,7 +2598,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         try AVAudioSession.sharedInstance().setCategory(
             .playback,
             mode: .spokenAudio,
-            options: mixesWithOtherAudio ? [.mixWithOthers] : []
+            options: PlaybackAudioSessionPolicy.options(mixes: mixesWithOtherAudio, lowersBackground: lowersBackgroundAudio)
         )
         #endif
     }
@@ -2665,6 +2717,11 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
     public func setMixesWithOtherAudio(_ enabled: Bool) throws {
         try speech.setMixesWithOtherAudio(enabled)
         try media.setMixesWithOtherAudio(enabled)
+    }
+
+    public func setLowersBackgroundAudio(_ enabled: Bool) throws {
+        try speech.setLowersBackgroundAudio(enabled)
+        try media.setLowersBackgroundAudio(enabled)
     }
 
     public func setPlaybackVolume(_ volume: Float) throws {

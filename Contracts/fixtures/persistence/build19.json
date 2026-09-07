@@ -1,0 +1,9 @@
+{
+  "sourceRevision": "738c743e202f5e700f4d6975adee52862f63c69f",
+  "sourceTag": "testflight/0.1-build-19",
+  "database": "build19.sqlite",
+  "schemaVersion": 4,
+  "sha256": "2a2a29e54238f1a4904e110c3e4c69fda18286a4cf34d0e9ac4cf25abce08d95",
+  "origin": "Synthetic library written by unmodified prior-release SessionKit and persistence sources on macOS; not device-captured data.",
+  "generator": "scripts/generate-prior-build-fixture.py"
+}

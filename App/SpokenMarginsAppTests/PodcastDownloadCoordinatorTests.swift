@@ -68,6 +68,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
             usesBackgroundSession: false
         )
 
+        coordinator.setNetworkTransportForTesting(.unavailable)
         coordinator.retry(itemId: "bbc-episode")
 
         XCTAssertEqual(
