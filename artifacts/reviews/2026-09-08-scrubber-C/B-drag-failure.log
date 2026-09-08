@@ -1,0 +1,88 @@
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsUISeams -testPlan UISeams -destination id=4AAAFEBA-6DA8-4166-8347-4106165C38C2 -derivedDataPath .build/verification/SpokenMarginsUISeams -parallel-testing-enabled NO "-only-testing:SpokenMarginsAppUITests/Gate1FlowUITests/testPlaybackScrubberAcceptsPhysicalDrag" -resultBundlePath /tmp/spoken-real-drag-B.xcresult test-without-building
+
+Resolve Package Graph
+
+
+Resolved source packages:
+  onnxruntime: https://github.com/microsoft/onnxruntime-swift-package-manager.git @ 1.24.2
+  SessionKit: /Users/colemiller/Documents/GitHub/spoken-margins-native/Packages/SessionKit
+  ZIPFoundation: https://github.com/weichsel/ZIPFoundation.git @ 0.9.20
+
+Writing result bundle at path:
+	/tmp/spoken-real-drag-B.xcresult
+
+2026-09-08 09:06:59.119411-0400 SpokenMarginsAppUITests-Runner[29720:1792596] [Default] Running tests...
+    t =      nans Interface orientation changed to Portrait
+Test Suite 'Selected tests' started at 2026-09-08 09:06:59.934.
+Test Suite 'SpokenMarginsAppUITests.xctest' started at 2026-09-08 09:06:59.938.
+Test Suite 'Gate1FlowUITests' started at 2026-09-08 09:06:59.938.
+Test Case '-[SpokenMarginsAppUITests.Gate1FlowUITests testPlaybackScrubberAcceptsPhysicalDrag]' started.
+    t =     0.00s Start Test at 2026-09-08 09:06:59.939
+    t =     0.04s Set Up
+    t =     0.05s     Open com.spokenmargins.native
+    t =     0.05s         Launch com.spokenmargins.native
+2026-09-08 09:07:00.323 xcodebuild[29706:1792316] [MT] IDELaunchParametersSnapshot: The operation couldn’t be completed. (DebuggerLLDB.DebuggerVersionStore.StoreError error 0.)
+2026-09-08 09:07:00.323 xcodebuild[29706:1792316] [MT] IDELaunchParametersSnapshot: no debugger version
+objc[29720]: Class UIAccessibilityLoaderWebShared is implemented in both /Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/System/Library/AccessibilityBundles/WebCore.axbundle/WebCore (0x10aeb8310) and /Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/System/Library/AccessibilityBundles/WebKit.axbundle/WebKit (0x10a758398). This may cause spurious casting failures and mysterious crashes. One of the duplicates must be removed or renamed.
+    t =     2.23s             Setting up automation session
+    t =     2.88s             Wait for com.spokenmargins.native to idle
+    t =     6.00s Terminate com.spokenmargins.native:29727
+    t =     7.10s Open com.spokenmargins.native
+    t =     7.10s     Launch com.spokenmargins.native
+2026-09-08 09:07:07.052 xcodebuild[29706:1792316] [MT] IDELaunchParametersSnapshot: The operation couldn’t be completed. (DebuggerLLDB.DebuggerVersionStore.StoreError error 0.)
+2026-09-08 09:07:07.052 xcodebuild[29706:1792316] [MT] IDELaunchParametersSnapshot: no debugger version
+    t =     7.54s         Setting up automation session
+    t =     9.38s         Wait for com.spokenmargins.native to idle
+    t =    11.67s Waiting 8.0s for "queue.start.item-ui-text-regression" Button to exist
+    t =    12.70s     Checking `Expect predicate `existsNoRetry == 1` for object "queue.start.item-ui-text-regression" Button`
+    t =    12.71s         Checking existence of `"queue.start.item-ui-text-regression" Button`
+    t =    12.88s Tap "queue.start.item-ui-text-regression" Button
+    t =    12.88s     Wait for com.spokenmargins.native to idle
+    t =    12.88s     Find the "queue.start.item-ui-text-regression" Button
+    t =    12.93s     Check for interrupting elements affecting "queue.start.item-ui-text-regression" Button
+    t =    13.01s     Synthesize event
+    t =    13.31s     Wait for com.spokenmargins.native to idle
+    t =    14.63s Waiting 8.0s for "playback.scrubber" Slider to exist
+    t =    15.67s     Checking `Expect predicate `existsNoRetry == 1` for object "playback.scrubber" Slider`
+    t =    15.67s         Checking existence of `"playback.scrubber" Slider`
+    t =    15.71s Find the "playback.scrubber" Slider
+    t =    15.74s Press "playback.scrubber" Slider[0.00, 0.50] for 0.2 seconds, then drag to "playback.scrubber" Slider[0.70, 0.50] with velocity of 250.00 pixels per second, and then hold for 0.2 seconds 
+    t =    15.74s     Wait for com.spokenmargins.native to idle
+    t =    15.74s     Find the "playback.scrubber" Slider
+    t =    15.76s     Check for interrupting elements affecting "playback.scrubber" Slider
+    t =    15.79s     Synthesize event
+    t =    15.79s         Find the "playback.scrubber" Slider
+    t =    15.82s         Find the "playback.scrubber" Slider
+    t =    15.84s         Find the "playback.scrubber" Slider
+    t =    15.88s         Find the "playback.scrubber" Slider
+    t =    15.91s         Find the "playback.scrubber" Slider
+    t =    17.23s     Wait for com.spokenmargins.native to idle
+    t =    20.03s Find the "playback.scrubber" Slider
+    t =    21.00s Find the "playback.scrubber" Slider
+    t =    22.08s Find the "playback.scrubber" Slider
+    t =    23.04s Find the "playback.scrubber" Slider
+    t =    23.99s Find the "playback.scrubber" Slider
+    t =    24.04s Find the "playback.scrubber" Slider
+/Users/colemiller/Documents/GitHub/spoken-margins-native/App/SpokenMarginsAppUITests/Gate1FlowUITests.swift:34: error: -[SpokenMarginsAppUITests.Gate1FlowUITests testPlaybackScrubberAcceptsPhysicalDrag] : XCTAssertEqual failed: ("XCTWaiterResult(rawValue: 2)") is not equal to ("XCTWaiterResult(rawValue: 1)") - Actual drag to 0.7 ended at Optional(4 percent)
+    t =    24.32s Tear Down
+Test Case '-[SpokenMarginsAppUITests.Gate1FlowUITests testPlaybackScrubberAcceptsPhysicalDrag]' failed (24.598 seconds).
+Test Suite 'Gate1FlowUITests' failed at 2026-09-08 09:07:24.539.
+	 Executed 1 test, with 1 failure (0 unexpected) in 24.598 (24.601) seconds
+Test Suite 'SpokenMarginsAppUITests.xctest' failed at 2026-09-08 09:07:24.540.
+	 Executed 1 test, with 1 failure (0 unexpected) in 24.598 (24.602) seconds
+Test Suite 'Selected tests' failed at 2026-09-08 09:07:24.541.
+	 Executed 1 test, with 1 failure (0 unexpected) in 24.598 (24.607) seconds
+2026-09-08 09:07:41.594 xcodebuild[29706:1792316] [MT] IDETestOperationsObserverDebug: 44.345 elapsed -- Testing started completed.
+2026-09-08 09:07:41.594 xcodebuild[29706:1792316] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-09-08 09:07:41.594 xcodebuild[29706:1792316] [MT] IDETestOperationsObserverDebug: 44.345 sec, +44.345 sec -- end
+
+Test session results, code coverage, and logs:
+	/tmp/spoken-real-drag-B.xcresult
+
+Failing tests:
+	Gate1FlowUITests.testPlaybackScrubberAcceptsPhysicalDrag()
+
+** TEST EXECUTE FAILED **
+
+Testing started

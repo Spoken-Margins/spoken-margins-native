@@ -59,3 +59,5 @@ Repository scans after implementation must produce no matches in app/package run
 - `README.md` and current verification guidance: explicit statements that the runtime is retired.
 
 No legacy model assets, package dependency, compilation flag, scheme, setting, test, or selectable voice remains.
+
+Follow suggestions use final response URLs when feeds omit self links, show one candidate per source identity/normalized feed URL, and recheck current subscriptions after discovery. Items with an already-followed canonical source suppress the prompt; accepting a suggestion persists that source on the item. Distinct feed URLs are not merged by display title.

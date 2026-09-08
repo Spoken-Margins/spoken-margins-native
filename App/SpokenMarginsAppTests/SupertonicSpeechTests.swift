@@ -149,6 +149,34 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    func testSlowSpeculativeChunkDoesNotSwitchAudiblePreparedPlaybackToFallback() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template, renderDelays: [2: .milliseconds(600)])
+        let fallback = RecordingFallbackAudioClient()
+        let started = expectation(description: "prepared playback started")
+        started.assertForOverFulfill = false
+        let unwantedFallback = expectation(description: "no speculative timeout fallback")
+        unwantedFallback.isInverted = true
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            maxCharacters: 120,
+            audioSessionActivator: {}, audioPlayerStarter: { player, rate in
+                player.playImmediately(atRate: rate)
+                started.fulfill()
+            }, observesPlayerLifecycle: false,
+            fallbackClient: fallback,
+            onFallback: { _, _, _ in unwantedFallback.fulfill() }, renderWaitLimit: .milliseconds(100)
+        )
+        _ = try client.prepareSpeechText(String(repeating: "This source has several chunks of prepared speech. ", count: 15))
+        try client.play(targetId: "speculative")
+        await fulfillment(of: [started], timeout: 2)
+        await fulfillment(of: [unwantedFallback], timeout: 0.8)
+        XCTAssertTrue(fallback.playedOffsets.isEmpty)
+        XCTAssertEqual(client.playbackTransportState(targetId: "speculative"), .playing)
+        try client.stop()
+    }
+
     func testStalledRendererFallsBackWithinBoundAndCanRetryCurrentTarget() async throws {
         let template = try makeTestWAV(duration: 0.5)
         defer { try? FileManager.default.removeItem(at: template) }

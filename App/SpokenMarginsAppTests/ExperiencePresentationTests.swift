@@ -264,6 +264,11 @@ final class ExperiencePresentationTests: XCTestCase {
         XCTAssertEqual(compact.map(\.id), [sameTitle.id, other.id])
     }
 
+    func testMarkedCompleteItemIsExcludedEvenWhenActiveSessionStillHasProgress() {
+        let completed = LibraryItemRow(id: "done", title: "Done", status: "Ready", canDelete: true, hasContinuationSession: true, continuationProgressPercent: 35, isCompleted: true)
+        XCTAssertNil(LibraryPresentation.continueItem(in: [completed], activeItemId: completed.id))
+    }
+
     func testContinueItemIsNilWithoutAnEligibleUnfinishedItem() {
         let completed = libraryRow(id: "completed", title: "Completed", progress: 100)
         let unplayed = libraryRow(id: "unplayed", title: "Unplayed", progress: 0)

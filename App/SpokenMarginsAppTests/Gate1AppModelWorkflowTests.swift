@@ -10,6 +10,29 @@ import PDFKit
 
 @MainActor
 final class Gate1AppModelWorkflowTests: XCTestCase {
+    func testDeveloperRecordingIsOptInBoundedAndStops() throws {
+        let recorder = DeveloperDiagnosticRecording(limit: 4)
+        recorder.record("ignored")
+        XCTAssertTrue(recorder.events.isEmpty)
+        recorder.start()
+        for index in 0..<10 { recorder.record("sample", ["offset": String(index)]) }
+        XCTAssertEqual(recorder.events.count, 4)
+        XCTAssertEqual(recorder.events.first?.fields["offset"], "6")
+        recorder.stop()
+        let saved = recorder.exportJSON()
+        let stoppedCount = recorder.events.count
+        recorder.record("ignored.after.stop")
+        XCTAssertEqual(recorder.events.count, stoppedCount)
+        let data = try XCTUnwrap(saved?.data(using: .utf8))
+        let capture = try JSONDecoder().decode(DeveloperDiagnosticRecording.Capture.self, from: data)
+        XCTAssertEqual(capture.schemaVersion, "spoken-margins.developer-recording.v1")
+        XCTAssertEqual(capture.events.last?.kind, "recording.stopped")
+        XCTAssertEqual(DeveloperDiagnosticRecording.token("private article URL"), DeveloperDiagnosticRecording.token("private article URL"))
+        XCTAssertFalse(DeveloperDiagnosticRecording.token("private article URL").contains("private"))
+        recorder.start()
+        XCTAssertEqual(recorder.events.count, 1)
+    }
+
     #if canImport(UIKit)
     func testDiagnosticsCopyPublishesSafePayloadAndSuccessFeedback() throws {
         let priorClipboard = UIPasteboard.general.items
@@ -563,10 +586,59 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         }
     }
 
+    func testLateSliderWriteCannotFreezeCanonicalPlaybackAfterRelease() {
+        var state = PlaybackScrubState()
+        let range = 0.0...100.0
+        state.begin(at: 10, range: range)
+        state.updateFromGesture(40, range: range)
+        state.finish()
+        state.updateFromGesture(40, range: range)
+        XCTAssertFalse(state.isEditing)
+        XCTAssertEqual(state.displayedValue(canonicalValue: 41, range: range), 41)
+        XCTAssertEqual(state.displayedValue(canonicalValue: 42, range: range), 42)
+    }
+
+    func testStartupRecoveryIncludesOlderUnpreparedItemsInNewestFirstOrder() {
+        let old = LibraryItemRow(id: "old", title: "Old", status: "Ready", canDelete: true, addedAt: Date(timeIntervalSince1970: 1))
+        let new = LibraryItemRow(id: "new", title: "New", status: "Ready", canDelete: true, addedAt: Date(timeIntervalSince1970: 2))
+        let done = LibraryItemRow(id: "done", title: "Done", status: "Ready", canDelete: true, isCompleted: true, addedAt: Date(timeIntervalSince1970: 3))
+        let ready = LibraryItemRow(id: "ready", title: "Ready", status: "Ready", canDelete: true, startupAudioState: .ready, addedAt: Date(timeIntervalSince1970: 4))
+        XCTAssertEqual(Gate1AppModel.startupPreparationCandidates([old, done, ready, new]), ["new", "old"])
+    }
+
+    func testPrioritizePinsOnlySelectedJobAndLeavesFutureImportsOrderedByRecency() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "queue-priority-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        let old = AudioPreparationJob(id: "old", itemId: "old", manifestId: "old", policy: .demandWindow, requestedAt: Date(timeIntervalSince1970: 1), maximumChunkCount: 2)
+        let selected = AudioPreparationJob(id: "selected", itemId: "selected", manifestId: "selected", policy: .demandWindow, requestedAt: Date(timeIntervalSince1970: 0), maximumChunkCount: 2)
+        try store.saveAudioPreparationJob(old)
+        try store.saveAudioPreparationJob(selected)
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.prioritizeAudioPreparationJob(id: selected.id)
+        let new = AudioPreparationJob(id: "new", itemId: "new", manifestId: "new", policy: .demandWindow, requestedAt: Date(timeIntervalSince1970: 2), maximumChunkCount: 2)
+        try store.saveAudioPreparationJob(new)
+        let jobs = try store.loadAudioPreparationJobs()
+        XCTAssertNil(jobs.first(where: { $0.id == old.id })?.userPriority)
+        XCTAssertEqual(jobs.sorted(by: Gate1AppModel.audioPreparationJobPrecedes).map(\.id), ["selected", "new", "old"])
+    }
+
+    func testNewestOpeningBufferComesFirstAndExplicitPriorityOverridesIt() {
+        let old = AudioPreparationJob(id: "old", itemId: "old", manifestId: "old", policy: .demandWindow, requestedAt: Date(timeIntervalSince1970: 1), maximumChunkCount: 2)
+        let new = AudioPreparationJob(id: "new", itemId: "new", manifestId: "new", policy: .demandWindow, requestedAt: Date(timeIntervalSince1970: 2), maximumChunkCount: 2)
+        var pinned = AudioPreparationJob(id: "pinned", itemId: "pinned", manifestId: "pinned", policy: .whileCharging, requestedAt: Date(timeIntervalSince1970: 0))
+        pinned.userPriority = 0
+        XCTAssertEqual([old, new, pinned].sorted(by: Gate1AppModel.audioPreparationJobPrecedes).map(\.id), ["pinned", "new", "old"])
+        XCTAssertEqual([old, new, pinned].sorted { Gate1AppModel.audioPreparationJobPrecedes($0, $1, activeItemId: "old") }.map(\.id), ["pinned", "old", "new"])
+    }
+
     func testPlaybackScrubStateClampsGestureToCanonicalDuration() {
         var state = PlaybackScrubState()
         let range = 0.0...900.0
 
+        state.begin(at: 0, range: range)
         state.updateFromGesture(1_200, range: range)
         XCTAssertEqual(state.displayedValue(canonicalValue: 0, range: range), 900)
     }
@@ -2935,6 +3007,50 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.itemId, "item-pill")
         XCTAssertEqual(model.selectedItem.id, "item-pill")
         XCTAssertNotNil(model.libraryItems.first(where: { $0.title == "Long Import" }))
+    }
+
+    func testFollowCandidatesDeduplicateIdentityAndURLWithoutMergingDistinctFeeds() {
+        let source = SourceIdentity(id: "source", kind: .articleFeed, canonicalURL: "https://example.com/feed", host: "example.com", title: "Same Title")
+        let first = SourceCandidateEvidence(id: "first", source: source, evidenceURL: "https://example.com/article", relation: "html_alternate", confidence: 1)
+        var duplicate = first
+        duplicate.id = "second-evidence"
+        var alias = first
+        alias.id = "alias"
+        alias.source.id = "legacy-id"
+        alias.source.canonicalURL = "https://EXAMPLE.com:443/feed/#fragment"
+        var distinct = first
+        distinct.id = "distinct"
+        distinct.source.id = "distinct-source"
+        distinct.source.canonicalURL = "https://example.com/other-feed"
+        XCTAssertEqual(Gate1AppModel.uniqueUnfollowedCandidates([first, duplicate, alias, distinct], subscriptions: []).map(\.id), ["first", "distinct"])
+        let followed = FeedSubscription(id: "followed", source: alias.source, state: .muted)
+        XCTAssertEqual(Gate1AppModel.uniqueUnfollowedCandidates([first, duplicate, alias, distinct], subscriptions: [followed]).map(\.id), ["distinct"])
+    }
+
+    func testFollowDiscoveryRechecksSubscriptionsBeforePublishing() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        var pending: CheckedContinuation<[SourceCandidateEvidence], Never>?
+        model.followCandidateDiscoveryHandler = { _, _ in
+            await withCheckedContinuation { pending = $0 }
+        }
+        try store.saveItem(Item(id: "article", title: "Article", mediaType: "text", text: "Source text.", externalReference: "https://example.com/article", status: "ready"))
+        try store.saveSession(Session(id: "session-article", itemId: "article", status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: "article", position: Position(charOffset: 4), completionPercent: 40, playbackRate: 1))
+        model.openHome()
+        model.openItem(id: "article")
+        model.offerFollowSuggestionIfEligible(itemId: "article", store: store)
+        try await waitFor("discovery suspended") { pending != nil }
+        let source = SourceIdentity(id: "source", kind: .articleFeed, canonicalURL: "https://example.com/feed", host: "example.com")
+        try store.saveFeedSubscription(FeedSubscription(id: "followed", source: source))
+        pending?.resume(returning: [SourceCandidateEvidence(id: "candidate", source: source, evidenceURL: "https://example.com/article", relation: "html_alternate", confidence: 1)])
+        try await waitFor("subscription reloaded") { model.feedSubscriptions.contains { $0.id == "followed" } }
+        XCTAssertTrue(model.sourceFollowSuggestionCandidates.isEmpty)
+        XCTAssertNil(try store.loadSourceSuggestionDecision(sourceId: source.id))
     }
 
     func testLateFollowDiscoveryCannotPublishUnderAnotherItem() async throws {

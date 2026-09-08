@@ -1,0 +1,43 @@
+--- a/App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift
++++ b/App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift
+@@ -4820,20 +4820,26 @@
+     let action: () -> Void
+ 
+     func body(content: Content) -> some View {
+-        content.simultaneousGesture(
+-            DragGesture(minimumDistance: 18, coordinateSpace: .global)
+-                .onEnded { value in
+-                    guard enabled else { return }
+-                    let horizontal = value.translation.width
+-                    let vertical = abs(value.translation.height)
+-                    guard value.startLocation.x <= 32,
+-                          horizontal >= 72,
+-                          horizontal > vertical * 1.4 else {
+-                        return
+-                    }
+-                    action()
+-                }
+-        )
++        content.overlay(alignment: .leading) {
++            if enabled {
++                // Attach recognition only to the edge. A gesture on the entire
++                // screen competes with slider tracking even when its action
++                // later rejects a drag that started away from the edge.
++                Color.clear
++                    .frame(width: 32)
++                    .contentShape(Rectangle())
++                    .gesture(
++                        DragGesture(minimumDistance: 18, coordinateSpace: .global)
++                            .onEnded { value in
++                                let horizontal = value.translation.width
++                                let vertical = abs(value.translation.height)
++                                guard horizontal >= 72, horizontal > vertical * 1.4 else { return }
++                                action()
++                            }
++                    )
++                    .accessibilityHidden(true)
++            }
++        }
+     }
+ }
+ 

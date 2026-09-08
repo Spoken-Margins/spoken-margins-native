@@ -164,6 +164,7 @@ enum LibraryPresentation {
         if let activeItemId,
            let active = rows.first(where: {
                $0.id == activeItemId
+                   && !$0.isCompleted
                    && $0.hasContinuationSession
                    && ($0.continuationProgressPercent ?? 0) < continuationSuggestionCutoffPercent
            }) {
@@ -172,7 +173,7 @@ enum LibraryPresentation {
 
         return rows
             .filter {
-                $0.hasContinuationSession
+                !$0.isCompleted && $0.hasContinuationSession
                     && ($0.continuationProgressPercent ?? 0) > 0
                     && ($0.continuationProgressPercent ?? 0) < continuationSuggestionCutoffPercent
             }

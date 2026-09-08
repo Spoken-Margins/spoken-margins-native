@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Developer device recording",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "build",
+    "captureID",
+    "events"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "spoken-margins.developer-recording.v1"
+    },
+    "build": {
+      "type": "string"
+    },
+    "captureID": {
+      "type": "string"
+    },
+    "events": {
+      "type": "array",
+      "maxItems": 1200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "time",
+          "elapsedMs",
+          "kind",
+          "fields"
+        ],
+        "properties": {
+          "time": {
+            "type": "string"
+          },
+          "elapsedMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "kind": {
+            "enum": [
+              "recording.started",
+              "recording.stopped",
+              "sample",
+              "main.delayed",
+              "item.open.begin",
+              "item.open.end",
+              "miniPlayer.close",
+              "seek.text.request",
+              "seek.media.request",
+              "preparation.selected",
+              "preparation.render.begin",
+              "preparation.committed",
+              "scrub.media.drag",
+              "scrub.media.editing",
+              "scrub.media.display",
+              "scrub.text.drag",
+              "scrub.text.editing",
+              "scrub.text.display"
+            ]
+          },
+          "fields": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

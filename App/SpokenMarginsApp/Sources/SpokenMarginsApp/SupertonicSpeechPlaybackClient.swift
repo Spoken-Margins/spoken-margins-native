@@ -468,6 +468,23 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private var shouldResumeAfterInterruption = false
     private var activeRenderControl: RenderTaskControl?
 
+    /// Speculative Library work can share the serial renderer only while the
+    /// listener has two contiguous committed chunks beyond the audible chunk.
+    var canYieldRendererToLibrary: Bool {
+        lock.withLock {
+            guard transportIntent == .playing else { return true }
+            guard !fallbackIsActive, pendingAutoplayOffset == nil, startedTargetId != nil else { return false }
+            if generationState == .ready { return true }
+            var offset = currentStartOffset + currentChunkLength
+            for _ in 0..<2 {
+                if offset >= preparedSpeechProjection.text.count { return true }
+                guard let chunk = renderedCache[offset] else { return false }
+                offset += chunk.request.sourceLength
+            }
+            return true
+        }
+    }
+
     init(
         renderer: any SupertonicRendering,
         voice: SupertonicVoiceID,
@@ -1142,9 +1159,20 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         let waitLimit = renderWaitLimit
         let task = Task { [weak self, renderer, voice] in
             let timeout = Task { @MainActor [weak self] in
-                do { try await Task.sleep(for: waitLimit) } catch { return }
-                guard let self, self.lock.withLock({ self.generation == request.generation && self.inFlightOffsets.contains(request.startOffset) }) else { return }
-                self.renderFailed(request: request, shouldPlayWhenReady: true, reason: "supertonic_render_timeout")
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: waitLimit) } catch { return }
+                    guard let self else { return }
+                    let demand = self.lock.withLock { () -> (current: Bool, waiting: Bool) in
+                        (self.generation == request.generation && self.inFlightOffsets.contains(request.startOffset),
+                         self.transportIntent == .playing && (shouldPlayWhenReady || self.pendingAutoplayOffset == request.startOffset || self.startedTargetId == nil))
+                    }
+                    guard demand.current else { return }
+                    // Slow speculative work must not interrupt audible prepared
+                    // audio. The deadline applies only when the listener waits.
+                    guard demand.waiting else { continue }
+                    self.renderFailed(request: request, shouldPlayWhenReady: shouldPlayWhenReady, reason: "supertonic_render_timeout")
+                    return
+                }
             }
             defer { timeout.cancel() }
             do {

@@ -1,0 +1,174 @@
+--- a/App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift
++++ b/App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift
+@@ -2281,7 +2281,7 @@
+                 Text(formatPlaybackTime(Int(scrubberDisplaySeconds * 1_000)))
+                     .frame(minWidth: 36, alignment: .trailing)
+                     .accessibilityIdentifier("playback.progress.label")
+-                Slider(
++                PlaybackPositionSlider(
+                     value: Binding(
+                         get: { mediaScrubState.displayedValue(canonicalValue: canonicalMediaSeconds, range: mediaScrubRange) },
+                         set: {
+@@ -2289,7 +2289,7 @@
+                             model.recordDeveloperDiagnostic("scrub.media.drag", ["value": String($0), "canonical": String(canonicalMediaSeconds), "range": String(mediaScrubRange.upperBound)])
+                         }
+                     ),
+-                    in: mediaScrubRange,
++                    range: mediaScrubRange,
+                     onEditingChanged: { editing in
+                         model.recordDeveloperDiagnostic("scrub.media.editing", ["editing": String(editing)])
+                         if editing {
+@@ -2324,7 +2324,7 @@
+                 Text("\(textScrubberPercent)%")
+                     .frame(minWidth: 34, alignment: .trailing)
+                     .accessibilityIdentifier("playback.progress.label")
+-                Slider(
++                PlaybackPositionSlider(
+                     value: Binding(
+                         get: { textScrubState.displayedValue(canonicalValue: canonicalTextOffset, range: textScrubRange) },
+                         set: {
+@@ -2332,7 +2332,7 @@
+                             model.recordDeveloperDiagnostic("scrub.text.drag", ["value": String($0), "canonical": String(canonicalTextOffset), "range": String(textScrubRange.upperBound)])
+                         }
+                     ),
+-                    in: textScrubRange,
++                    range: textScrubRange,
+                     onEditingChanged: { editing in
+                         model.recordDeveloperDiagnostic("scrub.text.editing", ["editing": String(editing)])
+                         if editing {
+--- a/App/SpokenMarginsApp/Sources/SpokenMarginsApp/DeveloperDiagnosticRecording.swift
++++ b/App/SpokenMarginsApp/Sources/SpokenMarginsApp/DeveloperDiagnosticRecording.swift
+@@ -5,7 +5,7 @@
+ /// and off-main. Fields at call sites are state/counters, never source content.
+ @MainActor
+ final class DeveloperDiagnosticRecording {
+-    static let buildIdentity = "device-diagnostics-20260908-A"
++    static let buildIdentity = "device-diagnostics-20260908-B"
+     struct Event: Codable {
+         let time: String
+         let elapsedMs: Int
+--- a/App/SpokenMarginsAppTests/Gate1AppModelWorkflowTests.swift
++++ b/App/SpokenMarginsAppTests/Gate1AppModelWorkflowTests.swift
+@@ -34,6 +34,29 @@
+     }
+ 
+     #if canImport(UIKit)
++    func testPlaybackSliderIgnoresNonTouchValueEventsAndTracksCanonicalUpdates() {
++        let slider = TrackingPlaybackSlider(frame: .zero)
++        slider.minimumValue = 0
++        slider.maximumValue = 9042
++        var editing: [Bool] = []
++        var requests: [Double] = []
++        slider.onEditing = { editing.append($0) }
++        slider.onValue = { requests.append($0) }
++        slider.setValue(2027, animated: false)
++        slider.sendActions(for: .valueChanged)
++        slider.sendActions(for: .touchDown)
++        slider.sendActions(for: .touchUpInside)
++        XCTAssertFalse(slider.gestureActive)
++        XCTAssertTrue(editing.isEmpty)
++        XCTAssertTrue(requests.isEmpty)
++        slider.setValue(2530, animated: false)
++        XCTAssertEqual(slider.value, 2530)
++        slider.accessibilityIncrement()
++        XCTAssertEqual(editing, [true, false])
++        XCTAssertEqual(requests.count, 1)
++        XCTAssertEqual(requests[0], 2620.42, accuracy: 0.01)
++    }
++
+     func testDiagnosticsCopyPublishesSafePayloadAndSuccessFeedback() throws {
+         let priorClipboard = UIPasteboard.general.items
+         defer { UIPasteboard.general.items = priorClipboard }
+--- /dev/null
++++ b/App/SpokenMarginsApp/Sources/SpokenMarginsApp/PlaybackPositionSlider.swift
+@@ -0,0 +1,90 @@
++import SwiftUI
++import UIKit
++
++/// Editing belongs to UIKit's accepted touch tracking, not SwiftUI's synthetic
++/// editing callbacks, which the device trace shows can reopen after a seek.
++struct PlaybackPositionSlider: UIViewRepresentable {
++    @Binding var value: Double
++    var range: ClosedRange<Double>
++    var onEditingChanged: (Bool) -> Void
++    @Environment(\.isEnabled) private var isEnabled
++
++    func makeUIView(context: Context) -> TrackingPlaybackSlider {
++        let slider = TrackingPlaybackSlider()
++        slider.minimumTrackTintColor = UIColor(AppColors.accent)
++        slider.setContentHuggingPriority(.defaultLow, for: .horizontal)
++        return slider
++    }
++
++    func updateUIView(_ slider: TrackingPlaybackSlider, context: Context) {
++        slider.onValue = { value = $0 }
++        slider.onEditing = onEditingChanged
++        slider.isEnabled = isEnabled
++        slider.minimumValue = Float(range.lowerBound)
++        slider.maximumValue = Float(range.upperBound)
++        if !slider.isTracking, !slider.gestureActive {
++            slider.setValue(Float(value), animated: false)
++        }
++    }
++
++    static func dismantleUIView(_ slider: TrackingPlaybackSlider, coordinator: ()) {
++        slider.onValue = nil
++        slider.onEditing = nil
++    }
++}
++
++final class TrackingPlaybackSlider: UISlider {
++    var onValue: ((Double) -> Void)?
++    var onEditing: ((Bool) -> Void)?
++    private(set) var gestureActive = false
++
++    override init(frame: CGRect) {
++        super.init(frame: frame)
++        addTarget(self, action: #selector(valueChanged), for: .valueChanged)
++    }
++    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
++
++    override func beginTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
++        let accepted = super.beginTracking(touch, with: event)
++        if accepted {
++            gestureActive = true
++            onEditing?(true)
++            onValue?(Double(value))
++        }
++        return accepted
++    }
++
++    override func endTracking(_ touch: UITouch?, with event: UIEvent?) {
++        super.endTracking(touch, with: event)
++        finishGesture()
++    }
++
++    override func cancelTracking(with event: UIEvent?) {
++        super.cancelTracking(with: event)
++        finishGesture()
++    }
++
++    @objc private func valueChanged() {
++        guard gestureActive, isTracking else { return }
++        onValue?(Double(value))
++    }
++
++    private func finishGesture() {
++        guard gestureActive else { return }
++        // Close ownership before invoking the seek, which can synchronously
++        // publish a new playback snapshot and update the representable.
++        gestureActive = false
++        onValue?(Double(value))
++        onEditing?(false)
++    }
++
++    override func accessibilityIncrement() { accessibilityStep(1) }
++    override func accessibilityDecrement() { accessibilityStep(-1) }
++    private func accessibilityStep(_ direction: Float) {
++        guard isEnabled else { return }
++        onEditing?(true)
++        value = min(maximumValue, max(minimumValue, value + direction * (maximumValue - minimumValue) * 0.01))
++        onValue?(Double(value))
++        onEditing?(false)
++    }
++}

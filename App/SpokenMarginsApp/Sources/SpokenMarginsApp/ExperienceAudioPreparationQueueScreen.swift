@@ -13,6 +13,7 @@ struct ExperienceAudioPreparationQueueScreen: View {
                 model.automaticAudioPreparationPolicy = policy
                 model.automaticAudioPreparationPolicyChanged()
             },
+            prioritize: model.prioritizeAudioPreparationJob,
             moveEarlier: model.moveAudioPreparationJobEarlier,
             moveLater: model.moveAudioPreparationJobLater,
             renderNow: model.prioritizeOfflinePreparation,
@@ -30,6 +31,7 @@ private struct AudioPreparationQueueContent: View, @preconcurrency Equatable {
     let queue: [AudioPreparationQueueRow]
     let recentlyPrepared: [RecentlyPreparedAudioRow]
     let setAutomaticPolicy: (AutomaticAudioPreparationPolicy) -> Void
+    let prioritize: (String) -> Void
     let moveEarlier: (String) -> Void
     let moveLater: (String) -> Void
     let renderNow: (String) -> Void
@@ -82,6 +84,7 @@ private struct AudioPreparationQueueContent: View, @preconcurrency Equatable {
                         ForEach(queue) { row in
                             AudioPreparationQueueItemRow(
                                 row: row,
+                                prioritize: { prioritize(row.id) },
                                 moveEarlier: { moveEarlier(row.id) },
                                 moveLater: { moveLater(row.id) },
                                 renderNow: { renderNow(row.itemId) },
@@ -97,7 +100,7 @@ private struct AudioPreparationQueueContent: View, @preconcurrency Equatable {
                     }
                 } footer: {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("The item you are listening to is pinned first. Within each remaining priority tier, use the arrows to change what iOS should prepare next.")
+                        Text("Use Prioritize to move an item to the top, or the arrows to adjust its position. Playback keeps priority for audio it needs immediately.")
                         if !queue.isEmpty {
                             Button("Clear Queue", role: .destructive) {
                                 isConfirmingQueueClear = true
@@ -194,6 +197,7 @@ private struct AudioPreparationQueueContent: View, @preconcurrency Equatable {
 
 private struct AudioPreparationQueueItemRow: View {
     let row: AudioPreparationQueueRow
+    let prioritize: () -> Void
     let moveEarlier: () -> Void
     let moveLater: () -> Void
     let renderNow: () -> Void
@@ -235,6 +239,11 @@ private struct AudioPreparationQueueItemRow: View {
                 .foregroundStyle(AppColors.secondaryText)
 
             HStack(spacing: 8) {
+                Button("Prioritize", systemImage: "arrow.up.to.line") { prioritize() }
+                    .font(.caption.weight(.semibold))
+                    .buttonStyle(.bordered)
+                    .accessibilityHint("Moves this item to the top of the Library render queue")
+                    .accessibilityIdentifier("offlineRendering.prioritize.\(row.itemId)")
                 Spacer(minLength: 0)
                 if row.policy != .explicit {
                     Button("Render Now") {
@@ -256,7 +265,7 @@ private struct AudioPreparationQueueItemRow: View {
     }
 
     private var priorityLabel: String {
-        if row.isActivePlaybackItem { return "Now playing · first priority" }
+        if row.isActivePlaybackItem { return "Now playing" }
         switch row.policy {
         case .explicit: return "Render now"
         case .demandWindow: return "Opening buffer"
@@ -265,7 +274,7 @@ private struct AudioPreparationQueueItemRow: View {
     }
 
     private var priorityIcon: String {
-        if row.isActivePlaybackItem { return "pin.fill" }
+        if row.isActivePlaybackItem { return "play.fill" }
         return row.policy == .explicit ? "bolt.fill" : "moon.stars.fill"
     }
 

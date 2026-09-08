@@ -233,7 +233,14 @@ actor FollowedSourceCoordinator {
         if http.statusCode == 304 { throw HTTPNotModified() }
         guard (200..<300).contains(http.statusCode) else { throw FollowedSourceError.invalidResponse }
         guard data.count <= Self.maximumFeedBytes else { throw FollowedSourceError.responseTooLarge }
-        return try parser.parse(data: data, contentType: http.value(forHTTPHeaderField: "Content-Type"))
+        var parsed = try parser.parse(data: data, contentType: http.value(forHTTPHeaderField: "Content-Type"))
+        // RSS often omits a self link. Redirect aliases must use the final
+        // response URL, otherwise /feed and /rss become separate sources.
+        let responseURL = http.url ?? url
+        parsed.feedURL = parsed.feedURL.flatMap {
+            URL(string: $0, relativeTo: responseURL)?.absoluteURL.absoluteString
+        } ?? responseURL.absoluteString
+        return parsed
     }
 
     private func fetchHTML(url: URL) async throws -> String {

@@ -19,11 +19,14 @@
         "name": "SpokenMarginsAppUITests"
       },
       "selectedTests": [
+        "Gate1FlowUITests/testPlaybackScrubberAcceptsPhysicalDrag()",
         "Gate1FlowUITests/testLibraryCompactRowStaysDense()",
         "Gate1FlowUITests/testRecordingExclusivelyOwnsTheAccessibleExperience()",
         "Gate1FlowUITests/testAmbiguousPodcastImportImmediatelyReplacesAddSourceWithEpisodePicker()",
         "Gate1FlowUITests/testBuild23RecipientMissingSourceReturnsWithoutAutoplayAndShowsProvenance()",
-        "Gate1FlowUITests/testBuild23LayoutRegressionsRemainOperableAtAccessibilityType()"
+        "Gate1FlowUITests/testBuild23LayoutRegressionsRemainOperableAtAccessibilityType()",
+        "Gate1FlowUITests/testExportPreviewRemainsReachableAfterStartingAnotherSession()",
+        "Gate1FlowUITests/testSeededGate1FlowHasPlaybackMiniPlayerExportAndSettings()"
       ],
       "parallelizable": false
     }

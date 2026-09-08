@@ -183,13 +183,15 @@ struct ExperienceLibraryScreen: View {
     }
 
     private func continueHero(_ item: LibraryItemRow) -> some View {
-        Button { model.openItem(id: item.id) } label: {
+        Group {
             Group {
                 switch libraryComposition {
                 case .horizontal:
                     HStack(spacing: 18) {
                         SMExperienceTypeCover(row: item, size: horizontalSizeClass == .regular ? 112 : 88)
-                        continueHeroDetails(item)
+                        Button { model.openItem(id: item.id) } label: { continueHeroDetails(item) }
+                            .buttonStyle(.borderless)
+                            .accessibilityIdentifier("library.row.\(item.id)")
                         Spacer(minLength: 0)
                         continueHeroAction(item)
                     }
@@ -200,7 +202,9 @@ struct ExperienceLibraryScreen: View {
                             Spacer(minLength: 12)
                             continueHeroAction(item)
                         }
-                        continueHeroDetails(item)
+                        Button { model.openItem(id: item.id) } label: { continueHeroDetails(item) }
+                            .buttonStyle(.borderless)
+                            .accessibilityIdentifier("library.row.\(item.id)")
                     }
                 }
             }
@@ -220,7 +224,6 @@ struct ExperienceLibraryScreen: View {
             }
         }
         .buttonStyle(.plain)
-        .accessibilityIdentifier("library.row.\(item.id)")
         .accessibilityHint("This item is saved in your Library.")
     }
 

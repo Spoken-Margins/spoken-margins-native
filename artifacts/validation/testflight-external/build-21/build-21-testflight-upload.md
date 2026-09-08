@@ -1,6 +1,8 @@
 # Build 21 TestFlight Upload And Product-Owner Handoff
 
-Status: uploaded successfully, processed by App Store Connect, and available to the internal `Margins` group; not yet added to `External Beta`, submitted for Beta App Review, or `human_validated`.
+Status at original handoff: uploaded successfully, processed by App Store Connect, and available internally.
+
+September 7 reconciliation: App Store Connect now shows Build 21 as `Testing`, assigned to both `Margins` and `External Beta`. The source below matches build-21 project settings and is preserved locally as `testflight/0.1-build-21`. The date of the intervening external assignment and product-owner validation are not established by this observation. No distribution settings were changed during reconciliation.
 
 ## Candidate
 

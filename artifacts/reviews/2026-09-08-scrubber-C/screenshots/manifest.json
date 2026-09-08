@@ -1,0 +1,35 @@
+[
+  {
+    "attachments" : [
+      {
+        "configurationName" : "Default",
+        "deviceId" : "4AAAFEBA-6DA8-4166-8347-4106165C38C2",
+        "deviceName" : "Spoken Margins Release Verification",
+        "exportedFileName" : "C40E89C0-A39C-4EF6-BB3B-32DA7E4FF62A.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "scrub-0_0_07C6581A-9A4F-4919-A584-998023241CD0.85",
+        "timestamp" : 1788873624.707
+      },
+      {
+        "configurationName" : "Default",
+        "deviceId" : "4AAAFEBA-6DA8-4166-8347-4106165C38C2",
+        "deviceName" : "Spoken Margins Release Verification",
+        "exportedFileName" : "AE10DC93-2A9A-4CC0-B1A3-36C1E9884100.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "scrub-0_0_5BCE368A-A1BE-427A-BB96-F1B53DA911C7.22",
+        "timestamp" : 1788873617.791
+      },
+      {
+        "configurationName" : "Default",
+        "deviceId" : "4AAAFEBA-6DA8-4166-8347-4106165C38C2",
+        "deviceName" : "Spoken Margins Release Verification",
+        "exportedFileName" : "2B6AE93B-D00F-44C3-97AD-82BC162D4F05.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "scrub-0_0_0C5F42DE-50EB-478B-BB87-A5ACBDA5499B.7",
+        "timestamp" : 1788873611.993
+      }
+    ],
+    "testIdentifier" : "Gate1FlowUITests/testPlaybackScrubberAcceptsPhysicalDrag()",
+    "testIdentifierURL" : "test://com.apple.xcode/SpokenMarginsNative/SpokenMarginsAppUITests/Gate1FlowUITests/testPlaybackScrubberAcceptsPhysicalDrag"
+  }
+]

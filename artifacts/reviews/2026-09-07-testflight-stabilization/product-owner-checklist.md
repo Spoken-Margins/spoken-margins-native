@@ -1,3 +1,5 @@
+> Superseded in part by the owner's [September 7 device feedback](../../validation/gate-1/2026-09-07-device-feedback.md): several flows were accepted, while scrubbing, import continuity, Library access, startup preparation, and Continue Listening failed. The identity and verification below describe the earlier candidate, not the subsequent remediation. Current remediation starts from commit `8f5b74c`.
+
 # Candidate acceptance checklist — not yet human validated
 
 ## Identity and device scope
@@ -43,4 +45,4 @@ An intermittent imported-podcast test failed twice with a persistence write erro
 - Evidence: `artifacts/test-runs/20260907-125017-904309-release/manifest.json` and `artifacts/test-runs/20260907-124523-268051-ui/manifest.json`.
 - The physical phone later became available with developer-installed 0.1 (25). Its exact source SHA is unknown, and the coordinated workload capture remains pending. No new candidate was installed on it by this task.
 
-These results establish automated verification, not product-owner acceptance. The checklist rows above remain pending.
+These results establish automated verification, not product-owner acceptance. The original checklist rows above preserve the prior handoff; use the linked owner-feedback record for subsequent bounded acceptance and failures.

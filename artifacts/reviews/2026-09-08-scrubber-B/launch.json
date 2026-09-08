@@ -1,0 +1,56 @@
+{
+  "info" : {
+    "arguments" : [
+      "devicectl",
+      "device",
+      "process",
+      "launch",
+      "--device",
+      "F9855B5E-675A-5050-8010-4B17AE843875",
+      "com.spokenmargins.native",
+      "--json-output",
+      "/tmp/spoken-scrubber-B-launch.json"
+    ],
+    "commandType" : "devicectl.device.process.launch",
+    "environment" : {
+      "TERM" : "dumb"
+    },
+    "jsonVersion" : 3,
+    "outcome" : "success",
+    "version" : "518.33"
+  },
+  "result" : {
+    "deviceIdentifier" : "F9855B5E-675A-5050-8010-4B17AE843875",
+    "launchOptions" : {
+      "activatedWhenStarted" : true,
+      "arguments" : [
+
+      ],
+      "environmentVariables" : {
+        "TERM" : "dumb"
+      },
+      "platformSpecificOptions" : {
+
+      },
+      "startStopped" : false,
+      "terminateExistingInstances" : false,
+      "user" : {
+        "active" : true
+      }
+    },
+    "process" : {
+      "auditToken" : [
+        4294967295,
+        501,
+        501,
+        501,
+        501,
+        23789,
+        0,
+        62094
+      ],
+      "executable" : "file:///private/var/containers/Bundle/Application/794FB6B7-68BB-4967-90D9-BF2E9DD016D6/SpokenMarginsApp.app/SpokenMarginsApp",
+      "processIdentifier" : 23789
+    }
+  }
+}

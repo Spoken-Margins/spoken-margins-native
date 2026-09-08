@@ -31,6 +31,7 @@ enum Build23ExperiencePolishLayout {
 struct ExperienceRootTabs: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Binding var navigation: AppNavigationState
+    var showsMiniPlayer = false
 
     private var rootSelection: Binding<AppRoot> {
         Binding(
@@ -42,6 +43,7 @@ struct ExperienceRootTabs: View {
     var body: some View {
         TabView(selection: rootSelection) {
             ExperienceLibraryScreen(addSourceRoute: addSourceRoute)
+                .safeAreaInset(edge: .bottom, spacing: 8) { miniPlayer }
                 .tabItem {
                     Label("Library", systemImage: AppRoot.library.systemImage)
                         .accessibilityIdentifier("navigation.tab.library")
@@ -49,6 +51,7 @@ struct ExperienceRootTabs: View {
                 .tag(AppRoot.library)
 
             ExperienceSourcesScreen()
+                .safeAreaInset(edge: .bottom, spacing: 8) { miniPlayer }
                 .tabItem {
                     Label("Sources", systemImage: AppRoot.sources.systemImage)
                         .accessibilityIdentifier("navigation.tab.sources")
@@ -56,6 +59,7 @@ struct ExperienceRootTabs: View {
                 .tag(AppRoot.sources)
 
             ExperienceMarginsScreen()
+                .safeAreaInset(edge: .bottom, spacing: 8) { miniPlayer }
                 .tabItem {
                     Label("Margins", systemImage: AppRoot.margins.systemImage)
                         .accessibilityIdentifier("navigation.tab.margins")
@@ -64,15 +68,18 @@ struct ExperienceRootTabs: View {
         }
         .tabViewStyle(.sidebarAdaptable)
         .tint(AppColors.evergreen)
-        .safeAreaPadding(
-            .bottom,
-            Build23ExperiencePolishLayout.rootContentBottomClearance(
-                showsPersistentMiniPlayer: model.shouldShowMiniPlayer
-            )
-        )
         .sheet(item: addSourceRoute) { route in
             ExperienceAddSourceFlow(initialRoute: route)
                 .environmentObject(model)
+        }
+    }
+
+    @ViewBuilder
+    private var miniPlayer: some View {
+        if showsMiniPlayer {
+            MiniPlayerBar()
+                .padding(.horizontal, 12)
+                .padding(.bottom, 4)
         }
     }
 

@@ -11,9 +11,62 @@ final class Gate1FlowUITests: XCTestCase {
         app.launch()
     }
 
+    func testPlaybackScrubberAcceptsPhysicalDrag() throws {
+        app.terminate()
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"] = String(repeating: "A long source passage lets us seek forward and backward while playback continues. ", count: 115)
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SUPERTONIC"] = "1"
+        app.launch()
+        openLibrarySettings()
+        scrollToButton(containingLabel: "Developer tools").tap()
+        let record = scrollToElement("settings.developer.recordDiagnostics")
+        record.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(record.value as? String, "1", "Diagnostic recording must be enabled")
+        app.buttons["settings.home.button"].tap()
+        let start = app.buttons["queue.start.item-ui-text-regression"]
+        XCTAssertTrue(start.waitForExistence(timeout: 8))
+        start.tap()
+        let slider = app.sliders["playback.scrubber"]
+        XCTAssertTrue(slider.waitForExistence(timeout: 8), app.debugDescription)
+        let playing = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Pause"), object: app.buttons["playback.play.button"])
+        XCTAssertEqual(XCTWaiter().wait(for: [playing], timeout: 60), .completed)
+        func percent() -> Double {
+            Double((slider.value as? String ?? "").components(separatedBy: " ").first ?? "") ?? -1
+        }
+        func positionCoordinate(_ fraction: Double) -> XCUICoordinate {
+            let inset = slider.frame.height / 2
+            let x = inset + (slider.frame.width - 2 * inset) * fraction
+            return slider.coordinate(withNormalizedOffset: CGVector(dx: x / slider.frame.width, dy: 0.5))
+        }
+        for target in [0.70, 0.22, 0.85] {
+            let from = positionCoordinate(percent() / 100)
+            let to = positionCoordinate(target)
+            from.press(forDuration: 0.2, thenDragTo: to, withVelocity: .slow, thenHoldForDuration: 0.2)
+            let expected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                abs(percent() - target * 100) < 5
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter().wait(for: [expected], timeout: 5), .completed,
+                           "Actual drag to \(target) ended at \(String(describing: slider.value))")
+            let landed = percent()
+            let advances = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                percent() >= landed + 1 && percent() < landed + 8
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter().wait(for: [advances], timeout: 25), .completed,
+                           "Position stopped following playback after release at \(landed)%")
+            captureScreen(named: "scrub-\(target)")
+        }
+        pausePlaybackIfNeeded()
+        positionCoordinate(percent() / 100)
+            .press(forDuration: 0.05, thenDragTo: positionCoordinate(0.4), withVelocity: .fast, thenHoldForDuration: 0)
+        XCTAssertLessThan(abs(percent() - 40), 5, "Quick paused drag lost its destination")
+        XCTAssertEqual(app.buttons["playback.play.button"].label, "Play", "Paused seek unexpectedly started playback")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.45))
+            .press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.45)))
+        XCTAssertTrue(element("library.screen").waitForExistence(timeout: 5), "Edge back stopped working")
+    }
+
     func testSeededGate1FlowHasPlaybackMiniPlayerExportAndSettings() throws {
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Library"].exists)
+        XCTAssertTrue(element("library.screen").exists)
 
         let seededStart = app.buttons["queue.start.item-pill"]
         XCTAssertTrue(seededStart.waitForExistence(timeout: 4), app.debugDescription)
@@ -41,6 +94,11 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("miniPlayer.close.button").exists)
         XCTAssertTrue(element("miniPlayer.interject.button").exists)
         XCTAssertTrue(element("miniPlayer.playPause.button").exists)
+        let hero = element("library.row.item-pill")
+        XCTAssertTrue(hero.waitForExistence(timeout: 4), app.debugDescription)
+        app.swipeUp()
+        XCTAssertLessThanOrEqual(hero.frame.maxY, element("miniPlayer.bar").frame.minY,
+                                 "The single Continue Listening card must scroll clear of the mini-player")
         openLibrarySettings()
 
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 4))

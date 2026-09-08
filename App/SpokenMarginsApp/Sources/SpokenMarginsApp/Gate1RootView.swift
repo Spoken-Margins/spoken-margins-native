@@ -18,7 +18,7 @@ struct Gate1RootView: View {
             } else {
                 switch model.screen {
                 case .home:
-                    ExperienceRootTabs(navigation: $navigation)
+                    ExperienceRootTabs(navigation: $navigation, showsMiniPlayer: !keyboardIsPresented && model.shouldShowMiniPlayer)
                 case .item:
                     ExperienceItemDetailScreen()
                 case .playback:
@@ -60,7 +60,7 @@ struct Gate1RootView: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 8) {
-            if !model.snapshot.isRecording && model.shouldShowMiniPlayer && !keyboardIsPresented {
+            if model.screen != .home && !model.snapshot.isRecording && model.shouldShowMiniPlayer && !keyboardIsPresented {
                 MiniPlayerBar()
                     .padding(.horizontal, 12)
                     .padding(.bottom, model.screen == .home ? 54 : 4)
@@ -482,7 +482,7 @@ private struct OnboardingChecklistRow: View {
     }
 }
 
-private struct MiniPlayerBar: View {
+struct MiniPlayerBar: View {
     @EnvironmentObject private var model: Gate1AppModel
 
     var body: some View {
@@ -1949,23 +1949,25 @@ private struct DiscretePlaybackRateSlider: View {
 struct PlaybackScrubState: Equatable {
     private(set) var draftValue = 0.0
     private(set) var isEditing = false
+    private var hasPendingValue = false
 
     mutating func begin(at canonicalValue: Double, range: ClosedRange<Double>) {
         guard !isEditing else { return }
-        draftValue = Self.clamped(canonicalValue, to: range)
+        if !hasPendingValue { draftValue = Self.clamped(canonicalValue, to: range) }
         isEditing = true
     }
 
     mutating func updateFromGesture(_ value: Double, range: ClosedRange<Double>) {
-        // The binding setter may run before Slider's editing callback. Claim
-        // gesture ownership here so a simultaneous playback tick cannot snap
-        // the thumb back to the transport position.
-        isEditing = true
+        // Binding writes may arrive both before begin and after finish. Only
+        // editing callbacks own the gesture; a late write must never freeze
+        // subsequent canonical playback ticks.
+        hasPendingValue = true
         draftValue = Self.clamped(value, to: range)
     }
 
     mutating func finish() {
         isEditing = false
+        hasPendingValue = false
     }
 
     func displayedValue(canonicalValue: Double, range: ClosedRange<Double>) -> Double {
@@ -2279,13 +2281,17 @@ private struct PlaybackScreen: View {
                 Text(formatPlaybackTime(Int(scrubberDisplaySeconds * 1_000)))
                     .frame(minWidth: 36, alignment: .trailing)
                     .accessibilityIdentifier("playback.progress.label")
-                Slider(
+                PlaybackPositionSlider(
                     value: Binding(
                         get: { mediaScrubState.displayedValue(canonicalValue: canonicalMediaSeconds, range: mediaScrubRange) },
-                        set: { mediaScrubState.updateFromGesture($0, range: mediaScrubRange) }
+                        set: {
+                            mediaScrubState.updateFromGesture($0, range: mediaScrubRange)
+                            model.recordDeveloperDiagnostic("scrub.media.drag", ["value": String($0), "canonical": String(canonicalMediaSeconds), "range": String(mediaScrubRange.upperBound)])
+                        }
                     ),
-                    in: mediaScrubRange,
+                    range: mediaScrubRange,
                     onEditingChanged: { editing in
+                        model.recordDeveloperDiagnostic("scrub.media.editing", ["editing": String(editing)])
                         if editing {
                             mediaScrubState.begin(at: canonicalMediaSeconds, range: mediaScrubRange)
                         } else {
@@ -2302,6 +2308,9 @@ private struct PlaybackScreen: View {
                 .accessibilityLabel("Playback position")
                 .accessibilityValue("\(formatPlaybackTime(Int(scrubberDisplaySeconds * 1_000))) of \(formatPlaybackTime(mediaDurationMs))")
                 .accessibilityIdentifier("playback.scrubber")
+                .onCompatibleChange(of: canonicalMediaSeconds) { value in
+                    model.recordDeveloperDiagnostic("scrub.media.display", ["canonical": String(value), "displayed": String(mediaScrubState.displayedValue(canonicalValue: value, range: mediaScrubRange)), "editing": String(mediaScrubState.isEditing), "range": String(mediaScrubRange.upperBound)])
+                }
                 .disabled(model.snapshot.isRecording)
                 Text("−\(formatPlaybackTime(displayMediaRemainingMs))")
                     .frame(minWidth: 42, alignment: .leading)
@@ -2315,13 +2324,17 @@ private struct PlaybackScreen: View {
                 Text("\(textScrubberPercent)%")
                     .frame(minWidth: 34, alignment: .trailing)
                     .accessibilityIdentifier("playback.progress.label")
-                Slider(
+                PlaybackPositionSlider(
                     value: Binding(
                         get: { textScrubState.displayedValue(canonicalValue: canonicalTextOffset, range: textScrubRange) },
-                        set: { textScrubState.updateFromGesture($0, range: textScrubRange) }
+                        set: {
+                            textScrubState.updateFromGesture($0, range: textScrubRange)
+                            model.recordDeveloperDiagnostic("scrub.text.drag", ["value": String($0), "canonical": String(canonicalTextOffset), "range": String(textScrubRange.upperBound)])
+                        }
                     ),
-                    in: textScrubRange,
+                    range: textScrubRange,
                     onEditingChanged: { editing in
+                        model.recordDeveloperDiagnostic("scrub.text.editing", ["editing": String(editing)])
                         if editing {
                             textScrubState.begin(at: canonicalTextOffset, range: textScrubRange)
                         } else {
@@ -2338,6 +2351,9 @@ private struct PlaybackScreen: View {
                 .accessibilityLabel("Playback position")
                 .accessibilityValue("\(textScrubberPercent) percent")
                 .accessibilityIdentifier("playback.scrubber")
+                .onCompatibleChange(of: canonicalTextOffset) { value in
+                    model.recordDeveloperDiagnostic("scrub.text.display", ["canonical": String(value), "displayed": String(textScrubState.displayedValue(canonicalValue: value, range: textScrubRange)), "editing": String(textScrubState.isEditing), "range": String(textScrubRange.upperBound)])
+                }
                 .disabled(model.snapshot.isRecording)
                 Text("100%")
                     .frame(minWidth: 34, alignment: .leading)
@@ -3789,6 +3805,11 @@ private struct SettingsScreen: View {
                 #if DEBUG
                 Section("Developer") {
                     DisclosureGroup("Developer tools", isExpanded: $showsDeveloperTools) {
+                        Toggle("Record Device Diagnostics", isOn: $model.developerDiagnosticRecordingEnabled)
+                            .accessibilityIdentifier("settings.developer.recordDiagnostics")
+                        Text("Turn on, reproduce the problem, then turn off and Copy Privacy-Safe Diagnostics. Keeps the latest 1,200 events; enabling starts a new recording. Off after app restart.")
+                            .font(.caption)
+                        Text(model.developerDiagnosticBuild).font(.caption.monospaced())
                         Button("Add Sample Item", action: model.addSampleItem)
                         Picker("Runtime Profile", selection: $model.selectedProfileId) {
                             Text("Phone/Tablet Online").tag("phone-tablet-online")
@@ -4799,20 +4820,26 @@ private struct EdgeSwipeBackModifier: ViewModifier {
     let action: () -> Void
 
     func body(content: Content) -> some View {
-        content.simultaneousGesture(
-            DragGesture(minimumDistance: 18, coordinateSpace: .global)
-                .onEnded { value in
-                    guard enabled else { return }
-                    let horizontal = value.translation.width
-                    let vertical = abs(value.translation.height)
-                    guard value.startLocation.x <= 32,
-                          horizontal >= 72,
-                          horizontal > vertical * 1.4 else {
-                        return
-                    }
-                    action()
-                }
-        )
+        content.overlay(alignment: .leading) {
+            if enabled {
+                // Attach recognition only to the edge. A gesture on the entire
+                // screen competes with slider tracking even when its action
+                // later rejects a drag that started away from the edge.
+                Color.clear
+                    .frame(width: 32)
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 18, coordinateSpace: .global)
+                            .onEnded { value in
+                                let horizontal = value.translation.width
+                                let vertical = abs(value.translation.height)
+                                guard horizontal >= 72, horizontal > vertical * 1.4 else { return }
+                                action()
+                            }
+                    )
+                    .accessibilityHidden(true)
+            }
+        }
     }
 }
 

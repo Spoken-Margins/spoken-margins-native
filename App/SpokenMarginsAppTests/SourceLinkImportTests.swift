@@ -46,6 +46,17 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.id, "item-pill")
     }
 
+    func testFeedAliasesUseFinalResponseIdentityWithoutSelfLink() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AliasedFeedURLProtocol.self]
+        let coordinator = FollowedSourceCoordinator(repository: InMemorySessionRepository(), session: URLSession(configuration: configuration))
+        let candidates = try await coordinator.discover(urlString: "https://example.com/article", requiringItemMembership: true)
+        XCTAssertEqual(candidates.count, 1)
+        XCTAssertEqual(candidates.first?.source.canonicalURL, "https://example.com/canonical-feed")
+        let subscription = try await coordinator.follow(urlString: "https://example.com/rss")
+        XCTAssertEqual(subscription.source.id, candidates.first?.source.id)
+    }
+
     func testFollowedSourceAcceptsLargeFeedAndRetainsOnlyNewestTwentyFiveSuggestions() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [LargePodcastFeedURLProtocol.self]
@@ -2327,4 +2338,20 @@ private actor SequencedInterjectionTranscriber {
         }
         return transcripts.removeFirst()
     }
+}
+
+private final class AliasedFeedURLProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "example.com" }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let isArticle = request.url?.path == "/article"
+        let body = isArticle
+            ? "<html><link rel=\"alternate\" type=\"application/rss+xml\" href=\"/feed\"></html>"
+            : "<rss version=\"2.0\"><channel><title>Publisher</title><link>https://example.com</link><item><title>Article</title><link>https://example.com/article</link></item></channel></rss>"
+        let response = HTTPURLResponse(url: URL(string: isArticle ? "https://example.com/article" : "https://example.com/canonical-feed")!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": isArticle ? "text/html" : "application/rss+xml"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
 }
