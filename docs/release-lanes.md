@@ -38,6 +38,8 @@ Diagnostic C follow-up, 2026-09-08: the final single-touch slider implementation
 
 Product-owner revision, 2026-09-08 (Follow prompts): authorize the bounded #76/#77 fix on `codex/provisional-next` for duplicate Follow candidates and prompts on items from already-followed sources, with focused discovery/eligibility regressions and app verification. Preserve the pending scrubber work. No distribution is requested.
 
+Product-owner release decision, 2026-09-08 (Build 26): the owner states that Build 26 validation has passed and authorizes internal TestFlight distribution. Record the current runtime at `cd2bf54b5b6e11d7bce3036861f19aad1978636d` as `human_validated` for this candidate, cut version 0.1 (26) on `codex/provisional-next`, run release/archive verification, upload, and assign to the existing internal `Margins` group. After successful upload, preserve the exact source with `testflight/0.1-build-26` and advance `codex/testflight-triage` to that candidate. This supersedes the pending owner-recheck and no-distribution wording above for the accepted candidate. External distribution, Beta App Review, and promotion to `main` are not authorized.
+
 ## Active Branches
 
 Only these branches are active development lanes:
