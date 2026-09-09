@@ -1,0 +1,58 @@
+{
+  "info" : {
+    "arguments" : [
+      "devicectl",
+      "device",
+      "process",
+      "launch",
+      "--device",
+      "F9855B5E-675A-5050-8010-4B17AE843875",
+      "--payload-url",
+      "spokenmargins://compact-control?command=play",
+      "com.spokenmargins.native",
+      "--json-output",
+      "artifacts/validation/gate-1/local-audio-relocation-fix/device-play.json"
+    ],
+    "commandType" : "devicectl.device.process.launch",
+    "environment" : {
+      "TERM" : "dumb"
+    },
+    "jsonVersion" : 3,
+    "outcome" : "success",
+    "version" : "518.33"
+  },
+  "result" : {
+    "deviceIdentifier" : "F9855B5E-675A-5050-8010-4B17AE843875",
+    "launchOptions" : {
+      "activatedWhenStarted" : true,
+      "arguments" : [
+
+      ],
+      "environmentVariables" : {
+        "TERM" : "dumb"
+      },
+      "platformSpecificOptions" : {
+
+      },
+      "startStopped" : false,
+      "terminateExistingInstances" : false,
+      "user" : {
+        "active" : true
+      }
+    },
+    "process" : {
+      "auditToken" : [
+        4294967295,
+        501,
+        501,
+        501,
+        501,
+        25880,
+        0,
+        67528
+      ],
+      "executable" : "file:///private/var/containers/Bundle/Application/EA9735DB-5BF4-410A-BAB9-9C45A07A34AA/SpokenMarginsApp.app/SpokenMarginsApp",
+      "processIdentifier" : 25880
+    }
+  }
+}

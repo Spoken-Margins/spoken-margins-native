@@ -302,7 +302,7 @@ struct ExperienceItemDetailScreen: View {
 
     private var listeningMap: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeading("Listening Map", detail: "Private scenes prepared on this device")
+            sectionHeading("Listening Map", detail: "Scene navigation and Skim summaries")
             ExperienceSurface(tint: AppColors.evergreen.opacity(0.18)) {
                 VStack(spacing: 0) {
                     ForEach(Array(model.selectedItem.listeningMapScenes.sorted { $0.startMs < $1.startMs }.enumerated()), id: \.element.id) { index, scene in

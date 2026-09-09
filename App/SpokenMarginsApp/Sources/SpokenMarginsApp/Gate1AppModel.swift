@@ -893,6 +893,7 @@ final class Gate1AppModel: ObservableObject {
     private var interjectionAudioCompletionTask: Task<Void, Never>?
     private var skimBridgePlayer: AVPlayer?
     private var skimBridgeTask: Task<Void, Never>?
+    private var preparingLocalAudioMapItems = Set<String>()
     private var commentaryCuePlayer: AVAudioPlayer?
     #endif
     private var announcedImportedInterjectionIDs: Set<String> = []
@@ -1399,7 +1400,7 @@ final class Gate1AppModel: ObservableObject {
 
     var listeningMapGenerationAvailabilityDescription: String {
         if !selectedItem.listeningMapScenes.isEmpty {
-            return "This podcast has a private Listening Map with \(selectedItem.listeningMapScenes.count) scene\(selectedItem.listeningMapScenes.count == 1 ? "" : "s")."
+            return "This item has a private Listening Map with \(selectedItem.listeningMapScenes.count) scene\(selectedItem.listeningMapScenes.count == 1 ? "" : "s")."
         }
         if !selectedItem.mediaChapters.isEmpty {
             return "This podcast already includes publisher chapters. A generated Listening Map is unnecessary."
@@ -1723,6 +1724,7 @@ final class Gate1AppModel: ObservableObject {
             }), let engine {
                 activeItemId = restoredSession.itemId
                 snapshot = try engine.inspectSession(sessionId: restoredSession.id)
+                try prepareSourceMediaPlayback(itemId: restoredSession.itemId)
                 selectedItem = try loadItemDetail(id: restoredSession.itemId, store: store)
                 diagnostics["restoredSession"] = restoredSession.id
                 diagnostics["restoredSessionMode"] = "paused_without_autoplay"
@@ -2320,6 +2322,7 @@ final class Gate1AppModel: ObservableObject {
                 guard let store = self.store else { return }
                 self.libraryItems = try self.loadLibraryRows(store: store)
                 self.markOnboardingSteps([.addedOwnSource, .addedFromFiles])
+                self.refreshSpokenMarginsPackageImportAfterAddingSource()
                 if openWhenFinished {
                     self.selectedItem = try self.loadItemDetail(id: item.id, store: store)
                     self.activeItemId = item.id
@@ -3344,9 +3347,9 @@ final class Gate1AppModel: ObservableObject {
         stopSpeechPreviews()
         streamingSpeechQueue.stopAndClear()
         scheduleTextAudioPrewarmIfNeeded(itemId: activeItemId)
-        preparePodcastPlayback(itemId: activeItemId)
         beginTextPlaybackStartupBackgroundTaskIfNeeded(itemId: activeItemId)
         run { engine in
+            try prepareSourceMediaPlayback(itemId: activeItemId)
             let started = try engine.startSession(itemId: activeItemId)
             snapshot = try applyPreferredPlaybackRate(to: started, engine: engine)
             if let store, let sessionId = snapshot.sessionId {
@@ -4148,8 +4151,9 @@ final class Gate1AppModel: ObservableObject {
         return safePodcastEvidenceComponent("\(ttsVoiceSelection.rawValue)-\(systemIdentifier)")
     }
 
-    private func summaryBridgeAssetID(itemId: String, proposalId: String, sceneId: String) -> String {
-        "summary-bridge-\(safePodcastEvidenceComponent(itemId))-\(safePodcastEvidenceComponent(proposalId))-\(safePodcastEvidenceComponent(sceneId))-\(currentSummaryBridgeVoiceKey())"
+    private func summaryBridgeAssetID(itemId: String, proposalId: String, sceneId: String, suppliedAssetId: String? = nil) -> String {
+        let voiceKey = suppliedAssetId.map { "supplied-\(safePodcastEvidenceComponent($0))" } ?? currentSummaryBridgeVoiceKey()
+        return "summary-bridge-\(safePodcastEvidenceComponent(itemId))-\(safePodcastEvidenceComponent(proposalId))-\(safePodcastEvidenceComponent(sceneId))-\(voiceKey)"
     }
 
     private func prepareSummaryBridgeAsset(
@@ -4160,10 +4164,13 @@ final class Gate1AppModel: ObservableObject {
     ) async throws -> OwnedOfflineAsset? {
         guard let summary = scene.summaryText?.trimmingCharacters(in: .whitespacesAndNewlines),
               !summary.isEmpty else { return nil }
-        let assetID = summaryBridgeAssetID(itemId: itemId, proposalId: proposalId, sceneId: scene.id)
+        let assetID = summaryBridgeAssetID(itemId: itemId, proposalId: proposalId, sceneId: scene.id, suppliedAssetId: scene.summaryAssetId)
         if let existing = try store.loadOwnedOfflineAssets().first(where: {
             $0.id == assetID && $0.integrity == .valid
-        }) { return existing }
+        }), resolvedApplicationSupportAssetURL(for: existing.relativePath) != nil { return existing }
+        // An authored voice is part of the imported experience, not a request
+        // to silently synthesize replacement speech in the current system voice.
+        guard scene.summaryAssetId == nil else { return nil }
         let directory = try episodeMapDirectory(itemId: itemId)
             .appending(path: "SummaryBridges", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -4311,7 +4318,8 @@ final class Gate1AppModel: ObservableObject {
         let assetID = summaryBridgeAssetID(
             itemId: activeItemId,
             proposalId: proposal.id,
-            sceneId: summaryScene.id
+            sceneId: summaryScene.id,
+            suppliedAssetId: summaryScene.summaryAssetId
         )
         guard let asset = (try? store.loadOwnedOfflineAssets())?.first(where: {
             $0.id == assetID && $0.category == .summaryBridge && $0.integrity == .valid
@@ -4909,6 +4917,7 @@ final class Gate1AppModel: ObservableObject {
             let store = try requireStore()
             activeItemId = id
             selectedItem = try loadItemDetail(id: id, store: store)
+            prepareImportedLocalAudioBridges(itemId: id)
             scheduleTextAudioPrewarmIfNeeded(itemId: id)
             listeningMapJSON = ""
             screen = .item
@@ -4921,6 +4930,7 @@ final class Gate1AppModel: ObservableObject {
 
     func startItem(id: String) {
         guard !rejectNavigationOrSessionMutationWhileRecording("start_item") else { return }
+        prepareImportedLocalAudioBridges(itemId: id)
         if libraryItems.first(where: { $0.id == id })?.startupAudioState == .preparing {
             scheduleStartupAudioPreparationIfNeeded(itemId: id)
             diagnostics["startupAudioPlayback:\(id)"] = "started_without_waiting_for_opening_buffer"
@@ -4981,7 +4991,7 @@ final class Gate1AppModel: ObservableObject {
                 _ = try? engine.stopPlayback()
             }
             let inspected = try engine.inspectSession(sessionId: session.id)
-            preparePodcastPlayback(itemId: session.itemId)
+            try prepareSourceMediaPlayback(itemId: session.itemId)
             snapshot = try applyPreferredPlaybackRate(to: inspected, engine: engine)
             selectedItem = try loadItemDetail(id: session.itemId, store: store)
             try refreshLibraryRows(store: store)
@@ -5011,7 +5021,7 @@ final class Gate1AppModel: ObservableObject {
                 _ = try? engine.stopPlayback()
             }
             _ = try engine.inspectSession(sessionId: session.id)
-            preparePodcastPlayback(itemId: session.itemId)
+            try prepareSourceMediaPlayback(itemId: session.itemId)
             do {
                 if session.completionPercent >= 100 {
                     let inspected = try engine.inspectSession(sessionId: session.id)
@@ -6888,6 +6898,18 @@ final class Gate1AppModel: ObservableObject {
                importedLayerHasValidItemAssociation(existing, store: store) {
                 if let itemId = existing.itemId {
                     openItem(id: itemId)
+                    if let item = try? store.loadItem(id: itemId), item.mediaType == "audiobook" {
+                        Task { @MainActor [weak self] in
+                            defer { try? FileManager.default.removeItem(at: root) }
+                            guard let self else { return }
+                            do {
+                                try await self.verifyLocalAudioForImport(item, contents: contents)
+                                try await self.activateImportedLocalAudioMaps(item: item, contents: contents)
+                                self.reportSuccess("Restored this listening package. Playback has not started.")
+                            } catch { self.reportFailure(error, context: "Restoring listening package failed") }
+                        }
+                        return true
+                    }
                     if let localURL = podcastDownloadCoordinator?.validatedLocalURL(for: itemId) {
                         resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
                     }
@@ -6995,6 +7017,9 @@ final class Gate1AppModel: ObservableObject {
                 }
                 let item = try itemId.map { try store.loadItem(id: $0) }
                 let localItem = item.map(self.localSharedItemIdentity(for:))
+                if let item, item.mediaType == "audiobook" {
+                    try await self.verifyLocalAudioForImport(item, contents: review.contents)
+                }
                 let itemText = item?.text
                 let disposition: ImportedCommentaryImportDisposition
                 if let digest = review.contents.manifest.contentDigest,
@@ -7023,8 +7048,6 @@ final class Gate1AppModel: ObservableObject {
                 case .imported(let layerId, let interjectionIds):
                     self.diagnostics["lastSpokenMarginsPackageImport"] = "imported:\(layerId):\(interjectionIds.count)"
                 }
-                self.spokenMarginsPackageImportReview = nil
-                self.isImportingSpokenMarginsPackage = false
                 if let itemId {
                     self.activeItemId = itemId
                     self.libraryItems = try self.loadLibraryRows(store: store)
@@ -7040,16 +7063,117 @@ final class Gate1AppModel: ObservableObject {
                             userInitiated: true
                         )
                     }
-                    if let localURL = self.podcastDownloadCoordinator?.validatedLocalURL(for: itemId) {
+                    if let item, item.mediaType == "audiobook" {
+                        try await self.activateImportedLocalAudioMaps(item: item, contents: review.contents)
+                    } else if let localURL = self.podcastDownloadCoordinator?.validatedLocalURL(for: itemId) {
                         self.resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
                     }
                 }
+                self.spokenMarginsPackageImportReview = nil
+                self.isImportingSpokenMarginsPackage = false
                 self.reportConfirmation("Imported shared Margins. Playback has not started.")
             } catch {
                 self.isImportingSpokenMarginsPackage = false
                 self.spokenMarginsPackageImportError = error.localizedDescription
                 self.diagnostics["lastSpokenMarginsPackageImport"] = "failed:\(error.localizedDescription)"
                 self.reportFailure(error, context: "Shared Margins import failed")
+            }
+        }
+    }
+
+    private func verifyLocalAudioForImport(_ item: Item, contents: VerifiedSpokenMarginsPackage) async throws {
+        guard let url = resolvedOwnedAudiobookURL(for: item) else {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("Local source audio is unavailable")
+        }
+        let actualDigest = try await Task.detached(priority: .utility) {
+            try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: url)
+        }.value
+        let recipient = localSharedItemIdentity(for: item)
+        guard actualDigest == recipient.exactEditionSHA256,
+              ExactLocalAudioImport.matches(contents.manifest.item, recipient) else {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("The audio bytes do not match this listening package")
+        }
+        for proposal in contents.listeningMapProposals {
+            _ = try ExactLocalAudioImport.projection(
+                proposal: proposal, source: contents.manifest.item, recipient: recipient, itemId: item.id
+            )
+        }
+    }
+
+    private func activateImportedLocalAudioMaps(item: Item, contents: VerifiedSpokenMarginsPackage) async throws {
+        let store = try requireStore()
+        let recipient = localSharedItemIdentity(for: item)
+        for proposal in contents.listeningMapProposals {
+            let projection = try ExactLocalAudioImport.projection(
+                proposal: proposal, source: contents.manifest.item, recipient: recipient, itemId: item.id
+            )
+            for scene in proposal.scenes where scene.summaryAssetId != nil {
+                try await adoptSuppliedSummary(scene: scene, proposalId: proposal.id, itemId: item.id, contents: contents, store: store)
+            }
+            try store.savePortableListeningMapProposal(proposal, itemId: item.id)
+            try store.saveResolvedListeningMapProjection(projection)
+        }
+        if selectedItem.id == item.id { refreshSelectedItem() }
+        prepareImportedLocalAudioBridges(itemId: item.id)
+    }
+
+    private func adoptSuppliedSummary(
+        scene: PortableListeningMapScene, proposalId: String, itemId: String,
+        contents: VerifiedSpokenMarginsPackage, store: SQLiteSessionStore
+    ) async throws {
+        guard let suppliedID = scene.summaryAssetId,
+              let descriptor = contents.manifest.assets.first(where: { $0.id == suppliedID && $0.role == SpokenMarginsAssetRole.summaryVoice }),
+              let sourceURL = contents.extractedAssetURLs[suppliedID],
+              let checksum = descriptor.sha256, let byteCount = descriptor.byteCount else {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("Supplied summary audio is unavailable")
+        }
+        let assetID = summaryBridgeAssetID(itemId: itemId, proposalId: proposalId, sceneId: scene.id, suppliedAssetId: suppliedID)
+        let relativePath = "SpokenMargins/EpisodeMaps/\(safePodcastEvidenceComponent(itemId))/SummaryBridges/\(assetID).m4a"
+        let support = try applicationSupportDirectory()
+        let destination = support.appending(path: relativePath)
+        let ledger = offlineStorageLedger ?? OfflineStorageLedger(repository: store, rootDirectory: support)
+        let reservation = try await ledger.reserve(ownerId: assetID, byteCount: Int64(byteCount))
+        do {
+            try await Task.detached(priority: .utility) {
+                guard try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: sourceURL) == checksum else {
+                    throw SpokenMarginsPackageArchiveError.invalidAsset(suppliedID)
+                }
+                try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data(contentsOf: sourceURL).write(to: destination, options: .atomic)
+            }.value
+            try await ledger.commit(reservationId: reservation.id, asset: OwnedOfflineAsset(
+                id: assetID, itemId: itemId, category: .summaryBridge, relativePath: relativePath,
+                byteCount: Int64(byteCount), checksumSHA256: checksum, isReproducible: false
+            ))
+        } catch {
+            try? await ledger.release(reservationId: reservation.id)
+            throw error
+        }
+    }
+
+    private func prepareImportedLocalAudioBridges(itemId: String) {
+        guard let store, let item = try? store.loadItem(id: itemId), item.mediaType == "audiobook",
+              let projection = try? store.loadResolvedListeningMapProjection(itemId: itemId),
+              let proposals = try? store.loadPortableListeningMapProposals(itemId: itemId),
+              let proposal = proposals.first(where: { $0.id == projection.proposalId }),
+              preparingLocalAudioMapItems.insert(itemId).inserted else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.preparingLocalAudioMapItems.remove(itemId) }
+            do {
+                for scene in proposal.scenes where scene.eligibility == .eligible {
+                    try Task.checkCancellation()
+                    guard try await self.prepareSummaryBridgeAsset(
+                        itemId: itemId, proposalId: proposal.id, scene: scene, store: store
+                    ) != nil else {
+                        throw SessionKitError.persistenceFailed("Summary audio was not prepared")
+                    }
+                    self.updateSkimAvailability()
+                }
+                self.diagnostics["localAudioSkim:\(itemId)"] = "ready"
+            } catch {
+                self.diagnostics["localAudioSkim:\(itemId)"] = "failed:\(error.localizedDescription)"
+                self.reportWarning("Some Skim summaries are not ready. Reopen the item to retry, or reimport the package to restore its supplied voices.")
             }
         }
     }
@@ -7181,10 +7305,14 @@ final class Gate1AppModel: ObservableObject {
         return matches.count == 1 ? matches[0].id : nil
     }
 
-    private func localSharedItemIdentity(for item: Item) -> SharedItemIdentity {
+    func localSharedItemIdentity(for item: Item) -> SharedItemIdentity {
         let isPodcast = item.media?.sourceType == .remoteStream || item.media?.sourceType == .nativeMediaFile
         let external = item.externalReference.flatMap { normalizedSharingURL($0) == nil ? nil : $0 }
         let enclosure = item.media?.url.flatMap { normalizedSharingURL($0) == nil ? nil : $0 }
+        let localAudioDigest = item.mediaType == "audiobook"
+            ? (try? store?.loadOwnedOfflineAssets())?.first(where: {
+                $0.itemId == item.id && $0.category == .audiobook && $0.integrity == .valid
+            })?.checksumSHA256 : nil
         return SharedItemIdentity(
             itemType: sharedItemType(for: item),
             canonicalURL: external ?? enclosure,
@@ -7193,7 +7321,7 @@ final class Gate1AppModel: ObservableObject {
             enclosureURL: enclosure,
             durationMs: item.media?.durationMs,
             normalizedContentSHA256: isPodcast ? nil : PortableArticleAnchorResolver.normalizedContentSHA256(item.text ?? ""),
-            exactEditionSHA256: isPodcast ? nil : PortableArticleAnchorResolver.exactEditionSHA256(item.text ?? "")
+            exactEditionSHA256: localAudioDigest ?? (isPodcast ? nil : PortableArticleAnchorResolver.exactEditionSHA256(item.text ?? ""))
         )
     }
 
@@ -8754,6 +8882,7 @@ final class Gate1AppModel: ObservableObject {
             if let restoredSnapshot {
                 snapshot = restoredSnapshot
                 activeItemId = restoredSnapshot.itemId ?? activeItemId
+                try prepareSourceMediaPlayback(itemId: activeItemId)
                 refreshSelectedItem()
                 diagnostics["sessionRestoredAfterRuntimeRebuild"] = sessionId
             }
@@ -12167,7 +12296,7 @@ final class Gate1AppModel: ObservableObject {
             enclosureURL: enclosure,
             durationMs: item.media?.durationMs,
             normalizedContentSHA256: articleNormalized,
-            exactEditionSHA256: exactDigest ?? articleExact
+            exactEditionSHA256: exactDigest ?? localSharedItemIdentity(for: item).exactEditionSHA256 ?? articleExact
         )
     }
 
@@ -12196,6 +12325,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func sharedItemType(for item: Item) -> SharedItemType {
+        if item.mediaType == "audiobook" { return .other }
         if item.media?.sourceType == .remoteStream || item.media?.sourceType == .nativeMediaFile {
             return .podcast
         }
@@ -14645,7 +14775,26 @@ final class Gate1AppModel: ObservableObject {
         podcastDownloadCoordinator?.register(itemId: itemId, remoteURL: remoteURL)
     }
 
-    private func preparePodcastPlayback(itemId: String) {
+    private func resolvedOwnedAudiobookURL(for item: Item) -> URL? {
+        // iOS can relocate the data container during an update. The ledger path
+        // is relative to today's Application Support directory; item URLs are not.
+        if let assets = try? store?.loadOwnedOfflineAssets(),
+           let asset = assets.first(where: { $0.itemId == item.id && $0.category == .audiobook && $0.integrity == .valid }),
+           let url = resolvedApplicationSupportAssetURL(for: asset.relativePath) {
+            return url
+        }
+        guard let savedURL = item.media?.url.flatMap(URL.init(string:)), savedURL.isFileURL else { return nil }
+        return resolvedApplicationSupportAssetURL(for: savedURL.path)
+    }
+
+    private func prepareSourceMediaPlayback(itemId: String) throws {
+        if let item = try store?.loadItem(id: itemId), item.mediaType == "audiobook" {
+            guard let url = resolvedOwnedAudiobookURL(for: item) else {
+                throw SessionKitError.invalidCommandForState("The imported audio file is unavailable. Restore the source audio to continue listening.")
+            }
+            _ = try engine?.updatePlaybackTransport(itemId: itemId, playbackURL: url.absoluteString, replaceActivePlayback: false)
+            return
+        }
         guard let coordinator = podcastDownloadCoordinator else { return }
         coordinator.configureActiveItem(itemId)
         if let record = podcastDownloadRecords[itemId], record.state == .evicted,

@@ -1,0 +1,9 @@
+2026-09-09 09:06:40.228 xcodebuild[57957:3695509] [MT] IDETestOperationsObserverDebug: 40.655 elapsed -- Testing started completed.
+2026-09-09 09:06:40.228 xcodebuild[57957:3695509] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-09-09 09:06:40.228 xcodebuild[57957:3695509] [MT] IDETestOperationsObserverDebug: 40.655 sec, +40.655 sec -- end
+Failing tests:
+	LocalAudioListeningPackageTests.testExactAudioImportActivatesMapResolvesMarginsAndSurvivesReconstruction()
+
+** TEST FAILED **
+
+Testing started

@@ -1,0 +1,26 @@
+[
+  {
+    "plan": "fast",
+    "status": "verified",
+    "input_sha256": "bec3e38a94c53a3f4bad40f08ef7c2b5d5a3f7913d8eec70c44c745e7df66408",
+    "manifest": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/test-runs/20260909-091005-128580-fast/manifest.json"
+  },
+  {
+    "plan": "app",
+    "status": "verified",
+    "input_sha256": "bec3e38a94c53a3f4bad40f08ef7c2b5d5a3f7913d8eec70c44c745e7df66408",
+    "manifest": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/test-runs/20260909-091024-299066-app/manifest.json"
+  },
+  {
+    "plan": "adapters",
+    "status": "verified",
+    "input_sha256": "bec3e38a94c53a3f4bad40f08ef7c2b5d5a3f7913d8eec70c44c745e7df66408",
+    "manifest": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/test-runs/20260909-091135-888744-adapters/manifest.json"
+  },
+  {
+    "plan": "speech-canary",
+    "status": "verified",
+    "input_sha256": "bec3e38a94c53a3f4bad40f08ef7c2b5d5a3f7913d8eec70c44c745e7df66408",
+    "manifest": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/test-runs/20260909-091203-263178-speech-canary/manifest.json"
+  }
+]

@@ -2,6 +2,13 @@
 
 Status: the one-way sharing MVP for issues #14, #17, #18, and #67 is implemented on `codex/sharing-next`. Automated contract, package, app-state, and build checks can establish `verified`; only the product owner can establish `human_validated`.
 
+## Local-audio guided sessions (2026-09-08)
+
+The provisional lane additionally supports recipient-supplied audiobooks with exact-byte identity. The archive carries `itemType: other`, the source audio SHA-256 and duration, bounded media anchors, an optional portable map, and an explicitly labeled commentary layer. Narration remains a separately imported audio file. Local source matching uses the owned audiobook checksum; confirmation rehashes the actual file off the main actor before accepting the import. A matching digest does not authorize out-of-range anchors or overlapping map scenes. Imported maps retain scene provenance and are persisted separately from publisher chapters. Eligible text-only summaries use the existing local Skim bridge route. For exact local-audio packages, explicitly supplied summary-voice assets are integrity-checked and adopted into the offline ledger under a voice-stable identity. They play at their supplied rate, survive device voice preference changes, and are never replaced with system TTS. Reopening retries incomplete local preparation; reimporting restores supplied assets. The owner requested Chatterbox or Kokoro for this authored session.
+
+An AI professor layer can contain authorized synthetic TTS Margins with `sender_approved_tts` provenance and a clearly synthetic sender label. These are prepared commentary, not live AI answers or a recording of a named academic. Guided playback supplies the cue and plays each intervention; Companion waits for Listen or Dismiss. Import itself never starts playback. Skim Forward summarizes the current scene and lands at the next; Skim Backward recaps the previous scene and lands at the current scene start. Product-owner use is still required to establish listening quality.
+
+
 ## Implemented boundary
 
 The foundation creates a `.spokenmargins` archive from one or more sender-approved share revisions. A share revision is a value snapshot derived from a private capture, so cleanup and sender editing never rewrite raw audio, raw transcript, or the local `Interjection`. Packaging accepts only explicitly selected revisions and either:

@@ -1,0 +1,67 @@
+{
+  "devices" : [
+    {
+      "architecture" : "arm64",
+      "deviceId" : "856FA6EF-5E03-4120-939B-F0EF42A804E8",
+      "deviceName" : "iPhone 17 Pro",
+      "modelName" : "iPhone 17 Pro",
+      "osBuildNumber" : "23F77",
+      "osVersion" : "26.5",
+      "platform" : "iOS Simulator"
+    }
+  ],
+  "testNodes" : [
+    {
+      "children" : [
+        {
+          "children" : [
+            {
+              "children" : [
+                {
+                  "children" : [
+                    {
+                      "name" : "LocalAudioListeningPackageTests.swift:112: XCTAssertGreaterThan failed: (\"5000\") is not greater than (\"5100\") - Saved-session playback must survive container relocation",
+                      "nodeType" : "Failure Message"
+                    },
+                    {
+                      "name" : "LocalAudioListeningPackageTests.swift:127: XCTAssertTrue failed",
+                      "nodeType" : "Failure Message"
+                    },
+                    {
+                      "name" : "LocalAudioListeningPackageTests.swift:66: [Internal] Thread running at User-interactive quality-of-service class waiting on a lower QoS thread running at Default quality-of-service class. Investigate ways to avoid priority inversions",
+                      "nodeType" : "Runtime Warning"
+                    }
+                  ],
+                  "duration" : "6s",
+                  "durationInSeconds" : 6.453561067581177,
+                  "name" : "testExactAudioImportActivatesMapResolvesMarginsAndSurvivesReconstruction()",
+                  "nodeIdentifier" : "LocalAudioListeningPackageTests/testExactAudioImportActivatesMapResolvesMarginsAndSurvivesReconstruction()",
+                  "nodeIdentifierURL" : "test://com.apple.xcode/SpokenMarginsNative/SpokenMarginsAppTests/LocalAudioListeningPackageTests/testExactAudioImportActivatesMapResolvesMarginsAndSurvivesReconstruction",
+                  "nodeType" : "Test Case",
+                  "result" : "Failed"
+                }
+              ],
+              "name" : "LocalAudioListeningPackageTests",
+              "nodeIdentifierURL" : "test://com.apple.xcode/SpokenMarginsNative/SpokenMarginsAppTests/LocalAudioListeningPackageTests",
+              "nodeType" : "Test Suite",
+              "result" : "Failed"
+            }
+          ],
+          "name" : "SpokenMarginsAppTests",
+          "nodeIdentifierURL" : "test://com.apple.xcode/SpokenMarginsNative/SpokenMarginsAppTests",
+          "nodeType" : "Unit test bundle",
+          "result" : "Failed"
+        }
+      ],
+      "name" : "AppBehavior",
+      "nodeType" : "Test Plan",
+      "result" : "Failed"
+    }
+  ],
+  "testPlanConfigurations" : [
+    {
+      "configurationId" : "1",
+      "configurationName" : "Default"
+    }
+  ]
+}

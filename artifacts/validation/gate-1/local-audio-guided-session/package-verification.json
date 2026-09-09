@@ -1,0 +1,85 @@
+{
+  "archiveRoundTrip": true,
+  "contentDigest": "fe06306dd0997b14202f288fb1af64a4f1249ce5abbde126fbb6bf1a1f9d7579",
+  "deterministicArchive": true,
+  "exactSourceAnchors": true,
+  "humanValidated": false,
+  "professorMargins": 11,
+  "scenes": 16,
+  "sourceSHA256": "f2503f46bcbe07e604c343b36f7f28251f52abd4c912ae2f7ba4584d8a500491",
+  "suppliedSkimVoices": 16,
+  "voiceModel": "Chatterbox Turbo fp16",
+  "wrongSourceRejected": true,
+  "boundaryASRChecks": {
+    "passed": 18,
+    "total": 18
+  },
+  "chatterboxASRChecks": {
+    "passed": 27,
+    "total": 27,
+    "maximumWordErrorRate": 0.06666666666666667
+  },
+  "professorDurationSeconds": 239.8,
+  "skimDurationSeconds": 320.4,
+  "archiveSHA256": "31e967d4c66e986b3faf21d97437bd47b23a1d0535471d2f00e85c6980b404ab",
+  "appVerification": [
+    {
+      "plan": "fast",
+      "status": "verified",
+      "inputSHA256": "523bc47767e00f1c518bd731765af2eb24734380065923ce37867910d896b5fa",
+      "counts": {
+        "passed": 266,
+        "failed": 0,
+        "skipped": 1
+      },
+      "manifest": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/test-runs/20260908-213322-774394-fast/manifest.json"
+    },
+    {
+      "plan": "app",
+      "status": "verified",
+      "inputSHA256": "523bc47767e00f1c518bd731765af2eb24734380065923ce37867910d896b5fa",
+      "counts": {
+        "passed": 393,
+        "failed": 0,
+        "skipped": 0
+      },
+      "manifest": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/test-runs/20260908-211506-755527-app/manifest.json"
+    },
+    {
+      "plan": "adapters",
+      "status": "verified",
+      "inputSHA256": "523bc47767e00f1c518bd731765af2eb24734380065923ce37867910d896b5fa",
+      "counts": {
+        "passed": 8,
+        "failed": 0,
+        "skipped": 0
+      },
+      "manifest": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/test-runs/20260908-211837-296276-adapters/manifest.json"
+    },
+    {
+      "plan": "speech-canary",
+      "status": "verified",
+      "inputSHA256": "523bc47767e00f1c518bd731765af2eb24734380065923ce37867910d896b5fa",
+      "counts": {
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "manifest": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/test-runs/20260908-212005-969363-speech-canary/manifest.json"
+    },
+    {
+      "plan": "ui",
+      "status": "verified",
+      "inputSHA256": "523bc47767e00f1c518bd731765af2eb24734380065923ce37867910d896b5fa",
+      "counts": {
+        "passed": 8,
+        "failed": 0,
+        "skipped": 0
+      },
+      "manifest": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/test-runs/20260908-212703-381880-ui/manifest.json"
+    }
+  ],
+  "deviceBuild": "Signed generic iOS build succeeded",
+  "developmentBuild": "0.1 (26), base fdbceda0dd840a541653ac6fe84957ffd6bec704 plus the verified working tree",
+  "testflightUpload": false
+}

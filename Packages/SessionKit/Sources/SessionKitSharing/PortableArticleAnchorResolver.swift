@@ -213,6 +213,17 @@ public enum ImportedItemResolver {
         guard canRepresentSameWork(item, localItem) else {
             return result(status: .wrongSource, interjections: interjections, evidenceClass: .unresolved)
         }
+        if item.itemType == .other, item.durationMs != nil {
+            let resolutions = Dictionary(uniqueKeysWithValues: interjections.map { record in
+                (record.packageScopedId, ExactLocalAudioImport.resolution(
+                    anchor: record.anchor, source: item, recipient: localItem
+                ))
+            })
+            return ImportedPackageSourceResolution(
+                status: resolutions.values.allSatisfy { $0.evidenceClass == .exactEdition } ? .resolved : .contextOnly,
+                anchorsByPackageScopedId: resolutions
+            )
+        }
         guard item.itemType != .podcast, let itemText else {
             return result(status: .contextOnly, interjections: interjections, evidenceClass: .unresolved)
         }

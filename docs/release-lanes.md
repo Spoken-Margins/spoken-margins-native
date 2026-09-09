@@ -43,6 +43,12 @@ Product-owner release decision, 2026-09-08 (Build 26): the owner states that Bui
 
 ## Active Branches
 
+Product-owner revision, 2026-09-08 (local-audio guided listening): extend the provisional #27/#88/#90 integration to the owner's exact local-audio Introduction session. Author a `.spokenmargins` package with source-grounded Skim scene summaries and explicitly labeled synthetic AI professor Margins. Support recipient-supplied local audio through exact-byte source matching, verified timed Margin placement, imported map activation, and locally rendered Skim bridges. Preserve podcast edition alignment and existing transport semantics; source narration remains a separately supplied file. The owner subsequently required Chatterbox or Kokoro voice quality. For this exact local-audio package, author-supplied synthetic summary audio may use the existing summary-voice asset fields and be adopted locally without system-TTS replacement; this narrows the earlier podcast-only prohibition on transporting rendered summaries. No public distribution, embedded-source schema expansion, or live AI conversation is authorized. Verify wrong-source rejection, map bounds, import persistence, bridge playback, and ordinary source/Margin transport before handoff. Product-owner testing alone establishes `human_validated` behavior.
+
+Product-owner failure report, 2026-09-09: the Introduction source remains silent on Play while imported Skim audio plays. Correct native local-audio transport resolution in the authorized integration, verify actual source advancement with the real media adapter (including pause/resume and return from Skim), and reinstall the development update without resetting the Library. The earlier no-op source test did not establish source playback; this flow remains pending human validation.
+
+Product-owner follow-up, 2026-09-09: the first native-URL correction still fails on the phone. The device catalog retains a pre-update absolute container URL while its source file remains in app-owned Audiobooks storage. Extend the same fix to current-container source resolution on playback and import verification, with relocated-file saved-session regression and device evidence before another handoff.
+
 Only these branches are active development lanes:
 
 | Branch | Role | Current authorized scope | Merge target |

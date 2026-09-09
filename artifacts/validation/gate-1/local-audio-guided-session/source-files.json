@@ -1,0 +1,11 @@
+{
+  "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift": "edf1c1b435b46519103bfc451db8ab143ec5c67bc830f0566da2fe4a157632bc",
+  "App/SpokenMarginsApp/Sources/SpokenMarginsApp/ExperienceItemDetailScreen.swift": "bd7eea4bfb4a6f319ba820dae19ce9aa7849bde05a3d7686e8f5778bdb1952ad",
+  "App/SpokenMarginsAppTests/LocalAudioListeningPackageTests.swift": "0f648d147e8ed7f3534363886000fd934b9c091db99f0f1d756749f20da07641",
+  "Packages/SessionKit/Sources/SessionKitSharing/ExactLocalAudioImport.swift": "2ddb77df6534f7ff5bc22444403d13513afc7a1ad78095b656f936ba02b4648f",
+  "Packages/SessionKit/Sources/SessionKitSharing/PortableArticleAnchorResolver.swift": "6e222375b2c397871d9c8ab4df6538606f1b7e8836bff39e6a0cb114315c967e",
+  "Packages/SessionKit/Tests/SessionKitTests/ExactLocalAudioImportTests.swift": "06c4fce05fb9779ed40896b0da911542cb804405ed47dab9650cad6c3a997863",
+  "SpokenMarginsNative.xcodeproj/project.pbxproj": "9cd33290856c1c42904a2786e6338e636c3472b76bbb24c1a15250fd1f2e6612",
+  "docs/release-lanes.md": "7f70f46b311a268f089d35381ebbee968c118980239001d381696d3099f38aed",
+  "docs/interjection-sharing-and-article-acquisition.md": "6984ca7d8b362cf5ad37c32d87372afc92c1c054829eb0405ba0e42d5a528b49"
+}

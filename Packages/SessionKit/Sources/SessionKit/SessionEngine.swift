@@ -3713,7 +3713,9 @@ public final class SessionEngine {
             title: item.title,
             subtitle: subtitle.isEmpty ? nil : subtitle,
             sourceURL: item.media?.url ?? item.externalReference,
-            playbackURL: playbackURLOverrides[item.id],
+            // Native media IDs name library assets; they need not be playable URLs.
+            playbackURL: playbackURLOverrides[item.id]
+                ?? (item.media?.sourceType == .nativeMediaFile ? item.media?.url : nil),
             artworkURL: nil,
             durationMs: item.media?.durationMs ?? timeline?.durationMs,
             sourceType: item.media?.sourceType,
