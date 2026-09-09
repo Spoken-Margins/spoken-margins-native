@@ -22,10 +22,10 @@ struct ExperienceItemDetailScreen: View {
                     SourceFollowSuggestionCard()
                     ManualSourceFollowButton()
                     if !model.selectedItem.overview.isEmpty { overview }
+                    sessions
                     structure
                     if !model.selectedItem.listeningMapScenes.isEmpty { listeningMap }
                     recentMargins
-                    sessions
                     readiness
                     advanced
                 }
@@ -184,7 +184,7 @@ struct ExperienceItemDetailScreen: View {
             Button {
                 model.startItem(id: model.selectedItem.id)
             } label: {
-                Label(model.selectedItemPreferredContinuationSession == nil ? "Start listening" : "Continue listening", systemImage: "play.fill")
+                Label(model.selectedItemPreferredContinuationSession == nil ? "Start listening" : "Continue", systemImage: "play.fill")
                     .frame(maxWidth: .infinity, minHeight: 52)
             }
             .buttonStyle(.borderedProminent)

@@ -1,0 +1,7 @@
+{
+  "name": "spoken-margins-experience-book",
+  "private": true,
+  "type": "module",
+  "scripts": {"dev": "node scripts/serve.mjs", "build": "node scripts/build.mjs"},
+  "engines": {"node": ">=22"}
+}

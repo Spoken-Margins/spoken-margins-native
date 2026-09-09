@@ -1,0 +1,17 @@
+[
+  {
+    "attachments" : [
+      {
+        "configurationName" : "Default",
+        "deviceId" : "BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+        "deviceName" : "Spoken Margins Test Suite iPad",
+        "exportedFileName" : "D557A90F-CF2C-482B-B0A1-9E0A2D59AEED.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "library-compact-row_0_8CFF8856-7FE5-456D-A42C-915588EDB0B6.png",
+        "timestamp" : 1788971313.714
+      }
+    ],
+    "testIdentifier" : "Gate1FlowUITests/testLibraryCompactRowStaysDense()",
+    "testIdentifierURL" : "test://com.apple.xcode/SpokenMarginsNative/SpokenMarginsAppUITests/Gate1FlowUITests/testLibraryCompactRowStaysDense"
+  }
+]

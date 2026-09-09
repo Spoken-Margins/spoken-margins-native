@@ -1,0 +1,331 @@
+[
+  {
+    "id": "F01",
+    "title": "An empty promise above the Library",
+    "severity": "S2",
+    "basis": "Observed",
+    "observation": "Continue listening remains a heading when no resumable hero is present.",
+    "impact": "The first screen implies unfinished work without offering it.",
+    "proposal": "Show Continue only when a resumable item exists; otherwise lead with Library and a first-listen invitation.",
+    "test": "With no active or unfinished item, can a newcomer name the next action without searching?",
+    "evidence": [
+      "evidence/01-library.jpg",
+      "evidence/18-added.jpg"
+    ]
+  },
+  {
+    "id": "F02",
+    "title": "Three filters share the same name",
+    "severity": "S2",
+    "basis": "Observed",
+    "observation": "Type, completion and availability controls each read All; the latter two accessibility targets also expose only All.",
+    "impact": "Users must infer each dimension from a small icon or open menus to discover it.",
+    "proposal": "Use one Filters action with an active count and named groups: Type, Progress, Availability. Keep sort separate.",
+    "test": "Ask someone to find unfinished items ready offline; compare wrong-menu openings against the current screen.",
+    "evidence": [
+      "evidence/01-library.jpg",
+      "evidence/22-large-library.jpg"
+    ]
+  },
+  {
+    "id": "F03",
+    "title": "Intake choices disappear below a half sheet",
+    "severity": "S2",
+    "basis": "Observed",
+    "observation": "Add Source initially opens at medium height. Document and Audiobook labels sit below the visible area; Paste Text initially clips its action area.",
+    "impact": "Users may miss supported inputs or mistake a form for an unfinished screen.",
+    "proposal": "Use a large sheet with compact input rows and a persistent Add action after input selection.",
+    "test": "Find and import a file from the first Add view at standard and largest text sizes without guidance.",
+    "evidence": [
+      "evidence/02-add.jpg",
+      "evidence/03-paste.jpg",
+      "evidence/17-paste-keyboard.jpg"
+    ]
+  },
+  {
+    "id": "F04",
+    "title": "Source means two different things",
+    "severity": "S2",
+    "basis": "Observed + code",
+    "observation": "Add Source imports an item, while Sources follows feeds and manages candidates.",
+    "impact": "A listener must learn the distinction between a listening item and an ongoing subscription before adding anything.",
+    "proposal": "Call the import action Add to Library. Test Following as the Sources label; retain separate follow and add consent.",
+    "test": "Ask users where to add one article versus follow future episodes. Reject the rename if Quick Folder becomes harder to locate.",
+    "evidence": [
+      "evidence/02-add.jpg",
+      "evidence/11-sources.jpg"
+    ]
+  },
+  {
+    "id": "F05",
+    "title": "Operational metadata appears as attribution",
+    "severity": "S2",
+    "basis": "Observed",
+    "observation": "A pasted item displays manual-import; the seed item displays bracketed reference syntax.",
+    "impact": "Internal provenance is correct data but weak human-facing identity.",
+    "proposal": "Display Pasted text, original publisher, or file name as appropriate; preserve the original reference in details.",
+    "test": "Can someone distinguish two imported versions and recognize where each came from without internal IDs?",
+    "evidence": [
+      "evidence/18-added.jpg",
+      "evidence/04-item.jpg"
+    ]
+  },
+  {
+    "id": "F06",
+    "title": "The capture action shares priority with synthesis",
+    "severity": "S2",
+    "basis": "Observed",
+    "observation": "Summarize Notes is alongside Interject even before a useful set of notes exists.",
+    "impact": "The infrequent reflection action competes with the product's frequent capture loop.",
+    "proposal": "Give Add a Margin a full-width reachable action. Put summaries in Review with eligibility and reason.",
+    "test": "From the playing screen, ask a newcomer to save a thought. Compare hesitation, wrong taps and action time.",
+    "evidence": [
+      "evidence/05-player.jpg",
+      "evidence/14-source-player.jpg"
+    ]
+  },
+  {
+    "id": "F07",
+    "title": "Text transport icons imply track skipping",
+    "severity": "S2",
+    "basis": "Observed",
+    "observation": "Text playback exposes Previous paragraph and Next paragraph to accessibility, while the visible symbols resemble previous/next track.",
+    "impact": "People may fear jumping to another item instead of moving within the current text.",
+    "proposal": "Use visibly labeled Paragraph controls for live text, and timed 15-second controls for native/prepared media.",
+    "test": "Before pressing either control, ask what it will do. Do not replace text semantics with fictional timestamps.",
+    "evidence": [
+      "evidence/14-source-player.jpg"
+    ]
+  },
+  {
+    "id": "F08",
+    "title": "Capture vocabulary hides the outcome",
+    "severity": "S2",
+    "basis": "Observed",
+    "observation": "The player says Interject; recording says Your margin and Finish; help calls them interjections.",
+    "impact": "The connection between the action, saved object, and return behavior is learned vocabulary.",
+    "proposal": "Use Add a Margin, Recording your thought, and Save & resume. Explain Margin once as a note linked to a listening moment.",
+    "test": "Ask users what Finish saves and what plays next. Retain an alternate Type a note route only as a separately approved extension.",
+    "evidence": [
+      "evidence/15-recording-fixture.jpg",
+      "evidence/12-margins-empty.jpg"
+    ]
+  },
+  {
+    "id": "F09",
+    "title": "Permission denial explains but does not help recover",
+    "severity": "S1",
+    "basis": "Observed",
+    "observation": "Denying microphone access returns to a banner telling the user to enable access in Settings. No direct recovery action appears in the inspected banner.",
+    "impact": "The defining task stops at a moment when the listener is trying to preserve a fleeting thought.",
+    "proposal": "Provide Open Settings, a persistent explanation, and Keep listening. Propose Type instead as a new capability, clearly outside current implementation scope.",
+    "test": "Deny permission, attempt a Margin again, and recover without searching device settings or losing the listening position.",
+    "evidence": [
+      "evidence/06-recording.jpg",
+      "evidence/07-mic-denied.jpg"
+    ]
+  },
+  {
+    "id": "F10",
+    "title": "Recording is clear, but its explanation is heavy",
+    "severity": "S3",
+    "basis": "Observed with recording fixture",
+    "observation": "An exclusive red screen and two large actions communicate recording well. Anchor locked and a paragraph explain persistence and resume mechanics.",
+    "impact": "The attention cost is concentrated in language while the user is trying to speak.",
+    "proposal": "Preserve exclusivity, visible duration and locked context. Replace system phrasing with Saved at this moment and Save & resume.",
+    "test": "Can a distracted listener identify recording state and the consequence of each action at a glance?",
+    "evidence": [
+      "evidence/15-recording-fixture.jpg"
+    ]
+  },
+  {
+    "id": "F11",
+    "title": "A Margin can be copied with context before context is visible",
+    "severity": "S2",
+    "basis": "Observed + code",
+    "observation": "The inspected detail shows the user's note, item, target and Copy with Context, but no preview of the adjacent source passage.",
+    "impact": "Users cannot inspect the meaningful material they are about to copy or remember what prompted the thought.",
+    "proposal": "Add a collapsed bounded Source context preview, clear target/position, and a replay-this-moment action. Retain native-audio context bounds.",
+    "test": "Return to a note a day later, explain its source moment, then correctly predict the copied content.",
+    "evidence": [
+      "evidence/16-margin-detail.jpg"
+    ]
+  },
+  {
+    "id": "F12",
+    "title": "The Timeline asks every event to look equally important",
+    "severity": "S2",
+    "basis": "Observed",
+    "observation": "Chapters, user response and assistant response use tall cards in one chronological rail; the screen also repeats its title.",
+    "impact": "A person looking for their own note must scan source structure and other content first.",
+    "proposal": "Retain the merged timeline, add All / My Margins / Shared views, and use compact chapter rows with richer note cards.",
+    "test": "Find the last personal Margin among 20 chapters and several imported notes. Preserve source order in the All view.",
+    "evidence": [
+      "evidence/08-timeline.jpg"
+    ]
+  },
+  {
+    "id": "F13",
+    "title": "Review is visually framed as a status dashboard",
+    "severity": "S2",
+    "basis": "Observed + code",
+    "observation": "Margins begins with an eyebrow, repeated title, explanation, three counters and filter chips. No search control appears in the reviewed view.",
+    "impact": "The retrieval task is below overview chrome, and finding an old idea depends on scanning.",
+    "proposal": "Lead with note search and recent note previews; surface attention only when action is needed. Search is a proposed extension.",
+    "test": "Find a remembered phrase across 50 Margins; compare success and time with the current grouping.",
+    "evidence": [
+      "evidence/12-margins-empty.jpg"
+    ]
+  },
+  {
+    "id": "F14",
+    "title": "Sharing begins with serialization choices",
+    "severity": "S2",
+    "basis": "Observed",
+    "observation": "Share combines reviewed Margin packages, session selection, two formats, three scopes and five content toggles before Copy or Export.",
+    "impact": "The listener must translate intent into archive configuration; accidental inclusion becomes more likely.",
+    "proposal": "Begin with Copy notes with context, Share selected Margins, or Export archive. Show an exact preview before the external share sheet.",
+    "test": "Ask for one note to be sent to a notes app and a session to a chatbot. Count unnecessary decisions and scope errors.",
+    "evidence": [
+      "evidence/09-export.jpg",
+      "evidence/10-export-actions.jpg"
+    ]
+  },
+  {
+    "id": "F15",
+    "title": "The app changes visual language at utility boundaries",
+    "severity": "S3",
+    "basis": "Observed",
+    "observation": "Library/Timeline use editorial green and bone; Settings, Share and Margin detail switch to blue links and different grouped-form treatments.",
+    "impact": "Task transitions feel less connected, although native grouped forms offer useful familiarity.",
+    "proposal": "Use native forms consistently with shared tint, text styles and spacing. Preserve system sheet semantics rather than imitating custom web controls.",
+    "test": "Navigate player → note → share → back; identify location and return path at each transition.",
+    "evidence": [
+      "evidence/13-settings.jpg",
+      "evidence/09-export.jpg",
+      "evidence/16-margin-detail.jpg"
+    ]
+  },
+  {
+    "id": "F16",
+    "title": "Caught up also means nothing is configured",
+    "severity": "S2",
+    "basis": "Observed",
+    "observation": "Sources says You're caught up when no source has been followed and offers an RSS link field.",
+    "impact": "A new listener can interpret absence as completion; RSS vocabulary assumes technical knowledge.",
+    "proposal": "Separate no subscriptions, no new entries, filter-empty, loading and failed refresh. Start with Follow a podcast or site, and keep Quick Folder explicit.",
+    "test": "Start without subscriptions and add one. Then empty a configured inbox and confirm the different message makes sense.",
+    "evidence": [
+      "evidence/11-sources.jpg"
+    ]
+  },
+  {
+    "id": "F17",
+    "title": "Readiness needs a human contract",
+    "severity": "S1",
+    "basis": "Code + product-owner history",
+    "observation": "The app distinguishes startup windows, live speech fallback, preparation, downloaded media and protected storage. The Library calls the queue Offline rendering.",
+    "impact": "A generic ready/queued status can be mistaken for fully available offline listening, especially before travel.",
+    "proposal": "Use Play now, Preparing offline audio, Ready offline, and Needs connection with type-specific truthful rules. Preserve cancel/retry and immediate playback priority.",
+    "test": "Go offline with a partial text render and a downloaded podcast. Verify each status predicts actual behavior; reject any false ready state.",
+    "evidence": [
+      "App/SpokenMarginsApp/Sources/SpokenMarginsApp/ExperienceAudioPreparationQueueScreen.swift",
+      "docs/release-lanes.md"
+    ]
+  },
+  {
+    "id": "F18",
+    "title": "Largest text turns controls into the content",
+    "severity": "S1",
+    "basis": "Observed",
+    "observation": "At maximum accessibility text size, onboarding fills more than the viewport and the sort control wraps into a truncated Recently A… label before Library content appears.",
+    "impact": "People who need large text pay a disproportionate navigation and reading cost.",
+    "proposal": "Use a short optional coach, one Filters row, full-width sort disclosure and linear content. Keep large text instead of shrinking it.",
+    "test": "At maximum Dynamic Type, reach the first item, open Filters and distinguish all labels without clipped meaning.",
+    "evidence": [
+      "evidence/21-large-text.jpg",
+      "evidence/22-large-library.jpg"
+    ]
+  },
+  {
+    "id": "F19",
+    "title": "Primary action contrast still deserves a bounded fix",
+    "severity": "S1",
+    "basis": "Observed",
+    "observation": "The populated Paste Text form shows dark Add to Library text on a dark-green primary action in the captured candidate.",
+    "impact": "A primary action becomes harder to recognize and read. This observation does not establish a full contrast conformance result.",
+    "proposal": "Use a single tested semantic primary-button style with high-contrast text across enabled, disabled and pressed states.",
+    "test": "Measure actual foreground/background pairs, then visually check Add at both appearances and Increased Contrast.",
+    "evidence": [
+      "evidence/17-paste-keyboard.jpg",
+      "docs/release-lanes.md"
+    ]
+  },
+  {
+    "id": "F20",
+    "title": "Completion closes the player without a strong return to the thoughts",
+    "severity": "S2",
+    "basis": "Observed + product contract",
+    "observation": "The short sample completed and returned to Library. Completed items remain reviewable; the persistent session player is removed.",
+    "impact": "The transition honors the owner's completion rule but underplays the value created by listening.",
+    "proposal": "Preserve automatic closure. Offer a nonblocking Finished · Review your Margins entry at the top of Library, with explicit replay.",
+    "test": "Finish an item containing three Margins. Find them without restarting playback or creating a second session.",
+    "evidence": [
+      "evidence/18-added.jpg",
+      "Contracts/docs/recovery-mvp.md"
+    ]
+  },
+  {
+    "id": "F21",
+    "title": "Sharing trust must survive simplification",
+    "severity": "S1",
+    "basis": "Code",
+    "observation": "Recipient import distinguishes package integrity, unverified sender identity, missing source, separate layers and non-autoplay. Some terminology exposes transport mechanics.",
+    "impact": "Simplifying to a generic verified badge would create false trust about who spoke or whether positions match.",
+    "proposal": "Lead with who the package claims to be from, what is included, and what is missing. Keep integrity, identity and position confidence separate.",
+    "test": "Import a wrong source and a valid package with an unverified sender label. No participant should infer verified identity from a file-integrity check.",
+    "evidence": [
+      "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Build23RecipientSharingExperience.swift"
+    ]
+  },
+  {
+    "id": "F22",
+    "title": "Safe storage controls are a strength hidden in accounting language",
+    "severity": "S3",
+    "basis": "Code",
+    "observation": "Storage protects originals and notes while offering a separate clear action for reproducible audio; the UI labels categories Protected, Reproducible and Reserved.",
+    "impact": "Users must translate an accounting model into what they can safely remove.",
+    "proposal": "Show Your originals and Margins, Downloaded/generated audio, and Preparing. Name exactly what Free up space will remove and preserve.",
+    "test": "Ask someone to free storage without deleting their only recording. They should correctly predict what remains before confirming.",
+    "evidence": [
+      "App/SpokenMarginsApp/Sources/SpokenMarginsApp/ExperienceStorageScreen.swift"
+    ]
+  },
+  {
+    "id": "F23",
+    "title": "Optional AI occupies the top of Settings",
+    "severity": "S3",
+    "basis": "Observed",
+    "observation": "AI Features and model availability appear before Playback & Voice and basic listening preferences.",
+    "impact": "A listening app's settings lead with an optional capability rather than the most frequent adjustment.",
+    "proposal": "Order settings around Voice & playback, Downloads & storage, Capture & accessibility, then optional summaries and help.",
+    "test": "Find voice and offline storage without reading model-support text. Keep availability reasons at the summary action too.",
+    "evidence": [
+      "evidence/13-settings.jpg"
+    ]
+  },
+  {
+    "id": "F24",
+    "title": "Review and playback context need a stable handoff",
+    "severity": "S2",
+    "basis": "Code + inference",
+    "observation": "The product supports historical session review, imported layers and a persistent active player. Multiple views can represent different items.",
+    "impact": "A listener may assume that opening a historical note has replaced what is currently playing, or that Play will resume the viewed source.",
+    "proposal": "Keep the active item visible; distinguish View in session from Play this moment. Switching playback must be an explicit action that preserves the previous position.",
+    "test": "Play A, inspect a Margin from B, then return. A must retain its state until the listener deliberately switches.",
+    "evidence": [
+      "App/SpokenMarginsApp/Sources/SpokenMarginsApp/ExperienceMarginDetailView.swift",
+      "Contracts/docs/recovery-mvp.md"
+    ]
+  }
+]

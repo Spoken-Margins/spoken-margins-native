@@ -6,6 +6,10 @@ Spoken Margins is a personal conversational listening app. A complete daily-driv
 
 The phone app has three private resource destinations: Library for deliberate listening items, Sources for explicit followed-feed and Quick Folder candidates, and Margins for the listener's locally persisted interjections. Source setup lives behind the shared Add Source router and continues to support pasted text, links, files, EPUBs, audiobooks, and a configured quick folder. Neither a followed-source entry nor a Quick Folder candidate enters the library until the user explicitly imports it. Now Playing is persistent session context rather than a fourth destination.
 
+## Compact presentation
+
+The Library prioritizes its existing offline-rendering status and listening items over editorial chrome. Item Detail places Listening Sessions before Chapters and labels resume as **Continue**. The persistent player presents the item, chapter/progress, and existing actions without decorative artwork or a duplicate progress bar; accessibility text sizes stack the actions below the title. The full player omits the redundant Now Playing eyebrow and groups Text, Mix, sleep timer, and speed in an adaptive secondary-control layout. Mix exposes its selected state with a checkmark and accessible on/off value; existing volume and background-audio controls remain available when enabled. Native source text remains outside the transport card in the existing Text sheet. These presentation choices do not change playback, preparation, session selection, or filtering.
+
 ## Onboarding
 
 Onboarding teaches the product's core loop before asking the user to explore intake breadth: choose one of two honestly distinct starter items, listen, save a Margin, open that Margin from the Timeline, and successfully copy or share the session export. Both starter items use production item, playback, and Timeline routes. The tour is skippable, resumable, replayable from Help.

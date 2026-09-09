@@ -27,12 +27,16 @@ struct ExperienceLibraryScreen: View {
     var body: some View {
         NavigationStack {
             List {
-                ExperienceEditorialHeader(
-                    eyebrow: "Your listening life",
-                    title: "Listen where you left off",
-                    detail: "Your sources, listening progress, and saved Margins stay together."
-                )
-                .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
+                Text("Continue listening")
+                    .font(.system(.title2, design: .serif).weight(.semibold))
+                    .foregroundStyle(AppColors.text)
+                    .accessibilityAddTraits(.isHeader)
+                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+
+                if !model.audioPreparationQueue.isEmpty || !model.recentlyPreparedAudio.isEmpty {
+                    preparationSummary
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                }
 
                 if model.shouldShowOnboardingCard {
                     onboardingStrip
@@ -61,10 +65,6 @@ struct ExperienceLibraryScreen: View {
 
                 controls
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
-                if !model.audioPreparationQueue.isEmpty || !model.recentlyPreparedAudio.isEmpty {
-                    preparationSummary
-                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
-                }
                 items
             }
             .background(AppColors.bone)
@@ -318,6 +318,7 @@ struct ExperienceLibraryScreen: View {
             .overlay { RoundedRectangle(cornerRadius: 14).stroke(AppColors.border) }
 
             filterControls
+                .labelStyle(.titleAndIcon)
         }
         .onChange(of: model.libraryQuery) { _, _ in model.libraryQueryChanged() }
     }
@@ -334,7 +335,7 @@ struct ExperienceLibraryScreen: View {
                     offlineMenu
                     sortMenu
                 }
-                .fixedSize(horizontal: true, vertical: false)
+                .fixedSize(horizontal: true, vertical: true)
 
                 wrappedFilterControls
             }

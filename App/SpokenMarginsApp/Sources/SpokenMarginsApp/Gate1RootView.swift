@@ -485,20 +485,23 @@ private struct OnboardingChecklistRow: View {
 struct MiniPlayerBar: View {
     @EnvironmentObject private var model: Gate1AppModel
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    private var layout: AnyLayout {
+        dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(spacing: 8))
+    }
+
     var body: some View {
-        HStack(spacing: 10) {
+        layout {
             Button(action: model.openPlayback) {
                 HStack(spacing: 11) {
-                    Image(systemName: "waveform")
-                        .font(.headline)
-                        .foregroundStyle(AppColors.evergreen)
-                        .frame(width: 40, height: 40)
-                        .background(AppColors.softGreen, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
                     VStack(alignment: .leading, spacing: 4) {
                         Text(model.playbackItemHeaderTitle)
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(AppColors.text)
-                            .lineLimit(1)
+                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
                         HStack(spacing: 7) {
                             if let chapter = model.playbackChapterHeaderTitle {
                                 Text(chapter).lineLimit(1)
@@ -508,53 +511,55 @@ struct MiniPlayerBar: View {
                         }
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
-                        ProgressView(value: Double(model.displayPlaybackProgressPercent), total: 100)
-                            .tint(AppColors.ochre)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Open Now Playing")
+            .accessibilityValue("\(model.playbackItemHeaderTitle), \(model.displayPlaybackProgressPercent) percent")
             .accessibilityIdentifier("miniPlayer.open.button")
 
-            Button(action: model.beginInterjection) {
-                Image(systemName: "mic.fill")
-                    .foregroundStyle(AppColors.coral)
-                    .frame(width: 44, height: 44)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Record an interjection")
-            .accessibilityIdentifier("miniPlayer.interject.button")
-
-            Button(action: model.playPause) {
-                Group {
-                    if model.snapshot.status == .starting {
-                        ProgressView().tint(.white)
-                    } else {
-                        Image(systemName: model.snapshot.status.isPlaybackActive ? "pause.fill" : "play.fill")
-                    }
+            HStack(spacing: 4) {
+                Button(action: model.beginInterjection) {
+                    Image(systemName: "mic.fill")
+                        .foregroundStyle(AppColors.coral)
+                        .frame(width: 44, height: 44)
                 }
-                .foregroundStyle(.white)
-                .frame(width: 46, height: 46)
-                .background(AppColors.evergreen, in: Circle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(model.snapshot.status.isPlaybackActive ? "Pause" : "Play")
-            .accessibilityIdentifier("miniPlayer.playPause.button")
+                .buttonStyle(.plain)
+                .accessibilityLabel("Record an interjection")
+                .accessibilityIdentifier("miniPlayer.interject.button")
 
-            Button(action: model.dismissMiniPlayer) {
-                Image(systemName: "xmark")
-                    .frame(width: 44, height: 44)
+                Button(action: model.playPause) {
+                    Group {
+                        if model.snapshot.status == .starting {
+                            ProgressView().tint(.white)
+                        } else {
+                            Image(systemName: model.snapshot.status.isPlaybackActive ? "pause.fill" : "play.fill")
+                        }
+                    }
+                    .foregroundStyle(.white)
+                    .frame(width: 46, height: 46)
+                    .background(AppColors.evergreen, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(model.snapshot.status.isPlaybackActive ? "Pause" : "Play")
+                .accessibilityIdentifier("miniPlayer.playPause.button")
+
+                Button(action: model.dismissMiniPlayer) {
+                    Image(systemName: "xmark")
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(AppColors.secondaryText)
+                .accessibilityLabel("Close and save listening session")
+                .accessibilityIdentifier("miniPlayer.close.button")
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(AppColors.secondaryText)
-            .accessibilityLabel("Close and save listening session")
-            .accessibilityIdentifier("miniPlayer.close.button")
+            .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? .infinity : nil, alignment: .trailing)
         }
-        .padding(.leading, 10)
+        .padding(.leading, 14)
         .padding(.trailing, 6)
         .padding(.vertical, 6)
         .foregroundStyle(AppColors.text)
@@ -2090,11 +2095,7 @@ private struct PlaybackScreen: View {
     }
 
     private var playbackControls: some View {
-        VStack(spacing: 20) {
-            Text("NOW PLAYING")
-                .font(.caption.weight(.bold))
-                .tracking(1.4)
-                .foregroundStyle(AppColors.ochre)
+        VStack(spacing: 16) {
             playbackHeader
             importedCommentaryControl
             playbackPosition
@@ -2450,73 +2451,106 @@ private struct PlaybackScreen: View {
     }
 
     private var playbackRateControl: some View {
-        HStack(spacing: 10) {
-            if model.snapshot.targetType == TargetType.itemTextTTS.rawValue {
-                Button {
-                    sourceTextOffsetAtPresentation = model.snapshot.currentTextStart ?? 0
-                    isSourceTextPresented = true
-                } label: {
-                    if usesVerbosePlaybackActions {
-                        PlaybackControlLabel(title: "Text", systemImage: "doc.plaintext")
-                    } else {
-                        Image(systemName: "doc.plaintext")
-                    }
-                }
-                .accessibilityLabel("View native source text")
-                .accessibilityIdentifier("playback.sourceText.button")
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 6) {
+                playbackSecondaryControls
             }
-
-            Spacer()
-
-            Button {
-                isSleepTimerPresented = true
-            } label: {
-                if usesVerbosePlaybackActions {
-                    PlaybackControlLabel(title: model.sleepTimerDescription, systemImage: "moon.zzz")
-                        .font(.subheadline.weight(.semibold).monospacedDigit())
-                } else {
-                    Image(systemName: "moon.zzz")
-                }
-            }
-            .accessibilityLabel(model.sleepTimerDescription)
-            .accessibilityIdentifier("playback.sleepTimer.button")
-            .popover(isPresented: $isSleepTimerPresented, arrowEdge: .top) {
-                sleepTimerPopover
-                    .presentationCompactAdaptation(.popover)
-            }
-
-            Button {
-                model.cyclePlaybackRate()
-            } label: {
-                if usesVerbosePlaybackActions {
-                    PlaybackControlLabel(title: model.compactPlaybackRateDescription, systemImage: "speedometer")
-                        .font(.subheadline.weight(.semibold).monospacedDigit())
-                } else {
-                    Text(model.compactPlaybackRateDescription)
-                        .font(.subheadline.weight(.semibold).monospacedDigit())
-                        .fixedSize(horizontal: true, vertical: false)
-                }
-            }
-            .accessibilityLabel("Playback speed, \(model.compactPlaybackRateDescription)")
-            .accessibilityHint("Advances to the next playback speed")
-            .accessibilityIdentifier("playback.rate.button")
-            .contextMenu {
-                ForEach(Gate1AppModel.supportedPlaybackRates, id: \.self) { rate in
-                    Button(String(format: "%.2f×", rate)) {
-                        if model.isMediaPlaybackSnapshot {
-                            model.setMediaPlaybackRate(rate)
-                        } else {
-                            model.speechRate = rate * 0.5
-                            model.playbackSpeechRateChanged()
-                        }
-                    }
-                }
+            .fixedSize(horizontal: true, vertical: false)
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                playbackSecondaryControls
             }
         }
         .font(.caption.weight(.semibold))
         .foregroundStyle(.white)
         .buttonStyle(.bordered)
         .tint(AppColors.watchControl)
+    }
+
+    @ViewBuilder
+    private var playbackSecondaryControls: some View {
+        if model.snapshot.targetType == TargetType.itemTextTTS.rawValue {
+            Button {
+                sourceTextOffsetAtPresentation = model.snapshot.currentTextStart ?? 0
+                isSourceTextPresented = true
+            } label: {
+                if usesVerbosePlaybackActions {
+                    PlaybackControlLabel(title: "Text", systemImage: "doc.plaintext")
+                    .frame(minHeight: 32)
+                } else {
+                    Image(systemName: "doc.plaintext")
+                    .frame(minWidth: 24, minHeight: 32)
+                }
+            }
+            .accessibilityLabel("View native source text")
+            .accessibilityIdentifier("playback.sourceText.button")
+        }
+
+        if model.showsMixWithOtherAudioOption {
+            Toggle(isOn: Binding(
+                get: { model.mixesWithOtherAudio },
+                set: { model.setMixesWithOtherAudio($0) }
+            )) {
+                PlaybackControlLabel(
+                    title: "Mix",
+                    systemImage: model.mixesWithOtherAudio ? "checkmark.circle.fill" : "circle"
+                )
+                .frame(minHeight: 32)
+            }
+            .toggleStyle(.button)
+            .disabled(model.snapshot.isRecording)
+            .accessibilityLabel("Mix with Other Audio")
+            .accessibilityValue(model.mixesWithOtherAudio ? "On" : "Off")
+            .accessibilityIdentifier("playback.mixWithOtherAudio.toggle")
+        }
+
+        Button {
+            isSleepTimerPresented = true
+        } label: {
+            if usesVerbosePlaybackActions {
+                PlaybackControlLabel(title: model.sleepTimerIsActive ? model.sleepTimerDescription : "Sleep", systemImage: "moon.zzz")
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .frame(minHeight: 32)
+            } else {
+                Image(systemName: "moon.zzz")
+                    .frame(minWidth: 24, minHeight: 32)
+            }
+        }
+        .accessibilityLabel(model.sleepTimerDescription)
+        .accessibilityIdentifier("playback.sleepTimer.button")
+        .popover(isPresented: $isSleepTimerPresented, arrowEdge: .top) {
+            sleepTimerPopover
+                .presentationCompactAdaptation(.popover)
+        }
+
+        Button {
+            model.cyclePlaybackRate()
+        } label: {
+            if usesVerbosePlaybackActions {
+                PlaybackControlLabel(title: model.compactPlaybackRateDescription, systemImage: "speedometer")
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .frame(minHeight: 32)
+            } else {
+                Text(model.compactPlaybackRateDescription)
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .frame(minHeight: 32)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+        }
+        .accessibilityLabel("Playback speed, \(model.compactPlaybackRateDescription)")
+        .accessibilityHint("Advances to the next playback speed")
+        .accessibilityIdentifier("playback.rate.button")
+        .contextMenu {
+            ForEach(Gate1AppModel.supportedPlaybackRates, id: \.self) { rate in
+                Button(String(format: "%.2f×", rate)) {
+                    if model.isMediaPlaybackSnapshot {
+                        model.setMediaPlaybackRate(rate)
+                    } else {
+                        model.speechRate = rate * 0.5
+                        model.playbackSpeechRateChanged()
+                    }
+                }
+            }
+        }
     }
 
     private var mixedAudioVolumeSlider: some View {
@@ -2564,47 +2598,34 @@ private struct PlaybackScreen: View {
 
     @ViewBuilder
     private var mixedAudioControl: some View {
-        if model.showsMixWithOtherAudioOption {
+        if model.showsMixWithOtherAudioOption && model.mixesWithOtherAudio {
             VStack(alignment: .leading, spacing: 10) {
-                Toggle(
-                    "Mix with Other Audio",
-                    isOn: Binding(
-                        get: { model.mixesWithOtherAudio },
-                        set: { model.setMixesWithOtherAudio($0) }
-                    )
-                )
-                .font(.subheadline.weight(.semibold))
-                .tint(AppColors.ochre)
-                .accessibilityIdentifier("playback.mixWithOtherAudio.toggle")
-
-                if model.mixesWithOtherAudio {
-                    HStack {
-                        Label("Spoken Margins level", systemImage: "speaker.wave.2")
-                        Spacer()
-                        Text(model.mixedPlaybackVolume, format: .percent.precision(.fractionLength(0)))
-                            .monospacedDigit()
-                    }
-                    .font(.caption.weight(.semibold))
-
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 12) {
-                            mixedAudioVolumeSlider.frame(minWidth: 120)
-                            lowerBackgroundAudioToggle.fixedSize(horizontal: true, vertical: false)
-                        }
-                        VStack(alignment: .leading, spacing: 10) {
-                            mixedAudioVolumeSlider
-                            lowerBackgroundAudioToggle
-                        }
-                    }
-
-                    Text("Make Spoken Margins easier to hear by lowering other apps while listening. Their volume returns when you pause or turn this off.")
-                        .font(.caption2)
-                        .foregroundStyle(AppColors.watchSecondary)
-
-                    Text("Other audio can continue. Control Spoken Margins here; Lock Screen and headphone controls may control the other app.")
-                        .font(.caption2)
-                        .foregroundStyle(AppColors.watchSecondary)
+                HStack {
+                    Label("Spoken Margins level", systemImage: "speaker.wave.2")
+                    Spacer()
+                    Text(model.mixedPlaybackVolume, format: .percent.precision(.fractionLength(0)))
+                        .monospacedDigit()
                 }
+                .font(.caption.weight(.semibold))
+
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) {
+                        mixedAudioVolumeSlider.frame(minWidth: 120)
+                        lowerBackgroundAudioToggle.fixedSize(horizontal: true, vertical: false)
+                    }
+                    VStack(alignment: .leading, spacing: 10) {
+                        mixedAudioVolumeSlider
+                        lowerBackgroundAudioToggle
+                    }
+                }
+
+                Text("Make Spoken Margins easier to hear by lowering other apps while listening. Their volume returns when you pause or turn this off.")
+                    .font(.caption2)
+                    .foregroundStyle(AppColors.watchSecondary)
+
+                Text("Other audio can continue. Control Spoken Margins here; Lock Screen and headphone controls may control the other app.")
+                    .font(.caption2)
+                    .foregroundStyle(AppColors.watchSecondary)
             }
             .padding(14)
             .foregroundStyle(.white)
