@@ -1,0 +1,17 @@
+{
+  "method": "DOM simulation with LinkeDOM; not browser layout or native accessibility validation",
+  "passed": [
+    "24 evidence-backed findings render.",
+    "All document IDs unique, including repeated design plates.",
+    "All 20 scenes render meaningful content and labeled controls.",
+    "Library → listen → record → save/resume → Timeline → Margin works.",
+    "Starred state persists through navigation.",
+    "Share preview reflects the selected voice inclusion.",
+    "Following does not import; explicit add does not autoplay.",
+    "Pasted-item confirmation preserves the chosen title and requires explicit Play.",
+    "Audio and text navigation previews expose their different semantics.",
+    "Recipient source selection and position matching remain distinct.",
+    "Severity filtering and expandable findings work.",
+    "All static and dynamically inserted local evidence references exist."
+  ]
+}
