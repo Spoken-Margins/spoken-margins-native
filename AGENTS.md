@@ -6,6 +6,21 @@ This repository uses a single-agent workflow by default. An agent should work en
 
 Parallel-agent rules are archived in `docs/parallel-agent-workflow-archive.md`. Do not use that workflow unless the product owner explicitly names a steward, gate agents, allowed files, forbidden files, and merge order.
 
+## Working agreements
+
+- Treat a request for action as authorization to complete the work within its stated scope. Make reasonable assumptions for routine, reversible decisions and continue independent work while resolving material questions.
+- Follow explicit user direction over skill guidelines and historical task notes, within system/tool constraints. Preserve product and release boundaries unless the user changes them. Do not ask again for authorization already given.
+- Before requesting a decision, prepare the authorized work needed to make it concrete and reviewable. If a skill blocks progress, identify the file and exact rule, explain its application, and distinguish that rule from your interpretation.
+- Keep updates and handoffs concise: outcome, evidence, and any remaining blocker. State assumptions and do not equate a passing build with product validation.
+- Preserve unrelated working-tree changes. Stop broadening verification once required checks pass; rerun only for a changed input, a failure diagnosis, or an unresolved concern. If an unchanged failure persists after diagnosis and a justified retry, report the blocker and continue independent authorized work instead of repeating the same check.
+- Treat model usage and user attention as limited resources, separate from machine execution time. Long-running checks can require substantial execution without requiring repeated agent analysis. Before inspecting progress again, identify what new evidence could change the next action; if none is expected, prefer tool-managed waiting and compact status reporting within platform constraints. Repeated unchanged results are a signal to simplify supervision. Preserve required verification and investigate failures; optimize the overhead around the work.
+
+### Second-edition status
+
+The September 10 redesign implementation and verification are complete; all delegated leases are returned. The single-agent default applies to subsequent tasks. The task-specific agent names, Terra assignments, and usage budget in `docs/second-edition-release-decision.md` and `docs/second-edition-work-packets.md` are historical authorization, not standing assignments for new work.
+
+See `artifacts/validation/gate-1/second-edition/handoff.md` for the exact candidate and pending owner validation. This closeout does not reverse the approved redesign or authorize distribution, a commit, merge, or baseline advancement. Follow the current release lane for subsequent work.
+
 ## Release Lane Routing
 
 Before creating a branch or changing implementation code, read `docs/release-lanes.md`. It is the authoritative source for active branch purposes, authorized issue scope, merge direction, and queued work.
@@ -30,7 +45,9 @@ Use these states consistently:
 
 ## Test And Build Policy
 
-Routine development should prefer fast checks:
+For documentation-only changes, check instruction consistency, referenced paths and commands, and the diff; run code checks only when the documentation change affects an executable contract or required gate. Do not add tests that merely restate documentation or mirror a low-impact implementation. For behavior changes, add meaningful regression coverage at the affected boundary.
+
+For code changes, routine development should prefer fast checks:
 
 ```bash
 ./scripts/bootstrap-python-tools.sh

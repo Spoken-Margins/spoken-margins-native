@@ -236,6 +236,12 @@ struct Build23SenderSharingExperience: View {
 
                 Text("Sender and permissions")
                     .font(.headline)
+                Text(SharingRightsPresentation.rightsNotice)
+                    .font(.caption)
+                    .foregroundStyle(AppColors.secondaryText)
+                Text(SharingRightsPresentation.recipientCopiesNotice)
+                    .font(.caption)
+                    .foregroundStyle(AppColors.secondaryText)
 
                 TextField(
                     "Name shown to the recipient",
@@ -447,15 +453,12 @@ struct Build23SenderSharingExperience: View {
 
     private func reviewStage(_ snapshot: Build23SharingSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 20) {
-            ExperienceEditorialHeader(
-                eyebrow: "Review",
-                title: "Check the cleanup",
-                detail: "Focus on changes that need attention, make any point edits, then Share. Package verification happens automatically."
-            )
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("build23.sender.stage.review")
-
             reviewComposition(snapshot)
+
+            Text("Review selected Margins")
+                .font(.headline)
+                .foregroundStyle(AppColors.text)
+                .accessibilityIdentifier("build23.sender.stage.review")
 
             DisclosureGroup("Package and placement details") {
                 VStack(alignment: .leading, spacing: 16) {
@@ -496,14 +499,10 @@ struct Build23SenderSharingExperience: View {
 
     private func recipientPreviewStage(_ snapshot: Build23SharingSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 20) {
-            ExperienceEditorialHeader(
-                eyebrow: "3 · Recipient Preview",
-                title: "See only what the verified package contains",
-                detail: "This projection was read back from the written package rather than reconstructed from the sender draft."
-            )
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("build23.sender.stage.recipient-preview")
-
+            Text("Recipient preview")
+                .font(.headline)
+                .foregroundStyle(AppColors.text)
+                .accessibilityIdentifier("build23.sender.stage.recipient-preview")
             switch snapshot.previewState {
             case .building:
                 ExperienceSurface(tint: AppColors.softGreen) {
@@ -586,14 +585,10 @@ struct Build23SenderSharingExperience: View {
 
     private func shareStage(_ snapshot: Build23SharingSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 20) {
-            ExperienceEditorialHeader(
-                eyebrow: "4 · Share",
-                title: "The verified file is ready for the system share sheet",
-                detail: "Sharing never substitutes a draft URL or an unverified package."
-            )
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("build23.sender.stage.share")
-
+            Text("Share verified package")
+                .font(.headline)
+                .foregroundStyle(AppColors.text)
+                .accessibilityIdentifier("build23.sender.stage.share")
             if coordinator.verifiedShareFileURL != nil, snapshot.canShareVerifiedFile {
                 ExperienceSurface(tint: AppColors.softGreen) {
                     Build23StatusLabel(

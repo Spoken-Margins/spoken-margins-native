@@ -49,6 +49,9 @@ public struct ExportInterjection: Codable, Equatable {
     public var transcriptionStatus: String
     public var transcript: String?
     public var audioPath: String?
+    /// Nil retains the legacy audio-recording interpretation for exports created
+    /// before written Margins were introduced.
+    public var captureKind: InterjectionCaptureKind? = nil
 }
 
 public struct ExportOptions: Equatable {
@@ -336,7 +339,11 @@ public enum SessionExportMarkdownRenderer {
         let position = interjection.mediaTimeMs.map(formattedMediaTime) ?? "\(interjection.roughPercent)%"
         lines.append("#### \(position) — Listener interjection")
         lines.append("")
-        if let transcript = interjection.transcript?.trimmingCharacters(in: .whitespacesAndNewlines), !transcript.isEmpty {
+        if let transcript = interjection.transcript,
+           !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if interjection.captureKind == .written {
+                lines.append("Written Margin:")
+            }
             lines.append(transcript)
         } else {
             lines.append("Transcript: \(interjection.transcriptionStatus)")

@@ -13,7 +13,9 @@ struct Gate1RootView: View {
 
     var body: some View {
         Group {
-            if model.snapshot.isRecording || model.isRequestingRecordingPermission {
+            if model.writtenMarginDraft != nil {
+                ExperienceWrittenMarginScreen()
+            } else if model.snapshot.isRecording || model.isRequestingRecordingPermission {
                 ExperienceRecordingView()
             } else {
                 switch model.screen {
@@ -39,7 +41,7 @@ struct Gate1RootView: View {
         }
         .background(AppColors.background.ignoresSafeArea())
         .safeAreaInset(edge: .top, spacing: 8) {
-            if !model.snapshot.isRecording,
+            if !model.recordingNavigationIsLocked,
                model.feedbackEvent != nil || model.trashUndo != nil || model.sourceImportProgressMessage != nil || model.legacyLibraryResetNotice != nil {
                 VStack(spacing: 8) {
                     if let resetNotice = model.legacyLibraryResetNotice {
@@ -60,7 +62,7 @@ struct Gate1RootView: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 8) {
-            if model.screen != .home && !model.snapshot.isRecording && model.shouldShowMiniPlayer && !keyboardIsPresented {
+            if model.screen != .home && model.screen != .timeline && !model.recordingNavigationIsLocked && model.shouldShowMiniPlayer && !keyboardIsPresented {
                 MiniPlayerBar()
                     .padding(.horizontal, 12)
                     .padding(.bottom, model.screen == .home ? 54 : 4)
@@ -69,6 +71,11 @@ struct Gate1RootView: View {
         .edgeSwipeBack(enabled: !model.recordingNavigationIsLocked && model.screen != .home, action: model.openHome)
         .onAppear {
             model.bootstrapLibraryIfNeeded()
+        }
+        .onChange(of: model.requestedExperienceRoot) { _, root in
+            guard let root else { return }
+            navigation.select(root, recordingIsLocked: model.recordingNavigationIsLocked)
+            model.requestedExperienceRoot = nil
         }
         #if canImport(UIKit)
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
@@ -501,16 +508,18 @@ struct MiniPlayerBar: View {
                         Text(model.playbackItemHeaderTitle)
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(AppColors.text)
-                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
-                        HStack(spacing: 7) {
-                            if let chapter = model.playbackChapterHeaderTitle {
-                                Text(chapter).lineLimit(1)
+                            .lineLimit(1)
+                        if !dynamicTypeSize.isAccessibilitySize {
+                            HStack(spacing: 7) {
+                                if let chapter = model.playbackChapterHeaderTitle {
+                                    Text(chapter).lineLimit(1)
+                                }
+                                Text("\(model.displayPlaybackProgressPercent)%")
+                                    .monospacedDigit()
                             }
-                            Text("\(model.displayPlaybackProgressPercent)%")
-                                .monospacedDigit()
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
                         }
-                        .font(.caption)
-                        .foregroundStyle(AppColors.secondaryText)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -519,12 +528,32 @@ struct MiniPlayerBar: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Open Now Playing")
-            .accessibilityValue("\(model.playbackItemHeaderTitle), \(model.displayPlaybackProgressPercent) percent")
+            .accessibilityValue("\(model.playbackItemHeaderTitle), \(model.playbackChapterHeaderTitle ?? "Source"), \(model.displayPlaybackProgressPercent) percent")
             .accessibilityIdentifier("miniPlayer.open.button")
 
             HStack(spacing: 4) {
+                if dynamicTypeSize.isAccessibilitySize {
+                    if let chapter = model.playbackChapterHeaderTitle {
+                        Text(chapter)
+                            .font(.caption2)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .layoutPriority(-1)
+                            .accessibilityHidden(true)
+                    }
+                    Text("\(model.displayPlaybackProgressPercent)%")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(AppColors.secondaryText)
+                        .fixedSize()
+                        .accessibilityHidden(true)
+                    Spacer(minLength: 4)
+                }
                 Button(action: model.beginInterjection) {
                     Image(systemName: "mic.fill")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 20, height: 26)
                         .foregroundStyle(AppColors.coral)
                         .frame(width: 44, height: 44)
                 }
@@ -532,24 +561,36 @@ struct MiniPlayerBar: View {
                 .accessibilityLabel("Record an interjection")
                 .accessibilityIdentifier("miniPlayer.interject.button")
 
-                Button(action: model.playPause) {
+                Button {
+                    if model.snapshot.phase == .finished {
+                        model.startNewSession(id: model.snapshot.itemId ?? model.selectedItem.id)
+                    } else {
+                        model.playPause()
+                    }
+                } label: {
                     Group {
                         if model.snapshot.status == .starting {
-                            ProgressView().tint(.white)
+                            ProgressView().tint(AppColors.onEvergreen)
                         } else {
-                            Image(systemName: model.snapshot.status.isPlaybackActive ? "pause.fill" : "play.fill")
+                            Image(systemName: model.activePlaybackIsPlaying ? "pause.fill" : "play.fill")
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 20, height: 24)
                         }
                     }
-                    .foregroundStyle(.white)
+                    .foregroundStyle(AppColors.onEvergreen)
                     .frame(width: 46, height: 46)
                     .background(AppColors.evergreen, in: Circle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(model.snapshot.status.isPlaybackActive ? "Pause" : "Play")
+                .accessibilityLabel(model.activePlaybackIsPlaying ? "Pause" : "Play")
                 .accessibilityIdentifier("miniPlayer.playPause.button")
 
                 Button(action: model.dismissMiniPlayer) {
                     Image(systemName: "xmark")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 22, height: 22)
                         .frame(width: 44, height: 44)
                 }
                 .buttonStyle(.plain)
@@ -1987,6 +2028,7 @@ struct PlaybackScrubState: Equatable {
 private struct PlaybackScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var followUp = ""
     @State private var selectedInterjection: Interjection?
     @State private var isPastingAssistantResponse = false
@@ -1994,6 +2036,11 @@ private struct PlaybackScreen: View {
     @State private var textScrubState = PlaybackScrubState()
     @State private var isSleepTimerPresented = false
     @State private var isSourceTextPresented = false
+    @State private var isPlaybackOptionsPresented = false
+    @State private var pendingOptionsDestination: OptionsDestination?
+    @Environment(\.openURL) private var openURL
+
+    private enum OptionsDestination { case item, timeline, export, margins, write }
     @State private var sourceTextOffsetAtPresentation = 0
     @State private var timelinePullTriggered = false
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
@@ -2003,38 +2050,40 @@ private struct PlaybackScreen: View {
         NavigationStack {
             ScrollViewReader { proxy in
                 ZStack {
-                    LinearGradient(
-                        colors: [AppColors.watchBackground, AppColors.evergreen.opacity(0.82)],
-                        startPoint: .top,
-                        endPoint: .bottomTrailing
-                    )
-                    .ignoresSafeArea()
+                    AppColors.listeningBackground.ignoresSafeArea()
                     ScrollView {
-                        VStack(spacing: 18) {
+                        VStack(alignment: .leading, spacing: 20) {
+                            if model.snapshot.phase == .finished {
+                                Text("Finished").font(.headline).foregroundStyle(AppColors.listeningAccent)
+                            }
+                            playbackHeader
+                            capturePermissionRecovery
+                            importedCommentaryControl
+                            recentMarginPreview
                             if model.shouldShowGuidedOnboardingCoach {
                                 GuidedOnboardingPlaybackCard {
-                                    withAnimation {
-                                        proxy.scrollTo("playback.timeline", anchor: .top)
-                                    }
+                                    openTimeline()
                                 }
                             }
-                            playbackControls
-                            sessionActionDock
                             SourceFollowSuggestionCard(appearance: .playback)
                             ManualSourceFollowButton(appearance: .playback)
                         }
-                        .padding(.horizontal, horizontalSizeClass == .regular ? 36 : 18)
-                        .padding(.vertical, 24)
+                        .padding(.horizontal, horizontalSizeClass == .regular ? 36 : 22)
+                        .padding(.vertical, 18)
                         .frame(maxWidth: 620)
-                        .frame(maxWidth: .infinity)
+                        .frame(maxWidth: .infinity, alignment: .top)
                     }
                     .scrollBounceBehavior(.always)
                     .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                        // ScrollGeometry's container is the inset content viewport.
+                        // The offset calculation below expects the whole viewport.
                         TimelinePullPresentation.overscrollDistance(
                             contentOffsetY: geometry.contentOffset.y,
                             contentHeight: geometry.contentSize.height,
-                            containerHeight: geometry.containerSize.height,
-                            bottomInset: geometry.contentInsets.bottom
+                            containerHeight: geometry.containerSize.height
+                                + geometry.contentInsets.top + geometry.contentInsets.bottom,
+                            bottomInset: geometry.contentInsets.bottom,
+                            topInset: geometry.contentInsets.top
                         )
                     } action: { _, distance in
                         if distance < 1 {
@@ -2045,7 +2094,11 @@ private struct PlaybackScreen: View {
                             openTimeline()
                         }
                     }
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        playbackControls
+                    }
                 }
+                .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("playback.screen")
                 .onCompatibleChange(of: model.guidedOnboardingStage) { stage in
                     if stage == .reviewTimeline {
@@ -2055,11 +2108,11 @@ private struct PlaybackScreen: View {
                     }
                 }
             }
-            .toolbarBackground(AppColors.watchBackground.opacity(0.92), for: .navigationBar)
+            .toolbarBackground(AppColors.listeningBackground, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button(action: model.openHome) {
+                    Button(action: model.openLibrary) {
                         Label("Library", systemImage: "books.vertical")
                     }
                     .accessibilityIdentifier("playback.home.button")
@@ -2071,7 +2124,7 @@ private struct PlaybackScreen: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .sheet(item: $selectedInterjection) { interjection in
-                InterjectionDetailView(interjection: interjection)
+                ExperienceMarginDetailView(row: MarginRow(interjection: interjection, itemTitle: model.selectedItem.title, sessionDate: nil))
                     .environmentObject(model)
             }
             .sheet(isPresented: $isPastingAssistantResponse) {
@@ -2086,6 +2139,34 @@ private struct PlaybackScreen: View {
                     currentOffset: sourceTextOffsetAtPresentation
                 )
             }
+            .sheet(isPresented: $isPlaybackOptionsPresented, onDismiss: performPendingOptionsNavigation) {
+                NavigationStack {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 18) {
+                            playbackRateControl
+                            mixedAudioControl
+                            onDeviceSpeechGenerationControl
+                            Button("Write a Margin", systemImage: "square.and.pencil") {
+                                closeOptions(to: .write)
+                            }
+                            .accessibilityIdentifier("playback.writeMargin.button")
+                            reflectionOptions
+                            sessionActionDock
+                        }
+                        .padding(20)
+                    }
+                    .background(AppColors.listeningBackground)
+                    .navigationTitle("Listening options")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { isPlaybackOptionsPresented = false }
+                        }
+                    }
+                }
+                .preferredColorScheme(.dark)
+                .presentationDetents([.medium, .large])
+            }
         }
     }
 
@@ -2095,31 +2176,184 @@ private struct PlaybackScreen: View {
     }
 
     private var playbackControls: some View {
-        VStack(spacing: 16) {
-            playbackHeader
-            importedCommentaryControl
+        VStack(spacing: 10) {
             playbackPosition
             playbackTransport
-            playbackRateControl
-            mixedAudioControl
-            onDeviceSpeechGenerationControl
-            interjectionControls
+            if !dynamicTypeSize.isAccessibilitySize {
+                HStack(spacing: 24) {
+                    Button(model.compactPlaybackRateDescription, action: model.cyclePlaybackRate)
+                        .accessibilityLabel("Playback speed, \(model.compactPlaybackRateDescription)")
+                        .accessibilityIdentifier("playback.rate.button")
+                    Button {
+                        isSleepTimerPresented = true
+                    } label: {
+                        Label(model.sleepTimerIsActive ? model.sleepTimerDescription : "Sleep", systemImage: "moon.zzz")
+                    }
+                    .accessibilityIdentifier("playback.sleepTimer.button")
+                    .popover(isPresented: $isSleepTimerPresented) {
+                        sleepTimerPopover.presentationCompactAdaptation(.popover)
+                    }
+                    listeningOptionsButton
+                }
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.white)
+                .buttonStyle(.plain)
+                .frame(minHeight: 44)
+            }
+            if model.playingImportedCommentary != nil {
+                Button("Return to Source", action: model.returnToSourceFromImportedCommentary)
+                    .buttonStyle(InterjectButtonStyle())
+                    .accessibilityIdentifier("importedCommentary.returnToSource")
+            } else if model.snapshot.skimBridgeState != nil {
+                Button("Return to Source") {
+                    model.returnFromSkim()
+                }
+                .buttonStyle(InterjectButtonStyle())
+                .accessibilityIdentifier("playback.skim.return.button")
+            } else if model.snapshot.phase == .finished {
+                Button("Review Margins", systemImage: "quote.bubble", action: model.openMargins)
+                    .frame(maxWidth: .infinity)
+                    .buttonStyle(InterjectButtonStyle())
+                    .accessibilityIdentifier("playback.reviewMargins.button")
+            } else {
+                HStack(spacing: 8) {
+                    Button(action: model.beginInterjection) {
+                        Label(dynamicTypeSize.isAccessibilitySize ? "Record" : "Add a Margin", systemImage: "mic.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(InterjectButtonStyle())
+                    .accessibilityLabel("Record a Margin")
+                    .accessibilityIdentifier("playback.interject.button")
+                    Button(action: model.beginWrittenMargin) {
+                        Image(systemName: "square.and.pencil")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: dynamicTypeSize.isAccessibilitySize ? 32 : 24, height: dynamicTypeSize.isAccessibilitySize ? 32 : 24)
+                            .frame(width: 52, height: 52)
+                    }
+                    .buttonStyle(InterjectButtonStyle())
+                    .accessibilityLabel("Write a Margin")
+                    .accessibilityIdentifier("playback.write.button")
+                }
+                .disabled(!model.hasActiveSession)
+            }
+            HStack(spacing: 18) {
+                Button(action: openTimeline) {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        Image(systemName: "list.bullet.rectangle").frame(minWidth: 52, minHeight: 52)
+                    } else {
+                        Label("Timeline", systemImage: "list.bullet.rectangle")
+                    }
+                }
+                .accessibilityLabel("Timeline")
+                .accessibilityIdentifier("playback.timeline.button")
+                Spacer(minLength: 4)
+                if dynamicTypeSize.isAccessibilitySize {
+                    listeningOptionsButton
+                } else {
+                    Button(action: model.openMargins) {
+                        Label("Margins", systemImage: "quote.bubble")
+                    }
+                    .accessibilityIdentifier("playback.margins.button")
+                }
+            }
+            .font(.subheadline)
+            .foregroundStyle(.white)
+            .buttonStyle(.plain)
+            .frame(minHeight: 44)
+            .id("playback.timeline")
         }
-        .padding(.horizontal, horizontalSizeClass == .regular ? 34 : 22)
-        .padding(.vertical, 28)
-        .frame(maxWidth: 560)
-        .background(Color.black.opacity(0.22))
-        .clipShape(RoundedRectangle(cornerRadius: 36, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 36, style: .continuous)
-                .stroke(Color.white.opacity(0.14))
+        .padding(.horizontal, 22)
+        .padding(.top, 14)
+        .padding(.bottom, 4)
+        .frame(maxWidth: 620)
+        .frame(maxWidth: .infinity)
+        .background(AppColors.listeningBackground)
+        .overlay(alignment: .top) { Rectangle().fill(.white.opacity(0.18)).frame(height: 1) }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("playback.controls")
+    }
+
+    private var listeningOptionsButton: some View {
+        Button {
+            isPlaybackOptionsPresented = true
+        } label: {
+            if dynamicTypeSize.isAccessibilitySize {
+                Image(systemName: "ellipsis").frame(minWidth: 52, minHeight: 52)
+            } else {
+                Label("More", systemImage: "ellipsis")
+            }
         }
-        .shadow(color: .black.opacity(0.22), radius: 28, y: 14)
+        .fixedSize(horizontal: true, vertical: false)
+        .accessibilityLabel("More listening options")
+        .accessibilityIdentifier("playback.options.button")
+    }
+
+    @ViewBuilder
+    private var recentMarginPreview: some View {
+        let notes = model.selectedItem.interjections.filter { $0.status == "active" }.suffix(2)
+        if !notes.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Recent Margins")
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.watchSecondary)
+                    .accessibilityAddTraits(.isHeader)
+                ForEach(Array(notes)) { note in
+                    Button { selectedInterjection = note } label: {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(InterjectionPositionPresentation.detailDescription(for: note, durationMs: model.snapshot.currentPlaybackDurationMs))
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(AppColors.watchSecondary)
+                            Text(MarginRow(interjection: note, itemTitle: model.selectedItem.title, sessionDate: nil).preview)
+                                .font(.system(.body, design: .serif))
+                                .foregroundStyle(.white)
+                                .multilineTextAlignment(.leading)
+                                .lineLimit(3)
+                        }
+                        .padding(.leading, 12)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .overlay(alignment: .leading) { Rectangle().fill(AppColors.captureBackground).frame(width: 2) }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var reflectionOptions: some View {
+        if model.aiSummaryExperienceAvailable {
+            Button(action: model.summarize) {
+                Label(model.summaryActionTitle, systemImage: "sparkles")
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(SecondaryButtonStyle())
+            .disabled(!model.canSummarizeInterjections || model.isSummarizingInterjections)
+            .accessibilityIdentifier("playback.summary.button")
+        }
+        if model.remoteProviderExperienceEnabled {
+            TextField("Ask about this session", text: $followUp, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .focused($followUpFocused)
+            Button("Discuss", systemImage: "bubble.left.and.bubble.right") {
+                followUpFocused = false
+                model.discuss(followUp: followUp)
+            }
+            .disabled(!model.hasActiveSession || followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .accessibilityIdentifier("playback.discuss.button")
+        }
+        Button("Margins", systemImage: "quote.bubble") {
+            closeOptions(to: .margins)
+        }
+        .frame(minHeight: 44)
     }
 
     private var sessionActionDock: some View {
         HStack(spacing: 8) {
-            Button(action: model.openCurrentPlaybackItem) {
+            Button {
+                closeOptions(to: .item)
+            } label: {
                 Image(systemName: "doc.text")
                     .frame(width: 48, height: 48)
             }
@@ -2134,7 +2368,9 @@ private struct PlaybackScreen: View {
             }
             .accessibilityIdentifier("playback.timeline.button")
 
-            Button(action: model.openExport) {
+            Button {
+                closeOptions(to: .export)
+            } label: {
                 Image(systemName: "square.and.arrow.up")
                     .frame(width: 48, height: 48)
             }
@@ -2151,8 +2387,57 @@ private struct PlaybackScreen: View {
     }
 
     private func openTimeline() {
+        if isPlaybackOptionsPresented {
+            closeOptions(to: .timeline)
+            return
+        }
         withAnimation(.snappy(duration: 0.34)) {
             model.openTimeline()
+        }
+    }
+
+    private func closeOptions(to destination: OptionsDestination) {
+        pendingOptionsDestination = destination
+        isPlaybackOptionsPresented = false
+    }
+
+    private func performPendingOptionsNavigation() {
+        guard let destination = pendingOptionsDestination else { return }
+        pendingOptionsDestination = nil
+        switch destination {
+        case .item: model.openCurrentPlaybackItem()
+        case .timeline: openTimeline()
+        case .export: model.openExport()
+        case .margins: model.openMargins()
+        case .write: model.beginWrittenMargin()
+        }
+    }
+
+    @ViewBuilder
+    private var capturePermissionRecovery: some View {
+        if model.recordingPermissionDenied {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Microphone access is unavailable", systemImage: "mic.slash")
+                    .font(.headline)
+                Text("You can write a Margin, or enable microphone access in Settings.")
+                    .font(.subheadline)
+                ViewThatFits(in: .horizontal) {
+                    HStack { permissionRecoveryActions }
+                    VStack(alignment: .leading) { permissionRecoveryActions }
+                }
+            }
+            .foregroundStyle(.white)
+            .padding(16)
+            .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+        }
+    }
+
+    @ViewBuilder
+    private var permissionRecoveryActions: some View {
+        Button("Write instead", systemImage: "square.and.pencil", action: model.beginWrittenMargin)
+            .accessibilityIdentifier("playback.permission.write.button")
+        Button("Open Settings", systemImage: "gearshape") {
+            if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
         }
     }
 
@@ -2175,22 +2460,6 @@ private struct PlaybackScreen: View {
 
     @ViewBuilder
     private var importedCommentaryControl: some View {
-        if model.hasEnabledImportedCommentary {
-            Toggle(
-                "Auto-play shared Margins",
-                isOn: Binding(
-                    get: { model.importedCommentaryAutoPlayEnabled },
-                    set: { enabled in
-                        model.setImportedCommentaryAutoPlayEnabled(enabled)
-                    }
-                )
-            )
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.white)
-            .tint(AppColors.accent)
-            .padding(.horizontal, 4)
-            .accessibilityIdentifier("importedCommentary.autoPlay")
-        }
         if let playing = model.playingImportedCommentary {
             VStack(spacing: 8) {
                 Text(playing.senderLabel)
@@ -2199,16 +2468,14 @@ private struct PlaybackScreen: View {
                 Text("Shared Margin \(playing.index) of \(playing.count)")
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.72))
-                Text("Playing at \(model.playingInterjectionAudioRate.formatted(.number.precision(.fractionLength(0...2))))× to match the item")
+                Text(model.importedCommentaryIsPaused ? "Paused" : "Playing at \(model.playingInterjectionAudioRate.formatted(.number.precision(.fractionLength(0...2))))× to match the item")
                     .font(.caption2)
                     .foregroundStyle(.white.opacity(0.72))
                 Text(playing.interjection.approvedTranscript)
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.85))
                     .lineLimit(3)
-                Button("Return to Source", action: model.returnToSourceFromImportedCommentary)
-                    .buttonStyle(PrimaryButtonStyle())
-                    .accessibilityIdentifier("importedCommentary.returnToSource")
+
             }
             .padding(12)
             .frame(maxWidth: .infinity)
@@ -2225,7 +2492,7 @@ private struct PlaybackScreen: View {
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.85))
                     .lineLimit(3)
-                HStack(spacing: 10) {
+                VStack(spacing: 10) {
                     Button("Listen", action: model.listenToPendingImportedCommentary)
                         .buttonStyle(PrimaryButtonStyle())
                         .accessibilityIdentifier("importedCommentary.listen")
@@ -2238,17 +2505,32 @@ private struct PlaybackScreen: View {
             .frame(maxWidth: .infinity)
             .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
         }
+        if model.hasEnabledImportedCommentary {
+            Toggle(
+                "Auto-play shared Margins",
+                isOn: Binding(
+                    get: { model.importedCommentaryAutoPlayEnabled },
+                    set: { enabled in
+                        model.setImportedCommentaryAutoPlayEnabled(enabled)
+                    }
+                )
+            )
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.white)
+            .tint(AppColors.accent)
+            .padding(.horizontal, 4)
+            .accessibilityIdentifier("importedCommentary.autoPlay")
+        }
+
     }
 
     private var playbackHeader: some View {
-        VStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 12) {
             Button(action: model.openCurrentPlaybackItem) {
                 Text(model.playbackItemHeaderTitle)
-                    .font(.title2.weight(.bold))
-                    .multilineTextAlignment(.center)
-                    .lineLimit(3)
-                    .minimumScaleFactor(0.85)
-                    .truncationMode(.tail)
+                    .font(.system(.largeTitle, design: .serif).weight(.medium))
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
                     .foregroundStyle(.white)
             }
             .buttonStyle(.plain)
@@ -2260,9 +2542,8 @@ private struct PlaybackScreen: View {
                 Button(action: model.openCurrentPlaybackItem) {
                     Text(chapterTitle)
                         .font(.subheadline.weight(.semibold))
-                        .multilineTextAlignment(.center)
-                        .lineLimit(2)
-                        .truncationMode(.tail)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
                         .foregroundStyle(.white.opacity(0.82))
                 }
                 .buttonStyle(.plain)
@@ -2401,14 +2682,14 @@ private struct PlaybackScreen: View {
                             ProgressView()
                                 .tint(.white)
                         } else {
-                            Image(systemName: model.snapshot.skimBridgeState?.status == .playing
-                                || model.snapshot.status.isPlaybackActive ? "pause.fill" : "play.fill")
+                            Image(systemName: model.snapshot.phase == .finished && model.playingImportedCommentary == nil ? "arrow.counterclockwise" : (model.snapshot.skimBridgeState?.status == .playing
+                                || model.activePlaybackIsPlaying ? "pause.fill" : "play.fill"))
                         }
                     }
                 }
                 .buttonStyle(MainPlaybackButtonStyle())
-                .accessibilityLabel(model.snapshot.skimBridgeState?.status == .playing
-                    || model.snapshot.status.isPlaybackActive ? "Pause" : "Play")
+                .accessibilityLabel(model.snapshot.phase == .finished && model.playingImportedCommentary == nil ? "Replay in a new session" : (model.snapshot.skimBridgeState?.status == .playing
+                    || model.activePlaybackIsPlaying ? "Pause" : "Play"))
                 .accessibilityIdentifier("playback.play.button")
 
                 Button {
@@ -2755,119 +3036,6 @@ private struct PlaybackScreen: View {
         }
         .padding(20)
         .frame(minWidth: 300)
-    }
-
-    @ViewBuilder
-    private var interjectionControls: some View {
-        if model.snapshot.isRecording {
-            VStack(spacing: 12) {
-                Label("Recording", systemImage: "record.circle.fill").foregroundStyle(.red)
-                HStack {
-                    Button(action: model.finishInterjection) { Label("Done", systemImage: "checkmark") }
-                        .buttonStyle(PrimaryButtonStyle())
-                        .accessibilityIdentifier("interjection.done.button")
-                    Button(action: model.cancelInterjection) { Label("Cancel", systemImage: "xmark") }
-                        .buttonStyle(LightButtonStyle())
-                        .accessibilityIdentifier("interjection.cancel.button")
-                }
-            }
-        } else {
-            VStack(spacing: 10) {
-                if usesVerbosePlaybackActions {
-                    HStack(spacing: 10) {
-                        if model.aiSummaryExperienceAvailable {
-                            Button(action: model.summarize) {
-                                HStack(spacing: 6) {
-                                    if model.isSummarizingInterjections {
-                                        ProgressView()
-                                    } else {
-                                        Image(systemName: "sparkles")
-                                    }
-                                    Text(model.summaryActionTitle)
-                                }
-                                .frame(maxWidth: .infinity, minHeight: 52)
-                            }
-                            .buttonStyle(WatchSecondaryButtonStyle())
-                            .disabled(!model.canSummarizeInterjections || model.isSummarizingInterjections)
-                            .accessibilityLabel(model.canRetryLocalSummary ? "Retry summary" : (model.isSummarizingInterjections ? "Summarizing interjections" : "Summarize interjections"))
-                            .accessibilityIdentifier("playback.summary.button")
-                        }
-                        Button(action: model.beginInterjection) {
-                            Label(model.interjectionButtonTitle, systemImage: "mic").frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(InterjectButtonStyle())
-                        .disabled(!model.hasActiveSession)
-                        .accessibilityIdentifier("playback.interject.button")
-                    }
-                    if !model.aiSummaryExperienceAvailable {
-                        Text(model.localFoundationModelAvailabilityDescription)
-                            .font(.caption)
-                            .foregroundStyle(AppColors.watchSecondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .accessibilityIdentifier("playback.summary.description")
-                    } else if model.remoteProviderExperienceEnabled && !model.hasConfiguredProviderAPIKey {
-                        Text("Add an OpenAI API key in Settings to summarize notes or discuss them.")
-                            .font(.caption)
-                            .foregroundStyle(AppColors.watchSecondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .accessibilityIdentifier("playback.summary.description")
-                    }
-                    if model.remoteProviderExperienceEnabled {
-                        Button {
-                            followUpFocused = false
-                            model.discuss(followUp: followUp)
-                        } label: {
-                            Label("Discuss", systemImage: "bubble.left.and.bubble.right.fill")
-                        }
-                        .buttonStyle(LightButtonStyle())
-                        .disabled(!model.hasActiveSession || followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .accessibilityIdentifier("playback.discuss.button")
-                    }
-                } else {
-                    HStack(spacing: 12) {
-                        if model.aiSummaryExperienceAvailable {
-                            Button(action: model.summarize) {
-                                Group {
-                                    if model.isSummarizingInterjections {
-                                        ProgressView()
-                                    } else {
-                                        Image(systemName: "sparkles")
-                                    }
-                                }
-                                .frame(maxWidth: .infinity, minHeight: 52)
-                            }
-                            .buttonStyle(WatchSecondaryButtonStyle())
-                            .disabled(!model.canSummarizeInterjections || model.isSummarizingInterjections)
-                            .accessibilityLabel(model.canRetryLocalSummary ? "Retry summary" : (model.isSummarizingInterjections ? "Summarizing interjections" : "Summarize interjections"))
-                            .accessibilityIdentifier("playback.summary.button")
-                        }
-
-                        Button(action: model.beginInterjection) {
-                            Image(systemName: "mic")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(InterjectButtonStyle())
-                        .disabled(!model.hasActiveSession)
-                        .accessibilityLabel(model.interjectionButtonTitle)
-                        .accessibilityIdentifier("playback.interject.button")
-
-                        if model.remoteProviderExperienceEnabled {
-                            Button {
-                                followUpFocused = false
-                                model.discuss(followUp: followUp)
-                            } label: {
-                                Image(systemName: "bubble.left.and.bubble.right.fill")
-                                    .frame(maxWidth: .infinity, minHeight: 52)
-                            }
-                            .buttonStyle(WatchSecondaryButtonStyle())
-                            .disabled(!model.hasActiveSession || followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                            .accessibilityLabel("Discuss")
-                            .accessibilityIdentifier("playback.discuss.button")
-                        }
-                    }
-                }
-            }
-        }
     }
 
     private var gate2CompactValidation: some View {
@@ -3486,66 +3654,13 @@ private struct SettingsScreen: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("AI Features") {
-                    if model.remoteProviderExperienceEnabled {
-                        LabeledContent("Provider", value: "OpenAI")
-                            .accessibilityIdentifier("provider.name")
-                        LabeledContent("Data Sharing", value: model.aiDataSharingConsentDescription)
-                        if model.aiDataSharingConsent == .grantedV1 {
-                            Button("Revoke OpenAI Data Sharing", role: .destructive, action: model.revokeAIDataSharingConsent)
-                                .accessibilityIdentifier("provider.revokeConsent.button")
-                        }
-                        SecureField("API Key", text: $model.providerAPIKey)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .focused($focusedField, equals: .apiKey)
-                            .accessibilityIdentifier("provider.apiKey.field")
-                        Button("Save Provider Settings", action: model.saveProviderSettings)
-                            .accessibilityIdentifier("provider.save.button")
-                        Button("Delete API Key", role: .destructive, action: model.deleteProviderAPIKey)
-                            .disabled(model.providerAPIKey.isEmpty)
-                            .accessibilityIdentifier("provider.deleteAPIKey.button")
-                        Button("Probe Provider", action: model.probeProvider)
-                            .accessibilityIdentifier("provider.probe.button")
-                        LabeledContent("Probe", value: model.providerProbeStatus)
-                        DisclosureGroup("Advanced model settings", isExpanded: $showsAdvancedAISettings) {
-                            TextField("Listening Map Model", text: $model.listeningMapModel)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .focused($focusedField, equals: .mapModel)
-                                .accessibilityIdentifier("provider.mapModel.field")
-                            TextField("Summary Model", text: $model.summaryModel)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .focused($focusedField, equals: .summaryModel)
-                                .accessibilityIdentifier("provider.summaryModel.field")
-                            TextField("Conversation Model", text: $model.conversationModel)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .focused($focusedField, equals: .conversationModel)
-                                .accessibilityIdentifier("provider.conversationModel.field")
-                        }
-                        .accessibilityIdentifier("provider.advanced.disclosure")
-                    } else {
-                        LabeledContent("Processing", value: "On device")
-                            .accessibilityIdentifier("settings.ai.processing")
-                        LabeledContent("Apple Foundation Model", value: model.localFoundationModelAvailabilityDescription)
-                        Text("Interjection summaries stay on this device. Publisher podcast chapters and deterministic native-text Listening Maps do not require AI. AI-generated Listening Maps, remote providers, and API keys are disabled in this release.")
-                            .font(.caption)
-                            .foregroundStyle(AppColors.secondaryText)
-                            .accessibilityIdentifier("settings.ai.releaseBoundary")
-                    }
-                }
-                .onCompatibleChange(of: model.listeningMapModel) { _ in model.settingsValueChanged() }
-                .onCompatibleChange(of: model.summaryModel) { _ in model.settingsValueChanged() }
-                .onCompatibleChange(of: model.conversationModel) { _ in model.settingsValueChanged() }
                 Section("Playback & Voice") {
                     Picker("Playback Controls", selection: $usesVerbosePlaybackActions) {
                         Text("Labeled").tag(true)
                         Text("Compact").tag(false)
                     }
                     .accessibilityIdentifier("settings.playbackControlStyle.picker")
-                    Text("Labeled controls show Text, Sleep Timer, and playback speed. Compact controls show icons only.")
+                    Text("Choose labels or icons in listening options.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
                     Toggle(
@@ -3623,7 +3738,7 @@ private struct SettingsScreen: View {
                     .onCompatibleChange(of: model.speechRate) { _ in
                         model.speechSettingsChanged()
                     }
-                    VStack(alignment: .leading, spacing: 10) {
+                    DisclosureGroup("Compare voice playback") {
                         Button {
                             model.previewSpokenContentVoice()
                         } label: {
@@ -3724,10 +3839,60 @@ private struct SettingsScreen: View {
                     Text("While Charging uses durable jobs and pauses before the next chunk when power, thermal, or storage safety changes. Completion timing is not guaranteed.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
-                    Text("Use Manage Offline Storage to review protected, reproducible, reserved, and category totals before clearing anything.")
-                        .font(.caption)
-                        .foregroundStyle(AppColors.secondaryText)
                 }
+                Section("AI Features") {
+                    if model.remoteProviderExperienceEnabled {
+                        LabeledContent("Provider", value: "OpenAI")
+                            .accessibilityIdentifier("provider.name")
+                        LabeledContent("Data Sharing", value: model.aiDataSharingConsentDescription)
+                        if model.aiDataSharingConsent == .grantedV1 {
+                            Button("Revoke OpenAI Data Sharing", role: .destructive, action: model.revokeAIDataSharingConsent)
+                                .accessibilityIdentifier("provider.revokeConsent.button")
+                        }
+                        SecureField("API Key", text: $model.providerAPIKey)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .focused($focusedField, equals: .apiKey)
+                            .accessibilityIdentifier("provider.apiKey.field")
+                        Button("Save Provider Settings", action: model.saveProviderSettings)
+                            .accessibilityIdentifier("provider.save.button")
+                        Button("Delete API Key", role: .destructive, action: model.deleteProviderAPIKey)
+                            .disabled(model.providerAPIKey.isEmpty)
+                            .accessibilityIdentifier("provider.deleteAPIKey.button")
+                        Button("Probe Provider", action: model.probeProvider)
+                            .accessibilityIdentifier("provider.probe.button")
+                        LabeledContent("Probe", value: model.providerProbeStatus)
+                        DisclosureGroup("Advanced model settings", isExpanded: $showsAdvancedAISettings) {
+                            TextField("Listening Map Model", text: $model.listeningMapModel)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .focused($focusedField, equals: .mapModel)
+                                .accessibilityIdentifier("provider.mapModel.field")
+                            TextField("Summary Model", text: $model.summaryModel)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .focused($focusedField, equals: .summaryModel)
+                                .accessibilityIdentifier("provider.summaryModel.field")
+                            TextField("Conversation Model", text: $model.conversationModel)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .focused($focusedField, equals: .conversationModel)
+                                .accessibilityIdentifier("provider.conversationModel.field")
+                        }
+                        .accessibilityIdentifier("provider.advanced.disclosure")
+                    } else {
+                        LabeledContent("Processing", value: "On device")
+                            .accessibilityIdentifier("settings.ai.processing")
+                        LabeledContent("Apple Foundation Model", value: model.localFoundationModelAvailabilityDescription)
+                        Text("Interjection summaries stay on this device. Publisher podcast chapters and deterministic native-text Listening Maps do not require AI. AI-generated Listening Maps, remote providers, and API keys are disabled in this release.")
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .accessibilityIdentifier("settings.ai.releaseBoundary")
+                    }
+                }
+                .onCompatibleChange(of: model.listeningMapModel) { _ in model.settingsValueChanged() }
+                .onCompatibleChange(of: model.summaryModel) { _ in model.settingsValueChanged() }
+                .onCompatibleChange(of: model.conversationModel) { _ in model.settingsValueChanged() }
                 Section("Recently Deleted") {
                     if model.recentlyDeletedItems.isEmpty {
                         Text("Items moved here can be restored. Nothing is deleted automatically.")
@@ -3874,6 +4039,9 @@ private struct SettingsScreen: View {
                 #endif
             }
             .accessibilityIdentifier("settings.screen")
+            .scrollContentBackground(.hidden)
+            .background(AppColors.bone)
+            .tint(AppColors.evergreen)
             .navigationTitle("Settings")
             .onAppear {
                 model.refreshSpeechVoiceOptions()
@@ -4400,16 +4568,6 @@ private struct PastedAssistantResponseView: View {
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 16) {
-                TextEditor(text: $model.pastedAssistantResponse)
-                    .font(.body)
-                    .frame(minHeight: 260)
-                    .padding(8)
-                    .background(AppColors.inputBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppColors.border))
-                    .focused($isFocused)
-                    .accessibilityLabel("Assistant response text")
-                    .accessibilityIdentifier("pasteResponse.editor")
                 HStack {
                     Button {
                         model.importPastedAssistantResponse(autoPlay: true)
@@ -4431,6 +4589,16 @@ private struct PastedAssistantResponseView: View {
                     .disabled(model.pastedAssistantResponse.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityIdentifier("pasteResponse.import.button")
                 }
+                TextEditor(text: $model.pastedAssistantResponse)
+                    .font(.body)
+                    .frame(height: 180)
+                    .padding(8)
+                    .background(AppColors.inputBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppColors.border))
+                    .focused($isFocused)
+                    .accessibilityLabel("Assistant response text")
+                    .accessibilityIdentifier("pasteResponse.editor")
                 Spacer()
             }
             .padding(20)
@@ -4570,7 +4738,7 @@ private enum PlaybackTimelineEntry: Identifiable {
     }
 }
 
-private struct InterjectionDetailView: View {
+struct InterjectionDetailView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dismiss) private var dismiss
     let interjection: Interjection
@@ -4584,7 +4752,7 @@ private struct InterjectionDetailView: View {
     }
 
     private var currentInterjection: Interjection {
-        model.selectedItem.interjections.first(where: { $0.id == interjection.id }) ?? interjection
+        model.selectedItem.interjections.first(where: { $0.id == interjection.id && $0.sessionId == interjection.sessionId && $0.itemId == interjection.itemId }) ?? interjection
     }
 
     var body: some View {
@@ -4612,16 +4780,18 @@ private struct InterjectionDetailView: View {
                 Section("Transcript") {
                     Text(current.cleanedTranscript ?? current.transcript ?? "No transcript yet.")
                         .textSelection(.enabled)
+                    if current.captureKind != .written {
                     Button {
                         model.toggleInterjectionAudioPlayback(current)
                     } label: {
                         Label(
-                            model.playingInterjectionAudioId == current.id ? "Stop Recording" : "Play Original Recording",
-                            systemImage: model.playingInterjectionAudioId == current.id ? "stop.fill" : "play.fill"
+                            model.isPlayingInterjectionAudio(current) ? "Stop Recording" : "Play Original Recording",
+                            systemImage: model.isPlayingInterjectionAudio(current) ? "stop.fill" : "play.fill"
                         )
                     }
                     .disabled(current.audioPath == nil)
                     .accessibilityIdentifier("interjection.detail.playRecording")
+                    }
                     Button {
                         model.copyInterjectionWithContext(current)
                         copied = true
@@ -4633,22 +4803,24 @@ private struct InterjectionDetailView: View {
                         Label(copied ? "Copied" : "Copy Transcript and Anchors", systemImage: copied ? "checkmark" : "doc.on.doc")
                     }
                     .accessibilityIdentifier("interjection.detail.copy")
+                    if current.captureKind != .written {
                     Button {
                         model.retryInterjectionTranscription(current)
                     } label: {
-                        if model.retryingInterjectionTranscriptionIds.contains(current.id) {
+                        if model.isRetryingInterjectionTranscription(current) {
                             Label("Retranscribing Saved Audio", systemImage: "waveform.badge.magnifyingglass")
                         } else {
                             Label("Retranscribe Saved Audio", systemImage: "waveform")
                         }
                     }
-                    .disabled(current.audioPath == nil || model.retryingInterjectionTranscriptionIds.contains(current.id))
+                    .disabled(current.audioPath == nil || model.isRetryingInterjectionTranscription(current))
                     .accessibilityIdentifier("interjection.detail.retryTranscription")
                     Button("Delete Transcript") {
                         pendingDeletion = .transcript
                     }
                     .disabled(current.transcript == nil && current.cleanedTranscript == nil)
                     .accessibilityIdentifier("interjection.detail.deleteTranscript")
+                    }
                 }
                 Section("Share later") {
                     Toggle(
@@ -4656,7 +4828,7 @@ private struct InterjectionDetailView: View {
                         isOn: Binding(
                             get: { currentInterjection.isStarredForSharing == true },
                             set: {
-                                model.setInterjectionStarredForSharing(current.id, starred: $0)
+                                model.setInterjectionStarredForSharing(current.id, sessionId: current.sessionId, starred: $0)
                             }
                         )
                     )
@@ -4675,7 +4847,7 @@ private struct InterjectionDetailView: View {
                             .foregroundStyle(AppColors.secondaryText)
                         Spacer()
                         Button("Save Note") {
-                            model.setInterjectionPrivateSharingNote(current.id, note: privateSharingNoteDraft)
+                            model.setInterjectionPrivateSharingNote(current.id, sessionId: current.sessionId, note: privateSharingNoteDraft)
                         }
                         .disabled(privateSharingNoteDraft == (current.privateSharingNote ?? ""))
                         .accessibilityIdentifier("interjection.detail.savePrivateSharingNote")
@@ -4688,13 +4860,13 @@ private struct InterjectionDetailView: View {
                     LabeledContent("Context status", value: anchorContextStatusLabel(current))
                     Text("Before")
                         .font(.headline)
-                    Text(anchorContextText(current.anchor.anchorBefore, status: current.anchorContextStatus))
+                    Text(anchorContextText(current.anchor.anchorBefore, status: current.captureKind == .written ? .unavailable : current.anchorContextStatus))
                         .textSelection(.enabled)
                     Text("After")
                         .font(.headline)
-                    Text(anchorContextText(current.anchor.anchorAfter, status: current.anchorContextStatus))
+                    Text(anchorContextText(current.anchor.anchorAfter, status: current.captureKind == .written ? .unavailable : current.anchorContextStatus))
                         .textSelection(.enabled)
-                    if current.anchorContextStatus == .unavailable {
+                    if current.captureKind != .written, current.anchorContextStatus == .unavailable {
                         Button("Retry Context") {
                             model.retryAnchorContext(current)
                         }
@@ -4710,14 +4882,14 @@ private struct InterjectionDetailView: View {
                     .accessibilityIdentifier("interjection.detail.delete")
                 }
             }
-            .navigationTitle("Interjection")
+            .navigationTitle("Manage Margin")
             .onAppear {
                 privateSharingNoteDraft = current.privateSharingNote ?? ""
             }
             .onDisappear {
                 if model.selectedItem.interjections.contains(where: { $0.id == current.id }),
                    privateSharingNoteDraft != (current.privateSharingNote ?? "") {
-                    model.setInterjectionPrivateSharingNote(current.id, note: privateSharingNoteDraft)
+                    model.setInterjectionPrivateSharingNote(current.id, sessionId: current.sessionId, note: privateSharingNoteDraft)
                 }
                 model.stopInterjectionAudioPlayback()
             }
@@ -4755,6 +4927,9 @@ private struct InterjectionDetailView: View {
 }
 
 private func anchorContextStatusLabel(_ interjection: Interjection) -> String {
+    if interjection.captureKind == .written {
+        return interjection.anchor.anchorBefore.isEmpty && interjection.anchor.anchorAfter.isEmpty ? "Unavailable" : "Ready"
+    }
     if let status = interjection.anchorContextStatus {
         switch status {
         case .pending: return "Pending"
@@ -4846,19 +5021,27 @@ private struct EdgeSwipeBackModifier: ViewModifier {
                 // Attach recognition only to the edge. A gesture on the entire
                 // screen competes with slider tracking even when its action
                 // later rejects a drag that started away from the edge.
-                Color.clear
-                    .frame(width: 32)
-                    .contentShape(Rectangle())
-                    .gesture(
-                        DragGesture(minimumDistance: 18, coordinateSpace: .global)
-                            .onEnded { value in
-                                let horizontal = value.translation.width
-                                let vertical = abs(value.translation.height)
-                                guard horizontal >= 72, horizontal > vertical * 1.4 else { return }
-                                action()
-                            }
-                    )
-                    .accessibilityHidden(true)
+                GeometryReader { geometry in
+                    // Native back buttons can overlap the leading edge on
+                    // iOS 18. Keep the gesture below the navigation bar so
+                    // those buttons receive ordinary center taps.
+                    let topClearance = geometry.safeAreaInsets.top + 64
+                    Color.clear
+                        .frame(width: 32, height: max(0, geometry.size.height - topClearance))
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture(minimumDistance: 18, coordinateSpace: .global)
+                                .onEnded { value in
+                                    let horizontal = value.translation.width
+                                    let vertical = abs(value.translation.height)
+                                    guard horizontal >= 72, horizontal > vertical * 1.4 else { return }
+                                    action()
+                                }
+                        )
+                        .offset(y: topClearance)
+                        .accessibilityHidden(true)
+                }
+                .frame(width: 32)
             }
         }
     }
@@ -5099,6 +5282,9 @@ private enum AppLinks {
 }
 
 enum AppColors {
+    static let listeningBackground = dynamicColor(AppSemanticColorRGB.listeningBackground)
+    static let captureBackground = dynamicColor(AppSemanticColorRGB.captureBackground)
+    static let listeningAccent = dynamicColor(AppSemanticColorRGB.listeningAccent)
     static let background = dynamicColor(AppSemanticColorRGB.background)
     static let panel = dynamicColor(AppSemanticColorRGB.panel)
     static let inputBackground = dynamicColor(light: (0.98, 0.99, 0.97), dark: (0.10, 0.12, 0.11))
@@ -5112,16 +5298,16 @@ enum AppColors {
     static let accentSoft = dynamicColor(light: (0.67, 0.91, 0.72), dark: (0.25, 0.39, 0.28))
     static let watchBackground = Color(red: 0.09, green: 0.13, blue: 0.11)
     static let watchControl = Color(red: 0.18, green: 0.24, blue: 0.21)
-    static let watchSecondary = Color(red: 0.69, green: 0.75, blue: 0.70)
+    static let watchSecondary = dynamicColor(AppSemanticColorRGB.listeningSecondary)
     static let dangerText = dynamicColor(AppSemanticColorRGB.dangerText)
     static let dangerBackground = dynamicColor(AppSemanticColorRGB.dangerBackground)
-    static let interjectText = Color(red: 0.08, green: 0.10, blue: 0.08)
-    static let bone = dynamicColor(light: (0.97, 0.95, 0.89), dark: (0.08, 0.10, 0.09))
+    static let interjectText = dynamicColor(AppSemanticColorRGB.captureText)
+    static let bone = dynamicColor(AppSemanticColorRGB.bone)
     static let evergreen = dynamicColor(AppSemanticColorRGB.evergreen)
     static let onEvergreen = dynamicColor(AppSemanticColorRGB.onEvergreen)
     static let ochre = dynamicColor(light: (0.76, 0.52, 0.16), dark: (0.94, 0.72, 0.32))
     static let coral = dynamicColor(light: (0.70, 0.27, 0.20), dark: (1.00, 0.57, 0.48))
-    static let plum = dynamicColor(light: (0.39, 0.24, 0.48), dark: (0.78, 0.62, 0.88))
+    static let plum = dynamicColor(AppSemanticColorRGB.plum)
 
     private static func dynamicColor(light: (Double, Double, Double), dark: (Double, Double, Double)) -> Color {
         #if canImport(UIKit)
@@ -5237,7 +5423,7 @@ private struct MainPlaybackButtonStyle: ButtonStyle {
             .font(.title2)
             .foregroundStyle(AppColors.interjectText)
             .frame(width: 76, height: 76)
-            .background(AppColors.accent.opacity(configuration.isPressed ? 0.75 : 1))
+            .background(AppColors.listeningAccent.opacity(configuration.isPressed ? 0.75 : 1))
             .clipShape(Circle())
     }
 }
@@ -5257,7 +5443,7 @@ private struct InterjectButtonStyle: ButtonStyle {
             .font(.headline)
             .frame(minHeight: 52)
             .foregroundStyle(AppColors.interjectText)
-            .background(Color(red: 0.94, green: 0.82, blue: 0.42).opacity(configuration.isPressed ? 0.78 : 1))
+            .background(AppColors.captureBackground.opacity(configuration.isPressed ? 0.78 : 1))
             .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }

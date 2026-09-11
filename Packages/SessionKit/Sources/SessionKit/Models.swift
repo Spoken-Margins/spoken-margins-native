@@ -98,6 +98,11 @@ public enum InterjectionTargetType: String, Codable, Equatable, Sendable {
     case assistantTurn = "assistant_turn"
 }
 
+public enum InterjectionCaptureKind: String, Codable, Equatable, Sendable {
+    case audio
+    case written
+}
+
 public enum AnchorType: String, Codable, Equatable, Sendable {
     case text
     case transcript
@@ -1242,6 +1247,8 @@ public struct Interjection: Codable, Equatable, Sendable {
     /// or `.spokenmargins` packages.
     public var isStarredForSharing: Bool? = nil
     public var privateSharingNote: String? = nil
+    /// Missing values predate written Margins and retain audio-recording semantics.
+    public var captureKind: InterjectionCaptureKind? = nil
 
     public init(
         id: String,
@@ -1266,7 +1273,8 @@ public struct Interjection: Codable, Equatable, Sendable {
         podcastAnchorEvidenceCaptureStatus: PodcastAnchorEvidenceCaptureStatus? = nil,
         podcastAnchorEvidenceFailureReason: String? = nil,
         isStarredForSharing: Bool? = nil,
-        privateSharingNote: String? = nil
+        privateSharingNote: String? = nil,
+        captureKind: InterjectionCaptureKind? = nil
     ) {
         self.id = id
         self.itemId = itemId
@@ -1291,6 +1299,38 @@ public struct Interjection: Codable, Equatable, Sendable {
         self.podcastAnchorEvidenceFailureReason = podcastAnchorEvidenceFailureReason
         self.isStarredForSharing = isStarredForSharing
         self.privateSharingNote = privateSharingNote
+        self.captureKind = captureKind
+    }
+}
+
+public struct WrittenInterjectionCapture: Equatable, Sendable {
+    public let id: String
+    public let sessionId: String
+    public let itemId: String
+    public let targetType: InterjectionTargetType
+    public let targetId: String
+    public let anchor: Anchor
+    public let roughPercent: Int
+    public let wasPlaying: Bool
+
+    public init(
+        id: String,
+        sessionId: String,
+        itemId: String,
+        targetType: InterjectionTargetType,
+        targetId: String,
+        anchor: Anchor,
+        roughPercent: Int,
+        wasPlaying: Bool
+    ) {
+        self.id = id
+        self.sessionId = sessionId
+        self.itemId = itemId
+        self.targetType = targetType
+        self.targetId = targetId
+        self.anchor = anchor
+        self.roughPercent = roughPercent
+        self.wasPlaying = wasPlaying
     }
 }
 

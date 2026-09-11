@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ExperienceRecordingView: View {
     @EnvironmentObject private var model: Gate1AppModel
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isDiscardConfirmationPresented = false
 
     private var isPreparing: Bool {
         model.isRequestingRecordingPermission && !model.snapshot.isRecording
@@ -10,111 +10,131 @@ struct ExperienceRecordingView: View {
 
     var body: some View {
         ZStack {
-            LinearGradient(
-                colors: [AppColors.coral, Color(red: 0.42, green: 0.10, blue: 0.08)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
-            VStack(spacing: 24) {
-                Spacer()
-                VStack(spacing: 9) {
-                    Label(isPreparing ? "STARTING" : "RECORDING", systemImage: isPreparing ? "mic.badge.plus" : "record.circle.fill")
-                        .font(.caption.weight(.bold))
-                        .tracking(1.4)
-                    Text("Your margin")
-                        .font(.system(.largeTitle, design: .serif).weight(.bold))
-                }
-                .foregroundStyle(.white)
-                .accessibilityIdentifier("recording.screen")
+            AppColors.listeningBackground.ignoresSafeArea()
 
-                if isPreparing {
-                    VStack(spacing: 18) {
-                        ProgressView()
-                            .controlSize(.large)
-                            .tint(.white)
-                        Text("Preparing microphone…")
-                            .font(.headline)
-                            .foregroundStyle(.white)
-                    }
-                    .frame(height: 108)
-                } else {
-                    TimelineView(.periodic(from: context.startedAt, by: 1)) { timeline in
-                        VStack(spacing: 18) {
-                            RecordingWaveform(
-                                phase: reduceMotion ? 0 : timeline.date.timeIntervalSince(context.startedAt)
-                            )
-                            Text(elapsedDescription(at: timeline.date))
-                                .font(.system(.title, design: .monospaced).weight(.semibold))
-                                .foregroundStyle(.white)
-                                .accessibilityLabel("Recording duration \(elapsedDescription(at: timeline.date))")
-                        }
-                    }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    status
+                    recordingTime
+                    anchor
+                    feedback
                 }
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("Anchor locked", systemImage: "lock.fill")
-                        .font(.caption.weight(.bold))
-                        .textCase(.uppercase)
-                    Text(context.itemTitle)
-                        .font(.title3.weight(.semibold))
-                    Text("\(context.locationTitle) · \(context.progressPercent)%")
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.76))
-                }
-                .foregroundStyle(.white)
-                .padding(18)
+                .padding(24)
+                .frame(maxWidth: 560, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .overlay { RoundedRectangle(cornerRadius: 18).stroke(Color.white.opacity(0.18)) }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Recording anchor. \(context.itemTitle), \(context.locationTitle), \(context.progressPercent) percent")
-                .accessibilityIdentifier("recording.anchor")
-
-                if let error = model.lastError {
-                    Text(error)
-                        .font(.subheadline)
-                        .foregroundStyle(.white)
-                        .padding(12)
-                        .background(AppColors.coral.opacity(0.8))
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                } else {
-                    Text(isPreparing
-                         ? "Your listening position is locked while the microphone becomes ready."
-                         : "Finish saves this Margin, returns to the locked point, and resumes listening. Cancel discards only this recording.")
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.8))
-                        .multilineTextAlignment(.center)
-                }
-                Spacer()
-                VStack(spacing: 12) {
-                    Button(action: model.finishInterjection) {
-                        Label("Finish", systemImage: "checkmark")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity, minHeight: 56)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.white)
-                    .foregroundStyle(AppColors.interjectText)
-                    .disabled(isPreparing)
-                    .accessibilityIdentifier("recording.finish.button")
-                    Button(role: .destructive, action: model.cancelInterjection) {
-                        Label("Cancel", systemImage: "xmark")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity, minHeight: 52)
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(.white.opacity(0.9))
-                    .foregroundStyle(.white)
-                    .disabled(isPreparing)
-                    .accessibilityIdentifier("recording.cancel.button")
-                }
-                .padding(.bottom, 20)
             }
-            .padding(24)
-            .frame(maxWidth: 560)
         }
-        .accessibilityAction(.escape, model.cancelInterjection)
+        .safeAreaInset(edge: .bottom, spacing: 0) { actionDock }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("recording.screen")
+        .alert("Discard this recording?", isPresented: $isDiscardConfirmationPresented) {
+            Button("Keep recording", role: .cancel) {}
+            Button("Discard recording", role: .destructive, action: model.cancelInterjection)
+        } message: {
+            Text("This Margin has not been saved. Discarding returns to the locked listening position.")
+        }
+        .accessibilityAction(.escape) {
+            if model.snapshot.isRecording {
+                isDiscardConfirmationPresented = true
+            } else {
+                model.cancelInterjection()
+            }
+        }
+    }
+
+    private var status: some View {
+        Label(
+            isPreparing ? "Preparing microphone" : "Recording Margin",
+            systemImage: isPreparing ? "mic.badge.plus" : "record.circle.fill"
+        )
+        .font(.headline)
+        .foregroundStyle(AppColors.listeningAccent)
+    }
+
+    @ViewBuilder
+    private var recordingTime: some View {
+        if isPreparing {
+            HStack(spacing: 12) {
+                ProgressView().tint(AppColors.listeningAccent)
+                Text("Waiting for microphone access")
+                    .font(.body)
+                    .foregroundStyle(.white)
+            }
+        } else {
+            TimelineView(.periodic(from: context.startedAt, by: 1)) { timeline in
+                Text(elapsedDescription(at: timeline.date))
+                    .font(.system(.largeTitle, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(.white)
+                    .accessibilityLabel("Recording duration \(elapsedDescription(at: timeline.date))")
+            }
+        }
+    }
+
+    private var anchor: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(isPreparing ? "Current listening position" : "Saved listening position", systemImage: isPreparing ? "headphones" : "lock.fill")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(AppColors.listeningBackground)
+            Text(context.itemTitle)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(AppColors.listeningBackground)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("\(context.locationTitle) · \(context.progressPercent)%")
+                .font(.subheadline)
+                .foregroundStyle(AppColors.listeningBackground)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppColors.captureBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Recording anchor. \(context.itemTitle), \(context.locationTitle), \(context.progressPercent) percent")
+        .accessibilityIdentifier("recording.anchor")
+    }
+
+    @ViewBuilder
+    private var feedback: some View {
+        if let error = model.lastError {
+            Label(error, systemImage: "exclamationmark.triangle.fill")
+                .font(.subheadline)
+                .foregroundStyle(AppColors.captureBackground)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var actionDock: some View {
+        VStack(spacing: 8) {
+            Button(action: model.finishInterjection) {
+                Label("Save & resume", systemImage: "checkmark")
+                    .frame(maxWidth: .infinity, minHeight: 52)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(AppColors.captureBackground)
+            .foregroundStyle(AppColors.listeningBackground)
+            .disabled(isPreparing)
+            .accessibilityIdentifier("recording.finish.button")
+
+            if isPreparing {
+                Button("Write instead", systemImage: "square.and.pencil", action: model.switchPendingVoiceCaptureToWrittenMargin)
+                    .foregroundStyle(.white)
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("recording.writeInstead.button")
+            }
+            Button(role: .destructive, action: requestDiscard) {
+                Label("Cancel", systemImage: "xmark")
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.white)
+            .accessibilityIdentifier("recording.cancel.button")
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 12)
+        .padding(.bottom, 12)
+        .background(AppColors.listeningBackground)
+        .overlay(alignment: .top) {
+            Rectangle().fill(.white.opacity(0.18)).frame(height: 1)
+        }
     }
 
     private var context: RecordingPresentationContext {
@@ -126,29 +146,16 @@ struct ExperienceRecordingView: View {
         )
     }
 
+    private func requestDiscard() {
+        if model.snapshot.isRecording {
+            isDiscardConfirmationPresented = true
+        } else {
+            model.cancelInterjection()
+        }
+    }
+
     private func elapsedDescription(at date: Date) -> String {
         let seconds = max(0, Int(date.timeIntervalSince(context.startedAt)))
         return String(format: "%02d:%02d", seconds / 60, seconds % 60)
-    }
-}
-
-private struct RecordingWaveform: View {
-    let phase: TimeInterval
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 5) {
-            ForEach(0..<25, id: \.self) { index in
-                Capsule()
-                    .fill(Color.white.opacity(index.isMultiple(of: 3) ? 1 : 0.68))
-                    .frame(width: 4, height: barHeight(index))
-            }
-        }
-        .frame(height: 72)
-        .accessibilityHidden(true)
-    }
-
-    private func barHeight(_ index: Int) -> CGFloat {
-        let value = sin((Double(index) * 0.72) + phase * 2.1)
-        return 18 + CGFloat(abs(value)) * 48
     }
 }

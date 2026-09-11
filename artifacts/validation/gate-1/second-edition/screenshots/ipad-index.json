@@ -1,0 +1,65 @@
+[
+  {
+    "file": "ipad-second-edition-timeline-accessibility-clearance.png",
+    "test": "Gate1FlowUITests/testBuild23LayoutRegressionsRemainOperableAtAccessibilityType()",
+    "source": "artifacts/reviews/second-edition/ipad-ui-passed/7D853919-8309-477D-9616-301C89B08C9D.png",
+    "run": "20260910-171053-400034-ui",
+    "input_sha256": "957ae1d63befc79bbac16edc0aa22b6c075d35e37989229627e5277be523e6af"
+  },
+  {
+    "file": "ipad-second-edition-add-text-keyboard-accessibility.png",
+    "test": "Gate1FlowUITests/testBuild23LayoutRegressionsRemainOperableAtAccessibilityType()",
+    "source": "artifacts/reviews/second-edition/ipad-ui-passed/5D96B7E5-29B1-47FC-B634-DA914D858BA5.png",
+    "run": "20260910-171053-400034-ui",
+    "input_sha256": "957ae1d63befc79bbac16edc0aa22b6c075d35e37989229627e5277be523e6af"
+  },
+  {
+    "file": "ipad-second-edition-item-shared-provenance.png",
+    "test": "Gate1FlowUITests/testBuild23RecipientMissingSourceReturnsWithoutAutoplayAndShowsProvenance()",
+    "source": "artifacts/reviews/second-edition/ipad-ui-passed/BAD3DF2B-C9E9-4141-A958-EFE9B75E7081.png",
+    "run": "20260910-171053-400034-ui",
+    "input_sha256": "957ae1d63befc79bbac16edc0aa22b6c075d35e37989229627e5277be523e6af"
+  },
+  {
+    "file": "ipad-library-compact-row.png",
+    "test": "Gate1FlowUITests/testLibraryCompactRowStaysDense()",
+    "source": "artifacts/reviews/second-edition/ipad-ui-passed/61C88ABB-BC65-4771-869C-CECFC1286C80.png",
+    "run": "20260910-171053-400034-ui",
+    "input_sha256": "957ae1d63befc79bbac16edc0aa22b6c075d35e37989229627e5277be523e6af"
+  },
+  {
+    "file": "ipad-second-edition-long-title-accessibility-controls.png",
+    "test": "Gate1FlowUITests/testPlaybackPrimaryActionsRemainVisibleWithLongTitleAndAccessibilityText()",
+    "source": "artifacts/reviews/second-edition/ipad-ui-passed/B0887D3A-3BAF-4501-AA8B-62B3FFE02C96.png",
+    "run": "20260910-171053-400034-ui",
+    "input_sha256": "957ae1d63befc79bbac16edc0aa22b6c075d35e37989229627e5277be523e6af"
+  },
+  {
+    "file": "ipad-second-edition-native-accessibility-size.png",
+    "test": "Gate1FlowUITests/testPlaybackPrimaryActionsRemainVisibleWithLongTitleAndAccessibilityText()",
+    "source": "artifacts/reviews/second-edition/ipad-ui-passed/F749D902-765B-424B-8265-A6AE37973086.png",
+    "run": "20260910-171053-400034-ui",
+    "input_sha256": "957ae1d63befc79bbac16edc0aa22b6c075d35e37989229627e5277be523e6af"
+  },
+  {
+    "file": "ipad-second-edition-margin-detail-timeline-clearance.png",
+    "test": "Gate1FlowUITests/testRecordingExclusivelyOwnsTheAccessibleExperience()",
+    "source": "artifacts/reviews/second-edition/ipad-ui-passed/B1B20197-4239-4CCB-B565-2151297E9454.png",
+    "run": "20260910-171053-400034-ui",
+    "input_sha256": "957ae1d63befc79bbac16edc0aa22b6c075d35e37989229627e5277be523e6af"
+  },
+  {
+    "file": "ipad-second-edition-written-margin-detail.png",
+    "test": "Gate1FlowUITests/testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource()",
+    "source": "artifacts/reviews/second-edition/ipad-ui-passed/6F798832-4169-4B32-B310-185622CB8BE2.png",
+    "run": "20260910-171053-400034-ui",
+    "input_sha256": "957ae1d63befc79bbac16edc0aa22b6c075d35e37989229627e5277be523e6af"
+  },
+  {
+    "file": "ipad-second-edition-written-capture-keyboard.png",
+    "test": "Gate1FlowUITests/testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource()",
+    "source": "artifacts/reviews/second-edition/ipad-ui-passed/98F5B935-D8B6-4EF2-9C42-0BBEA40570AD.png",
+    "run": "20260910-171053-400034-ui",
+    "input_sha256": "957ae1d63befc79bbac16edc0aa22b6c075d35e37989229627e5277be523e6af"
+  }
+]

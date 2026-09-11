@@ -1,0 +1,1040 @@
+diff --git a/App/SpokenMarginsApp/Sources/SpokenMarginsApp/ExperienceLibraryScreen.swift b/App/SpokenMarginsApp/Sources/SpokenMarginsApp/ExperienceLibraryScreen.swift
+index db443bd..3c106d8 100644
+--- a/App/SpokenMarginsApp/Sources/SpokenMarginsApp/ExperienceLibraryScreen.swift
++++ b/App/SpokenMarginsApp/Sources/SpokenMarginsApp/ExperienceLibraryScreen.swift
+@@ -4,8 +4,8 @@ import SessionKit
+ struct ExperienceLibraryScreen: View {
+     @EnvironmentObject private var model: Gate1AppModel
+     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+-
+     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
++
+     @Binding var addSourceRoute: AddSourceRoute?
+     @State private var isAudioPreparationQueuePresented = false
+ 
+@@ -17,55 +17,44 @@ struct ExperienceLibraryScreen: View {
+         LibraryPresentation.compactItems(model.visibleLibraryItems, excluding: continueItem)
+     }
+ 
+-    private var libraryComposition: Build23ExperiencePolishLayout.LibraryComposition {
+-        Build23ExperiencePolishLayout.libraryComposition(
+-            isCompactWidth: horizontalSizeClass == .compact,
+-            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
+-        )
++    private var visibleContinueItem: LibraryItemRow? {
++        guard let continueItem,
++              model.visibleLibraryItems.contains(where: { $0.id == continueItem.id }) else {
++            return nil
++        }
++        return continueItem
+     }
+ 
+     var body: some View {
+         NavigationStack {
+             List {
+-                Text("Continue listening")
+-                    .font(.system(.title2, design: .serif).weight(.semibold))
+-                    .foregroundStyle(AppColors.text)
+-                    .accessibilityAddTraits(.isHeader)
++                controls
+                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+ 
++                if let continueItem = visibleContinueItem {
++                    ExperienceLibraryCompactRow(
++                        row: continueItem,
++                        isCurrentItem: true,
++                        onOpen: { model.openItem(id: continueItem.id) },
++                        onPlay: { model.startItem(id: continueItem.id) },
++                        onComplete: { model.markItemCompleted(id: continueItem.id) },
++                        onPrepareOffline: { model.prioritizeOfflinePreparation(id: continueItem.id) },
++                        onDelete: { model.moveItemToTrash(id: continueItem.id) }
++                    )
++                    .libraryRowLayout(horizontalSizeClass: horizontalSizeClass)
++                }
++
++                items
++
+                 if !model.audioPreparationQueue.isEmpty || !model.recentlyPreparedAudio.isEmpty {
+                     preparationSummary
+-                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
++                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 6)
+                 }
+ 
+                 if model.shouldShowOnboardingCard {
+                     onboardingStrip
+                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
+                 }
+-
+-                if let continueItem {
+-                    continueHero(continueItem)
+-                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
+-                        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+-                            Button { model.markItemCompleted(id: continueItem.id) } label: {
+-                                Label("Complete", systemImage: "checkmark.circle.fill")
+-                            }
+-                            .tint(AppColors.evergreen)
+-                        }
+-                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+-                            Button(role: .destructive) { model.moveItemToTrash(id: continueItem.id) } label: {
+-                                Label("Delete", systemImage: "trash")
+-                            }
+-                            Button { model.prioritizeOfflinePreparation(id: continueItem.id) } label: {
+-                                Label("Offline", systemImage: "arrow.down.circle")
+-                            }
+-                            .tint(AppColors.ochre)
+-                        }
+-                }
+-
+-                controls
+-                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
+-                items
+             }
+             .background(AppColors.bone)
+             .scrollContentBackground(.hidden)
+@@ -105,7 +94,7 @@ struct ExperienceLibraryScreen: View {
+             Button {
+                 addSourceRoute = .linkOrPodcast
+             } label: {
+-                Label("Add Source", systemImage: "plus")
++                Label("Add", systemImage: "plus")
+             }
+             .accessibilityIdentifier("home.addSource.button")
+         }
+@@ -182,115 +171,6 @@ struct ExperienceLibraryScreen: View {
+         .accessibilityIdentifier("library.onboarding.starters")
+     }
+ 
+-    private func continueHero(_ item: LibraryItemRow) -> some View {
+-        Group {
+-            Group {
+-                switch libraryComposition {
+-                case .horizontal:
+-                    HStack(spacing: 18) {
+-                        SMExperienceTypeCover(row: item, size: horizontalSizeClass == .regular ? 112 : 88)
+-                        Button { model.openItem(id: item.id) } label: { continueHeroDetails(item) }
+-                            .buttonStyle(.borderless)
+-                            .accessibilityIdentifier("library.row.\(item.id)")
+-                        Spacer(minLength: 0)
+-                        continueHeroAction(item)
+-                    }
+-                case .wrapped:
+-                    VStack(alignment: .leading, spacing: 16) {
+-                        HStack(alignment: .top, spacing: 12) {
+-                            SMExperienceTypeCover(row: item, size: 88)
+-                            Spacer(minLength: 12)
+-                            continueHeroAction(item)
+-                        }
+-                        Button { model.openItem(id: item.id) } label: { continueHeroDetails(item) }
+-                            .buttonStyle(.borderless)
+-                            .accessibilityIdentifier("library.row.\(item.id)")
+-                    }
+-                }
+-            }
+-            .padding(horizontalSizeClass == .regular ? 22 : 16)
+-            .frame(maxWidth: .infinity, alignment: .leading)
+-            .background(
+-                LinearGradient(
+-                    colors: [AppColors.panel, AppColors.softGreen.opacity(0.86)],
+-                    startPoint: .topLeading,
+-                    endPoint: .bottomTrailing
+-                )
+-            )
+-            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+-            .overlay {
+-                RoundedRectangle(cornerRadius: 24, style: .continuous)
+-                    .stroke(AppColors.evergreen.opacity(0.28))
+-            }
+-        }
+-        .buttonStyle(.plain)
+-        .accessibilityHint("This item is saved in your Library.")
+-    }
+-
+-    private func continueHeroDetails(_ item: LibraryItemRow) -> some View {
+-        VStack(alignment: .leading, spacing: 8) {
+-            Label(
+-                model.activePlaybackItemId == item.id ? "Now playing · In your Library" : "Continue listening · In your Library",
+-                systemImage: "play.circle.fill"
+-            )
+-                .font(.caption.weight(.bold))
+-                .textCase(.uppercase)
+-                .foregroundStyle(AppColors.ochre)
+-            Text(item.title)
+-                .font(.system(.title2, design: .serif).weight(.bold))
+-                .foregroundStyle(AppColors.text)
+-                .multilineTextAlignment(.leading)
+-                .lineLimit(3)
+-            if let source = item.sourceTitle ?? item.author {
+-                Text(source)
+-                    .font(.subheadline)
+-                    .foregroundStyle(AppColors.secondaryText)
+-                    .lineLimit(1)
+-            }
+-            if let progress = item.continuationProgressPercent {
+-                VStack(alignment: .leading, spacing: 4) {
+-                    ProgressView(value: Double(progress), total: 100)
+-                        .tint(AppColors.ochre)
+-                    Text("\(progress)% complete")
+-                        .font(.caption.monospacedDigit())
+-                        .foregroundStyle(AppColors.secondaryText)
+-                }
+-            }
+-        }
+-    }
+-
+-    private func continueHeroAction(_ item: LibraryItemRow) -> some View {
+-        Button { model.startItem(id: item.id) } label: {
+-            ZStack(alignment: .bottomTrailing) {
+-                Image(systemName: "play.fill")
+-                    .font(.title3)
+-                    .foregroundStyle(item.offlineState == .readyOffline ? .white : AppColors.evergreen)
+-                    .frame(width: 54, height: 54)
+-                    .background(item.offlineState == .readyOffline ? AppColors.evergreen : AppColors.softGreen, in: Circle())
+-                if item.startupAudioState == .preparing {
+-                    ProgressView()
+-                        .controlSize(.mini)
+-                        .tint(AppColors.evergreen)
+-                        .padding(4)
+-                        .background(AppColors.panel, in: Circle())
+-                }
+-            }
+-        }
+-        .buttonStyle(.plain)
+-        .accessibilityLabel("Continue \(item.title)")
+-        .accessibilityValue(
+-            item.startupAudioState == .preparing
+-                ? "\(startupProgressDescription(item)). Playback can start now."
+-                : (item.offlineState == .readyOffline ? "Ready offline" : "Opening audio ready")
+-        )
+-        .accessibilityIdentifier("library.continue.\(item.id)")
+-    }
+-
+-    private func startupProgressDescription(_ item: LibraryItemRow) -> String {
+-        let target = max(1, item.startupAudioTargetChunkCount)
+-        return "\(min(item.startupAudioCompletedChunkCount, target)) of \(target) opening chunks ready"
+-    }
+-
+     private var controls: some View {
+         VStack(alignment: .leading, spacing: 12) {
+             HStack(spacing: 10) {
+@@ -317,88 +197,44 @@ struct ExperienceLibraryScreen: View {
+             .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+             .overlay { RoundedRectangle(cornerRadius: 14).stroke(AppColors.border) }
+ 
+-            filterControls
+-                .labelStyle(.titleAndIcon)
+-        }
+-        .onChange(of: model.libraryQuery) { _, _ in model.libraryQueryChanged() }
+-    }
+-
+-    @ViewBuilder
+-    private var filterControls: some View {
+-        if libraryComposition == .wrapped {
+-            wrappedFilterControls
+-        } else {
+-            ViewThatFits(in: .horizontal) {
+-                HStack(spacing: 8) {
+-                    contentTypeMenu
+-                    listeningMenu
+-                    offlineMenu
+-                    sortMenu
+-                }
+-                .fixedSize(horizontal: true, vertical: true)
+-
+-                wrappedFilterControls
++            HStack(spacing: 8) {
++                libraryFiltersMenu
++                sortMenu
+             }
+         }
++        .onChange(of: model.libraryQuery) { _, _ in model.libraryQueryChanged() }
+     }
+ 
+-    private var wrappedFilterControls: some View {
+-        LazyVGrid(columns: wrappedFilterColumns, alignment: .leading, spacing: 8) {
+-            contentTypeMenu.frame(maxWidth: .infinity, alignment: .leading)
+-            listeningMenu.frame(maxWidth: .infinity, alignment: .leading)
+-            offlineMenu.frame(maxWidth: .infinity, alignment: .leading)
+-            sortMenu.frame(maxWidth: .infinity, alignment: .leading)
+-        }
+-    }
+-
+-    private var wrappedFilterColumns: [GridItem] {
+-        if dynamicTypeSize.isAccessibilitySize {
+-            return [GridItem(.flexible(), spacing: 8, alignment: .leading)]
+-        }
+-        return [GridItem(.adaptive(minimum: 150), spacing: 8, alignment: .leading)]
+-    }
+-
+-    private var contentTypeMenu: some View {
++    private var libraryFiltersMenu: some View {
+         Menu {
+-            Picker("Content type", selection: $model.libraryQuery.contentType) {
+-                ForEach(LibraryContentTypeFilter.allCases, id: \.self) { option in
+-                    Text(displayName(option.rawValue)).tag(option)
++            Section("Content type") {
++                Picker("Content type", selection: $model.libraryQuery.contentType) {
++                    ForEach(LibraryContentTypeFilter.allCases, id: \.self) { option in
++                        Text(displayName(option.rawValue)).tag(option)
++                    }
+                 }
+             }
+-        } label: {
+-            ExperienceFilterChip(isActive: model.libraryQuery.contentType != .all) {
+-                Label(displayName(model.libraryQuery.contentType.rawValue), systemImage: "square.grid.2x2")
+-            }
+-        }
+-        .accessibilityIdentifier("library.filter.menu")
+-    }
+-
+-    private var listeningMenu: some View {
+-        Menu {
+-            Picker("Listening", selection: $model.libraryQuery.listeningState) {
+-                ForEach(LibraryListeningStateFilter.allCases, id: \.self) { option in
+-                    Text(displayName(option.rawValue)).tag(option)
++            Section("Listening") {
++                Picker("Listening", selection: $model.libraryQuery.listeningState) {
++                    ForEach(LibraryListeningStateFilter.allCases, id: \.self) { option in
++                        Text(displayName(option.rawValue)).tag(option)
++                    }
+                 }
+             }
+-        } label: {
+-            ExperienceFilterChip(isActive: model.libraryQuery.listeningState != .all) {
+-                Label(displayName(model.libraryQuery.listeningState.rawValue), systemImage: "play.circle")
+-            }
+-        }
+-    }
+-
+-    private var offlineMenu: some View {
+-        Menu {
+-            Picker("Offline", selection: $model.libraryQuery.offlineState) {
+-                ForEach(LibraryOfflineStateFilter.allCases, id: \.self) { option in
+-                    Text(displayName(option.rawValue)).tag(option)
++            Section("Offline") {
++                Picker("Offline", selection: $model.libraryQuery.offlineState) {
++                    ForEach(LibraryOfflineStateFilter.allCases, id: \.self) { option in
++                        Text(displayName(option.rawValue)).tag(option)
++                    }
+                 }
+             }
+         } label: {
+-            ExperienceFilterChip(isActive: model.libraryQuery.offlineState != .all) {
+-                Label(displayName(model.libraryQuery.offlineState.rawValue), systemImage: "arrow.down.circle")
++            ExperienceFilterChip(isActive: hasActiveFilters) {
++                Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
+             }
+         }
++        .accessibilityLabel(hasActiveFilters ? "Filter Library, active filters" : "Filter Library")
++        .accessibilityIdentifier("library.filter.menu")
+     }
+ 
+     private var sortMenu: some View {
+@@ -416,6 +252,12 @@ struct ExperienceLibraryScreen: View {
+         .accessibilityIdentifier("library.sort.menu")
+     }
+ 
++    private var hasActiveFilters: Bool {
++        model.libraryQuery.contentType != .all
++            || model.libraryQuery.listeningState != .all
++            || model.libraryQuery.offlineState != .all
++    }
++
+     @ViewBuilder
+     private var items: some View {
+         if model.libraryItems.isEmpty {
+@@ -438,37 +280,16 @@ struct ExperienceLibraryScreen: View {
+             }
+             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
+         } else {
+-            Section {
+-                ForEach(compactItems) { row in
+-                    ExperienceLibraryCompactRow(
+-                        row: row,
+-                        onOpen: { model.openItem(id: row.id) },
+-                        onPlay: { model.startItem(id: row.id) },
+-                        onComplete: { model.markItemCompleted(id: row.id) },
+-                        onPrepareOffline: { model.prioritizeOfflinePreparation(id: row.id) },
+-                        onDelete: { model.moveItemToTrash(id: row.id) }
+-                    )
+-                    .listRowInsets(EdgeInsets(
+-                        top: 0,
+-                        leading: horizontalSizeClass == .regular ? 28 : 16,
+-                        bottom: 0,
+-                        trailing: horizontalSizeClass == .regular ? 28 : 16
+-                    ))
+-                    .listRowBackground(AppColors.bone)
+-                    .listRowSeparator(.hidden)
+-                }
+-            } header: {
+-                HStack {
+-                    Text("In your Library")
+-                        .font(.system(.title3, design: .serif).weight(.bold))
+-                        .foregroundStyle(AppColors.text)
+-                    Spacer()
+-                    Text("\(compactItems.count)")
+-                        .font(.subheadline.monospacedDigit())
+-                        .foregroundStyle(AppColors.secondaryText)
+-                }
+-                .textCase(nil)
+-                .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
++            ForEach(compactItems) { row in
++                ExperienceLibraryCompactRow(
++                    row: row,
++                    onOpen: { model.openItem(id: row.id) },
++                    onPlay: { model.startItem(id: row.id) },
++                    onComplete: { model.markItemCompleted(id: row.id) },
++                    onPrepareOffline: { model.prioritizeOfflinePreparation(id: row.id) },
++                    onDelete: { model.moveItemToTrash(id: row.id) }
++                )
++                .libraryRowLayout(horizontalSizeClass: horizontalSizeClass)
+             }
+         }
+     }
+@@ -479,7 +300,10 @@ struct ExperienceLibraryScreen: View {
+ }
+ 
+ private struct ExperienceLibraryCompactRow: View {
++    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
++
+     let row: LibraryItemRow
++    var isCurrentItem = false
+     let onOpen: () -> Void
+     let onPlay: () -> Void
+     let onComplete: () -> Void
+@@ -488,19 +312,28 @@ private struct ExperienceLibraryCompactRow: View {
+ 
+     var body: some View {
+         HStack(alignment: .center, spacing: 12) {
+-            SMExperienceTypeCover(row: row, size: 52)
++            Image(systemName: mediaSymbol)
++                .font(.body.weight(.semibold))
++                .foregroundStyle(AppColors.evergreen)
++                .frame(width: 38, height: 44)
++                .background(AppColors.softGreen.opacity(isCurrentItem ? 0.85 : 0.55))
+             Button(action: onOpen) {
+                 VStack(alignment: .leading, spacing: 3) {
++                    if isCurrentItem {
++                        Label(currentItemLabel, systemImage: "play.circle.fill")
++                            .font(.caption.weight(.semibold))
++                            .foregroundStyle(AppColors.evergreen)
++                    }
+                     Text(row.title)
+                         .font(.headline)
+                         .foregroundStyle(AppColors.text)
+                         .multilineTextAlignment(.leading)
+-                        .lineLimit(2)
++                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                     Text(detailLine)
+                         .font(.subheadline)
+                         .foregroundStyle(AppColors.secondaryText)
+                         .multilineTextAlignment(.leading)
+-                        .lineLimit(1)
++                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                 }
+                 .fixedSize(horizontal: false, vertical: true)
+                 .frame(maxWidth: .infinity, alignment: .leading)
+@@ -534,10 +367,22 @@ private struct ExperienceLibraryCompactRow: View {
+             .accessibilityIdentifier("queue.start.\(row.id)")
+         }
+         .padding(.horizontal, 12)
+-        .padding(.vertical, 9)
+-        .frame(maxWidth: .infinity, minHeight: 70, alignment: .leading)
++        .padding(.vertical, 10)
++        .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
+         .contentShape(Rectangle())
+-        .background(AppColors.panel)
++        .background(AppColors.bone)
++        .overlay(alignment: .leading) {
++            if isCurrentItem {
++                Rectangle()
++                    .fill(AppColors.evergreen)
++                    .frame(width: 3)
++            }
++        }
++        .overlay(alignment: .bottom) {
++            Rectangle()
++                .fill(AppColors.border.opacity(0.8))
++                .frame(height: 1)
++        }
+         .contextMenu {
+             Button("Open", systemImage: "arrow.right", action: onOpen)
+             Button(playActionTitle, systemImage: "play", action: onPlay)
+@@ -574,7 +419,7 @@ private struct ExperienceLibraryCompactRow: View {
+     }
+ 
+     private var detailLine: String {
+-        [row.sourceTitle ?? row.author, mediaLabel, listeningLabel, offlineDetailLabel]
++        [row.sourceTitle ?? row.author, mediaLabel, listeningLabel, statusDetail]
+             .compactMap { value in
+                 guard let value, !value.isEmpty else { return nil }
+                 return value
+@@ -587,6 +432,23 @@ private struct ExperienceLibraryCompactRow: View {
+         return row.hasContinuationSession ? "Continue \(row.title)" : "Start \(row.title)"
+     }
+ 
++    private var currentItemLabel: String {
++        row.hasContinuationSession ? "Continue listening" : "Current item"
++    }
++
++    private var mediaSymbol: String {
++        switch row.mediaType.lowercased() {
++        case "podcast", "audio", "audiobook", "m4a", "m4b", "mp3":
++            "headphones"
++        case "pdf":
++            "doc.richtext"
++        case "epub":
++            "book.closed"
++        default:
++            "doc.text"
++        }
++    }
++
+     private var listeningLabel: String? {
+         if row.isCompleted {
+             "Completed"
+@@ -610,7 +472,7 @@ private struct ExperienceLibraryCompactRow: View {
+         case .paused:
+             return "Opening audio paused"
+         case .failed:
+-            return "Live voice available"
++            return "Opening audio unavailable · Live voice available"
+         case .notRequired, .ready:
+             break
+         }
+@@ -622,8 +484,25 @@ private struct ExperienceLibraryCompactRow: View {
+         }
+     }
+ 
++    private var statusDetail: String? {
++        offlineDetailLabel
++    }
++
+     private var startupProgressDescription: String {
+         let target = max(1, row.startupAudioTargetChunkCount)
+         return "\(min(row.startupAudioCompletedChunkCount, target)) of \(target) chunks"
+     }
+ }
++
++private extension View {
++    func libraryRowLayout(horizontalSizeClass: UserInterfaceSizeClass?) -> some View {
++        listRowInsets(EdgeInsets(
++            top: 0,
++            leading: horizontalSizeClass == .regular ? 28 : 16,
++            bottom: 0,
++            trailing: horizontalSizeClass == .regular ? 28 : 16
++        ))
++        .listRowBackground(AppColors.bone)
++        .listRowSeparator(.hidden)
++    }
++}
+diff --git a/App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift b/App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift
+index 61ea421..26407b6 100644
+--- a/App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift
++++ b/App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift
+@@ -1987,6 +1987,7 @@ struct PlaybackScrubState: Equatable {
+ private struct PlaybackScreen: View {
+     @EnvironmentObject private var model: Gate1AppModel
+     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
++    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+     @State private var followUp = ""
+     @State private var selectedInterjection: Interjection?
+     @State private var isPastingAssistantResponse = false
+@@ -1994,6 +1995,8 @@ private struct PlaybackScreen: View {
+     @State private var textScrubState = PlaybackScrubState()
+     @State private var isSleepTimerPresented = false
+     @State private var isSourceTextPresented = false
++    @State private var isPlaybackOptionsPresented = false
++    @State private var isPlaybackMarginsPresented = false
+     @State private var sourceTextOffsetAtPresentation = 0
+     @State private var timelinePullTriggered = false
+     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
+@@ -2003,30 +2006,24 @@ private struct PlaybackScreen: View {
+         NavigationStack {
+             ScrollViewReader { proxy in
+                 ZStack {
+-                    LinearGradient(
+-                        colors: [AppColors.watchBackground, AppColors.evergreen.opacity(0.82)],
+-                        startPoint: .top,
+-                        endPoint: .bottomTrailing
+-                    )
+-                    .ignoresSafeArea()
++                    AppColors.listeningBackground.ignoresSafeArea()
+                     ScrollView {
+-                        VStack(spacing: 18) {
++                        VStack(alignment: .leading, spacing: 20) {
++                            playbackHeader
++                            importedCommentaryControl
++                            recentMarginPreview
+                             if model.shouldShowGuidedOnboardingCoach {
+                                 GuidedOnboardingPlaybackCard {
+-                                    withAnimation {
+-                                        proxy.scrollTo("playback.timeline", anchor: .top)
+-                                    }
++                                    openTimeline()
+                                 }
+                             }
+-                            playbackControls
+-                            sessionActionDock
+                             SourceFollowSuggestionCard(appearance: .playback)
+                             ManualSourceFollowButton(appearance: .playback)
+                         }
+-                        .padding(.horizontal, horizontalSizeClass == .regular ? 36 : 18)
+-                        .padding(.vertical, 24)
++                        .padding(.horizontal, horizontalSizeClass == .regular ? 36 : 22)
++                        .padding(.vertical, 18)
+                         .frame(maxWidth: 620)
+-                        .frame(maxWidth: .infinity)
++                        .frame(maxWidth: .infinity, alignment: .top)
+                     }
+                     .scrollBounceBehavior(.always)
+                     .onScrollGeometryChange(for: CGFloat.self) { geometry in
+@@ -2045,6 +2042,9 @@ private struct PlaybackScreen: View {
+                             openTimeline()
+                         }
+                     }
++                    .safeAreaInset(edge: .bottom, spacing: 0) {
++                        playbackControls
++                    }
+                 }
+                 .accessibilityIdentifier("playback.screen")
+                 .onCompatibleChange(of: model.guidedOnboardingStage) { stage in
+@@ -2055,7 +2055,7 @@ private struct PlaybackScreen: View {
+                     }
+                 }
+             }
+-            .toolbarBackground(AppColors.watchBackground.opacity(0.92), for: .navigationBar)
++            .toolbarBackground(AppColors.listeningBackground, for: .navigationBar)
+             .toolbarColorScheme(.dark, for: .navigationBar)
+             .toolbar {
+                 ToolbarItem(placement: .topBarLeading) {
+@@ -2086,6 +2086,33 @@ private struct PlaybackScreen: View {
+                     currentOffset: sourceTextOffsetAtPresentation
+                 )
+             }
++            .sheet(isPresented: $isPlaybackOptionsPresented) {
++                NavigationStack {
++                    ScrollView {
++                        VStack(alignment: .leading, spacing: 18) {
++                            playbackRateControl
++                            mixedAudioControl
++                            onDeviceSpeechGenerationControl
++                            reflectionOptions
++                            sessionActionDock
++                        }
++                        .padding(20)
++                    }
++                    .background(AppColors.listeningBackground)
++                    .navigationTitle("Listening options")
++                    .navigationBarTitleDisplayMode(.inline)
++                    .toolbar {
++                        ToolbarItem(placement: .confirmationAction) {
++                            Button("Done") { isPlaybackOptionsPresented = false }
++                        }
++                    }
++                }
++                .preferredColorScheme(.dark)
++                .presentationDetents([.medium, .large])
++            }
++            .sheet(isPresented: $isPlaybackMarginsPresented) {
++                ExperienceMarginsScreen().environmentObject(model)
++            }
+         }
+     }
+ 
+@@ -2095,26 +2122,140 @@ private struct PlaybackScreen: View {
+     }
+ 
+     private var playbackControls: some View {
+-        VStack(spacing: 16) {
+-            playbackHeader
+-            importedCommentaryControl
++        VStack(spacing: 10) {
+             playbackPosition
+             playbackTransport
+-            playbackRateControl
+-            mixedAudioControl
+-            onDeviceSpeechGenerationControl
+-            interjectionControls
++            if !dynamicTypeSize.isAccessibilitySize {
++                HStack(spacing: 24) {
++                    Button(model.compactPlaybackRateDescription, action: model.cyclePlaybackRate)
++                        .accessibilityLabel("Playback speed, \(model.compactPlaybackRateDescription)")
++                        .accessibilityIdentifier("playback.rate.button")
++                    Button {
++                        isSleepTimerPresented = true
++                    } label: {
++                        Label(model.sleepTimerIsActive ? model.sleepTimerDescription : "Sleep", systemImage: "moon.zzz")
++                    }
++                    .accessibilityIdentifier("playback.sleepTimer.button")
++                    .popover(isPresented: $isSleepTimerPresented) {
++                        sleepTimerPopover.presentationCompactAdaptation(.popover)
++                    }
++                    listeningOptionsButton
++                }
++                .font(.subheadline.weight(.medium))
++                .foregroundStyle(.white)
++                .buttonStyle(.plain)
++                .frame(minHeight: 44)
++            }
++            Button(action: model.beginInterjection) {
++                Label("Add a Margin", systemImage: "mic.fill")
++                    .frame(maxWidth: .infinity)
++            }
++            .buttonStyle(InterjectButtonStyle())
++            .disabled(!model.hasActiveSession)
++            .accessibilityIdentifier("playback.interject.button")
++            HStack(spacing: 18) {
++                Button(action: openTimeline) {
++                    Label("Timeline", systemImage: "list.bullet.rectangle")
++                }
++                .accessibilityIdentifier("playback.timeline.button")
++                Spacer(minLength: 4)
++                if dynamicTypeSize.isAccessibilitySize {
++                    listeningOptionsButton
++                } else {
++                    Button {
++                        isPlaybackMarginsPresented = true
++                    } label: {
++                        Label("Margins", systemImage: "quote.bubble")
++                    }
++                    .accessibilityIdentifier("playback.margins.button")
++                }
++            }
++            .font(.subheadline)
++            .foregroundStyle(.white)
++            .buttonStyle(.plain)
++            .frame(minHeight: 44)
++            .id("playback.timeline")
++        }
++        .padding(.horizontal, 22)
++        .padding(.top, 14)
++        .padding(.bottom, 4)
++        .frame(maxWidth: 620)
++        .frame(maxWidth: .infinity)
++        .background(AppColors.listeningBackground)
++        .overlay(alignment: .top) { Rectangle().fill(.white.opacity(0.18)).frame(height: 1) }
++        .accessibilityIdentifier("playback.controls")
++    }
++
++    private var listeningOptionsButton: some View {
++        Button {
++            isPlaybackOptionsPresented = true
++        } label: {
++            Label("More", systemImage: "ellipsis")
++        }
++        .accessibilityLabel("More listening options")
++        .accessibilityIdentifier("playback.options.button")
++    }
++
++    @ViewBuilder
++    private var recentMarginPreview: some View {
++        let notes = model.selectedItem.interjections.filter { $0.status == "active" }.suffix(2)
++        if !notes.isEmpty {
++            VStack(alignment: .leading, spacing: 12) {
++                Text("Recent Margins")
++                    .font(.subheadline)
++                    .foregroundStyle(AppColors.watchSecondary)
++                    .accessibilityAddTraits(.isHeader)
++                ForEach(Array(notes)) { note in
++                    Button { selectedInterjection = note } label: {
++                        VStack(alignment: .leading, spacing: 6) {
++                            Text(InterjectionPositionPresentation.detailDescription(for: note, durationMs: model.snapshot.currentPlaybackDurationMs))
++                                .font(.caption.monospacedDigit())
++                                .foregroundStyle(AppColors.watchSecondary)
++                            Text(note.displayText ?? note.cleanedTranscript ?? note.transcript ?? "Audio Margin")
++                                .font(.system(.body, design: .serif))
++                                .foregroundStyle(.white)
++                                .multilineTextAlignment(.leading)
++                                .lineLimit(3)
++                        }
++                        .padding(.leading, 12)
++                        .padding(.vertical, 8)
++                        .frame(maxWidth: .infinity, alignment: .leading)
++                        .overlay(alignment: .leading) { Rectangle().fill(AppColors.captureBackground).frame(width: 2) }
++                    }
++                    .buttonStyle(.plain)
++                }
++            }
++        }
++    }
++
++    @ViewBuilder
++    private var reflectionOptions: some View {
++        if model.aiSummaryExperienceAvailable {
++            Button(action: model.summarize) {
++                Label(model.summaryActionTitle, systemImage: "sparkles")
++                    .frame(maxWidth: .infinity, minHeight: 44)
++            }
++            .buttonStyle(SecondaryButtonStyle())
++            .disabled(!model.canSummarizeInterjections || model.isSummarizingInterjections)
++            .accessibilityIdentifier("playback.summary.button")
++        }
++        if model.remoteProviderExperienceEnabled {
++            TextField("Ask about this session", text: $followUp, axis: .vertical)
++                .textFieldStyle(.roundedBorder)
++                .focused($followUpFocused)
++            Button("Discuss", systemImage: "bubble.left.and.bubble.right") {
++                followUpFocused = false
++                model.discuss(followUp: followUp)
++            }
++            .disabled(!model.hasActiveSession || followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
++            .accessibilityIdentifier("playback.discuss.button")
+         }
+-        .padding(.horizontal, horizontalSizeClass == .regular ? 34 : 22)
+-        .padding(.vertical, 28)
+-        .frame(maxWidth: 560)
+-        .background(Color.black.opacity(0.22))
+-        .clipShape(RoundedRectangle(cornerRadius: 36, style: .continuous))
+-        .overlay {
+-            RoundedRectangle(cornerRadius: 36, style: .continuous)
+-                .stroke(Color.white.opacity(0.14))
++        NavigationLink {
++            ExperienceMarginsScreen().environmentObject(model)
++        } label: {
++            Label("Margins", systemImage: "quote.bubble")
+         }
+-        .shadow(color: .black.opacity(0.22), radius: 28, y: 14)
++        .frame(minHeight: 44)
+     }
+ 
+     private var sessionActionDock: some View {
+@@ -2241,14 +2382,12 @@ private struct PlaybackScreen: View {
+     }
+ 
+     private var playbackHeader: some View {
+-        VStack(spacing: 6) {
++        VStack(alignment: .leading, spacing: 12) {
+             Button(action: model.openCurrentPlaybackItem) {
+                 Text(model.playbackItemHeaderTitle)
+-                    .font(.title2.weight(.bold))
+-                    .multilineTextAlignment(.center)
+-                    .lineLimit(3)
+-                    .minimumScaleFactor(0.85)
+-                    .truncationMode(.tail)
++                    .font(.system(.largeTitle, design: .serif).weight(.medium))
++                    .multilineTextAlignment(.leading)
++                    .fixedSize(horizontal: false, vertical: true)
+                     .foregroundStyle(.white)
+             }
+             .buttonStyle(.plain)
+@@ -2260,9 +2399,8 @@ private struct PlaybackScreen: View {
+                 Button(action: model.openCurrentPlaybackItem) {
+                     Text(chapterTitle)
+                         .font(.subheadline.weight(.semibold))
+-                        .multilineTextAlignment(.center)
+-                        .lineLimit(2)
+-                        .truncationMode(.tail)
++                        .multilineTextAlignment(.leading)
++                        .fixedSize(horizontal: false, vertical: true)
+                         .foregroundStyle(.white.opacity(0.82))
+                 }
+                 .buttonStyle(.plain)
+@@ -2757,119 +2895,6 @@ private struct PlaybackScreen: View {
+         .frame(minWidth: 300)
+     }
+ 
+-    @ViewBuilder
+-    private var interjectionControls: some View {
+-        if model.snapshot.isRecording {
+-            VStack(spacing: 12) {
+-                Label("Recording", systemImage: "record.circle.fill").foregroundStyle(.red)
+-                HStack {
+-                    Button(action: model.finishInterjection) { Label("Done", systemImage: "checkmark") }
+-                        .buttonStyle(PrimaryButtonStyle())
+-                        .accessibilityIdentifier("interjection.done.button")
+-                    Button(action: model.cancelInterjection) { Label("Cancel", systemImage: "xmark") }
+-                        .buttonStyle(LightButtonStyle())
+-                        .accessibilityIdentifier("interjection.cancel.button")
+-                }
+-            }
+-        } else {
+-            VStack(spacing: 10) {
+-                if usesVerbosePlaybackActions {
+-                    HStack(spacing: 10) {
+-                        if model.aiSummaryExperienceAvailable {
+-                            Button(action: model.summarize) {
+-                                HStack(spacing: 6) {
+-                                    if model.isSummarizingInterjections {
+-                                        ProgressView()
+-                                    } else {
+-                                        Image(systemName: "sparkles")
+-                                    }
+-                                    Text(model.summaryActionTitle)
+-                                }
+-                                .frame(maxWidth: .infinity, minHeight: 52)
+-                            }
+-                            .buttonStyle(WatchSecondaryButtonStyle())
+-                            .disabled(!model.canSummarizeInterjections || model.isSummarizingInterjections)
+-                            .accessibilityLabel(model.canRetryLocalSummary ? "Retry summary" : (model.isSummarizingInterjections ? "Summarizing interjections" : "Summarize interjections"))
+-                            .accessibilityIdentifier("playback.summary.button")
+-                        }
+-                        Button(action: model.beginInterjection) {
+-                            Label(model.interjectionButtonTitle, systemImage: "mic").frame(maxWidth: .infinity)
+-                        }
+-                        .buttonStyle(InterjectButtonStyle())
+-                        .disabled(!model.hasActiveSession)
+-                        .accessibilityIdentifier("playback.interject.button")
+-                    }
+-                    if !model.aiSummaryExperienceAvailable {
+-                        Text(model.localFoundationModelAvailabilityDescription)
+-                            .font(.caption)
+-                            .foregroundStyle(AppColors.watchSecondary)
+-                            .frame(maxWidth: .infinity, alignment: .leading)
+-                            .accessibilityIdentifier("playback.summary.description")
+-                    } else if model.remoteProviderExperienceEnabled && !model.hasConfiguredProviderAPIKey {
+-                        Text("Add an OpenAI API key in Settings to summarize notes or discuss them.")
+-                            .font(.caption)
+-                            .foregroundStyle(AppColors.watchSecondary)
+-                            .frame(maxWidth: .infinity, alignment: .leading)
+-                            .accessibilityIdentifier("playback.summary.description")
+-                    }
+-                    if model.remoteProviderExperienceEnabled {
+-                        Button {
+-                            followUpFocused = false
+-                            model.discuss(followUp: followUp)
+-                        } label: {
+-                            Label("Discuss", systemImage: "bubble.left.and.bubble.right.fill")
+-                        }
+-                        .buttonStyle(LightButtonStyle())
+-                        .disabled(!model.hasActiveSession || followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+-                        .accessibilityIdentifier("playback.discuss.button")
+-                    }
+-                } else {
+-                    HStack(spacing: 12) {
+-                        if model.aiSummaryExperienceAvailable {
+-                            Button(action: model.summarize) {
+-                                Group {
+-                                    if model.isSummarizingInterjections {
+-                                        ProgressView()
+-                                    } else {
+-                                        Image(systemName: "sparkles")
+-                                    }
+-                                }
+-                                .frame(maxWidth: .infinity, minHeight: 52)
+-                            }
+-                            .buttonStyle(WatchSecondaryButtonStyle())
+-                            .disabled(!model.canSummarizeInterjections || model.isSummarizingInterjections)
+-                            .accessibilityLabel(model.canRetryLocalSummary ? "Retry summary" : (model.isSummarizingInterjections ? "Summarizing interjections" : "Summarize interjections"))
+-                            .accessibilityIdentifier("playback.summary.button")
+-                        }
+-
+-                        Button(action: model.beginInterjection) {
+-                            Image(systemName: "mic")
+-                                .frame(maxWidth: .infinity)
+-                        }
+-                        .buttonStyle(InterjectButtonStyle())
+-                        .disabled(!model.hasActiveSession)
+-                        .accessibilityLabel(model.interjectionButtonTitle)
+-                        .accessibilityIdentifier("playback.interject.button")
+-
+-                        if model.remoteProviderExperienceEnabled {
+-                            Button {
+-                                followUpFocused = false
+-                                model.discuss(followUp: followUp)
+-                            } label: {
+-                                Image(systemName: "bubble.left.and.bubble.right.fill")
+-                                    .frame(maxWidth: .infinity, minHeight: 52)
+-                            }
+-                            .buttonStyle(WatchSecondaryButtonStyle())
+-                            .disabled(!model.hasActiveSession || followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+-                            .accessibilityLabel("Discuss")
+-                            .accessibilityIdentifier("playback.discuss.button")
+-                        }
+-                    }
+-                }
+-            }
+-        }
+-    }
+-
+     private var gate2CompactValidation: some View {
+         VStack(alignment: .leading, spacing: 10) {
+             Text("Compact Controls")
+@@ -5099,6 +5124,9 @@ private enum AppLinks {
+ }
+ 
+ enum AppColors {
++    static let listeningBackground = Color(red: 0.09, green: 0.224, blue: 0.184)
++    static let captureBackground = Color(red: 1, green: 0.941, blue: 0.745)
++    static let listeningAccent = Color(red: 0.859, green: 0.929, blue: 0.553)
+     static let background = dynamicColor(AppSemanticColorRGB.background)
+     static let panel = dynamicColor(AppSemanticColorRGB.panel)
+     static let inputBackground = dynamicColor(light: (0.98, 0.99, 0.97), dark: (0.10, 0.12, 0.11))
+@@ -5237,7 +5265,7 @@ private struct MainPlaybackButtonStyle: ButtonStyle {
+             .font(.title2)
+             .foregroundStyle(AppColors.interjectText)
+             .frame(width: 76, height: 76)
+-            .background(AppColors.accent.opacity(configuration.isPressed ? 0.75 : 1))
++            .background(AppColors.listeningAccent.opacity(configuration.isPressed ? 0.75 : 1))
+             .clipShape(Circle())
+     }
+ }
+@@ -5257,7 +5285,7 @@ private struct InterjectButtonStyle: ButtonStyle {
+             .font(.headline)
+             .frame(minHeight: 52)
+             .foregroundStyle(AppColors.interjectText)
+-            .background(Color(red: 0.94, green: 0.82, blue: 0.42).opacity(configuration.isPressed ? 0.78 : 1))
++            .background(AppColors.captureBackground.opacity(configuration.isPressed ? 0.78 : 1))
+             .clipShape(RoundedRectangle(cornerRadius: 8))
+     }
+ }
+diff --git a/App/SpokenMarginsAppUITests/Gate1FlowUITests.swift b/App/SpokenMarginsAppUITests/Gate1FlowUITests.swift
+index c4c6f01..9b1d58b 100644
+--- a/App/SpokenMarginsAppUITests/Gate1FlowUITests.swift
++++ b/App/SpokenMarginsAppUITests/Gate1FlowUITests.swift
+@@ -275,7 +275,10 @@ final class Gate1FlowUITests: XCTestCase {
+         let timelineButton = scrollToElement("playback.timeline.button")
+         XCTAssertEqual(timelineButton.label, "Timeline")
+         XCTAssertFalse(timelineButton.label.contains("\n"))
++        app.buttons["playback.options.button"].tap()
++        XCTAssertTrue(element("playback.export.button").waitForExistence(timeout: 4))
+         XCTAssertTrue(element("playback.export.button").isHittable)
++        app.buttons["Done"].tap()
+ 
+         let playbackScroll = app.scrollViews.firstMatch
+         let pullStart = playbackScroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.78))
+@@ -595,6 +598,31 @@ final class Gate1FlowUITests: XCTestCase {
+         XCTAssertFalse(element("recording.screen").exists)
+     }
+ 
++    func testPlaybackPrimaryActionsRemainVisibleWithLongTitleAndAccessibilityText() throws {
++        app.terminate()
++        let longTitle = "A listener's notebook about the art of paying attention, ordinary streets, familiar voices, and everything we might otherwise forget on a long walk home"
++        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE"] = longTitle
++        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"] = String(repeating: "A paragraph worth listening to. ", count: 80)
++        app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge"]
++        app.launch()
++        let start = scrollToElement("queue.start.item-ui-text-regression")
++        XCTAssertTrue(start.isHittable)
++        start.tap()
++        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
++        let viewport = app.windows.firstMatch.frame
++        for id in ["playback.play.button", "playback.interject.button", "playback.options.button"] {
++            let control = element(id)
++            XCTAssertTrue(control.waitForExistence(timeout: 4), id)
++            XCTAssertTrue(control.isHittable, "\(id) requires scrolling past content")
++            XCTAssertTrue(viewport.contains(control.frame), "\(id) is clipped outside the viewport")
++        }
++        captureScreen(named: "second-edition-long-title-accessibility-controls")
++        let scroll = app.scrollViews.firstMatch
++        scroll.swipeUp()
++        XCTAssertTrue(element("playback.interject.button").isHittable, "Scrolling content moved capture away")
++        XCTAssertTrue(element("playback.play.button").isHittable, "Scrolling content moved playback away")
++    }
++
+     func testRootsRemainUsableWithLargeTypeDarkContrastAndReducedMotion() throws {
+         app.terminate()
+         app.launchArguments += [
+diff --git a/TestPlans/UISeams.xctestplan b/TestPlans/UISeams.xctestplan
+index ed9ba7f..988ebcb 100644
+--- a/TestPlans/UISeams.xctestplan
++++ b/TestPlans/UISeams.xctestplan
+@@ -26,7 +26,8 @@
+         "Gate1FlowUITests/testBuild23RecipientMissingSourceReturnsWithoutAutoplayAndShowsProvenance()",
+         "Gate1FlowUITests/testBuild23LayoutRegressionsRemainOperableAtAccessibilityType()",
+         "Gate1FlowUITests/testExportPreviewRemainsReachableAfterStartingAnotherSession()",
+-        "Gate1FlowUITests/testSeededGate1FlowHasPlaybackMiniPlayerExportAndSettings()"
++        "Gate1FlowUITests/testSeededGate1FlowHasPlaybackMiniPlayerExportAndSettings()",
++        "Gate1FlowUITests/testPlaybackPrimaryActionsRemainVisibleWithLongTitleAndAccessibilityText()"
+       ],
+       "parallelizable": false
+     }

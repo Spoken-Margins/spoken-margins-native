@@ -44,6 +44,7 @@ public final class SessionEngine {
     private var playbackStartDeadline: Date?
     private var playbackURLOverrides: [String: String] = [:]
     private var pendingPlaybackPosition: PendingPlaybackPosition?
+    private var pendingWrittenInterjection: WrittenInterjectionCapture?
 
     private struct PendingPlaybackPosition {
         var targetId: String
@@ -1148,6 +1149,9 @@ public final class SessionEngine {
     @discardableResult
     public func beginInterjection() throws -> SessionSnapshot {
         try require("beginInterjection", category: "interjection", capabilities: ["record_audio", "delegate_interjection_to_canonical_runtime"])
+        guard pendingWrittenInterjection == nil else {
+            throw SessionKitError.invalidCommandForState("beginInterjection")
+        }
         guard var session = currentSession else { throw SessionKitError.invalidCommandForState("beginInterjection") }
         let usesNativeMediaClock = session.currentTargetType == .transcriptBackedMedia
             || session.currentTargetType == .browserOwnedMedia
@@ -1176,6 +1180,275 @@ public final class SessionEngine {
         snapshot.recordingTargetId = target.id
         publish(status: .recording, phase: .recordingInterjection)
         return snapshot
+    }
+
+    @discardableResult
+    public func beginWrittenInterjection() throws -> WrittenInterjectionCapture {
+        try requireNavigationAllowed("beginWrittenInterjection")
+        guard let originalSession = currentSession else {
+            throw SessionKitError.invalidCommandForState("beginWrittenInterjection")
+        }
+        guard pendingWrittenInterjection == nil else {
+            throw SessionKitError.invalidCommandForState("beginWrittenInterjection")
+        }
+        let wasPlaying = snapshot.status.isPlaybackActive
+        // Resolve the immutable target before changing transport. The native
+        // media clock still has to be sampled after pause, but every other
+        // fallible part of the transaction happens before audio is stopped.
+        let target = currentInterjectionTarget(for: originalSession)
+        _ = buildAnchor(for: originalSession, targetType: target.type, targetId: target.id)
+
+        do {
+            var session = originalSession
+            let usesNativeMediaClock = session.currentTargetType == .transcriptBackedMedia
+                || session.currentTargetType == .browserOwnedMedia
+            if usesNativeMediaClock {
+                try audio.pause()
+                session = try syncCurrentPositionFromAudio(session)
+            } else {
+                session = try syncCurrentPositionFromAudio(session)
+                try audio.pause()
+            }
+            let anchor = buildAnchor(for: session, targetType: target.type, targetId: target.id)
+            try persistSession(session)
+            currentSession = session
+            let capture = WrittenInterjectionCapture(
+                id: UUID().uuidString,
+                sessionId: session.id,
+                itemId: session.itemId,
+                targetType: target.type,
+                targetId: target.id,
+                anchor: anchor,
+                roughPercent: interjectionPercent(
+                    for: session,
+                    targetType: target.type,
+                    targetId: target.id,
+                    anchor: anchor
+                ),
+                wasPlaying: wasPlaying
+            )
+            pendingWrittenInterjection = capture
+            publish(status: .paused, phase: session.phase)
+            return capture
+        } catch {
+            // A failed begin must leave no draft and must restore transport if
+            // the source had been playing. The persisted session was only
+            // written after the pause/synchronization transaction succeeded.
+            currentSession = originalSession
+            if wasPlaying {
+                try? restoreWrittenInterjectionTransport(wasPlaying: true, session: originalSession)
+            } else {
+                try? audio.pause()
+                publish(status: .paused, phase: originalSession.phase)
+            }
+            throw error
+        }
+    }
+
+    @discardableResult
+    public func saveWrittenInterjection(captureId: String, text: String) throws -> SessionSnapshot {
+        guard let capture = pendingWrittenInterjection, capture.id == captureId,
+              let session = currentSession,
+              session.id == capture.sessionId,
+              session.itemId == capture.itemId else {
+            throw SessionKitError.invalidCommandForState("saveWrittenInterjection")
+        }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw SessionKitError.invalidCommandForState("saveWrittenInterjection")
+        }
+        let interjection = Interjection(
+            id: "ij-written-\(capture.id)",
+            itemId: capture.itemId,
+            sessionId: capture.sessionId,
+            targetType: capture.targetType,
+            targetId: capture.targetId,
+            createdAt: now(),
+            roughPercent: capture.roughPercent,
+            anchor: capture.anchor,
+            audioPath: nil,
+            audioStatus: "discarded",
+            transcriptionStatus: "transcribed",
+            transcript: text,
+            cleanedTranscript: nil,
+            displayText: text,
+            status: "active",
+            // Written capture does not schedule transcription. A missing
+            // cached context is unavailable, never pending background work.
+            anchorContextStatus: capture.anchor.mediaTimeMs == nil
+                || !capture.anchor.anchorBefore.isEmpty
+                || !capture.anchor.anchorAfter.isEmpty ? .ready : .unavailable,
+            captureKind: .written
+        )
+        try repository.saveInterjection(interjection)
+        pendingWrittenInterjection = nil
+        do {
+            try restoreWrittenInterjectionTransport(wasPlaying: capture.wasPlaying, session: session)
+        } catch {
+            // The note is already durable. Do not report this as a save failure
+            // or retain a retryable draft: doing either would allow a second
+            // submit to create a duplicate. Leave transport safely paused.
+            try? audio.pause()
+            publish(status: .paused, phase: session.phase)
+        }
+        return snapshot
+    }
+
+    @discardableResult
+    public func cancelWrittenInterjection(captureId: String) throws -> SessionSnapshot {
+        guard let capture = pendingWrittenInterjection, capture.id == captureId,
+              let session = currentSession,
+              session.id == capture.sessionId,
+              session.itemId == capture.itemId else {
+            throw SessionKitError.invalidCommandForState("cancelWrittenInterjection")
+        }
+        try restoreWrittenInterjectionTransport(wasPlaying: capture.wasPlaying, session: session)
+        pendingWrittenInterjection = nil
+        return snapshot
+    }
+
+    private func restoreWrittenInterjectionTransport(wasPlaying: Bool, session: Session) throws {
+        if wasPlaying {
+            if externallyStreamedTurnId == session.currentTargetId {
+                publish(status: .starting, phase: session.phase)
+            } else {
+                try playCurrentTarget(session)
+                publishPlaybackStart(for: session, phase: session.phase)
+            }
+        } else {
+            try audio.pause()
+            publish(status: .paused, phase: session.phase)
+        }
+    }
+
+    private struct InterjectionAnchorPlaybackPlan {
+        var originalSession: Session
+        var session: Session
+        var item: Item
+        var map: ListeningMap?
+    }
+
+    private func interjectionAnchorPlaybackPlan(for requested: Interjection) throws -> InterjectionAnchorPlaybackPlan {
+        guard let originalSession = try repository.loadSession(id: requested.sessionId),
+              originalSession.itemId == requested.itemId,
+              let stored = try repository.loadInterjections(sessionId: requested.sessionId).first(where: {
+                  $0.id == requested.id
+                      && $0.sessionId == requested.sessionId
+                      && $0.itemId == requested.itemId
+              }),
+              stored.status == "active" else {
+            throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
+        }
+
+        let item = try repository.loadItem(id: originalSession.itemId)
+        let map = try repository.loadListeningMap(itemId: item.id)
+        var session = originalSession
+        switch stored.targetType {
+        case .item:
+            guard stored.targetId == item.id else {
+                throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
+            }
+            let targetType = playbackTargetType(for: item)
+            session.currentTargetType = targetType
+            session.currentTargetId = itemPlaybackTargetId(for: item, targetType: targetType)
+            session.phase = .itemPlayback
+            if targetType == .transcriptBackedMedia || targetType == .browserOwnedMedia {
+                guard let mediaTimeMs = stored.anchor.mediaTimeMs,
+                      mediaTimeMs >= 0 else {
+                    throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
+                }
+                let durableDurationMs = (try repository.loadTranscriptTimeline(itemId: item.id))?.timeline.durationMs
+                    ?? item.media?.durationMs
+                guard durableDurationMs.map({ mediaTimeMs <= $0 }) ?? true else {
+                    throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
+                }
+                session = mediaSession(session, movedTo: mediaTimeMs)
+            } else {
+                guard let text = item.text,
+                      stored.anchor.startChar >= 0,
+                      stored.anchor.endChar >= stored.anchor.startChar,
+                      stored.anchor.endChar <= text.count else {
+                    throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
+                }
+                session.position = Position(
+                    charOffset: stored.anchor.startChar,
+                    chapterId: map?.chapters.last(where: { $0.startChar <= stored.anchor.startChar })?.id
+                )
+                session.completionPercent = percent(for: stored.anchor.startChar, text: text)
+            }
+        case .assistantTurn, .summaryTurn:
+            guard let turn = try repository.loadTurns(sessionId: originalSession.id).first(where: { $0.id == stored.targetId }),
+                  turn.role == "assistant",
+                  (turn.status == "complete" || turn.status == "streaming"),
+                  (stored.targetType == .assistantTurn && turn.turnType == "assistant_response")
+                      || (stored.targetType == .summaryTurn && turn.turnType == "interjection_summary") else {
+                throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
+            }
+            let text = generatedTurnNavigationText(for: turn)
+            guard stored.anchor.startChar >= 0,
+                  stored.anchor.endChar >= stored.anchor.startChar,
+                  stored.anchor.endChar <= text.count else {
+                throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
+            }
+            session.currentTargetType = stored.targetType == .assistantTurn ? .assistantTurnTTS : .summaryTurnTTS
+            session.currentTargetId = turn.id
+            session.phase = stored.targetType == .assistantTurn ? .aiResponsePlayback : .summaryPlayback
+            session.position = Position(charOffset: stored.anchor.startChar, chapterId: nil)
+            session.completionPercent = percent(for: stored.anchor.startChar, text: text)
+        }
+        return InterjectionAnchorPlaybackPlan(originalSession: originalSession, session: session, item: item, map: map)
+    }
+
+    @discardableResult
+    public func playInterjectionAnchor(_ interjection: Interjection) throws -> SessionSnapshot {
+        try requireNavigationAllowed("playInterjectionAnchor")
+        let plan = try interjectionAnchorPlaybackPlan(for: interjection)
+        let previousSession = currentSession
+        let previousItem = currentItem
+        let previousMap = currentMap
+        let previousSnapshot = snapshot
+        let previousPendingPlaybackPosition = pendingPlaybackPosition
+        let previousExternallyStreamedTurnId = externallyStreamedTurnId
+
+        do {
+            currentSession = plan.session
+            currentItem = plan.item
+            currentMap = plan.map
+            externallyStreamedTurnId = nil
+            try persistSession(plan.session)
+            protectPlaybackPosition(for: plan.session)
+            try playCurrentTarget(plan.session)
+            publishPlaybackStart(for: plan.session, phase: plan.session.phase)
+            return snapshot
+        } catch {
+            // The target session has not become the user's current source until
+            // both its durable target and adapter setup succeed. Restore its
+            // stored position before returning to the prior source.
+            try? repository.saveSession(plan.originalSession)
+            currentSession = previousSession
+            currentItem = previousItem
+            currentMap = previousMap
+            pendingPlaybackPosition = previousPendingPlaybackPosition
+            externallyStreamedTurnId = previousExternallyStreamedTurnId
+            snapshot = previousSnapshot
+            if let previousSession {
+                do {
+                    if previousSnapshot.status.isPlaybackActive {
+                        try playCurrentTarget(previousSession)
+                        publishPlaybackStart(for: previousSession, phase: previousSession.phase)
+                    } else {
+                        try audio.pause()
+                        publish(status: .paused, phase: previousSession.phase)
+                    }
+                } catch {
+                    // Identity is still truthful even when the adapter cannot
+                    // restore the old transport.
+                    snapshot.status = .paused
+                    snapshot.phase = previousSession.phase
+                    snapshot.lastFailure = "playback_anchor_rollback_failed"
+                }
+            }
+            throw error
+        }
     }
 
     @discardableResult
@@ -1745,8 +2018,8 @@ public final class SessionEngine {
     }
 
     @discardableResult
-    public func transcriptionCompleted(interjectionId: String, transcript: String) throws -> SessionSnapshot {
-        try updateInterjection(interjectionId) { interjection in
+    public func transcriptionCompleted(interjectionId: String, sessionId: String? = nil, transcript: String) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
             interjection.transcript = transcript
             interjection.alignedTranscript = nil
             interjection.transcriptionStatus = "transcribed"
@@ -1759,9 +2032,10 @@ public final class SessionEngine {
     @discardableResult
     public func transcriptionCompleted(
         interjectionId: String,
+        sessionId: String? = nil,
         alignedTranscript: AlignedInterjectionTranscript
     ) throws -> SessionSnapshot {
-        try updateInterjection(interjectionId) { interjection in
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
             interjection.transcript = alignedTranscript.text
             interjection.alignedTranscript = alignedTranscript
             interjection.transcriptionStatus = "transcribed"
@@ -1774,10 +2048,11 @@ public final class SessionEngine {
     @discardableResult
     public func podcastAnchorEvidenceCompleted(
         interjectionId: String,
+        sessionId: String? = nil,
         evidence: [CapturedPodcastAnchorEvidence],
         sourceExactEditionSHA256: String?
     ) throws -> SessionSnapshot {
-        try updateInterjection(interjectionId) { interjection in
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
             interjection.podcastAnchorEvidence = evidence
             interjection.sourceExactEditionSHA256 = sourceExactEditionSHA256
             interjection.podcastAnchorEvidenceCaptureStatus = .ready
@@ -1789,9 +2064,10 @@ public final class SessionEngine {
     @discardableResult
     public func podcastAnchorEvidenceFailed(
         interjectionId: String,
+        sessionId: String? = nil,
         reason: String
     ) throws -> SessionSnapshot {
-        try updateInterjection(interjectionId) { interjection in
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
             interjection.podcastAnchorEvidenceCaptureStatus = .unavailable
             interjection.podcastAnchorEvidenceFailureReason = reason
         }
@@ -1799,8 +2075,8 @@ public final class SessionEngine {
     }
 
     @discardableResult
-    public func transcriptionFailed(interjectionId: String, error: String) throws -> SessionSnapshot {
-        try updateInterjection(interjectionId) { interjection in
+    public func transcriptionFailed(interjectionId: String, sessionId: String? = nil, error: String) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
             interjection.transcriptionStatus = "failed"
             interjection.displayText = "Audio saved. Transcript failed."
         }
@@ -1809,12 +2085,12 @@ public final class SessionEngine {
     }
 
     @discardableResult
-    public func sourceWindowContextCompleted(interjectionId: String, timeline: TranscriptTimeline) throws -> SessionSnapshot {
+    public func sourceWindowContextCompleted(interjectionId: String, sessionId: String? = nil, timeline: TranscriptTimeline) throws -> SessionSnapshot {
         let normalized = normalizedSourceTranscriptTimeline(timeline).timeline
         guard !normalized.segments.isEmpty else {
-            return try sourceWindowContextUnavailable(interjectionId: interjectionId)
+            return try sourceWindowContextUnavailable(interjectionId: interjectionId, sessionId: sessionId)
         }
-        try updateInterjection(interjectionId) { interjection in
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
             let mediaTimeMs = interjection.anchor.mediaTimeMs ?? 0
             let resolved = MediaTimelineAnchorResolver.resolve(
                 mediaTimeMs: mediaTimeMs,
@@ -1846,24 +2122,24 @@ public final class SessionEngine {
     }
 
     @discardableResult
-    public func sourceWindowContextUnavailable(interjectionId: String) throws -> SessionSnapshot {
-        try updateInterjection(interjectionId) { interjection in
+    public func sourceWindowContextUnavailable(interjectionId: String, sessionId: String? = nil) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
             interjection.anchorContextStatus = .unavailable
         }
         return snapshot
     }
 
     @discardableResult
-    public func sourceWindowContextPending(interjectionId: String) throws -> SessionSnapshot {
-        try updateInterjection(interjectionId) { interjection in
+    public func sourceWindowContextPending(interjectionId: String, sessionId: String? = nil) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
             interjection.anchorContextStatus = .pending
         }
         return snapshot
     }
 
     @discardableResult
-    public func cleanupCompleted(interjectionId: String, cleanedTranscript: String) throws -> SessionSnapshot {
-        try updateInterjection(interjectionId) { interjection in
+    public func cleanupCompleted(interjectionId: String, sessionId: String? = nil, cleanedTranscript: String) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
             interjection.cleanedTranscript = cleanedTranscript
             interjection.displayText = cleanedTranscript
         }
@@ -1871,8 +2147,8 @@ public final class SessionEngine {
     }
 
     @discardableResult
-    public func deleteRepresentation(interjectionId: String, representation: String) throws -> SessionSnapshot {
-        try updateInterjection(interjectionId) { interjection in
+    public func deleteRepresentation(interjectionId: String, sessionId: String? = nil, representation: String) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
             if representation == "cleanedTranscript" {
                 interjection.cleanedTranscript = nil
                 interjection.displayText = interjection.transcript
@@ -1887,8 +2163,8 @@ public final class SessionEngine {
     }
 
     @discardableResult
-    public func deleteInterjection(interjectionId: String) throws -> SessionSnapshot {
-        try updateInterjection(interjectionId) { interjection in
+    public func deleteInterjection(interjectionId: String, sessionId: String? = nil) throws -> SessionSnapshot {
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
             interjection.status = "deleted"
         }
         publish(status: snapshot.status, phase: snapshot.phase)
@@ -2076,8 +2352,11 @@ public final class SessionEngine {
                         : turnContext?.after ?? interjection.anchor.anchorAfter,
                     mediaTimeMs: interjection.anchor.mediaTimeMs,
                     transcriptionStatus: interjection.transcriptionStatus,
-                    transcript: interjection.cleanedTranscript ?? interjection.transcript,
-                    audioPath: nil
+                    transcript: interjection.captureKind == .written
+                        ? interjection.transcript
+                        : interjection.cleanedTranscript ?? interjection.transcript,
+                    audioPath: nil,
+                    captureKind: interjection.captureKind
                 )
             }
         )
@@ -2976,7 +3255,7 @@ public final class SessionEngine {
     }
 
     private func requireNavigationAllowed(_ command: String) throws {
-        guard snapshot.status != .recording else {
+        guard snapshot.status != .recording, pendingWrittenInterjection == nil else {
             throw SessionKitError.invalidCommandForState(command)
         }
     }
@@ -3239,7 +3518,22 @@ public final class SessionEngine {
         )
     }
 
-    private func updateInterjection(_ id: String, mutate: (inout Interjection) -> Void) throws {
+    private func updateInterjection(
+        _ id: String,
+        sessionId: String? = nil,
+        mutate: (inout Interjection) -> Void
+    ) throws {
+        if let sessionId {
+            guard (try repository.loadSession(id: sessionId)) != nil,
+                  var interjection = try repository.loadInterjections(sessionId: sessionId).first(where: {
+                      $0.id == id && $0.sessionId == sessionId
+                  }) else {
+                throw SessionKitError.invalidCommandForState("updateInterjection")
+            }
+            mutate(&interjection)
+            try repository.saveInterjection(interjection)
+            return
+        }
         if let memory = repository as? InMemorySessionRepository, var interjection = memory.interjections[id] {
             mutate(&interjection)
             try repository.saveInterjection(interjection)

@@ -16,6 +16,7 @@ struct ExperienceItemDetailScreen: View {
                 LazyVStack(alignment: .leading, spacing: 22) {
                     hero
                     primaryActions
+                    downloadRecovery
                     if !sharingCoordinator.importedLayers.isEmpty {
                         Build23ImportedMarginPresentation(coordinator: sharingCoordinator)
                     }
@@ -26,7 +27,6 @@ struct ExperienceItemDetailScreen: View {
                     structure
                     if !model.selectedItem.listeningMapScenes.isEmpty { listeningMap }
                     recentMargins
-                    readiness
                     advanced
                 }
                 .padding(.horizontal, horizontalSizeClass == .regular ? 30 : 18)
@@ -82,27 +82,14 @@ struct ExperienceItemDetailScreen: View {
     }
 
     private var hero: some View {
-        HStack(alignment: .top, spacing: 20) {
-            SMExperienceTypeCover(
-                id: model.selectedItem.id,
-                mediaType: model.selectedItem.isNativeAudio ? "audiobook" : "text",
-                sourceReferenceType: model.selectedItem.externalReference.isEmpty ? nil : "url",
-                size: horizontalSizeClass == .regular ? 132 : 98
-            )
-            VStack(alignment: .leading, spacing: 9) {
-                Text(heroStatusLabel.uppercased())
-                    .font(.caption.weight(.bold))
-                    .tracking(1)
-                    .foregroundStyle(readinessColor)
-                Text(model.selectedItem.title)
-                    .font(.system(.largeTitle, design: .serif).weight(.bold))
-                    .foregroundStyle(AppColors.text)
-                    .lineLimit(4)
-                    .minimumScaleFactor(0.72)
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) { metadataPills }
-                    VStack(alignment: .leading, spacing: 7) { metadataPills }
-                }
+        VStack(alignment: .leading, spacing: 10) {
+            Text(model.selectedItem.title)
+                .font(.title.weight(.bold))
+                .foregroundStyle(AppColors.text)
+                .fixedSize(horizontal: false, vertical: true)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { metadataPills }
+                VStack(alignment: .leading, spacing: 7) { metadataPills }
             }
         }
         .accessibilityElement(children: .combine)
@@ -110,9 +97,8 @@ struct ExperienceItemDetailScreen: View {
 
     @ViewBuilder
     private var metadataPills: some View {
-        metadataPill(itemStatusLabel, systemImage: "checkmark.circle")
         if chapterCount > 0 {
-            metadataPill("\(chapterCount) chapters", systemImage: "list.bullet")
+            metadataPill("\(chapterCount) chapter\(chapterCount == 1 ? "" : "s")", systemImage: "list.bullet")
         }
         if !model.selectedItem.listeningMapScenes.isEmpty {
             let count = model.selectedItem.listeningMapScenes.count
@@ -122,7 +108,8 @@ struct ExperienceItemDetailScreen: View {
             )
         }
         if !model.selectedItem.interjections.isEmpty {
-            metadataPill("\(model.selectedItem.interjections.count) Margins", systemImage: "quote.bubble")
+            let count = model.selectedItem.interjections.count
+            metadataPill("\(count) Margin\(count == 1 ? "" : "s")", systemImage: "quote.bubble")
         }
         if let tableCount = model.selectedItem.documentStructure?.tables.count,
            tableCount > 0 {
@@ -139,69 +126,78 @@ struct ExperienceItemDetailScreen: View {
             : model.selectedItem.chapters.count
     }
 
-    private var itemStatusLabel: String {
-        if !model.selectedItem.mediaChapters.isEmpty,
-           model.selectedItem.status == "needs_listening_map" {
-            return "Publisher chapters"
-        }
-        return humanize(model.selectedItem.status)
-    }
-
-    private var heroStatusLabel: String {
-        switch model.selectedPodcastDownloadState {
-        case .availableOffline: "Available offline"
-        case .downloading: "Downloading"
-        case .waitingForWiFi: "Waiting for Wi-Fi"
-        case .failed, .evicted: "Download needs attention"
-        case .streamingOnly: "Ready to stream"
-        case .none: itemStatusLabel
-        }
-    }
-
     private var primaryActions: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 10) { primaryActionButtons }
-            VStack(spacing: 10) { primaryActionButtons }
+        VStack(alignment: .leading, spacing: 10) {
+            primaryPlaybackAction
+            if model.selectedItemPreferredContinuationSession != nil || !itemMargins.isEmpty {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 10) { secondaryActionButtons }
+                    VStack(alignment: .leading, spacing: 8) { secondaryActionButtons }
+                }
+            }
         }
     }
 
     @ViewBuilder
-    private var primaryActionButtons: some View {
+    private var primaryPlaybackAction: some View {
         if model.selectedItemStartupAudioState == .preparing {
             HStack(spacing: 10) {
                 ProgressView()
-                    .tint(.white)
+                    .tint(AppColors.evergreen)
                 Text(model.selectedItemStartupAudioProgressDescription)
                     .fontWeight(.semibold)
             }
-            .foregroundStyle(.white)
-            .frame(maxWidth: .infinity, minHeight: 52)
-            .background(AppColors.evergreen, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .foregroundStyle(AppColors.secondaryText)
             .accessibilityElement(children: .combine)
             .accessibilityLabel(model.selectedItemStartupAudioProgressDescription)
             .accessibilityIdentifier("item.start.preparing")
-        } else {
-            Button {
+        }
+        Button {
                 model.startItem(id: model.selectedItem.id)
             } label: {
-                Label(model.selectedItemPreferredContinuationSession == nil ? "Start listening" : "Continue", systemImage: "play.fill")
+                Label(model.selectedItemStartupAudioState == .preparing ? "Listen now" : primaryPlaybackLabel, systemImage: "play.fill")
                     .frame(maxWidth: .infinity, minHeight: 52)
             }
             .buttonStyle(.borderedProminent)
             .tint(AppColors.evergreen)
             .accessibilityIdentifier("item.start.button")
-        }
+    }
 
+    @ViewBuilder
+    private var secondaryActionButtons: some View {
         if model.selectedItemPreferredContinuationSession != nil {
             Button {
                 confirmsNewSession = true
             } label: {
                 Label("New session", systemImage: "plus.circle")
-                    .frame(maxWidth: .infinity, minHeight: 52)
+                    .frame(minHeight: 40)
             }
             .buttonStyle(.bordered)
+            .tint(AppColors.evergreen)
             .accessibilityIdentifier("item.startNew.button")
         }
+
+        if !itemMargins.isEmpty {
+            Button {
+                model.openMargins()
+            } label: {
+                Label("Review Margins", systemImage: "quote.bubble")
+                    .frame(minHeight: 40)
+            }
+            .buttonStyle(.bordered)
+            .tint(AppColors.evergreen)
+            .accessibilityIdentifier("item.reviewMargins.button")
+        }
+    }
+
+    private var primaryPlaybackLabel: String {
+        if hasFinishedSession { return "Replay" }
+        return model.selectedItemPreferredContinuationSession == nil ? "Start listening" : "Continue"
+    }
+
+    private var hasFinishedSession: Bool {
+        guard let session = model.selectedItemPreferredContinuationSession else { return false }
+        return session.status == "finished" || session.phase == .finished || session.completionPercent >= 100
     }
 
     private var overview: some View {
@@ -301,42 +297,8 @@ struct ExperienceItemDetailScreen: View {
     }
 
     private var listeningMap: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            sectionHeading("Listening Map", detail: "Scene navigation and Skim summaries")
-            ExperienceSurface(tint: AppColors.evergreen.opacity(0.18)) {
-                VStack(spacing: 0) {
-                    ForEach(Array(model.selectedItem.listeningMapScenes.sorted { $0.startMs < $1.startMs }.enumerated()), id: \.element.id) { index, scene in
-                        if index > 0 { Divider() }
-                        Button { model.jumpToListeningMapScene(scene) } label: {
-                            HStack(spacing: 12) {
-                                Text(formatPlaybackTime(scene.startMs))
-                                    .font(.caption.monospacedDigit().weight(.bold))
-                                    .foregroundStyle(AppColors.evergreen)
-                                    .frame(width: 52, alignment: .leading)
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(scene.title)
-                                        .font(.headline)
-                                        .foregroundStyle(AppColors.text)
-                                        .multilineTextAlignment(.leading)
-                                    if let description = scene.description, !description.isEmpty {
-                                        Text(description)
-                                            .font(.caption)
-                                            .foregroundStyle(AppColors.secondaryText)
-                                            .lineLimit(3)
-                                    }
-                                }
-                                Spacer()
-                                Image(systemName: "play.fill")
-                                    .foregroundStyle(AppColors.evergreen)
-                            }
-                            .frame(minHeight: 52)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("listeningMap.scene.jump.\(scene.id)")
-                    }
-                }
-            }
-        }
+        ExperienceListeningMapSection(scenes: model.selectedItem.listeningMapScenes, model: model)
+            .equatable()
     }
 
     @ViewBuilder
@@ -392,7 +354,7 @@ struct ExperienceItemDetailScreen: View {
                                         Text(sessionTitle(row.session, index: index))
                                             .font(.headline)
                                             .foregroundStyle(AppColors.text)
-                                        Text("\(row.session.completionPercent)% · \(row.interjectionCount) Margins")
+                                        Text("\(row.session.completionPercent)% · \(row.interjectionCount) Margin\(row.interjectionCount == 1 ? "" : "s")")
                                             .font(.subheadline.monospacedDigit())
                                             .foregroundStyle(AppColors.secondaryText)
                                     }
@@ -418,41 +380,35 @@ struct ExperienceItemDetailScreen: View {
         }
     }
 
-    private var readiness: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            sectionHeading("Listening readiness", detail: "Availability is separate from source structure")
-            ExperienceSurface(tint: readinessColor.opacity(0.4)) {
-                HStack(spacing: 12) {
-                    Image(systemName: readinessIcon)
-                        .font(.title2)
-                        .foregroundStyle(readinessColor)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(readinessLabel).font(.headline)
-                        Text(model.selectedPodcastDownloadDescription ?? "This item can be played with its current preparation state.")
-                            .font(.subheadline)
-                            .foregroundStyle(AppColors.secondaryText)
-                    }
-                    Spacer()
-                    switch model.selectedPodcastDownloadState {
-                    case .waitingForWiFi, .streamingOnly:
-                        Button("Download Now", action: model.downloadSelectedPodcastNow)
-                            .buttonStyle(.borderedProminent)
-                            .tint(AppColors.evergreen)
-                    case .failed, .evicted:
-                        Button("Retry Download", action: model.retrySelectedPodcastDownload)
-                            .buttonStyle(.bordered)
-                    case .downloading:
-                        ProgressView()
-                    case .availableOffline:
-                        Label("Downloaded", systemImage: "checkmark.circle.fill")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(AppColors.evergreen)
-                    case .none:
-                        EmptyView()
-                    }
+    @ViewBuilder
+    private var downloadRecovery: some View {
+        switch model.selectedPodcastDownloadState {
+        case .waitingForWiFi, .streamingOnly, .failed, .evicted, .downloading:
+            HStack(spacing: 12) {
+                Label(readinessLabel, systemImage: readinessIcon)
+                    .font(.subheadline)
+                    .foregroundStyle(readinessColor)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                switch model.selectedPodcastDownloadState {
+                case .waitingForWiFi, .streamingOnly:
+                    Button("Download Now", action: model.downloadSelectedPodcastNow)
+                        .buttonStyle(.bordered)
+                        .tint(AppColors.evergreen)
+                case .failed, .evicted:
+                    Button("Retry Download", action: model.retrySelectedPodcastDownload)
+                        .buttonStyle(.bordered)
+                        .tint(AppColors.evergreen)
+                case .downloading:
+                    ProgressView()
+                        .tint(readinessColor)
+                case .availableOffline, .none:
+                    EmptyView()
                 }
-                .accessibilityIdentifier("item.podcastDownload.status")
             }
+            .accessibilityIdentifier("item.podcastDownload.status")
+        case .availableOffline, .none:
+            EmptyView()
         }
     }
 
@@ -502,7 +458,14 @@ struct ExperienceItemDetailScreen: View {
     }
 
     private var readinessLabel: String {
-        model.selectedPodcastDownloadDescription ?? humanize(model.selectedItem.status)
+        switch model.selectedPodcastDownloadState {
+        case .waitingForWiFi: "Waiting for Wi-Fi"
+        case .streamingOnly: "Streaming available"
+        case .failed, .evicted: "Download needs attention"
+        case .downloading: "Downloading"
+        case .availableOffline: "Available offline"
+        case .none: ""
+        }
     }
 
     private var readinessIcon: String {
@@ -555,7 +518,72 @@ struct ExperienceItemDetailScreen: View {
         return "\(marker) · \(date.formatted(date: .abbreviated, time: .omitted))"
     }
 
-    private func humanize(_ value: String) -> String {
-        value.replacingOccurrences(of: "_", with: " ").capitalized
+}
+
+// Playback publishes frequent model updates. The scene section depends only on
+// its value inputs; keep those updates from rebuilding every summary row.
+private struct ExperienceListeningMapSection: View, Equatable {
+    let scenes: [MediaTimelineChapter]
+    let model: Gate1AppModel
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.scenes == rhs.scenes && lhs.model === rhs.model
     }
+
+    var body: some View {
+        LazyVStack(alignment: .leading, spacing: 12) {
+            sectionHeading("Listening Map", detail: "Scene navigation and Skim summaries")
+            ExperienceSurface(tint: AppColors.evergreen.opacity(0.18)) {
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(scenes.enumerated()), id: \.element.id) { index, scene in
+                        VStack(spacing: 0) {
+                            if index > 0 { Divider() }
+                            Button { model.jumpToListeningMapScene(scene) } label: {
+                                HStack(spacing: 12) {
+                                    Text(formatPlaybackTime(scene.startMs))
+                                        .font(.caption.monospacedDigit().weight(.bold))
+                                        .foregroundStyle(AppColors.evergreen)
+                                        .frame(width: 52, alignment: .leading)
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(scene.title)
+                                            .font(.headline)
+                                            .foregroundStyle(AppColors.text)
+                                            .multilineTextAlignment(.leading)
+                                        if let description = scene.description, !description.isEmpty {
+                                            Text(description)
+                                                .font(.caption)
+                                                .foregroundStyle(AppColors.secondaryText)
+                                                .lineLimit(3)
+                                        }
+                                    }
+                                    Spacer()
+                                    Image(systemName: "play.fill")
+                                        .foregroundStyle(AppColors.evergreen)
+                                }
+                                .frame(minHeight: 52)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("listeningMap.scene.jump.\(scene.id)")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func formatPlaybackTime(_ milliseconds: Int) -> String {
+        let seconds = max(0, milliseconds / 1_000)
+        if seconds >= 3_600 {
+            return String(format: "%d:%02d:%02d", seconds / 3_600, (seconds % 3_600) / 60, seconds % 60)
+        }
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+
+    private func sectionHeading(_ title: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.system(.title3, design: .serif).weight(.bold))
+            Text(detail).font(.caption).foregroundStyle(AppColors.secondaryText)
+        }
+    }
+
 }

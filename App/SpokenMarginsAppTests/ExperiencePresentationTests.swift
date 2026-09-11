@@ -4,6 +4,69 @@ import SessionKitPersistence
 @testable import SpokenMarginsApp
 
 final class ExperiencePresentationTests: XCTestCase {
+    @MainActor
+    func testTimelineIncludesAllGeneratedScenesWithDistinctProvenanceAndSeekTargets() throws {
+        var item = ItemDetailState()
+        item.id = "episode"
+        item.mediaDurationMs = 24 * 60_000
+        item.mediaChapters = [MediaTimelineChapter(id: "publisher", title: "Publisher opening", startMs: 0, transcriptSegmentId: "publisher-segment")]
+        item.listeningMapScenes = (0..<24).reversed().map { index in
+            MediaTimelineChapter(id: "scene-\(index)", title: "Scene \(index + 1)", description: "Summary for scene \(index + 1)", startMs: index * 60_000, transcriptSegmentId: "segment-\(index)")
+        }
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
+        let scenes = entries.filter { $0.provenance == .listeningMap }
+        XCTAssertEqual(scenes.count, 24)
+        XCTAssertEqual(scenes.map(\.title), (1...24).map { "Scene \($0)" })
+        XCTAssertEqual(Set(entries.map(\.id)).count, entries.count)
+        XCTAssertEqual(entries.filter { $0.provenance == .source }.map(\.title), ["Publisher opening"])
+        XCTAssertTrue(try XCTUnwrap(scenes.first).detail.contains("Generated scene · 0:00"))
+        XCTAssertTrue(try XCTUnwrap(scenes.last).detail.contains("Summary for scene 24"))
+        for (index, entry) in scenes.enumerated() {
+            guard case .listeningMapScene(let scene) = entry.action else {
+                return XCTFail("A generated scene must use its projected timestamp seek action")
+            }
+            XCTAssertEqual(scene.startMs, index * 60_000)
+            XCTAssertEqual(entry.accessibilityIdentifier, "timeline.listeningMapScene.jump.scene-\(index)")
+        }
+        item.listeningMapScenes.removeAll()
+        XCTAssertFalse(ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil).contains { $0.provenance == .listeningMap })
+    }
+
+    @MainActor
+    func testTimelineKeepsEachAssistantMarginsInItsOwnCoordinateSpace() throws {
+        var item = ItemDetailState()
+        item.id = "item"
+        item.title = "Source"
+        var source = interjection(id: "source-note", transcript: "Source note")
+        source.roughPercent = 70
+        let first = ConversationTurn(id: "first", sessionId: "session", role: "assistant", turnType: "assistant_response", status: "complete", text: "First response", sourceInterjectionIds: [source.id])
+        let second = ConversationTurn(id: "second", sessionId: "session", role: "assistant", turnType: "assistant_response", status: "complete", text: "Second response", sourceInterjectionIds: [])
+        item.turns = [first, second]
+        item.interjections = [source]
+        for turn in item.turns {
+            for percent in [99, 50, 25, 0] {
+                var note = interjection(id: "\(turn.id)-\(percent)", transcript: "A response note")
+                note.targetType = .assistantTurn
+                note.targetId = turn.id
+                note.roughPercent = percent
+                item.interjections.append(note)
+            }
+        }
+        // A colliding note ID in another session must not move the parent.
+        var unrelated = source
+        unrelated.sessionId = "other-session"
+        unrelated.roughPercent = 5
+        item.interjections.append(unrelated)
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: "session")
+        let ids = entries.map(\.id)
+        XCTAssertEqual(ids, ["source.beginning", "session::source-note", "turn.first", "session::first-0", "session::first-25", "session::first-50", "session::first-99", "turn.second", "session::second-0", "session::second-25", "session::second-50", "session::second-99"])
+        XCTAssertEqual(entries.first { $0.id == "turn.first" }?.position, 70)
+        XCTAssertEqual(entries.first { $0.id == "session::first-25" }?.detail, "Within assistant response · 25%")
+        item.turns.removeLast()
+        let orphan = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: "session")
+        XCTAssertTrue(try XCTUnwrap(orphan.first { $0.id == "session::second-25" }).detail.contains("Response unavailable"))
+    }
+
     func testTimelinePullRequiresDeliberateBottomOverscroll() {
         XCTAssertEqual(
             TimelinePullPresentation.overscrollDistance(
@@ -35,6 +98,26 @@ final class ExperiencePresentationTests: XCTestCase {
         )
         XCTAssertFalse(TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: 71))
         XCTAssertTrue(TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: 72))
+    }
+
+    func testTimelinePullMeasuresShortContentFromItsInsetRestingPosition() {
+        // A short player rests above zero because navigation owns the top inset.
+        // The fixed dock also reserves space at the bottom of the scroll view.
+        func distance(_ offset: CGFloat) -> CGFloat {
+            TimelinePullPresentation.overscrollDistance(
+                contentOffsetY: offset, contentHeight: 280,
+                containerHeight: 874, bottomInset: 342, topInset: 116
+            )
+        }
+        XCTAssertEqual(distance(-116), 0, "Resting short content must not open Timeline")
+        XCTAssertEqual(distance(-45), 71)
+        XCTAssertFalse(TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: distance(-45)))
+        XCTAssertEqual(distance(-44), 72)
+        XCTAssertTrue(TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: distance(-44)))
+        XCTAssertEqual(TimelinePullPresentation.overscrollDistance(
+            contentOffsetY: 700, contentHeight: 1_200,
+            containerHeight: 874, bottomInset: 342, topInset: 116
+        ), 32, "Long content must still reach its real bottom before the pull counts")
     }
 
     func testAddSourceStartsWithFourObjectRoutesAndKeepsFolderManagementSecondary() {
@@ -308,6 +391,22 @@ final class ExperiencePresentationTests: XCTestCase {
             ),
             .onlineOnly
         )
+    }
+
+    func testWrittenMediaMarginHasNoAudioRepairOrPendingContextWork() {
+        var note = interjection(transcript: "Keep my words.", audioStatus: "discarded", anchorContextStatus: .unavailable)
+        note.captureKind = .written
+        note.audioPath = nil
+        note.anchor = Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 12_000)
+        let written = MarginRow(interjection: note, itemTitle: "Source", sessionDate: nil)
+        XCTAssertEqual(written.fullText, "Keep my words.")
+        XCTAssertFalse(written.needsAttention)
+        XCTAssertFalse(written.canPlayRecording)
+        XCTAssertFalse(written.canRetryTranscription)
+        note.captureKind = nil
+        note.audioStatus = "missing"
+        let legacy = MarginRow(interjection: note, itemTitle: "Source", sessionDate: nil)
+        XCTAssertTrue(legacy.needsAttention, "An absent recording must still be distinguished from a written note")
     }
 
     func testMarginRowIdentityComposesSessionAndInterjectionIDs() {

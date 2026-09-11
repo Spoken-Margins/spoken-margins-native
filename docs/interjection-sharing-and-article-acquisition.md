@@ -1,6 +1,6 @@
 # Interjection Sharing Foundation
 
-Status: the one-way sharing MVP for issues #14, #17, #18, and #67 is implemented on `codex/sharing-next`. Automated contract, package, app-state, and build checks can establish `verified`; only the product owner can establish `human_validated`.
+Status: the one-way sharing MVP for issues #14, #17, #18, and #67 is integrated on `codex/provisional-next`; `codex/sharing-next` is historical source ancestry. The September 11 external-readiness policy and decision checklist are in `docs/external-testflight-sharing-decision.md`. Automated contract, package, app-state, and build checks can establish `verified`; only the product owner can establish `human_validated`.
 
 ## Local-audio guided sessions (2026-09-08)
 
@@ -51,7 +51,7 @@ Article resolution accepts raw offsets only when an exact-edition SHA-256 over t
 
 The app exposes sender review from the listening Share screen, the system share sheet for the resulting file, recipient disclosure/import, same-device recipient testing, distinct Shared Margins controls, cueing/playback, and Timeline provenance. Item actions are shown before optional Listening Map tools, and the item screen presents only one map-generation route. At an evidence-backed text or podcast anchor, Companion playback pauses the source, sounds a cue, and exposes Listen and Dismiss in the app and every actionable Lock Screen Live Activity presentation; either choice returns to source playback. Those controls use shared `LiveActivityIntent`/`AudioPlaybackIntent` definitions so iOS executes their handoff in the app process, while the canonical app model remains the sole audio owner. iOS still requires device authentication before a locked-device button performs its action.
 
-The Live Activity's next-navigation entry is an ordered projection rather than a mutation of source structure. It compares the next publisher chapter with verified upcoming Shared Margins and presents whichever occurs first. With no chapters it can therefore show the next Shared Margin; with chapters, Margins appear between them at their resolved source positions. Selecting a Margin moves to its verified local anchor and explicitly reveals it: Guided begins it after the cue, while Fresh or Companion waits for Listen or Dismiss. Shared Margins are never persisted as publisher chapters, and ambiguous or unresolved anchors are never made navigable. Guided mode sounds the same cue and begins the Margin after it. The playback-level auto-play switch chooses Guided or Companion for enabled layers. It does not implement co-op replies (#19), AI synthesis (#26), accounts, hosted storage, public distribution, offline Listening Map generation, proposal activation, or summary/Skim playback. The one-way v1 manifest deliberately omits conversation and parent-package fields so the later #19 reply model is not frozen by this MVP.
+The Live Activity's next-navigation entry is an ordered projection rather than a mutation of source structure. It compares the next publisher chapter with verified upcoming Shared Margins and presents whichever occurs first. With no chapters it can therefore show the next Shared Margin; with chapters, Margins appear between them at their resolved source positions. Selecting a Margin moves to its verified local anchor and explicitly reveals it: Guided begins it after the cue, while Fresh or Companion waits for Listen or Dismiss. Shared Margins are never persisted as publisher chapters, and ambiguous or unresolved anchors are never made navigable. Guided mode sounds the same cue and begins the Margin after it. The playback-level auto-play switch chooses Guided or Companion for enabled layers. It does not implement co-op replies (#19), co-op AI synthesis (#26), accounts, hosted storage, or public publishing. Later provisional local-map and Skim work is governed by the release lane and the local-audio section above, not this historical foundation boundary. The one-way v1 manifest deliberately omits conversation and parent-package fields so the later #19 reply model is not frozen by this MVP.
 
 ## Experience Overhaul action model
 
@@ -78,7 +78,7 @@ Recipient actions:
 
 The overhaul can combine, split, reorder, or visually redesign the surfaces, but it should preserve three decision boundaries: no outgoing representation without sender review, no embedded linkless item without the displayed rights basis, and no recipient interruption or navigation for an unresolved anchor.
 
-The explicit item-transport and rights policy is now implemented. External use remains pending product-owner validation; automated tests are developer evidence only.
+Item-transport assertions are implemented. External acceptance of the proposed rights policy and disclosures remains pending under #14; an implemented checkbox is not policy approval. September 11 remediation extends acoustic opt-out to edition-wide signatures and presents actual verified-package contents with recipient-copy and rights notices. The existing digest-verified archive preview rendering remains unchanged so prior packages stay readable. Automated tests are developer evidence only.
 
 ## Audit method
 

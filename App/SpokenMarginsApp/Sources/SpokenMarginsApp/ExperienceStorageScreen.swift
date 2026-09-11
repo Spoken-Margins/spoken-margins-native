@@ -9,15 +9,10 @@ struct ExperienceStorageScreen: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 20) {
-                    ExperienceEditorialHeader(
-                        eyebrow: "One honest ledger",
-                        title: "Offline storage",
-                        detail: "Prepared media can be recreated. Imported audio, recordings, and Margins stay protected."
-                    )
                     budgetCard
+                    safeClear
                     accounting
                     categories
-                    safeClear
                 }
                 .padding(20)
                 .frame(maxWidth: 780)

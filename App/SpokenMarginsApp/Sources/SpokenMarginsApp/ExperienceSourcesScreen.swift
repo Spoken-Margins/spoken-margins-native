@@ -31,7 +31,7 @@ struct ExperienceSourcesScreen: View {
             .listStyle(.plain)
             .animation(.smooth(duration: 0.24), value: filteredCandidates.map(\.id))
             .accessibilityIdentifier("sources.screen")
-            .navigationTitle("Sources")
+            .navigationTitle("Following")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -55,8 +55,7 @@ struct ExperienceSourcesScreen: View {
     }
 
     private var intakeHeader: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            sourceInboxTitle
+        VStack(alignment: .leading, spacing: 10) {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 10) {
                     feedURLField
@@ -86,18 +85,6 @@ struct ExperienceSourcesScreen: View {
             if !model.followedSourceCandidates.isEmpty {
                 Button("Cancel", action: model.cancelFollowSourceCandidates)
             }
-        }
-    }
-
-    private var sourceInboxTitle: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text("RSS & PODCAST FEEDS")
-                .font(.caption.weight(.bold))
-                .tracking(1.15)
-                .foregroundStyle(AppColors.evergreen)
-            Text("Add a source")
-                .font(.system(.largeTitle, design: .serif).weight(.bold))
-                .foregroundStyle(AppColors.text)
         }
     }
 
@@ -170,8 +157,8 @@ struct ExperienceSourcesScreen: View {
             }
         } header: {
             HStack {
-                Text("New entries")
-                    .font(.system(.title2, design: .serif).weight(.bold))
+                Text("New")
+                    .font(.headline)
                     .foregroundStyle(AppColors.text)
                 Spacer()
                 Text("\(filteredCandidates.count)")
@@ -251,7 +238,6 @@ private struct SourceInboxRow: View {
                         .font(.headline)
                         .foregroundStyle(AppColors.text)
                         .multilineTextAlignment(.leading)
-                        .lineLimit(2)
                     Text(provenance)
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)

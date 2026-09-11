@@ -1,0 +1,10 @@
+{
+  "prior_input": "957ae1d63befc79bbac16edc0aa22b6c075d35e37989229627e5277be523e6af",
+  "current_input": "c1487699ee38fc215838efe819664bf93c12cdbb6ed61053ab34b351f13b89c5",
+  "changed_files": [
+    "App/SpokenMarginsAppUITests/Gate1FlowUITests.swift"
+  ],
+  "reason": "Replace unreliable iOS 18 Menu hittability flag with real activation, selection and reset assertions. No app or runtime changes.",
+  "prior_full_ipad_run": "artifacts/test-runs/20260910-171053-400034-ui/manifest.json",
+  "followup": "Scoped amended accessibility route on iOS 18.6 and iPad; full release on final test input."
+}

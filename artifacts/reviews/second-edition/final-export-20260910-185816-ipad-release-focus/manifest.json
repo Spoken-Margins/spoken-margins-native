@@ -1,0 +1,65 @@
+[
+  {
+    "attachments" : [
+      {
+        "configurationName" : "Default",
+        "deviceId" : "BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+        "deviceName" : "Spoken Margins Test Suite iPad",
+        "exportedFileName" : "A6A37D23-220A-4183-9D71-F0BF039F370B.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "second-edition-item-shared-provenance_0_D3604A5C-FEEE-4149-A188-2A40B6ACAAFB.png",
+        "timestamp" : 1789081166.278
+      },
+      {
+        "configurationName" : "Default",
+        "deviceId" : "BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+        "deviceName" : "Spoken Margins Test Suite iPad",
+        "exportedFileName" : "7E250F8E-9B93-480D-902F-F09A849F8666.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "second-edition-sender-preview-action_0_B67F18B9-3B07-4585-AFD1-791AF02EE898.png",
+        "timestamp" : 1789081151.09
+      }
+    ],
+    "testIdentifier" : "Gate1FlowUITests/testBuild23RecipientMissingSourceReturnsWithoutAutoplayAndShowsProvenance()",
+    "testIdentifierURL" : "test://com.apple.xcode/SpokenMarginsNative/SpokenMarginsAppUITests/Gate1FlowUITests/testBuild23RecipientMissingSourceReturnsWithoutAutoplayAndShowsProvenance"
+  },
+  {
+    "attachments" : [
+      {
+        "configurationName" : "Default",
+        "deviceId" : "BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+        "deviceName" : "Spoken Margins Test Suite iPad",
+        "exportedFileName" : "65240147-561C-4EED-85D3-43D45FAC0A47.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "second-edition-long-title-accessibility-controls_0_C731AF30-F4B4-49A5-A102-E765734F557E.png",
+        "timestamp" : 1789081194.763
+      },
+      {
+        "configurationName" : "Default",
+        "deviceId" : "BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+        "deviceName" : "Spoken Margins Test Suite iPad",
+        "exportedFileName" : "2B21C812-5092-4586-BFAD-51542ACE670C.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "second-edition-native-accessibility-size_0_ECEF2F9F-8AFA-46A5-9444-380E71546D63.png",
+        "timestamp" : 1789081191.129
+      }
+    ],
+    "testIdentifier" : "Gate1FlowUITests/testPlaybackPrimaryActionsRemainVisibleWithLongTitleAndAccessibilityText()",
+    "testIdentifierURL" : "test://com.apple.xcode/SpokenMarginsNative/SpokenMarginsAppUITests/Gate1FlowUITests/testPlaybackPrimaryActionsRemainVisibleWithLongTitleAndAccessibilityText"
+  },
+  {
+    "attachments" : [
+      {
+        "configurationName" : "Default",
+        "deviceId" : "BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+        "deviceName" : "Spoken Margins Test Suite iPad",
+        "exportedFileName" : "65047E80-E54E-459E-BA7C-71B3F270AFFA.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "timeline-reflection-clearance_0_DC53323E-EB7C-458D-8370-4EC790551806.png",
+        "timestamp" : 1789081225.286
+      }
+    ],
+    "testIdentifier" : "Gate1FlowUITests/testPlaybackPullsIntoTimelineAndReflectionControlsClearTheMiniPlayerAndKeyboard()",
+    "testIdentifierURL" : "test://com.apple.xcode/SpokenMarginsNative/SpokenMarginsAppUITests/Gate1FlowUITests/testPlaybackPullsIntoTimelineAndReflectionControlsClearTheMiniPlayerAndKeyboard"
+  }
+]

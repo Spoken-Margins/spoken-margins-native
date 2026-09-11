@@ -1,6 +1,6 @@
 import Foundation
 
-public final class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
+public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
     public var items: [String: Item]
     public var mapsByItemId: [String: ListeningMap]
     public var sessions: [String: Session]

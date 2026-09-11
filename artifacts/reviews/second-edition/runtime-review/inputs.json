@@ -1,0 +1,12 @@
+{
+  "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift": "8f0ef2f98e449e039a20507e415d50f935489a71dce4f240e7306454127f1975",
+  "Packages/SessionKit/Sources/SessionKit/Models.swift": "4384feebe3c32e30952a29fc56fb2f8ef69a0a21ae46f32210f4a1e690d27ef2",
+  "Packages/SessionKit/Sources/SessionKitPersistence/SQLiteSessionStore.swift": "665b69cdccbbef7d7119a10b7bb5cd69adfdaba1b2013c676f14af175b09c97f",
+  "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift": "9ff267a090233fe3cff86478a35182158b255e8bc440a239777958dfe51acd84",
+  "App/SpokenMarginsApp/Sources/SpokenMarginsApp/ExperienceModels.swift": "a5a84117782a55d2e51b55977461fcb3919ddeb7d0452c9db1a4b5df8e29641b",
+  "Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests.swift": "760478a4e59002c9e19a287a4af0214b9cf03030ca4ae231e4479fb5da6c4800",
+  "Packages/SessionKit/Tests/SessionKitTests/PriorBuildPersistenceTests.swift": "86869669dd0619c4849b23ede9b127cc8763002e576bc3e904b16e7f010133d1",
+  "App/SpokenMarginsAppTests/Gate1AppModelWorkflowTests.swift": "033245355d0226719503c5140f013e83d7b6a0fc489bf485b733b681d8d1b1d1",
+  "Contracts/schemas/interjection.schema.json": "10a853800ea6d9be9283daa32c662fe39ab8b395c207e04fd1c93c256947fdd5",
+  "Contracts/fixtures/interjections/written-interjection.json": "7e63f51371095d967c3ebc0f2c9844261e59200dddd79b8aef2d24b1b36ad18d"
+}

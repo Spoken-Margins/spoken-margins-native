@@ -1,0 +1,138 @@
+Application, 0x105c42ef0, pid: 65347, label: 'Spoken Margins' <App element pid: 65347>
+  Window (Main), 0x105c2e550, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 65347, elementOrHash.elementID: 4367465376.4>
+    Other, 0x105c44d80, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 65347, elementOrHash.elementID: 4366536704.5>
+      Other, 0x105c435f0, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 65347, elementOrHash.elementID: 4366648672.6>
+        Other, 0x105c446c0, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 65347, elementOrHash.elementID: 4367427552.7>
+          Other, 0x105c43950, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 65347, elementOrHash.elementID: 105553169786080.8>
+            Other, 0x105c44020, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 65347, elementOrHash.elementID: 4367318208.169>
+              NavigationBar, 0x105c48500, {{0.0, 20.0}, {375.0, 44.0}}, identifier: 'Timeline' <AX element pid: 65347, elementOrHash.elementID: 4368862096.170>
+                Button, 0x105c496c0, {{8.0, 20.0}, {44.0, 44.0}}, identifier: 'timeline.nowPlaying.button', label: 'Now Playing' <AX element pid: 65347, elementOrHash.elementID: 4788097696.172>
+                StaticText, 0x105c48860, {{154.0, 32.0}, {67.5, 20.5}}, label: 'Timeline' <AX element pid: 65347, elementOrHash.elementID: 4369212912.173>
+                Other, 0x105c48160, {{307.0, 20.0}, {52.0, 44.0}}, identifier: 'square.and.arrow.up', label: 'Export session' <AX element pid: 65347, elementOrHash.elementID: 4803746656.174>
+                  Other, 0x105c46960, {{307.0, 20.0}, {52.0, 44.0}} <AX element pid: 65347, elementOrHash.elementID: 105553170039424.176>
+                    Button, 0x105c46cc0, {{307.0, 16.0}, {52.0, 52.0}}, identifier: 'square.and.arrow.up', label: 'Export session' <AX element pid: 65347, elementOrHash.elementID: 105553170039104.178>
+              Other, 0x105c47a90, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 65347, elementOrHash.elementID: 4366750960.171>
+                Other, 0x105c47720, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 65347, elementOrHash.elementID: 4368636176.175>
+                  Other, 0x105c4c2e0, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 65347, elementOrHash.elementID: 4368713312.177>
+                    Other, 0x105c4c650, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 65347, elementOrHash.elementID: 105553170045504.179>
+                      ScrollView, 0x105c4cd20, {{0.0, 0.0}, {375.0, 667.0}}, identifier: 'timeline.screen' <AX element pid: 65347, elementOrHash.elementID: 4396775936.181>
+                        Other, 0x105c4d420, {{0.0, -705.0}, {375.0, 1088.0}} <AX element pid: 65347, elementOrHash.elementID: 4368784944.183>
+                          StaticText, 0x105c4db10, {{18.0, -693.0}, {171.0, 18.0}}, label: 'You Can't Inspect the Pill' <AX element pid: 65347, elementOrHash.elementID: 105553169850656.189>
+                          Other, 0x105c45480, {{24.5, -336.0}, {333.0, 446.5}}, identifier: 'timeline.rail' <AX element pid: 65347, elementOrHash.elementID: 105553170043424.190>
+                            Button, 0x105c4d790, {{24.5, -336.0}, {333.0, 109.5}}, identifier: 'timeline.turn.play.turn-addendum-A05A7DF6', label: 'My response, 100 percent. My response. Can you respond to my interjection?' <AX element pid: 65347, elementOrHash.elementID: 105553169982688.201>
+                              Image, 0x105c4b1d0, {{78.0, -318.5}, {11.5, 11.5}}, identifier: 'person.crop.circle', label: 'Account' <AX element pid: 65347, elementOrHash.elementID: 105553169985088.223>
+                              StaticText, 0x105c49340, {{78.0, -319.6}, {111.5, 13.5}}, label: 'MY RESPONSE' <AX element pid: 65347, elementOrHash.elementID: 105553169981728.224>
+                              StaticText, 0x105c4ae70, {{308.0, -320.6}, {34.0, 14.5}}, label: '100%' <AX element pid: 65347, elementOrHash.elementID: 105553169981888.225>
+                              StaticText, 0x105c4ab20, {{77.0, -299.0}, {102.0, 20.5}}, label: 'My response' <AX element pid: 65347, elementOrHash.elementID: 105553169974528.226>
+                              StaticText, 0x105c49a10, {{77.0, -271.5}, {246.5, 18.0}}, label: 'Can you respond to my interjection?' <AX element pid: 65347, elementOrHash.elementID: 105553169982048.227>
+                            Button, 0x105c25c90, {{27.0, -227.0}, {330.5, 130.0}}, identifier: 'timeline.turn.play.turn-response-001', label: 'Assistant response, 100 percent. Assistant response. Here is a quick response to your interjection.' <AX element pid: 65347, elementOrHash.elementID: 105553169983808.202>
+                              Image, 0x105c25930, {{27.0, -205.5}, {12.0, 12.0}}, identifier: 'sparkle', label: 'sparkle' <AX element pid: 65347, elementOrHash.elementID: 105553169981088.228>
+                              Button, 0x105c24820, {{61.5, -227.0}, {296.0, 118.5}}, label: 'ASSISTANT RESPONSE, 100%, Assistant response, Here is a quick response to your interjection.' <AX element pid: 65347, elementOrHash.elementID: 105553169983328.229>
+                                Image, 0x105c1c5d0, {{78.0, -210.5}, {10.5, 13.0}}, identifier: 'sparkles', label: 'Sparkle' <AX element pid: 65347, elementOrHash.elementID: 105553169981248.235>
+                                StaticText, 0x105c26350, {{78.0, -210.5}, {163.0, 13.9}}, label: 'ASSISTANT RESPONSE' <AX element pid: 65347, elementOrHash.elementID: 105553169983168.236>
+                                StaticText, 0x105c25260, {{308.0, -211.1}, {34.0, 14.5}}, label: '100%' <AX element pid: 65347, elementOrHash.elementID: 105553169983648.237>
+                                StaticText, 0x105c206c0, {{77.0, -189.5}, {152.0, 20.5}}, label: 'Assistant response' <AX element pid: 65347, elementOrHash.elementID: 105553169980928.238>
+                                StaticText, 0x105c1c270, {{77.0, -162.0}, {224.5, 38.0}}, label: 'Here is a quick response to your interjection.' <AX element pid: 65347, elementOrHash.elementID: 105553169980768.239>
+                            Button, 0x105c1c950, {{27.0, -97.5}, {330.5, 110.0}}, identifier: 'timeline.turnChapter.jump.turn-response-001.ai-ch-1', label: 'Assistant response, 100 percent. Quick Response. Within assistant response · 0%' <AX element pid: 65347, elementOrHash.elementID: 105553169985888.203>
+                              Image, 0x105c1bf20, {{27.0, -76.0}, {12.0, 12.0}}, identifier: 'sparkle', label: 'sparkle' <AX element pid: 65347, elementOrHash.elementID: 105553169984288.230>
+                              Button, 0x105c1aa90, {{61.5, -97.5}, {296.0, 98.5}}, label: 'ASSISTANT RESPONSE, 100%, Quick Response, Within assistant response · 0%' <AX element pid: 65347, elementOrHash.elementID: 105553169985568.231>
+                                Image, 0x105c1cca0, {{78.0, -81.0}, {10.5, 13.0}}, identifier: 'sparkles', label: 'Sparkle' <AX element pid: 65347, elementOrHash.elementID: 105553169984448.240>
+                                StaticText, 0x105c1d030, {{78.0, -81.0}, {163.0, 13.9}}, label: 'ASSISTANT RESPONSE' <AX element pid: 65347, elementOrHash.elementID: 105553169984768.241>
+                                StaticText, 0x105c1d3a0, {{308.0, -81.6}, {34.0, 14.5}}, label: '100%' <AX element pid: 65347, elementOrHash.elementID: 105553169984928.242>
+                                StaticText, 0x105c1d6f0, {{77.0, -60.0}, {128.5, 20.5}}, label: 'Quick Response' <AX element pid: 65347, elementOrHash.elementID: 105553169985248.243>
+                                StaticText, 0x105c2ae60, {{77.0, -32.5}, {211.0, 18.0}}, label: 'Within assistant response · 0%' <AX element pid: 65347, elementOrHash.elementID: 105553169985408.244>
+                            Button, 0x105c2b1a0, {{27.0, 12.0}, {330.5, 98.5}}, identifier: 'timeline.turnChapter.jump.turn-response-001.ai-ch-2', label: 'Assistant response, 100 percent. Timeline Navigation. Within assistant response · 62%' <AX element pid: 65347, elementOrHash.elementID: 105553169987168.204>
+                              Image, 0x105c1e7c0, {{27.0, 33.5}, {12.0, 12.0}}, identifier: 'sparkle', label: 'sparkle' <AX element pid: 65347, elementOrHash.elementID: 105553169986368.232>
+                              Button, 0x105c1eb50, {{61.5, 12.0}, {296.0, 98.5}}, label: 'ASSISTANT RESPONSE, 100%, Timeline Navigation, Within assistant response · 62%' <AX element pid: 65347, elementOrHash.elementID: 105553169982208.233>
+                                Image, 0x105c20350, {{78.0, 28.5}, {10.5, 13.0}}, identifier: 'sparkles', label: 'Sparkle' <AX element pid: 65347, elementOrHash.elementID: 105553169986528.245>
+                                StaticText, 0x105c26a60, {{78.0, 28.5}, {163.0, 13.9}}, label: 'ASSISTANT RESPONSE' <AX element pid: 65347, elementOrHash.elementID: 105553169986048.246>
+                                StaticText, 0x105c1fc90, {{308.0, 27.9}, {34.0, 14.5}}, label: '100%' <AX element pid: 65347, elementOrHash.elementID: 105553169986208.247>
+                                StaticText, 0x105c1f920, {{77.0, 49.5}, {156.5, 20.5}}, label: 'Timeline Navigation' <AX element pid: 65347, elementOrHash.elementID: 105553169986688.248>
+                                StaticText, 0x105c315b0, {{77.0, 77.0}, {220.0, 18.0}}, label: 'Within assistant response · 62%' <AX element pid: 65347, elementOrHash.elementID: 105553169974848.249>
+                          StaticText, 0x105c330d0, {{35.5, 163.5}, {204.0, 21.0}}, label: 'Reflect on this session' <AX element pid: 65347, elementOrHash.elementID: 105553170049184.191>
+                          TextView, 0x105c3a8c0, {{42.0, 204.5}, {291.0, 80.0}}, identifier: 'timeline.reflection.editor', label: 'Paste assistant response', value: Keyboard dismissal..., Keyboard Focused <AX element pid: 65347, elementOrHash.elementID: 4371119616.192>
+                            Other, 0x105c3afd0, {{300.0, 204.5}, {30.0, 80.0}}, label: 'Vertical scroll bar, 1 page', value: 0% <AX element pid: 65347, elementOrHash.elementID: 4788065440.205>
+                              Other, 0x105c3ac40, {{327.0, 249.5}, {3.0, 32.0}} <AX element pid: 65347, elementOrHash.elementID: 4788066944.234>
+                          Button, 0x105c3a200, {{34.0, 304.5}, {231.5, 34.5}}, identifier: 'timeline.reflection.import.button', label: 'Import pasted response' <AX element pid: 65347, elementOrHash.elementID: 105553170046144.193>
+                            Image, 0x105c3b330, {{48.0, 314.5}, {14.0, 14.0}}, identifier: 'plus', label: 'Add' <AX element pid: 65347, elementOrHash.elementID: 105553170048864.206>
+                            StaticText, 0x105c32a10, {{34.0, 304.5}, {231.5, 34.5}}, label: 'Import pasted response' <AX element pid: 65347, elementOrHash.elementID: 105553170046304.207>
+                        Other, 0x105c3bdb0, {{342.0, 64.0}, {30.0, 291.0}}, label: 'Vertical scroll bar, 4 pages', value: 96% <AX element pid: 65347, elementOrHash.elementID: 4367071632.184>
+                          Other, 0x105c3c500, {{369.0, 216.5}, {3.0, 130.0}} <AX element pid: 65347, elementOrHash.elementID: 4366682752.194>
+                        Other, 0x105c3c880, {{342.0, 64.0}, {30.0, 291.0}}, label: 'Vertical scroll bar, 4 pages', value: 96% <AX element pid: 65347, elementOrHash.elementID: 4367071632.184>
+                          Other, 0x105c3cbd0, {{369.0, 216.5}, {3.0, 130.0}} <AX element pid: 65347, elementOrHash.elementID: 4366682752.194>
+            Other, 0x105c3cf30, {{0.0, 20.0}, {32.0, 343.0}} <AX element pid: 65347, elementOrHash.elementID: 105553169852256.88>
+  Window, 0x105c3d2b0, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 65347, elementOrHash.elementID: 4379128832.250>
+    Other, 0x105c3d610, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 65347, elementOrHash.elementID: 4787878592.252>
+      Other, 0x105c3d960, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 65347, elementOrHash.elementID: 4366647840.254>
+      Other, 0x105c3dcc0, {{0.0, 363.0}, {375.0, 304.0}} <AX element pid: 65347, elementOrHash.elementID: 4366793824.255>
+        Other, 0x105c3e040, {{0.0, 363.0}, {375.0, 44.0}} <AX element pid: 65347, elementOrHash.elementID: 4356825312.257>
+          Other, 0x105c3e3c0, {{0.0, 363.0}, {375.0, 44.0}} <AX element pid: 65347, elementOrHash.elementID: 4803694960.264>
+            Other, 0x105c3e730, {{0.0, 363.0}, {375.0, 44.0}} <AX element pid: 65347, elementOrHash.elementID: 105553170014016.269>
+              Toolbar, 0x105c3eaa0, {{0.0, 363.0}, {375.0, 44.0}}, identifier: 'Toolbar', label: 'Toolbar' <AX element pid: 65347, elementOrHash.elementID: 4356294688.274>
+                Other, 0x105c3f4c0, {{0.0, 363.0}, {375.0, 44.0}} <AX element pid: 65347, elementOrHash.elementID: 4803805376.279>
+                  Other, 0x105c31920, {{0.0, 363.0}, {359.0, 44.0}} <AX element pid: 65347, elementOrHash.elementID: 4803586080.315>
+                    Other, 0x105c4d080, {{302.5, 371.0}, {56.5, 28.5}} <AX element pid: 65347, elementOrHash.elementID: 4369543216.317>
+                      Other, 0x105c4b540, {{302.5, 371.0}, {56.5, 28.5}}, identifier: 'timeline.keyboard.done', label: 'Done' <AX element pid: 65347, elementOrHash.elementID: 4803635088.319>
+                        Other, 0x105c4a440, {{302.5, 371.0}, {56.5, 28.5}} <AX element pid: 65347, elementOrHash.elementID: 105553170041184.323>
+                          Button, 0x105c44370, {{302.5, 371.0}, {56.5, 28.5}}, identifier: 'timeline.keyboard.done', label: 'Done' <AX element pid: 65347, elementOrHash.elementID: 105553170040864.324>
+        Other, 0x105c45110, {{0.0, 407.0}, {375.0, 260.0}} <AX element pid: 65347, elementOrHash.elementID: 4788296608.339>
+  Window, 0x105c45b70, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 65347, elementOrHash.elementID: 4379215360.336>
+    Other, 0x105c45ec0, {{0.0, 0.0}, {375.0, 667.0}} <AX element pid: 65347, elementOrHash.elementID: 4788290304.337>
+      Other, 0x105c46230, {{0.0, 363.0}, {375.0, 304.0}} <AX element pid: 65347, elementOrHash.elementID: 4788220656.338>
+        Other, 0x105c45820, {{0.0, 363.0}, {375.0, 44.0}} <AX element pid: 65347, elementOrHash.elementID: 4788297056.340>
+        Other, 0x105cdc630, {{0.0, 407.0}, {375.0, 44.0}} <AX element pid: 65347, elementOrHash.elementID: 4369132288.341>
+          Other, 0x105c66b80, {{0.0, 407.0}, {375.0, 44.0}} <AX element pid: 65347, elementOrHash.elementID: 4369236784.343>
+            Other, 0x105cd46d0, {{0.0, 407.0}, {375.0, 44.0}} <AX element pid: 65347, elementOrHash.elementID: 4369103024.345>
+        Other, 0x105ce25b0, {{0.0, 407.0}, {375.0, 44.0}}, identifier: 'SystemInputAssistantView' <AX element pid: 65347, elementOrHash.elementID: 4367217904.261>
+          Other, 0x105ce26d0, {{0.0, 407.0}, {375.0, 44.0}} <AX element pid: 65347, elementOrHash.elementID: 4367078992.266>
+            Other, 0x105ce27f0, {{0.0, 407.0}, {375.0, 44.0}}, identifier: 'CenterPageView' <AX element pid: 65347, elementOrHash.elementID: 4367176432.271>
+              Other, 0x105ce2910, {{0.0, -193.0}, {375.0, 1244.0}} <AX element pid: 65347, elementOrHash.elementID: 4367142048.275>
+                ScrollView, 0x105ce2a30, {{0.0, 407.0}, {375.0, 44.0}} <AX element pid: 65347, elementOrHash.elementID: 4382133760.280>
+              Other, 0x105ce2b50, {{0.0, 407.0}, {375.0, 44.0}} <AX element pid: 65347, elementOrHash.elementID: 4788212608.276>
+                Other, 0x105ce2c70, {{0.0, 407.0}, {375.0, 44.0}}, label: 'Typing Predictions' <AX element pid: 65347, elementOrHash.elementID: 4788064880.281>
+                  Other, 0x105ce2d90, {{0.0, 407.0}, {375.0, 44.0}} <AX element pid: 65347, elementOrHash.elementID: 4788200864.316>
+                    Other, 0x105ce2eb0, {{0.0, 407.0}, {375.0, 44.0}} <AX element pid: 65347, elementOrHash.elementID: 4366791184.318>
+                      Other, 0x105ce2fd0, {{0.0, 407.0}, {125.0, 44.0}}, label: 'I' <AX element pid: 65347, elementOrHash.elementID: 4356576944.320>
+                      Other, 0x105ce30f0, {{125.0, 407.0}, {125.0, 44.0}}, label: 'The' <AX element pid: 65347, elementOrHash.elementID: 4356109920.321>
+                      Other, 0x105ce3210, {{250.0, 407.0}, {125.0, 44.0}}, label: 'I’m' <AX element pid: 65347, elementOrHash.elementID: 4356474160.322>
+        Other, 0x105ce3330, {{0.0, 451.0}, {375.0, 216.0}} <AX element pid: 65347, elementOrHash.elementID: 4369410784.342>
+          Other, 0x105ce3450, {{0.0, 451.0}, {375.0, 216.0}} <AX element pid: 65347, elementOrHash.elementID: 4369230288.344>
+            Other, 0x105ce3570, {{0.0, 451.0}, {375.0, 216.0}} <AX element pid: 65347, elementOrHash.elementID: 4368880176.346>
+              Other, 0x105ce3690, {{0.0, 451.0}, {375.0, 216.0}} <AX element pid: 65347, elementOrHash.elementID: 4369069200.347>
+        Other, 0x105ce37b0, {{0.0, 451.0}, {375.0, 216.0}} <AX element pid: 65347, elementOrHash.elementID: 4366642656.263>
+          Keyboard, 0x105ce38d0, {{0.0, 451.0}, {375.0, 216.0}} <AX element pid: 65347, elementOrHash.elementID: 4367233296.268>
+            Other, 0x105ce39f0, {{0.0, 451.0}, {375.0, 216.0}} <AX element pid: 65347, elementOrHash.elementID: 4367106944.273>
+              Other, 0x105ce3b10, {{0.0, 451.0}, {375.0, 216.0}}, identifier: 'UIKeyboardLayoutStar Preview' <AX element pid: 65347, elementOrHash.elementID: 4395809792.278>
+                Key, 0x105ce3c30, {{0.0, 458.0}, {37.5, 46.0}}, label: 'Q' <AX element pid: 65347, elementOrHash.elementID: 105553151348480.348>
+                Key, 0x105ce3d50, {{37.5, 458.0}, {37.5, 46.0}}, label: 'W' <AX element pid: 65347, elementOrHash.elementID: 105553151350000.349>
+                Key, 0x105ce3e70, {{75.0, 458.0}, {37.5, 46.0}}, label: 'E' <AX element pid: 65347, elementOrHash.elementID: 105553151348800.350>
+                Key, 0x105ce3f90, {{112.5, 458.0}, {37.5, 46.0}}, label: 'R' <AX element pid: 65347, elementOrHash.elementID: 105553151348320.351>
+                Key, 0x105ce40b0, {{150.0, 458.0}, {37.5, 46.0}}, label: 'T' <AX element pid: 65347, elementOrHash.elementID: 105553151348080.352>
+                Key, 0x105ce41d0, {{187.5, 458.0}, {37.5, 46.0}}, label: 'Y' <AX element pid: 65347, elementOrHash.elementID: 105553151347920.353>
+                Key, 0x105ce42f0, {{225.0, 458.0}, {37.5, 46.0}}, label: 'U' <AX element pid: 65347, elementOrHash.elementID: 105553151348240.354>
+                Key, 0x105ce4410, {{262.5, 458.0}, {37.5, 46.0}}, label: 'I' <AX element pid: 65347, elementOrHash.elementID: 105553151348400.355>
+                Key, 0x105ce4530, {{300.0, 458.0}, {37.5, 46.0}}, label: 'O' <AX element pid: 65347, elementOrHash.elementID: 105553151359520.356>
+                Key, 0x105ce4650, {{337.5, 458.0}, {37.5, 46.0}}, label: 'P' <AX element pid: 65347, elementOrHash.elementID: 105553151350080.357>
+                Key, 0x105ce4770, {{18.5, 512.0}, {37.5, 46.0}}, label: 'A' <AX element pid: 65347, elementOrHash.elementID: 105553151350240.358>
+                Key, 0x105ce4890, {{56.0, 512.0}, {37.5, 46.0}}, label: 'S' <AX element pid: 65347, elementOrHash.elementID: 105553151348160.359>
+                Key, 0x105ce49b0, {{93.5, 512.0}, {37.5, 46.0}}, label: 'D' <AX element pid: 65347, elementOrHash.elementID: 105553151350160.360>
+                Key, 0x105ce4ad0, {{131.0, 512.0}, {37.5, 46.0}}, label: 'F' <AX element pid: 65347, elementOrHash.elementID: 105553151350480.361>
+                Key, 0x105ce4bf0, {{169.0, 512.0}, {37.5, 46.0}}, label: 'G' <AX element pid: 65347, elementOrHash.elementID: 105553151350400.362>
+                Key, 0x105ce4d10, {{206.5, 512.0}, {37.5, 46.0}}, label: 'H' <AX element pid: 65347, elementOrHash.elementID: 105553151350640.363>
+                Key, 0x105ce4e30, {{244.0, 512.0}, {37.5, 46.0}}, label: 'J' <AX element pid: 65347, elementOrHash.elementID: 105553151350560.364>
+                Key, 0x105ce4f50, {{281.5, 512.0}, {37.5, 46.0}}, label: 'K' <AX element pid: 65347, elementOrHash.elementID: 105553151354400.365>
+                Key, 0x105ce5070, {{319.0, 512.0}, {37.5, 46.0}}, label: 'L' <AX element pid: 65347, elementOrHash.elementID: 105553151355360.366>
+                Button, 0x105ce5190, {{0.0, 566.0}, {48.0, 46.0}}, identifier: 'shift', label: 'shift', Selected <AX element pid: 65347, elementOrHash.elementID: 105553151353840.367>
+                Key, 0x105ce52b0, {{56.0, 566.0}, {37.5, 46.0}}, label: 'Z' <AX element pid: 65347, elementOrHash.elementID: 105553151354320.368>
+                Key, 0x105ce53d0, {{93.5, 566.0}, {37.5, 46.0}}, label: 'X' <AX element pid: 65347, elementOrHash.elementID: 105553151353920.369>
+                Key, 0x105ce54f0, {{131.0, 566.0}, {37.5, 46.0}}, label: 'C' <AX element pid: 65347, elementOrHash.elementID: 105553151354000.370>
+                Key, 0x105ce5610, {{169.0, 566.0}, {37.5, 46.0}}, label: 'V' <AX element pid: 65347, elementOrHash.elementID: 105553151355680.371>
+                Key, 0x105ce5730, {{206.5, 566.0}, {37.5, 46.0}}, label: 'B' <AX element pid: 65347, elementOrHash.elementID: 105553151359040.372>
+                Key, 0x105ce5850, {{244.0, 566.0}, {37.5, 46.0}}, label: 'N' <AX element pid: 65347, elementOrHash.elementID: 105553151358480.373>
+                Key, 0x105ce5970, {{281.5, 566.0}, {37.5, 46.0}}, label: 'M' <AX element pid: 65347, elementOrHash.elementID: 105553151359120.374>
+                Key, 0x105ce5be0, {{327.0, 566.0}, {48.0, 46.0}}, identifier: 'delete', label: 'delete' <AX element pid: 65347, elementOrHash.elementID: 105553151360480.375>
+                Key, 0x105ce5d00, {{0.0, 620.0}, {46.5, 46.0}}, identifier: 'more', label: 'numbers' <AX element pid: 65347, elementOrHash.elementID: 105553151359680.376>
+                Button, 0x105ce5e20, {{46.5, 620.0}, {47.0, 46.0}}, identifier: 'emoji', label: 'Emoji' <AX element pid: 65347, elementOrHash.elementID: 105553151347840.377>
+                Button, 0x105ce5f40, {{93.5, 620.0}, {37.5, 46.0}}, identifier: 'dictation', label: 'Dictate' <AX element pid: 65347, elementOrHash.elementID: 105553151358960.378>
+                Key, 0x105ce6060, {{131.0, 620.0}, {150.5, 46.0}}, identifier: 'space', label: 'space' <AX element pid: 65347, elementOrHash.elementID: 105553151358240.379>
+                Button, 0x105ce6180, {{281.5, 620.0}, {93.5, 46.0}}, identifier: 'Return', label: 'return' <AX element pid: 65347, elementOrHash.elementID: 105553151353680.380>

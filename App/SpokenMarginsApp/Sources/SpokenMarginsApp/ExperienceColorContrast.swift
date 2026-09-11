@@ -21,6 +21,21 @@ struct AppDynamicRGB: Equatable, Sendable {
 }
 
 enum AppSemanticColorRGB {
+    private static func fixed(_ red: Double, _ green: Double, _ blue: Double) -> AppDynamicRGB {
+        let color = AppColorRGB(red: red, green: green, blue: blue)
+        return AppDynamicRGB(light: color, dark: color)
+    }
+
+    static let listeningBackground = fixed(0.09, 0.224, 0.184)
+    static let captureBackground = fixed(1, 0.941, 0.745)
+    static let listeningAccent = fixed(0.859, 0.929, 0.553)
+    static let listeningSecondary = fixed(0.69, 0.75, 0.70)
+    static let captureText = fixed(0.08, 0.10, 0.08)
+    static let white = fixed(1, 1, 1)
+    static let bone = AppDynamicRGB(
+        light: .init(red: 0.97, green: 0.95, blue: 0.89),
+        dark: .init(red: 0.08, green: 0.10, blue: 0.09)
+    )
     static let background = AppDynamicRGB(
         light: .init(red: 0.96, green: 0.97, blue: 0.94),
         dark: .init(red: 0.07, green: 0.09, blue: 0.08)
@@ -40,6 +55,10 @@ enum AppSemanticColorRGB {
     static let primaryAction = AppDynamicRGB(
         light: .init(red: 0.08, green: 0.32, blue: 0.22),
         dark: .init(red: 0.12, green: 0.36, blue: 0.23)
+    )
+    static let plum = AppDynamicRGB(
+        light: .init(red: 0.39, green: 0.24, blue: 0.48),
+        dark: .init(red: 0.78, green: 0.62, blue: 0.88)
     )
     static let evergreen = AppDynamicRGB(
         light: .init(red: 0.08, green: 0.30, blue: 0.21),
@@ -72,11 +91,20 @@ enum AppColorContrastAudit {
     }
 
     static let textBackgroundPairs: [Pair] = [
+        .init(name: "reading body on bone", foreground: AppSemanticColorRGB.text, background: AppSemanticColorRGB.bone, minimumRatio: 4.5),
+        .init(name: "reading secondary on bone", foreground: AppSemanticColorRGB.secondaryText, background: AppSemanticColorRGB.bone, minimumRatio: 4.5),
+        .init(name: "listening body", foreground: AppSemanticColorRGB.white, background: AppSemanticColorRGB.listeningBackground, minimumRatio: 4.5),
+        .init(name: "listening secondary", foreground: AppSemanticColorRGB.listeningSecondary, background: AppSemanticColorRGB.listeningBackground, minimumRatio: 4.5),
+        .init(name: "recording status", foreground: AppSemanticColorRGB.listeningAccent, background: AppSemanticColorRGB.listeningBackground, minimumRatio: 4.5),
+        .init(name: "playback primary action", foreground: AppSemanticColorRGB.captureText, background: AppSemanticColorRGB.listeningAccent, minimumRatio: 4.5),
+        .init(name: "capture action", foreground: AppSemanticColorRGB.captureText, background: AppSemanticColorRGB.captureBackground, minimumRatio: 4.5),
+        .init(name: "locked capture context", foreground: AppSemanticColorRGB.listeningBackground, background: AppSemanticColorRGB.captureBackground, minimumRatio: 4.5),
         .init(name: "body on app background", foreground: AppSemanticColorRGB.text, background: AppSemanticColorRGB.background, minimumRatio: 4.5),
         .init(name: "body on panel", foreground: AppSemanticColorRGB.text, background: AppSemanticColorRGB.panel, minimumRatio: 4.5),
         .init(name: "secondary on app background", foreground: AppSemanticColorRGB.secondaryText, background: AppSemanticColorRGB.background, minimumRatio: 4.5),
         .init(name: "secondary on panel", foreground: AppSemanticColorRGB.secondaryText, background: AppSemanticColorRGB.panel, minimumRatio: 4.5),
         .init(name: "primary button label", foreground: .init(light: .init(red: 1, green: 1, blue: 1), dark: .init(red: 1, green: 1, blue: 1)), background: AppSemanticColorRGB.primaryAction, minimumRatio: 4.5),
+        .init(name: "response import label", foreground: AppSemanticColorRGB.onEvergreen, background: AppSemanticColorRGB.plum, minimumRatio: 4.5),
         .init(name: "label on evergreen", foreground: AppSemanticColorRGB.onEvergreen, background: AppSemanticColorRGB.evergreen, minimumRatio: 4.5),
         .init(name: "body on soft green", foreground: AppSemanticColorRGB.text, background: AppSemanticColorRGB.softGreen, minimumRatio: 4.5),
         .init(name: "danger label", foreground: AppSemanticColorRGB.dangerText, background: AppSemanticColorRGB.dangerBackground, minimumRatio: 4.5)

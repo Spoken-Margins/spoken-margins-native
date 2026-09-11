@@ -1,0 +1,286 @@
+[
+  {
+    "file": "ipad-second-edition-timeline-accessibility-clearance.png",
+    "test": "Gate1FlowUITests/testBuild23LayoutRegressionsRemainOperableAtAccessibilityType()",
+    "run": "artifacts/test-runs/20260910-192155-297213-ui/manifest.json",
+    "input_sha256": "7632bd366c275aa8596a1a1d0210eb4ee9bf7fd76de210b0a0aba46d81e8f2bb",
+    "destination": {
+      "lastBootedAt": "2026-09-10T22:48:05Z",
+      "dataPath": "/Users/colemiller/Library/Developer/CoreSimulator/Devices/BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51/data",
+      "dataPathSize": 3985985536,
+      "logPath": "/Users/colemiller/Library/Logs/CoreSimulator/BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+      "udid": "BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+      "isAvailable": true,
+      "logPathSize": 389120,
+      "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-11-inch-M5-12GB",
+      "state": "Shutdown",
+      "name": "Spoken Margins Test Suite iPad",
+      "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
+    },
+    "final_candidate_relationship": "Executed before the four-binding dark-only contrast repair; light appearance unchanged. See artifacts/reviews/second-edition/dark-contrast-delta.json."
+  },
+  {
+    "file": "ipad-second-edition-timeline-accessibility-content.png",
+    "test": "Gate1FlowUITests/testBuild23LayoutRegressionsRemainOperableAtAccessibilityType()",
+    "run": "artifacts/test-runs/20260910-192155-297213-ui/manifest.json",
+    "input_sha256": "7632bd366c275aa8596a1a1d0210eb4ee9bf7fd76de210b0a0aba46d81e8f2bb",
+    "destination": {
+      "lastBootedAt": "2026-09-10T22:48:05Z",
+      "dataPath": "/Users/colemiller/Library/Developer/CoreSimulator/Devices/BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51/data",
+      "dataPathSize": 3985985536,
+      "logPath": "/Users/colemiller/Library/Logs/CoreSimulator/BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+      "udid": "BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+      "isAvailable": true,
+      "logPathSize": 389120,
+      "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-11-inch-M5-12GB",
+      "state": "Shutdown",
+      "name": "Spoken Margins Test Suite iPad",
+      "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
+    },
+    "final_candidate_relationship": "Executed before the four-binding dark-only contrast repair; light appearance unchanged. See artifacts/reviews/second-edition/dark-contrast-delta.json."
+  },
+  {
+    "file": "ipad-second-edition-add-text-keyboard-accessibility.png",
+    "test": "Gate1FlowUITests/testBuild23LayoutRegressionsRemainOperableAtAccessibilityType()",
+    "run": "artifacts/test-runs/20260910-192155-297213-ui/manifest.json",
+    "input_sha256": "7632bd366c275aa8596a1a1d0210eb4ee9bf7fd76de210b0a0aba46d81e8f2bb",
+    "destination": {
+      "lastBootedAt": "2026-09-10T22:48:05Z",
+      "dataPath": "/Users/colemiller/Library/Developer/CoreSimulator/Devices/BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51/data",
+      "dataPathSize": 3985985536,
+      "logPath": "/Users/colemiller/Library/Logs/CoreSimulator/BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+      "udid": "BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+      "isAvailable": true,
+      "logPathSize": 389120,
+      "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-11-inch-M5-12GB",
+      "state": "Shutdown",
+      "name": "Spoken Margins Test Suite iPad",
+      "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
+    },
+    "final_candidate_relationship": "Executed before the four-binding dark-only contrast repair; light appearance unchanged. See artifacts/reviews/second-edition/dark-contrast-delta.json."
+  },
+  {
+    "file": "ipad-second-edition-item-shared-provenance.png",
+    "test": "Gate1FlowUITests/testBuild23RecipientMissingSourceReturnsWithoutAutoplayAndShowsProvenance()",
+    "run": "artifacts/test-runs/20260910-192155-297213-ui/manifest.json",
+    "input_sha256": "7632bd366c275aa8596a1a1d0210eb4ee9bf7fd76de210b0a0aba46d81e8f2bb",
+    "destination": {
+      "lastBootedAt": "2026-09-10T22:48:05Z",
+      "dataPath": "/Users/colemiller/Library/Developer/CoreSimulator/Devices/BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51/data",
+      "dataPathSize": 3985985536,
+      "logPath": "/Users/colemiller/Library/Logs/CoreSimulator/BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+      "udid": "BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+      "isAvailable": true,
+      "logPathSize": 389120,
+      "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-11-inch-M5-12GB",
+      "state": "Shutdown",
+      "name": "Spoken Margins Test Suite iPad",
+      "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
+    },
+    "final_candidate_relationship": "Executed before the four-binding dark-only contrast repair; light appearance unchanged. See artifacts/reviews/second-edition/dark-contrast-delta.json."
+  },
+  {
+    "file": "ipad-second-edition-sender-preview-action.png",
+    "test": "Gate1FlowUITests/testBuild23RecipientMissingSourceReturnsWithoutAutoplayAndShowsProvenance()",
+    "run": "artifacts/test-runs/20260910-192155-297213-ui/manifest.json",
+    "input_sha256": "7632bd366c275aa8596a1a1d0210eb4ee9bf7fd76de210b0a0aba46d81e8f2bb",
+    "destination": {
+      "lastBootedAt": "2026-09-10T22:48:05Z",
+      "dataPath": "/Users/colemiller/Library/Developer/CoreSimulator/Devices/BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51/data",
+      "dataPathSize": 3985985536,
+      "logPath": "/Users/colemiller/Library/Logs/CoreSimulator/BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+      "udid": "BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+      "isAvailable": true,
+      "logPathSize": 389120,
+      "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-11-inch-M5-12GB",
+      "state": "Shutdown",
+      "name": "Spoken Margins Test Suite iPad",
+      "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
+    },
+    "final_candidate_relationship": "Executed before the four-binding dark-only contrast repair; light appearance unchanged. See artifacts/reviews/second-edition/dark-contrast-delta.json."
+  },
+  {
+    "file": "ipad-second-edition-long-title-accessibility-controls.png",
+    "test": "Gate1FlowUITests/testPlaybackPrimaryActionsRemainVisibleWithLongTitleAndAccessibilityText()",
+    "run": "artifacts/test-runs/20260910-192155-297213-ui/manifest.json",
+    "input_sha256": "7632bd366c275aa8596a1a1d0210eb4ee9bf7fd76de210b0a0aba46d81e8f2bb",
+    "destination": {
+      "lastBootedAt": "2026-09-10T22:48:05Z",
+      "dataPath": "/Users/colemiller/Library/Developer/CoreSimulator/Devices/BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51/data",
+      "dataPathSize": 3985985536,
+      "logPath": "/Users/colemiller/Library/Logs/CoreSimulator/BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+      "udid": "BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+      "isAvailable": true,
+      "logPathSize": 389120,
+      "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-11-inch-M5-12GB",
+      "state": "Shutdown",
+      "name": "Spoken Margins Test Suite iPad",
+      "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
+    },
+    "final_candidate_relationship": "Executed before the four-binding dark-only contrast repair; light appearance unchanged. See artifacts/reviews/second-edition/dark-contrast-delta.json."
+  },
+  {
+    "file": "ipad-second-edition-native-accessibility-size.png",
+    "test": "Gate1FlowUITests/testPlaybackPrimaryActionsRemainVisibleWithLongTitleAndAccessibilityText()",
+    "run": "artifacts/test-runs/20260910-192155-297213-ui/manifest.json",
+    "input_sha256": "7632bd366c275aa8596a1a1d0210eb4ee9bf7fd76de210b0a0aba46d81e8f2bb",
+    "destination": {
+      "lastBootedAt": "2026-09-10T22:48:05Z",
+      "dataPath": "/Users/colemiller/Library/Developer/CoreSimulator/Devices/BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51/data",
+      "dataPathSize": 3985985536,
+      "logPath": "/Users/colemiller/Library/Logs/CoreSimulator/BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+      "udid": "BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+      "isAvailable": true,
+      "logPathSize": 389120,
+      "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-11-inch-M5-12GB",
+      "state": "Shutdown",
+      "name": "Spoken Margins Test Suite iPad",
+      "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
+    },
+    "final_candidate_relationship": "Executed before the four-binding dark-only contrast repair; light appearance unchanged. See artifacts/reviews/second-edition/dark-contrast-delta.json."
+  },
+  {
+    "file": "ipad-second-edition-margin-detail-timeline-clearance.png",
+    "test": "Gate1FlowUITests/testRecordingExclusivelyOwnsTheAccessibleExperience()",
+    "run": "artifacts/test-runs/20260910-192155-297213-ui/manifest.json",
+    "input_sha256": "7632bd366c275aa8596a1a1d0210eb4ee9bf7fd76de210b0a0aba46d81e8f2bb",
+    "destination": {
+      "lastBootedAt": "2026-09-10T22:48:05Z",
+      "dataPath": "/Users/colemiller/Library/Developer/CoreSimulator/Devices/BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51/data",
+      "dataPathSize": 3985985536,
+      "logPath": "/Users/colemiller/Library/Logs/CoreSimulator/BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+      "udid": "BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+      "isAvailable": true,
+      "logPathSize": 389120,
+      "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-11-inch-M5-12GB",
+      "state": "Shutdown",
+      "name": "Spoken Margins Test Suite iPad",
+      "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
+    },
+    "final_candidate_relationship": "Executed before the four-binding dark-only contrast repair; light appearance unchanged. See artifacts/reviews/second-edition/dark-contrast-delta.json."
+  },
+  {
+    "file": "ipad-second-edition-written-margin-detail.png",
+    "test": "Gate1FlowUITests/testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource()",
+    "run": "artifacts/test-runs/20260910-192155-297213-ui/manifest.json",
+    "input_sha256": "7632bd366c275aa8596a1a1d0210eb4ee9bf7fd76de210b0a0aba46d81e8f2bb",
+    "destination": {
+      "lastBootedAt": "2026-09-10T22:48:05Z",
+      "dataPath": "/Users/colemiller/Library/Developer/CoreSimulator/Devices/BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51/data",
+      "dataPathSize": 3985985536,
+      "logPath": "/Users/colemiller/Library/Logs/CoreSimulator/BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+      "udid": "BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+      "isAvailable": true,
+      "logPathSize": 389120,
+      "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-11-inch-M5-12GB",
+      "state": "Shutdown",
+      "name": "Spoken Margins Test Suite iPad",
+      "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
+    },
+    "final_candidate_relationship": "Executed before the four-binding dark-only contrast repair; light appearance unchanged. See artifacts/reviews/second-edition/dark-contrast-delta.json."
+  },
+  {
+    "file": "ipad-second-edition-written-capture-keyboard.png",
+    "test": "Gate1FlowUITests/testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource()",
+    "run": "artifacts/test-runs/20260910-192155-297213-ui/manifest.json",
+    "input_sha256": "7632bd366c275aa8596a1a1d0210eb4ee9bf7fd76de210b0a0aba46d81e8f2bb",
+    "destination": {
+      "lastBootedAt": "2026-09-10T22:48:05Z",
+      "dataPath": "/Users/colemiller/Library/Developer/CoreSimulator/Devices/BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51/data",
+      "dataPathSize": 3985985536,
+      "logPath": "/Users/colemiller/Library/Logs/CoreSimulator/BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+      "udid": "BEBBB4FD-E13C-457C-A41F-DD7DF02B5C51",
+      "isAvailable": true,
+      "logPathSize": 389120,
+      "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-11-inch-M5-12GB",
+      "state": "Shutdown",
+      "name": "Spoken Margins Test Suite iPad",
+      "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
+    },
+    "final_candidate_relationship": "Executed before the four-binding dark-only contrast repair; light appearance unchanged. See artifacts/reviews/second-edition/dark-contrast-delta.json."
+  },
+  {
+    "file": "small-second-edition-timeline-accessibility-clearance.png",
+    "test": "Gate1FlowUITests/testBuild23LayoutRegressionsRemainOperableAtAccessibilityType()",
+    "run": "artifacts/test-runs/20260910-193112-ui-small-ios18/manifest.json",
+    "input_sha256": "7632bd366c275aa8596a1a1d0210eb4ee9bf7fd76de210b0a0aba46d81e8f2bb",
+    "destination": {
+      "udid": "09B39C91-F60E-497E-9F7C-AAD8740FBAC3",
+      "name": "iPhone SE (3rd generation)",
+      "os": "18.6"
+    },
+    "final_candidate_relationship": "Executed before the four-binding dark-only contrast repair; light appearance unchanged. See artifacts/reviews/second-edition/dark-contrast-delta.json."
+  },
+  {
+    "file": "small-second-edition-timeline-accessibility-content.png",
+    "test": "Gate1FlowUITests/testBuild23LayoutRegressionsRemainOperableAtAccessibilityType()",
+    "run": "artifacts/test-runs/20260910-193112-ui-small-ios18/manifest.json",
+    "input_sha256": "7632bd366c275aa8596a1a1d0210eb4ee9bf7fd76de210b0a0aba46d81e8f2bb",
+    "destination": {
+      "udid": "09B39C91-F60E-497E-9F7C-AAD8740FBAC3",
+      "name": "iPhone SE (3rd generation)",
+      "os": "18.6"
+    },
+    "final_candidate_relationship": "Executed before the four-binding dark-only contrast repair; light appearance unchanged. See artifacts/reviews/second-edition/dark-contrast-delta.json."
+  },
+  {
+    "file": "small-second-edition-add-text-keyboard-accessibility.png",
+    "test": "Gate1FlowUITests/testBuild23LayoutRegressionsRemainOperableAtAccessibilityType()",
+    "run": "artifacts/test-runs/20260910-193112-ui-small-ios18/manifest.json",
+    "input_sha256": "7632bd366c275aa8596a1a1d0210eb4ee9bf7fd76de210b0a0aba46d81e8f2bb",
+    "destination": {
+      "udid": "09B39C91-F60E-497E-9F7C-AAD8740FBAC3",
+      "name": "iPhone SE (3rd generation)",
+      "os": "18.6"
+    },
+    "final_candidate_relationship": "Executed before the four-binding dark-only contrast repair; light appearance unchanged. See artifacts/reviews/second-edition/dark-contrast-delta.json."
+  },
+  {
+    "file": "small-second-edition-long-title-accessibility-controls.png",
+    "test": "Gate1FlowUITests/testPlaybackPrimaryActionsRemainVisibleWithLongTitleAndAccessibilityText()",
+    "run": "artifacts/test-runs/20260910-193112-ui-small-ios18/manifest.json",
+    "input_sha256": "7632bd366c275aa8596a1a1d0210eb4ee9bf7fd76de210b0a0aba46d81e8f2bb",
+    "destination": {
+      "udid": "09B39C91-F60E-497E-9F7C-AAD8740FBAC3",
+      "name": "iPhone SE (3rd generation)",
+      "os": "18.6"
+    },
+    "final_candidate_relationship": "Executed before the four-binding dark-only contrast repair; light appearance unchanged. See artifacts/reviews/second-edition/dark-contrast-delta.json."
+  },
+  {
+    "file": "small-second-edition-native-accessibility-size.png",
+    "test": "Gate1FlowUITests/testPlaybackPrimaryActionsRemainVisibleWithLongTitleAndAccessibilityText()",
+    "run": "artifacts/test-runs/20260910-193112-ui-small-ios18/manifest.json",
+    "input_sha256": "7632bd366c275aa8596a1a1d0210eb4ee9bf7fd76de210b0a0aba46d81e8f2bb",
+    "destination": {
+      "udid": "09B39C91-F60E-497E-9F7C-AAD8740FBAC3",
+      "name": "iPhone SE (3rd generation)",
+      "os": "18.6"
+    },
+    "final_candidate_relationship": "Executed before the four-binding dark-only contrast repair; light appearance unchanged. See artifacts/reviews/second-edition/dark-contrast-delta.json."
+  },
+  {
+    "file": "small-second-edition-written-margin-detail.png",
+    "test": "Gate1FlowUITests/testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource()",
+    "run": "artifacts/test-runs/20260910-193112-ui-small-ios18/manifest.json",
+    "input_sha256": "7632bd366c275aa8596a1a1d0210eb4ee9bf7fd76de210b0a0aba46d81e8f2bb",
+    "destination": {
+      "udid": "09B39C91-F60E-497E-9F7C-AAD8740FBAC3",
+      "name": "iPhone SE (3rd generation)",
+      "os": "18.6"
+    },
+    "final_candidate_relationship": "Executed before the four-binding dark-only contrast repair; light appearance unchanged. See artifacts/reviews/second-edition/dark-contrast-delta.json."
+  },
+  {
+    "file": "small-second-edition-written-capture-keyboard.png",
+    "test": "Gate1FlowUITests/testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource()",
+    "run": "artifacts/test-runs/20260910-193112-ui-small-ios18/manifest.json",
+    "input_sha256": "7632bd366c275aa8596a1a1d0210eb4ee9bf7fd76de210b0a0aba46d81e8f2bb",
+    "destination": {
+      "udid": "09B39C91-F60E-497E-9F7C-AAD8740FBAC3",
+      "name": "iPhone SE (3rd generation)",
+      "os": "18.6"
+    },
+    "final_candidate_relationship": "Executed before the four-binding dark-only contrast repair; light appearance unchanged. See artifacts/reviews/second-edition/dark-contrast-delta.json."
+  }
+]

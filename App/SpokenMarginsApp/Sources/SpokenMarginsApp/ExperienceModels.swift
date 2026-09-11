@@ -1,6 +1,49 @@
 import Foundation
 import SessionKit
 
+struct WrittenMarginDraft: Equatable {
+    let capture: WrittenInterjectionCapture
+    var text: String
+    let itemTitle: String
+    let targetDescription: String
+    let progressPercent: Int
+
+    var captureID: String { capture.id }
+    var priorWasPlaying: Bool { capture.wasPlaying }
+    var lockedSessionID: String { capture.sessionId }
+    var lockedItemID: String { capture.itemId }
+    var lockedTargetID: String { capture.targetId }
+}
+
+enum MarginCollectionFilter: String, CaseIterable, Equatable, Sendable {
+    case all
+    case starred
+    case attention
+    case shared
+
+    var title: String {
+        switch self {
+        case .all: "Mine"
+        case .starred: "Starred"
+        case .attention: "Needs attention"
+        case .shared: "Shared"
+        }
+    }
+}
+
+struct MarginCollectionQuery: Equatable, Sendable {
+    var text = ""
+    var filter: MarginCollectionFilter = .all
+
+    func matches(_ values: [String]) -> Bool {
+        let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        return query.isEmpty || values.joined(separator: " ")
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .contains(query)
+    }
+}
+
 enum AppRoot: String, CaseIterable, Identifiable, Hashable, Sendable {
     case library
     case sources
@@ -11,7 +54,7 @@ enum AppRoot: String, CaseIterable, Identifiable, Hashable, Sendable {
     var title: String {
         switch self {
         case .library: "Library"
-        case .sources: "Sources"
+        case .sources: "Following"
         case .margins: "Margins"
         }
     }
@@ -44,9 +87,10 @@ enum TimelinePullPresentation {
         contentOffsetY: CGFloat,
         contentHeight: CGFloat,
         containerHeight: CGFloat,
-        bottomInset: CGFloat
+        bottomInset: CGFloat,
+        topInset: CGFloat = 0
     ) -> CGFloat {
-        let maximumScrollOffset = max(0, contentHeight + bottomInset - containerHeight)
+        let maximumScrollOffset = max(-topInset, contentHeight + bottomInset - containerHeight)
         return max(0, contentOffsetY - maximumScrollOffset)
     }
 
@@ -218,6 +262,7 @@ enum OnboardingEvidenceClassifier {
 
 enum TimelineProvenance: String, CaseIterable, Hashable, Sendable {
     case source
+    case listeningMap
     case myMargin
     case userResponse
     case assistantResponse
@@ -225,6 +270,7 @@ enum TimelineProvenance: String, CaseIterable, Hashable, Sendable {
     var label: String {
         switch self {
         case .source: "Source"
+        case .listeningMap: "Listening map"
         case .myMargin: "My Margin"
         case .userResponse: "My response"
         case .assistantResponse: "Assistant response"
@@ -234,6 +280,7 @@ enum TimelineProvenance: String, CaseIterable, Hashable, Sendable {
     var systemImage: String {
         switch self {
         case .source: "doc.text"
+        case .listeningMap: "map"
         case .myMargin: "quote.bubble.fill"
         case .userResponse: "person.crop.circle"
         case .assistantResponse: "sparkles"
@@ -259,6 +306,11 @@ struct MarginRow: Identifiable, Equatable, Sendable {
     let sessionDate: Date?
 
     var id: String { "\(interjection.sessionId)::\(interjection.id)" }
+    var isWritten: Bool { interjection.captureKind == .written }
+    var fullText: String {
+        [interjection.displayText, interjection.cleanedTranscript, interjection.transcript]
+            .compactMap { $0 }.first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? preview
+    }
 
     var preview: String {
         for value in [interjection.displayText, interjection.cleanedTranscript, interjection.transcript] {
@@ -269,10 +321,14 @@ struct MarginRow: Identifiable, Equatable, Sendable {
     }
 
     var needsAttention: Bool {
+        if isWritten { return false }
         let transcriptReady = ["transcribed", "complete"].contains(interjection.transcriptionStatus)
         let contextFailed = interjection.anchorContextStatus == .unavailable
         return !transcriptReady || contextFailed || interjection.audioStatus == "missing"
     }
+
+    var canPlayRecording: Bool { !isWritten && interjection.audioPath != nil }
+    var canRetryTranscription: Bool { !isWritten && !["transcribed", "complete"].contains(interjection.transcriptionStatus) && interjection.audioPath != nil }
 
     var attentionDescription: String {
         if interjection.anchorContextStatus == .unavailable { return "Context needs retry" }
@@ -289,6 +345,24 @@ struct MarginRow: Identifiable, Equatable, Sendable {
         case .item: "Source"
         case .assistantTurn: "Assistant response"
         case .summaryTurn: "Interjection summary"
+        }
+    }
+}
+
+struct SharedMarginRow: Identifiable, Equatable, Sendable {
+    let interjection: ImportedCommentaryInterjection
+    let layer: ImportedCommentaryLayer
+    let itemTitle: String
+
+    var id: String { "shared::\(layer.id)::\(interjection.id)" }
+    var collectionLabel: String { layer.displayLabel.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 } ?? "Imported collection" }
+    var positionDescription: String {
+        if interjection.resolution.isAmbiguous { return "Position needs review" }
+        switch interjection.resolution.evidenceClass {
+        case .unresolved, .absentFromRecipientEdition, .ambiguous: return "Position not matched"
+        case .timestampFallback, .mapInterpolated: return "Approximate position"
+        case .recipientConfirmed: return "Position confirmed by you"
+        default: return "Position matched"
         }
     }
 }

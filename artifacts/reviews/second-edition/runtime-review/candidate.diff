@@ -1,0 +1,1933 @@
+diff --git a/App/SpokenMarginsApp/Sources/SpokenMarginsApp/ExperienceModels.swift b/App/SpokenMarginsApp/Sources/SpokenMarginsApp/ExperienceModels.swift
+index 7b8cebe..d4e9e8b 100644
+--- a/App/SpokenMarginsApp/Sources/SpokenMarginsApp/ExperienceModels.swift
++++ b/App/SpokenMarginsApp/Sources/SpokenMarginsApp/ExperienceModels.swift
+@@ -1,6 +1,49 @@
+ import Foundation
+ import SessionKit
+ 
++struct WrittenMarginDraft: Equatable {
++    let capture: WrittenInterjectionCapture
++    var text: String
++    let itemTitle: String
++    let targetDescription: String
++    let progressPercent: Int
++
++    var captureID: String { capture.id }
++    var priorWasPlaying: Bool { capture.wasPlaying }
++    var lockedSessionID: String { capture.sessionId }
++    var lockedItemID: String { capture.itemId }
++    var lockedTargetID: String { capture.targetId }
++}
++
++enum MarginCollectionFilter: String, CaseIterable, Equatable, Sendable {
++    case all
++    case starred
++    case attention
++    case shared
++
++    var title: String {
++        switch self {
++        case .all: "Mine"
++        case .starred: "Starred"
++        case .attention: "Needs attention"
++        case .shared: "Shared"
++        }
++    }
++}
++
++struct MarginCollectionQuery: Equatable, Sendable {
++    var text = ""
++    var filter: MarginCollectionFilter = .all
++
++    func matches(_ values: [String]) -> Bool {
++        let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
++            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
++        return query.isEmpty || values.joined(separator: " ")
++            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
++            .contains(query)
++    }
++}
++
+ enum AppRoot: String, CaseIterable, Identifiable, Hashable, Sendable {
+     case library
+     case sources
+@@ -11,7 +54,7 @@ enum AppRoot: String, CaseIterable, Identifiable, Hashable, Sendable {
+     var title: String {
+         switch self {
+         case .library: "Library"
+-        case .sources: "Sources"
++        case .sources: "Following"
+         case .margins: "Margins"
+         }
+     }
+@@ -259,6 +302,11 @@ struct MarginRow: Identifiable, Equatable, Sendable {
+     let sessionDate: Date?
+ 
+     var id: String { "\(interjection.sessionId)::\(interjection.id)" }
++    var isWritten: Bool { interjection.captureKind == .written }
++    var fullText: String {
++        [interjection.displayText, interjection.cleanedTranscript, interjection.transcript]
++            .compactMap { $0 }.first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? preview
++    }
+ 
+     var preview: String {
+         for value in [interjection.displayText, interjection.cleanedTranscript, interjection.transcript] {
+@@ -269,11 +317,15 @@ struct MarginRow: Identifiable, Equatable, Sendable {
+     }
+ 
+     var needsAttention: Bool {
++        if isWritten { return interjection.anchorContextStatus == .unavailable }
+         let transcriptReady = ["transcribed", "complete"].contains(interjection.transcriptionStatus)
+         let contextFailed = interjection.anchorContextStatus == .unavailable
+         return !transcriptReady || contextFailed || interjection.audioStatus == "missing"
+     }
+ 
++    var canPlayRecording: Bool { !isWritten && interjection.audioPath != nil }
++    var canRetryTranscription: Bool { !isWritten && !["transcribed", "complete"].contains(interjection.transcriptionStatus) && interjection.audioPath != nil }
++
+     var attentionDescription: String {
+         if interjection.anchorContextStatus == .unavailable { return "Context needs retry" }
+         if interjection.audioStatus == "missing" { return "Recording is unavailable" }
+@@ -293,6 +345,24 @@ struct MarginRow: Identifiable, Equatable, Sendable {
+     }
+ }
+ 
++struct SharedMarginRow: Identifiable, Equatable, Sendable {
++    let interjection: ImportedCommentaryInterjection
++    let layer: ImportedCommentaryLayer
++    let itemTitle: String
++
++    var id: String { "shared::\(layer.id)::\(interjection.id)" }
++    var collectionLabel: String { layer.displayLabel.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 } ?? "Imported collection" }
++    var positionDescription: String {
++        if interjection.resolution.isAmbiguous { return "Position needs review" }
++        switch interjection.resolution.evidenceClass {
++        case .unresolved, .absentFromRecipientEdition, .ambiguous: return "Position not matched"
++        case .timestampFallback, .mapInterpolated: return "Approximate position"
++        case .recipientConfirmed: return "Position confirmed by you"
++        default: return "Position matched"
++        }
++    }
++}
++
+ struct OfflineStorageCategoryRow: Identifiable, Equatable, Sendable {
+     let category: OfflineAssetCategory
+     let byteCount: Int64
+diff --git a/App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift b/App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift
+index 3a1ddeb..1a028fd 100644
+--- a/App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift
++++ b/App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift
+@@ -527,6 +527,12 @@ final class Gate1AppModel: ObservableObject {
+     }
+ 
+     @Published private var presentedScreen: Gate1Screen = .home
++    @Published var requestedExperienceRoot: AppRoot?
++    @Published private(set) var writtenMarginDraft: WrittenMarginDraft?
++    @Published private(set) var recordingPermissionDenied = false
++    @Published var marginCollectionQuery = MarginCollectionQuery()
++    @Published private(set) var sharedMarginRows: [SharedMarginRow] = []
++    private var pendingVoiceCaptureRequestID: UUID?
+     var screen: Gate1Screen {
+         get { presentedScreen }
+         set {
+@@ -642,6 +648,7 @@ final class Gate1AppModel: ObservableObject {
+     @Published private(set) var isWritingBatchExport = false
+     @Published private(set) var retryingInterjectionTranscriptionIds: Set<String> = []
+     @Published private(set) var playingInterjectionAudioId: String?
++    @Published private(set) var playingInterjectionAudioSessionID: String?
+     @Published private(set) var playingInterjectionAudioRate: Double = 1
+     @Published var libraryItems: [LibraryItemRow] = [] { didSet { cachedQuickAddCandidates = nil } }
+     @Published private(set) var audioPreparationQueue: [AudioPreparationQueueRow] = []
+@@ -868,6 +875,7 @@ final class Gate1AppModel: ObservableObject {
+     private var sourceSuggestionChecks: Set<String> = []
+     private var guidedOnboardingCoordinator: GuidedOnboardingCoordinator?
+     private let recordingClientOverride: RecordingClient?
++    private let microphonePermissionRequest: (() async -> Bool)?
+     private let forcePreparedTextGate: Bool
+     private let sourceTranscriptionClient: SourceTranscriptionClient
+     private let interjectionTranscriptionHandler: InterjectionTranscriptionHandler
+@@ -1123,6 +1131,7 @@ final class Gate1AppModel: ObservableObject {
+         browserTextHandoffStore: Gate5BrowserTextHandoffStore? = nil,
+         audioPlaybackClient: AudioPlaybackClient? = nil,
+         recordingClient: RecordingClient? = nil,
++        microphonePermissionRequest: (() async -> Bool)? = nil,
+         forcePreparedTextGate: Bool = false,
+         sourceTranscriptionClient: SourceTranscriptionClient = SystemSourceTranscriptionClient(),
+         interjectionTranscriptionHandler: InterjectionTranscriptionHandler? = nil,
+@@ -1147,6 +1156,7 @@ final class Gate1AppModel: ObservableObject {
+         self.browserTextHandoffStore = browserTextHandoffStore
+         self.audioPlaybackClientOverride = audioPlaybackClient
+         self.recordingClientOverride = recordingClient
++        self.microphonePermissionRequest = microphonePermissionRequest
+         self.forcePreparedTextGate = forcePreparedTextGate
+         self.sourceTranscriptionClient = sourceTranscriptionClient
+         self.gate2CompactControls = gate2CompactControls
+@@ -1925,6 +1935,14 @@ final class Gate1AppModel: ObservableObject {
+                         )
+                     }
+             }
++            sharedMarginRows = try store.loadImportedCommentaryLayers()
++                .filter { $0.deletedAt == nil && ($0.itemId == nil || activeItems[$0.itemId ?? ""] != nil) }
++                .flatMap { layer in
++                    try store.loadImportedCommentaryInterjections(layerId: layer.id).map {
++                        SharedMarginRow(interjection: $0, layer: layer, itemTitle: activeItems[layer.itemId ?? ""] ?? layer.itemIdentity.title)
++                    }
++                }
++                .sorted { $0.interjection.createdAt > $1.interjection.createdAt }
+             marginRows = rows.sorted { lhs, rhs in
+                 let leftSessionDate = lhs.sessionDate ?? .distantPast
+                 let rightSessionDate = rhs.sessionDate ?? .distantPast
+@@ -1939,6 +1957,34 @@ final class Gate1AppModel: ObservableObject {
+         }
+     }
+ 
++    var visiblePrivateMarginRows: [MarginRow] {
++        marginRows.filter { row in
++            let matchesFilter: Bool
++            switch marginCollectionQuery.filter {
++            case .all: matchesFilter = true
++            case .starred: matchesFilter = row.interjection.isStarredForSharing == true
++            case .attention: matchesFilter = row.needsAttention
++            case .shared: matchesFilter = false
++            }
++            return matchesFilter && marginCollectionQuery.matches([row.fullText, row.itemTitle])
++        }
++    }
++
++    var visibleSharedMarginRows: [SharedMarginRow] {
++        guard marginCollectionQuery.filter == .shared else { return [] }
++        return sharedMarginRows.filter {
++            marginCollectionQuery.matches([$0.interjection.approvedTranscript, $0.itemTitle, $0.collectionLabel])
++        }
++    }
++
++    func marginSourceContext(_ row: MarginRow) -> String? {
++        // The saved bounded anchor belongs to this Margin's source or generated target.
++        let parts = [row.interjection.anchor.anchorBefore, row.interjection.anchor.anchorAfter]
++            .compactMap { $0 }.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
++        guard !parts.isEmpty else { return nil }
++        return String(parts.joined(separator: " … ").prefix(600))
++    }
++
+     func openMarginInTimeline(_ row: MarginRow) {
+         guard !rejectNavigationOrSessionMutationWhileRecording("open_margin_timeline") else { return }
+         if let activeSessionID = snapshot.sessionId,
+@@ -1962,6 +2008,43 @@ final class Gate1AppModel: ObservableObject {
+         }
+     }
+ 
++    @discardableResult
++    func playMarginMoment(_ row: MarginRow) -> Bool {
++        guard !rejectNavigationOrSessionMutationWhileRecording("play_margin_moment") else { return false }
++        let previousItemID = snapshot.itemId
++        do {
++            let store = try requireStore()
++            guard let session = try store.loadSession(id: row.interjection.sessionId),
++                  session.itemId == row.interjection.itemId,
++                  let interjection = try store.loadInterjections(sessionId: session.id).first(where: {
++                      $0.id == row.interjection.id && $0.sessionId == session.id
++                          && $0.itemId == session.itemId && $0.status == "active"
++                  }) else {
++                throw SessionKitError.invalidCommandForState("This Margin's listening session is unavailable.")
++            }
++            let detail = try loadItemDetail(id: session.itemId, store: store)
++            if engine == nil { installEngine(try makeEngine(store: store)) }
++            guard let engine else { return false }
++            // URL registration is separate from selection; the engine owns exact
++            // target validation and the reversible playback transaction.
++            try prepareSourceMediaPlayback(itemId: session.itemId)
++            snapshot = try engine.playInterjectionAnchor(interjection)
++            streamingSpeechQueue.relinquishToCanonicalPlayback()
++            stopInterjectionAudioPlayback()
++            activeItemId = session.itemId
++            selectedItem = detail
++            if previousItemID != session.itemId { resetMixWithOtherAudioForNewSession() }
++            screen = .playback
++            lastError = nil
++            return true
++        } catch {
++            if let engine { snapshot = engine.snapshot }
++            if let previousItemID { podcastDownloadCoordinator?.configureActiveItem(previousItemID) }
++            reportFailure(error, context: "Could not play this Margin's position")
++            return false
++        }
++    }
++
+     private func tryRefreshOfflineStorageUsage() {
+         guard let ledger = offlineStorageLedger else { return }
+         Task { [weak self] in
+@@ -3407,6 +3490,10 @@ final class Gate1AppModel: ObservableObject {
+     }
+ 
+     func playPause() {
++        if snapshot.status == .finished, let itemID = snapshot.itemId {
++            startNewSession(id: itemID)
++            return
++        }
+         if let bridge = snapshot.skimBridgeState {
+             setSkimBridgePaused(bridge.status == .playing)
+             return
+@@ -4668,7 +4755,7 @@ final class Gate1AppModel: ObservableObject {
+     }
+ 
+     var recordingNavigationIsLocked: Bool {
+-        isRequestingRecordingPermission || snapshot.isRecording
++        isRequestingRecordingPermission || snapshot.isRecording || writtenMarginDraft != nil
+     }
+ 
+     @discardableResult
+@@ -4692,6 +4779,18 @@ final class Gate1AppModel: ObservableObject {
+         screen = .home
+     }
+ 
++    func openMargins() {
++        guard !rejectNavigationOrSessionMutationWhileRecording("open_margins") else { return }
++        openHome()
++        requestedExperienceRoot = .margins
++    }
++
++    func openLibrary() {
++        guard !rejectNavigationOrSessionMutationWhileRecording("open_library") else { return }
++        openHome()
++        requestedExperienceRoot = .library
++    }
++
+     var visibleLibraryItems: [LibraryItemRow] {
+         let normalizedQuery = libraryQuery.query.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+             .trimmingCharacters(in: .whitespacesAndNewlines)
+@@ -5597,6 +5696,9 @@ final class Gate1AppModel: ObservableObject {
+             return
+         }
+         guard !recordingNavigationIsLocked else { return }
++        let voiceCaptureRequestID = UUID()
++        pendingVoiceCaptureRequestID = voiceCaptureRequestID
++        recordingPermissionDenied = false
+         isRequestingRecordingPermission = true
+         statusMessage = "Starting interjection..."
+         lastError = nil
+@@ -5608,8 +5710,8 @@ final class Gate1AppModel: ObservableObject {
+             progressPercent: snapshot.currentPlaybackProgressPercent,
+             startedAt: requestedAt
+         )
+-        if recordingClientOverride != nil {
+-            startInterjectionRecording(requestedAt: requestedAt)
++        if recordingClientOverride != nil, microphonePermissionRequest == nil {
++            startInterjectionRecording(requestedAt: requestedAt, captureID: voiceCaptureRequestID)
+             return
+         }
+         #if canImport(AVFoundation) && os(iOS)
+@@ -5619,29 +5721,36 @@ final class Gate1AppModel: ObservableObject {
+         } else {
+             recordPermissionIsGranted = AVAudioSession.sharedInstance().recordPermission == .granted
+         }
+-        if recordPermissionIsGranted {
++        if recordPermissionIsGranted, microphonePermissionRequest == nil {
+             diagnostics["lastMicrophonePermissionResult"] = "granted"
+             Task { @MainActor [weak self] in
+                 await Task.yield()
+-                self?.startInterjectionRecording(requestedAt: requestedAt)
++                self?.startInterjectionRecording(requestedAt: requestedAt, captureID: voiceCaptureRequestID)
+             }
+             return
+         }
+         #endif
+         Task {
+             let granted = await requestMicrophonePermission()
++            guard pendingVoiceCaptureRequestID == voiceCaptureRequestID else { return }
+             guard granted else {
+                 isRequestingRecordingPermission = false
+                 recordingPresentationContext = nil
++                pendingVoiceCaptureRequestID = nil
++                recordingPermissionDenied = true
+                 reportFailure("Microphone access is required to record interjections. Enable microphone access in Settings and try again.")
+                 return
+             }
+-            startInterjectionRecording(requestedAt: requestedAt)
++            startInterjectionRecording(requestedAt: requestedAt, captureID: voiceCaptureRequestID)
+         }
+     }
+ 
+-    private func startInterjectionRecording(requestedAt: Date) {
+-        defer { isRequestingRecordingPermission = false }
++    private func startInterjectionRecording(requestedAt: Date, captureID: UUID) {
++        guard pendingVoiceCaptureRequestID == captureID else { return }
++        defer {
++            isRequestingRecordingPermission = false
++            pendingVoiceCaptureRequestID = nil
++        }
+         synchronizeStreamingSpeechAnchorIfNeeded()
+         streamingSpeechQueue.pauseForInterjection()
+         run { engine in
+@@ -5664,7 +5773,8 @@ final class Gate1AppModel: ObservableObject {
+     }
+ 
+     private func requestMicrophonePermission(timeoutSeconds: TimeInterval = 10) async -> Bool {
+-        await withTaskGroup(of: Bool.self) { group in
++        if let microphonePermissionRequest { return await microphonePermissionRequest() }
++        return await withTaskGroup(of: Bool.self) { group in
+             group.addTask {
+                 await SystemRecordingClient.requestRecordPermission()
+             }
+@@ -5704,6 +5814,12 @@ final class Gate1AppModel: ObservableObject {
+     }
+ 
+     func cancelInterjection() {
++        if isRequestingRecordingPermission && !snapshot.isRecording {
++            pendingVoiceCaptureRequestID = nil
++            isRequestingRecordingPermission = false
++            recordingPresentationContext = nil
++            return
++        }
+         run { engine in
+             snapshot = try engine.cancelInterjection()
+             refreshSelectedItem()
+@@ -5715,6 +5831,80 @@ final class Gate1AppModel: ObservableObject {
+         streamingSpeechQueue.resumeAfterInterjection()
+     }
+ 
++    func beginWrittenMargin() {
++        guard !recordingNavigationIsLocked else { return }
++        guard snapshot.skimBridgeState == nil, playingImportedCommentary == nil else {
++            reportFailure("Return to the source before writing a Margin.")
++            return
++        }
++        do {
++            let store = try requireStore()
++            if engine == nil { installEngine(try makeEngine(store: store)) }
++            guard let engine else { return }
++            synchronizeStreamingSpeechAnchorIfNeeded()
++            streamingSpeechQueue.pauseForInterjection()
++            let capture = try engine.beginWrittenInterjection()
++            lastError = nil
++            recordingPermissionDenied = false
++            snapshot = engine.snapshot
++            writtenMarginDraft = WrittenMarginDraft(
++                capture: capture,
++                text: "",
++                itemTitle: (try? store.loadItem(id: capture.itemId).title) ?? "Current item",
++                targetDescription: capture.targetType == .item ? "Source" : (capture.targetType == .assistantTurn ? "Assistant response" : "Interjection summary"),
++                progressPercent: capture.roughPercent
++            )
++            recordingPresentationContext = nil
++        } catch {
++            streamingSpeechQueue.resumeAfterInterjection()
++            reportFailure(error, context: "Written Margin could not start")
++        }
++    }
++
++    func updateWrittenMarginText(_ text: String) {
++        guard writtenMarginDraft != nil else { return }
++        writtenMarginDraft?.text = text
++    }
++
++    func switchPendingVoiceCaptureToWrittenMargin() {
++        guard isRequestingRecordingPermission, !snapshot.isRecording else { return }
++        isRequestingRecordingPermission = false
++        pendingVoiceCaptureRequestID = nil
++        recordingPresentationContext = nil
++        beginWrittenMargin()
++    }
++
++    func saveWrittenMargin(text: String) {
++        guard let draft = writtenMarginDraft, let engine else { return }
++        do {
++            snapshot = try engine.saveWrittenInterjection(captureId: draft.capture.id, text: text)
++            writtenMarginDraft = nil
++            if draft.priorWasPlaying { streamingSpeechQueue.resumeAfterInterjection() }
++            refreshSelectedItem()
++            refreshMarginRows()
++            if draft.priorWasPlaying && snapshot.status == .paused {
++                reportWarning("Margin saved. Playback is paused; tap Play to continue.")
++            } else {
++                reportConfirmation("Written Margin saved.")
++            }
++        } catch {
++            writtenMarginDraft?.text = text
++            reportFailure(error, context: "Written Margin could not be saved")
++        }
++    }
++
++    func cancelWrittenMargin() {
++        guard let draft = writtenMarginDraft, let engine else { return }
++        do {
++            snapshot = try engine.cancelWrittenInterjection(captureId: draft.capture.id)
++            writtenMarginDraft = nil
++            if draft.priorWasPlaying { streamingSpeechQueue.resumeAfterInterjection() }
++            refreshSelectedItem()
++        } catch {
++            reportFailure(error, context: "Written Margin could not be cancelled")
++        }
++    }
++
+     func endSession() {
+         guard !rejectNavigationOrSessionMutationWhileRecording("end_session") else { return }
+         closeCurrentSession(navigateHome: true)
+@@ -5907,10 +6097,12 @@ final class Gate1AppModel: ObservableObject {
+               !selectedItem.turns.contains(where: { $0.status == "pending" || $0.status == "streaming" }) else {
+             return
+         }
+-        closeCurrentSession(
+-            navigateHome: true,
+-            successMessage: "Session complete and saved."
+-        )
++        guard snapshot.status == .finished else { return }
++        if let store {
++            try? refreshLibraryRows(store: store)
++        }
++        refreshMarginRows()
++        diagnostics["completedSessionPresentation"] = "retained_finished_session"
+     }
+ 
+     private func shouldDeferGeneratedTurnPlayback(turnId: String, completedCurrentAudio: Bool = false) -> Bool {
+@@ -6201,25 +6393,39 @@ final class Gate1AppModel: ObservableObject {
+         }
+     }
+ 
++    static func marginIdentity(_ interjection: Interjection) -> String {
++        "\(interjection.sessionId)::\(interjection.id)"
++    }
++
++    func isPlayingInterjectionAudio(_ interjection: Interjection) -> Bool {
++        playingInterjectionAudioId == interjection.id && playingInterjectionAudioSessionID == interjection.sessionId
++    }
++
++    func isRetryingInterjectionTranscription(_ interjection: Interjection) -> Bool {
++        retryingInterjectionTranscriptionIds.contains(Self.marginIdentity(interjection))
++    }
++
+     func retryAnchorContext(_ interjection: Interjection) {
+-        guard !pendingSourceContextInterjectionIds.contains(interjection.id) else { return }
++        guard interjection.captureKind != .written else { return }
++        guard !pendingSourceContextInterjectionIds.contains(Self.marginIdentity(interjection)) else { return }
+         scheduleSourceWindowContextIfNeeded(for: interjection)
+         reportConfirmation("Retrying source context.")
+     }
+ 
+     func retryInterjectionTranscription(_ interjection: Interjection) {
+-        guard interjection.audioPath != nil else {
++        guard interjection.captureKind != .written, interjection.audioPath != nil else {
+             reportFailure("The saved interjection audio is unavailable.")
+             return
+         }
+-        guard retryingInterjectionTranscriptionIds.insert(interjection.id).inserted else { return }
++        guard retryingInterjectionTranscriptionIds.insert(Self.marginIdentity(interjection)).inserted else { return }
+         scheduleTranscription(for: interjection)
+         reportConfirmation("Retranscribing the saved interjection audio.")
+     }
+ 
+     func toggleInterjectionAudioPlayback(_ interjection: Interjection) {
+         #if canImport(AVFoundation)
+-        if playingInterjectionAudioId == interjection.id {
++        guard interjection.captureKind != .written else { return }
++        if isPlayingInterjectionAudio(interjection) {
+             stopInterjectionAudioPlayback()
+             return
+         }
+@@ -6245,6 +6451,7 @@ final class Gate1AppModel: ObservableObject {
+             player.defaultRate = Float(rate)
+             interjectionAudioPlayer = player
+             playingInterjectionAudioId = interjection.id
++            playingInterjectionAudioSessionID = interjection.sessionId
+             playingInterjectionAudioRate = rate
+             interjectionAudioCompletionTask = Task { @MainActor [weak self, weak item] in
+                 while !Task.isCancelled, let item {
+@@ -6277,6 +6484,7 @@ final class Gate1AppModel: ObservableObject {
+         interjectionAudioCompletionTask = nil
+         #endif
+         playingInterjectionAudioId = nil
++        playingInterjectionAudioSessionID = nil
+         playingInterjectionAudioRate = 1
+     }
+ 
+@@ -6595,6 +6803,27 @@ final class Gate1AppModel: ObservableObject {
+         }
+     }
+ 
++    func setMarginStarred(_ row: MarginRow, starred: Bool) {
++        guard !rejectNavigationOrSessionMutationWhileRecording("star_margin") else { return }
++        do {
++            let store = try requireStore()
++            guard var interjection = try store.loadInterjections(sessionId: row.interjection.sessionId).first(where: {
++                $0.id == row.interjection.id
++                    && $0.sessionId == row.interjection.sessionId
++                    && $0.itemId == row.interjection.itemId
++            }) else {
++                throw SessionKitError.persistenceFailed("margin_curation_interjection_missing")
++            }
++            interjection.isStarredForSharing = starred ? true : nil
++            try store.saveInterjection(interjection)
++            refreshMarginRows()
++            if snapshot.sessionId == row.interjection.sessionId { refreshSelectedItem() }
++            diagnostics["marginCuration:\(row.id)"] = starred ? "starred" : "unstarred"
++        } catch {
++            reportFailure(error, context: "Margin star could not be saved")
++        }
++    }
++
+     func setInterjectionPrivateSharingNote(_ interjectionID: String, note: String) {
+         do {
+             let store = try requireStore()
+@@ -11054,7 +11283,8 @@ final class Gate1AppModel: ObservableObject {
+     }
+ 
+     private func scheduleSourceWindowContextIfNeeded(for interjection: Interjection) {
+-        guard interjection.targetType == .item,
++        guard interjection.captureKind != .written,
++              interjection.targetType == .item,
+               let anchorMediaTimeMs = interjection.anchor.mediaTimeMs,
+               let store,
+               let item = try? store.loadItem(id: interjection.itemId),
+@@ -11067,7 +11297,7 @@ final class Gate1AppModel: ObservableObject {
+         let saved = try? store.loadInterjections(sessionId: interjection.sessionId)
+             .first(where: { $0.id == interjection.id })
+         guard saved?.transcriptionStatus != "pending",
+-              !pendingSourceContextInterjectionIds.contains(interjection.id) else { return }
++              !pendingSourceContextInterjectionIds.contains(Self.marginIdentity(interjection)) else { return }
+         switch item.media?.sourceType {
+         case .some(.nativeMediaFile), .some(.remoteStream):
+             break
+@@ -11082,7 +11312,7 @@ final class Gate1AppModel: ObservableObject {
+                windowAfterMs: sourceWindowContextAfterMs
+            ) {
+             run { engine in
+-                snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjection.id, timeline: window)
++                snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjection.id, sessionId: interjection.sessionId, timeline: window)
+                 refreshSelectedItem()
+                 diagnostics["sourceWindowTranscription:\(interjection.id)"] = "complete:stored_transcript"
+                 diagnostics["sourceWindowContextProvenance:\(interjection.id)"] = "stored_transcript"
+@@ -11093,9 +11323,9 @@ final class Gate1AppModel: ObservableObject {
+         let transcriptionURL = podcastDownloadCoordinator?.validatedLocalURL(for: item.id) ?? canonicalSourceURL
+         let provenance = transcriptionURL.isFileURL ? "downloaded_local_audio" : "bounded_remote_window"
+         diagnostics["sourceWindowContextProvenance:\(interjection.id)"] = provenance
+-        pendingSourceContextInterjectionIds.insert(interjection.id)
++        pendingSourceContextInterjectionIds.insert(Self.marginIdentity(interjection))
+         run { engine in
+-            snapshot = try engine.sourceWindowContextPending(interjectionId: interjection.id)
++            snapshot = try engine.sourceWindowContextPending(interjectionId: interjection.id, sessionId: interjection.sessionId)
+             refreshSelectedItem()
+         }
+         Task { [weak self, interjectionId = interjection.id, itemId = item.id, durationMs = item.media?.durationMs, windowBeforeMs = sourceWindowContextBeforeMs, windowAfterMs = sourceWindowContextAfterMs] in
+@@ -11149,7 +11379,7 @@ final class Gate1AppModel: ObservableObject {
+                 }
+                 await MainActor.run {
+                     self.run { engine in
+-                        self.snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjectionId, timeline: analysis.timeline)
++                        self.snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjectionId, sessionId: interjection.sessionId, timeline: analysis.timeline)
+                         if !referenceEvidence.isEmpty {
+                             try self.persistPodcastAnchorEvidence(
+                                 request: PostResumeAudioSampleRequest(
+@@ -11164,22 +11394,24 @@ final class Gate1AppModel: ObservableObject {
+                             )
+                         }
+                         self.refreshSelectedItem()
++                        self.refreshMarginRows()
+                         self.diagnostics["sourceWindowTranscription:\(interjectionId)"] = "complete:speech_window"
+                         self.diagnostics["sourceWindowContextProvenance:\(interjectionId)"] = provenance
+                         self.diagnostics["sourceWindowSignature:\(interjectionId)"] = referenceEvidence.isEmpty
+                             ? "unavailable:\(referenceEvidenceFailure ?? "temporary_audio_unavailable")"
+                             : "complete:\(referenceEvidence.count)"
+-                        self.pendingSourceContextInterjectionIds.remove(interjectionId)
++                        self.pendingSourceContextInterjectionIds.remove(Self.marginIdentity(interjection))
+                     }
+                 }
+             } catch {
+                 await MainActor.run {
+                     self.diagnostics["sourceWindowTranscription:\(interjectionId)"] = "failed:\(error.localizedDescription)"
+                     self.diagnostics["sourceWindowContextProvenance:\(interjectionId)"] = "unavailable"
+-                    self.pendingSourceContextInterjectionIds.remove(interjectionId)
++                    self.pendingSourceContextInterjectionIds.remove(Self.marginIdentity(interjection))
+                     self.run { engine in
+-                        self.snapshot = try engine.sourceWindowContextUnavailable(interjectionId: interjectionId)
++                        self.snapshot = try engine.sourceWindowContextUnavailable(interjectionId: interjectionId, sessionId: interjection.sessionId)
+                         self.refreshSelectedItem()
++                        self.refreshMarginRows()
+                     }
+                     // Source-window context is redundant, best-effort evidence.
+                     // The Margin and its timestamp are already durable, and the
+@@ -11198,7 +11430,7 @@ final class Gate1AppModel: ObservableObject {
+             for interjection in interjections where interjection.targetType == .item
+                 && interjection.anchor.mediaTimeMs != nil
+                 && interjection.anchorContextStatus != .ready
+-                && !pendingSourceContextInterjectionIds.contains(interjection.id) {
++                && !pendingSourceContextInterjectionIds.contains(Self.marginIdentity(interjection)) {
+                 scheduleSourceWindowContextIfNeeded(for: interjection)
+             }
+         }
+@@ -11252,39 +11484,43 @@ final class Gate1AppModel: ObservableObject {
+                         if let alignedTranscript {
+                             snapshot = try engine.transcriptionCompleted(
+                                 interjectionId: interjection.id,
++                                sessionId: interjection.sessionId,
+                                 alignedTranscript: alignedTranscript
+                             )
+                         } else {
+                             snapshot = try engine.transcriptionCompleted(
+                                 interjectionId: interjection.id,
++                                sessionId: interjection.sessionId,
+                                 transcript: transcript
+                             )
+                         }
+                         refreshSelectedItem()
++                        refreshMarginRows()
+                         diagnostics["interjectionTranscription:\(interjection.id)"] = "complete"
+                         reportSuccess("Transcribed interjection.")
+                     }
+-                    retryingInterjectionTranscriptionIds.remove(interjection.id)
++                    retryingInterjectionTranscriptionIds.remove(Self.marginIdentity(interjection))
+                     scheduleSourceWindowContextIfNeeded(for: interjection)
+                 }
+             } catch {
+                 await MainActor.run {
+                     let failure = String(describing: error)
+-                    let wasRetry = retryingInterjectionTranscriptionIds.contains(interjection.id)
++                    let wasRetry = retryingInterjectionTranscriptionIds.contains(Self.marginIdentity(interjection))
+                     if wasRetry {
+                         diagnostics["interjectionTranscription:\(interjection.id)"] = "retry_failed:\(failure)"
+                         diagnostics["lastInterjectionTranscriptionFailure"] = "\(interjection.id):\(failure)"
+                         reportFailure("Saved audio and current transcript kept. Retranscription failed.")
+                     } else {
+                         run { engine in
+-                            snapshot = try engine.transcriptionFailed(interjectionId: interjection.id, error: failure)
++                            snapshot = try engine.transcriptionFailed(interjectionId: interjection.id, sessionId: interjection.sessionId, error: failure)
+                             refreshSelectedItem()
++                        refreshMarginRows()
+                             diagnostics["interjectionTranscription:\(interjection.id)"] = "failed:\(failure)"
+                             diagnostics["lastInterjectionTranscriptionFailure"] = "\(interjection.id):\(failure)"
+                             reportFailure("Audio saved. Transcript failed.")
+                         }
+                     }
+-                    retryingInterjectionTranscriptionIds.remove(interjection.id)
++                    retryingInterjectionTranscriptionIds.remove(Self.marginIdentity(interjection))
+                     scheduleSourceWindowContextIfNeeded(for: interjection)
+                 }
+             }
+diff --git a/App/SpokenMarginsAppTests/Gate1AppModelWorkflowTests.swift b/App/SpokenMarginsAppTests/Gate1AppModelWorkflowTests.swift
+index e410cf4..53ca83d 100644
+--- a/App/SpokenMarginsAppTests/Gate1AppModelWorkflowTests.swift
++++ b/App/SpokenMarginsAppTests/Gate1AppModelWorkflowTests.swift
+@@ -2405,7 +2405,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
+         XCTAssertEqual(model.diagnostics["playbackLifecycleSync"], "saved")
+     }
+ 
+-    func testCompletingFinalAudioAutomaticallyClosesTheSession() throws {
++    func testCompletingFinalAudioRetainsFinishedSessionForReview() throws {
+         let audio = WorkflowCompletionAudioClient()
+         let model = Gate1AppModel(audioPlaybackClient: audio)
+         model.resetAndSeed()
+@@ -2415,17 +2415,186 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
+         audio.completeCurrentTarget()
+         model.syncPlaybackProgressForLifecycle()
+ 
+-        XCTAssertNil(model.snapshot.sessionId)
+-        XCTAssertEqual(model.screen, .home)
++        XCTAssertEqual(model.snapshot.sessionId, completedSessionID)
++        XCTAssertEqual(model.snapshot.status, .finished)
++        XCTAssertEqual(model.screen, .playback)
+         XCTAssertEqual(model.statusMessage, "Session complete and saved.")
+-        XCTAssertEqual(model.feedbackEvent?.kind, .success)
+-        XCTAssertEqual(model.feedbackEvent?.message, "Session complete and saved.")
+         XCTAssertEqual(
+             model.selectedItem.sessions.first(where: { $0.id == completedSessionID })?.status,
+             "finished"
+         )
+     }
+ 
++    func testNaturalCompletionPreservesAnOpenItemAndItsFinishedSourceSession() throws {
++        let audio = WorkflowCompletionAudioClient()
++        let model = Gate1AppModel(audioPlaybackClient: audio)
++        model.resetAndSeed()
++        model.startItem(id: "item-pill")
++        let sessionID = model.snapshot.sessionId
++        model.openItem(id: "item-pill")
++        audio.completeCurrentTarget()
++        model.syncPlaybackProgressForLifecycle()
++        XCTAssertEqual(model.screen, .item)
++        XCTAssertEqual(model.snapshot.sessionId, sessionID)
++        XCTAssertEqual(model.snapshot.status, .finished)
++        model.openPlayback()
++        XCTAssertEqual(model.screen, .playback)
++        XCTAssertEqual(model.snapshot.status, .finished)
++    }
++
++    func testGlobalMarginSearchStarsAndSharedRowsKeepSessionIdentity() throws {
++        let root = FileManager.default.temporaryDirectory.appending(path: "margin-retrieval-\(UUID().uuidString)")
++        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
++        defer { try? FileManager.default.removeItem(at: root) }
++        let url = root.appending(path: "library.sqlite")
++        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: url)
++        model.resetAndSeed()
++        model.startItem(id: "item-pill")
++        let before = model.snapshot
++        let firstSession = try XCTUnwrap(before.sessionId)
++        let store = try SQLiteSessionStore(path: url.path)
++        try store.saveItem(Item(id: "retrieval-item", title: "Elsewhere", mediaType: "text", text: "private-source-only-marker and a useful passage", externalReference: "local", status: "ready"))
++        try store.saveSession(Session(id: "retrieval-session", itemId: "retrieval-item", status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: "retrieval-item", position: Position(charOffset: 8), completionPercent: 10, playbackRate: 1.5))
++        var original = shareableInterjection(itemId: "item-pill")
++        original.id = "same-note-id"
++        original.sessionId = firstSession
++        original.targetId = "item-pill"
++        try store.saveInterjection(original)
++        for index in 0..<50 {
++            var note = shareableInterjection(itemId: "retrieval-item")
++            note.id = index == 23 ? "same-note-id" : "note-\(index)"
++            note.sessionId = "retrieval-session"
++            note.targetId = "retrieval-item"
++            note.transcript = index == 23 ? "A café with an amber notebook" : "Ordinary thought \(index)"
++            note.displayText = note.transcript
++            note.cleanedTranscript = nil
++            note.anchor = Anchor(anchorType: .text, startChar: 8, endChar: 12, anchorBefore: "before", anchorAfter: "after")
++            try store.saveInterjection(note)
++        }
++        let layer = ImportedCommentaryLayer(id: "shared-layer", itemId: "retrieval-item", packageDigest: "shared-digest", packageId: "package", itemIdentity: SharedItemIdentity(itemType: .article, title: "Elsewhere"), displayLabel: "A shared collection", importedAt: Date())
++        try store.saveImportedCommentaryLayer(layer)
++        try store.saveImportedCommentaryInterjection(ImportedCommentaryInterjection(id: "same-note-id", layerId: layer.id, packageScopedId: "shared-note", createdAt: Date(), anchorEvidence: PortableAnchorEvidence(anchorType: .text), approvedTranscript: "Shared approved words"))
++        model.openHome()
++        model.refreshMarginRows()
++        model.marginCollectionQuery.text = "CAFE with an amber"
++        let found = try XCTUnwrap(model.visiblePrivateMarginRows.first)
++        XCTAssertEqual(model.visiblePrivateMarginRows.count, 1)
++        XCTAssertEqual(found.interjection.sessionId, "retrieval-session")
++        model.openMarginInTimeline(found)
++        model.setMarginStarred(found, starred: true)
++        XCTAssertEqual(model.snapshot, before)
++        XCTAssertEqual(try store.loadInterjections(sessionId: firstSession).first?.isStarredForSharing, original.isStarredForSharing)
++        let reconstructed = try SQLiteSessionStore(path: url.path)
++        XCTAssertEqual(try reconstructed.loadInterjections(sessionId: "retrieval-session").first { $0.id == "same-note-id" }?.isStarredForSharing, true)
++        model.marginCollectionQuery = MarginCollectionQuery(text: "", filter: .starred)
++        XCTAssertEqual(model.visiblePrivateMarginRows.map(\.id), [found.id])
++        model.marginCollectionQuery = MarginCollectionQuery(text: "private-source-only-marker", filter: .all)
++        XCTAssertTrue(model.visiblePrivateMarginRows.isEmpty)
++        model.marginCollectionQuery = MarginCollectionQuery(text: "absent words", filter: .all)
++        XCTAssertTrue(model.visiblePrivateMarginRows.isEmpty)
++        model.marginCollectionQuery = MarginCollectionQuery(text: "shared approved", filter: .shared)
++        XCTAssertTrue(model.visiblePrivateMarginRows.isEmpty)
++        XCTAssertEqual(model.visibleSharedMarginRows.count, 1)
++        XCTAssertNotEqual(model.visibleSharedMarginRows.first?.id, found.id)
++        XCTAssertEqual(model.visibleSharedMarginRows.first?.collectionLabel, "A shared collection")
++        XCTAssertEqual(model.snapshot, before)
++        XCTAssertTrue(model.playMarginMoment(found))
++        XCTAssertEqual(model.snapshot.itemId, "retrieval-item")
++        XCTAssertEqual(model.snapshot.sessionId, "retrieval-session")
++        XCTAssertEqual(model.snapshot.currentTextStart, 8)
++    }
++
++    func testLateMicrophoneGrantCannotReplaceWrittenCaptureOrRestartCancelledCapture() async throws {
++        let gate = MarginPermissionTestGate()
++        let model = Gate1AppModel(
++            audioPlaybackClient: NoopAudioPlaybackClient(),
++            recordingClient: NoopRecordingClient(),
++            microphonePermissionRequest: { await gate.request() }
++        )
++        model.resetAndSeed()
++        model.startItem(id: "item-pill")
++        model.pause()
++        model.beginInterjection()
++        for _ in 0..<100 where gate.continuation == nil { await Task.yield() }
++        XCTAssertNotNil(gate.continuation)
++        model.switchPendingVoiceCaptureToWrittenMargin()
++        let draft = try XCTUnwrap(model.writtenMarginDraft)
++        gate.finish(true)
++        for _ in 0..<20 { await Task.yield() }
++        XCTAssertFalse(model.snapshot.isRecording)
++        XCTAssertEqual(model.writtenMarginDraft?.captureID, draft.captureID)
++        model.cancelWrittenMargin()
++        model.beginInterjection()
++        for _ in 0..<100 where gate.continuation == nil { await Task.yield() }
++        XCTAssertNotNil(gate.continuation)
++        model.cancelInterjection()
++        gate.finish(true)
++        for _ in 0..<20 { await Task.yield() }
++        XCTAssertFalse(model.snapshot.isRecording)
++        XCTAssertFalse(model.recordingNavigationIsLocked)
++        XCTAssertEqual(model.snapshot.status, .paused)
++    }
++
++    func testDeniedMicrophoneOffersIndependentWrittenCapture() async throws {
++        let model = Gate1AppModel(
++            audioPlaybackClient: NoopAudioPlaybackClient(),
++            recordingClient: NoopRecordingClient(),
++            microphonePermissionRequest: { false }
++        )
++        model.resetAndSeed()
++        model.startItem(id: "item-pill")
++        model.pause()
++        model.beginInterjection()
++        for _ in 0..<100 where model.isRequestingRecordingPermission { await Task.yield() }
++        XCTAssertTrue(model.recordingPermissionDenied)
++        model.beginWrittenMargin()
++        XCTAssertNotNil(model.writtenMarginDraft)
++        XCTAssertFalse(model.recordingPermissionDenied)
++        XCTAssertFalse(model.snapshot.isRecording)
++        model.cancelWrittenMargin()
++    }
++
++    func testWrittenMarginAppDraftLocksNavigationAndSurvivesReconstruction() throws {
++        let root = FileManager.default.temporaryDirectory.appending(path: "written-margin-\(UUID().uuidString)")
++        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
++        defer { try? FileManager.default.removeItem(at: root) }
++        let url = root.appending(path: "library.sqlite")
++        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), recordingClient: NoopRecordingClient(), databaseURLOverride: url)
++        model.resetAndSeed()
++        model.startItem(id: "item-pill")
++        model.pause()
++        let before = model.snapshot
++        model.beginWrittenMargin()
++        let capture = try XCTUnwrap(model.writtenMarginDraft)
++        XCTAssertFalse(capture.priorWasPlaying)
++        XCTAssertFalse(model.snapshot.isRecording)
++        XCTAssertTrue(model.recordingNavigationIsLocked)
++        model.openLibrary()
++        model.startNewSession(id: "item-pill")
++        model.beginInterjection()
++        XCTAssertEqual(model.snapshot.sessionId, before.sessionId)
++        XCTAssertEqual(model.writtenMarginDraft?.captureID, capture.captureID)
++        let words = "  A thought in my own words.\n\nKeep this spacing.  "
++        model.updateWrittenMarginText(words)
++        model.saveWrittenMargin(text: words)
++        XCTAssertNil(model.writtenMarginDraft)
++        XCTAssertFalse(model.recordingNavigationIsLocked)
++        XCTAssertEqual(model.snapshot.status, .paused)
++        let store = try SQLiteSessionStore(path: url.path)
++        let saved = try XCTUnwrap(store.loadInterjections(sessionId: capture.lockedSessionID).first)
++        XCTAssertEqual(saved.captureKind, .written)
++        XCTAssertEqual(saved.displayText, words)
++        XCTAssertEqual(saved.anchor, capture.capture.anchor)
++        XCTAssertNil(saved.audioPath)
++        model.saveWrittenMargin(text: words)
++        XCTAssertEqual(try store.loadInterjections(sessionId: capture.lockedSessionID).count, 1)
++        model.beginWrittenMargin()
++        model.updateWrittenMarginText("Discard this draft")
++        model.cancelWrittenMargin()
++        XCTAssertEqual(try store.loadInterjections(sessionId: capture.lockedSessionID).count, 1)
++        XCTAssertEqual(model.snapshot.status, .paused)
++    }
++
+     func testPlaybackSpeechRateChangeRestartsActiveNativeTextAtCurrentOffset() throws {
+         let previousSpeechRate = UserDefaults.standard.object(forKey: "speechRate")
+         defer {
+@@ -3640,3 +3809,16 @@ private final class WorkflowCompletionAudioClient: AudioPlaybackClient {
+         lock.unlock()
+     }
+ }
++
++@MainActor
++private final class MarginPermissionTestGate {
++    var continuation: CheckedContinuation<Bool, Never>?
++    func request() async -> Bool {
++        await withCheckedContinuation { continuation = $0 }
++    }
++    func finish(_ granted: Bool) {
++        let pending = continuation
++        continuation = nil
++        pending?.resume(returning: granted)
++    }
++}
+diff --git a/Contracts/schemas/interjection.schema.json b/Contracts/schemas/interjection.schema.json
+index 8091fd0..3db10ec 100644
+--- a/Contracts/schemas/interjection.schema.json
++++ b/Contracts/schemas/interjection.schema.json
+@@ -56,6 +56,7 @@
+     "transcriptionStatus": { "enum": ["pending", "transcribed", "failed"] },
+     "transcript": { "type": ["string", "null"] },
+     "cleanedTranscript": { "type": ["string", "null"] },
++    "captureKind": { "type": ["string", "null"], "enum": ["audio", "written", null] },
+     "isStarredForSharing": { "type": ["boolean", "null"] },
+     "privateSharingNote": { "type": ["string", "null"], "maxLength": 500 },
+     "alignedTranscript": {
+diff --git a/Packages/SessionKit/Sources/SessionKit/Models.swift b/Packages/SessionKit/Sources/SessionKit/Models.swift
+index a2ae90c..0b91340 100644
+--- a/Packages/SessionKit/Sources/SessionKit/Models.swift
++++ b/Packages/SessionKit/Sources/SessionKit/Models.swift
+@@ -98,6 +98,11 @@ public enum InterjectionTargetType: String, Codable, Equatable, Sendable {
+     case assistantTurn = "assistant_turn"
+ }
+ 
++public enum InterjectionCaptureKind: String, Codable, Equatable, Sendable {
++    case audio
++    case written
++}
++
+ public enum AnchorType: String, Codable, Equatable, Sendable {
+     case text
+     case transcript
+@@ -1242,6 +1247,8 @@ public struct Interjection: Codable, Equatable, Sendable {
+     /// or `.spokenmargins` packages.
+     public var isStarredForSharing: Bool? = nil
+     public var privateSharingNote: String? = nil
++    /// Missing values predate written Margins and retain audio-recording semantics.
++    public var captureKind: InterjectionCaptureKind? = nil
+ 
+     public init(
+         id: String,
+@@ -1266,7 +1273,8 @@ public struct Interjection: Codable, Equatable, Sendable {
+         podcastAnchorEvidenceCaptureStatus: PodcastAnchorEvidenceCaptureStatus? = nil,
+         podcastAnchorEvidenceFailureReason: String? = nil,
+         isStarredForSharing: Bool? = nil,
+-        privateSharingNote: String? = nil
++        privateSharingNote: String? = nil,
++        captureKind: InterjectionCaptureKind? = nil
+     ) {
+         self.id = id
+         self.itemId = itemId
+@@ -1291,6 +1299,38 @@ public struct Interjection: Codable, Equatable, Sendable {
+         self.podcastAnchorEvidenceFailureReason = podcastAnchorEvidenceFailureReason
+         self.isStarredForSharing = isStarredForSharing
+         self.privateSharingNote = privateSharingNote
++        self.captureKind = captureKind
++    }
++}
++
++public struct WrittenInterjectionCapture: Equatable, Sendable {
++    public let id: String
++    public let sessionId: String
++    public let itemId: String
++    public let targetType: InterjectionTargetType
++    public let targetId: String
++    public let anchor: Anchor
++    public let roughPercent: Int
++    public let wasPlaying: Bool
++
++    public init(
++        id: String,
++        sessionId: String,
++        itemId: String,
++        targetType: InterjectionTargetType,
++        targetId: String,
++        anchor: Anchor,
++        roughPercent: Int,
++        wasPlaying: Bool
++    ) {
++        self.id = id
++        self.sessionId = sessionId
++        self.itemId = itemId
++        self.targetType = targetType
++        self.targetId = targetId
++        self.anchor = anchor
++        self.roughPercent = roughPercent
++        self.wasPlaying = wasPlaying
+     }
+ }
+ 
+diff --git a/Packages/SessionKit/Sources/SessionKit/SessionEngine.swift b/Packages/SessionKit/Sources/SessionKit/SessionEngine.swift
+index 644ee10..26906fd 100644
+--- a/Packages/SessionKit/Sources/SessionKit/SessionEngine.swift
++++ b/Packages/SessionKit/Sources/SessionKit/SessionEngine.swift
+@@ -44,6 +44,7 @@ public final class SessionEngine {
+     private var playbackStartDeadline: Date?
+     private var playbackURLOverrides: [String: String] = [:]
+     private var pendingPlaybackPosition: PendingPlaybackPosition?
++    private var pendingWrittenInterjection: WrittenInterjectionCapture?
+ 
+     private struct PendingPlaybackPosition {
+         var targetId: String
+@@ -1148,6 +1149,9 @@ public final class SessionEngine {
+     @discardableResult
+     public func beginInterjection() throws -> SessionSnapshot {
+         try require("beginInterjection", category: "interjection", capabilities: ["record_audio", "delegate_interjection_to_canonical_runtime"])
++        guard pendingWrittenInterjection == nil else {
++            throw SessionKitError.invalidCommandForState("beginInterjection")
++        }
+         guard var session = currentSession else { throw SessionKitError.invalidCommandForState("beginInterjection") }
+         let usesNativeMediaClock = session.currentTargetType == .transcriptBackedMedia
+             || session.currentTargetType == .browserOwnedMedia
+@@ -1178,6 +1182,276 @@ public final class SessionEngine {
+         return snapshot
+     }
+ 
++    @discardableResult
++    public func beginWrittenInterjection() throws -> WrittenInterjectionCapture {
++        try requireNavigationAllowed("beginWrittenInterjection")
++        guard let originalSession = currentSession else {
++            throw SessionKitError.invalidCommandForState("beginWrittenInterjection")
++        }
++        guard pendingWrittenInterjection == nil else {
++            throw SessionKitError.invalidCommandForState("beginWrittenInterjection")
++        }
++        let wasPlaying = snapshot.status.isPlaybackActive
++        // Resolve the immutable target before changing transport. The native
++        // media clock still has to be sampled after pause, but every other
++        // fallible part of the transaction happens before audio is stopped.
++        let target = currentInterjectionTarget(for: originalSession)
++        _ = buildAnchor(for: originalSession, targetType: target.type, targetId: target.id)
++
++        do {
++            var session = originalSession
++            let usesNativeMediaClock = session.currentTargetType == .transcriptBackedMedia
++                || session.currentTargetType == .browserOwnedMedia
++            if usesNativeMediaClock {
++                try audio.pause()
++                session = try syncCurrentPositionFromAudio(session)
++            } else {
++                session = try syncCurrentPositionFromAudio(session)
++                try audio.pause()
++            }
++            let anchor = buildAnchor(for: session, targetType: target.type, targetId: target.id)
++            try persistSession(session)
++            currentSession = session
++            let capture = WrittenInterjectionCapture(
++                id: UUID().uuidString,
++                sessionId: session.id,
++                itemId: session.itemId,
++                targetType: target.type,
++                targetId: target.id,
++                anchor: anchor,
++                roughPercent: interjectionPercent(
++                    for: session,
++                    targetType: target.type,
++                    targetId: target.id,
++                    anchor: anchor
++                ),
++                wasPlaying: wasPlaying
++            )
++            pendingWrittenInterjection = capture
++            publish(status: .paused, phase: session.phase)
++            return capture
++        } catch {
++            // A failed begin must leave no draft and must restore transport if
++            // the source had been playing. The persisted session was only
++            // written after the pause/synchronization transaction succeeded.
++            currentSession = originalSession
++            if wasPlaying {
++                try? restoreWrittenInterjectionTransport(wasPlaying: true, session: originalSession)
++            } else {
++                try? audio.pause()
++                publish(status: .paused, phase: originalSession.phase)
++            }
++            throw error
++        }
++    }
++
++    @discardableResult
++    public func saveWrittenInterjection(captureId: String, text: String) throws -> SessionSnapshot {
++        guard let capture = pendingWrittenInterjection, capture.id == captureId,
++              let session = currentSession,
++              session.id == capture.sessionId,
++              session.itemId == capture.itemId else {
++            throw SessionKitError.invalidCommandForState("saveWrittenInterjection")
++        }
++        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
++            throw SessionKitError.invalidCommandForState("saveWrittenInterjection")
++        }
++        let interjection = Interjection(
++            id: "ij-written-\(capture.id)",
++            itemId: capture.itemId,
++            sessionId: capture.sessionId,
++            targetType: capture.targetType,
++            targetId: capture.targetId,
++            createdAt: now(),
++            roughPercent: capture.roughPercent,
++            anchor: capture.anchor,
++            audioPath: nil,
++            audioStatus: "discarded",
++            transcriptionStatus: "transcribed",
++            transcript: text,
++            cleanedTranscript: nil,
++            displayText: text,
++            status: "active",
++            // A discarded recording does not create source context. Keep media
++            // notes pending until their existing transcript/source context is
++            // actually available.
++            anchorContextStatus: capture.anchor.mediaTimeMs == nil
++                || !capture.anchor.anchorBefore.isEmpty
++                || !capture.anchor.anchorAfter.isEmpty ? .ready : .pending,
++            captureKind: .written
++        )
++        try repository.saveInterjection(interjection)
++        pendingWrittenInterjection = nil
++        do {
++            try restoreWrittenInterjectionTransport(wasPlaying: capture.wasPlaying, session: session)
++        } catch {
++            // The note is already durable. Do not report this as a save failure
++            // or retain a retryable draft: doing either would allow a second
++            // submit to create a duplicate. Leave transport safely paused.
++            try? audio.pause()
++            publish(status: .paused, phase: session.phase)
++        }
++        return snapshot
++    }
++
++    @discardableResult
++    public func cancelWrittenInterjection(captureId: String) throws -> SessionSnapshot {
++        guard let capture = pendingWrittenInterjection, capture.id == captureId,
++              let session = currentSession,
++              session.id == capture.sessionId,
++              session.itemId == capture.itemId else {
++            throw SessionKitError.invalidCommandForState("cancelWrittenInterjection")
++        }
++        try restoreWrittenInterjectionTransport(wasPlaying: capture.wasPlaying, session: session)
++        pendingWrittenInterjection = nil
++        return snapshot
++    }
++
++    private func restoreWrittenInterjectionTransport(wasPlaying: Bool, session: Session) throws {
++        if wasPlaying {
++            if externallyStreamedTurnId == session.currentTargetId {
++                publish(status: .starting, phase: session.phase)
++            } else {
++                try playCurrentTarget(session)
++                publishPlaybackStart(for: session, phase: session.phase)
++            }
++        } else {
++            try audio.pause()
++            publish(status: .paused, phase: session.phase)
++        }
++    }
++
++    private struct InterjectionAnchorPlaybackPlan {
++        var originalSession: Session
++        var session: Session
++        var item: Item
++        var map: ListeningMap?
++    }
++
++    private func interjectionAnchorPlaybackPlan(for requested: Interjection) throws -> InterjectionAnchorPlaybackPlan {
++        guard let originalSession = try repository.loadSession(id: requested.sessionId),
++              originalSession.itemId == requested.itemId,
++              let stored = try repository.loadInterjections(sessionId: requested.sessionId).first(where: {
++                  $0.id == requested.id
++                      && $0.sessionId == requested.sessionId
++                      && $0.itemId == requested.itemId
++              }),
++              stored.status == "active" else {
++            throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
++        }
++
++        let item = try repository.loadItem(id: originalSession.itemId)
++        let map = try repository.loadListeningMap(itemId: item.id)
++        var session = originalSession
++        switch stored.targetType {
++        case .item:
++            guard stored.targetId == item.id else {
++                throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
++            }
++            let targetType = playbackTargetType(for: item)
++            session.currentTargetType = targetType
++            session.currentTargetId = itemPlaybackTargetId(for: item, targetType: targetType)
++            session.phase = .itemPlayback
++            if targetType == .transcriptBackedMedia || targetType == .browserOwnedMedia {
++                guard let mediaTimeMs = stored.anchor.mediaTimeMs,
++                      mediaTimeMs >= 0 else {
++                    throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
++                }
++                let durableDurationMs = (try repository.loadTranscriptTimeline(itemId: item.id))?.timeline.durationMs
++                    ?? item.media?.durationMs
++                guard durableDurationMs.map({ mediaTimeMs <= $0 }) ?? true else {
++                    throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
++                }
++                session = mediaSession(session, movedTo: mediaTimeMs)
++            } else {
++                guard let text = item.text,
++                      stored.anchor.startChar >= 0,
++                      stored.anchor.endChar >= stored.anchor.startChar,
++                      stored.anchor.endChar <= text.count else {
++                    throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
++                }
++                session.position = Position(
++                    charOffset: stored.anchor.startChar,
++                    chapterId: map?.chapters.last(where: { $0.startChar <= stored.anchor.startChar })?.id
++                )
++                session.completionPercent = percent(for: stored.anchor.startChar, text: text)
++            }
++        case .assistantTurn, .summaryTurn:
++            guard let turn = try repository.loadTurns(sessionId: originalSession.id).first(where: { $0.id == stored.targetId }),
++                  turn.role == "assistant",
++                  (turn.status == "complete" || turn.status == "streaming"),
++                  (stored.targetType == .assistantTurn && turn.turnType == "assistant_response")
++                      || (stored.targetType == .summaryTurn && turn.turnType == "interjection_summary") else {
++                throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
++            }
++            let text = generatedTurnNavigationText(for: turn)
++            guard stored.anchor.startChar >= 0,
++                  stored.anchor.endChar >= stored.anchor.startChar,
++                  stored.anchor.endChar <= text.count else {
++                throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
++            }
++            session.currentTargetType = stored.targetType == .assistantTurn ? .assistantTurnTTS : .summaryTurnTTS
++            session.currentTargetId = turn.id
++            session.phase = stored.targetType == .assistantTurn ? .aiResponsePlayback : .summaryPlayback
++            session.position = Position(charOffset: stored.anchor.startChar, chapterId: nil)
++            session.completionPercent = percent(for: stored.anchor.startChar, text: text)
++        }
++        return InterjectionAnchorPlaybackPlan(originalSession: originalSession, session: session, item: item, map: map)
++    }
++
++    @discardableResult
++    public func playInterjectionAnchor(_ interjection: Interjection) throws -> SessionSnapshot {
++        try requireNavigationAllowed("playInterjectionAnchor")
++        let plan = try interjectionAnchorPlaybackPlan(for: interjection)
++        let previousSession = currentSession
++        let previousItem = currentItem
++        let previousMap = currentMap
++        let previousSnapshot = snapshot
++        let previousPendingPlaybackPosition = pendingPlaybackPosition
++        let previousExternallyStreamedTurnId = externallyStreamedTurnId
++
++        do {
++            currentSession = plan.session
++            currentItem = plan.item
++            currentMap = plan.map
++            externallyStreamedTurnId = nil
++            try persistSession(plan.session)
++            protectPlaybackPosition(for: plan.session)
++            try playCurrentTarget(plan.session)
++            publishPlaybackStart(for: plan.session, phase: plan.session.phase)
++            return snapshot
++        } catch {
++            // The target session has not become the user's current source until
++            // both its durable target and adapter setup succeed. Restore its
++            // stored position before returning to the prior source.
++            try? repository.saveSession(plan.originalSession)
++            currentSession = previousSession
++            currentItem = previousItem
++            currentMap = previousMap
++            pendingPlaybackPosition = previousPendingPlaybackPosition
++            externallyStreamedTurnId = previousExternallyStreamedTurnId
++            snapshot = previousSnapshot
++            if let previousSession {
++                do {
++                    if previousSnapshot.status.isPlaybackActive {
++                        try playCurrentTarget(previousSession)
++                        publishPlaybackStart(for: previousSession, phase: previousSession.phase)
++                    } else {
++                        try audio.pause()
++                        publish(status: .paused, phase: previousSession.phase)
++                    }
++                } catch {
++                    // Identity is still truthful even when the adapter cannot
++                    // restore the old transport.
++                    snapshot.status = .paused
++                    snapshot.phase = previousSession.phase
++                    snapshot.lastFailure = "playback_anchor_rollback_failed"
++                }
++            }
++            throw error
++        }
++    }
++
+     @discardableResult
+     public func finishInterjection(audioRef: String?) throws -> SessionSnapshot {
+         guard var session = currentSession,
+@@ -1745,8 +2019,8 @@ public final class SessionEngine {
+     }
+ 
+     @discardableResult
+-    public func transcriptionCompleted(interjectionId: String, transcript: String) throws -> SessionSnapshot {
+-        try updateInterjection(interjectionId) { interjection in
++    public func transcriptionCompleted(interjectionId: String, sessionId: String? = nil, transcript: String) throws -> SessionSnapshot {
++        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+             interjection.transcript = transcript
+             interjection.alignedTranscript = nil
+             interjection.transcriptionStatus = "transcribed"
+@@ -1759,9 +2033,10 @@ public final class SessionEngine {
+     @discardableResult
+     public func transcriptionCompleted(
+         interjectionId: String,
++        sessionId: String? = nil,
+         alignedTranscript: AlignedInterjectionTranscript
+     ) throws -> SessionSnapshot {
+-        try updateInterjection(interjectionId) { interjection in
++        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+             interjection.transcript = alignedTranscript.text
+             interjection.alignedTranscript = alignedTranscript
+             interjection.transcriptionStatus = "transcribed"
+@@ -1774,10 +2049,11 @@ public final class SessionEngine {
+     @discardableResult
+     public func podcastAnchorEvidenceCompleted(
+         interjectionId: String,
++        sessionId: String? = nil,
+         evidence: [CapturedPodcastAnchorEvidence],
+         sourceExactEditionSHA256: String?
+     ) throws -> SessionSnapshot {
+-        try updateInterjection(interjectionId) { interjection in
++        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+             interjection.podcastAnchorEvidence = evidence
+             interjection.sourceExactEditionSHA256 = sourceExactEditionSHA256
+             interjection.podcastAnchorEvidenceCaptureStatus = .ready
+@@ -1789,9 +2065,10 @@ public final class SessionEngine {
+     @discardableResult
+     public func podcastAnchorEvidenceFailed(
+         interjectionId: String,
++        sessionId: String? = nil,
+         reason: String
+     ) throws -> SessionSnapshot {
+-        try updateInterjection(interjectionId) { interjection in
++        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+             interjection.podcastAnchorEvidenceCaptureStatus = .unavailable
+             interjection.podcastAnchorEvidenceFailureReason = reason
+         }
+@@ -1799,8 +2076,8 @@ public final class SessionEngine {
+     }
+ 
+     @discardableResult
+-    public func transcriptionFailed(interjectionId: String, error: String) throws -> SessionSnapshot {
+-        try updateInterjection(interjectionId) { interjection in
++    public func transcriptionFailed(interjectionId: String, sessionId: String? = nil, error: String) throws -> SessionSnapshot {
++        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+             interjection.transcriptionStatus = "failed"
+             interjection.displayText = "Audio saved. Transcript failed."
+         }
+@@ -1809,12 +2086,12 @@ public final class SessionEngine {
+     }
+ 
+     @discardableResult
+-    public func sourceWindowContextCompleted(interjectionId: String, timeline: TranscriptTimeline) throws -> SessionSnapshot {
++    public func sourceWindowContextCompleted(interjectionId: String, sessionId: String? = nil, timeline: TranscriptTimeline) throws -> SessionSnapshot {
+         let normalized = normalizedSourceTranscriptTimeline(timeline).timeline
+         guard !normalized.segments.isEmpty else {
+-            return try sourceWindowContextUnavailable(interjectionId: interjectionId)
++            return try sourceWindowContextUnavailable(interjectionId: interjectionId, sessionId: sessionId)
+         }
+-        try updateInterjection(interjectionId) { interjection in
++        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+             let mediaTimeMs = interjection.anchor.mediaTimeMs ?? 0
+             let resolved = MediaTimelineAnchorResolver.resolve(
+                 mediaTimeMs: mediaTimeMs,
+@@ -1846,16 +2123,16 @@ public final class SessionEngine {
+     }
+ 
+     @discardableResult
+-    public func sourceWindowContextUnavailable(interjectionId: String) throws -> SessionSnapshot {
+-        try updateInterjection(interjectionId) { interjection in
++    public func sourceWindowContextUnavailable(interjectionId: String, sessionId: String? = nil) throws -> SessionSnapshot {
++        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+             interjection.anchorContextStatus = .unavailable
+         }
+         return snapshot
+     }
+ 
+     @discardableResult
+-    public func sourceWindowContextPending(interjectionId: String) throws -> SessionSnapshot {
+-        try updateInterjection(interjectionId) { interjection in
++    public func sourceWindowContextPending(interjectionId: String, sessionId: String? = nil) throws -> SessionSnapshot {
++        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+             interjection.anchorContextStatus = .pending
+         }
+         return snapshot
+@@ -2976,7 +3253,7 @@ public final class SessionEngine {
+     }
+ 
+     private func requireNavigationAllowed(_ command: String) throws {
+-        guard snapshot.status != .recording else {
++        guard snapshot.status != .recording, pendingWrittenInterjection == nil else {
+             throw SessionKitError.invalidCommandForState(command)
+         }
+     }
+@@ -3239,7 +3516,22 @@ public final class SessionEngine {
+         )
+     }
+ 
+-    private func updateInterjection(_ id: String, mutate: (inout Interjection) -> Void) throws {
++    private func updateInterjection(
++        _ id: String,
++        sessionId: String? = nil,
++        mutate: (inout Interjection) -> Void
++    ) throws {
++        if let sessionId {
++            guard (try repository.loadSession(id: sessionId)) != nil,
++                  var interjection = try repository.loadInterjections(sessionId: sessionId).first(where: {
++                      $0.id == id && $0.sessionId == sessionId
++                  }) else {
++                throw SessionKitError.invalidCommandForState("updateInterjection")
++            }
++            mutate(&interjection)
++            try repository.saveInterjection(interjection)
++            return
++        }
+         if let memory = repository as? InMemorySessionRepository, var interjection = memory.interjections[id] {
+             mutate(&interjection)
+             try repository.saveInterjection(interjection)
+diff --git a/Packages/SessionKit/Sources/SessionKitPersistence/SQLiteSessionStore.swift b/Packages/SessionKit/Sources/SessionKitPersistence/SQLiteSessionStore.swift
+index deaac89..b665609 100644
+--- a/Packages/SessionKit/Sources/SessionKitPersistence/SQLiteSessionStore.swift
++++ b/Packages/SessionKit/Sources/SessionKitPersistence/SQLiteSessionStore.swift
+@@ -242,6 +242,13 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
+         return layers.first { $0.packageDigest == packageDigest }
+     }
+ 
++    public func loadImportedCommentaryLayers() throws -> [ImportedCommentaryLayer] {
++        try query(
++            "SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at ASC, id ASC;",
++            ["imported_commentary_layer"]
++        )
++    }
++
+     public func loadImportedCommentaryLayers(itemId: String) throws -> [ImportedCommentaryLayer] {
+         try loadByItem(kind: "imported_commentary_layer", itemId: itemId)
+     }
+diff --git a/Packages/SessionKit/Tests/SessionKitTests/PriorBuildPersistenceTests.swift b/Packages/SessionKit/Tests/SessionKitTests/PriorBuildPersistenceTests.swift
+index 07d475e..226049c 100644
+--- a/Packages/SessionKit/Tests/SessionKitTests/PriorBuildPersistenceTests.swift
++++ b/Packages/SessionKit/Tests/SessionKitTests/PriorBuildPersistenceTests.swift
+@@ -12,13 +12,19 @@ final class PriorBuildPersistenceTests: XCTestCase {
+         try checkPriorLibrary(build: 25, schema: 5)
+     }
+ 
++    func testWrittenInterjectionFixtureDeclaresDiscardedAudioAndWrittenCaptureKind() throws {
++        let root = try repositoryRoot()
++        let fixture = root.appending(path: "Contracts/fixtures/interjections/written-interjection.json")
++        let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: fixture)) as? [String: Any])
++
++        XCTAssertEqual(payload["captureKind"] as? String, "written")
++        XCTAssertEqual(payload["transcript"] as? String, "Keep  this exact thought.")
++        XCTAssertEqual((payload["audio"] as? [String: Any])?["status"] as? String, "discarded")
++        XCTAssertTrue((payload["audio"] as? [String: Any])?["path"] is NSNull, "The wire fixture must explicitly carry no audio path.")
++    }
++
+     private func checkPriorLibrary(build: Int, schema: Int) throws {
+-        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+-        while !FileManager.default.fileExists(atPath: root.appending(path: "Contracts").path) {
+-            let parent = root.deletingLastPathComponent()
+-            guard parent != root else { throw NSError(domain: "PriorBuildFixture", code: 1, userInfo: [NSLocalizedDescriptionKey: "Repository root unavailable"]) }
+-            root = parent
+-        }
++        let root = try repositoryRoot()
+         let fixture = root.appending(path: "Contracts/fixtures/persistence/build\(build).sqlite")
+         let temporary = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+         try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+@@ -36,6 +42,7 @@ final class PriorBuildPersistenceTests: XCTestCase {
+                 let notes = try store.loadInterjections(sessionId: id)
+                 XCTAssertEqual(notes.map(\.id), ["shared-note-id"])
+                 XCTAssertEqual(notes.first?.transcript, words)
++                XCTAssertNil(notes.first?.captureKind, "Legacy records without captureKind remain audio semantics.")
+             }
+             var item = try store.loadItem(id: "prior-article")
+             XCTAssertNil(item.sourceCompletedAt)
+@@ -53,6 +60,20 @@ final class PriorBuildPersistenceTests: XCTestCase {
+         XCTAssertEqual(try reopened.loadSession(id: "prior-A")?.playbackRate, 1.5)
+         XCTAssertEqual(try reopened.loadInterjections(sessionId: "prior-A").first?.transcript, "ALPHA prior note")
+         XCTAssertEqual(try reopened.loadInterjections(sessionId: "prior-B").first?.transcript, "BRAVO prior note")
++        XCTAssertNil(try reopened.loadInterjections(sessionId: "prior-A").first?.captureKind)
++        XCTAssertNil(try reopened.loadInterjections(sessionId: "prior-B").first?.captureKind)
+         XCTAssertEqual(try reopened.quarantinedRecordCount(), 0)
+     }
++
++    private func repositoryRoot() throws -> URL {
++        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
++        while !FileManager.default.fileExists(atPath: root.appending(path: "Contracts").path) {
++            let parent = root.deletingLastPathComponent()
++            guard parent != root else {
++                throw NSError(domain: "PriorBuildFixture", code: 1, userInfo: [NSLocalizedDescriptionKey: "Repository root unavailable"])
++            }
++            root = parent
++        }
++        return root
++    }
+ }
+diff --git a/Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests.swift b/Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests.swift
+index f9efbf9..abef00c 100644
+--- a/Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests.swift
++++ b/Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests.swift
+@@ -4176,6 +4176,346 @@ final class SessionKitCoreTests: XCTestCase {
+         XCTAssertEqual(engine.lastScheduledTranscriptionInterjectionId, interjection.id)
+     }
+ 
++    func testWrittenInterjectionPreservesExactTextAndUsesNoAudioCaptureServices() throws {
++        let profile = RuntimeCapabilityProfile(
++            id: "phone-tablet-online",
++            displayName: "Phone/Tablet Online",
++            capabilities: [
++                "sync": ["canonical_persistence"],
++                "playback": ["realtime_tts"],
++                "interjection": ["record_audio"]
++            ]
++        )
++        let item = Item(id: "item-written", title: "Written", mediaType: "text", text: "First sentence. Second sentence.", externalReference: nil, status: "ready")
++        let audio = RecordingAudioClient()
++        let recorder = CountingRecordingClient()
++        let transcriber = RecordingTranscriptionClient()
++        let repo = InMemorySessionRepository(items: [item.id: item])
++        let engine = SessionEngine(profile: profile, repository: repo, audio: audio, recorder: recorder, transcriber: transcriber)
++
++        _ = try engine.startSession(itemId: item.id)
++        audio.currentOffset = "First sentence. ".count
++        let capture = try engine.beginWrittenInterjection()
++        XCTAssertTrue(capture.wasPlaying)
++        XCTAssertEqual(capture.targetType, .item)
++        XCTAssertEqual(capture.anchor.anchorBefore, "First sentence.")
++        XCTAssertThrowsError(try engine.stopPlayback())
++        XCTAssertThrowsError(try engine.beginInterjection())
++
++        _ = try engine.saveWrittenInterjection(captureId: capture.id, text: " Keep  this exact thought. ")
++
++        let note = try XCTUnwrap(try repo.loadInterjections(sessionId: capture.sessionId).first)
++        XCTAssertEqual(note.captureKind, .written)
++        XCTAssertNil(note.audioPath)
++        XCTAssertEqual(note.audioStatus, "discarded")
++        XCTAssertEqual(note.transcriptionStatus, "transcribed")
++        XCTAssertEqual(note.transcript, " Keep  this exact thought. ")
++        XCTAssertEqual(note.displayText, " Keep  this exact thought. ")
++        XCTAssertEqual(recorder.beginCount, 0)
++        XCTAssertEqual(recorder.finishCount, 0)
++        XCTAssertEqual(recorder.cancelCount, 0)
++        XCTAssertTrue(transcriber.scheduledInterjectionIds.isEmpty)
++        XCTAssertEqual(audio.playedOffsets.last, "First sentence. ".count)
++    }
++
++    func testWrittenInterjectionCancelKeepsAPrepausedSourcePausedAndRejectsStaleRequests() throws {
++        let profile = RuntimeCapabilityProfile(
++            id: "phone-tablet-online",
++            displayName: "Phone/Tablet Online",
++            capabilities: ["sync": ["canonical_persistence"], "playback": ["realtime_tts"]]
++        )
++        let item = Item(id: "item-written-paused", title: "Written", mediaType: "text", text: "A source sentence.", externalReference: nil, status: "ready")
++        let audio = RecordingAudioClient()
++        let repo = InMemorySessionRepository(items: [item.id: item])
++        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
++
++        _ = try engine.startSession(itemId: item.id)
++        _ = try engine.pause()
++        let playCountBeforeCapture = audio.playedTargets.count
++        let capture = try engine.beginWrittenInterjection()
++        XCTAssertFalse(capture.wasPlaying)
++        XCTAssertThrowsError(try engine.cancelWrittenInterjection(captureId: "stale"))
++        _ = try engine.cancelWrittenInterjection(captureId: capture.id)
++
++        XCTAssertEqual(try repo.loadInterjections(sessionId: capture.sessionId).count, 0)
++        XCTAssertEqual(audio.playedTargets.count, playCountBeforeCapture)
++        XCTAssertEqual(engine.snapshot.status, .paused)
++        XCTAssertThrowsError(try engine.cancelWrittenInterjection(captureId: capture.id))
++    }
++
++    func testWrittenInterjectionOnExternallyStreamedTurnKeepsGeneratedAnchorAndDoesNotDoublePlay() throws {
++        let profile = RuntimeCapabilityProfile(
++            id: "phone-tablet-online",
++            displayName: "Phone/Tablet Online",
++            capabilities: [
++                "sync": ["canonical_persistence"],
++                "playback": ["assistant_turn_tts"]
++            ]
++        )
++        let item = Item(id: "item-written-stream", title: "Written stream", mediaType: "text", text: "Source.", externalReference: nil, status: "ready")
++        let session = Session(id: "session-written-stream", itemId: item.id, status: "in_progress", phase: .conversation, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 0, playbackRate: 1)
++        let audio = RecordingAudioClient()
++        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session])
++        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
++
++        _ = try engine.aiStreamDelta(turnId: "turn-written-stream", content: "First response. Second point has the detail.")
++        _ = try engine.activateStreamingTurn(turnId: "turn-written-stream")
++        let offset = "First response. ".count
++        _ = try engine.updateStreamingTurnPosition(turnId: "turn-written-stream", charOffset: offset)
++        let capture = try engine.beginWrittenInterjection()
++        _ = try engine.saveWrittenInterjection(captureId: capture.id, text: "A generated-margin note.")
++
++        let note = try XCTUnwrap(try repo.loadInterjections(sessionId: session.id).first)
++        XCTAssertEqual(note.targetType, .assistantTurn)
++        XCTAssertEqual(note.targetId, "turn-written-stream")
++        XCTAssertEqual(note.anchor.anchorType, .turn)
++        XCTAssertEqual(note.anchor.startChar, offset)
++        XCTAssertEqual(engine.snapshot.status, .starting)
++        XCTAssertTrue(audio.playedTargets.isEmpty)
++    }
++
++    func testTranscriptlessMediaWrittenInterjectionDoesNotClaimReadySourceContext() throws {
++        let profile = RuntimeCapabilityProfile(
++            id: "phone-tablet-online",
++            displayName: "Phone/Tablet Online",
++            capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media"]]
++        )
++        let item = Item(
++            id: "item-written-media",
++            title: "Written media",
++            mediaType: TargetType.transcriptBackedMedia.rawValue,
++            text: nil,
++            externalReference: "https://example.com/episode",
++            status: "ready",
++            media: ItemMedia(sourceType: .remoteStream, url: "https://cdn.example.com/episode.mp3", durationMs: 900_000)
++        )
++        let audio = RecordingAudioClient()
++        let repo = InMemorySessionRepository(items: [item.id: item])
++        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
++
++        _ = try engine.startSession(itemId: item.id)
++        audio.currentMediaTimeValue = 123_000
++        let capture = try engine.beginWrittenInterjection()
++        _ = try engine.saveWrittenInterjection(captureId: capture.id, text: "A media-margin note.")
++
++        let note = try XCTUnwrap(try repo.loadInterjections(sessionId: capture.sessionId).first)
++        XCTAssertEqual(note.audioStatus, "discarded")
++        XCTAssertEqual(note.anchor.anchorType, .media)
++        XCTAssertEqual(note.anchorContextStatus, .pending)
++    }
++
++    func testWrittenInterjectionRejectsDoubleSaveWithoutCreatingADuplicate() throws {
++        let profile = RuntimeCapabilityProfile(
++            id: "phone-tablet-online",
++            displayName: "Phone/Tablet Online",
++            capabilities: ["sync": ["canonical_persistence"], "playback": ["realtime_tts"]]
++        )
++        let item = Item(id: "item-written-once", title: "Written once", mediaType: "text", text: "A source sentence.", externalReference: nil, status: "ready")
++        let repo = InMemorySessionRepository(items: [item.id: item])
++        let engine = SessionEngine(profile: profile, repository: repo)
++
++        _ = try engine.startSession(itemId: item.id)
++        let capture = try engine.beginWrittenInterjection()
++        XCTAssertThrowsError(try engine.saveWrittenInterjection(captureId: "stale", text: "Note"))
++        _ = try engine.saveWrittenInterjection(captureId: capture.id, text: "Note")
++        XCTAssertThrowsError(try engine.saveWrittenInterjection(captureId: capture.id, text: "Note"))
++        XCTAssertEqual(try repo.loadInterjections(sessionId: capture.sessionId).map(\.id), ["ij-written-\(capture.id)"])
++    }
++
++    func testWrittenInterjectionRetainsItsCaptureAfterStoreFailureAndWritesOnceOnRetry() throws {
++        let profile = RuntimeCapabilityProfile(
++            id: "phone-tablet-online",
++            displayName: "Phone/Tablet Online",
++            capabilities: ["sync": ["canonical_persistence"], "playback": ["realtime_tts"]]
++        )
++        let item = Item(id: "item-written-retry", title: "Written retry", mediaType: "text", text: "A source sentence.", externalReference: nil, status: "ready")
++        let repo = FailingWrittenInterjectionRepository(items: [item.id: item])
++        let engine = SessionEngine(profile: profile, repository: repo)
++
++        _ = try engine.startSession(itemId: item.id)
++        let capture = try engine.beginWrittenInterjection()
++        repo.failNextInterjectionSave = true
++        XCTAssertThrowsError(try engine.saveWrittenInterjection(captureId: capture.id, text: "Retry this exact text."))
++        XCTAssertEqual(try repo.loadInterjections(sessionId: capture.sessionId).count, 0)
++        _ = try engine.saveWrittenInterjection(captureId: capture.id, text: "Retry this exact text.")
++
++        XCTAssertEqual(try repo.loadInterjections(sessionId: capture.sessionId).map(\.transcript), ["Retry this exact text."])
++        XCTAssertThrowsError(try engine.saveWrittenInterjection(captureId: capture.id, text: "Retry this exact text."))
++    }
++
++    func testWrittenInterjectionBeginFailureRestoresPlayingSourceWithoutCreatingADraft() throws {
++        let profile = RuntimeCapabilityProfile(
++            id: "phone-tablet-online",
++            displayName: "Phone/Tablet Online",
++            capabilities: ["sync": ["canonical_persistence"], "playback": ["realtime_tts"]]
++        )
++        let item = Item(id: "item-written-begin-failure", title: "Written begin failure", mediaType: "text", text: "A source sentence.", externalReference: nil, status: "ready")
++        let audio = RecordingAudioClient()
++        let repo = FailingWrittenInterjectionRepository(items: [item.id: item])
++        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
++
++        _ = try engine.startSession(itemId: item.id)
++        repo.failNextSessionSave = true
++        XCTAssertThrowsError(try engine.beginWrittenInterjection())
++        XCTAssertEqual(engine.snapshot.status, .playing)
++        XCTAssertEqual(audio.playedTargets.last, item.id)
++
++        let capture = try engine.beginWrittenInterjection()
++        _ = try engine.cancelWrittenInterjection(captureId: capture.id)
++    }
++
++    func testWrittenInterjectionCommitDoesNotRemainRetryableWhenResumeFails() throws {
++        let profile = RuntimeCapabilityProfile(
++            id: "phone-tablet-online",
++            displayName: "Phone/Tablet Online",
++            capabilities: ["sync": ["canonical_persistence"], "playback": ["realtime_tts"]]
++        )
++        let item = Item(id: "item-written-resume-failure", title: "Written resume failure", mediaType: "text", text: "A source sentence.", externalReference: nil, status: "ready")
++        let audio = RecordingAudioClient()
++        let repo = InMemorySessionRepository(items: [item.id: item])
++        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
++
++        _ = try engine.startSession(itemId: item.id)
++        let capture = try engine.beginWrittenInterjection()
++        audio.failNextPlay = true
++        _ = try engine.saveWrittenInterjection(captureId: capture.id, text: "Committed before transport recovery.")
++
++        XCTAssertEqual(try repo.loadInterjections(sessionId: capture.sessionId).count, 1)
++        XCTAssertEqual(engine.snapshot.status, .paused)
++        XCTAssertThrowsError(try engine.saveWrittenInterjection(captureId: capture.id, text: "Committed before transport recovery."))
++        _ = try engine.stopPlayback()
++    }
++
++    func testPlayInterjectionAnchorSwitchesToForeignTextSessionAtSavedOffset() throws {
++        let profile = phonePlaybackProfile()
++        let oldItem = Item(id: "item-anchor-old", title: "Old", mediaType: "text", text: "Old source text.", externalReference: nil, status: "ready")
++        let targetItem = Item(id: "item-anchor-target", title: "Target", mediaType: "text", text: "First sentence. Second sentence.", externalReference: nil, status: "ready")
++        let oldSession = Session(id: "session-anchor-old", itemId: oldItem.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: oldItem.id, position: Position(charOffset: 3), completionPercent: 20, playbackRate: 1)
++        let targetSession = Session(id: "session-anchor-target", itemId: targetItem.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: targetItem.id, position: Position(charOffset: 2), completionPercent: 10, playbackRate: 1)
++        let note = Interjection(id: "ij-anchor-text", itemId: targetItem.id, sessionId: targetSession.id, targetType: .item, targetId: targetItem.id, createdAt: Date(), roughPercent: 50, anchor: Anchor(anchorType: .text, startChar: "First sentence. ".count, endChar: targetItem.text!.count, anchorBefore: "First sentence.", anchorAfter: "Second sentence."), audioPath: nil, audioStatus: "saved", transcriptionStatus: "transcribed", transcript: "Note", cleanedTranscript: nil, displayText: "Note", status: "active")
++        let audio = RecordingAudioClient()
++        let repo = InMemorySessionRepository(items: [oldItem.id: oldItem, targetItem.id: targetItem], sessions: [oldSession.id: oldSession, targetSession.id: targetSession], interjections: [note.id: note])
++        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
++
++        _ = try engine.inspectSession(sessionId: oldSession.id)
++        _ = try engine.resumePlayback()
++        let snapshot = try engine.playInterjectionAnchor(note)
++
++        XCTAssertEqual(snapshot.sessionId, targetSession.id)
++        XCTAssertEqual(snapshot.itemId, targetItem.id)
++        XCTAssertEqual(audio.playedTargets.last, targetItem.id)
++        XCTAssertEqual(audio.playedOffsets.last, "First sentence. ".count)
++    }
++
++    func testPlayInterjectionAnchorRejectsInvalidForeignAnchorWithoutChangingCurrentPlayback() throws {
++        let profile = phonePlaybackProfile()
++        let oldItem = Item(id: "item-anchor-invalid-old", title: "Old", mediaType: "text", text: "Old source text.", externalReference: nil, status: "ready")
++        let targetItem = Item(id: "item-anchor-invalid-target", title: "Target", mediaType: "text", text: "Short.", externalReference: nil, status: "ready")
++        let oldSession = Session(id: "session-anchor-invalid-old", itemId: oldItem.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: oldItem.id, position: Position(charOffset: 3), completionPercent: 20, playbackRate: 1)
++        let targetSession = Session(id: "session-anchor-invalid-target", itemId: targetItem.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: targetItem.id, position: Position(charOffset: 2), completionPercent: 10, playbackRate: 1)
++        let note = Interjection(id: "ij-anchor-invalid", itemId: targetItem.id, sessionId: targetSession.id, targetType: .item, targetId: targetItem.id, createdAt: Date(), roughPercent: 50, anchor: Anchor(anchorType: .text, startChar: 99, endChar: 100, anchorBefore: "", anchorAfter: ""), audioPath: nil, audioStatus: "saved", transcriptionStatus: "transcribed", transcript: "Note", cleanedTranscript: nil, displayText: "Note", status: "active")
++        let audio = RecordingAudioClient()
++        let repo = InMemorySessionRepository(items: [oldItem.id: oldItem, targetItem.id: targetItem], sessions: [oldSession.id: oldSession, targetSession.id: targetSession], interjections: [note.id: note])
++        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
++
++        _ = try engine.inspectSession(sessionId: oldSession.id)
++        _ = try engine.resumePlayback()
++        XCTAssertThrowsError(try engine.playInterjectionAnchor(note))
++
++        XCTAssertEqual(engine.currentSession?.id, oldSession.id)
++        XCTAssertEqual(engine.snapshot.status, .playing)
++        XCTAssertEqual(audio.playedTargets.last, oldItem.id)
++        XCTAssertEqual(try repo.loadSession(id: targetSession.id)?.position.charOffset, 2)
++    }
++
++    func testPlayInterjectionAnchorRestoresOldSessionAndForeignPersistenceAfterAdapterFailure() throws {
++        let profile = phonePlaybackProfile()
++        let oldItem = Item(id: "item-anchor-rollback-old", title: "Old", mediaType: "text", text: "Old source text.", externalReference: nil, status: "ready")
++        let targetItem = Item(id: "item-anchor-rollback-target", title: "Target", mediaType: "text", text: "First. Second.", externalReference: nil, status: "ready")
++        let oldSession = Session(id: "session-anchor-rollback-old", itemId: oldItem.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: oldItem.id, position: Position(charOffset: 3), completionPercent: 20, playbackRate: 1)
++        let targetSession = Session(id: "session-anchor-rollback-target", itemId: targetItem.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: targetItem.id, position: Position(charOffset: 4), completionPercent: 30, playbackRate: 1)
++        let note = Interjection(id: "ij-anchor-rollback", itemId: targetItem.id, sessionId: targetSession.id, targetType: .item, targetId: targetItem.id, createdAt: Date(), roughPercent: 50, anchor: Anchor(anchorType: .text, startChar: 7, endChar: 13, anchorBefore: "First.", anchorAfter: "Second."), audioPath: nil, audioStatus: "saved", transcriptionStatus: "transcribed", transcript: "Note", cleanedTranscript: nil, displayText: "Note", status: "active")
++        let audio = RecordingAudioClient()
++        let repo = FailingWrittenInterjectionRepository(items: [oldItem.id: oldItem, targetItem.id: targetItem], sessions: [oldSession.id: oldSession, targetSession.id: targetSession], interjections: [note.id: note])
++        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
++
++        _ = try engine.inspectSession(sessionId: oldSession.id)
++        _ = try engine.resumePlayback()
++        repo.failNextSessionSave = true
++        XCTAssertThrowsError(try engine.playInterjectionAnchor(note))
++        XCTAssertEqual(engine.currentSession?.id, oldSession.id)
++        XCTAssertEqual(try repo.loadSession(id: targetSession.id)?.position.charOffset, 4)
++        audio.failNextPlay = true
++        XCTAssertThrowsError(try engine.playInterjectionAnchor(note))
++
++        XCTAssertEqual(engine.currentSession?.id, oldSession.id)
++        XCTAssertEqual(engine.snapshot.status, .playing)
++        XCTAssertEqual(try repo.loadSession(id: targetSession.id)?.position.charOffset, 4)
++        XCTAssertEqual(audio.playedTargets.last, oldItem.id)
++    }
++
++    func testPlayInterjectionAnchorStartsMediaAndPreparedTextAtSavedMediaTime() throws {
++        let profile = RuntimeCapabilityProfile(id: "phone-tablet-online", displayName: "Phone", capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media", "prerendered_audio"]])
++        let mediaItem = Item(id: "item-anchor-media", title: "Media", mediaType: TargetType.transcriptBackedMedia.rawValue, text: nil, externalReference: nil, status: "ready", media: ItemMedia(sourceType: .remoteStream, url: "https://cdn.example.com/media.mp3", durationMs: 10_000))
++        let preparedItem = Item(id: "item-anchor-prepared", title: "Prepared", mediaType: TargetType.transcriptBackedMedia.rawValue, text: "Prepared narration.", externalReference: nil, status: "ready", media: ItemMedia(sourceType: .generatedTTSPrerendered, url: "memory://prepared", durationMs: 10_000))
++        let mediaSession = Session(id: "session-anchor-media", itemId: mediaItem.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .transcriptBackedMedia, currentTargetId: "old-media", position: Position(mediaTimeMs: 100), completionPercent: 1, playbackRate: 1)
++        let preparedSession = Session(id: "session-anchor-prepared", itemId: preparedItem.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .transcriptBackedMedia, currentTargetId: "old-prepared", position: Position(mediaTimeMs: 200), completionPercent: 2, playbackRate: 1)
++        let mediaNote = Interjection(id: "ij-anchor-media", itemId: mediaItem.id, sessionId: mediaSession.id, targetType: .item, targetId: mediaItem.id, createdAt: Date(), roughPercent: 50, anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 5_000), audioPath: nil, audioStatus: "saved", transcriptionStatus: "transcribed", transcript: "Note", cleanedTranscript: nil, displayText: "Note", status: "active")
++        let preparedNote = Interjection(id: "ij-anchor-prepared", itemId: preparedItem.id, sessionId: preparedSession.id, targetType: .item, targetId: preparedItem.id, createdAt: Date(), roughPercent: 60, anchor: Anchor(anchorType: .media, startChar: 4, endChar: 9, anchorBefore: "", anchorAfter: "", mediaTimeMs: 6_000), audioPath: nil, audioStatus: "saved", transcriptionStatus: "transcribed", transcript: "Note", cleanedTranscript: nil, displayText: "Note", status: "active")
++        let audio = RecordingAudioClient()
++        let repo = InMemorySessionRepository(items: [mediaItem.id: mediaItem, preparedItem.id: preparedItem], sessions: [mediaSession.id: mediaSession, preparedSession.id: preparedSession], interjections: [mediaNote.id: mediaNote, preparedNote.id: preparedNote])
++        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
++
++        _ = try engine.playInterjectionAnchor(mediaNote)
++        XCTAssertEqual(audio.playedTargets.last, mediaItem.media?.url)
++        XCTAssertEqual(audio.playedOffsets.last, 5_000)
++        _ = try engine.playInterjectionAnchor(preparedNote)
++        XCTAssertEqual(audio.playedTargets.last, preparedItem.media?.url)
++        XCTAssertEqual(audio.playedOffsets.last, 6_000)
++    }
++
++    func testPlayInterjectionAnchorStartsGeneratedTurnAtSavedOffset() throws {
++        let profile = phonePlaybackProfile()
++        let item = Item(id: "item-anchor-turn", title: "Turn", mediaType: "text", text: "Source.", externalReference: nil, status: "ready")
++        let session = Session(id: "session-anchor-turn", itemId: item.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 0, playbackRate: 1)
++        let turn = ConversationTurn(id: "turn-anchor-response", sessionId: session.id, role: "assistant", turnType: "assistant_response", status: "complete", summary: "Brief.", text: "First response. Second response.", rawText: nil, chapters: nil, sourceInterjectionIds: [])
++        let offset = "First response. ".count
++        let note = Interjection(id: "ij-anchor-turn", itemId: item.id, sessionId: session.id, targetType: .assistantTurn, targetId: turn.id, createdAt: Date(), roughPercent: 50, anchor: Anchor(anchorType: .turn, startChar: offset, endChar: turn.text!.count, anchorBefore: "First response.", anchorAfter: "Second response."), audioPath: nil, audioStatus: "saved", transcriptionStatus: "transcribed", transcript: "Note", cleanedTranscript: nil, displayText: "Note", status: "active")
++        let audio = RecordingAudioClient()
++        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session], interjections: [note.id: note], turns: [turn.id: turn])
++        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
++
++        _ = try engine.playInterjectionAnchor(note)
++
++        XCTAssertEqual(engine.snapshot.targetType, TargetType.assistantTurnTTS.rawValue)
++        XCTAssertEqual(audio.playedTargets.last, turn.id)
++        XCTAssertEqual(audio.playedOffsets.last, "Brief.\n\n".count + offset)
++    }
++
++    func testExplicitSessionAsyncMarginUpdateDoesNotCrossMutateCollidingSQLiteNoteIDs() throws {
++        let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-anchor-collision-\(UUID().uuidString).sqlite").path
++        defer { try? FileManager.default.removeItem(atPath: path) }
++        let store = try SQLiteSessionStore(path: path)
++        let firstItem = Item(id: "item-anchor-collision-one", title: "One", mediaType: "text", text: "One.", externalReference: nil, status: "ready")
++        let secondItem = Item(id: "item-anchor-collision-two", title: "Two", mediaType: "text", text: "Two.", externalReference: nil, status: "ready")
++        let firstSession = Session(id: "session-anchor-collision-one", itemId: firstItem.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: firstItem.id, position: Position(), completionPercent: 0, playbackRate: 1)
++        let secondSession = Session(id: "session-anchor-collision-two", itemId: secondItem.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: secondItem.id, position: Position(), completionPercent: 0, playbackRate: 1)
++        let firstNote = Interjection(id: "shared-note-id", itemId: firstItem.id, sessionId: firstSession.id, targetType: .item, targetId: firstItem.id, createdAt: Date(), roughPercent: 0, anchor: Anchor(anchorType: .text, startChar: 0, endChar: 1, anchorBefore: "", anchorAfter: ""), audioPath: "one.m4a", audioStatus: "saved", transcriptionStatus: "pending", transcript: nil, cleanedTranscript: nil, displayText: nil, status: "active")
++        let secondNote = Interjection(id: "shared-note-id", itemId: secondItem.id, sessionId: secondSession.id, targetType: .item, targetId: secondItem.id, createdAt: Date(timeIntervalSince1970: 2), roughPercent: 0, anchor: Anchor(anchorType: .text, startChar: 0, endChar: 1, anchorBefore: "", anchorAfter: ""), audioPath: "two.m4a", audioStatus: "saved", transcriptionStatus: "pending", transcript: nil, cleanedTranscript: nil, displayText: nil, status: "active")
++        try store.saveItem(firstItem)
++        try store.saveItem(secondItem)
++        try store.saveSession(firstSession)
++        try store.saveSession(secondSession)
++        try store.saveInterjection(firstNote)
++        try store.saveInterjection(secondNote)
++        let engine = SessionEngine(profile: phonePlaybackProfile(), repository: store)
++
++        _ = try engine.transcriptionCompleted(interjectionId: "shared-note-id", sessionId: secondSession.id, transcript: "Only second updates.")
++
++        XCTAssertNil(try store.loadInterjections(sessionId: firstSession.id).first?.transcript)
++        XCTAssertEqual(try store.loadInterjections(sessionId: secondSession.id).first?.transcript, "Only second updates.")
++    }
++
+     func testRecordingInterjectionIgnoresPausedSpeechCompletion() throws {
+         let profile = RuntimeCapabilityProfile(
+             id: "phone-tablet-online",
+@@ -5717,6 +6057,7 @@ private final class RecordingAudioClient: AudioPlaybackClient {
+     var acceptsPostResumeSamples = false
+     var postResumeSampleRequests: [PostResumeAudioSampleRequest] = []
+     var eventLog: [String] = []
++    var failNextPlay = false
+ 
+     func configureMediaContext(_ context: PlaybackMediaContext?) throws {
+         mediaContexts.append(context)
+@@ -5738,6 +6079,10 @@ private final class RecordingAudioClient: AudioPlaybackClient {
+     }
+ 
+     func play(targetId: String, from charOffset: Int) throws {
++        if failNextPlay {
++            failNextPlay = false
++            throw SessionKitError.persistenceFailed("injected_play_failure")
++        }
+         activeTargetId = targetId
+         currentMediaTimeValue = nil
+         playedTargets.append(targetId)
+@@ -5851,6 +6196,46 @@ private final class RecordingAudioClient: AudioPlaybackClient {
+     }
+ }
+ 
++private final class FailingWrittenInterjectionRepository: InMemorySessionRepository {
++    var failNextInterjectionSave = false
++    var failNextSessionSave = false
++
++    override func saveInterjection(_ interjection: Interjection) throws {
++        if failNextInterjectionSave {
++            failNextInterjectionSave = false
++            throw SessionKitError.persistenceFailed("injected_interjection_save_failure")
++        }
++        try super.saveInterjection(interjection)
++    }
++
++    override func saveSession(_ session: Session) throws {
++        if failNextSessionSave {
++            failNextSessionSave = false
++            throw SessionKitError.persistenceFailed("injected_session_save_failure")
++        }
++        try super.saveSession(session)
++    }
++}
++
++private final class CountingRecordingClient: RecordingClient {
++    var beginCount = 0
++    var finishCount = 0
++    var cancelCount = 0
++
++    func beginRecording() throws {
++        beginCount += 1
++    }
++
++    func finishRecording(audioRef: String?) throws -> String {
++        finishCount += 1
++        return audioRef ?? "interjections/counting.m4a"
++    }
++
++    func cancelRecording() throws {
++        cancelCount += 1
++    }
++}
++
+ private final class RecordingTextAudioPreparationClient: TextAudioPreparationClient, @unchecked Sendable {
+     var prepared: PreparedTextAudio?
+     var requests: [(itemId: String, title: String, text: String)] = []

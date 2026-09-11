@@ -230,7 +230,6 @@ struct Build23MarginSelectionRow: View {
                             .font(.body)
                             .foregroundStyle(AppColors.text)
                             .multilineTextAlignment(.leading)
-                            .lineLimit(3)
 
                         Text(margin.isIncluded ? "Included" : "Tap to include")
                             .font(.caption)
@@ -287,7 +286,6 @@ struct Build23ReviewSelectionRow: View {
                         .font(.subheadline)
                         .foregroundStyle(AppColors.text)
                         .multilineTextAlignment(.leading)
-                        .lineLimit(2)
 
                     Label("Included", systemImage: "checkmark.circle")
                         .font(.caption)

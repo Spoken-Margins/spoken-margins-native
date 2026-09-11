@@ -1,0 +1,48 @@
+[
+  {
+    "attachments" : [
+      {
+        "configurationName" : "Default",
+        "deviceId" : "856FA6EF-5E03-4120-939B-F0EF42A804E8",
+        "deviceName" : "iPhone 17 Pro",
+        "exportedFileName" : "38631636-6D32-4AE0-A764-AACFC7B26EF1.txt",
+        "isAssociatedWithFailure" : true,
+        "suggestedHumanReadableName" : "Complete Issue Description.txt"
+      },
+      {
+        "configurationName" : "Default",
+        "deviceId" : "856FA6EF-5E03-4120-939B-F0EF42A804E8",
+        "deviceName" : "iPhone 17 Pro",
+        "exportedFileName" : "923E7C8D-E2E0-4DC2-94C4-BFF54A2BB2A9.txt",
+        "isAssociatedWithFailure" : true,
+        "suggestedHumanReadableName" : "App UI hierarchy for com.spokenmargins_0_82F6C950-49E2-4A89-A6DD-C871DFEF1692.native",
+        "timestamp" : 1789065052.478
+      },
+      {
+        "configurationName" : "Default",
+        "deviceId" : "856FA6EF-5E03-4120-939B-F0EF42A804E8",
+        "deviceName" : "iPhone 17 Pro",
+        "exportedFileName" : "EA5201FE-D751-4018-B778-FFBDEBE717F4",
+        "isAssociatedWithFailure" : true,
+        "suggestedHumanReadableName" : "UI Snapshot 2026-09-10 at 14.30.52",
+        "timestamp" : 1789065052.478
+      }
+    ],
+    "testIdentifier" : "Gate1FlowUITests/testExportPreviewRemainsReachableAfterStartingAnotherSession()",
+    "testIdentifierURL" : "test://com.apple.xcode/SpokenMarginsNative/SpokenMarginsAppUITests/Gate1FlowUITests/testExportPreviewRemainsReachableAfterStartingAnotherSession"
+  },
+  {
+    "attachments" : [
+      {
+        "configurationName" : "Default",
+        "deviceId" : "856FA6EF-5E03-4120-939B-F0EF42A804E8",
+        "deviceName" : "iPhone 17 Pro",
+        "exportedFileName" : "13978744-D7D1-42A9-8EE0-DD2A7C2DA38A.txt",
+        "isAssociatedWithFailure" : true,
+        "suggestedHumanReadableName" : "Complete Issue Description.txt"
+      }
+    ],
+    "testIdentifier" : "Gate1FlowUITests/testPlaybackScrubberAcceptsPhysicalDrag()",
+    "testIdentifierURL" : "test://com.apple.xcode/SpokenMarginsNative/SpokenMarginsAppUITests/Gate1FlowUITests/testPlaybackScrubberAcceptsPhysicalDrag"
+  }
+]

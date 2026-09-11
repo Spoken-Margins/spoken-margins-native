@@ -53,7 +53,7 @@ struct ExperienceRootTabs: View {
             ExperienceSourcesScreen()
                 .safeAreaInset(edge: .bottom, spacing: 8) { miniPlayer }
                 .tabItem {
-                    Label("Sources", systemImage: AppRoot.sources.systemImage)
+                    Label("Following", systemImage: AppRoot.sources.systemImage)
                         .accessibilityIdentifier("navigation.tab.sources")
                 }
                 .tag(AppRoot.sources)

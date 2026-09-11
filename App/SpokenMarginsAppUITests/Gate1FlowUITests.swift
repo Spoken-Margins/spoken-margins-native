@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 final class Gate1FlowUITests: XCTestCase {
     private var app: XCUIApplication!
@@ -9,6 +10,26 @@ final class Gate1FlowUITests: XCTestCase {
         app.launchArguments = ["--ui-testing"]
         app.launchEnvironment["SPOKEN_MARGINS_UI_TESTING"] = "1"
         app.launch()
+    }
+
+    func testLongTimelineResponseKeepsActionAboveEditorAndStartsPlayback() throws {
+        app.buttons["queue.start.item-pill"].tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
+        pausePlaybackIfNeeded()
+        openTimelineExperience()
+        let editor = scrollToElement("timeline.reflection.editor")
+        editor.tap()
+        app.typeText(String(repeating: "This is a substantial response with a useful argument. ", count: 25))
+        app.buttons["timeline.keyboard.done"].tap()
+        let action = scrollToElement("timeline.reflection.import.button")
+        XCTAssertTrue(action.isHittable)
+        XCTAssertLessThan(editor.frame.height, 320, "Response length must not expand the editor")
+        XCTAssertLessThanOrEqual(action.frame.maxY, editor.frame.minY)
+        captureScreen(named: "long-response-action-and-editor")
+        action.tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
+        let playing = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Pause"), object: app.buttons["playback.play.button"])
+        XCTAssertEqual(XCTWaiter().wait(for: [playing], timeout: 15), .completed)
     }
 
     func testPlaybackScrubberAcceptsPhysicalDrag() throws {
@@ -84,7 +105,7 @@ final class Gate1FlowUITests: XCTestCase {
         app.buttons["playback.forward.button"].tap()
         app.buttons["playback.back.button"].tap()
 
-        app.buttons["playback.export.button"].tap()
+        openPlaybackExport()
         XCTAssertTrue(element("export.screen").waitForExistence(timeout: 4))
         XCTAssertTrue(element("export.preview").waitForExistence(timeout: 4))
 
@@ -149,6 +170,7 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("recording.screen").waitForExistence(timeout: 4))
         captureScreen(named: "05-recording")
         element("recording.cancel.button").tap()
+        app.alerts.buttons["Discard recording"].tap()
     }
 
     func testDeveloperListeningMapJSONCanBeAppliedFromSettings() throws {
@@ -222,7 +244,7 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(seededStart.waitForExistence(timeout: 4), app.debugDescription)
         seededStart.tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
-        app.buttons["playback.export.button"].tap()
+        openPlaybackExport()
         XCTAssertTrue(element("export.screen").waitForExistence(timeout: 4))
         configureFullSessionExport()
         let firstExport = element("export.preview").label
@@ -240,7 +262,7 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(confirmStartNew.waitForExistence(timeout: 4))
         confirmStartNew.tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
-        app.buttons["playback.export.button"].tap()
+        openPlaybackExport()
         XCTAssertTrue(element("export.screen").waitForExistence(timeout: 4))
         configureFullSessionExport()
         let secondExport = element("export.preview").label
@@ -275,12 +297,25 @@ final class Gate1FlowUITests: XCTestCase {
         let timelineButton = scrollToElement("playback.timeline.button")
         XCTAssertEqual(timelineButton.label, "Timeline")
         XCTAssertFalse(timelineButton.label.contains("\n"))
+        app.buttons["playback.options.button"].tap()
+        XCTAssertTrue(element("playback.export.button").waitForExistence(timeout: 4))
         XCTAssertTrue(element("playback.export.button").isHittable)
+        app.buttons["Done"].tap()
 
         let playbackScroll = app.scrollViews.firstMatch
-        let pullStart = playbackScroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.78))
-        let pullEnd = playbackScroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08))
-        pullStart.press(forDuration: 0.1, thenDragTo: pullEnd)
+        let playbackControls = element("playback.controls")
+        XCTAssertTrue(playbackControls.waitForExistence(timeout: 4))
+        // The persistent controls are inside the reported scroll-view frame.
+        // Pull the actual content, never the transport or scrubber beneath it.
+        for _ in 0..<5 {
+            if element("timeline.screen").exists { break }
+            let origin = playbackScroll.coordinate(withNormalizedOffset: .zero)
+            let visibleBottom = playbackControls.frame.minY - playbackScroll.frame.minY
+            XCTAssertGreaterThan(visibleBottom, 160)
+            let pullStart = origin.withOffset(CGVector(dx: playbackScroll.frame.width * 0.5, dy: visibleBottom - 20))
+            let pullEnd = origin.withOffset(CGVector(dx: playbackScroll.frame.width * 0.5, dy: 140))
+            pullStart.press(forDuration: 0.1, thenDragTo: pullEnd)
+        }
         XCTAssertTrue(element("timeline.screen").waitForExistence(timeout: 4))
 
         let editor = scrollToElement("timeline.reflection.editor")
@@ -547,9 +582,8 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("miniPlayer.bar").waitForExistence(timeout: 4))
         assertMiniPlayerClearsRootNavigation()
 
-        tapRoot("Sources")
+        tapRoot("Following")
         XCTAssertTrue(element("sources.screen").waitForExistence(timeout: 4))
-        XCTAssertTrue(app.staticTexts["Add a source"].exists)
         XCTAssertTrue(element("sources.follow.url").waitForExistence(timeout: 4))
         XCTAssertTrue(element("sources.follow.button").exists)
         XCTAssertFalse(app.staticTexts["Follow is not Add"].exists)
@@ -587,29 +621,151 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertFalse(element("playback.screen").exists)
         XCTAssertFalse(element("miniPlayer.bar").exists)
         XCTAssertFalse(app.tabBars.firstMatch.exists)
-        XCTAssertFalse(app.buttons["Sources"].exists)
+        XCTAssertFalse(app.buttons["Following"].exists)
         XCTAssertFalse(app.buttons["Margins"].exists)
 
+        element("recording.finish.button").tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
+        XCTAssertEqual(element("playback.play.button").label, "Pause", "Saving a voice Margin did not resume playback")
+        pausePlaybackIfNeeded()
+        element("playback.margins.button").tap()
+        XCTAssertTrue(element("margins.screen").waitForExistence(timeout: 4))
+        XCTAssertTrue(element("miniPlayer.bar").exists)
+        let savedMargin = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "margins.row.")).firstMatch
+        XCTAssertTrue(savedMargin.waitForExistence(timeout: 4))
+        savedMargin.tap()
+        XCTAssertTrue(element("marginDetail.screen").waitForExistence(timeout: 4), "Tapping the saved Margin row did not open its detail")
+        let timelineAction = app.buttons["Open in Timeline"]
+        let pinnedMoment = app.buttons["marginDetail.playMoment.button"]
+        let detailList = element("marginDetail.screen").collectionViews.firstMatch
+        for _ in 0..<5 {
+            if timelineAction.isHittable && timelineAction.frame.maxY < pinnedMoment.frame.minY - 12 { break }
+            detailList.swipeUp()
+        }
+        XCTAssertTrue(timelineAction.isHittable)
+        XCTAssertLessThan(timelineAction.frame.maxY, pinnedMoment.frame.minY - 12,
+                          "The detail action cannot clear its fixed playback control")
+        captureScreen(named: "second-edition-margin-detail-timeline-clearance")
+        timelineAction.tap()
+        XCTAssertTrue(element("timeline.screen").waitForExistence(timeout: 4), "A Margins sheet hid the requested Timeline")
+        element("timeline.nowPlaying.button").tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 4))
+        element("playback.interject.button").tap()
+        XCTAssertTrue(element("recording.screen").waitForExistence(timeout: 4))
         element("recording.cancel.button").tap()
+        app.alerts.buttons["Discard recording"].tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
         XCTAssertFalse(element("recording.screen").exists)
+        XCTAssertEqual(element("playback.play.button").label, "Pause", "Voice capture cancellation did not resume the source")
+    }
+
+    func testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource() throws {
+        app.terminate()
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE"] = "A walk with room to think"
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"] = String(repeating: "Notice the small details along the way. ", count: 80)
+        app.launch()
+        scrollToElement("queue.start.item-ui-text-regression").tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
+        pausePlaybackIfNeeded()
+        element("playback.write.button").tap()
+        XCTAssertTrue(element("writtenMargin.screen").waitForExistence(timeout: 4))
+        XCTAssertFalse(element("miniPlayer.bar").exists)
+        XCTAssertFalse(app.tabBars.firstMatch.exists)
+        XCTAssertFalse(element("writtenMargin.save.button").isEnabled)
+        let editor = app.textViews["writtenMargin.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 4))
+        editor.tap()
+        editor.typeText("Remember the amber doorway.")
+        XCTAssertTrue(element("writtenMargin.save.button").isHittable, "The keyboard hides Save")
+        captureScreen(named: "second-edition-written-capture-keyboard")
+        element("writtenMargin.save.button").tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5))
+        XCTAssertEqual(element("playback.play.button").label, "Play", "Saving a pre-paused note started playback")
+        element("playback.margins.button").tap()
+        let search = app.textFields["margins.search.field"]
+        XCTAssertTrue(search.waitForExistence(timeout: 4))
+        search.tap()
+        search.typeText("amber doorway")
+        let note = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "margins.row.")).firstMatch
+        XCTAssertTrue(note.waitForExistence(timeout: 4))
+        note.tap()
+        XCTAssertTrue(element("marginDetail.screen").waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["Remember the amber doorway."].exists)
+        XCTAssertFalse(app.buttons["Play Recording"].exists)
+        app.buttons["marginDetail.star.button"].tap()
+        XCTAssertEqual(app.buttons["marginDetail.star.button"].label, "Unstar Margin")
+        captureScreen(named: "second-edition-written-margin-detail")
+        element("marginDetail.playMoment.button").tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["playback.title"].label.contains("A walk with room to think"))
+        pausePlaybackIfNeeded()
+        element("playback.write.button").tap()
+        XCTAssertTrue(element("writtenMargin.screen").waitForExistence(timeout: 4))
+        app.textViews["writtenMargin.text"].tap()
+        app.textViews["writtenMargin.text"].typeText("Discard this thought")
+        app.buttons["writtenMargin.cancel.button"].tap()
+        app.alerts.buttons["Keep writing"].tap()
+        XCTAssertTrue(element("writtenMargin.screen").exists)
+        app.buttons["writtenMargin.cancel.button"].tap()
+        app.alerts.buttons["Discard Margin"].tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5))
+        XCTAssertEqual(element("playback.play.button").label, "Play")
+    }
+
+    func testPlaybackPrimaryActionsRemainVisibleWithLongTitleAndAccessibilityText() throws {
+        app.terminate()
+        let longTitle = "A listener's notebook about the art of paying attention, ordinary streets, familiar voices, and everything we might otherwise forget on a long walk home"
+        // Ensure ordinary scrolling is possible even in the wider iPad viewport.
+        // Bottom overscroll has its own navigation test.
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE"] = Array(repeating: longTitle, count: 3).joined(separator: ". ")
+        app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"] = String(repeating: "A paragraph worth listening to. ", count: 80)
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
+        app.launch()
+        let start = scrollToElement("queue.start.item-ui-text-regression")
+        XCTAssertTrue(start.isHittable)
+        start.tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
+        captureScreen(named: "second-edition-native-accessibility-size")
+        XCTAssertFalse(element("playback.sleepTimer.button").exists, "Maximum native Dynamic Type did not activate the accessible control layout")
+        let viewport = app.windows.firstMatch.frame
+        for id in ["playback.play.button", "playback.interject.button", "playback.options.button"] {
+            let control = element(id)
+            XCTAssertTrue(control.waitForExistence(timeout: 4), id)
+            XCTAssertTrue(control.isHittable, "\(id) requires scrolling past content")
+            XCTAssertTrue(viewport.contains(control.frame), "\(id) is clipped outside the viewport")
+        }
+        captureScreen(named: "second-edition-long-title-accessibility-controls")
+        let scroll = app.scrollViews.firstMatch
+        let controls = element("playback.controls")
+        let titleBeforeScroll = element("playback.title").frame.minY
+        let origin = scroll.coordinate(withNormalizedOffset: .zero)
+        let startY = controls.frame.minY - scroll.frame.minY - 20
+        origin.withOffset(CGVector(dx: scroll.frame.width * 0.5, dy: startY))
+            .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: scroll.frame.width * 0.5, dy: startY - 120)))
+        XCTAssertLessThan(element("playback.title").frame.minY, titleBeforeScroll - 20,
+                          "The content did not scroll independently of the fixed controls")
+        XCTAssertTrue(element("playback.interject.button").isHittable, "Scrolling content moved capture away")
+        XCTAssertTrue(element("playback.play.button").isHittable, "Scrolling content moved playback away")
     }
 
     func testRootsRemainUsableWithLargeTypeDarkContrastAndReducedMotion() throws {
         app.terminate()
         app.launchArguments += [
             "-AppleInterfaceStyle", "Dark",
-            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge",
+            "-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue,
             "-UIAccessibilityDarkerSystemColorsEnabled", "YES",
             "-UIAccessibilityReduceMotionEnabled", "YES"
         ]
         app.launch()
 
         XCTAssertTrue(element("library.screen").waitForExistence(timeout: 8))
-        tapRoot("Sources")
+        captureScreen(named: "second-edition-library-dark-accessibility")
+        tapRoot("Following")
         XCTAssertTrue(element("sources.screen").waitForExistence(timeout: 4))
+        captureScreen(named: "second-edition-following-dark-accessibility")
         tapRoot("Margins")
         XCTAssertTrue(element("margins.screen").waitForExistence(timeout: 4))
+        captureScreen(named: "second-edition-margins-dark-accessibility")
     }
 
     func testOfflineStorageExplainsProtectionBeforeSafeClear() throws {
@@ -755,26 +911,29 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(provenance.waitForExistence(timeout: 5))
         XCTAssertTrue(provenance.label.localizedCaseInsensitiveContains("separate shared layer"))
         XCTAssertTrue(provenance.label.localizedCaseInsensitiveContains("Reveal mode Companion"))
+        captureScreen(named: "second-edition-item-shared-provenance")
 
         element("miniPlayer.open.button").tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5))
         XCTAssertEqual(element("playback.play.button").label, "Play")
         openTimelineExperience()
+        scrollToButton(containingLabel: "Shared Margins").tap()
         let timelineProvenance = importedLayerElement(suffix: ".provenance")
+        _ = scrollTo(timelineProvenance)
         XCTAssertTrue(timelineProvenance.waitForExistence(timeout: 5))
     }
 
     func testBuild23LayoutRegressionsRemainOperableAtAccessibilityType() throws {
         app.terminate()
         app.launchArguments += [
-            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge",
+            "-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue,
             "-UIAccessibilityDarkerSystemColorsEnabled", "YES",
             "-UIAccessibilityReduceMotionEnabled", "YES"
         ]
         app.launch()
 
         XCTAssertTrue(element("library.screen").waitForExistence(timeout: 8))
-        let start = app.buttons["queue.start.item-pill"]
+        let start = scrollTo(app.buttons["queue.start.item-pill"])
         XCTAssertTrue(start.waitForExistence(timeout: 5))
         start.tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
@@ -784,11 +943,24 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("library.screen").waitForExistence(timeout: 5))
         XCTAssertTrue(element("miniPlayer.bar").waitForExistence(timeout: 5))
         assertMiniPlayerClearsRootNavigation()
+        XCTAssertLessThan(element("miniPlayer.bar").frame.height, app.windows.firstMatch.frame.height * 0.25,
+                          "The persistent player consumes more than a quarter of the reading viewport")
         let search = scrollToElementBidirectionally("library.search.field")
-        let filter = scrollToElementBidirectionally("library.filter.menu")
+        let filter = element("library.filter.menu")
         XCTAssertTrue(search.isHittable)
-        XCTAssertTrue(filter.isHittable)
-        XCTAssertLessThanOrEqual(filter.frame.maxX, app.windows.firstMatch.frame.maxX)
+        XCTAssertTrue(filter.exists)
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(filter.frame))
+        XCTAssertFalse(filter.frame.intersects(element("miniPlayer.bar").frame))
+        // iOS 18 reports a visible native Menu as non-hittable. Verify its actual
+        // activation and selection instead of trusting that accessibility flag.
+        filter.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.buttons["Text"].waitForExistence(timeout: 4))
+        app.buttons["Text"].tap()
+        XCTAssertTrue(filter.waitForExistence(timeout: 4))
+        XCTAssertTrue(filter.label.contains("active filters"))
+        filter.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        app.buttons["All"].firstMatch.tap()
+        XCTAssertEqual(filter.label, "Filter Library")
 
         app.buttons["home.addSource.button"].tap()
         scrollToElementBidirectionally("addSource.route.pastedText").tap()
@@ -797,26 +969,18 @@ final class Gate1FlowUITests: XCTestCase {
         editor.tap()
         editor.typeText("Build 23 keeps the final Add Source action above the keyboard and safe area.")
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
-        let addToLibrary = scrollToElementBidirectionally("create.start.button")
+        let addToLibrary = app.buttons["create.start.button"]
+        XCTAssertTrue(addToLibrary.waitForExistence(timeout: 3))
         let keyboardDone = app.buttons["Done"].firstMatch
         XCTAssertTrue(keyboardDone.exists)
         let keyboardTop = min(app.keyboards.firstMatch.frame.minY, keyboardDone.frame.minY)
-        for _ in 0..<6 where addToLibrary.frame.maxY > keyboardTop {
-            let form = app.scrollViews.containing(.button, identifier: "create.start.button").firstMatch
-            // Drag the form margin; a center swipe is consumed by the nested text editor.
-            let visibleHeight = min(form.frame.maxY, keyboardTop) - form.frame.minY
-            XCTAssertGreaterThan(visibleHeight, 40)
-            let origin = form.coordinate(withNormalizedOffset: .zero)
-            let start = origin.withOffset(CGVector(dx: form.frame.width - 8, dy: visibleHeight - 16))
-            let end = origin.withOffset(CGVector(dx: form.frame.width - 8, dy: visibleHeight * 0.25))
-            start.press(forDuration: 0.05, thenDragTo: end)
-        }
         XCTAssertTrue(addToLibrary.isHittable)
         XCTAssertLessThanOrEqual(
             addToLibrary.frame.maxY,
             keyboardTop,
             "The Add Source action is covered by the keyboard or its accessory toolbar."
         )
+        captureScreen(named: "second-edition-add-text-keyboard-accessibility")
         keyboardDone.tap()
         XCTAssertTrue(waitForDisappearance(app.keyboards.firstMatch, timeout: 5))
         app.buttons["Close"].firstMatch.tap()
@@ -824,9 +988,23 @@ final class Gate1FlowUITests: XCTestCase {
         element("miniPlayer.open.button").tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5))
         openTimelineExperience()
-        let reflectionAction = scrollToElementBidirectionally("timeline.reflection.import.button")
+        let reflectionAction = app.buttons["timeline.reflection.import.button"]
+        XCTAssertTrue(reflectionAction.waitForExistence(timeout: 4))
+        captureScreen(named: "second-edition-timeline-accessibility-content")
         let timelineMiniPlayer = element("miniPlayer.bar")
         XCTAssertTrue(timelineMiniPlayer.waitForExistence(timeout: 5))
+        let timelineScroll = app.scrollViews.containing(.button, identifier: "timeline.reflection.import.button").firstMatch
+        for _ in 0..<16 where reflectionAction.frame.maxY > timelineMiniPlayer.frame.minY {
+            let visibleHeight = min(timelineScroll.frame.maxY, timelineMiniPlayer.frame.minY) - timelineScroll.frame.minY
+            XCTAssertGreaterThan(visibleHeight, 40)
+            let origin = timelineScroll.coordinate(withNormalizedOffset: .zero)
+            // Stay inside the visible content, outside the nested editor and
+            // the left-edge back gesture. Disabled actions need not be hittable.
+            let swipeX = timelineScroll.frame.width - 30
+            origin.withOffset(CGVector(dx: swipeX, dy: visibleHeight - 16))
+                .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: swipeX, dy: visibleHeight * 0.25)))
+        }
+        captureScreen(named: "second-edition-timeline-accessibility-clearance")
         XCTAssertLessThanOrEqual(
             reflectionAction.frame.maxY,
             timelineMiniPlayer.frame.minY,
@@ -875,10 +1053,17 @@ final class Gate1FlowUITests: XCTestCase {
         start.tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
         pausePlaybackIfNeeded()
-        app.buttons["playback.export.button"].tap()
+        openPlaybackExport()
         XCTAssertTrue(element("export.screen").waitForExistence(timeout: 5))
         scrollToButton(containingLabel: "Share Margins").tap()
         XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 8))
+    }
+
+    private func openPlaybackExport() {
+        element("playback.options.button").tap()
+        let export = scrollToElement("playback.export.button")
+        XCTAssertTrue(export.isHittable)
+        export.tap()
     }
 
     private func pausePlaybackIfNeeded() {
@@ -912,7 +1097,9 @@ final class Gate1FlowUITests: XCTestCase {
     }
 
     private func buildBuild23RecipientPreview() {
-        scrollToBuild23SenderElement("build23.sender.preview.build").tap()
+        let preview = scrollToBuild23SenderElement("build23.sender.preview.build")
+        captureScreen(named: "second-edition-sender-preview-action")
+        preview.tap()
         XCTAssertTrue(element("build23.sender.recipient.verified-preview").waitForExistence(timeout: 12))
     }
 
@@ -920,15 +1107,29 @@ final class Gate1FlowUITests: XCTestCase {
         let candidate = element(identifier)
         let senderExperience = element("build23.sender.experience")
         XCTAssertTrue(senderExperience.waitForExistence(timeout: 5), "Build 23 sender experience is missing")
-        for _ in 0..<24 where !(candidate.exists && candidate.isHittable) {
-            if candidate.exists, candidate.frame.midY < senderExperience.frame.midY {
-                senderExperience.swipeDown()
-            } else {
-                senderExperience.swipeUp()
-            }
+        let recipientFooter = element("build23.sender.recipient-test-session")
+        func visibleBottom() -> CGFloat {
+            let screenBottom = min(senderExperience.frame.maxY - 8, app.windows.firstMatch.frame.maxY - 34)
+            return recipientFooter.exists ? min(screenBottom, recipientFooter.frame.minY - 12) : screenBottom
+        }
+        func fullyReachable() -> Bool {
+            candidate.exists && candidate.isHittable
+                && candidate.frame.minY >= senderExperience.frame.minY + 12
+                && candidate.frame.maxY <= visibleBottom()
+        }
+        for _ in 0..<12 {
+            if fullyReachable() { break }
+            let origin = senderExperience.coordinate(withNormalizedOffset: .zero)
+            let x = senderExperience.frame.width - 24
+            let lower = visibleBottom() - senderExperience.frame.minY - 20
+            let upper: CGFloat = 80
+            XCTAssertGreaterThan(lower, upper)
+            let moveDown = candidate.exists && candidate.frame.minY < senderExperience.frame.minY + 12
+            origin.withOffset(CGVector(dx: x, dy: moveDown ? upper : lower))
+                .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: x, dy: moveDown ? lower : upper)))
         }
         XCTAssertTrue(
-            candidate.waitForExistence(timeout: 5) && candidate.isHittable,
+            candidate.waitForExistence(timeout: 5) && fullyReachable(),
             "Missing or unreachable Build 23 sender element: \(identifier)"
         )
         return candidate

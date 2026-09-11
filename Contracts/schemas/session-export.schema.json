@@ -58,7 +58,8 @@
           "mediaTimeMs": { "type": ["integer", "null"] },
           "transcriptionStatus": { "type": "string" },
           "transcript": { "type": ["string", "null"] },
-          "audioPath": { "type": ["string", "null"] }
+          "audioPath": { "type": ["string", "null"] },
+          "captureKind": { "type": ["string", "null"], "enum": ["audio", "written", null] }
         }
       }
     }

@@ -1,0 +1,203 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>AbortOnUnknownIPC</key>
+	<true/>
+	<key>Bootstrap</key>
+	<dict>
+		<key>BinaryOrderPreference</key>
+		<string>arm64</string>
+		<key>CheckedAllocationsPosixSpawnFlagsGlobal</key>
+		<false/>
+		<key>Child</key>
+		<dict>
+			<key>DYLD_ROOT_PATH</key>
+			<string>/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot</string>
+			<key>DYLD_SHARED_CACHE_DIR</key>
+			<string>/Library/Developer/CoreSimulator/Caches/dyld/25G83/com.apple.CoreSimulator.SimRuntime.iOS-26-5.23F77/</string>
+			<key>IPHONE_SHARED_RESOURCES_DIRECTORY</key>
+			<string>/Users/colemiller/Library/Developer/CoreSimulator/Devices/856FA6EF-5E03-4120-939B-F0EF42A804E8/data</string>
+			<key>IPHONE_SIMULATOR_ROOT</key>
+			<string>/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot</string>
+			<key>IPHONE_TVOUT_EXTENDED_PROPERTIES</key>
+			<string>/Users/colemiller/Library/Developer/CoreSimulator/Devices/856FA6EF-5E03-4120-939B-F0EF42A804E8/data/Library/Application Support/Simulator/extended_display.plist</string>
+			<key>LS_ENABLE_BUNDLE_LOCALIZATION_CACHING</key>
+			<string>1</string>
+			<key>PATH</key>
+			<string>/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/usr/bin:/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/bin:/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/usr/sbin:/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/sbin:/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/usr/local/bin</string>
+			<key>SIMULATOR_ARCHS</key>
+			<string>arm64</string>
+			<key>SIMULATOR_AUDIO_DEVICES_PLIST_PATH</key>
+			<string>/Users/colemiller/Library/Developer/CoreSimulator/Devices/856FA6EF-5E03-4120-939B-F0EF42A804E8/data/var/run/com.apple.coresimulator.audio.plist</string>
+			<key>SIMULATOR_AUDIO_SETTINGS_PATH</key>
+			<string>/Users/colemiller/Library/Developer/CoreSimulator/Devices/856FA6EF-5E03-4120-939B-F0EF42A804E8/data/var/run/simulatoraudio/audiosettings.plist</string>
+			<key>SIMULATOR_BOOT_TIME</key>
+			<string>1789078176</string>
+			<key>SIMULATOR_CAPABILITIES</key>
+			<string>/Library/Developer/CoreSimulator/Profiles/DeviceTypes/iPhone 17 Pro.simdevicetype/Contents/Resources/capabilities.plist</string>
+			<key>SIMULATOR_DEVICE_NAME</key>
+			<string>iPhone 17 Pro</string>
+			<key>SIMULATOR_EXTENDED_DISPLAY_PROPERTIES</key>
+			<string>/Users/colemiller/Library/Developer/CoreSimulator/Devices/856FA6EF-5E03-4120-939B-F0EF42A804E8/data/Library/Application Support/Simulator/extended_display.plist</string>
+			<key>SIMULATOR_FRAMEBUFFER_FRAMEWORK</key>
+			<string>/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Resources/Platforms/iphoneos/Library/PrivateFrameworks/SimFramebuffer.framework/SimFramebuffer</string>
+			<key>SIMULATOR_HID_SYSTEM_MANAGER</key>
+			<string>/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Resources/Platforms/iphoneos/Library/Frameworks/SimulatorHID.framework</string>
+			<key>SIMULATOR_HOST_HOME</key>
+			<string>/Users/colemiller</string>
+			<key>SIMULATOR_LEGACY_ASSET_SUFFIX</key>
+			<string>iphone</string>
+			<key>SIMULATOR_LOG_ROOT</key>
+			<string>/Users/colemiller/Library/Logs/CoreSimulator/856FA6EF-5E03-4120-939B-F0EF42A804E8</string>
+			<key>SIMULATOR_MAINSCREEN_HEIGHT</key>
+			<string>2622</string>
+			<key>SIMULATOR_MAINSCREEN_PITCH</key>
+			<string>460.000000</string>
+			<key>SIMULATOR_MAINSCREEN_SCALE</key>
+			<string>3.000000</string>
+			<key>SIMULATOR_MAINSCREEN_WIDTH</key>
+			<string>1206</string>
+			<key>SIMULATOR_MEMORY_WARNINGS</key>
+			<string>/Users/colemiller/Library/Developer/CoreSimulator/Devices/856FA6EF-5E03-4120-939B-F0EF42A804E8/data/var/run/memory_warning_simulation</string>
+			<key>SIMULATOR_MODEL_IDENTIFIER</key>
+			<string>iPhone18,1</string>
+			<key>SIMULATOR_PRODUCT_CLASS</key>
+			<string>V53</string>
+			<key>SIMULATOR_ROOT</key>
+			<string>/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot</string>
+			<key>SIMULATOR_RUNTIME_BUILD_VERSION</key>
+			<string>23F77</string>
+			<key>SIMULATOR_RUNTIME_VERSION</key>
+			<string>26.5</string>
+			<key>SIMULATOR_SHARED_RESOURCES_DIRECTORY</key>
+			<string>/Users/colemiller/Library/Developer/CoreSimulator/Devices/856FA6EF-5E03-4120-939B-F0EF42A804E8/data</string>
+			<key>SIMULATOR_UDID</key>
+			<string>856FA6EF-5E03-4120-939B-F0EF42A804E8</string>
+			<key>SIMULATOR_VERSION_INFO</key>
+			<string>CoreSimulator 1051.55 - Device: iPhone 17 Pro (856FA6EF-5E03-4120-939B-F0EF42A804E8) - Runtime: iOS 26.5 (23F77) - DeviceType: iPhone 17 Pro</string>
+			<key>TERM</key>
+			<string>dumb</string>
+			<key>XPC_SIMULATOR_LAUNCHD_NAME</key>
+			<string>com.apple.CoreSimulator.SimDevice.856FA6EF-5E03-4120-939B-F0EF42A804E8</string>
+		</dict>
+		<key>ChildDefaults</key>
+		<dict>
+			<key>CFFIXED_USER_HOME</key>
+			<string>/Users/colemiller/Library/Developer/CoreSimulator/Devices/856FA6EF-5E03-4120-939B-F0EF42A804E8/data</string>
+			<key>DYLD_FALLBACK_FRAMEWORK_PATH</key>
+			<string>/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/System/Library/Frameworks</string>
+			<key>DYLD_FALLBACK_LIBRARY_PATH</key>
+			<string>/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/usr/lib</string>
+			<key>HOME</key>
+			<string>/Users/colemiller/Library/Developer/CoreSimulator/Devices/856FA6EF-5E03-4120-939B-F0EF42A804E8/data</string>
+			<key>TMPDIR</key>
+			<string>/Users/colemiller/Library/Developer/CoreSimulator/Devices/856FA6EF-5E03-4120-939B-F0EF42A804E8/data/tmp/</string>
+		</dict>
+		<key>Paths</key>
+		<array>
+			<string>/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/System/Library/LaunchDaemons</string>
+			<string>/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/System/Library/LaunchAngels</string>
+			<string>/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/Developer/Library/LaunchDaemons</string>
+			<string>/Users/colemiller/Library/Developer/CoreSimulator/Devices/856FA6EF-5E03-4120-939B-F0EF42A804E8/data/Library/LaunchDaemons</string>
+		</array>
+		<key>Self</key>
+		<dict>
+			<key>CFFIXED_USER_HOME</key>
+			<string>/Users/colemiller/Library/Developer/CoreSimulator/Devices/856FA6EF-5E03-4120-939B-F0EF42A804E8/data</string>
+			<key>DYLD_FALLBACK_FRAMEWORK_PATH</key>
+			<string>/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/System/Library/Frameworks</string>
+			<key>DYLD_FALLBACK_LIBRARY_PATH</key>
+			<string>/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/usr/lib</string>
+			<key>DYLD_ROOT_PATH</key>
+			<string>/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot</string>
+			<key>DYLD_SHARED_CACHE_DIR</key>
+			<string>/Library/Developer/CoreSimulator/Caches/dyld/25G83/com.apple.CoreSimulator.SimRuntime.iOS-26-5.23F77/</string>
+			<key>HOME</key>
+			<string>/Users/colemiller/Library/Developer/CoreSimulator/Devices/856FA6EF-5E03-4120-939B-F0EF42A804E8/data</string>
+			<key>IPHONE_SHARED_RESOURCES_DIRECTORY</key>
+			<string>/Users/colemiller/Library/Developer/CoreSimulator/Devices/856FA6EF-5E03-4120-939B-F0EF42A804E8/data</string>
+			<key>IPHONE_SIMULATOR_ROOT</key>
+			<string>/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot</string>
+			<key>IPHONE_TVOUT_EXTENDED_PROPERTIES</key>
+			<string>/Users/colemiller/Library/Developer/CoreSimulator/Devices/856FA6EF-5E03-4120-939B-F0EF42A804E8/data/Library/Application Support/Simulator/extended_display.plist</string>
+			<key>LS_ENABLE_BUNDLE_LOCALIZATION_CACHING</key>
+			<string>1</string>
+			<key>PATH</key>
+			<string>/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/usr/bin:/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/bin:/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/usr/sbin:/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/sbin:/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/usr/local/bin</string>
+			<key>SIMULATOR_ARCHS</key>
+			<string>arm64</string>
+			<key>SIMULATOR_AUDIO_DEVICES_PLIST_PATH</key>
+			<string>/Users/colemiller/Library/Developer/CoreSimulator/Devices/856FA6EF-5E03-4120-939B-F0EF42A804E8/data/var/run/com.apple.coresimulator.audio.plist</string>
+			<key>SIMULATOR_AUDIO_SETTINGS_PATH</key>
+			<string>/Users/colemiller/Library/Developer/CoreSimulator/Devices/856FA6EF-5E03-4120-939B-F0EF42A804E8/data/var/run/simulatoraudio/audiosettings.plist</string>
+			<key>SIMULATOR_BOOT_TIME</key>
+			<string>1789078176</string>
+			<key>SIMULATOR_CAPABILITIES</key>
+			<string>/Library/Developer/CoreSimulator/Profiles/DeviceTypes/iPhone 17 Pro.simdevicetype/Contents/Resources/capabilities.plist</string>
+			<key>SIMULATOR_DEVICE_NAME</key>
+			<string>iPhone 17 Pro</string>
+			<key>SIMULATOR_EXTENDED_DISPLAY_PROPERTIES</key>
+			<string>/Users/colemiller/Library/Developer/CoreSimulator/Devices/856FA6EF-5E03-4120-939B-F0EF42A804E8/data/Library/Application Support/Simulator/extended_display.plist</string>
+			<key>SIMULATOR_FRAMEBUFFER_FRAMEWORK</key>
+			<string>/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Resources/Platforms/iphoneos/Library/PrivateFrameworks/SimFramebuffer.framework/SimFramebuffer</string>
+			<key>SIMULATOR_HID_SYSTEM_MANAGER</key>
+			<string>/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Resources/Platforms/iphoneos/Library/Frameworks/SimulatorHID.framework</string>
+			<key>SIMULATOR_HOST_HOME</key>
+			<string>/Users/colemiller</string>
+			<key>SIMULATOR_LEGACY_ASSET_SUFFIX</key>
+			<string>iphone</string>
+			<key>SIMULATOR_LOG_ROOT</key>
+			<string>/Users/colemiller/Library/Logs/CoreSimulator/856FA6EF-5E03-4120-939B-F0EF42A804E8</string>
+			<key>SIMULATOR_MAINSCREEN_HEIGHT</key>
+			<string>2622</string>
+			<key>SIMULATOR_MAINSCREEN_PITCH</key>
+			<string>460.000000</string>
+			<key>SIMULATOR_MAINSCREEN_SCALE</key>
+			<string>3.000000</string>
+			<key>SIMULATOR_MAINSCREEN_WIDTH</key>
+			<string>1206</string>
+			<key>SIMULATOR_MEMORY_WARNINGS</key>
+			<string>/Users/colemiller/Library/Developer/CoreSimulator/Devices/856FA6EF-5E03-4120-939B-F0EF42A804E8/data/var/run/memory_warning_simulation</string>
+			<key>SIMULATOR_MODEL_IDENTIFIER</key>
+			<string>iPhone18,1</string>
+			<key>SIMULATOR_PRODUCT_CLASS</key>
+			<string>V53</string>
+			<key>SIMULATOR_ROOT</key>
+			<string>/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot</string>
+			<key>SIMULATOR_RUNTIME_BUILD_VERSION</key>
+			<string>23F77</string>
+			<key>SIMULATOR_RUNTIME_VERSION</key>
+			<string>26.5</string>
+			<key>SIMULATOR_SHARED_RESOURCES_DIRECTORY</key>
+			<string>/Users/colemiller/Library/Developer/CoreSimulator/Devices/856FA6EF-5E03-4120-939B-F0EF42A804E8/data</string>
+			<key>SIMULATOR_UDID</key>
+			<string>856FA6EF-5E03-4120-939B-F0EF42A804E8</string>
+			<key>SIMULATOR_VERSION_INFO</key>
+			<string>CoreSimulator 1051.55 - Device: iPhone 17 Pro (856FA6EF-5E03-4120-939B-F0EF42A804E8) - Runtime: iOS 26.5 (23F77) - DeviceType: iPhone 17 Pro</string>
+			<key>TERM</key>
+			<string>dumb</string>
+			<key>TMPDIR</key>
+			<string>/Users/colemiller/Library/Developer/CoreSimulator/Devices/856FA6EF-5E03-4120-939B-F0EF42A804E8/data/tmp/</string>
+			<key>XPC_SIMULATOR_LAUNCHD_NAME</key>
+			<string>com.apple.CoreSimulator.SimDevice.856FA6EF-5E03-4120-939B-F0EF42A804E8</string>
+		</dict>
+		<key>SimulatorRuntimeRoot</key>
+		<string>/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot</string>
+	</dict>
+	<key>CrashOnSIGTERMTimeout</key>
+	<false/>
+	<key>ExtensionWatchdog</key>
+	<integer>0</integer>
+	<key>LogServiceLifecycle</key>
+	<true/>
+	<key>LogToFlatFile</key>
+	<true/>
+	<key>RequireDomainBinding</key>
+	<true/>
+	<key>SIGTERMTimeout</key>
+	<integer>3</integer>
+	<key>UseGuardMalloc</key>
+	<false/>
+</dict>
+</plist>

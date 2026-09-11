@@ -1,0 +1,36 @@
+{
+  "udid": "856FA6EF-5E03-4120-939B-F0EF42A804E8",
+  "build_run": "artifacts/test-runs/20260910-195910-generic-builds/manifest.json",
+  "input_sha256": "7632bd366c275aa8596a1a1d0210eb4ee9bf7fd76de210b0a0aba46d81e8f2bb",
+  "captures": [
+    {
+      "file": "library-light-standard.png",
+      "actual_os_settings": {
+        "appearance": "light",
+        "increase_contrast": "disabled",
+        "content_size": "large"
+      },
+      "sha256": "c442c6f315e606e0974b6dbfb584dee2ac0932c9fb6eeb2aa703a7783cdaa40d"
+    },
+    {
+      "file": "library-dark-increased-contrast.png",
+      "actual_os_settings": {
+        "appearance": "dark",
+        "increase_contrast": "enabled",
+        "content_size": "large"
+      },
+      "sha256": "779f8ab4136dd03d887b4c75fda95a895caf653a1bdf626fba549fc2df6fd407"
+    },
+    {
+      "file": "library-dark-largest-text.png",
+      "actual_os_settings": {
+        "appearance": "dark",
+        "increase_contrast": "enabled",
+        "content_size": "accessibility-extra-extra-extra-large"
+      },
+      "sha256": "22151dd66ee102209cbdfb39078129a3d15f3c3cfe25ecde7fd334e3825aabba"
+    }
+  ],
+  "review_status": "Found low contrast on mini-player play glyph and loading indicator; repaired using onEvergreen. These are before-repair captures.",
+  "settings_restored": true
+}

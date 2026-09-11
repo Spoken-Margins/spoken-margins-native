@@ -1,0 +1,46 @@
+Failed to tap "Open in Timeline" Button: No matches found for Elements matching predicate '"Open in Timeline" IN identifiers' from input {(
+    Button, identifier: 'ToggleSideBar', label: 'Toggle sidebar',
+    Button, identifier: 'navigation.tab.library', label: 'Library',
+    Button, identifier: 'navigation.tab.sources', label: 'Following',
+    Button, identifier: 'navigation.tab.margins', label: 'Margins', Selected,
+    Button, identifier: 'navigation.tab.library', label: 'Library',
+    Button, identifier: 'navigation.tab.sources', label: 'Following',
+    Button, identifier: 'navigation.tab.margins', label: 'Margins', Selected,
+    Button, identifier: 'miniPlayer.open.button', label: 'Open Now Playing', value: You Can't Inspect ...,
+    Button, identifier: 'miniPlayer.interject.button', label: 'Record an interjection',
+    Button, identifier: 'miniPlayer.playPause.button', label: 'Pause',
+    Button, identifier: 'miniPlayer.close.button', label: 'Close and save listening session',
+    Button, identifier: 'gearshape', label: 'Settings',
+    Button, identifier: 'arrow.clockwise', label: 'Refresh Margins',
+    Button, identifier: 'margins.row.session-item-pill-1F180182-662B-4DB0-9CC2-993F5421EE48::ij-001', label: 'My Margin. Audio saved. Transcript failed.. You Can't Inspect the Pill. Sep 10, 2026 at 16:52',
+    Button, label: 'Mine',
+    Button, label: 'Starred',
+    Button, label: 'Needs attention',
+    Button, label: 'Shared'
+)}
+Possibly caused by runtime issues:
+Automation type mismatch: computed Button from legacy attributes vs Cell from modern attribute. Input attributes and values: {
+    "XC_kAXXCAttributeAutomationType" = 75;
+    "XC_kAXXCAttributeElementBaseType" = "_UIFloatingTabBarItemCell";
+    "XC_kAXXCAttributeElementType" = "_UIFloatingTabBarItemCell";
+    "XC_kAXXCAttributeTraits" = 146297323528;
+}
+Automation type mismatch: computed Button from legacy attributes vs Cell from modern attribute. Input attributes and values: {
+    "XC_kAXXCAttributeAutomationType" = 75;
+    "XC_kAXXCAttributeElementBaseType" = "_UIFloatingTabBarItemCell";
+    "XC_kAXXCAttributeElementType" = "_UIFloatingTabBarItemCell";
+    "XC_kAXXCAttributeTraits" = 146297323520;
+}
+Automation type mismatch: computed Button from legacy attributes vs Other from modern attribute. Input attributes and values: {
+    "XC_kAXXCAttributeAutomationType" = 0;
+    "XC_kAXXCAttributeElementBaseType" = "_UIFloatingTabBarItemView";
+    "XC_kAXXCAttributeElementType" = "_UIFloatingTabBarItemView";
+    "XC_kAXXCAttributeTraits" = 8858370048;
+}
+Automation type mismatch: computed Button from legacy attributes vs Other from modern attribute. Input attributes and values: {
+    "XC_kAXXCAttributeAutomationType" = 0;
+    "XC_kAXXCAttributeElementBaseType" = "_UIFloatingTabBarItemView";
+    "XC_kAXXCAttributeElementType" = "_UIFloatingTabBarItemView";
+    "XC_kAXXCAttributeTraits" = 8858370056;
+}
+See test report attachments for more detail.

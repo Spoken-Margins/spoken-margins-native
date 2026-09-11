@@ -1,38 +1,45 @@
 import SwiftUI
 
 struct ExperienceMarginsScreen: View {
-    private enum Filter: String, CaseIterable, Identifiable {
-        case all = "All"
-        case attention = "Needs attention"
-        case recent = "Recent"
-        var id: String { rawValue }
+    private struct MarginGroup: Identifiable {
+        let sessionID: String
+        let itemTitle: String
+        let sessionDate: Date?
+        let rows: [MarginRow]
+
+        var id: String { sessionID }
+
+        var sessionDescription: String {
+            guard let sessionDate else { return "Listening session" }
+            return sessionDate.formatted(date: .abbreviated, time: .shortened)
+        }
     }
 
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
-    @State private var filter: Filter = .all
     @State private var selectedMargin: MarginRow?
+    @State private var selectedSharedMargin: SharedMarginRow?
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 20) {
-                    ExperienceEditorialHeader(
-                        eyebrow: "Your private commentary",
-                        title: "Margins",
-                        detail: "Review the thoughts you captured across every listening session."
-                    )
-                    summaryStrip
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    TextField("Search your notes or an item", text: $model.marginCollectionQuery.text)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier("margins.search.field")
+                        .padding(.bottom, 12)
                     filterBar
-                    collection
+                        .padding(.bottom, 8)
+                    if model.marginCollectionQuery.filter == .shared { sharedCollection } else { collection }
                 }
                 .padding(.horizontal, horizontalSizeClass == .regular ? 28 : 16)
-                .padding(.vertical, 20)
+                .padding(.vertical, 12)
                 .frame(maxWidth: horizontalSizeClass == .regular ? 920 : .infinity)
                 .frame(maxWidth: .infinity)
             }
             .background(AppColors.bone)
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("margins.screen")
             .navigationTitle("Margins")
             .navigationBarTitleDisplayMode(.inline)
@@ -54,37 +61,18 @@ struct ExperienceMarginsScreen: View {
             .sheet(item: $selectedMargin) { row in
                 ExperienceMarginDetailView(row: row).environmentObject(model)
             }
+            .sheet(item: $selectedSharedMargin) { row in
+                SharedMarginDetailView(row: row).environmentObject(model)
+            }
         }
-    }
-
-    private var summaryStrip: some View {
-        HStack(spacing: 0) {
-            summaryMetric("Total", value: model.marginRows.count, color: AppColors.coral)
-            Divider().frame(height: 42)
-            summaryMetric("Attention", value: attentionCount, color: attentionCount > 0 ? AppColors.coral : AppColors.evergreen)
-            Divider().frame(height: 42)
-            summaryMetric("Items", value: itemCount, color: AppColors.ochre)
-        }
-        .padding(.vertical, 14)
-        .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay { RoundedRectangle(cornerRadius: 18).stroke(AppColors.border) }
-    }
-
-    private func summaryMetric(_ title: String, value: Int, color: Color) -> some View {
-        VStack(spacing: 3) {
-            Text("\(value)").font(.title2.bold().monospacedDigit()).foregroundStyle(color)
-            Text(title).font(.caption).foregroundStyle(AppColors.secondaryText)
-        }
-        .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .combine)
     }
 
     private var filterBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(Filter.allCases) { option in
-                    Button { filter = option } label: {
-                        ExperienceFilterChip(isActive: filter == option) { Text(option.rawValue) }
+                ForEach(MarginCollectionFilter.allCases, id: \.self) { option in
+                    Button { model.marginCollectionQuery.filter = option } label: {
+                        ExperienceFilterChip(isActive: model.marginCollectionQuery.filter == option) { Text(option.title) }
                     }
                     .buttonStyle(.plain)
                 }
@@ -98,77 +86,165 @@ struct ExperienceMarginsScreen: View {
             SMExperienceEmptyState(
                 systemImage: "quote.bubble",
                 title: model.marginRows.isEmpty ? "No Margins yet" : "Nothing in this view",
-                detail: model.marginRows.isEmpty ? "While listening, tap Interject and speak what you want to remember." : "Choose another filter to see more Margins.",
-                actionTitle: model.marginRows.isEmpty ? "Open Now Playing" : "Show all"
+                detail: model.marginRows.isEmpty ? "While listening, record or write what you want to remember." : "Try a different search or filter.",
+                actionTitle: model.marginRows.isEmpty ? (model.hasActiveSession ? "Open Now Playing" : "Choose an item") : "Clear search & filters"
             ) {
-                if model.marginRows.isEmpty { model.openPlayback() } else { filter = .all }
+                if model.marginRows.isEmpty {
+                    if model.hasActiveSession { model.openPlayback() } else { model.openLibrary() }
+                } else { model.marginCollectionQuery = MarginCollectionQuery() }
             }
         } else {
-            ForEach(groupedRows, id: \.title) { group in
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Text(group.title)
-                            .font(.system(.title3, design: .serif).weight(.bold))
-                        Spacer()
-                        Text("\(group.rows.count)")
-                            .font(.caption.monospacedDigit())
+            ForEach(groupedRows) { group in
+                VStack(alignment: .leading, spacing: 0) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(group.itemTitle)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(AppColors.text)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(group.sessionDescription)
+                            .font(.caption)
                             .foregroundStyle(AppColors.secondaryText)
                     }
-                    VStack(spacing: 0) {
-                        ForEach(Array(group.rows.enumerated()), id: \.element.id) { index, row in
-                            if index > 0 { Divider().padding(.leading, 62) }
-                            Button { selectedMargin = row } label: {
-                                HStack(alignment: .top, spacing: 12) {
-                                    Image(systemName: row.needsAttention ? "exclamationmark.bubble.fill" : "quote.bubble.fill")
-                                        .foregroundStyle(row.needsAttention ? AppColors.coral : AppColors.ochre)
-                                        .frame(width: 42, height: 42)
-                                        .background((row.needsAttention ? AppColors.coral : AppColors.ochre).opacity(0.1), in: Circle())
-                                    VStack(alignment: .leading, spacing: 5) {
-                                        Text(row.preview)
-                                            .font(.headline)
-                                            .foregroundStyle(AppColors.text)
-                                            .multilineTextAlignment(.leading)
-                                            .lineLimit(3)
-                                        Text(row.needsAttention ? row.attentionDescription : "\(row.targetDescription) · \(row.interjection.roughPercent)%")
-                                            .font(.caption)
-                                            .foregroundStyle(AppColors.secondaryText)
-                                    }
-                                    Spacer()
-                                    Image(systemName: "chevron.right")
-                                        .font(.caption.bold())
+                    .padding(.top, 16)
+                    .padding(.bottom, 6)
+
+                    ForEach(group.rows) { row in
+                        Button { selectedMargin = row } label: {
+                            HStack(alignment: .top, spacing: 12) {
+                                Image(systemName: row.interjection.isStarredForSharing == true ? "star.fill" : (row.needsAttention ? "exclamationmark.bubble.fill" : (row.isWritten ? "square.and.pencil" : "quote.bubble")))
+                                    .foregroundStyle(row.needsAttention ? AppColors.coral : AppColors.evergreen)
+                                    .frame(width: 28, height: 32)
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text(row.preview)
+                                        .font(.system(.body, design: .serif))
+                                        .foregroundStyle(AppColors.text)
+                                        .multilineTextAlignment(.leading)
+                                        .lineLimit(3)
+                                    Text(row.needsAttention ? row.attentionDescription : "\(row.targetDescription) · \(row.interjection.roughPercent)%")
+                                        .font(.caption)
                                         .foregroundStyle(AppColors.secondaryText)
                                 }
-                                .padding(14)
-                                .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+                                Spacer(minLength: 8)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(AppColors.secondaryText)
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("My Margin. \(row.preview). \(row.itemTitle)")
-                            .accessibilityIdentifier("margins.row.\(row.id)")
+                            .padding(.vertical, 12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("My Margin. \(row.preview). \(group.itemTitle). \(group.sessionDescription)")
+                        .accessibilityIdentifier("margins.row.\(row.id)")
+                        .overlay(alignment: .bottom) {
+                            Rectangle().fill(AppColors.border.opacity(0.75)).frame(height: 1)
                         }
                     }
-                    .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .overlay { RoundedRectangle(cornerRadius: 18).stroke(AppColors.border) }
                 }
             }
         }
     }
 
-    private var filteredRows: [MarginRow] {
-        switch filter {
-        case .all: model.marginRows
-        case .attention: model.marginRows.filter(\.needsAttention)
-        case .recent: Array(model.marginRows.prefix(12))
+    @ViewBuilder
+    private var sharedCollection: some View {
+        if model.visibleSharedMarginRows.isEmpty {
+            ContentUnavailableView(
+                model.marginCollectionQuery.text.isEmpty ? "No shared Margins" : "No matches",
+                systemImage: "person.2",
+                description: Text("Imported Margins appear here separately from your own notes.")
+            )
+        } else {
+            ForEach(model.visibleSharedMarginRows) { row in
+                Button { selectedSharedMargin = row } label: {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Label("Shared · \(row.collectionLabel)", systemImage: "person.2")
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                        Text(row.interjection.approvedTranscript)
+                            .font(.system(.body, design: .serif))
+                            .foregroundStyle(AppColors.text)
+                            .lineLimit(3)
+                        Text("\(row.itemTitle) · \(row.positionDescription)")
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                    }
+                    .multilineTextAlignment(.leading)
+                    .padding(.vertical, 14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("margins.shared.row.\(row.id)")
+                Divider()
+            }
         }
     }
 
-    private var groupedRows: [(title: String, rows: [MarginRow])] {
-        let order = filteredRows.reduce(into: [String]()) { result, row in
-            if !result.contains(row.itemTitle) { result.append(row.itemTitle) }
-        }
-        let groups = Dictionary(grouping: filteredRows, by: \.itemTitle)
-        return order.map { ($0, groups[$0, default: []]) }
-    }
+    private var filteredRows: [MarginRow] { model.visiblePrivateMarginRows }
 
-    private var attentionCount: Int { model.marginRows.filter(\.needsAttention).count }
-    private var itemCount: Int { Set(model.marginRows.map(\.itemTitle)).count }
+    private var groupedRows: [MarginGroup] {
+        let orderedSessionIDs = filteredRows.reduce(into: [String]()) { result, row in
+            if !result.contains(row.interjection.sessionId) {
+                result.append(row.interjection.sessionId)
+            }
+        }
+        let rowsBySession = Dictionary(grouping: filteredRows, by: \.interjection.sessionId)
+        return orderedSessionIDs.compactMap { sessionID in
+            guard let rows = rowsBySession[sessionID], let first = rows.first else { return nil }
+            return MarginGroup(
+                sessionID: sessionID,
+                itemTitle: first.itemTitle,
+                sessionDate: first.sessionDate,
+                rows: rows
+            )
+        }
+    }
+}
+
+private struct SharedMarginDetailView: View {
+    @EnvironmentObject private var model: Gate1AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var shouldOpenItem = false
+    let row: SharedMarginRow
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Label("Shared · \(row.collectionLabel)", systemImage: "person.2")
+                        .font(.subheadline)
+                    Text(row.interjection.approvedTranscript)
+                        .font(.system(.title3, design: .serif))
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Section("Source & position") {
+                    Text(row.itemTitle)
+                    Text(row.positionDescription)
+                    if row.layer.itemId != nil {
+                        Button("Open item and shared controls", systemImage: "doc.text") {
+                            shouldOpenItem = true
+                            dismiss()
+                        }
+                    } else {
+                        Text("The source is missing. Open the original shared file to match it.")
+                    }
+                }
+                Section {
+                    DisclosureGroup("Package details") {
+                        Text("Package integrity checked. This collection is unsigned; its label is not verified sender identity.")
+                        Text("Imported \(row.layer.importedAt.formatted(date: .abbreviated, time: .omitted))")
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(AppColors.bone)
+            .navigationTitle("Shared Margin")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { Button("Done") { dismiss() } }
+            .onDisappear {
+                if shouldOpenItem, let itemID = row.layer.itemId { model.openItem(id: itemID) }
+            }
+        }
+    }
 }

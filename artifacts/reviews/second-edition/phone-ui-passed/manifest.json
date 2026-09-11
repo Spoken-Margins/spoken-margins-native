@@ -1,0 +1,137 @@
+[
+  {
+    "attachments" : [
+      {
+        "configurationName" : "Default",
+        "deviceId" : "856FA6EF-5E03-4120-939B-F0EF42A804E8",
+        "deviceName" : "iPhone 17 Pro",
+        "exportedFileName" : "2CDE5446-C98E-4A59-8549-BA6A2229B3B3.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "second-edition-timeline-accessibility-clearance_0_FE1980F0-C798-4DB6-9382-E45AA1E1DEB0.png",
+        "timestamp" : 1789072741.073
+      },
+      {
+        "configurationName" : "Default",
+        "deviceId" : "856FA6EF-5E03-4120-939B-F0EF42A804E8",
+        "deviceName" : "iPhone 17 Pro",
+        "exportedFileName" : "94064C45-3BF8-41D9-9CEA-206FB95468DF.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "second-edition-add-text-keyboard-accessibility_0_FF79FA3C-C15F-4055-8389-9BAAD0B78A67.png",
+        "timestamp" : 1789072698.459
+      }
+    ],
+    "testIdentifier" : "Gate1FlowUITests/testBuild23LayoutRegressionsRemainOperableAtAccessibilityType()",
+    "testIdentifierURL" : "test://com.apple.xcode/SpokenMarginsNative/SpokenMarginsAppUITests/Gate1FlowUITests/testBuild23LayoutRegressionsRemainOperableAtAccessibilityType"
+  },
+  {
+    "attachments" : [
+      {
+        "configurationName" : "Default",
+        "deviceId" : "856FA6EF-5E03-4120-939B-F0EF42A804E8",
+        "deviceName" : "iPhone 17 Pro",
+        "exportedFileName" : "F9CA4E7C-7700-408A-8F80-BD811FEC0873.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "second-edition-item-shared-provenance_0_503730AD-97CB-4B17-9A4D-AA48755A25C0.png",
+        "timestamp" : 1789072791.689
+      }
+    ],
+    "testIdentifier" : "Gate1FlowUITests/testBuild23RecipientMissingSourceReturnsWithoutAutoplayAndShowsProvenance()",
+    "testIdentifierURL" : "test://com.apple.xcode/SpokenMarginsNative/SpokenMarginsAppUITests/Gate1FlowUITests/testBuild23RecipientMissingSourceReturnsWithoutAutoplayAndShowsProvenance"
+  },
+  {
+    "attachments" : [
+      {
+        "configurationName" : "Default",
+        "deviceId" : "856FA6EF-5E03-4120-939B-F0EF42A804E8",
+        "deviceName" : "iPhone 17 Pro",
+        "exportedFileName" : "F08E4C4F-7C33-4967-91C9-1B35D4ACF72C.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "library-compact-row_0_54B09A24-255D-46A8-AFD8-D72CCFEC9B52.png",
+        "timestamp" : 1789072843.785
+      }
+    ],
+    "testIdentifier" : "Gate1FlowUITests/testLibraryCompactRowStaysDense()",
+    "testIdentifierURL" : "test://com.apple.xcode/SpokenMarginsNative/SpokenMarginsAppUITests/Gate1FlowUITests/testLibraryCompactRowStaysDense"
+  },
+  {
+    "attachments" : [
+      {
+        "configurationName" : "Default",
+        "deviceId" : "856FA6EF-5E03-4120-939B-F0EF42A804E8",
+        "deviceName" : "iPhone 17 Pro",
+        "exportedFileName" : "90A4BEDA-655E-42A2-A999-389D0261957E.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "second-edition-long-title-accessibility-controls_0_288B4DEC-D624-4B47-A005-4211326D81CE.png",
+        "timestamp" : 1789072866.853
+      },
+      {
+        "configurationName" : "Default",
+        "deviceId" : "856FA6EF-5E03-4120-939B-F0EF42A804E8",
+        "deviceName" : "iPhone 17 Pro",
+        "exportedFileName" : "3627382A-EEB4-44DC-988A-48BB79FB1BB5.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "second-edition-native-accessibility-size_0_E349F32E-DAD9-48E2-BA9E-743C4DDCCBC0.png",
+        "timestamp" : 1789072863.397
+      }
+    ],
+    "testIdentifier" : "Gate1FlowUITests/testPlaybackPrimaryActionsRemainVisibleWithLongTitleAndAccessibilityText()",
+    "testIdentifierURL" : "test://com.apple.xcode/SpokenMarginsNative/SpokenMarginsAppUITests/Gate1FlowUITests/testPlaybackPrimaryActionsRemainVisibleWithLongTitleAndAccessibilityText"
+  },
+  {
+    "attachments" : [
+      {
+        "configurationName" : "Default",
+        "deviceId" : "856FA6EF-5E03-4120-939B-F0EF42A804E8",
+        "deviceName" : "iPhone 17 Pro",
+        "exportedFileName" : "14896C27-A049-42E6-B953-8EC158A23366.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "scrub-0_0_9F327A09-CE85-4A31-B33A-27B3D4C8776C.85",
+        "timestamp" : 1789072937.272
+      },
+      {
+        "configurationName" : "Default",
+        "deviceId" : "856FA6EF-5E03-4120-939B-F0EF42A804E8",
+        "deviceName" : "iPhone 17 Pro",
+        "exportedFileName" : "6DF1ADE1-D087-4FD1-8B3D-09415EACF320.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "scrub-0_0_13E80DE7-B795-4C81-BFB8-7F6D248D2BF6.22",
+        "timestamp" : 1789072928.254
+      },
+      {
+        "configurationName" : "Default",
+        "deviceId" : "856FA6EF-5E03-4120-939B-F0EF42A804E8",
+        "deviceName" : "iPhone 17 Pro",
+        "exportedFileName" : "4018995C-EDCA-45E8-92A8-1510FA735D5E.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "scrub-0_0_3F25E4E1-051F-4E41-BE62-F7D899F33A21.7",
+        "timestamp" : 1789072920.328
+      }
+    ],
+    "testIdentifier" : "Gate1FlowUITests/testPlaybackScrubberAcceptsPhysicalDrag()",
+    "testIdentifierURL" : "test://com.apple.xcode/SpokenMarginsNative/SpokenMarginsAppUITests/Gate1FlowUITests/testPlaybackScrubberAcceptsPhysicalDrag"
+  },
+  {
+    "attachments" : [
+      {
+        "configurationName" : "Default",
+        "deviceId" : "856FA6EF-5E03-4120-939B-F0EF42A804E8",
+        "deviceName" : "iPhone 17 Pro",
+        "exportedFileName" : "3DD03ABF-5D39-44FE-A0B6-5F603A7D79B3.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "second-edition-written-margin-detail_0_427A6F51-553F-424F-AE3B-6D297DB02DF1.png",
+        "timestamp" : 1789073060.199
+      },
+      {
+        "configurationName" : "Default",
+        "deviceId" : "856FA6EF-5E03-4120-939B-F0EF42A804E8",
+        "deviceName" : "iPhone 17 Pro",
+        "exportedFileName" : "79EE4F10-9349-4F50-B8B2-6EC5123DA41F.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "second-edition-written-capture-keyboard_0_11B0712F-DDB4-4A09-AE32-F530F59607C3.png",
+        "timestamp" : 1789073049.973
+      }
+    ],
+    "testIdentifier" : "Gate1FlowUITests/testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource()",
+    "testIdentifierURL" : "test://com.apple.xcode/SpokenMarginsNative/SpokenMarginsAppUITests/Gate1FlowUITests/testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource"
+  }
+]

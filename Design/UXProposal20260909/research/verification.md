@@ -39,3 +39,7 @@ Verified the repaired source in the actual browser:
 - No new browser script errors during the repaired-source pass.
 
 These are web artifact checks, not native product-flow validation.
+
+## Second edition · September 10
+
+Superseding browser and interaction evidence for the redesigned web concept is in [second-edition.md](second-edition.md). The original native app audit remains historical evidence from September 9. The product owner's subsequent rejection of the first proposal's use of space is documented there; the first design must not be described as human-validated.

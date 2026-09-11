@@ -1,0 +1,98 @@
+[
+  {
+    "attachments" : [
+      {
+        "configurationName" : "Default",
+        "deviceId" : "09B39C91-F60E-497E-9F7C-AAD8740FBAC3",
+        "deviceName" : "Spoken Margins Small Phone iOS 18",
+        "exportedFileName" : "1E75D567-F9CC-4A71-AAEB-3FC1FF9E57E6.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "second-edition-timeline-accessibility-clearance_0_99DC9ECB-67B6-4BE5-8204-B29FF4DAB51D.png",
+        "timestamp" : 1789077668.631
+      },
+      {
+        "configurationName" : "Default",
+        "deviceId" : "09B39C91-F60E-497E-9F7C-AAD8740FBAC3",
+        "deviceName" : "Spoken Margins Small Phone iOS 18",
+        "exportedFileName" : "ED47609A-50DB-4CBE-9C2A-AF49770454FC.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "second-edition-timeline-accessibility-content_0_70B2D8CD-C5BE-4985-B7B9-46C95A0B8CE8.png",
+        "timestamp" : 1789077647.016
+      },
+      {
+        "configurationName" : "Default",
+        "deviceId" : "09B39C91-F60E-497E-9F7C-AAD8740FBAC3",
+        "deviceName" : "Spoken Margins Small Phone iOS 18",
+        "exportedFileName" : "60FBB892-5A9A-4405-ADC3-4A745788B587.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "second-edition-add-text-keyboard-accessibility_0_F6625486-3205-4A09-B443-0713551396B2.png",
+        "timestamp" : 1789077638.845
+      }
+    ],
+    "testIdentifier" : "Gate1FlowUITests/testBuild23LayoutRegressionsRemainOperableAtAccessibilityType()",
+    "testIdentifierURL" : "test://com.apple.xcode/SpokenMarginsNative/SpokenMarginsAppUITests/Gate1FlowUITests/testBuild23LayoutRegressionsRemainOperableAtAccessibilityType"
+  },
+  {
+    "attachments" : [
+      {
+        "configurationName" : "Default",
+        "deviceId" : "09B39C91-F60E-497E-9F7C-AAD8740FBAC3",
+        "deviceName" : "Spoken Margins Small Phone iOS 18",
+        "exportedFileName" : "D66697EC-B15E-4885-8506-21F96665C181.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "library-compact-row_0_97131170-0D94-44F5-BAA7-9526217460D9.png",
+        "timestamp" : 1789077675.225
+      }
+    ],
+    "testIdentifier" : "Gate1FlowUITests/testLibraryCompactRowStaysDense()",
+    "testIdentifierURL" : "test://com.apple.xcode/SpokenMarginsNative/SpokenMarginsAppUITests/Gate1FlowUITests/testLibraryCompactRowStaysDense"
+  },
+  {
+    "attachments" : [
+      {
+        "configurationName" : "Default",
+        "deviceId" : "09B39C91-F60E-497E-9F7C-AAD8740FBAC3",
+        "deviceName" : "Spoken Margins Small Phone iOS 18",
+        "exportedFileName" : "FC83D2BD-C414-437C-B0D9-1DCF914B4230.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "second-edition-long-title-accessibility-controls_0_B620B2E9-7862-4481-95D6-9D4EBBED41A5.png",
+        "timestamp" : 1789077696.279
+      },
+      {
+        "configurationName" : "Default",
+        "deviceId" : "09B39C91-F60E-497E-9F7C-AAD8740FBAC3",
+        "deviceName" : "Spoken Margins Small Phone iOS 18",
+        "exportedFileName" : "BA2A341E-2FCB-49C4-8004-711227E954CC.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "second-edition-native-accessibility-size_0_71C34114-97A7-4C59-A996-E4961EEF6CCB.png",
+        "timestamp" : 1789077692.956
+      }
+    ],
+    "testIdentifier" : "Gate1FlowUITests/testPlaybackPrimaryActionsRemainVisibleWithLongTitleAndAccessibilityText()",
+    "testIdentifierURL" : "test://com.apple.xcode/SpokenMarginsNative/SpokenMarginsAppUITests/Gate1FlowUITests/testPlaybackPrimaryActionsRemainVisibleWithLongTitleAndAccessibilityText"
+  },
+  {
+    "attachments" : [
+      {
+        "configurationName" : "Default",
+        "deviceId" : "09B39C91-F60E-497E-9F7C-AAD8740FBAC3",
+        "deviceName" : "Spoken Margins Small Phone iOS 18",
+        "exportedFileName" : "CB03F265-6632-408A-BAE4-54D54F949F66.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "second-edition-written-margin-detail_0_D58C5837-C3D6-4650-9DEC-8A2796BBA8FF.png",
+        "timestamp" : 1789077722.722
+      },
+      {
+        "configurationName" : "Default",
+        "deviceId" : "09B39C91-F60E-497E-9F7C-AAD8740FBAC3",
+        "deviceName" : "Spoken Margins Small Phone iOS 18",
+        "exportedFileName" : "6317F3AA-C3A9-4E1E-B931-139A4507B1F8.png",
+        "isAssociatedWithFailure" : false,
+        "suggestedHumanReadableName" : "second-edition-written-capture-keyboard_0_7BD2F211-47ED-4E56-8C92-B962B3DE7794.png",
+        "timestamp" : 1789077715.447
+      }
+    ],
+    "testIdentifier" : "Gate1FlowUITests/testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource()",
+    "testIdentifierURL" : "test://com.apple.xcode/SpokenMarginsNative/SpokenMarginsAppUITests/Gate1FlowUITests/testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource"
+  }
+]

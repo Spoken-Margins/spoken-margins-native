@@ -4,8 +4,8 @@ import SessionKit
 struct ExperienceLibraryScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     @Binding var addSourceRoute: AddSourceRoute?
     @State private var isAudioPreparationQueuePresented = false
 
@@ -17,55 +17,44 @@ struct ExperienceLibraryScreen: View {
         LibraryPresentation.compactItems(model.visibleLibraryItems, excluding: continueItem)
     }
 
-    private var libraryComposition: Build23ExperiencePolishLayout.LibraryComposition {
-        Build23ExperiencePolishLayout.libraryComposition(
-            isCompactWidth: horizontalSizeClass == .compact,
-            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
-        )
+    private var visibleContinueItem: LibraryItemRow? {
+        guard let continueItem,
+              model.visibleLibraryItems.contains(where: { $0.id == continueItem.id }) else {
+            return nil
+        }
+        return continueItem
     }
 
     var body: some View {
         NavigationStack {
             List {
-                Text("Continue listening")
-                    .font(.system(.title2, design: .serif).weight(.semibold))
-                    .foregroundStyle(AppColors.text)
-                    .accessibilityAddTraits(.isHeader)
+                controls
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+
+                if let continueItem = visibleContinueItem {
+                    ExperienceLibraryCompactRow(
+                        row: continueItem,
+                        isCurrentItem: true,
+                        onOpen: { model.openItem(id: continueItem.id) },
+                        onPlay: { model.startItem(id: continueItem.id) },
+                        onComplete: { model.markItemCompleted(id: continueItem.id) },
+                        onPrepareOffline: { model.prioritizeOfflinePreparation(id: continueItem.id) },
+                        onDelete: { model.moveItemToTrash(id: continueItem.id) }
+                    )
+                    .libraryRowLayout(horizontalSizeClass: horizontalSizeClass)
+                }
+
+                items
 
                 if !model.audioPreparationQueue.isEmpty || !model.recentlyPreparedAudio.isEmpty {
                     preparationSummary
-                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 6)
                 }
 
                 if model.shouldShowOnboardingCard {
                     onboardingStrip
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
                 }
-
-                if let continueItem {
-                    continueHero(continueItem)
-                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
-                        .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                            Button { model.markItemCompleted(id: continueItem.id) } label: {
-                                Label("Complete", systemImage: "checkmark.circle.fill")
-                            }
-                            .tint(AppColors.evergreen)
-                        }
-                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                            Button(role: .destructive) { model.moveItemToTrash(id: continueItem.id) } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
-                            Button { model.prioritizeOfflinePreparation(id: continueItem.id) } label: {
-                                Label("Offline", systemImage: "arrow.down.circle")
-                            }
-                            .tint(AppColors.ochre)
-                        }
-                }
-
-                controls
-                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
-                items
             }
             .background(AppColors.bone)
             .scrollContentBackground(.hidden)
@@ -105,7 +94,7 @@ struct ExperienceLibraryScreen: View {
             Button {
                 addSourceRoute = .linkOrPodcast
             } label: {
-                Label("Add Source", systemImage: "plus")
+                Label("Add", systemImage: "plus")
             }
             .accessibilityIdentifier("home.addSource.button")
         }
@@ -182,115 +171,6 @@ struct ExperienceLibraryScreen: View {
         .accessibilityIdentifier("library.onboarding.starters")
     }
 
-    private func continueHero(_ item: LibraryItemRow) -> some View {
-        Group {
-            Group {
-                switch libraryComposition {
-                case .horizontal:
-                    HStack(spacing: 18) {
-                        SMExperienceTypeCover(row: item, size: horizontalSizeClass == .regular ? 112 : 88)
-                        Button { model.openItem(id: item.id) } label: { continueHeroDetails(item) }
-                            .buttonStyle(.borderless)
-                            .accessibilityIdentifier("library.row.\(item.id)")
-                        Spacer(minLength: 0)
-                        continueHeroAction(item)
-                    }
-                case .wrapped:
-                    VStack(alignment: .leading, spacing: 16) {
-                        HStack(alignment: .top, spacing: 12) {
-                            SMExperienceTypeCover(row: item, size: 88)
-                            Spacer(minLength: 12)
-                            continueHeroAction(item)
-                        }
-                        Button { model.openItem(id: item.id) } label: { continueHeroDetails(item) }
-                            .buttonStyle(.borderless)
-                            .accessibilityIdentifier("library.row.\(item.id)")
-                    }
-                }
-            }
-            .padding(horizontalSizeClass == .regular ? 22 : 16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                LinearGradient(
-                    colors: [AppColors.panel, AppColors.softGreen.opacity(0.86)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .stroke(AppColors.evergreen.opacity(0.28))
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityHint("This item is saved in your Library.")
-    }
-
-    private func continueHeroDetails(_ item: LibraryItemRow) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(
-                model.activePlaybackItemId == item.id ? "Now playing · In your Library" : "Continue listening · In your Library",
-                systemImage: "play.circle.fill"
-            )
-                .font(.caption.weight(.bold))
-                .textCase(.uppercase)
-                .foregroundStyle(AppColors.ochre)
-            Text(item.title)
-                .font(.system(.title2, design: .serif).weight(.bold))
-                .foregroundStyle(AppColors.text)
-                .multilineTextAlignment(.leading)
-                .lineLimit(3)
-            if let source = item.sourceTitle ?? item.author {
-                Text(source)
-                    .font(.subheadline)
-                    .foregroundStyle(AppColors.secondaryText)
-                    .lineLimit(1)
-            }
-            if let progress = item.continuationProgressPercent {
-                VStack(alignment: .leading, spacing: 4) {
-                    ProgressView(value: Double(progress), total: 100)
-                        .tint(AppColors.ochre)
-                    Text("\(progress)% complete")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(AppColors.secondaryText)
-                }
-            }
-        }
-    }
-
-    private func continueHeroAction(_ item: LibraryItemRow) -> some View {
-        Button { model.startItem(id: item.id) } label: {
-            ZStack(alignment: .bottomTrailing) {
-                Image(systemName: "play.fill")
-                    .font(.title3)
-                    .foregroundStyle(item.offlineState == .readyOffline ? .white : AppColors.evergreen)
-                    .frame(width: 54, height: 54)
-                    .background(item.offlineState == .readyOffline ? AppColors.evergreen : AppColors.softGreen, in: Circle())
-                if item.startupAudioState == .preparing {
-                    ProgressView()
-                        .controlSize(.mini)
-                        .tint(AppColors.evergreen)
-                        .padding(4)
-                        .background(AppColors.panel, in: Circle())
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Continue \(item.title)")
-        .accessibilityValue(
-            item.startupAudioState == .preparing
-                ? "\(startupProgressDescription(item)). Playback can start now."
-                : (item.offlineState == .readyOffline ? "Ready offline" : "Opening audio ready")
-        )
-        .accessibilityIdentifier("library.continue.\(item.id)")
-    }
-
-    private func startupProgressDescription(_ item: LibraryItemRow) -> String {
-        let target = max(1, item.startupAudioTargetChunkCount)
-        return "\(min(item.startupAudioCompletedChunkCount, target)) of \(target) opening chunks ready"
-    }
-
     private var controls: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
@@ -317,88 +197,51 @@ struct ExperienceLibraryScreen: View {
             .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay { RoundedRectangle(cornerRadius: 14).stroke(AppColors.border) }
 
-            filterControls
-                .labelStyle(.titleAndIcon)
+            HStack(spacing: 8) {
+                libraryFiltersMenu
+                sortMenu
+            }
         }
         .onChange(of: model.libraryQuery) { _, _ in model.libraryQueryChanged() }
     }
 
-    @ViewBuilder
-    private var filterControls: some View {
-        if libraryComposition == .wrapped {
-            wrappedFilterControls
-        } else {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) {
-                    contentTypeMenu
-                    listeningMenu
-                    offlineMenu
-                    sortMenu
-                }
-                .fixedSize(horizontal: true, vertical: true)
-
-                wrappedFilterControls
-            }
-        }
-    }
-
-    private var wrappedFilterControls: some View {
-        LazyVGrid(columns: wrappedFilterColumns, alignment: .leading, spacing: 8) {
-            contentTypeMenu.frame(maxWidth: .infinity, alignment: .leading)
-            listeningMenu.frame(maxWidth: .infinity, alignment: .leading)
-            offlineMenu.frame(maxWidth: .infinity, alignment: .leading)
-            sortMenu.frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private var wrappedFilterColumns: [GridItem] {
-        if dynamicTypeSize.isAccessibilitySize {
-            return [GridItem(.flexible(), spacing: 8, alignment: .leading)]
-        }
-        return [GridItem(.adaptive(minimum: 150), spacing: 8, alignment: .leading)]
-    }
-
-    private var contentTypeMenu: some View {
+    private var libraryFiltersMenu: some View {
         Menu {
-            Picker("Content type", selection: $model.libraryQuery.contentType) {
-                ForEach(LibraryContentTypeFilter.allCases, id: \.self) { option in
-                    Text(displayName(option.rawValue)).tag(option)
+            Section("Content type") {
+                Picker("Content type", selection: $model.libraryQuery.contentType) {
+                    ForEach(LibraryContentTypeFilter.allCases, id: \.self) { option in
+                        Text(displayName(option.rawValue)).tag(option)
+                    }
+                }
+            }
+            Section("Listening") {
+                Picker("Listening", selection: $model.libraryQuery.listeningState) {
+                    ForEach(LibraryListeningStateFilter.allCases, id: \.self) { option in
+                        Text(displayName(option.rawValue)).tag(option)
+                    }
+                }
+            }
+            Section("Offline") {
+                Picker("Offline", selection: $model.libraryQuery.offlineState) {
+                    ForEach(LibraryOfflineStateFilter.allCases, id: \.self) { option in
+                        Text(displayName(option.rawValue)).tag(option)
+                    }
                 }
             }
         } label: {
-            ExperienceFilterChip(isActive: model.libraryQuery.contentType != .all) {
-                Label(displayName(model.libraryQuery.contentType.rawValue), systemImage: "square.grid.2x2")
+            if dynamicTypeSize.isAccessibilitySize {
+                Image(systemName: "line.3.horizontal.decrease.circle")
+                    .font(.title2)
+                    .frame(minWidth: 52, minHeight: 52)
+                    .foregroundStyle(AppColors.evergreen)
+            } else {
+                ExperienceFilterChip(isActive: hasActiveFilters) {
+                    Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
+                }
             }
         }
+        .accessibilityLabel(hasActiveFilters ? "Filter Library, active filters" : "Filter Library")
         .accessibilityIdentifier("library.filter.menu")
-    }
-
-    private var listeningMenu: some View {
-        Menu {
-            Picker("Listening", selection: $model.libraryQuery.listeningState) {
-                ForEach(LibraryListeningStateFilter.allCases, id: \.self) { option in
-                    Text(displayName(option.rawValue)).tag(option)
-                }
-            }
-        } label: {
-            ExperienceFilterChip(isActive: model.libraryQuery.listeningState != .all) {
-                Label(displayName(model.libraryQuery.listeningState.rawValue), systemImage: "play.circle")
-            }
-        }
-    }
-
-    private var offlineMenu: some View {
-        Menu {
-            Picker("Offline", selection: $model.libraryQuery.offlineState) {
-                ForEach(LibraryOfflineStateFilter.allCases, id: \.self) { option in
-                    Text(displayName(option.rawValue)).tag(option)
-                }
-            }
-        } label: {
-            ExperienceFilterChip(isActive: model.libraryQuery.offlineState != .all) {
-                Label(displayName(model.libraryQuery.offlineState.rawValue), systemImage: "arrow.down.circle")
-            }
-        }
     }
 
     private var sortMenu: some View {
@@ -409,11 +252,26 @@ struct ExperienceLibraryScreen: View {
                 }
             }
         } label: {
-            ExperienceFilterChip(isActive: model.libraryQuery.sort != .recentlyAdded) {
-                Label(displayName(model.libraryQuery.sort.rawValue), systemImage: "arrow.up.arrow.down")
+            if dynamicTypeSize.isAccessibilitySize {
+                Image(systemName: "arrow.up.arrow.down")
+                    .font(.title2)
+                    .frame(minWidth: 52, minHeight: 52)
+                    .foregroundStyle(AppColors.evergreen)
+            } else {
+                ExperienceFilterChip(isActive: model.libraryQuery.sort != .recentlyAdded) {
+                    Label(displayName(model.libraryQuery.sort.rawValue), systemImage: "arrow.up.arrow.down")
+                }
             }
         }
+        .accessibilityLabel("Sort Library")
+        .accessibilityValue(displayName(model.libraryQuery.sort.rawValue))
         .accessibilityIdentifier("library.sort.menu")
+    }
+
+    private var hasActiveFilters: Bool {
+        model.libraryQuery.contentType != .all
+            || model.libraryQuery.listeningState != .all
+            || model.libraryQuery.offlineState != .all
     }
 
     @ViewBuilder
@@ -426,7 +284,7 @@ struct ExperienceLibraryScreen: View {
                 actionTitle: "Add Source"
             ) { addSourceRoute = .linkOrPodcast }
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
-        } else if compactItems.isEmpty {
+        } else if model.visibleLibraryItems.isEmpty {
             SMExperienceEmptyState(
                 systemImage: "magnifyingglass",
                 title: "No matches",
@@ -438,37 +296,16 @@ struct ExperienceLibraryScreen: View {
             }
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
         } else {
-            Section {
-                ForEach(compactItems) { row in
-                    ExperienceLibraryCompactRow(
-                        row: row,
-                        onOpen: { model.openItem(id: row.id) },
-                        onPlay: { model.startItem(id: row.id) },
-                        onComplete: { model.markItemCompleted(id: row.id) },
-                        onPrepareOffline: { model.prioritizeOfflinePreparation(id: row.id) },
-                        onDelete: { model.moveItemToTrash(id: row.id) }
-                    )
-                    .listRowInsets(EdgeInsets(
-                        top: 0,
-                        leading: horizontalSizeClass == .regular ? 28 : 16,
-                        bottom: 0,
-                        trailing: horizontalSizeClass == .regular ? 28 : 16
-                    ))
-                    .listRowBackground(AppColors.bone)
-                    .listRowSeparator(.hidden)
-                }
-            } header: {
-                HStack {
-                    Text("In your Library")
-                        .font(.system(.title3, design: .serif).weight(.bold))
-                        .foregroundStyle(AppColors.text)
-                    Spacer()
-                    Text("\(compactItems.count)")
-                        .font(.subheadline.monospacedDigit())
-                        .foregroundStyle(AppColors.secondaryText)
-                }
-                .textCase(nil)
-                .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
+            ForEach(compactItems) { row in
+                ExperienceLibraryCompactRow(
+                    row: row,
+                    onOpen: { model.openItem(id: row.id) },
+                    onPlay: { model.startItem(id: row.id) },
+                    onComplete: { model.markItemCompleted(id: row.id) },
+                    onPrepareOffline: { model.prioritizeOfflinePreparation(id: row.id) },
+                    onDelete: { model.moveItemToTrash(id: row.id) }
+                )
+                .libraryRowLayout(horizontalSizeClass: horizontalSizeClass)
             }
         }
     }
@@ -479,7 +316,10 @@ struct ExperienceLibraryScreen: View {
 }
 
 private struct ExperienceLibraryCompactRow: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let row: LibraryItemRow
+    var isCurrentItem = false
     let onOpen: () -> Void
     let onPlay: () -> Void
     let onComplete: () -> Void
@@ -488,19 +328,28 @@ private struct ExperienceLibraryCompactRow: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            SMExperienceTypeCover(row: row, size: 52)
+            Image(systemName: mediaSymbol)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(AppColors.evergreen)
+                .frame(width: 38, height: 44)
+                .background(AppColors.softGreen.opacity(isCurrentItem ? 0.85 : 0.55))
             Button(action: onOpen) {
                 VStack(alignment: .leading, spacing: 3) {
+                    if isCurrentItem {
+                        Label(currentItemLabel, systemImage: "play.circle.fill")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(AppColors.evergreen)
+                    }
                     Text(row.title)
                         .font(.headline)
                         .foregroundStyle(AppColors.text)
                         .multilineTextAlignment(.leading)
-                        .lineLimit(2)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
                     Text(detailLine)
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
                         .multilineTextAlignment(.leading)
-                        .lineLimit(1)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -534,10 +383,22 @@ private struct ExperienceLibraryCompactRow: View {
             .accessibilityIdentifier("queue.start.\(row.id)")
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .frame(maxWidth: .infinity, minHeight: 70, alignment: .leading)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
         .contentShape(Rectangle())
-        .background(AppColors.panel)
+        .background(AppColors.bone)
+        .overlay(alignment: .leading) {
+            if isCurrentItem {
+                Rectangle()
+                    .fill(AppColors.evergreen)
+                    .frame(width: 3)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(AppColors.border.opacity(0.8))
+                .frame(height: 1)
+        }
         .contextMenu {
             Button("Open", systemImage: "arrow.right", action: onOpen)
             Button(playActionTitle, systemImage: "play", action: onPlay)
@@ -574,7 +435,7 @@ private struct ExperienceLibraryCompactRow: View {
     }
 
     private var detailLine: String {
-        [row.sourceTitle ?? row.author, mediaLabel, listeningLabel, offlineDetailLabel]
+        [sourceByline, mediaLabel, listeningLabel, statusDetail]
             .compactMap { value in
                 guard let value, !value.isEmpty else { return nil }
                 return value
@@ -582,9 +443,38 @@ private struct ExperienceLibraryCompactRow: View {
             .joined(separator: " · ")
     }
 
+    private var sourceByline: String? {
+        for candidate in [row.sourceTitle, row.author] {
+            guard var value = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { continue }
+            if value.hasPrefix("[["), value.hasSuffix("]]") {
+                value = String(value.dropFirst(2).dropLast(2))
+            }
+            if value.caseInsensitiveCompare(row.title) != .orderedSame { return value }
+        }
+        return nil
+    }
+
     private var playActionTitle: String {
-        if row.isCompleted { return "Review \(row.title)" }
+        if (row.continuationProgressPercent ?? 0) >= 100 { return "Replay \(row.title)" }
         return row.hasContinuationSession ? "Continue \(row.title)" : "Start \(row.title)"
+    }
+
+    private var currentItemLabel: String {
+        if (row.continuationProgressPercent ?? 0) >= 100 { return "Finished" }
+        return row.hasContinuationSession ? (dynamicTypeSize.isAccessibilitySize ? "Resume" : "Continue listening") : "Current item"
+    }
+
+    private var mediaSymbol: String {
+        switch row.mediaType.lowercased() {
+        case "podcast", "audio", "audiobook", "m4a", "m4b", "mp3":
+            "headphones"
+        case "pdf":
+            "doc.richtext"
+        case "epub":
+            "book.closed"
+        default:
+            "doc.text"
+        }
     }
 
     private var listeningLabel: String? {
@@ -610,7 +500,7 @@ private struct ExperienceLibraryCompactRow: View {
         case .paused:
             return "Opening audio paused"
         case .failed:
-            return "Live voice available"
+            return "Opening audio unavailable · Live voice available"
         case .notRequired, .ready:
             break
         }
@@ -622,8 +512,25 @@ private struct ExperienceLibraryCompactRow: View {
         }
     }
 
+    private var statusDetail: String? {
+        offlineDetailLabel
+    }
+
     private var startupProgressDescription: String {
         let target = max(1, row.startupAudioTargetChunkCount)
         return "\(min(row.startupAudioCompletedChunkCount, target)) of \(target) chunks"
+    }
+}
+
+private extension View {
+    func libraryRowLayout(horizontalSizeClass: UserInterfaceSizeClass?) -> some View {
+        listRowInsets(EdgeInsets(
+            top: 0,
+            leading: horizontalSizeClass == .regular ? 28 : 16,
+            bottom: 0,
+            trailing: horizontalSizeClass == .regular ? 28 : 16
+        ))
+        .listRowBackground(AppColors.bone)
+        .listRowSeparator(.hidden)
     }
 }

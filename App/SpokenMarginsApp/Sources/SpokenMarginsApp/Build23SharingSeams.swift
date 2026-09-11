@@ -647,18 +647,13 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             transport: transport(verified.manifest.itemTransport.kind),
             margins: margins,
             voiceAssetCount: verified.manifest.assets.filter {
-                [SpokenMarginsAssetRole.originalVoice, SpokenMarginsAssetRole.cleanedVoice].contains($0.role)
+                [SpokenMarginsAssetRole.originalVoice, SpokenMarginsAssetRole.cleanedVoice, SpokenMarginsAssetRole.summaryVoice, SpokenMarginsAssetRole.ttsVoice].contains($0.role)
             }.count,
             acousticEvidenceCount: verified.manifest.assets.filter {
                 $0.role == SpokenMarginsAssetRole.acousticSignature
             }.count,
             listeningMapProposalCount: verified.listeningMapProposals.count,
-            disclosures: [
-                "Only the reviewed Margins shown here are in this file.",
-                "Private sharing notes, unrelated sessions, and raw diagnostics are not included.",
-                "Podcast audio is never included.",
-                "Sender identity is labeled but not cryptographically verified."
-            ]
+            disclosures: SharingRightsPresentation.disclosures(for: verified)
         )
     }
 

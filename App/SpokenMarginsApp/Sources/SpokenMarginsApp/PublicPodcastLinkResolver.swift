@@ -1350,6 +1350,7 @@ private struct RSSFeedItem {
     var publisherChapterCollections: [PublisherChapterCollection] = []
     var podloveChapters: [PublisherChapter] = []
     var description: String?
+    var descriptionChapters: PublisherChapterCollection?
     var publishedAt: String?
     var durationMs: Int?
     var isExactMatch = false
@@ -1433,6 +1434,12 @@ private final class RSSFeedParser: NSObject, XMLParserDelegate {
                 if currentItem?.description?.isEmpty != false, !text.isEmpty {
                     currentItem?.description = text
                 }
+                // A short summary often precedes the full show notes. Retain
+                // the richest usable chapter list rather than the first text.
+                if let chapters = TimestampedDescriptionChapterParser.parse(text),
+                   chapters.chapters.count > (currentItem?.descriptionChapters?.chapters.count ?? 0) {
+                    currentItem?.descriptionChapters = chapters
+                }
             case "chapters":
                 if namespaceURI?.lowercased() == "http://podlove.org/simple-chapters" {
                     isInPodloveChapters = false
@@ -1446,8 +1453,7 @@ private final class RSSFeedParser: NSObject, XMLParserDelegate {
                             chapters: item.podloveChapters
                         ))
                     }
-                    if let description = item.description,
-                       let descriptionChapters = TimestampedDescriptionChapterParser.parse(description) {
+                    if let descriptionChapters = item.descriptionChapters {
                         item.publisherChapterCollections.append(descriptionChapters)
                     }
                     items.append(item)

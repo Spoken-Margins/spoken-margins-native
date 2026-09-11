@@ -1,0 +1,120 @@
+Application, 0x117794b40, pid: 36298, label: 'Spoken Margins' <App element pid: 36298>
+  Window (Main), 0x117794c80, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 36298, elementOrHash.elementID: 4397418496.4>
+    Other, 0x117794dc0, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 36298, elementOrHash.elementID: 4455711232.5>
+      Other, 0x117794f00, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 36298, elementOrHash.elementID: 4456646528.6>
+        Other, 0x117795040, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 36298, elementOrHash.elementID: 4397417472.7>
+          Other, 0x117795180, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 36298, elementOrHash.elementID: 4454747200.8>
+            Other, 0x1177952c0, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 36298, elementOrHash.elementID: 4455154560.448>
+              Other, 0x117795400, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 36298, elementOrHash.elementID: 4863549440.450>
+                Other, 0x117795540, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 36298, elementOrHash.elementID: 4455139520.454>
+                  Other, 0x117795680, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 36298, elementOrHash.elementID: 4397423616.457>
+                    Other, 0x1177957c0, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 36298, elementOrHash.elementID: 4455279552.460>
+                      Other, 0x117795900, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 36298, elementOrHash.elementID: 4455280000.463>
+                        Other, 0x117795a40, {{0.0, 0.0}, {402.0, 874.0}}, identifier: 'library.screen' <AX element pid: 36298, elementOrHash.elementID: 4399495168.469>
+                          NavigationBar, 0x117795b80, {{0.0, 62.0}, {402.0, 54.0}}, identifier: 'Library' <AX element pid: 36298, elementOrHash.elementID: 4863358464.476>
+                            Other, 0x117795cc0, {{20.0, 66.0}, {48.0, 36.0}}, identifier: 'home.settings.button', label: 'Library options' <AX element pid: 36298, elementOrHash.elementID: 4815060992.485>
+                              Other, 0x117795e00, {{20.0, 66.0}, {48.0, 36.0}} <AX element pid: 36298, elementOrHash.elementID: 4454961536.492>
+                                Button, 0x117795f40, {{20.0, 66.0}, {48.0, 36.0}}, identifier: 'home.settings.button', label: 'Library options' <AX element pid: 36298, elementOrHash.elementID: 4454961088.496>
+                                  Button, 0x117796080, {{20.0, 66.0}, {48.0, 36.0}} <AX element pid: 36298, elementOrHash.elementID: 4744339328.499>
+                                    Image, 0x1177961c0, {{33.0, 73.0}, {22.0, 22.0}}, identifier: 'ellipsis.circle', label: 'More' <AX element pid: 36298, elementOrHash.elementID: 4454958848.503>
+                            StaticText, 0x117796300, {{172.7, 73.7}, {56.3, 20.7}}, label: 'Library' <AX element pid: 36298, elementOrHash.elementID: 4744346496.486>
+                            Button, 0x117796440, {{346.0, 66.0}, {36.0, 36.0}}, identifier: 'home.addSource.button', label: 'Add' <AX element pid: 36298, elementOrHash.elementID: 4747239552.487>
+                          Other, 0x117796580, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 36298, elementOrHash.elementID: 4399482176.477>
+                            Other, 0x1177966c0, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 36298, elementOrHash.elementID: 4454939520.488>
+                              Other, 0x117796800, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 36298, elementOrHash.elementID: 4864870144.493>
+                                Other, 0x117796940, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 36298, elementOrHash.elementID: 4455278656.497>
+                                  CollectionView, 0x117796a80, {{0.0, 0.0}, {402.0, 874.0}}, identifier: 'home.screen' <AX element pid: 36298, elementOrHash.elementID: 4555948032.500>
+                                    Other, 0x117796bc0, {{0.0, -1632.0}, {402.0, 3947.7}} <AX element pid: 36298, elementOrHash.elementID: 4748035584.504>
+                                    Other, 0x117796d00, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 36298, elementOrHash.elementID: 4454666624.505>
+                                      Other, 0x117796e40, {{0.0, 0.0}, {402.0, 170.8}} <AX element pid: 36298, elementOrHash.elementID: 4454842368.513>
+                                      Other, 0x117796f80, {{0.0, 726.2}, {402.0, 147.8}} <AX element pid: 36298, elementOrHash.elementID: 4454849536.514>
+                                    Other, 0x1177970c0, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 36298, elementOrHash.elementID: 4454676032.506>
+                                    Cell, 0x117797200, {{0.0, 116.0}, {402.0, 106.0}} <AX element pid: 36298, elementOrHash.elementID: 4815064832.507>
+                                      Other, 0x117797340, {{0.0, 116.0}, {402.0, 106.0}} <AX element pid: 36298, elementOrHash.elementID: 4455726080.515>
+                                        Other, 0x117797480, {{0.0, 116.0}, {402.0, 106.0}} <AX element pid: 36298, elementOrHash.elementID: 4744341120.524>
+                                          Other, 0x1177975c0, {{0.0, 116.0}, {402.0, 106.0}} <AX element pid: 36298, elementOrHash.elementID: 4455278208.532>
+                                      Other, 0x117797700, {{0.0, 116.0}, {402.0, 106.0}} <AX element pid: 36298, elementOrHash.elementID: 4454850432.516>
+                                        Other, 0x117797840, {{0.0, 116.0}, {402.0, 106.0}} <AX element pid: 36298, elementOrHash.elementID: 4456516608.525>
+                                          Other, 0x117797980, {{0.0, 116.0}, {402.0, 106.0}} <AX element pid: 36298, elementOrHash.elementID: 4455151616.533>
+                                            Image, 0x117797ac0, {{32.0, 135.7}, {16.3, 16.7}}, identifier: 'magnifyingglass', label: 'Search' <AX element pid: 36298, elementOrHash.elementID: 4455277760.540>
+                                            TextField, 0x117797c00, {{60.3, 133.0}, {311.7, 22.0}}, identifier: 'library.search.field', placeholderValue: 'Search title, source, or author' <AX element pid: 36298, elementOrHash.elementID: 4815062272.541>
+                                            Button, 0x117797d40, {{16.0, 180.0}, {102.7, 38.0}}, identifier: 'library.filter.menu', label: 'Filter Library' <AX element pid: 36298, elementOrHash.elementID: 4454964224.542>
+                                              Button, 0x117797e80, {{16.0, 180.0}, {102.7, 38.0}} <AX element pid: 36298, elementOrHash.elementID: 4398012544.556>
+                                                Image, 0x11744b480, {{31.3, 189.3}, {19.7, 19.7}}, identifier: 'line.3.horizontal.decrease.circle', label: 'Filter' <AX element pid: 36298, elementOrHash.elementID: 4455276864.563>
+                                                StaticText, 0x11744b5c0, {{31.3, 189.3}, {74.3, 19.7}}, label: 'Filter' <AX element pid: 36298, elementOrHash.elementID: 4455275968.564>
+                                            Button, 0x11744b700, {{126.7, 180.0}, {179.0, 38.0}}, identifier: 'library.sort.menu', label: 'Recently Added' <AX element pid: 36298, elementOrHash.elementID: 4455306496.543>
+                                              Button, 0x11744b840, {{126.7, 180.0}, {179.0, 38.0}} <AX element pid: 36298, elementOrHash.elementID: 4398017920.557>
+                                                Image, 0x11744b980, {{140.3, 189.7}, {22.7, 18.7}}, identifier: 'arrow.up.arrow.down', label: 'Sort' <AX element pid: 36298, elementOrHash.elementID: 4399395968.566>
+                                                StaticText, 0x11744bc00, {{140.3, 189.7}, {152.3, 18.7}}, label: 'Recently Added' <AX element pid: 36298, elementOrHash.elementID: 4455306944.567>
+                                    Cell, 0x1174488c0, {{0.0, 222.0}, {402.0, 68.0}} <AX element pid: 36298, elementOrHash.elementID: 4815066112.508>
+                                      Other, 0x11744be80, {{0.0, 222.0}, {402.0, 68.0}} <AX element pid: 36298, elementOrHash.elementID: 4455723008.517>
+                                        Other, 0x117448b40, {{0.0, 222.0}, {402.0, 68.0}} <AX element pid: 36298, elementOrHash.elementID: 4744342912.526>
+                                          Other, 0x117448c80, {{0.0, 222.0}, {402.0, 68.0}} <AX element pid: 36298, elementOrHash.elementID: 4455144448.534>
+                                      Other, 0x11744ad00, {{0.0, 222.0}, {402.0, 68.0}} <AX element pid: 36298, elementOrHash.elementID: 4454849088.518>
+                                        Other, 0x117448140, {{0.0, 222.0}, {402.0, 68.0}} <AX element pid: 36298, elementOrHash.elementID: 4456513536.527>
+                                          Other, 0x117448280, {{0.0, 222.0}, {402.0, 68.0}} <AX element pid: 36298, elementOrHash.elementID: 4455150720.535>
+                                            Image, 0x1174483c0, {{39.7, 247.0}, {14.7, 18.3}}, identifier: 'doc.text', label: 'Plain Text Document' <AX element pid: 36298, elementOrHash.elementID: 4455148032.544>
+                                            Button, 0x117448500, {{78.0, 235.3}, {244.0, 41.3}}, identifier: 'library.row.item-pill', label: 'You Can't Inspect the Pill, [[You Can't Inspect the Pill]] · Text · Completed' <AX element pid: 36298, elementOrHash.elementID: 4455138624.545>
+                                              StaticText, 0x117448640, {{78.0, 235.3}, {197.7, 20.3}}, label: 'You Can't Inspect the Pill' <AX element pid: 36298, elementOrHash.elementID: 4455149376.558>
+                                              StaticText, 0x11744ae40, {{78.0, 258.7}, {240.3, 18.0}}, label: '[[You Can't Inspect the Pill]] · Text · Completed' <AX element pid: 36298, elementOrHash.elementID: 4455149824.559>
+                                            Button, 0x11744bd40, {{334.0, 236.0}, {40.0, 40.0}}, identifier: 'queue.start.item-pill', label: 'Review You Can't Inspect the Pill', value: Ready to start <AX element pid: 36298, elementOrHash.elementID: 4455143104.546>
+                                    Cell, 0x11744b0c0, {{0.0, 290.0}, {402.0, 83.3}} <AX element pid: 36298, elementOrHash.elementID: 4815067392.509>
+                                      Other, 0x11744b340, {{0.0, 290.0}, {402.0, 83.3}} <AX element pid: 36298, elementOrHash.elementID: 4455723520.519>
+                                        Other, 0x117448000, {{0.0, 290.0}, {402.0, 83.3}} <AX element pid: 36298, elementOrHash.elementID: 4864883584.528>
+                                          Other, 0x11744bac0, {{0.0, 290.0}, {402.0, 83.3}} <AX element pid: 36298, elementOrHash.elementID: 4455151168.536>
+                                      Other, 0x117448780, {{0.0, 290.0}, {402.0, 83.3}} <AX element pid: 36298, elementOrHash.elementID: 4454846848.520>
+                                        Other, 0x117a48000, {{0.0, 290.0}, {402.0, 83.3}} <AX element pid: 36298, elementOrHash.elementID: 4456521216.529>
+                                          Other, 0x117a48140, {{0.0, 290.0}, {402.0, 83.3}} <AX element pid: 36298, elementOrHash.elementID: 4454672448.537>
+                                            Image, 0x117a48280, {{39.7, 322.7}, {14.7, 18.3}}, identifier: 'doc.text', label: 'Plain Text Document' <AX element pid: 36298, elementOrHash.elementID: 4455148928.547>
+                                            Button, 0x117a483c0, {{78.0, 300.0}, {244.0, 63.3}}, identifier: 'library.row.guided-onboarding', label: 'A Guided Tour of Spoken Margins, Spoken Margins · Guided Tour · Offline' <AX element pid: 36298, elementOrHash.elementID: 4455150272.548>
+                                              StaticText, 0x117a48500, {{78.0, 300.0}, {137.0, 42.3}}, label: 'A Guided Tour of Spoken Margins' <AX element pid: 36298, elementOrHash.elementID: 4455147136.560>
+                                              StaticText, 0x117a48640, {{78.0, 345.3}, {241.3, 18.0}}, label: 'Spoken Margins · Guided Tour · Offline' <AX element pid: 36298, elementOrHash.elementID: 4455148480.561>
+                                            Button, 0x117a48780, {{334.0, 311.7}, {40.0, 40.0}}, identifier: 'queue.start.guided-onboarding', label: 'Start A Guided Tour of Spoken Margins', value: Ready offline <AX element pid: 36298, elementOrHash.elementID: 4454676480.549>
+                                    Cell, 0x117a488c0, {{0.0, 373.3}, {402.0, 194.3}} <AX element pid: 36298, elementOrHash.elementID: 4398138624.510>
+                                      Other, 0x117a48a00, {{0.0, 373.3}, {402.0, 194.3}} <AX element pid: 36298, elementOrHash.elementID: 4455714816.521>
+                                        Other, 0x117a48b40, {{0.0, 373.3}, {402.0, 194.3}} <AX element pid: 36298, elementOrHash.elementID: 4864882688.530>
+                                          Other, 0x117a48c80, {{0.0, 373.3}, {402.0, 194.3}} <AX element pid: 36298, elementOrHash.elementID: 4454672000.538>
+                                      Other, 0x117a48dc0, {{0.0, 373.3}, {402.0, 194.3}} <AX element pid: 36298, elementOrHash.elementID: 4454844608.522>
+                                        Other, 0x117a48f00, {{0.0, 373.3}, {402.0, 194.3}} <AX element pid: 36298, elementOrHash.elementID: 4456524288.531>
+                                          Other, 0x117a49040, {{0.0, 373.3}, {402.0, 194.3}} <AX element pid: 36298, elementOrHash.elementID: 4454673344.539>
+                                            Image, 0x117a49180, {{42.3, 409.0}, {15.7, 19.0}}, identifier: 'library.onboarding.starters', label: 'Sparkle' <AX element pid: 36298, elementOrHash.elementID: 4454664832.550>
+                                            StaticText, 0x117a492c0, {{80.0, 400.3}, {132.3, 42.3}}, identifier: 'library.onboarding.starters', label: 'Start with a two-minute tour' <AX element pid: 36298, elementOrHash.elementID: 4454667968.551>
+                                            StaticText, 0x117a49400, {{80.0, 450.7}, {177.0, 38.0}}, identifier: 'library.onboarding.starters', label: 'Hear the core loop, then practice making a Margin.' <AX element pid: 36298, elementOrHash.elementID: 4454668864.552>
+                                            Button, 0x117a49540, {{80.0, 496.7}, {103.3, 44.0}}, identifier: 'library.onboarding.starters', label: 'Hear overview' <AX element pid: 36298, elementOrHash.elementID: 4454669760.553>
+                                            Button, 0x117a49680, {{191.3, 501.3}, {86.7, 34.7}}, identifier: 'library.onboarding.starters', label: 'Practice' <AX element pid: 36298, elementOrHash.elementID: 4454675136.554>
+                                            Button, 0x117a497c0, {{341.3, 415.7}, {13.3, 13.3}}, identifier: 'library.onboarding.starters', label: 'Dismiss getting started' <AX element pid: 36298, elementOrHash.elementID: 4454673792.555>
+                                    Other, 0x117a49900, {{369.0, 116.0}, {30.0, 675.0}}, label: 'Vertical scroll bar, 1 page', value: 0% <AX element pid: 36298, elementOrHash.elementID: 4863546880.511>
+                                      Other, 0x117a49a40, {{396.0, 781.0}, {3.0, 7.0}} <AX element pid: 36298, elementOrHash.elementID: 4454849984.523>
+                                    Other, 0x117a49b80, {{369.0, 116.0}, {30.0, 675.0}}, label: 'Vertical scroll bar, 1 page', value: 0% <AX element pid: 36298, elementOrHash.elementID: 4863546880.511>
+                                      Other, 0x117a49cc0, {{396.0, 781.0}, {3.0, 7.0}} <AX element pid: 36298, elementOrHash.elementID: 4454849984.523>
+                          Other, 0x117a49e00, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 36298, elementOrHash.elementID: 4863554048.478>
+                            Other, 0x117a49f40, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 36298, elementOrHash.elementID: 4863951872.489>
+              Other, 0x117a4a080, {{0.0, 791.0}, {402.0, 83.0}} <AX element pid: 36298, elementOrHash.elementID: 4455157696.451>
+                Other, 0x117a4a1c0, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 36298, elementOrHash.elementID: 4455145344.455>
+                  TabBar, 0x117a4a300, {{0.0, 791.0}, {402.0, 83.0}}, label: 'Tab Bar' <AX element pid: 36298, elementOrHash.elementID: 4747246592.458>
+                    Other, 0x117a4a440, {{64.0, 791.0}, {274.0, 62.0}} <AX element pid: 36298, elementOrHash.elementID: 4455155904.461>
+                      Other, 0x117a4a580, {{64.0, 791.0}, {94.0, 54.0}} <AX element pid: 36298, elementOrHash.elementID: 4454970944.464>
+                      Other, 0x117a4a6c0, {{64.0, 791.0}, {274.0, 62.0}} <AX element pid: 36298, elementOrHash.elementID: 4455157248.465>
+                        Button, 0x117a4a800, {{68.0, 795.0}, {94.0, 54.0}}, identifier: 'navigation.tab.library', label: 'Library', Selected <AX element pid: 36298, elementOrHash.elementID: 4397298176.470>
+                          Image, 0x117a4a940, {{98.0, 800.0}, {33.3, 29.3}}, identifier: 'books.vertical.fill', label: 'Bookshelf' <AX element pid: 36298, elementOrHash.elementID: 4863555584.479>
+                        Button, 0x117a4aa80, {{154.0, 795.0}, {94.0, 54.0}}, identifier: 'navigation.tab.sources', label: 'Sources' <AX element pid: 36298, elementOrHash.elementID: 4397286656.471>
+                          Image, 0x117a4abc0, {{184.0, 802.7}, {33.7, 24.7}}, identifier: 'dot.radiowaves.left.and.right', label: 'radio' <AX element pid: 36298, elementOrHash.elementID: 4863545344.480>
+                        Button, 0x117a4ad00, {{240.0, 795.0}, {94.0, 54.0}}, identifier: 'navigation.tab.margins', label: 'Margins' <AX element pid: 36298, elementOrHash.elementID: 4397299456.472>
+                          Image, 0x117a4ae40, {{271.0, 801.7}, {31.3, 27.7}}, identifier: 'quote.bubble.fill', label: 'Bubble' <AX element pid: 36298, elementOrHash.elementID: 4863543296.481>
+                      Other, 0x117a4af80, {{68.0, 795.0}, {94.0, 54.0}} <AX element pid: 36298, elementOrHash.elementID: 4747245312.466>
+                        Other, 0x117a4b0c0, {{68.0, 795.0}, {94.0, 54.0}} <AX element pid: 36298, elementOrHash.elementID: 4455156352.473>
+                          Other, 0x117a4b200, {{68.0, 795.0}, {94.0, 54.0}} <AX element pid: 36298, elementOrHash.elementID: 4455155456.482>
+                          Other, 0x117a4b340, {{68.0, 795.0}, {94.0, 54.0}} <AX element pid: 36298, elementOrHash.elementID: 4455158592.483>
+                            Other, 0x117a4b480, {{68.0, 795.0}, {94.0, 54.0}} <AX element pid: 36298, elementOrHash.elementID: 4455165760.490>
+                              Other, 0x117a4b5c0, {{68.0, 795.0}, {94.0, 54.0}} <AX element pid: 36298, elementOrHash.elementID: 4455158144.494>
+                                Other, 0x117a4b700, {{68.0, 795.0}, {94.0, 54.0}} <AX element pid: 36298, elementOrHash.elementID: 4455159040.498>
+                              Other, 0x117a4b840, {{68.0, 795.0}, {94.0, 54.0}} <AX element pid: 36298, elementOrHash.elementID: 4455166208.495>
+                            Other, 0x117a4b980, {{68.0, 795.0}, {94.0, 54.0}} <AX element pid: 36298, elementOrHash.elementID: 4455164864.491>
+                Other, 0x117a4bac0, {{0.0, 791.0}, {402.0, 83.0}} <AX element pid: 36298, elementOrHash.elementID: 4863556096.456>
+                  Other, 0x117a4bc00, {{0.0, 791.0}, {402.0, 83.0}} <AX element pid: 36298, elementOrHash.elementID: 4744345600.459>
+                    Other, 0x117a4bd40, {{0.0, 791.0}, {402.0, 83.0}} <AX element pid: 36298, elementOrHash.elementID: 4454963328.462>
+                      Other, 0x117a4be80, {{0.0, 791.0}, {402.0, 83.0}} <AX element pid: 36298, elementOrHash.elementID: 4454966016.467>
+                        Other, 0x117a64000, {{0.0, 791.0}, {402.0, 83.0}} <AX element pid: 36298, elementOrHash.elementID: 4735048192.474>
+                          Other, 0x117a64140, {{0.0, 791.0}, {402.0, 83.0}} <AX element pid: 36298, elementOrHash.elementID: 4454963776.484>
+                      Other, 0x117a64280, {{0.0, 791.0}, {402.0, 83.0}} <AX element pid: 36298, elementOrHash.elementID: 4735049728.468>
+                        Other, 0x117a643c0, {{0.0, 791.0}, {402.0, 83.0}} <AX element pid: 36298, elementOrHash.elementID: 4454961984.475>

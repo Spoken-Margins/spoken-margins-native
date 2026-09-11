@@ -2,9 +2,55 @@ import AVFoundation
 import SessionKit
 import SessionKitAudio
 import XCTest
+import SessionKitPersistence
+import MediaPlayer
+@testable import SpokenMarginsApp
 
 @MainActor
 final class MediaPlaybackInterruptionTests: XCTestCase {
+    func testResumePreservesMatchingPendingNavigationSeek() async throws {
+        let audioURL = try makeTestWAV(duration: 10)
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+        let client = AVPlayerStreamPlaybackClient()
+        defer { try? client.stop() }
+        let target = "seek-resume-source"
+        try client.configureMediaContext(PlaybackMediaContext(
+            itemId: "seek-resume", targetType: .transcriptBackedMedia,
+            targetId: target, title: "Seek then resume",
+            playbackURL: audioURL.absoluteString, durationMs: 10_000
+        ))
+        try client.play(targetId: target, fromMediaTimeMs: 0)
+        for _ in 0..<150 where (client.currentMediaTimeMs() ?? 0) < 200 {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertGreaterThan(client.currentMediaTimeMs() ?? 0, 100)
+        try client.pause()
+        let request = try client.requestMediaSeek(toMediaTimeMs: 5_000)
+        XCTAssertEqual(client.mediaSeekResolution(for: request), .pending)
+        // No suspension here: resume arrives before the navigation callback.
+        try client.play(targetId: target, fromMediaTimeMs: 5_000)
+        XCTAssertEqual(client.mediaSeekResolution(for: request), .pending,
+                       "Resume at the same destination must retain the navigation transaction")
+        for _ in 0..<150 where client.mediaSeekResolution(for: request) == .pending {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        guard case .accepted(let acceptedTime) = client.mediaSeekResolution(for: request) else {
+            return XCTFail("Matching seek was not accepted: \(client.mediaSeekResolution(for: request))")
+        }
+        XCTAssertEqual(acceptedTime, 5_000, accuracy: 250)
+        for _ in 0..<150 where (client.currentMediaTimeMs() ?? 0) < 5_300 {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertGreaterThan(client.currentMediaTimeMs() ?? 0, 5_100)
+        // A genuinely different destination must still supersede the old one.
+        let replaced = try client.requestMediaSeek(toMediaTimeMs: 2_000)
+        try client.play(targetId: target, fromMediaTimeMs: 3_000)
+        guard case .failed(_, let reason) = client.mediaSeekResolution(for: replaced) else {
+            return XCTFail("A different destination must replace the old navigation request")
+        }
+        XCTAssertEqual(reason, "media_seek_superseded")
+    }
+
     func testLoadedPlayerDurationReplacesUnderestimatedFeedDuration() async throws {
         let audioURL = try makeTestWAV(duration: 3)
         defer { try? FileManager.default.removeItem(at: audioURL) }
@@ -78,6 +124,113 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         await fulfillment(of: [ended], timeout: 1)
         XCTAssertEqual(events.values, [.began, .endedShouldResume])
         try client.stop()
+    }
+
+    func testImportedMarginTransportFreezesAndResumesRealSourceAndMarginPlayers() async throws {
+        try await verifyImportedMarginTransport(nativeMedia: true, guided: false)
+    }
+
+    func testGuidedTextMarginTransportRetainsSourcePauseUntilExplicitReturn() async throws {
+        try await verifyImportedMarginTransport(nativeMedia: false, guided: true)
+    }
+
+    private func verifyImportedMarginTransport(nativeMedia: Bool, guided: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "margin-transport-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceURL = try makeTestWAV(duration: 30)
+        let marginURL = try makeTestWAV(duration: 30)
+        defer {
+            try? FileManager.default.removeItem(at: sourceURL)
+            try? FileManager.default.removeItem(at: marginURL)
+        }
+        let db = root.appending(path: "library.sqlite")
+        let sourcePlayer = AVPlayerStreamPlaybackClient()
+        let routed = RoutedAudioPlaybackClient(speech: NoopAudioPlaybackClient(), media: sourcePlayer)
+        let model = Gate1AppModel(audioPlaybackClient: routed, databaseURLOverride: db)
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: db.path)
+        let itemID = nativeMedia ? "real-source" : "item-pill"
+        if nativeMedia {
+            try store.seed(item: Item(id: itemID, title: "Real source", mediaType: "audiobook", text: nil,
+                externalReference: sourceURL.absoluteString, status: "ready", externalReferenceType: "audiobook",
+                media: ItemMedia(sourceType: .nativeMediaFile, url: sourceURL.absoluteString, durationMs: 30_000, nativeMediaId: "source-audio")))
+        }
+        model.startItem(id: itemID)
+        defer { model.returnToSourceFromImportedCommentary(); model.pause() }
+        if nativeMedia {
+            for _ in 0..<150 where (sourcePlayer.currentMediaTimeMs() ?? 0) < 200 { try await Task.sleep(for: .milliseconds(20)) }
+            XCTAssertGreaterThan(sourcePlayer.currentMediaTimeMs() ?? 0, 100)
+        }
+        let layer = ImportedCommentaryLayer(id: "received", itemId: itemID, packageDigest: "digest", packageId: "package",
+            itemIdentity: SharedItemIdentity(itemType: nativeMedia ? .other : .text, title: "Source"),
+            displayLabel: "Reviewer", importedAt: Date(), sourceResolutionStatus: .resolved,
+            isEnabled: true, isMuted: true, revealMode: guided ? .guided : .companion)
+        let record = ImportedCommentaryInterjection(id: "note", layerId: layer.id, packageScopedId: "note", createdAt: Date(),
+            anchorEvidence: PortableAnchorEvidence(anchorType: nativeMedia ? .media : .text),
+            approvedTranscript: "Reviewed words", audioPath: marginURL.path, audioDurationMs: 30_000,
+            resolution: ImportedAnchorResolution(evidenceClass: nativeMedia ? .acousticVerified : .articleTextVerified,
+                localStartChar: nativeMedia ? nil : 120, localEndChar: nativeMedia ? nil : 140,
+                localMediaTimeMs: nativeMedia ? 1_000 : nil, confidence: 1))
+        model.selectedItem.importedCommentaryLayers = [layer]
+        model.selectedItem.importedCommentaryInterjections = [layer.id: [record]]
+        if guided {
+            XCTAssertTrue(model.handleGate2CompactApplicationCommand(Gate2CompactApplicationCommand.jumpToSharedMargin, targetID: record.id))
+            for _ in 0..<150 where model.playingImportedCommentary == nil { try await Task.sleep(for: .milliseconds(20)) }
+        } else {
+            model.listenToImportedCommentary(layerID: layer.id, interjectionID: record.id)
+        }
+        let player = try XCTUnwrap(Mirror(reflecting: model).children.first { $0.label == "interjectionAudioPlayer" }?.value as? AVPlayer)
+        for _ in 0..<150 where player.currentTime().seconds < 0.2 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertGreaterThan(player.currentTime().seconds, 0.1)
+        XCTAssertEqual(model.snapshot.status, .paused)
+        let sourcePausedAt = sourcePlayer.currentMediaTimeMs() ?? 0
+        model.playPause()
+        XCTAssertTrue(model.importedCommentaryIsPaused)
+        XCTAssertFalse(model.activePlaybackIsPlaying)
+        XCTAssertEqual(player.rate, 0)
+        let marginPausedAt = player.currentTime().seconds
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(player.currentTime().seconds, marginPausedAt, accuracy: 0.03)
+        XCTAssertLessThanOrEqual(abs((sourcePlayer.currentMediaTimeMs() ?? 0) - sourcePausedAt), 30)
+        XCTAssertEqual(model.playingImportedCommentary?.id, record.id)
+        model.dispatchGate2CompactCommand(.play, origin: "imported_margin_remote")
+        for _ in 0..<150 where player.currentTime().seconds < marginPausedAt + 0.2 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertGreaterThan(player.currentTime().seconds, marginPausedAt + 0.1)
+        XCTAssertEqual(model.snapshot.status, .paused)
+        model.dispatchGate2CompactCommand(.pause, origin: "imported_margin_remote")
+        XCTAssertEqual(player.rate, 0)
+        XCTAssertTrue(model.importedCommentaryIsPaused)
+        XCTAssertEqual(MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyTitle] as? String, "Shared Margin")
+        model.resumePlayback()
+        model.pause()
+        XCTAssertEqual(player.rate, 0, "Explicit pause must control the Margin too")
+        if guided {
+            // Natural completion uses the same once-only source restoration as Return.
+            model.resumePlayback()
+            await player.seek(to: CMTime(seconds: 29.8, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+            for _ in 0..<150 where model.playingImportedCommentary != nil { try await Task.sleep(for: .milliseconds(20)) }
+        } else {
+            model.returnToSourceFromImportedCommentary()
+        }
+        XCTAssertNil(model.playingImportedCommentary)
+        XCTAssertNil(player.currentItem)
+        for _ in 0..<150 where model.snapshot.status == .starting { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(model.snapshot.status, .playing)
+        if nativeMedia {
+            for _ in 0..<150 where (sourcePlayer.currentMediaTimeMs() ?? 0) < sourcePausedAt + 200 { try await Task.sleep(for: .milliseconds(20)) }
+            XCTAssertGreaterThan(sourcePlayer.currentMediaTimeMs() ?? 0, sourcePausedAt + 100)
+        }
+        model.pause()
+        model.returnToSourceFromImportedCommentary()
+        XCTAssertEqual(model.snapshot.status, .paused, "Repeated return cannot resume twice")
+        model.selectedItem.importedCommentaryLayers = [layer]
+        model.selectedItem.importedCommentaryInterjections = [layer.id: [record]]
+        model.listenToImportedCommentary(layerID: layer.id, interjectionID: record.id)
+        XCTAssertNotNil(model.playingImportedCommentary)
+        model.stopInterjectionAudioPlayback()
+        model.returnToSourceFromImportedCommentary()
+        XCTAssertEqual(model.snapshot.status, .paused, "A stopped Margin must not retain a source-resume intent")
     }
 
     private func makeTestWAV(duration: TimeInterval) throws -> URL {

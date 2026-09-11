@@ -8,10 +8,12 @@ import UIKit
 struct ExperienceAddSourceFlow: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var selectedRoute: AddSourceRoute
     @State private var showsRoutePicker = true
     @State private var fileRequest: FileRequest?
     @State private var showsFileImporter = false
+    @State private var textImportError: String?
     @FocusState private var focusedField: Field?
 
     private enum Field { case link, title, text }
@@ -23,6 +25,13 @@ struct ExperienceAddSourceFlow: View {
 
     var body: some View {
         NavigationStack {
+            Group {
+                if showsPinnedTextAction {
+                    pastedTextSource
+                        .padding(20)
+                        .frame(maxWidth: 720)
+                        .frame(maxWidth: .infinity)
+                } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     if let review = model.sourceLinkCandidateReview {
@@ -38,16 +47,53 @@ struct ExperienceAddSourceFlow: View {
                 .frame(maxWidth: 720)
                 .frame(maxWidth: .infinity)
             }
+                }
+            }
             .contentMargins(
                 .bottom,
-                Build23ExperiencePolishLayout.addSourceBottomClearance,
+                showsPinnedTextAction ? 16 : Build23ExperiencePolishLayout.addSourceBottomClearance,
                 for: .scrollContent
             )
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if showsPinnedTextAction {
+                    Button {
+                        model.importTextItem(startListening: false)
+                        textImportError = model.lastError
+                        if textImportError == nil { dismiss() }
+                    } label: {
+                        Label(dynamicTypeSize.isAccessibilitySize ? "Add" : "Add to Library", systemImage: "plus")
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.vertical, 6)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .disabled(model.importText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityLabel("Add to Library")
+                    .accessibilityIdentifier("create.start.button")
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: 720)
+                    .frame(maxWidth: .infinity)
+                    .background(AppColors.bone)
+                }
+            }
             .scrollDismissesKeyboard(.interactively)
             .background(AppColors.bone)
-            .navigationTitle("Add Source")
+            .navigationTitle(showsPinnedTextAction ? "Add Text" : "Add Source")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                if showsPinnedTextAction {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            focusedField = nil
+                            showsRoutePicker = true
+                        } label: {
+                            Image(systemName: "chevron.left")
+                        }
+                        .accessibilityLabel("Choose a different source type")
+                        .accessibilityIdentifier("addSource.route.back")
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Close") { dismiss() }
                 }
@@ -67,18 +113,20 @@ struct ExperienceAddSourceFlow: View {
             }
             .onAppear { model.resetSourceLinkImportState() }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents(showsRoutePicker && !dynamicTypeSize.isAccessibilitySize ? [.medium, .large] : [.large])
         .presentationDragIndicator(.visible)
         .accessibilityIdentifier("addSource.sheet")
     }
 
+    private var showsPinnedTextAction: Bool {
+        !showsRoutePicker && selectedRoute == .pastedText && model.sourceLinkCandidateReview == nil
+    }
+
     private var routePicker: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            ExperienceEditorialHeader(
-                eyebrow: "BRING SOMETHING WORTH HEARING",
-                title: "What do you have?",
-                detail: "Choose the object in front of you. You’ll see only the controls it needs."
-            )
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Add to Library")
+                .font(.title2.weight(.bold))
+                .foregroundStyle(AppColors.text)
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                 ForEach(primaryRoutes) { route in
                     Button {
@@ -103,10 +151,9 @@ struct ExperienceAddSourceFlow: View {
                                 .font(.caption)
                                 .foregroundStyle(AppColors.secondaryText)
                                 .multilineTextAlignment(.leading)
-                                .lineLimit(3)
                         }
                         .padding(15)
-                        .frame(maxWidth: .infinity, minHeight: 156, alignment: .topLeading)
+                        .frame(maxWidth: .infinity, minHeight: 142, alignment: .topLeading)
                         .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                         .overlay { RoundedRectangle(cornerRadius: 18).stroke(AppColors.border) }
                     }
@@ -142,10 +189,7 @@ struct ExperienceAddSourceFlow: View {
             Image(systemName: selectedRoute.systemImage)
                 .foregroundStyle(AppColors.evergreen)
             VStack(alignment: .leading, spacing: 2) {
-                Text(selectedRoute.title).font(.title2.bold())
-                Text(selectedRoute.detail)
-                    .font(.caption)
-                    .foregroundStyle(AppColors.secondaryText)
+                Text(selectedRoute.title).font(.headline)
             }
         }
     }
@@ -166,7 +210,6 @@ struct ExperienceAddSourceFlow: View {
 
     @ViewBuilder
     private var routeContent: some View {
-        Divider().padding(.vertical, 4)
         switch selectedRoute {
         case .linkOrPodcast: linkSource
         case .pastedText: pastedTextSource
@@ -223,43 +266,41 @@ struct ExperienceAddSourceFlow: View {
     }
 
     private var pastedTextSource: some View {
-        ExperienceSurface(tint: AppColors.ochre) {
-            VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
                 TextField("Title (optional)", text: $model.importTitle)
                     .textFieldStyle(.roundedBorder)
                     .focused($focusedField, equals: .title)
                     .accessibilityIdentifier("create.title.field")
-                TextEditor(text: $model.importText)
-                    .frame(minHeight: 150)
-                    .padding(8)
-                    .background(AppColors.inputBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(AppColors.border))
-                    .focused($focusedField, equals: .text)
-                    .accessibilityLabel("Source text")
-                    .accessibilityIdentifier("create.text.editor")
-                HStack {
-                    Button("Paste", systemImage: "doc.on.clipboard", action: model.pasteImportTextFromClipboard)
-                        .buttonStyle(.bordered)
-                    Spacer()
-                    Button("Add to Library", systemImage: "plus") {
-                        model.importTextItem(startListening: false)
-                        dismiss()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(AppColors.evergreen)
-                    .disabled(model.importText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .accessibilityIdentifier("create.start.button")
+                Button(action: model.pasteImportTextFromClipboard) {
+                    Image(systemName: "doc.on.clipboard")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 24, height: 24)
+                        .frame(width: 44, height: 44)
                 }
+                .accessibilityLabel("Paste source text")
+            }
+            TextEditor(text: $model.importText)
+                .font(.body)
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 80, maxHeight: .infinity)
+                .focused($focusedField, equals: .text)
+                .accessibilityLabel("Source text")
+                .accessibilityIdentifier("create.text.editor")
+            if let textImportError {
+                Label(textImportError, systemImage: "exclamationmark.triangle")
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.dangerText)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .tint(AppColors.evergreen)
     }
 
     private var documentSource: some View {
         ExperienceSurface {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Documents and books stay local and retain authored structure when the format provides it.")
-                    .foregroundStyle(AppColors.secondaryText)
                 Button("Choose Document or Book", systemImage: "doc.badge.plus") {
                     presentFileImporter(.documentOrBook)
                 }
@@ -267,6 +308,9 @@ struct ExperienceAddSourceFlow: View {
                 .tint(AppColors.evergreen)
                 .frame(minHeight: 44)
                 .accessibilityIdentifier("document.import.button")
+                Text("Documents and books stay local and retain authored structure when the format provides it.")
+                    .font(.caption)
+                    .foregroundStyle(AppColors.secondaryText)
             }
         }
     }
@@ -274,8 +318,6 @@ struct ExperienceAddSourceFlow: View {
     private var audiobookSource: some View {
         ExperienceSurface {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Audiobooks are copied into app-owned storage and protected from automatic eviction.")
-                    .foregroundStyle(AppColors.secondaryText)
                 Button("Choose Audiobook", systemImage: "headphones") {
                     presentFileImporter(.audiobook)
                 }
@@ -283,6 +325,9 @@ struct ExperienceAddSourceFlow: View {
                 .tint(AppColors.evergreen)
                 .frame(minHeight: 44)
                 .accessibilityIdentifier("audiobook.import.button")
+                Text("Audiobooks are copied into app-owned storage and protected from automatic eviction.")
+                    .font(.caption)
+                    .foregroundStyle(AppColors.secondaryText)
             }
         }
     }
@@ -328,12 +373,13 @@ struct ExperienceAddSourceFlow: View {
 
     private func candidateReview(_ review: SourceLinkCandidateReviewState) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            ExperienceEditorialHeader(
-                eyebrow: "MATCH NEEDS REVIEW",
-                title: "Choose the episode",
-                detail: "Spoken Margins will not guess when more than one public episode is plausible."
-            )
-            .accessibilityIdentifier("sourceLink.candidateReview.sheet")
+            Text("Choose the matching episode")
+                .font(.title2.weight(.bold))
+                .foregroundStyle(AppColors.text)
+                .accessibilityIdentifier("sourceLink.candidateReview.sheet")
+            Text("More than one public episode matches this link.")
+                .font(.subheadline)
+                .foregroundStyle(AppColors.secondaryText)
             ForEach(Array(review.result.candidates.enumerated()), id: \.offset) { index, candidate in
                 Button {
                     model.selectSourceLinkCandidate(candidate)

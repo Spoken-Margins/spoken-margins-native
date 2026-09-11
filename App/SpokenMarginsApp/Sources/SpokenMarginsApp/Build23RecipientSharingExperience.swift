@@ -55,11 +55,9 @@ struct Build23RecipientSharingExperience: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                ExperienceEditorialHeader(
-                    eyebrow: "SHARED MARGINS",
-                    title: "Review before importing",
-                    detail: "Confirm the package, source, and sender details before adding this commentary."
-                )
+                Text("Shared Margins")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(AppColors.text)
 
                 if let snapshot = coordinator.recipientSnapshot {
                     preview(snapshot)
@@ -94,12 +92,6 @@ struct Build23RecipientSharingExperience: View {
                     .foregroundStyle(AppColors.evergreen)
                     .accessibilityLabel("Package integrity checked")
 
-                Text(Build23RecipientPresentation.integrityDetail)
-                    .font(.subheadline)
-                    .foregroundStyle(AppColors.secondaryText)
-
-                Divider()
-
                 VStack(alignment: .leading, spacing: 6) {
                     Text(snapshot.itemTitle)
                         .font(.title3.weight(.semibold))
@@ -112,6 +104,16 @@ struct Build23RecipientSharingExperience: View {
                 }
 
                 packageFacts(snapshot)
+
+                Text(Build23RecipientPresentation.integrityDetail)
+                    .font(.caption)
+                    .foregroundStyle(AppColors.secondaryText)
+                Text(SharingRightsPresentation.rightsNotice)
+                    .font(.caption)
+                    .foregroundStyle(AppColors.secondaryText)
+                Text("Deleting this import removes your local copy only. Other recipients may retain their copies.")
+                    .font(.caption)
+                    .foregroundStyle(AppColors.secondaryText)
             }
         }
 

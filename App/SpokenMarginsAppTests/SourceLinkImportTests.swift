@@ -10,6 +10,58 @@ import UIKit
 final class SourceLinkImportTests: XCTestCase {
     private var temporaryDirectories: [URL] = []
 
+    func testDescriptionChaptersAcceptLinkedParenthesesAndPreserveTitleColons() throws {
+        let chapters = try XCTUnwrap(TimestampedDescriptionChapterParser.parse("""
+        <p>Episode notes with unrelated <a href="https://example.com?t=99">links</a>.</p>
+        <div>(<a href="https://example.com/watch?t=0">00:00:00</a>) &ndash; AI: the opening question</div>
+        <div><a href="https://example.com/watch?t=942">(00:15:42)</a>&nbsp;— Evidence &amp; uncertainty</div>
+        <p>[01:02:03](https://example.com/watch?t=3723) | What&#39;s next?</p>
+        """))
+        XCTAssertEqual(chapters.source, .timestampedDescription)
+        XCTAssertEqual(chapters.chapters, [
+            PublisherChapter(title: "AI: the opening question", startMs: 0),
+            PublisherChapter(title: "Evidence & uncertainty", startMs: 942_000),
+            PublisherChapter(title: "What's next?", startMs: 3_723_000)
+        ])
+    }
+
+    func testDescriptionChaptersValidateTimesAndIgnoreProseAndURLOnlyLines() throws {
+        let chapters = try XCTUnwrap(TimestampedDescriptionChapterParser.parse("""
+        Released at 12:30 on Tuesday.
+        00:60 Invalid seconds
+        01:75:00 Invalid minutes
+        [00:02) Mismatched brackets
+        00:03garbage
+        00:04 https://example.com
+        <script>00:05 Script content</script>
+        • [120:00] Long introduction
+        00:00.250 - First thought
+        00:00.250 - First thought
+        00&#58;30&#160;– A second thought
+        """))
+        XCTAssertEqual(chapters.chapters.map(\.startMs), [250, 30_000, 7_200_000])
+        XCTAssertEqual(chapters.chapters.map(\.title), ["First thought", "A second thought", "Long introduction"])
+        XCTAssertNil(TimestampedDescriptionChapterParser.parse("00:00 Only one chapter"))
+        XCTAssertNil(TimestampedDescriptionChapterParser.parse(String(repeating: "x", count: 1_000_001)))
+    }
+
+    func testFeedDescriptionChaptersSurviveAnEarlierShortSummary() throws {
+        let feed = """
+        <rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+        <channel><title>Show</title><item><title>Episode</title>
+        <enclosure url="https://example.com/episode.mp3" type="audio/mpeg" />
+        <description>A brief summary without chapters.</description>
+        <content:encoded><![CDATA[<p>(00:00) – Opening</p><p>(12:30) – Discussion</p>]]></content:encoded>
+        </item></channel></rss>
+        """
+        let request = LinkResolutionRequest(id: "description-fallback", inputURL: "https://example.com/feed.xml", sourceSurface: "paste", createdAt: Date())
+        let result = try PublicPodcastLinkResolver(fetch: { _ in Data(feed.utf8) }).resolve(request)
+        let collections = try XCTUnwrap(result.selectedCandidate).publisherChapterCollections
+        XCTAssertEqual(collections.count, 1)
+        XCTAssertEqual(collections.first?.source, .timestampedDescription)
+        XCTAssertEqual(collections.first?.chapters.map(\.startMs), [0, 750_000])
+    }
+
     override func tearDownWithError() throws {
         for directory in temporaryDirectories {
             try? FileManager.default.removeItem(at: directory)

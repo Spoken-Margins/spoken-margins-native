@@ -1,0 +1,41 @@
+{
+  "schemaVersion": "spoken-margins.export.v1",
+  "item": {
+    "id": "item-written",
+    "title": "Written source",
+    "includedFullText": false,
+    "text": null
+  },
+  "session": {
+    "id": "session-written",
+    "status": "in_progress",
+    "completionPercent": 42
+  },
+  "listeningMap": null,
+  "turns": [],
+  "timeline": [
+    {
+      "type": "interjection",
+      "interjectionId": "written-margin-001",
+      "targetType": "item",
+      "targetId": "item-written",
+      "percent": 42
+    }
+  ],
+  "interjections": [
+    {
+      "id": "written-margin-001",
+      "sessionId": "session-written",
+      "targetType": "item",
+      "targetId": "item-written",
+      "roughPercent": 42,
+      "anchorBefore": "Before.",
+      "anchorAfter": "After.",
+      "mediaTimeMs": null,
+      "transcriptionStatus": "transcribed",
+      "transcript": "  Keep  this exact thought.  ",
+      "audioPath": null,
+      "captureKind": "written"
+    }
+  ]
+}

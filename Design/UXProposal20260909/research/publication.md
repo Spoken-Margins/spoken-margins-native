@@ -24,3 +24,15 @@ The Codex preview handoff was queued because the task was not visible. Use the p
 - Same owner-private URL and audience.
 - Fixed browser-global name collision that prevented the mockups and demo from rendering. Live browser confirms 10 populated phone plates, 20 scene controls, and populated iPad composition.
 - Final live asset check: all 23 gallery JPEGs decoded successfully; no failed image elements.
+
+## Second edition · published September 10, 2026
+
+- Source: `9c37821120ef3af4e5cc65c5964b5403c34b6f29`.
+- Saved version 3: `appgprj_6aa18784e9248191b0f301ae78f03a54~appgver_4c2790c24b6481918118f21e1faff1f1`.
+- Deployment: `appgdep_6aa2c16deb4c8191b96b955c9b2d88f3`.
+- Deployment succeeded at 14:41:11 UTC. Owner-only audience unchanged.
+- Prototype: https://spoken-margins-experience-book.uncomposed.chatgpt.site/try.html
+- Book: https://spoken-margins-experience-book.uncomposed.chatgpt.site/
+- First edition: https://spoken-margins-experience-book.uncomposed.chatgpt.site/edition-one.html
+- Source changes are restricted to this design artifact. Parent app repository was not committed or pushed by this task.
+- Final hosted browser navigation reached the private ChatGPT sign-in page. Local browser checks are recorded in second-edition.md; live authenticated interaction verification is not claimed. The source read credential also returned HTTP 401, so it was not used as evidence of served content. The browser was left at the published prototype URL for owner sign-in.

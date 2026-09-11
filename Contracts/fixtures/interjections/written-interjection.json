@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "interjection.v1",
+  "id": "written-margin-001",
+  "itemId": "item-written",
+  "sessionId": "session-written",
+  "targetType": "item",
+  "targetId": "item-written",
+  "createdAt": "2026-09-10T12:00:00Z",
+  "roughPercent": 42,
+  "anchor": { "anchorType": "text", "startChar": 12, "endChar": 18, "anchorBefore": "Before", "anchorAfter": "After" },
+  "audio": { "status": "discarded", "path": null, "durationMs": null },
+  "captureKind": "written",
+  "transcriptionStatus": "transcribed",
+  "transcript": "Keep  this exact thought.",
+  "cleanedTranscript": null,
+  "status": "active",
+  "error": null
+}

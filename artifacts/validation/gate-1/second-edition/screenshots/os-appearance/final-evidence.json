@@ -1,0 +1,36 @@
+{
+  "input_sha256": "de27462fa86d9c071062ed9bf7a539e8b0fd0551c4efcbffaab79d3ed42e060b",
+  "build_run": "artifacts/test-runs/20260910-201752-738743-smoke/manifest.json",
+  "udid": "856FA6EF-5E03-4120-939B-F0EF42A804E8",
+  "captures": [
+    {
+      "file": "final-library-dark.png",
+      "sha256": "900031036e707c3c21d5d82f657f8c80a81c59528c920067595b78fab403c067",
+      "actual_os_settings": {
+        "appearance": "dark",
+        "increase_contrast": "enabled",
+        "content_size": "large"
+      }
+    },
+    {
+      "file": "final-player-dark.png",
+      "sha256": "8a8de54e009ebbf6f1e7e8ea83dee206f150cd277447443d1d1fc9a0f47efffc",
+      "actual_os_settings": {
+        "appearance": "dark",
+        "increase_contrast": "enabled",
+        "content_size": "large"
+      }
+    },
+    {
+      "file": "final-writing-dark.png",
+      "sha256": "db633d5783462cb0d8414545011295be4914ac4a68fbaaa3fc3db47162c52f2c",
+      "actual_os_settings": {
+        "appearance": "dark",
+        "increase_contrast": "enabled",
+        "content_size": "large"
+      }
+    }
+  ],
+  "review_status": "verified: Library mini-player, player and empty written composer visually inspected in actual OS dark plus increased contrast; no owner validation inferred",
+  "settings_restored": true
+}

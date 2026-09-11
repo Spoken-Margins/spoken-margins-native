@@ -100,11 +100,9 @@ struct Build23ImportedMarginPresentation: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            ExperienceEditorialHeader(
-                eyebrow: "IMPORTED LAYERS",
-                title: "Shared Margins",
-                detail: "Imported commentary stays separate from your own Margins. Choose how and whether each layer appears."
-            )
+            Text("Shared Margins")
+                .font(.title3.weight(.bold))
+                .foregroundStyle(AppColors.text)
 
             if coordinator.importedLayers.isEmpty {
                 emptyState
@@ -124,21 +122,19 @@ struct Build23ImportedMarginPresentation: View {
         ExperienceSurface(tint: AppColors.plum.opacity(0.08)) {
             VStack(alignment: .leading, spacing: 16) {
                 provenanceHeader(layer)
-
-                Divider()
-
-                layerStateControls(layer)
-
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Image(systemName: "point.3.connected.trianglepath.dotted")
-                        .foregroundStyle(AppColors.plum)
-                        .accessibilityHidden(true)
-                    Text(proposalCountLabel(layer.listeningMapProposalCount))
-                        .font(.subheadline)
-                        .foregroundStyle(AppColors.secondaryText)
-                }
-
                 marginRail(layer)
+
+                DisclosureGroup("Layer options") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        layerStateControls(layer)
+                        Label(proposalCountLabel(layer.listeningMapProposalCount), systemImage: "point.3.connected.trianglepath.dotted")
+                            .font(.subheadline)
+                            .foregroundStyle(AppColors.secondaryText)
+                    }
+                    .padding(.top, 8)
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(AppColors.text)
             }
         }
     }
@@ -157,16 +153,6 @@ struct Build23ImportedMarginPresentation: View {
             } icon: {
                 Image(systemName: Build23ImportedLayerPresentation.provenanceSymbolName)
                     .foregroundStyle(AppColors.plum)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(AppColors.panel)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(AppColors.plum, lineWidth: 1.5)
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(Text(

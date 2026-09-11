@@ -1755,6 +1755,14 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         guard let url = URL(string: requestedURL ?? targetId) else {
             throw SessionKitError.invalidCommandForState("stream_audio_invalid_url:\(requestedURL ?? targetId)")
         }
+        // Resuming immediately after navigation (for example after a Skim
+        // bridge) must not supersede the very seek the engine is awaiting.
+        // Only reuse it for the same player, target and exact destination.
+        let continuesNavigationSeek = activeTargetId == targetId
+            && activePlaybackURL == url && player != nil
+            && mediaSeekLifecycle.pending?.purpose == .navigation
+            && mediaSeekLifecycle.pending?.targetId == targetId
+            && mediaSeekLifecycle.pending?.mediaTimeMs == max(0, mediaTimeMs)
         if activeTargetId != targetId || activePlaybackURL != url || player == nil {
             cancelPostResumeEvidenceCapture(reason: "playback_item_changed")
             removePlayerStateObserver()
@@ -1781,19 +1789,21 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         #endif
         let seconds = max(0, Double(mediaTimeMs) / 1000)
         lastRequestedMediaTimeMs = max(0, mediaTimeMs)
-        let seekGeneration = beginMediaSeek(
-            targetId: targetId,
-            mediaTimeMs: lastRequestedMediaTimeMs,
-            purpose: .playbackStart
-        )
         playbackComplete = false
         completedTargetId = nil
-        let time = CMTime(seconds: seconds, preferredTimescale: 600)
         paused = false
-        let tolerance = CMTime(seconds: 0.25, preferredTimescale: 600)
-        player?.seek(to: time, toleranceBefore: tolerance, toleranceAfter: tolerance) { [weak self] finished in
-            DispatchQueue.main.async { [weak self] in
-                self?.finishMediaSeek(generation: seekGeneration, targetId: targetId, finished: finished)
+        if !continuesNavigationSeek {
+            let seekGeneration = beginMediaSeek(
+                targetId: targetId,
+                mediaTimeMs: lastRequestedMediaTimeMs,
+                purpose: .playbackStart
+            )
+            let time = CMTime(seconds: seconds, preferredTimescale: 600)
+            let tolerance = CMTime(seconds: 0.25, preferredTimescale: 600)
+            player?.seek(to: time, toleranceBefore: tolerance, toleranceAfter: tolerance) { [weak self] finished in
+                DispatchQueue.main.async { [weak self] in
+                    self?.finishMediaSeek(generation: seekGeneration, targetId: targetId, finished: finished)
+                }
             }
         }
         player?.play()

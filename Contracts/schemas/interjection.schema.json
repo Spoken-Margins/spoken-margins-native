@@ -56,6 +56,7 @@
     "transcriptionStatus": { "enum": ["pending", "transcribed", "failed"] },
     "transcript": { "type": ["string", "null"] },
     "cleanedTranscript": { "type": ["string", "null"] },
+    "captureKind": { "type": ["string", "null"], "enum": ["audio", "written", null] },
     "isStarredForSharing": { "type": ["boolean", "null"] },
     "privateSharingNote": { "type": ["string", "null"], "maxLength": 500 },
     "alignedTranscript": {

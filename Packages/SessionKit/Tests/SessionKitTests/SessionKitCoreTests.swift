@@ -4176,6 +4176,385 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(engine.lastScheduledTranscriptionInterjectionId, interjection.id)
     }
 
+    func testWrittenInterjectionPreservesExactTextAndUsesNoAudioCaptureServices() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "interjection": ["record_audio"]
+            ]
+        )
+        let item = Item(id: "item-written", title: "Written", mediaType: "text", text: "First sentence. Second sentence.", externalReference: nil, status: "ready")
+        let audio = RecordingAudioClient()
+        let recorder = CountingRecordingClient()
+        let transcriber = RecordingTranscriptionClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio, recorder: recorder, transcriber: transcriber)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentOffset = "First sentence. ".count
+        let capture = try engine.beginWrittenInterjection()
+        XCTAssertTrue(capture.wasPlaying)
+        XCTAssertEqual(capture.targetType, .item)
+        XCTAssertEqual(capture.anchor.anchorBefore, "First sentence.")
+        XCTAssertThrowsError(try engine.stopPlayback())
+        XCTAssertThrowsError(try engine.beginInterjection())
+
+        _ = try engine.saveWrittenInterjection(captureId: capture.id, text: " Keep  this exact thought. ")
+
+        let note = try XCTUnwrap(try repo.loadInterjections(sessionId: capture.sessionId).first)
+        XCTAssertEqual(note.captureKind, .written)
+        XCTAssertNil(note.audioPath)
+        XCTAssertEqual(note.audioStatus, "discarded")
+        XCTAssertEqual(note.transcriptionStatus, "transcribed")
+        XCTAssertEqual(note.transcript, " Keep  this exact thought. ")
+        XCTAssertEqual(note.displayText, " Keep  this exact thought. ")
+        XCTAssertEqual(recorder.beginCount, 0)
+        XCTAssertEqual(recorder.finishCount, 0)
+        XCTAssertEqual(recorder.cancelCount, 0)
+        XCTAssertTrue(transcriber.scheduledInterjectionIds.isEmpty)
+        XCTAssertEqual(audio.playedOffsets.last, "First sentence. ".count)
+    }
+
+    func testWrittenInterjectionCancelKeepsAPrepausedSourcePausedAndRejectsStaleRequests() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: ["sync": ["canonical_persistence"], "playback": ["realtime_tts"]]
+        )
+        let item = Item(id: "item-written-paused", title: "Written", mediaType: "text", text: "A source sentence.", externalReference: nil, status: "ready")
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        _ = try engine.pause()
+        let playCountBeforeCapture = audio.playedTargets.count
+        let capture = try engine.beginWrittenInterjection()
+        XCTAssertFalse(capture.wasPlaying)
+        XCTAssertThrowsError(try engine.cancelWrittenInterjection(captureId: "stale"))
+        _ = try engine.cancelWrittenInterjection(captureId: capture.id)
+
+        XCTAssertEqual(try repo.loadInterjections(sessionId: capture.sessionId).count, 0)
+        XCTAssertEqual(audio.playedTargets.count, playCountBeforeCapture)
+        XCTAssertEqual(engine.snapshot.status, .paused)
+        XCTAssertThrowsError(try engine.cancelWrittenInterjection(captureId: capture.id))
+    }
+
+    func testWrittenInterjectionOnExternallyStreamedTurnKeepsGeneratedAnchorAndDoesNotDoublePlay() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["assistant_turn_tts"]
+            ]
+        )
+        let item = Item(id: "item-written-stream", title: "Written stream", mediaType: "text", text: "Source.", externalReference: nil, status: "ready")
+        let session = Session(id: "session-written-stream", itemId: item.id, status: "in_progress", phase: .conversation, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 0, playbackRate: 1)
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.aiStreamDelta(turnId: "turn-written-stream", content: "First response. Second point has the detail.")
+        _ = try engine.activateStreamingTurn(turnId: "turn-written-stream")
+        let offset = "First response. ".count
+        _ = try engine.updateStreamingTurnPosition(turnId: "turn-written-stream", charOffset: offset)
+        let capture = try engine.beginWrittenInterjection()
+        _ = try engine.saveWrittenInterjection(captureId: capture.id, text: "A generated-margin note.")
+
+        let note = try XCTUnwrap(try repo.loadInterjections(sessionId: session.id).first)
+        XCTAssertEqual(note.targetType, .assistantTurn)
+        XCTAssertEqual(note.targetId, "turn-written-stream")
+        XCTAssertEqual(note.anchor.anchorType, .turn)
+        XCTAssertEqual(note.anchor.startChar, offset)
+        XCTAssertEqual(engine.snapshot.status, .starting)
+        XCTAssertTrue(audio.playedTargets.isEmpty)
+    }
+
+    func testTranscriptlessMediaWrittenInterjectionDoesNotClaimReadySourceContext() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media"]]
+        )
+        let item = Item(
+            id: "item-written-media",
+            title: "Written media",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://example.com/episode",
+            status: "ready",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://cdn.example.com/episode.mp3", durationMs: 900_000)
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentMediaTimeValue = 123_000
+        let capture = try engine.beginWrittenInterjection()
+        _ = try engine.saveWrittenInterjection(captureId: capture.id, text: "A media-margin note.")
+
+        let note = try XCTUnwrap(try repo.loadInterjections(sessionId: capture.sessionId).first)
+        XCTAssertEqual(note.audioStatus, "discarded")
+        XCTAssertEqual(note.anchor.anchorType, .media)
+        XCTAssertEqual(note.anchorContextStatus, .unavailable, "No transcription or context job is scheduled for written capture")
+    }
+
+    func testWrittenInterjectionRejectsDoubleSaveWithoutCreatingADuplicate() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: ["sync": ["canonical_persistence"], "playback": ["realtime_tts"]]
+        )
+        let item = Item(id: "item-written-once", title: "Written once", mediaType: "text", text: "A source sentence.", externalReference: nil, status: "ready")
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo)
+
+        _ = try engine.startSession(itemId: item.id)
+        let capture = try engine.beginWrittenInterjection()
+        XCTAssertThrowsError(try engine.saveWrittenInterjection(captureId: "stale", text: "Note"))
+        _ = try engine.saveWrittenInterjection(captureId: capture.id, text: "Note")
+        XCTAssertThrowsError(try engine.saveWrittenInterjection(captureId: capture.id, text: "Note"))
+        XCTAssertEqual(try repo.loadInterjections(sessionId: capture.sessionId).map(\.id), ["ij-written-\(capture.id)"])
+    }
+
+    func testWrittenInterjectionRetainsItsCaptureAfterStoreFailureAndWritesOnceOnRetry() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: ["sync": ["canonical_persistence"], "playback": ["realtime_tts"]]
+        )
+        let item = Item(id: "item-written-retry", title: "Written retry", mediaType: "text", text: "A source sentence.", externalReference: nil, status: "ready")
+        let repo = FailingWrittenInterjectionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo)
+
+        _ = try engine.startSession(itemId: item.id)
+        let capture = try engine.beginWrittenInterjection()
+        repo.failNextInterjectionSave = true
+        XCTAssertThrowsError(try engine.saveWrittenInterjection(captureId: capture.id, text: "Retry this exact text."))
+        XCTAssertEqual(try repo.loadInterjections(sessionId: capture.sessionId).count, 0)
+        _ = try engine.saveWrittenInterjection(captureId: capture.id, text: "Retry this exact text.")
+
+        XCTAssertEqual(try repo.loadInterjections(sessionId: capture.sessionId).map(\.transcript), ["Retry this exact text."])
+        XCTAssertThrowsError(try engine.saveWrittenInterjection(captureId: capture.id, text: "Retry this exact text."))
+    }
+
+    func testWrittenInterjectionBeginFailureRestoresPlayingSourceWithoutCreatingADraft() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: ["sync": ["canonical_persistence"], "playback": ["realtime_tts"]]
+        )
+        let item = Item(id: "item-written-begin-failure", title: "Written begin failure", mediaType: "text", text: "A source sentence.", externalReference: nil, status: "ready")
+        let audio = RecordingAudioClient()
+        let repo = FailingWrittenInterjectionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        repo.failNextSessionSave = true
+        XCTAssertThrowsError(try engine.beginWrittenInterjection())
+        XCTAssertEqual(engine.snapshot.status, .playing)
+        XCTAssertEqual(audio.playedTargets.last, item.id)
+
+        let capture = try engine.beginWrittenInterjection()
+        _ = try engine.cancelWrittenInterjection(captureId: capture.id)
+    }
+
+    func testWrittenInterjectionCommitDoesNotRemainRetryableWhenResumeFails() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: ["sync": ["canonical_persistence"], "playback": ["realtime_tts"]]
+        )
+        let item = Item(id: "item-written-resume-failure", title: "Written resume failure", mediaType: "text", text: "A source sentence.", externalReference: nil, status: "ready")
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        let capture = try engine.beginWrittenInterjection()
+        audio.failNextPlay = true
+        _ = try engine.saveWrittenInterjection(captureId: capture.id, text: "Committed before transport recovery.")
+
+        XCTAssertEqual(try repo.loadInterjections(sessionId: capture.sessionId).count, 1)
+        XCTAssertEqual(engine.snapshot.status, .paused)
+        XCTAssertThrowsError(try engine.saveWrittenInterjection(captureId: capture.id, text: "Committed before transport recovery."))
+        _ = try engine.stopPlayback()
+    }
+
+    func testSessionQualifiedCleanupAndDeletionDoNotMutateSameIDMarginInAnotherSQLiteSession() throws {
+        let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-\(UUID().uuidString).sqlite").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let store = try SQLiteSessionStore(path: path)
+        let item = Item(id: "item-scoped-margin", title: "Scoped", mediaType: "text", text: "Source.", externalReference: nil, status: "ready")
+        let first = Session(id: "session-scoped-A", itemId: item.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 0, playbackRate: 1)
+        let second = Session(id: "session-scoped-B", itemId: item.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 0, playbackRate: 1)
+        func margin(sessionId: String, transcript: String, cleaned: String?) -> Interjection {
+            Interjection(
+                id: "same-margin-id", itemId: item.id, sessionId: sessionId,
+                targetType: .item, targetId: item.id, createdAt: Date(timeIntervalSince1970: 1),
+                roughPercent: 0, anchor: Anchor(anchorType: .text, startChar: 0, endChar: 7, anchorBefore: "Source.", anchorAfter: ""),
+                audioPath: "interjections/\(sessionId).m4a", audioStatus: "saved", transcriptionStatus: "transcribed",
+                transcript: transcript, cleanedTranscript: cleaned, displayText: cleaned ?? transcript, status: "active"
+            )
+        }
+        try store.saveItem(item)
+        try store.saveSession(first)
+        try store.saveSession(second)
+        try store.saveInterjection(margin(sessionId: first.id, transcript: "First original", cleaned: "First cleaned"))
+        try store.saveInterjection(margin(sessionId: second.id, transcript: "Second original", cleaned: nil))
+        let engine = SessionEngine(profile: phonePlaybackProfile(), repository: store)
+
+        _ = try engine.cleanupCompleted(interjectionId: "same-margin-id", sessionId: second.id, cleanedTranscript: "Second cleaned")
+        XCTAssertEqual(try store.loadInterjections(sessionId: first.id).first?.cleanedTranscript, "First cleaned")
+        XCTAssertEqual(try store.loadInterjections(sessionId: second.id).first?.cleanedTranscript, "Second cleaned")
+
+        _ = try engine.deleteRepresentation(interjectionId: "same-margin-id", sessionId: second.id, representation: "transcript")
+        XCTAssertEqual(try store.loadInterjections(sessionId: first.id).first?.transcript, "First original")
+        XCTAssertNil(try store.loadInterjections(sessionId: second.id).first?.transcript)
+
+        _ = try engine.deleteInterjection(interjectionId: "same-margin-id", sessionId: second.id)
+        XCTAssertEqual(try store.loadInterjections(sessionId: first.id).first?.status, "active")
+        XCTAssertEqual(try store.loadInterjections(sessionId: second.id).first?.status, "deleted")
+
+        XCTAssertThrowsError(try engine.cleanupCompleted(interjectionId: "same-margin-id", sessionId: "unknown-session", cleanedTranscript: "must not fallback"))
+        XCTAssertEqual(try store.loadInterjections(sessionId: first.id).first?.cleanedTranscript, "First cleaned")
+    }
+
+    func testPlayInterjectionAnchorSwitchesToForeignTextSessionAtSavedOffset() throws {
+        let profile = phonePlaybackProfile()
+        let oldItem = Item(id: "item-anchor-old", title: "Old", mediaType: "text", text: "Old source text.", externalReference: nil, status: "ready")
+        let targetItem = Item(id: "item-anchor-target", title: "Target", mediaType: "text", text: "First sentence. Second sentence.", externalReference: nil, status: "ready")
+        let oldSession = Session(id: "session-anchor-old", itemId: oldItem.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: oldItem.id, position: Position(charOffset: 3), completionPercent: 20, playbackRate: 1)
+        let targetSession = Session(id: "session-anchor-target", itemId: targetItem.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: targetItem.id, position: Position(charOffset: 2), completionPercent: 10, playbackRate: 1)
+        let note = Interjection(id: "ij-anchor-text", itemId: targetItem.id, sessionId: targetSession.id, targetType: .item, targetId: targetItem.id, createdAt: Date(), roughPercent: 50, anchor: Anchor(anchorType: .text, startChar: "First sentence. ".count, endChar: targetItem.text!.count, anchorBefore: "First sentence.", anchorAfter: "Second sentence."), audioPath: nil, audioStatus: "saved", transcriptionStatus: "transcribed", transcript: "Note", cleanedTranscript: nil, displayText: "Note", status: "active")
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [oldItem.id: oldItem, targetItem.id: targetItem], sessions: [oldSession.id: oldSession, targetSession.id: targetSession], interjections: [note.id: note])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.inspectSession(sessionId: oldSession.id)
+        _ = try engine.resumePlayback()
+        let snapshot = try engine.playInterjectionAnchor(note)
+
+        XCTAssertEqual(snapshot.sessionId, targetSession.id)
+        XCTAssertEqual(snapshot.itemId, targetItem.id)
+        XCTAssertEqual(audio.playedTargets.last, targetItem.id)
+        XCTAssertEqual(audio.playedOffsets.last, "First sentence. ".count)
+    }
+
+    func testPlayInterjectionAnchorRejectsInvalidForeignAnchorWithoutChangingCurrentPlayback() throws {
+        let profile = phonePlaybackProfile()
+        let oldItem = Item(id: "item-anchor-invalid-old", title: "Old", mediaType: "text", text: "Old source text.", externalReference: nil, status: "ready")
+        let targetItem = Item(id: "item-anchor-invalid-target", title: "Target", mediaType: "text", text: "Short.", externalReference: nil, status: "ready")
+        let oldSession = Session(id: "session-anchor-invalid-old", itemId: oldItem.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: oldItem.id, position: Position(charOffset: 3), completionPercent: 20, playbackRate: 1)
+        let targetSession = Session(id: "session-anchor-invalid-target", itemId: targetItem.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: targetItem.id, position: Position(charOffset: 2), completionPercent: 10, playbackRate: 1)
+        let note = Interjection(id: "ij-anchor-invalid", itemId: targetItem.id, sessionId: targetSession.id, targetType: .item, targetId: targetItem.id, createdAt: Date(), roughPercent: 50, anchor: Anchor(anchorType: .text, startChar: 99, endChar: 100, anchorBefore: "", anchorAfter: ""), audioPath: nil, audioStatus: "saved", transcriptionStatus: "transcribed", transcript: "Note", cleanedTranscript: nil, displayText: "Note", status: "active")
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [oldItem.id: oldItem, targetItem.id: targetItem], sessions: [oldSession.id: oldSession, targetSession.id: targetSession], interjections: [note.id: note])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.inspectSession(sessionId: oldSession.id)
+        _ = try engine.resumePlayback()
+        XCTAssertThrowsError(try engine.playInterjectionAnchor(note))
+
+        XCTAssertEqual(engine.currentSession?.id, oldSession.id)
+        XCTAssertEqual(engine.snapshot.status, .playing)
+        XCTAssertEqual(audio.playedTargets.last, oldItem.id)
+        XCTAssertEqual(try repo.loadSession(id: targetSession.id)?.position.charOffset, 2)
+    }
+
+    func testPlayInterjectionAnchorRestoresOldSessionAndForeignPersistenceAfterAdapterFailure() throws {
+        let profile = phonePlaybackProfile()
+        let oldItem = Item(id: "item-anchor-rollback-old", title: "Old", mediaType: "text", text: "Old source text.", externalReference: nil, status: "ready")
+        let targetItem = Item(id: "item-anchor-rollback-target", title: "Target", mediaType: "text", text: "First. Second.", externalReference: nil, status: "ready")
+        let oldSession = Session(id: "session-anchor-rollback-old", itemId: oldItem.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: oldItem.id, position: Position(charOffset: 3), completionPercent: 20, playbackRate: 1)
+        let targetSession = Session(id: "session-anchor-rollback-target", itemId: targetItem.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: targetItem.id, position: Position(charOffset: 4), completionPercent: 30, playbackRate: 1)
+        let note = Interjection(id: "ij-anchor-rollback", itemId: targetItem.id, sessionId: targetSession.id, targetType: .item, targetId: targetItem.id, createdAt: Date(), roughPercent: 50, anchor: Anchor(anchorType: .text, startChar: 7, endChar: 13, anchorBefore: "First.", anchorAfter: "Second."), audioPath: nil, audioStatus: "saved", transcriptionStatus: "transcribed", transcript: "Note", cleanedTranscript: nil, displayText: "Note", status: "active")
+        let audio = RecordingAudioClient()
+        let repo = FailingWrittenInterjectionRepository(items: [oldItem.id: oldItem, targetItem.id: targetItem], sessions: [oldSession.id: oldSession, targetSession.id: targetSession], interjections: [note.id: note])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.inspectSession(sessionId: oldSession.id)
+        _ = try engine.resumePlayback()
+        repo.failNextSessionSave = true
+        XCTAssertThrowsError(try engine.playInterjectionAnchor(note))
+        XCTAssertEqual(engine.currentSession?.id, oldSession.id)
+        XCTAssertEqual(try repo.loadSession(id: targetSession.id)?.position.charOffset, 4)
+        audio.failNextPlay = true
+        XCTAssertThrowsError(try engine.playInterjectionAnchor(note))
+
+        XCTAssertEqual(engine.currentSession?.id, oldSession.id)
+        XCTAssertEqual(engine.snapshot.status, .playing)
+        XCTAssertEqual(try repo.loadSession(id: targetSession.id)?.position.charOffset, 4)
+        XCTAssertEqual(audio.playedTargets.last, oldItem.id)
+    }
+
+    func testPlayInterjectionAnchorStartsMediaAndPreparedTextAtSavedMediaTime() throws {
+        let profile = RuntimeCapabilityProfile(id: "phone-tablet-online", displayName: "Phone", capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media", "prerendered_audio"]])
+        let mediaItem = Item(id: "item-anchor-media", title: "Media", mediaType: TargetType.transcriptBackedMedia.rawValue, text: nil, externalReference: nil, status: "ready", media: ItemMedia(sourceType: .remoteStream, url: "https://cdn.example.com/media.mp3", durationMs: 10_000))
+        let preparedItem = Item(id: "item-anchor-prepared", title: "Prepared", mediaType: TargetType.transcriptBackedMedia.rawValue, text: "Prepared narration.", externalReference: nil, status: "ready", media: ItemMedia(sourceType: .generatedTTSPrerendered, url: "memory://prepared", durationMs: 10_000))
+        let mediaSession = Session(id: "session-anchor-media", itemId: mediaItem.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .transcriptBackedMedia, currentTargetId: "old-media", position: Position(mediaTimeMs: 100), completionPercent: 1, playbackRate: 1)
+        let preparedSession = Session(id: "session-anchor-prepared", itemId: preparedItem.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .transcriptBackedMedia, currentTargetId: "old-prepared", position: Position(mediaTimeMs: 200), completionPercent: 2, playbackRate: 1)
+        let mediaNote = Interjection(id: "ij-anchor-media", itemId: mediaItem.id, sessionId: mediaSession.id, targetType: .item, targetId: mediaItem.id, createdAt: Date(), roughPercent: 50, anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 5_000), audioPath: nil, audioStatus: "saved", transcriptionStatus: "transcribed", transcript: "Note", cleanedTranscript: nil, displayText: "Note", status: "active")
+        let preparedNote = Interjection(id: "ij-anchor-prepared", itemId: preparedItem.id, sessionId: preparedSession.id, targetType: .item, targetId: preparedItem.id, createdAt: Date(), roughPercent: 60, anchor: Anchor(anchorType: .media, startChar: 4, endChar: 9, anchorBefore: "", anchorAfter: "", mediaTimeMs: 6_000), audioPath: nil, audioStatus: "saved", transcriptionStatus: "transcribed", transcript: "Note", cleanedTranscript: nil, displayText: "Note", status: "active")
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [mediaItem.id: mediaItem, preparedItem.id: preparedItem], sessions: [mediaSession.id: mediaSession, preparedSession.id: preparedSession], interjections: [mediaNote.id: mediaNote, preparedNote.id: preparedNote])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.playInterjectionAnchor(mediaNote)
+        XCTAssertEqual(audio.playedTargets.last, mediaItem.media?.url)
+        XCTAssertEqual(audio.playedOffsets.last, 5_000)
+        _ = try engine.playInterjectionAnchor(preparedNote)
+        XCTAssertEqual(audio.playedTargets.last, preparedItem.media?.url)
+        XCTAssertEqual(audio.playedOffsets.last, 6_000)
+    }
+
+    func testPlayInterjectionAnchorStartsGeneratedTurnAtSavedOffset() throws {
+        let profile = phonePlaybackProfile()
+        let item = Item(id: "item-anchor-turn", title: "Turn", mediaType: "text", text: "Source.", externalReference: nil, status: "ready")
+        let session = Session(id: "session-anchor-turn", itemId: item.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: item.id, position: Position(), completionPercent: 0, playbackRate: 1)
+        let turn = ConversationTurn(id: "turn-anchor-response", sessionId: session.id, role: "assistant", turnType: "assistant_response", status: "complete", summary: "Brief.", text: "First response. Second response.", rawText: nil, chapters: nil, sourceInterjectionIds: [])
+        let offset = "First response. ".count
+        let note = Interjection(id: "ij-anchor-turn", itemId: item.id, sessionId: session.id, targetType: .assistantTurn, targetId: turn.id, createdAt: Date(), roughPercent: 50, anchor: Anchor(anchorType: .turn, startChar: offset, endChar: turn.text!.count, anchorBefore: "First response.", anchorAfter: "Second response."), audioPath: nil, audioStatus: "saved", transcriptionStatus: "transcribed", transcript: "Note", cleanedTranscript: nil, displayText: "Note", status: "active")
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session], interjections: [note.id: note], turns: [turn.id: turn])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.playInterjectionAnchor(note)
+
+        XCTAssertEqual(engine.snapshot.targetType, TargetType.assistantTurnTTS.rawValue)
+        XCTAssertEqual(audio.playedTargets.last, turn.id)
+        XCTAssertEqual(audio.playedOffsets.last, "Brief.\n\n".count + offset)
+    }
+
+    func testExplicitSessionAsyncMarginUpdateDoesNotCrossMutateCollidingSQLiteNoteIDs() throws {
+        let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-anchor-collision-\(UUID().uuidString).sqlite").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let store = try SQLiteSessionStore(path: path)
+        let firstItem = Item(id: "item-anchor-collision-one", title: "One", mediaType: "text", text: "One.", externalReference: nil, status: "ready")
+        let secondItem = Item(id: "item-anchor-collision-two", title: "Two", mediaType: "text", text: "Two.", externalReference: nil, status: "ready")
+        let firstSession = Session(id: "session-anchor-collision-one", itemId: firstItem.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: firstItem.id, position: Position(), completionPercent: 0, playbackRate: 1)
+        let secondSession = Session(id: "session-anchor-collision-two", itemId: secondItem.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: secondItem.id, position: Position(), completionPercent: 0, playbackRate: 1)
+        let firstNote = Interjection(id: "shared-note-id", itemId: firstItem.id, sessionId: firstSession.id, targetType: .item, targetId: firstItem.id, createdAt: Date(), roughPercent: 0, anchor: Anchor(anchorType: .text, startChar: 0, endChar: 1, anchorBefore: "", anchorAfter: ""), audioPath: "one.m4a", audioStatus: "saved", transcriptionStatus: "pending", transcript: nil, cleanedTranscript: nil, displayText: nil, status: "active")
+        let secondNote = Interjection(id: "shared-note-id", itemId: secondItem.id, sessionId: secondSession.id, targetType: .item, targetId: secondItem.id, createdAt: Date(timeIntervalSince1970: 2), roughPercent: 0, anchor: Anchor(anchorType: .text, startChar: 0, endChar: 1, anchorBefore: "", anchorAfter: ""), audioPath: "two.m4a", audioStatus: "saved", transcriptionStatus: "pending", transcript: nil, cleanedTranscript: nil, displayText: nil, status: "active")
+        try store.saveItem(firstItem)
+        try store.saveItem(secondItem)
+        try store.saveSession(firstSession)
+        try store.saveSession(secondSession)
+        try store.saveInterjection(firstNote)
+        try store.saveInterjection(secondNote)
+        let engine = SessionEngine(profile: phonePlaybackProfile(), repository: store)
+
+        _ = try engine.transcriptionCompleted(interjectionId: "shared-note-id", sessionId: secondSession.id, transcript: "Only second updates.")
+
+        XCTAssertNil(try store.loadInterjections(sessionId: firstSession.id).first?.transcript)
+        XCTAssertEqual(try store.loadInterjections(sessionId: secondSession.id).first?.transcript, "Only second updates.")
+    }
+
     func testRecordingInterjectionIgnoresPausedSpeechCompletion() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
@@ -5717,6 +6096,7 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     var acceptsPostResumeSamples = false
     var postResumeSampleRequests: [PostResumeAudioSampleRequest] = []
     var eventLog: [String] = []
+    var failNextPlay = false
 
     func configureMediaContext(_ context: PlaybackMediaContext?) throws {
         mediaContexts.append(context)
@@ -5738,6 +6118,10 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     }
 
     func play(targetId: String, from charOffset: Int) throws {
+        if failNextPlay {
+            failNextPlay = false
+            throw SessionKitError.persistenceFailed("injected_play_failure")
+        }
         activeTargetId = targetId
         currentMediaTimeValue = nil
         playedTargets.append(targetId)
@@ -5848,6 +6232,46 @@ private final class RecordingAudioClient: AudioPlaybackClient {
         postResumeSampleRequests.append(request)
         eventLog.append("arm_post_resume_sample")
         return acceptsPostResumeSamples
+    }
+}
+
+private final class FailingWrittenInterjectionRepository: InMemorySessionRepository {
+    var failNextInterjectionSave = false
+    var failNextSessionSave = false
+
+    override func saveInterjection(_ interjection: Interjection) throws {
+        if failNextInterjectionSave {
+            failNextInterjectionSave = false
+            throw SessionKitError.persistenceFailed("injected_interjection_save_failure")
+        }
+        try super.saveInterjection(interjection)
+    }
+
+    override func saveSession(_ session: Session) throws {
+        if failNextSessionSave {
+            failNextSessionSave = false
+            throw SessionKitError.persistenceFailed("injected_session_save_failure")
+        }
+        try super.saveSession(session)
+    }
+}
+
+private final class CountingRecordingClient: RecordingClient {
+    var beginCount = 0
+    var finishCount = 0
+    var cancelCount = 0
+
+    func beginRecording() throws {
+        beginCount += 1
+    }
+
+    func finishRecording(audioRef: String?) throws -> String {
+        finishCount += 1
+        return audioRef ?? "interjections/counting.m4a"
+    }
+
+    func cancelRecording() throws {
+        cancelCount += 1
     }
 }
 

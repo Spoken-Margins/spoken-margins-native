@@ -283,7 +283,6 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
     @MainActor
     func testImportedPodcastRequestsTranscriptFallbackAndResolvesFuzzyContext() async throws {
         let root = try temporaryDirectory(named: "spoken-margins-transcript-fallback")
-        defer { try? FileManager.default.removeItem(at: root) }
         let databaseURL = root.appendingPathComponent("recipient.sqlite")
         let packageURL = root.appendingPathComponent("transcript-fallback.spokenmargins")
         let manifest = try writePodcastPackage(to: packageURL, packageID: "package-transcript-fallback")
@@ -302,7 +301,14 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let item = try XCTUnwrap(model.libraryItems.first(where: { $0.title == Self.podcastTitle }))
         let localURL = root.appendingPathComponent("recipient.mp3")
         try Data("recipient-edition".utf8).write(to: localURL)
-        let store = try SQLiteSessionStore(path: databaseURL.path)
+        let store = try model.libraryStoreForTesting()
+        addTeardownBlock { [weak model, weak store] in
+            // Startup work may outlive this case. Never unlink an open SQLite/WAL
+            // file; any retained UUID fixture remains in the test host's temp area.
+            if model == nil, store == nil {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
         let digest = try XCTUnwrap(manifest.contentDigest)
         let importedLayer = try XCTUnwrap(store.loadImportedCommentaryLayer(packageDigest: digest))
         let importedMargin = try XCTUnwrap(store.loadImportedCommentaryInterjections(layerId: importedLayer.id).first)

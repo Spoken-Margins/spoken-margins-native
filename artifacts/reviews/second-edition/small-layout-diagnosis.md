@@ -1,0 +1,7 @@
+# iOS 18.6 small-phone layout verification
+
+The first four-route run (`20260910-171842-ui-small-ios18`) passed dense Library, maximum-text player controls, and the complete written save/search/star/play/discard path. Its accessibility route stopped at `filter.isHittable`, even though the capture `small-ui-first/filter-failure.png` showed a visible Filter control above the mini-player. The steward directly opened that native popup through Simulator and selected Text; the resulting accessibility label was `Filter Library, active filters`. No app change was made.
+
+The revised route verifies the actual Menu hit area, opens it, selects Text, checks the active label, and resets All. In `20260910-172715-layout-small`, those checks and Add Text keyboard clearance succeeded. A later Timeline check still used an isHittable-based scrolling helper on the intentionally disabled Import action (empty response). It exhausted unrelated swipes and hit the test's execution-time allowance; some Xcode attachments were replaced with a pending-attachment error and are not claimed as screenshots.
+
+The Timeline assertion remains full-button clearance above the mini-player. The test now scrolls based on geometry, inside the content's right margin and outside its nested editor and left back gesture. This amendment changes only UI test mechanics. A scoped route on small iOS 18.6 and iPad follows; the full release suite uses the final test source.

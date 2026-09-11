@@ -1,0 +1,49 @@
+Application, 0x113254000, pid: 35782, label: 'Spoken Margins' <App element pid: 35782>
+  Window (Main), 0x113254140, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 35782, elementOrHash.elementID: 4360456192.4>
+    Other, 0x1132543c0, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 35782, elementOrHash.elementID: 4417929728.5>
+      Other, 0x113254500, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 35782, elementOrHash.elementID: 4418879488.6>
+        Other, 0x113254640, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 35782, elementOrHash.elementID: 4360455168.7>
+          Other, 0x113254780, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 35782, elementOrHash.elementID: 4417129536.8>
+            Other, 0x1132548c0, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 35782, elementOrHash.elementID: 4417154432.115>
+              NavigationBar, 0x113254a00, {{0.0, 62.0}, {402.0, 54.0}}, identifier: '_TtGC7SwiftUI32NavigationStackHosting' <AX element pid: 35782, elementOrHash.elementID: 4688780032.117>
+                Button, 0x113254b40, {{20.0, 66.0}, {36.0, 36.0}}, identifier: 'playback.home.button', label: 'Library' <AX element pid: 35782, elementOrHash.elementID: 4699819136.120>
+              Other, 0x113254c80, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 35782, elementOrHash.elementID: 4417154880.118>
+                Other, 0x113257980, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 35782, elementOrHash.elementID: 4417189888.121>
+                  Other, 0x113257840, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 35782, elementOrHash.elementID: 4698201984.123>
+                    Other, 0x113257700, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 35782, elementOrHash.elementID: 4417120320.124>
+                      ScrollView, 0x113255900, {{0.0, 0.0}, {402.0, 874.0}}, identifier: 'playback.screen' <AX element pid: 35782, elementOrHash.elementID: 4360777728.125>
+                        Other, 0x1132557c0, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 35782, elementOrHash.elementID: 4417153984.138>
+                          Other, 0x113255680, {{0.0, 0.0}, {402.0, 170.8}} <AX element pid: 35782, elementOrHash.elementID: 4417141184.152>
+                        Other, 0x113255540, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 35782, elementOrHash.elementID: 4417153536.139>
+                        Other, 0x113255400, {{0.0, 116.0}, {402.0, 147.7}} <AX element pid: 35782, elementOrHash.elementID: 4756605440.140>
+                          Button, 0x1132552c0, {{61.3, 134.0}, {279.3, 81.7}}, identifier: 'playback.title', label: 'You Can't Inspect the Pill' <AX element pid: 35782, elementOrHash.elementID: 4417075648.153>
+                          Button, 0x113255180, {{61.3, 227.7}, {68.7, 18.0}}, identifier: 'playback.title', label: 'Summary' <AX element pid: 35782, elementOrHash.elementID: 4417073856.154>
+                        Other, 0x113255040, {{369.0, 116.0}, {30.0, 416.0}}, label: 'Vertical scroll bar, 1 page', value: 0% <AX element pid: 35782, elementOrHash.elementID: 4759654400.141>
+                          Other, 0x113254f00, {{396.0, 387.3}, {3.0, 141.7}} <AX element pid: 35782, elementOrHash.elementID: 4417143680.155>
+                        Other, 0x113254dc0, {{369.0, 116.0}, {30.0, 416.0}}, label: 'Vertical scroll bar, 1 page', value: 0% <AX element pid: 35782, elementOrHash.elementID: 4759654400.141>
+                          Other, 0x113257ac0, {{396.0, 387.3}, {3.0, 141.7}} <AX element pid: 35782, elementOrHash.elementID: 4417143680.155>
+                      StaticText, 0x113257c00, {{37.3, 555.8}, {18.7, 14.3}}, identifier: 'playback.screen', label: '0%' <AX element pid: 35782, elementOrHash.elementID: 4417074752.126>
+                      Slider, 0x113257d40, {{64.0, 546.0}, {274.0, 34.0}}, identifier: 'playback.screen', label: 'Playback position', value: 0 percent <AX element pid: 35782, elementOrHash.elementID: 4699816576.127>
+                      StaticText, 0x113257e80, {{346.0, 555.8}, {34.0, 14.3}}, identifier: 'playback.screen', label: '100%' <AX element pid: 35782, elementOrHash.elementID: 4417075200.128>
+                      Button, 0x113163700, {{79.0, 597.0}, {62.0, 62.0}}, identifier: 'playback.screen', label: 'Previous paragraph' <AX element pid: 35782, elementOrHash.elementID: 4417068928.129>
+                      Button, 0x113163840, {{163.0, 590.0}, {76.0, 76.0}}, identifier: 'playback.screen', label: 'Play' <AX element pid: 35782, elementOrHash.elementID: 4417076544.130>
+                      Button, 0x11325c000, {{261.0, 597.0}, {62.0, 62.0}}, identifier: 'playback.screen', label: 'Next paragraph' <AX element pid: 35782, elementOrHash.elementID: 4417071168.131>
+                      Button, 0x11325c140, {{98.8, 689.0}, {39.0, 18.0}}, identifier: 'playback.screen', label: 'Playback speed, 1.00×' <AX element pid: 35782, elementOrHash.elementID: 4417062208.132>
+                      Button, 0x11325c280, {{163.7, 689.3}, {63.2, 18.3}}, identifier: 'playback.screen', label: 'Sleep' <AX element pid: 35782, elementOrHash.elementID: 4417061312.133>
+                        Image, 0x11325c3c0, {{163.7, 689.3}, {14.7, 17.3}}, identifier: 'moon.zzz', label: 'Snooze' <AX element pid: 35782, elementOrHash.elementID: 4417060864.142>
+                        StaticText, 0x11325c500, {{163.7, 689.3}, {63.2, 18.3}}, label: 'Sleep' <AX element pid: 35782, elementOrHash.elementID: 4417061760.143>
+                      Button, 0x11325c640, {{252.3, 679.0}, {50.8, 38.0}}, identifier: 'playback.screen', label: 'More listening options' <AX element pid: 35782, elementOrHash.elementID: 4417072064.134>
+                        Image, 0x11325c780, {{252.3, 686.7}, {14.0, 3.0}}, identifier: 'ellipsis', label: 'More' <AX element pid: 35782, elementOrHash.elementID: 4417068480.144>
+                        StaticText, 0x11325c8c0, {{252.3, 679.0}, {50.8, 38.0}}, label: 'More' <AX element pid: 35782, elementOrHash.elementID: 4417072512.145>
+                      Button, 0x11325ca00, {{22.0, 730.0}, {358.0, 52.0}}, identifier: 'playback.screen', label: 'Add a Margin' <AX element pid: 35782, elementOrHash.elementID: 4417066240.135>
+                        Image, 0x11325cb40, {{138.0, 746.7}, {13.3, 18.7}}, identifier: 'mic.fill', label: 'Microphone' <AX element pid: 35782, elementOrHash.elementID: 4417071616.146>
+                        StaticText, 0x11325cc80, {{138.0, 746.3}, {128.3, 20.3}}, label: 'Add a Margin' <AX element pid: 35782, elementOrHash.elementID: 4417066688.147>
+                      Button, 0x11325cdc0, {{24.0, 805.0}, {85.0, 18.0}}, identifier: 'playback.screen', label: 'Timeline' <AX element pid: 35782, elementOrHash.elementID: 4417064000.136>
+                        Image, 0x11325cf00, {{24.0, 807.0}, {17.3, 13.7}}, identifier: 'list.bullet.rectangle', label: 'list.bullet.rectangle' <AX element pid: 35782, elementOrHash.elementID: 4417063104.148>
+                        StaticText, 0x11325d040, {{24.0, 805.0}, {85.0, 18.0}}, label: 'Timeline' <AX element pid: 35782, elementOrHash.elementID: 4417064896.149>
+                      Button, 0x11325d180, {{298.7, 805.0}, {81.3, 18.0}}, identifier: 'playback.screen', label: 'Margins' <AX element pid: 35782, elementOrHash.elementID: 4417069376.137>
+                        Image, 0x11325d2c0, {{298.7, 806.7}, {16.3, 15.3}}, identifier: 'quote.bubble', label: 'Bubble' <AX element pid: 35782, elementOrHash.elementID: 4417063552.150>
+                        StaticText, 0x11325d400, {{298.7, 805.0}, {81.3, 18.0}}, label: 'Margins' <AX element pid: 35782, elementOrHash.elementID: 4417065344.151>
+              Other, 0x11325d540, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 35782, elementOrHash.elementID: 4756606976.119>
+                Other, 0x11325d680, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 35782, elementOrHash.elementID: 4756609024.122>
+            Other, 0x11325d7c0, {{0.0, 62.0}, {32.0, 778.0}} <AX element pid: 35782, elementOrHash.elementID: 4417184064.116>

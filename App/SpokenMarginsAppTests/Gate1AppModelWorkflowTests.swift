@@ -949,10 +949,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.title, "Welcome to Spoken Margins")
         XCTAssertTrue(model.selectedItem.text.contains("structured listening workspace"))
         XCTAssertTrue(model.selectedItem.text.contains("Listening Map"))
-        XCTAssertTrue(model.selectedItem.text.contains("Tap Interject"))
+        XCTAssertTrue(model.selectedItem.text.contains("Tap Add a Margin"))
         XCTAssertTrue(model.selectedItem.text.contains("backward and forward buttons"))
-        XCTAssertTrue(model.selectedItem.text.contains("paste a podcast"))
-        XCTAssertTrue(model.selectedItem.text.contains("Import Text or PDF Files"))
+        XCTAssertTrue(model.selectedItem.text.contains("Link or Podcast"))
+        XCTAssertTrue(model.selectedItem.text.contains("document, PDF, DRM-free EPUB"))
         XCTAssertTrue(model.selectedItem.text.contains("Summarize Notes synthesizes"))
         XCTAssertTrue(model.selectedItem.text.contains("enable Spoken Margins Text"))
         XCTAssertFalse(model.selectedItem.text.contains("You Can't Inspect the Pill"))
@@ -1986,7 +1986,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.status, .playing)
     }
 
-    func testHomeRefreshesAndOpensNewestSessionAtOneHundredPercent() async throws {
+    func testHomeReflectsCompletionAndReplayPreservesBothPriorSessions() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         model.startItem(id: "item-pill")
@@ -2012,10 +2012,13 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let sessionCount = model.selectedItem.sessions.count
         model.startItem(id: "item-pill")
 
-        XCTAssertEqual(model.snapshot.sessionId, completedSessionID)
-        XCTAssertEqual(model.snapshot.status, .paused)
-        XCTAssertEqual(model.snapshot.sourceProgressPercent, 100)
-        XCTAssertEqual(model.selectedItem.sessions.count, sessionCount)
+        XCTAssertNotEqual(model.snapshot.sessionId, completedSessionID)
+        XCTAssertNotEqual(model.snapshot.sessionId, olderSessionID)
+        XCTAssertEqual(model.snapshot.status, .playing)
+        XCTAssertEqual(model.snapshot.sourceProgressPercent, 0)
+        XCTAssertEqual(model.selectedItem.sessions.count, sessionCount + 1)
+        XCTAssertTrue(model.selectedItem.sessions.contains { $0.id == completedSessionID })
+        XCTAssertTrue(model.selectedItem.sessions.contains { $0.id == olderSessionID })
     }
 
     func testFinishedSessionAtOneHundredPercentIsPreferredOverOlderInProgressSession() throws {
@@ -2405,7 +2408,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.diagnostics["playbackLifecycleSync"], "saved")
     }
 
-    func testCompletingFinalAudioAutomaticallyClosesTheSession() throws {
+    func testCompletingFinalAudioRetainsFinishedSessionForReview() throws {
         let audio = WorkflowCompletionAudioClient()
         let model = Gate1AppModel(audioPlaybackClient: audio)
         model.resetAndSeed()
@@ -2415,15 +2418,289 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         audio.completeCurrentTarget()
         model.syncPlaybackProgressForLifecycle()
 
-        XCTAssertNil(model.snapshot.sessionId)
-        XCTAssertEqual(model.screen, .home)
+        XCTAssertEqual(model.snapshot.sessionId, completedSessionID)
+        XCTAssertEqual(model.snapshot.phase, .finished)
+        XCTAssertEqual(model.screen, .playback)
         XCTAssertEqual(model.statusMessage, "Session complete and saved.")
-        XCTAssertEqual(model.feedbackEvent?.kind, .success)
-        XCTAssertEqual(model.feedbackEvent?.message, "Session complete and saved.")
         XCTAssertEqual(
             model.selectedItem.sessions.first(where: { $0.id == completedSessionID })?.status,
             "finished"
         )
+    }
+
+    func testItemReplayStartsANewSessionAndPreservesTheCompletedSession() throws {
+        let audio = WorkflowCompletionAudioClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let completedID = try XCTUnwrap(model.snapshot.sessionId)
+        audio.completeCurrentTarget()
+        model.syncPlaybackProgressForLifecycle()
+        XCTAssertEqual(model.snapshot.phase, .finished)
+        model.openHome()
+        model.startItem(id: "item-pill")
+        XCTAssertNotEqual(model.snapshot.sessionId, completedID)
+        XCTAssertEqual(model.snapshot.currentTextStart, 0)
+        XCTAssertEqual(model.snapshot.phase, .itemPlayback)
+        XCTAssertEqual(model.snapshot.status, .playing)
+        XCTAssertEqual(model.selectedItem.sessions.first { $0.id == completedID }?.status, "finished")
+    }
+
+    func testNaturalCompletionPreservesAnOpenItemAndItsFinishedSourceSession() throws {
+        let audio = WorkflowCompletionAudioClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let sessionID = model.snapshot.sessionId
+        model.openItem(id: "item-pill")
+        audio.completeCurrentTarget()
+        model.syncPlaybackProgressForLifecycle()
+        XCTAssertEqual(model.screen, .item)
+        XCTAssertEqual(model.snapshot.sessionId, sessionID)
+        XCTAssertEqual(model.snapshot.phase, .finished)
+        model.openPlayback()
+        XCTAssertEqual(model.screen, .playback)
+        XCTAssertEqual(model.snapshot.phase, .finished)
+    }
+
+    func testGlobalMarginSearchStarsAndSharedRowsKeepSessionIdentity() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "margin-retrieval-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: url)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        var before = model.snapshot
+        let firstSession = try XCTUnwrap(before.sessionId)
+        let store = try SQLiteSessionStore(path: url.path)
+        try store.saveItem(Item(id: "retrieval-item", title: "Elsewhere", mediaType: "text", text: "private-source-only-marker and a useful passage", externalReference: "local", status: "ready"))
+        try store.saveSession(Session(id: "retrieval-session", itemId: "retrieval-item", status: "in_progress", phase: .itemPlayback, currentTargetType: .itemTextTTS, currentTargetId: "retrieval-item", position: Position(charOffset: 8), completionPercent: 10, playbackRate: 1.5))
+        var original = shareableInterjection(itemId: "item-pill")
+        original.id = "same-note-id"
+        original.sessionId = firstSession
+        original.targetId = "item-pill"
+        try store.saveInterjection(original)
+        for index in 0..<50 {
+            var note = shareableInterjection(itemId: "retrieval-item")
+            note.id = index == 23 ? "same-note-id" : "note-\(index)"
+            note.sessionId = "retrieval-session"
+            note.targetId = "retrieval-item"
+            note.transcript = index == 23 ? "A café with an amber notebook" : "Ordinary thought \(index)"
+            note.displayText = note.transcript
+            note.cleanedTranscript = nil
+            note.anchor = Anchor(anchorType: .text, startChar: 8, endChar: 12, anchorBefore: "before", anchorAfter: "after")
+            try store.saveInterjection(note)
+        }
+        let layer = ImportedCommentaryLayer(id: "shared-layer", itemId: "retrieval-item", packageDigest: "shared-digest", packageId: "package", itemIdentity: SharedItemIdentity(itemType: .text, title: "Elsewhere"), displayLabel: "A shared collection", importedAt: Date())
+        try store.saveImportedCommentaryLayer(layer)
+        try store.saveImportedCommentaryInterjection(ImportedCommentaryInterjection(id: "same-note-id", layerId: layer.id, packageScopedId: "shared-note", createdAt: Date(), anchorEvidence: PortableAnchorEvidence(anchorType: .text), approvedTranscript: "Shared approved words"))
+        model.openHome()
+        before = model.snapshot
+        model.refreshMarginRows()
+        model.marginCollectionQuery.text = "CAFE with an amber"
+        let found = try XCTUnwrap(model.visiblePrivateMarginRows.first)
+        XCTAssertEqual(model.visiblePrivateMarginRows.count, 1)
+        XCTAssertEqual(found.interjection.sessionId, "retrieval-session")
+        model.openMarginInTimeline(found)
+        model.setMarginStarred(found, starred: true)
+        XCTAssertEqual(model.snapshot, before)
+        XCTAssertEqual(try store.loadInterjections(sessionId: firstSession).first?.isStarredForSharing, original.isStarredForSharing)
+        let reconstructed = try SQLiteSessionStore(path: url.path)
+        XCTAssertEqual(try reconstructed.loadInterjections(sessionId: "retrieval-session").first { $0.id == "same-note-id" }?.isStarredForSharing, true)
+        model.marginCollectionQuery = MarginCollectionQuery(text: "", filter: .starred)
+        XCTAssertEqual(model.visiblePrivateMarginRows.map(\.id), [found.id])
+        model.marginCollectionQuery = MarginCollectionQuery(text: "private-source-only-marker", filter: .all)
+        XCTAssertTrue(model.visiblePrivateMarginRows.isEmpty)
+        model.marginCollectionQuery = MarginCollectionQuery(text: "absent words", filter: .all)
+        XCTAssertTrue(model.visiblePrivateMarginRows.isEmpty)
+        model.marginCollectionQuery = MarginCollectionQuery(text: "shared approved", filter: .shared)
+        XCTAssertTrue(model.visiblePrivateMarginRows.isEmpty)
+        XCTAssertEqual(model.visibleSharedMarginRows.count, 1)
+        XCTAssertNotEqual(model.visibleSharedMarginRows.first?.id, found.id)
+        XCTAssertEqual(model.visibleSharedMarginRows.first?.collectionLabel, "A shared collection")
+        XCTAssertEqual(model.snapshot, before)
+        XCTAssertTrue(model.playMarginMoment(found))
+        XCTAssertEqual(model.snapshot.itemId, "retrieval-item")
+        XCTAssertEqual(model.snapshot.sessionId, "retrieval-session")
+        XCTAssertEqual(model.snapshot.currentTextStart, 8)
+    }
+
+    func testGlobalMarginDestructiveActionsAndPrivateCurationAddressTheForeignSession() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "margin-identity-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: url)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        var before = model.snapshot
+        let store = try SQLiteSessionStore(path: url.path)
+        var foreignSession = try XCTUnwrap(store.loadSession(id: try XCTUnwrap(before.sessionId)))
+        foreignSession.id = "foreign-session"
+        try store.saveSession(foreignSession)
+        var original = shareableInterjection(itemId: "item-pill")
+        original.id = "collision"
+        original.sessionId = try XCTUnwrap(before.sessionId)
+        var foreign = original
+        foreign.sessionId = foreignSession.id
+        foreign.transcript = "Foreign words"
+        try store.saveInterjection(original)
+        try store.saveInterjection(foreign)
+        model.syncPlaybackProgressForLifecycle()
+        before = model.snapshot
+        model.setInterjectionPrivateSharingNote(foreign.id, sessionId: foreign.sessionId, note: "Private foreign note")
+        model.setInterjectionStarredForSharing(foreign.id, sessionId: foreign.sessionId, starred: true)
+        model.deleteTranscript(interjection: foreign)
+        let afterTranscript = try XCTUnwrap(store.loadInterjections(sessionId: foreign.sessionId).first)
+        XCTAssertNil(afterTranscript.transcript)
+        XCTAssertEqual(afterTranscript.privateSharingNote, "Private foreign note")
+        XCTAssertEqual(afterTranscript.isStarredForSharing, true)
+        model.deleteInterjection(foreign)
+        XCTAssertEqual(try store.loadInterjections(sessionId: foreign.sessionId).first?.status, "deleted")
+        XCTAssertEqual(try store.loadInterjections(sessionId: original.sessionId).first, original)
+        XCTAssertEqual(model.snapshot, before)
+    }
+
+    func testLateMicrophoneGrantCannotReplaceWrittenCaptureOrRestartCancelledCapture() async throws {
+        let gate = MarginPermissionTestGate()
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: NoopRecordingClient(),
+            microphonePermissionRequest: { await gate.request() }
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.pause()
+        model.beginInterjection()
+        for _ in 0..<100 where gate.continuation == nil { await Task.yield() }
+        XCTAssertNotNil(gate.continuation)
+        model.switchPendingVoiceCaptureToWrittenMargin()
+        let draft = try XCTUnwrap(model.writtenMarginDraft)
+        gate.finish(true)
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertFalse(model.snapshot.isRecording)
+        XCTAssertEqual(model.writtenMarginDraft?.captureID, draft.captureID)
+        model.cancelWrittenMargin()
+        model.beginInterjection()
+        for _ in 0..<100 where gate.continuation == nil { await Task.yield() }
+        XCTAssertNotNil(gate.continuation)
+        model.cancelInterjection()
+        gate.finish(true)
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertFalse(model.snapshot.isRecording)
+        XCTAssertFalse(model.recordingNavigationIsLocked)
+        XCTAssertEqual(model.snapshot.status, .paused)
+    }
+
+    func testDeniedMicrophoneOffersIndependentWrittenCapture() async throws {
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: NoopRecordingClient(),
+            microphonePermissionRequest: { false }
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.pause()
+        model.beginInterjection()
+        for _ in 0..<100 where model.isRequestingRecordingPermission { await Task.yield() }
+        XCTAssertTrue(model.recordingPermissionDenied)
+        model.beginWrittenMargin()
+        XCTAssertNotNil(model.writtenMarginDraft)
+        XCTAssertFalse(model.recordingPermissionDenied)
+        XCTAssertFalse(model.snapshot.isRecording)
+        model.cancelWrittenMargin()
+    }
+
+    func testAssistantMarginCaptureRetainsTurnPositionAcrossReloadAndExport() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "turn-anchors-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), recordingClient: NoopRecordingClient(), databaseURLOverride: url)
+        model.resetAndSeed()
+        // Complete the real first-use system-voice choice, including pending migration consent.
+        model.declineCurrentTerms()
+        model.startItem(id: "item-pill")
+        model.pause()
+        let sourcePosition = model.snapshot.sourceProgressPercent
+        let sessionID = try XCTUnwrap(model.snapshot.sessionId)
+        var expected: [String: (String, Int)] = [:]
+        for responseIndex in 0..<2 {
+            model.pastedAssistantResponse = String(repeating: "Response \(responseIndex) contains a distinct argument. ", count: 80)
+            model.importPastedAssistantResponse()
+            XCTAssertEqual(model.snapshot.targetType, TargetType.assistantTurnTTS.rawValue)
+            XCTAssertEqual(model.snapshot.status, .playing)
+            model.pause()
+            let turn = try XCTUnwrap(model.selectedItem.turns.last)
+            for percent in [0, 25, 50, 99] {
+                let offset = (turn.text ?? "").count * percent / 100
+                model.seekText(toCharOffset: offset)
+                model.beginWrittenMargin()
+                model.saveWrittenMargin(text: "Note \(responseIndex)-\(percent)")
+                let note = try XCTUnwrap(model.selectedItem.interjections.first { $0.displayText == "Note \(responseIndex)-\(percent)" })
+                XCTAssertEqual(note.targetType, .assistantTurn)
+                XCTAssertEqual(note.targetId, turn.id)
+                XCTAssertEqual(note.anchor.startChar, offset)
+                XCTAssertLessThanOrEqual(abs(note.roughPercent - percent), 1)
+                expected[note.id] = (turn.id, offset)
+            }
+        }
+        XCTAssertEqual(model.snapshot.sourceProgressPercent, sourcePosition)
+        let store = try SQLiteSessionStore(path: url.path)
+        let notes = try store.loadInterjections(sessionId: sessionID)
+        XCTAssertEqual(notes.count, 8)
+        for note in notes {
+            let identity = try XCTUnwrap(expected[note.id])
+            XCTAssertEqual(note.targetId, identity.0)
+            XCTAssertEqual(note.anchor.startChar, identity.1)
+        }
+        let engine = SessionEngine(profile: RuntimeCapabilityProfile(id: "anchor-export", displayName: "Anchor export", capabilities: ["sync": ["canonical_persistence"]]), repository: store)
+        let exported = try engine.buildExport(options: ExportOptions(sessionId: sessionID, includeFullText: false, includeReference: false, includeListeningMap: false, includeInterjections: true))
+        XCTAssertEqual(exported.interjections.count, 8)
+        XCTAssertTrue(exported.interjections.allSatisfy { $0.targetType == InterjectionTargetType.assistantTurn.rawValue })
+        XCTAssertEqual(Set(exported.interjections.map(\.targetId)), Set(expected.values.map { $0.0 }))
+    }
+
+    func testWrittenMarginAppDraftLocksNavigationAndSurvivesReconstruction() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "written-margin-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), recordingClient: NoopRecordingClient(), databaseURLOverride: url)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.pause()
+        let before = model.snapshot
+        model.beginWrittenMargin()
+        let capture = try XCTUnwrap(model.writtenMarginDraft)
+        XCTAssertFalse(capture.priorWasPlaying)
+        XCTAssertFalse(model.snapshot.isRecording)
+        XCTAssertTrue(model.recordingNavigationIsLocked)
+        model.openLibrary()
+        model.startNewSession(id: "item-pill")
+        model.beginInterjection()
+        XCTAssertEqual(model.snapshot.sessionId, before.sessionId)
+        XCTAssertEqual(model.writtenMarginDraft?.captureID, capture.captureID)
+        let words = "  A thought in my own words.\n\nKeep this spacing.  "
+        model.updateWrittenMarginText(words)
+        model.saveWrittenMargin(text: words)
+        XCTAssertNil(model.writtenMarginDraft)
+        XCTAssertFalse(model.recordingNavigationIsLocked)
+        XCTAssertEqual(model.snapshot.status, .paused)
+        let store = try SQLiteSessionStore(path: url.path)
+        let saved = try XCTUnwrap(store.loadInterjections(sessionId: capture.lockedSessionID).first)
+        XCTAssertEqual(saved.captureKind, .written)
+        XCTAssertEqual(saved.displayText, words)
+        XCTAssertEqual(saved.anchor, capture.capture.anchor)
+        XCTAssertNil(saved.audioPath)
+        model.saveWrittenMargin(text: words)
+        XCTAssertEqual(try store.loadInterjections(sessionId: capture.lockedSessionID).count, 1)
+        model.beginWrittenMargin()
+        model.updateWrittenMarginText("Discard this draft")
+        model.cancelWrittenMargin()
+        XCTAssertEqual(try store.loadInterjections(sessionId: capture.lockedSessionID).count, 1)
+        XCTAssertEqual(model.snapshot.status, .paused)
     }
 
     func testPlaybackSpeechRateChangeRestartsActiveNativeTextAtCurrentOffset() throws {
@@ -3030,12 +3307,19 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     func testFollowDiscoveryRechecksSubscriptionsBeforePublishing() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
         let databaseURL = root.appending(path: "library.sqlite")
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
         model.resetAndSeed()
-        let store = try SQLiteSessionStore(path: databaseURL.path)
+        let store = try model.libraryStoreForTesting()
+        addTeardownBlock { [weak model, weak store] in
+            // Startup work may outlive this case. Never unlink an open SQLite/WAL
+            // file; any retained UUID fixture remains in the test host's temp area.
+            if model == nil, store == nil {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
         var pending: CheckedContinuation<[SourceCandidateEvidence], Never>?
+        defer { pending?.resume(returning: []) }
         model.followCandidateDiscoveryHandler = { _, _ in
             await withCheckedContinuation { pending = $0 }
         }
@@ -3048,6 +3332,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let source = SourceIdentity(id: "source", kind: .articleFeed, canonicalURL: "https://example.com/feed", host: "example.com")
         try store.saveFeedSubscription(FeedSubscription(id: "followed", source: source))
         pending?.resume(returning: [SourceCandidateEvidence(id: "candidate", source: source, evidenceURL: "https://example.com/article", relation: "html_alternate", confidence: 1)])
+        pending = nil
         try await waitFor("subscription reloaded") { model.feedSubscriptions.contains { $0.id == "followed" } }
         XCTAssertTrue(model.sourceFollowSuggestionCandidates.isEmpty)
         XCTAssertNil(try store.loadSourceSuggestionDecision(sourceId: source.id))
@@ -3056,12 +3341,19 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     func testLateFollowDiscoveryCannotPublishUnderAnotherItem() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
         let databaseURL = root.appending(path: "library.sqlite")
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
         model.resetAndSeed()
-        let store = try SQLiteSessionStore(path: databaseURL.path)
+        let store = try model.libraryStoreForTesting()
+        addTeardownBlock { [weak model, weak store] in
+            // Startup work may outlive this case. Never unlink an open SQLite/WAL
+            // file; any retained UUID fixture remains in the test host's temp area.
+            if model == nil, store == nil {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
         var pending: [String: CheckedContinuation<[SourceCandidateEvidence], Never>] = [:]
+        defer { pending.values.forEach { $0.resume(returning: []) } }
         model.followCandidateDiscoveryHandler = { item, _ in
             await withCheckedContinuation { pending[item.id] = $0 }
         }
@@ -3638,5 +3930,18 @@ private final class WorkflowCompletionAudioClient: AudioPlaybackClient {
         currentOffset = preparedText.count
         completedTargetId = activeTargetId
         lock.unlock()
+    }
+}
+
+@MainActor
+private final class MarginPermissionTestGate {
+    var continuation: CheckedContinuation<Bool, Never>?
+    func request() async -> Bool {
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func finish(_ granted: Bool) {
+        let pending = continuation
+        continuation = nil
+        pending?.resume(returning: granted)
     }
 }

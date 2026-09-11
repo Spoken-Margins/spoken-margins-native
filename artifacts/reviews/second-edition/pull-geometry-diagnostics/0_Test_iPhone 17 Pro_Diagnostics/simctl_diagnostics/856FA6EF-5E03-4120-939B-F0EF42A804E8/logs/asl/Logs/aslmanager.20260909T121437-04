@@ -1,0 +1,127 @@
+Sep  9 12:14:37: aslmanager starting
+Sep  9 12:14:37: ----------------------------------------
+Sep  9 12:14:37: Processing data store /Users/colemiller/Library/Logs/CoreSimulator/856FA6EF-5E03-4120-939B-F0EF42A804E8/asl
+Sep  9 12:14:37: Data Store Size = 12040
+Sep  9 12:14:37: Data Store YMD Files (TTL = 7 days)
+Sep  9 12:14:37:   2026.09.02.G80.asl   1826 (age 6 days 12:14:37)
+Sep  9 12:14:37:   2026.09.04.G80.asl   6482 (age 4 days 12:14:37)
+Sep  9 12:14:37:   2026.09.07.G80.asl   1244 (age 1 day 12:14:37)
+Sep  9 12:14:37:   2026.09.08.G80.asl   1826 (age 12:14:37)
+Sep  9 12:14:37:   2026.09.09.G80.asl   662 (age 0)
+Sep  9 12:14:37: Data Store AUX Directories
+Sep  9 12:14:37: Data Store BB.AUX Directories
+Sep  9 12:14:37: Data Store BB Files
+Sep  9 12:14:37: Start YMD File Scan
+Sep  9 12:14:37: Finished YMD File Scan
+Sep  9 12:14:37: Start AUX Directory Scan
+Sep  9 12:14:37: Finished AUX Directory Scan
+Sep  9 12:14:37: Start BB.AUX Directory Scan
+Sep  9 12:14:37: Finished BB.AUX Directory Scan
+Sep  9 12:14:37: Start BB Scan
+Sep  9 12:14:37: Finished BB Scan
+Sep  9 12:14:37: Data Store Size = 12040
+Sep  9 12:14:37: ----------------------------------------
+Sep  9 12:14:37: Processing module com.apple.asl
+Sep  9 12:14:37: Checking file /Users/colemiller/Library/Logs/CoreSimulator/856FA6EF-5E03-4120-939B-F0EF42A804E8/system.log
+Sep  9 12:14:37: - Rename, move to destination directory, and compress as required
+Sep  9 12:14:37:     ignore src file system.log since it is internal and syslogd will checkpoint it when it needs to be renamed
+Sep  9 12:14:37:     no src files
+Sep  9 12:14:37: - Check for expired files - TTL = 7 days
+Sep  9 12:14:37:     dst files
+Sep  9 12:14:37:       system.log.0.gz (age 11:09:52)
+Sep  9 12:14:37: - Check total storage used - MAX = 52428800
+Sep  9 12:14:37:     dst files
+Sep  9 12:14:37:       system.log.0.gz size 574
+Sep  9 12:14:37: ----------------------------------------
+Sep  9 12:14:37: Processing data store /Users/colemiller/Library/Logs/CoreSimulator/856FA6EF-5E03-4120-939B-F0EF42A804E8/asl
+Sep  9 12:14:37: Data Store Size = 12040
+Sep  9 12:14:37: Data Store YMD Files (TTL = 7 days)
+Sep  9 12:14:37:   2026.09.02.G80.asl   1826 (age 6 days 12:14:37)
+Sep  9 12:14:37:   2026.09.04.G80.asl   6482 (age 4 days 12:14:37)
+Sep  9 12:14:37:   2026.09.07.G80.asl   1244 (age 1 day 12:14:37)
+Sep  9 12:14:37:   2026.09.08.G80.asl   1826 (age 12:14:37)
+Sep  9 12:14:37:   2026.09.09.G80.asl   662 (age 0)
+Sep  9 12:14:37: Data Store AUX Directories
+Sep  9 12:14:37: Data Store BB.AUX Directories
+Sep  9 12:14:37: Data Store BB Files
+Sep  9 12:14:37: Start YMD File Scan
+Sep  9 12:14:37: Finished YMD File Scan
+Sep  9 12:14:37: Start AUX Directory Scan
+Sep  9 12:14:37: Finished AUX Directory Scan
+Sep  9 12:14:37: Start BB.AUX Directory Scan
+Sep  9 12:14:37: Finished BB.AUX Directory Scan
+Sep  9 12:14:37: Start BB Scan
+Sep  9 12:14:37: Finished BB Scan
+Sep  9 12:14:37: Data Store Size = 12040
+Sep  9 12:14:37: ----------------------------------------
+Sep  9 12:14:37: Processing data store /Users/colemiller/Library/Logs/CoreSimulator/856FA6EF-5E03-4120-939B-F0EF42A804E8/eventmonitor
+Sep  9 12:14:37: ----------------------------------------
+Sep  9 12:14:37: Processing data store /Users/colemiller/Library/Logs/CoreSimulator/856FA6EF-5E03-4120-939B-F0EF42A804E8/performance
+Sep  9 12:14:37: ----------------------------------------
+Sep  9 12:14:37: Processing data store /Users/colemiller/Library/Logs/CoreSimulator/856FA6EF-5E03-4120-939B-F0EF42A804E8/DiagnosticMessages
+Sep  9 12:14:37: Finished processing module com.apple.asl
+Sep  9 12:14:37: ----------------------------------------
+Sep  9 12:14:37: Processing module com.apple.NanoFindMy-UserStudy
+Sep  9 12:14:37: Checking file /var/mobile/Library/Logs/com.apple.NanoFindMy-UserStudy.log
+Sep  9 12:14:37: - Rename, move to destination directory, and compress as required
+Sep  9 12:14:37:     no src files
+Sep  9 12:14:37: - Check for expired files - TTL = 7 days
+Sep  9 12:14:37:     no dst files
+Sep  9 12:14:37: Finished processing module com.apple.NanoFindMy-UserStudy
+Sep  9 12:14:37: ----------------------------------------
+Sep  9 12:14:37: Processing module com.apple.nano-fmld
+Sep  9 12:14:37: Checking file /var/mobile/Library/Logs/CrashReporter/DiagnosticLogs/com.apple.nano-fmld.log
+Sep  9 12:14:37: - Rename, move to destination directory, and compress as required
+Sep  9 12:14:37:     no src files
+Sep  9 12:14:37: - Check for expired files - TTL = 7 days
+Sep  9 12:14:37:     no dst files
+Sep  9 12:14:37: Finished processing module com.apple.nano-fmld
+Sep  9 12:14:37: ----------------------------------------
+Sep  9 12:14:37: Processing module com.apple.nanosetup
+Sep  9 12:14:37: Checking file /var/mobile/Library/Logs/CrashReporter/DiagnosticLogs/com.apple.nanosetup.log
+Sep  9 12:14:37: - Rename, move to destination directory, and compress as required
+Sep  9 12:14:37:     no src files
+Sep  9 12:14:37: - Check for expired files - TTL = 7 days
+Sep  9 12:14:37:     no dst files
+Sep  9 12:14:37: Finished processing module com.apple.nanosetup
+Sep  9 12:14:37: ----------------------------------------
+Sep  9 12:14:37: Processing module com.apple.contacts.ContactsAutocomplete
+Sep  9 12:14:37: Checking file /Users/colemiller/Library/Logs/CoreSimulator/856FA6EF-5E03-4120-939B-F0EF42A804E8/com.apple.contacts.ContactsAutocomplete/Probes.log
+Sep  9 12:14:37: - Rename, move to destination directory, and compress as required
+Sep  9 12:14:37:     no src files
+Sep  9 12:14:37: - Check for expired files - TTL = 7 days
+Sep  9 12:14:37:     no dst files
+Sep  9 12:14:37: - Check total storage used - MAX = 209715200
+Sep  9 12:14:37:     no dst files
+Sep  9 12:14:37: Checking file /Users/colemiller/Library/Logs/CoreSimulator/856FA6EF-5E03-4120-939B-F0EF42A804E8/com.apple.contacts.ContactsAutocomplete/Sorting.log
+Sep  9 12:14:37: - Rename, move to destination directory, and compress as required
+Sep  9 12:14:37:     no src files
+Sep  9 12:14:37: - Check for expired files - TTL = 7 days
+Sep  9 12:14:37:     no dst files
+Sep  9 12:14:37: - Check total storage used - MAX = 209715200
+Sep  9 12:14:37:     no dst files
+Sep  9 12:14:37: Checking file /Users/colemiller/Library/Logs/CoreSimulator/856FA6EF-5E03-4120-939B-F0EF42A804E8/com.apple.contacts.ContactsAutocomplete/Performance.log
+Sep  9 12:14:37: - Rename, move to destination directory, and compress as required
+Sep  9 12:14:37:     no src files
+Sep  9 12:14:37: - Check for expired files - TTL = 7 days
+Sep  9 12:14:37:     no dst files
+Sep  9 12:14:37: - Check total storage used - MAX = 209715200
+Sep  9 12:14:37:     no dst files
+Sep  9 12:14:37: Checking file /Users/colemiller/Library/Logs/CoreSimulator/856FA6EF-5E03-4120-939B-F0EF42A804E8/com.apple.contacts.ContactsAutocomplete/Debug.log
+Sep  9 12:14:37: - Rename, move to destination directory, and compress as required
+Sep  9 12:14:37:     no src files
+Sep  9 12:14:37: - Check for expired files - TTL = 7 days
+Sep  9 12:14:37:     no dst files
+Sep  9 12:14:37: - Check total storage used - MAX = 209715200
+Sep  9 12:14:37:     no dst files
+Sep  9 12:14:37: Finished processing module com.apple.contacts.ContactsAutocomplete
+Sep  9 12:14:37: ----------------------------------------
+Sep  9 12:14:37: Processing module com.apple.networking.boringssl
+Sep  9 12:14:37: Checking file /Library/Logs/CrashReporter/com.apple.networking.boringssl.log
+Sep  9 12:14:37: - Rename, move to destination directory, and compress as required
+Sep  9 12:14:37:     no src files
+Sep  9 12:14:37: - Check for expired files - TTL = 7 days
+Sep  9 12:14:37:     no dst files
+Sep  9 12:14:37: Finished processing module com.apple.networking.boringssl
+Sep  9 12:14:37: ----------------------------------------
+Sep  9 12:14:37: aslmanager finished

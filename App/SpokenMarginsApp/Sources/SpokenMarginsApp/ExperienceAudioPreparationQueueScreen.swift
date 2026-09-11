@@ -53,26 +53,6 @@ private struct AudioPreparationQueueContent: View, @preconcurrency Equatable {
         NavigationStack {
             List {
                 Section {
-                    Picker(
-                        "Automatic audio preparation",
-                        selection: Binding(
-                            get: { automaticPolicy },
-                            set: { policy in setAutomaticPolicy(policy) }
-                        )
-                    ) {
-                        ForEach(AutomaticAudioPreparationPolicy.allCases, id: \.self) { policy in
-                            Text(policy.displayName).tag(policy)
-                        }
-                    }
-
-                    Text(policyExplanation)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } header: {
-                    Text("Overnight preparation")
-                }
-
-                Section {
                     if queue.isEmpty {
                         ContentUnavailableView(
                             "Nothing queued",
@@ -108,6 +88,26 @@ private struct AudioPreparationQueueContent: View, @preconcurrency Equatable {
                             .accessibilityHint("Cancels queued rendering while keeping Library items and completed audio")
                         }
                     }
+                }
+
+                Section {
+                    Picker(
+                        "Automatic audio preparation",
+                        selection: Binding(
+                            get: { automaticPolicy },
+                            set: { policy in setAutomaticPolicy(policy) }
+                        )
+                    ) {
+                        ForEach(AutomaticAudioPreparationPolicy.allCases, id: \.self) { policy in
+                            Text(policy.displayName).tag(policy)
+                        }
+                    }
+
+                    Text(policyExplanation)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text("Automatic preparation")
                 }
 
                 Section("Recently rendered") {

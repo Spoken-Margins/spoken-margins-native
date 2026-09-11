@@ -242,6 +242,13 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         return layers.first { $0.packageDigest == packageDigest }
     }
 
+    public func loadImportedCommentaryLayers() throws -> [ImportedCommentaryLayer] {
+        try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at ASC, id ASC;",
+            ["imported_commentary_layer"]
+        )
+    }
+
     public func loadImportedCommentaryLayers(itemId: String) throws -> [ImportedCommentaryLayer] {
         try loadByItem(kind: "imported_commentary_layer", itemId: itemId)
     }

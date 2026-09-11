@@ -1,0 +1,323 @@
+2026-06-24 16:47:32-0500 diagnosticd[72008]: diagnosticd starting
+2026-06-24 16:47:32-0500 diagnosticd[72008]: System mode client started - diagnosticd (72008) - mode: 0x9, filter: "<empty>"
+2026-06-24 16:53:56-0500 diagnosticd[77550]: diagnosticd starting
+2026-06-24 16:53:56-0500 diagnosticd[77550]: System mode client started - diagnosticd (77550) - mode: 0x9, filter: "<empty>"
+2026-06-28 11:31:10-0500 diagnosticd[33942]: diagnosticd starting
+2026-06-28 11:31:10-0500 diagnosticd[33942]: System mode client started - diagnosticd (33942) - mode: 0x9, filter: "<empty>"
+2026-06-28 12:48:12-0500 diagnosticd[81429]: diagnosticd starting
+2026-06-28 12:48:12-0500 diagnosticd[81429]: System mode client started - diagnosticd (81429) - mode: 0x9, filter: "<empty>"
+2026-06-28 12:49:33-0500 diagnosticd[82141]: diagnosticd starting
+2026-06-28 12:49:33-0500 diagnosticd[82141]: System mode client started - diagnosticd (82141) - mode: 0x9, filter: "<empty>"
+2026-07-09 15:08:57-0400 diagnosticd[73161]: diagnosticd starting
+2026-07-09 15:08:57-0400 diagnosticd[73161]: System mode client started - diagnosticd (73161) - mode: 0x9, filter: "<empty>"
+2026-07-17 16:16:16-0400 diagnosticd[73161]: assertion failed: 25F80 23F77: diagnosticd + 3192 [ACFF5F55-BE44-3F5B-8EE8-B49AC1A51FDF]: 0x3d
+2026-07-19 14:58:51-0400 diagnosticd[11260]: diagnosticd starting
+2026-07-19 14:58:51-0400 diagnosticd[11260]: System mode client started - diagnosticd (11260) - mode: 0x9, filter: "<empty>"
+2026-07-22 09:37:46-0400 diagnosticd[35430]: diagnosticd starting
+2026-07-22 09:37:46-0400 diagnosticd[35430]: System mode client started - diagnosticd (35430) - mode: 0x9, filter: "<empty>"
+2026-07-22 09:40:31-0400 diagnosticd[36214]: diagnosticd starting
+2026-07-22 09:40:31-0400 diagnosticd[36214]: System mode client started - diagnosticd (36214) - mode: 0x9, filter: "<empty>"
+2026-07-22 09:42:44-0400 diagnosticd[36858]: diagnosticd starting
+2026-07-22 09:42:44-0400 diagnosticd[36858]: System mode client started - diagnosticd (36858) - mode: 0x9, filter: "<empty>"
+2026-07-22 09:47:05-0400 diagnosticd[38328]: diagnosticd starting
+2026-07-22 09:47:05-0400 diagnosticd[38328]: System mode client started - diagnosticd (38328) - mode: 0x9, filter: "<empty>"
+2026-07-22 09:48:23-0400 diagnosticd[38767]: diagnosticd starting
+2026-07-22 09:48:23-0400 diagnosticd[38767]: System mode client started - diagnosticd (38767) - mode: 0x9, filter: "<empty>"
+2026-07-22 09:57:24-0400 diagnosticd[40595]: diagnosticd starting
+2026-07-22 09:57:24-0400 diagnosticd[40595]: System mode client started - diagnosticd (40595) - mode: 0x9, filter: "<empty>"
+2026-07-22 10:30:34-0400 diagnosticd[47511]: diagnosticd starting
+2026-07-22 10:30:34-0400 diagnosticd[47511]: System mode client started - diagnosticd (47511) - mode: 0x9, filter: "<empty>"
+2026-07-22 10:32:57-0400 diagnosticd[48183]: diagnosticd starting
+2026-07-22 10:32:57-0400 diagnosticd[48183]: System mode client started - diagnosticd (48183) - mode: 0x9, filter: "<empty>"
+2026-07-22 10:51:49-0400 diagnosticd[55188]: diagnosticd starting
+2026-07-22 10:51:49-0400 diagnosticd[55188]: System mode client started - diagnosticd (55188) - mode: 0x9, filter: "<empty>"
+2026-07-22 10:55:38-0400 diagnosticd[56124]: diagnosticd starting
+2026-07-22 10:55:38-0400 diagnosticd[56124]: System mode client started - diagnosticd (56124) - mode: 0x9, filter: "<empty>"
+2026-07-22 10:59:02-0400 diagnosticd[56917]: diagnosticd starting
+2026-07-22 10:59:02-0400 diagnosticd[56917]: System mode client started - diagnosticd (56917) - mode: 0x9, filter: "<empty>"
+2026-07-23 07:25:44-0400 diagnosticd[47647]: diagnosticd starting
+2026-07-23 07:25:44-0400 diagnosticd[47647]: System mode client started - diagnosticd (47647) - mode: 0x9, filter: "<empty>"
+2026-07-23 10:23:02-0400 diagnosticd[47647]: assertion failed: 25F80 23F77: diagnosticd + 3192 [ACFF5F55-BE44-3F5B-8EE8-B49AC1A51FDF]: 0x3d
+2026-07-23 10:23:02-0400 diagnosticd[47647]: assertion failed: 25F80 23F77: diagnosticd + 3192 [ACFF5F55-BE44-3F5B-8EE8-B49AC1A51FDF]: 0x3d
+2026-07-23 11:59:44-0400 diagnosticd[19893]: diagnosticd starting
+2026-07-23 11:59:44-0400 diagnosticd[19893]: System mode client started - diagnosticd (19893) - mode: 0x9, filter: "<empty>"
+2026-07-23 11:59:54-0400 diagnosticd[19893]: assertion failed: 25F80 23F77: diagnosticd + 3192 [ACFF5F55-BE44-3F5B-8EE8-B49AC1A51FDF]: 0x3d
+2026-07-23 11:59:54-0400 diagnosticd[19893]: assertion failed: 25F80 23F77: diagnosticd + 3192 [ACFF5F55-BE44-3F5B-8EE8-B49AC1A51FDF]: 0x3d
+2026-07-23 12:00:02-0400 diagnosticd[20310]: diagnosticd starting
+2026-07-23 12:00:02-0400 diagnosticd[20310]: System mode client started - diagnosticd (20310) - mode: 0x9, filter: "<empty>"
+2026-07-23 12:05:08-0400 diagnosticd[20310]: assertion failed: 25F80 23F77: diagnosticd + 3192 [ACFF5F55-BE44-3F5B-8EE8-B49AC1A51FDF]: 0x3d
+2026-08-03 09:52:00-0400 diagnosticd[42141]: diagnosticd starting
+2026-08-03 09:52:00-0400 diagnosticd[42141]: System mode client started - diagnosticd (42141) - mode: 0x9, filter: "<empty>"
+2026-08-03 10:07:01-0400 diagnosticd[48765]: diagnosticd starting
+2026-08-03 10:07:01-0400 diagnosticd[48765]: System mode client started - diagnosticd (48765) - mode: 0x9, filter: "<empty>"
+2026-08-03 10:09:53-0400 diagnosticd[51333]: diagnosticd starting
+2026-08-03 10:09:53-0400 diagnosticd[51333]: System mode client started - diagnosticd (51333) - mode: 0x9, filter: "<empty>"
+2026-08-03 10:13:17-0400 diagnosticd[53117]: diagnosticd starting
+2026-08-03 10:13:17-0400 diagnosticd[53117]: System mode client started - diagnosticd (53117) - mode: 0x9, filter: "<empty>"
+2026-08-03 10:16:30-0400 diagnosticd[55143]: diagnosticd starting
+2026-08-03 10:16:30-0400 diagnosticd[55143]: System mode client started - diagnosticd (55143) - mode: 0x9, filter: "<empty>"
+2026-08-03 10:21:26-0400 diagnosticd[58825]: diagnosticd starting
+2026-08-03 10:21:26-0400 diagnosticd[58825]: System mode client started - diagnosticd (58825) - mode: 0x9, filter: "<empty>"
+2026-08-03 14:50:10-0400 diagnosticd[58825]: assertion failed: 25F80 23F77: diagnosticd + 3192 [ACFF5F55-BE44-3F5B-8EE8-B49AC1A51FDF]: 0x3d
+2026-08-03 14:50:11-0400 diagnosticd[58825]: assertion failed: 25F80 23F77: diagnosticd + 3192 [ACFF5F55-BE44-3F5B-8EE8-B49AC1A51FDF]: 0x3d
+2026-08-03 14:50:14-0400 diagnosticd[39564]: diagnosticd starting
+2026-08-03 14:50:22-0400 diagnosticd[39904]: diagnosticd starting
+2026-08-03 14:50:22-0400 diagnosticd[39904]: System mode client started - diagnosticd (39904) - mode: 0x9, filter: "<empty>"
+2026-08-03 14:50:30-0400 diagnosticd[39904]: assertion failed: 25F80 23F77: diagnosticd + 3192 [ACFF5F55-BE44-3F5B-8EE8-B49AC1A51FDF]: 0x3d
+2026-08-03 15:16:21-0400 diagnosticd[56260]: diagnosticd starting
+2026-08-03 15:16:21-0400 diagnosticd[56260]: System mode client started - diagnosticd (56260) - mode: 0x9, filter: "<empty>"
+2026-08-03 15:16:21-0400 diagnosticd[56260]: assertion failed: 25F80 23F77: diagnosticd + 3192 [ACFF5F55-BE44-3F5B-8EE8-B49AC1A51FDF]: 0x3d
+2026-08-03 15:16:22-0400 diagnosticd[56260]: assertion failed: 25F80 23F77: diagnosticd + 3192 [ACFF5F55-BE44-3F5B-8EE8-B49AC1A51FDF]: 0x3d
+2026-08-03 15:16:22-0400 diagnosticd[56260]: assertion failed: 25F80 23F77: diagnosticd + 3192 [ACFF5F55-BE44-3F5B-8EE8-B49AC1A51FDF]: 0x3d
+2026-08-03 15:16:22-0400 diagnosticd[56260]: assertion failed: 25F80 23F77: diagnosticd + 3192 [ACFF5F55-BE44-3F5B-8EE8-B49AC1A51FDF]: 0x3d
+2026-08-03 15:16:23-0400 diagnosticd[56260]: assertion failed: 25F80 23F77: diagnosticd + 3192 [ACFF5F55-BE44-3F5B-8EE8-B49AC1A51FDF]: 0x3d
+2026-08-03 15:16:23-0400 diagnosticd[56260]: assertion failed: 25F80 23F77: diagnosticd + 3192 [ACFF5F55-BE44-3F5B-8EE8-B49AC1A51FDF]: 0x3d
+2026-08-03 15:16:23-0400 diagnosticd[56260]: assertion failed: 25F80 23F77: diagnosticd + 3192 [ACFF5F55-BE44-3F5B-8EE8-B49AC1A51FDF]: 0x3d
+2026-08-10 13:59:25-0500 diagnosticd[54844]: diagnosticd starting
+2026-08-10 13:59:25-0500 diagnosticd[54844]: System mode client started - diagnosticd (54844) - mode: 0x9, filter: "<empty>"
+2026-08-10 14:00:48-0500 diagnosticd[54844]: assertion failed: 25F80 23F77: diagnosticd + 3192 [ACFF5F55-BE44-3F5B-8EE8-B49AC1A51FDF]: 0x3d
+2026-08-10 14:08:46-0500 diagnosticd[56709]: diagnosticd starting
+2026-08-10 14:08:46-0500 diagnosticd[56709]: System mode client started - diagnosticd (56709) - mode: 0x9, filter: "<empty>"
+2026-08-10 14:40:58-0500 diagnosticd[56709]: assertion failed: 25F80 23F77: diagnosticd + 3192 [ACFF5F55-BE44-3F5B-8EE8-B49AC1A51FDF]: 0x3d
+2026-08-10 14:40:58-0500 diagnosticd[56709]: assertion failed: 25F80 23F77: diagnosticd + 3192 [ACFF5F55-BE44-3F5B-8EE8-B49AC1A51FDF]: 0x3d
+2026-08-11 12:42:55-0500 diagnosticd[71374]: diagnosticd starting
+2026-08-11 12:42:55-0500 diagnosticd[71374]: System mode client started - diagnosticd (71374) - mode: 0x9, filter: "<empty>"
+2026-08-11 13:44:19-0500 diagnosticd[71374]: assertion failed: 25F80 23F77: diagnosticd + 3192 [ACFF5F55-BE44-3F5B-8EE8-B49AC1A51FDF]: 0x3d
+2026-08-19 09:10:09-0500 diagnosticd[78337]: diagnosticd starting
+2026-08-19 09:10:09-0500 diagnosticd[78337]: System mode client started - diagnosticd (78337) - mode: 0x9, filter: "<empty>"
+2026-08-19 09:18:04-0500 diagnosticd[81407]: diagnosticd starting
+2026-08-19 09:18:04-0500 diagnosticd[81407]: System mode client started - diagnosticd (81407) - mode: 0x9, filter: "<empty>"
+2026-08-20 14:49:53-0500 diagnosticd[96418]: diagnosticd starting
+2026-08-20 14:49:53-0500 diagnosticd[96418]: System mode client started - diagnosticd (96418) - mode: 0x9, filter: "<empty>"
+2026-08-20 14:55:32-0500 diagnosticd[97679]: diagnosticd starting
+2026-08-20 14:55:32-0500 diagnosticd[97679]: System mode client started - diagnosticd (97679) - mode: 0x9, filter: "<empty>"
+2026-08-20 15:23:31-0500 diagnosticd[2402]: diagnosticd starting
+2026-08-20 15:23:31-0500 diagnosticd[2402]: System mode client started - diagnosticd (2402) - mode: 0x9, filter: "<empty>"
+2026-08-20 15:30:28-0500 diagnosticd[3756]: diagnosticd starting
+2026-08-20 15:30:28-0500 diagnosticd[3756]: System mode client started - diagnosticd (3756) - mode: 0x9, filter: "<empty>"
+2026-08-24 19:08:56-0500 diagnosticd[65400]: diagnosticd starting
+2026-08-24 19:08:56-0500 diagnosticd[65400]: System mode client started - diagnosticd (65400) - mode: 0x9, filter: "<empty>"
+2026-08-24 19:13:45-0500 diagnosticd[66305]: diagnosticd starting
+2026-08-24 19:13:45-0500 diagnosticd[66305]: System mode client started - diagnosticd (66305) - mode: 0x9, filter: "<empty>"
+2026-08-24 19:15:34-0500 diagnosticd[66788]: diagnosticd starting
+2026-08-24 19:15:34-0500 diagnosticd[66788]: System mode client started - diagnosticd (66788) - mode: 0x9, filter: "<empty>"
+2026-08-24 19:35:14-0500 diagnosticd[69676]: diagnosticd starting
+2026-08-24 19:35:14-0500 diagnosticd[69676]: System mode client started - diagnosticd (69676) - mode: 0x9, filter: "<empty>"
+2026-08-26 09:19:27-0500 diagnosticd[43129]: diagnosticd starting
+2026-08-26 09:19:27-0500 diagnosticd[43129]: System mode client started - diagnosticd (43129) - mode: 0x9, filter: "<empty>"
+2026-08-28 00:02:35-0500 diagnosticd[78753]: diagnosticd starting
+2026-08-28 00:02:35-0500 diagnosticd[78753]: System mode client started - diagnosticd (78753) - mode: 0x9, filter: "<empty>"
+2026-08-28 00:07:44-0500 diagnosticd[80908]: diagnosticd starting
+2026-08-28 00:07:44-0500 diagnosticd[80908]: System mode client started - diagnosticd (80908) - mode: 0x9, filter: "<empty>"
+2026-08-28 11:00:13-0500 diagnosticd[80908]: assertion failed: 25F80 23F77: diagnosticd + 3192 [ACFF5F55-BE44-3F5B-8EE8-B49AC1A51FDF]: 0x3d
+2026-08-29 21:03:45-0500 diagnosticd[85907]: diagnosticd starting
+2026-08-29 21:03:45-0500 diagnosticd[85907]: System mode client started - diagnosticd (85907) - mode: 0x9, filter: "<empty>"
+2026-08-29 21:07:04-0500 diagnosticd[85907]: System mode client started - DTServiceHub (86316) - mode: 0x8, filter: "{
+    logicalExp =     {
+        subfilters =         (
+                        {
+                logicalExp =                 {
+                    operator = 1;
+                    subfilters =                     (
+                                                {
+                            pid =                             {
+                                86310 = 0;
+                            };
+                        },
+                                                {
+                            subsystem =                             {
+                                "com.apple.runtime-issues" = 0;
+                            };
+                        }
+                    );
+                };
+            },
+                        {
+                logicalExp =                 {
+                    operator = 1;
+                    subfilters =                     (
+            
+2026-08-29 22:10:21-0500 diagnosticd[85907]: System mode client stopped - DTServiceHub (86316) - clearing mode: 0x0, still active: 0x9
+2026-08-29 22:39:42-0500 diagnosticd[85907]: System mode client started - DTServiceHub (86316) - mode: 0x8, filter: "{
+    logicalExp =     {
+        subfilters =         (
+                        {
+                logicalExp =                 {
+                    operator = 1;
+                    subfilters =                     (
+                                                {
+                            pid =                             {
+                                93812 = 0;
+                            };
+                        },
+                                                {
+                            subsystem =                             {
+                                "com.apple.runtime-issues" = 0;
+                            };
+                        }
+                    );
+                };
+            },
+                        {
+                logicalExp =                 {
+                    operator = 1;
+                    subfilters =                     (
+            
+2026-08-29 22:55:23-0500 diagnosticd[85907]: System mode client stopped - DTServiceHub (86316) - clearing mode: 0x0, still active: 0x9
+2026-08-30 09:15:45-0500 diagnosticd[3989]: diagnosticd starting
+2026-08-30 09:15:45-0500 diagnosticd[3989]: System mode client started - diagnosticd (3989) - mode: 0x9, filter: "<empty>"
+2026-08-30 10:08:29-0500 diagnosticd[9644]: diagnosticd starting
+2026-08-30 10:08:29-0500 diagnosticd[9644]: System mode client started - diagnosticd (9644) - mode: 0x9, filter: "<empty>"
+2026-08-30 10:15:28-0500 diagnosticd[10506]: diagnosticd starting
+2026-08-30 10:15:28-0500 diagnosticd[10506]: System mode client started - diagnosticd (10506) - mode: 0x9, filter: "<empty>"
+2026-08-30 16:35:18-0500 diagnosticd[3229]: diagnosticd starting
+2026-08-30 16:35:18-0500 diagnosticd[3229]: System mode client started - diagnosticd (3229) - mode: 0x9, filter: "<empty>"
+2026-08-30 18:17:37-0500 diagnosticd[3229]: System mode client started - DTServiceHub (3449) - mode: 0x8, filter: "{
+    logicalExp =     {
+        subfilters =         (
+                        {
+                logicalExp =                 {
+                    operator = 1;
+                    subfilters =                     (
+                                                {
+                            pid =                             {
+                                21368 = 0;
+                            };
+                        },
+                                                {
+                            subsystem =                             {
+                                "com.apple.runtime-issues" = 0;
+                            };
+                        }
+                    );
+                };
+            },
+                        {
+                logicalExp =                 {
+                    operator = 1;
+                    subfilters =                     (
+              
+2026-08-30 18:44:02-0500 diagnosticd[3229]: System mode client stopped - DTServiceHub (3449) - clearing mode: 0x0, still active: 0x9
+2026-09-02 23:22:37-0500 diagnosticd[34763]: diagnosticd starting
+2026-09-02 23:22:37-0500 diagnosticd[34763]: System mode client started - diagnosticd (34763) - mode: 0x9, filter: "<empty>"
+2026-09-02 23:26:45-0500 diagnosticd[35452]: diagnosticd starting
+2026-09-02 23:26:45-0500 diagnosticd[35452]: System mode client started - diagnosticd (35452) - mode: 0x9, filter: "<empty>"
+2026-09-02 23:28:52-0500 diagnosticd[36539]: diagnosticd starting
+2026-09-02 23:28:52-0500 diagnosticd[36539]: System mode client started - diagnosticd (36539) - mode: 0x9, filter: "<empty>"
+2026-09-04 10:05:06-0500 diagnosticd[2655]: diagnosticd starting
+2026-09-04 10:05:06-0500 diagnosticd[2655]: System mode client started - diagnosticd (2655) - mode: 0x9, filter: "<empty>"
+2026-09-04 10:12:02-0500 diagnosticd[3689]: diagnosticd starting
+2026-09-04 10:12:02-0500 diagnosticd[3689]: System mode client started - diagnosticd (3689) - mode: 0x9, filter: "<empty>"
+2026-09-04 11:21:04-0500 diagnosticd[15233]: diagnosticd starting
+2026-09-04 11:21:04-0500 diagnosticd[15233]: System mode client started - diagnosticd (15233) - mode: 0x9, filter: "<empty>"
+2026-09-04 11:21:14-0500 diagnosticd[15459]: diagnosticd starting
+2026-09-04 11:21:14-0500 diagnosticd[15459]: System mode client started - diagnosticd (15459) - mode: 0x9, filter: "<empty>"
+2026-09-04 13:42:45-0500 diagnosticd[41686]: diagnosticd starting
+2026-09-04 13:42:45-0500 diagnosticd[41686]: System mode client started - diagnosticd (41686) - mode: 0x9, filter: "<empty>"
+2026-09-04 13:47:38-0500 diagnosticd[42581]: diagnosticd starting
+2026-09-04 13:47:38-0500 diagnosticd[42581]: System mode client started - diagnosticd (42581) - mode: 0x9, filter: "<empty>"
+2026-09-04 13:50:13-0500 diagnosticd[43626]: diagnosticd starting
+2026-09-04 13:50:13-0500 diagnosticd[43626]: System mode client started - diagnosticd (43626) - mode: 0x9, filter: "<empty>"
+2026-09-04 14:16:01-0500 diagnosticd[73993]: diagnosticd starting
+2026-09-04 14:16:01-0500 diagnosticd[73993]: System mode client started - diagnosticd (73993) - mode: 0x9, filter: "<empty>"
+2026-09-04 14:21:56-0500 diagnosticd[75988]: diagnosticd starting
+2026-09-04 14:21:56-0500 diagnosticd[75988]: System mode client started - diagnosticd (75988) - mode: 0x9, filter: "<empty>"
+2026-09-04 14:33:31-0500 diagnosticd[75988]: System mode client started - log (78716) - mode: 0xb, filter: "{
+    subsystem =     {
+        "com.spokenmargins.native" = 0;
+    };
+}"
+2026-09-04 14:36:25-0500 diagnosticd[79724]: diagnosticd starting
+2026-09-04 14:36:25-0500 diagnosticd[79724]: System mode client started - diagnosticd (79724) - mode: 0x9, filter: "<empty>"
+2026-09-04 14:39:26-0500 diagnosticd[79724]: System mode client started - log (80779) - mode: 0xb, filter: "{
+    subsystem =     {
+        "com.spokenmargins.native" = 0;
+    };
+}"
+2026-09-04 14:54:07-0500 diagnosticd[79724]: System mode client stopped - log (80779) - clearing mode: 0x2, still active: 0x9
+2026-09-04 17:22:15-0500 diagnosticd[12314]: diagnosticd starting
+2026-09-04 17:22:15-0500 diagnosticd[12314]: System mode client started - diagnosticd (12314) - mode: 0x9, filter: "<empty>"
+2026-09-04 17:46:14-0500 diagnosticd[18368]: diagnosticd starting
+2026-09-04 17:46:14-0500 diagnosticd[18368]: System mode client started - diagnosticd (18368) - mode: 0x9, filter: "<empty>"
+2026-09-04 17:50:55-0500 diagnosticd[20218]: diagnosticd starting
+2026-09-04 17:50:55-0500 diagnosticd[20218]: System mode client started - diagnosticd (20218) - mode: 0x9, filter: "<empty>"
+2026-09-07 09:35:08-0400 diagnosticd[16353]: diagnosticd starting
+2026-09-07 09:35:08-0400 diagnosticd[16353]: System mode client started - diagnosticd (16353) - mode: 0x9, filter: "<empty>"
+2026-09-07 09:38:38-0400 diagnosticd[17013]: diagnosticd starting
+2026-09-07 09:38:38-0400 diagnosticd[17013]: System mode client started - diagnosticd (17013) - mode: 0x9, filter: "<empty>"
+2026-09-07 11:08:14-0400 diagnosticd[17013]: System mode client started - log (33590) - mode: 0xb, filter: "{
+    subsystem =     {
+        "org.monhegan.fieldcamera.r0" = 0;
+    };
+}"
+2026-09-07 11:13:52-0400 diagnosticd[17013]: System mode client stopped - log (33590) - clearing mode: 0x2, still active: 0x9
+2026-09-07 11:13:52-0400 diagnosticd[17013]: System mode client started - log (35038) - mode: 0xb, filter: "{
+    subsystem =     {
+        "org.monhegan.fieldcamera.r0" = 0;
+    };
+}"
+2026-09-08 09:53:28-0400 diagnosticd[37353]: diagnosticd starting
+2026-09-08 09:53:28-0400 diagnosticd[37353]: System mode client started - diagnosticd (37353) - mode: 0x9, filter: "<empty>"
+2026-09-08 10:02:23-0400 diagnosticd[39882]: diagnosticd starting
+2026-09-08 10:02:23-0400 diagnosticd[39882]: System mode client started - diagnosticd (39882) - mode: 0x9, filter: "<empty>"
+2026-09-08 21:07:31-0400 diagnosticd[27543]: diagnosticd starting
+2026-09-08 21:07:31-0400 diagnosticd[27543]: System mode client started - diagnosticd (27543) - mode: 0x9, filter: "<empty>"
+2026-09-09 12:09:17-0400 diagnosticd[94724]: diagnosticd starting
+2026-09-09 12:09:17-0400 diagnosticd[94724]: System mode client started - diagnosticd (94724) - mode: 0x9, filter: "<empty>"
+2026-09-09 12:22:28-0400 diagnosticd[94724]: System mode client started - log (121) - mode: 0xb, filter: "{
+    subsystem =     {
+        "com.spokenmargins.native" = 0;
+    };
+}"
+2026-09-09 12:26:24-0400 diagnosticd[94724]: System mode client stopped - log (121) - clearing mode: 0x2, still active: 0x9
+2026-09-09 12:26:29-0400 diagnosticd[94724]: System mode client started - log (3217) - mode: 0xb, filter: "{
+    subsystem =     {
+        "com.spokenmargins.native" = 0;
+    };
+}"
+2026-09-09 12:29:24-0400 diagnosticd[94724]: System mode client stopped - log (3217) - clearing mode: 0x2, still active: 0x9
+2026-09-09 12:29:43-0400 diagnosticd[94724]: System mode client started - log (5573) - mode: 0xb, filter: "{
+    subsystem =     {
+        "com.spokenmargins.native" = 0;
+    };
+}"
+2026-09-09 12:31:07-0400 diagnosticd[94724]: System mode client stopped - log (5573) - clearing mode: 0x2, still active: 0x9
+2026-09-10 14:04:31-0400 diagnosticd[30698]: diagnosticd starting
+2026-09-10 14:04:31-0400 diagnosticd[30698]: System mode client started - diagnosticd (30698) - mode: 0x9, filter: "<empty>"
+2026-09-10 14:06:28-0400 diagnosticd[30698]: System mode client started - log (31438) - mode: 0xb, filter: "{
+    subsystem =     {
+        "com.spokenmargins.native" = 0;
+    };
+}"
+2026-09-10 14:15:27-0400 diagnosticd[30698]: System mode client stopped - log (31438) - clearing mode: 0x2, still active: 0x9
+2026-09-10 14:15:27-0400 diagnosticd[30698]: System mode client started - log (33684) - mode: 0xb, filter: "{
+    subsystem =     {
+        "com.spokenmargins.native" = 0;
+    };
+}"
+2026-09-10 14:40:41-0400 diagnosticd[30698]: System mode client stopped - log (33684) - clearing mode: 0x2, still active: 0x9
+2026-09-10 14:40:42-0400 diagnosticd[30698]: System mode client started - log (36894) - mode: 0xb, filter: "{
+    subsystem =     {
+        "com.spokenmargins.native" = 0;
+    };
+}"
+2026-09-10 15:16:50-0400 diagnosticd[30698]: System mode client stopped - log (36894) - clearing mode: 0x2, still active: 0x9
+2026-09-10 15:16:51-0400 diagnosticd[30698]: System mode client started - log (40946) - mode: 0xb, filter: "{
+    subsystem =     {
+        "com.spokenmargins.native" = 0;
+    };
+}"
+2026-09-10 15:28:11-0400 diagnosticd[42450]: diagnosticd starting
+2026-09-10 15:28:11-0400 diagnosticd[42450]: System mode client started - diagnosticd (42450) - mode: 0x9, filter: "<empty>"
+2026-09-10 15:52:29-0400 diagnosticd[44544]: diagnosticd starting
+2026-09-10 15:52:29-0400 diagnosticd[44544]: System mode client started - diagnosticd (44544) - mode: 0x9, filter: "<empty>"
+2026-09-10 16:06:36-0400 diagnosticd[46451]: diagnosticd starting
+2026-09-10 16:06:36-0400 diagnosticd[46451]: System mode client started - diagnosticd (46451) - mode: 0x9, filter: "<empty>"
+2026-09-10 16:08:40-0400 diagnosticd[46892]: diagnosticd starting
+2026-09-10 16:08:40-0400 diagnosticd[46892]: System mode client started - diagnosticd (46892) - mode: 0x9, filter: "<empty>"
+2026-09-10 16:23:57-0400 diagnosticd[48792]: diagnosticd starting
+2026-09-10 16:23:57-0400 diagnosticd[48792]: System mode client started - diagnosticd (48792) - mode: 0x9, filter: "<empty>"
+2026-09-10 18:03:17-0400 diagnosticd[59122]: diagnosticd starting
+2026-09-10 18:03:17-0400 diagnosticd[59122]: System mode client started - diagnosticd (59122) - mode: 0x9, filter: "<empty>"
+2026-09-10 18:09:37-0400 diagnosticd[60119]: diagnosticd starting
+2026-09-10 18:09:37-0400 diagnosticd[60119]: System mode client started - diagnosticd (60119) - mode: 0x9, filter: "<empty>"

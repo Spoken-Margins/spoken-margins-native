@@ -1,0 +1,130 @@
+Application, 0x113032e40, pid: 60844, label: 'Spoken Margins' <App element pid: 60844>
+  Window (Main), 0x113032940, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 60844, elementOrHash.elementID: 4410689536.4>
+    Other, 0x1130308c0, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 60844, elementOrHash.elementID: 4434919936.5>
+      Other, 0x113033980, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 60844, elementOrHash.elementID: 4436017152.6>
+        Other, 0x113033c00, {{-402.0, -874.0}, {1206.0, 2622.0}} <AX element pid: 60844, elementOrHash.elementID: 4742034560.304>
+        Other, 0x113030c80, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 60844, elementOrHash.elementID: 4410688512.7>
+          Other, 0x113030280, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 60844, elementOrHash.elementID: 4433985536.8>
+            Other, 0x113030640, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 60844, elementOrHash.elementID: 4434183488.224>
+              NavigationBar, 0x113030a00, {{0.0, 62.0}, {402.0, 54.0}}, identifier: '_TtGC7SwiftUI29PresentationHosting' <AX element pid: 60844, elementOrHash.elementID: 4436290048.226>
+                Button, 0x1130317c0, {{20.0, 66.0}, {36.0, 36.0}}, identifier: 'export.home.button', label: 'Home' <AX element pid: 60844, elementOrHash.elementID: 4728774144.233>
+              Other, 0x1130326c0, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 60844, elementOrHash.elementID: 4434183040.227>
+                Other, 0x113033ac0, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 60844, elementOrHash.elementID: 4434323520.234>
+                  Other, 0x113030dc0, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 60844, elementOrHash.elementID: 4411255296.238>
+                    Other, 0x113033840, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 60844, elementOrHash.elementID: 4434036032.239>
+                      ScrollView, 0x113031b80, {{0.0, 0.0}, {402.0, 874.0}}, identifier: 'export.screen' <AX element pid: 60844, elementOrHash.elementID: 4815119360.240>
+                        Other, 0x113032580, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 60844, elementOrHash.elementID: 4434183936.241>
+                          Other, 0x113033700, {{0.0, 0.0}, {402.0, 170.8}} <AX element pid: 60844, elementOrHash.elementID: 4434470528.245>
+                        Other, 0x1130335c0, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 60844, elementOrHash.elementID: 4434184384.242>
+                        Other, 0x1130330c0, {{0.0, 116.0}, {402.0, 2072.0}} <AX element pid: 60844, elementOrHash.elementID: 4730833408.243>
+                          StaticText, 0x113031040, {{20.0, 136.0}, {92.7, 40.7}}, label: 'Share' <AX element pid: 60844, elementOrHash.elementID: 4434475904.246>
+                          StaticText, 0x113031680, {{20.0, 192.7}, {330.7, 64.3}}, label: 'Share reviewed Margins with their voice, or export a session handoff as Markdown or JSON.' <AX element pid: 60844, elementOrHash.elementID: 4434188864.247>
+                          StaticText, 0x113031900, {{36.0, 289.0}, {114.3, 20.3}}, label: 'Share Margins' <AX element pid: 60844, elementOrHash.elementID: 4434196928.248>
+                          StaticText, 0x113030f00, {{36.0, 319.3}, {330.0, 61.3}}, label: 'Review the words, voice version, item transport, and anchor evidence that will leave your device.' <AX element pid: 60844, elementOrHash.elementID: 4434197376.249>
+                          Button, 0x113031e00, {{36.0, 390.7}, {330.0, 44.0}}, label: 'Share Margins (1)' <AX element pid: 60844, elementOrHash.elementID: 4434195584.250>
+                            Image, 0x113031a40, {{118.0, 403.3}, {19.7, 18.0}}, identifier: 'person.wave.2', label: 'person.wave.2' <AX element pid: 60844, elementOrHash.elementID: 4434190208.267>
+                            StaticText, 0x113033e80, {{118.0, 403.2}, {168.3, 20.3}}, label: 'Share Margins (1)' <AX element pid: 60844, elementOrHash.elementID: 4434196032.268>
+                          StaticText, 0x113033480, {{20.0, 466.7}, {188.7, 20.3}}, label: 'Export listening session' <AX element pid: 60844, elementOrHash.elementID: 4412309952.251>
+                          Button, 0x1130321c0, {{36.0, 519.0}, {330.0, 34.3}}, identifier: 'export.session.picker', label: 'Listening Session, Sep 10, 2026 at 18:18 · 0% complete · 1 notes' <AX element pid: 60844, elementOrHash.elementID: 4436286976.252>
+                            StaticText, 0x113030b40, {{48.0, 515.7}, {289.7, 40.3}}, label: 'Sep 10, 2026 at 18:18 · 0% complete · 1 notes' <AX element pid: 60844, elementOrHash.elementID: 4411259776.269>
+                          SegmentedControl, 0x113031f40, {{36.0, 567.3}, {330.0, 31.0}}, identifier: 'export.format.picker' <AX element pid: 60844, elementOrHash.elementID: 4436289280.253>
+                            Button, 0x113031180, {{36.0, 567.3}, {165.0, 32.0}}, label: 'AI Handoff Markdown', Selected <AX element pid: 60844, elementOrHash.elementID: 4436290816.270>
+                            Button, 0x113033200, {{201.0, 567.3}, {165.0, 32.0}}, label: 'Full JSON Archive' <AX element pid: 60844, elementOrHash.elementID: 4436294656.271>
+                          SegmentedControl, 0x113032800, {{36.0, 612.3}, {330.0, 31.0}}, identifier: 'export.scope.picker' <AX element pid: 60844, elementOrHash.elementID: 4436283904.254>
+                            Button, 0x113032bc0, {{36.0, 612.3}, {110.0, 32.0}}, label: 'Original' <AX element pid: 60844, elementOrHash.elementID: 4436284672.272>
+                            Button, 0x113030140, {{146.0, 612.3}, {110.0, 32.0}}, label: 'Source Notes' <AX element pid: 60844, elementOrHash.elementID: 4436286208.273>
+                            Button, 0x113032a80, {{256.0, 612.3}, {110.0, 32.0}}, label: 'Full Session', Selected <AX element pid: 60844, elementOrHash.elementID: 4436292352.274>
+                          Switch, 0x112dcf340, {{36.0, 657.3}, {330.0, 28.0}}, identifier: 'export.includeSourceText.toggle', label: 'Source Text', value: 1 <AX element pid: 60844, elementOrHash.elementID: 4412276032.255>
+                            StaticText, 0x112dcf840, {{36.0, 661.2}, {90.0, 20.3}}, label: 'Source Text' <AX element pid: 60844, elementOrHash.elementID: 4412275136.275>
+                            Switch, 0x112dcf480, {{305.0, 657.3}, {63.0, 28.0}}, value: 1 <AX element pid: 60844, elementOrHash.elementID: 4436026752.276>
+                          Switch, 0x112dcfac0, {{36.0, 699.3}, {330.0, 28.0}}, identifier: 'export.includeReference.toggle', label: 'Reference', value: 0 <AX element pid: 60844, elementOrHash.elementID: 4434046784.256>
+                            StaticText, 0x112dcf980, {{36.0, 703.2}, {77.3, 20.3}}, label: 'Reference' <AX element pid: 60844, elementOrHash.elementID: 4434049024.277>
+                            Switch, 0x112dce800, {{305.0, 699.3}, {63.0, 28.0}}, value: 0 <AX element pid: 60844, elementOrHash.elementID: 4742024960.278>
+                          Switch, 0x112dcebc0, {{36.0, 741.3}, {330.0, 28.0}}, identifier: 'export.includeListeningMap.toggle', label: 'Listening Map', value: 0 <AX element pid: 60844, elementOrHash.elementID: 4434050368.257>
+                            StaticText, 0x112dcfe80, {{36.0, 745.2}, {106.7, 20.3}}, label: 'Listening Map' <AX element pid: 60844, elementOrHash.elementID: 4434048128.279>
+                            Switch, 0x112dcf5c0, {{305.0, 741.3}, {63.0, 28.0}}, value: 0 <AX element pid: 60844, elementOrHash.elementID: 4742030720.280>
+                          Switch, 0x112dcf200, {{36.0, 783.3}, {330.0, 28.0}}, identifier: 'export.includeInterjections.toggle', label: 'Interjections', value: 1 <AX element pid: 60844, elementOrHash.elementID: 4434043648.258>
+                            StaticText, 0x112dcd680, {{36.0, 787.2}, {94.0, 20.3}}, label: 'Interjections' <AX element pid: 60844, elementOrHash.elementID: 4434041856.281>
+                            Switch, 0x112dcd900, {{305.0, 783.3}, {63.0, 28.0}}, value: 1 <AX element pid: 60844, elementOrHash.elementID: 4742036480.282>
+                          Switch, 0x112dce1c0, {{36.0, 825.3}, {330.0, 28.0}}, identifier: 'export.includeTurns.toggle', label: 'AI Turns', value: 1 <AX element pid: 60844, elementOrHash.elementID: 4434039168.259>
+                            StaticText, 0x112dcda40, {{36.0, 829.2}, {62.3, 20.3}}, label: 'AI Turns' <AX element pid: 60844, elementOrHash.elementID: 4434044544.283>
+                            Switch, 0x112dced00, {{305.0, 825.3}, {63.0, 28.0}}, value: 1 <AX element pid: 60844, elementOrHash.elementID: 4742029440.284>
+                          Button, 0x112dcea80, {{20.0, 885.3}, {178.3, 44.0}}, identifier: 'export.share.button', label: 'Export Session' <AX element pid: 60844, elementOrHash.elementID: 4434044096.260>
+                            Image, 0x112dce6c0, {{38.0, 897.0}, {15.3, 20.7}}, identifier: 'square.and.arrow.up', label: 'Share' <AX element pid: 60844, elementOrHash.elementID: 4434037824.285>
+                            StaticText, 0x112dcee40, {{38.0, 897.0}, {144.3, 21.7}}, label: 'Export Session' <AX element pid: 60844, elementOrHash.elementID: 4434043200.286>
+                          Button, 0x112dcf700, {{20.0, 941.3}, {99.0, 42.0}}, identifier: 'export.copyPlainText.button', label: 'Copy' <AX element pid: 60844, elementOrHash.elementID: 4434046336.261>
+                            Image, 0x112dcd400, {{36.0, 951.7}, {17.7, 21.3}}, identifier: 'doc.on.doc', label: 'Copy' <AX element pid: 60844, elementOrHash.elementID: 4434034688.287>
+                            StaticText, 0x112dcdb80, {{36.0, 951.7}, {69.0, 21.3}}, label: 'Copy' <AX element pid: 60844, elementOrHash.elementID: 4434047232.288>
+                          Button, 0x112dcd540, {{20.0, 995.3}, {63.7, 42.0}}, identifier: 'export.item.button', label: 'Item' <AX element pid: 60844, elementOrHash.elementID: 4434035584.262>
+                          StaticText, 0x112dce940, {{36.0, 1069.3}, {63.0, 20.3}}, label: 'Preview' <AX element pid: 60844, elementOrHash.elementID: 4434049920.263>
+                          StaticText, 0x112dce440, {{339.0, 1072.3}, {27.0, 14.3}}, label: '2 KB' <AX element pid: 60844, elementOrHash.elementID: 4434047680.264>
+                          StaticText, 0x112dcfd40, {{36.0, 1097.7}, {330.0, 1054.3}}, identifier: 'export.preview', label: 'Export preview, 2 KB.' <AX element pid: 60844, elementOrHash.elementID: 4434040512.265>
+                        Other, 0x113094000, {{369.0, 116.0}, {30.0, 696.0}}, label: 'Vertical scroll bar, 3 pages', value: 0% <AX element pid: 60844, elementOrHash.elementID: 4815179776.244>
+                          Other, 0x113094140, {{396.0, 119.0}, {3.0, 271.3}} <AX element pid: 60844, elementOrHash.elementID: 4434325760.266>
+                        Other, 0x113094280, {{369.0, 116.0}, {30.0, 696.0}}, label: 'Vertical scroll bar, 3 pages', value: 0% <AX element pid: 60844, elementOrHash.elementID: 4815179776.244>
+                          Other, 0x1130943c0, {{396.0, 119.0}, {3.0, 271.3}} <AX element pid: 60844, elementOrHash.elementID: 4434325760.266>
+              Other, 0x113094500, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 60844, elementOrHash.elementID: 4730842112.228>
+                Other, 0x113094640, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 60844, elementOrHash.elementID: 4815190528.235>
+            Other, 0x113094780, {{11.5, 777.5}, {379.0, 59.0}}, identifier: 'miniPlayer.bar' <AX element pid: 60844, elementOrHash.elementID: 4434320832.225>
+              Button, 0x1130948c0, {{26.0, 785.0}, {208.0, 44.0}}, identifier: 'miniPlayer.open.button', label: 'Open Now Playing', value: Build 23 Sharing P... <AX element pid: 60844, elementOrHash.elementID: 4434319040.229>
+                StaticText, 0x113094a00, {{26.0, 788.8}, {163.7, 18.0}}, label: 'Build 23 Sharing Probe' <AX element pid: 60844, elementOrHash.elementID: 4434317696.236>
+                StaticText, 0x113094b40, {{26.0, 810.8}, {18.7, 14.3}}, label: '0%' <AX element pid: 60844, elementOrHash.elementID: 4434318144.237>
+              Button, 0x113094c80, {{255.3, 794.0}, {17.3, 26.0}}, identifier: 'miniPlayer.interject.button', label: 'Record an interjection' <AX element pid: 60844, elementOrHash.elementID: 4434319488.230>
+              Button, 0x113094dc0, {{290.0, 784.0}, {46.0, 46.0}}, identifier: 'miniPlayer.playPause.button', label: 'Play' <AX element pid: 60844, elementOrHash.elementID: 4434319936.231>
+              Button, 0x113094f00, {{351.0, 796.0}, {22.0, 22.0}}, identifier: 'miniPlayer.close.button', label: 'Close and save listening session' <AX element pid: 60844, elementOrHash.elementID: 4434320384.232>
+            Other, 0x113095040, {{0.0, 62.0}, {32.0, 778.0}} <AX element pid: 60844, elementOrHash.elementID: 4434169344.116>
+    Other, 0x113095180, {{0.0, 0.0}, {402.0, 874.0}} <AX element pid: 60844, elementOrHash.elementID: 4878043648.301>
+      Other, 0x1130952c0, {{-402.0, -874.0}, {1206.0, 2622.0}} <AX element pid: 60844, elementOrHash.elementID: 4436024832.302>
+      Other, 0x113095400, {{0.0, 62.0}, {402.0, 812.0}} <AX element pid: 60844, elementOrHash.elementID: 4742035200.303>
+        Other, 0x113095540, {{0.0, 62.0}, {402.0, 812.0}} <AX element pid: 60844, elementOrHash.elementID: 4434243840.305>
+          Other, 0x113095680, {{0.0, 62.0}, {402.0, 812.0}} <AX element pid: 60844, elementOrHash.elementID: 4434234432.306>
+            Other, 0x1130957c0, {{0.0, 62.0}, {402.0, 812.0}} <AX element pid: 60844, elementOrHash.elementID: 4743128064.307>
+              Other, 0x113095900, {{0.0, 62.0}, {402.0, 812.0}} <AX element pid: 60844, elementOrHash.elementID: 4434288960.308>
+                ScrollView, 0x113095a40, {{0.0, 62.0}, {402.0, 812.0}}, identifier: 'build23.sender.experience' <AX element pid: 60844, elementOrHash.elementID: 4815110144.309>
+                  Other, 0x113095b80, {{0.0, 62.0}, {402.0, 849.0}} <AX element pid: 60844, elementOrHash.elementID: 4878350848.310>
+                    StaticText, 0x113095cc0, {{20.0, 86.0}, {114.3, 20.3}}, label: 'Share Margins' <AX element pid: 60844, elementOrHash.elementID: 4433998528.312>
+                    Button, 0x113095e00, {{329.3, 86.0}, {52.7, 20.3}}, identifier: 'build23.sender.cancel', label: 'Cancel' <AX element pid: 60844, elementOrHash.elementID: 4433999424.313>
+                    Button, 0x113095f40, {{275.0, 128.3}, {107.0, 36.3}}, identifier: 'build23.sender.review.share', label: 'Share 1' <AX element pid: 60844, elementOrHash.elementID: 4434038720.549>
+                      Image, 0x113096080, {{289.0, 136.3}, {15.0, 20.0}}, identifier: 'square.and.arrow.up', label: 'Share' <AX element pid: 60844, elementOrHash.elementID: 4434042304.568>
+                      StaticText, 0x1130961c0, {{275.0, 128.3}, {107.0, 36.3}}, label: 'Share 1' <AX element pid: 60844, elementOrHash.elementID: 4434045440.569>
+                    Button, 0x113096300, {{20.0, 191.3}, {36.7, 30.7}}, identifier: 'build23.sender.review.navigator', label: 'Previous', Disabled <AX element pid: 60844, elementOrHash.elementID: 4434036928.550>
+                    Button, 0x113096440, {{66.7, 186.7}, {268.7, 40.3}}, identifier: 'build23.sender.review.navigator', label: 'Margin 1 of 1' <AX element pid: 60844, elementOrHash.elementID: 4434539648.551>
+                      Button, 0x113096580, {{66.7, 186.7}, {268.7, 40.3}} <AX element pid: 60844, elementOrHash.elementID: 4740468224.570>
+                        StaticText, 0x1130966c0, {{78.7, 196.7}, {99.7, 20.3}}, label: 'Margin 1 of 1' <AX element pid: 60844, elementOrHash.elementID: 4434079552.585>
+                        Image, 0x113096800, {{310.0, 198.7}, {11.3, 16.0}}, identifier: 'chevron.up.chevron.down', label: 'Up And Down Chevrons' <AX element pid: 60844, elementOrHash.elementID: 4434074176.586>
+                    Button, 0x113096940, {{345.3, 191.3}, {36.7, 30.7}}, identifier: 'build23.sender.review.navigator', label: 'Next', Disabled <AX element pid: 60844, elementOrHash.elementID: 4434536960.552>
+                    StaticText, 0x113096a80, {{36.0, 259.0}, {172.3, 24.0}}, identifier: 'build23.sender.margin.editor.ij-ui-summary', label: 'Review this Margin' <AX element pid: 60844, elementOrHash.elementID: 4434529344.553>
+                    StaticText, 0x113096bc0, {{315.0, 266.7}, {51.0, 14.3}}, label: 'Included' <AX element pid: 60844, elementOrHash.elementID: 4434532928.554>
+                    StaticText, 0x113096d00, {{37.3, 301.0}, {313.3, 58.0}}, label: 'Automatic cleanup is unavailable because this Margin has no word-level timing. Text review remains available.' <AX element pid: 60844, elementOrHash.elementID: 4434531136.555>
+                    StaticText, 0x113096e40, {{36.0, 377.0}, {68.7, 20.3}}, label: 'Share as' <AX element pid: 60844, elementOrHash.elementID: 4434531584.556>
+                    StaticText, 0x113096f80, {{36.0, 407.3}, {299.7, 30.3}}, label: 'Cleaned voice becomes available after this Margin is cleaned successfully.' <AX element pid: 60844, elementOrHash.elementID: 4434532480.557>
+                    SegmentedControl, 0x1130970c0, {{36.0, 447.7}, {330.0, 31.0}}, identifier: 'build23.sender.representation.ij-ui-summary' <AX element pid: 60844, elementOrHash.elementID: 4878411520.558>
+                      Button, 0x113097200, {{36.0, 447.7}, {330.0, 32.0}}, label: 'Text', Selected <AX element pid: 60844, elementOrHash.elementID: 4878414592.571>
+                    StaticText, 0x113097340, {{36.0, 496.7}, {158.3, 20.3}}, label: 'Reviewed transcript' <AX element pid: 60844, elementOrHash.elementID: 4434530240.559>
+                    StaticText, 0x113097480, {{36.0, 527.0}, {296.3, 64.3}}, label: 'The recipient should notice the careful distinction between a claim and its evidence.' <AX element pid: 60844, elementOrHash.elementID: 4434528896.560>
+                    Button, 0x1130975c0, {{36.0, 625.3}, {330.0, 28.3}}, label: 'Placement details' <AX element pid: 60844, elementOrHash.elementID: 4434539200.561>
+                      StaticText, 0x113097700, {{36.0, 625.3}, {330.0, 28.3}}, label: 'Placement details' <AX element pid: 60844, elementOrHash.elementID: 4434526208.572>
+                      Image, 0x113097840, {{358.3, 633.3}, {7.0, 12.0}}, identifier: 'collapsed' <AX element pid: 60844, elementOrHash.elementID: 4434534720.573>
+                    Button, 0x113097980, {{36.0, 671.7}, {93.3, 34.3}}, identifier: 'build23.sender.editor.undo.ij-ui-summary', label: 'Undo', Disabled <AX element pid: 60844, elementOrHash.elementID: 4434540096.562>
+                      Image, 0x113097ac0, {{50.0, 681.0}, {16.0, 15.7}}, identifier: 'arrow.uturn.backward', label: 'Undo', Disabled <AX element pid: 60844, elementOrHash.elementID: 4434527552.574>
+                      StaticText, 0x113097c00, {{36.0, 671.7}, {93.3, 34.3}}, label: 'Undo', Disabled <AX element pid: 60844, elementOrHash.elementID: 4434528000.575>
+                    Button, 0x113097d40, {{139.3, 671.7}, {91.3, 34.3}}, identifier: 'build23.sender.editor.redo.ij-ui-summary', label: 'Redo', Disabled <AX element pid: 60844, elementOrHash.elementID: 4434526656.563>
+                      Image, 0x113097e80, {{153.3, 681.0}, {16.0, 15.7}}, identifier: 'arrow.uturn.forward', label: 'Redo', Disabled <AX element pid: 60844, elementOrHash.elementID: 4434538752.576>
+                      StaticText, 0x114ad0000, {{139.3, 671.7}, {91.3, 34.3}}, label: 'Redo', Disabled <AX element pid: 60844, elementOrHash.elementID: 4434541888.577>
+                    StaticText, 0x114ad0140, {{20.0, 742.0}, {197.0, 20.3}}, identifier: 'build23.sender.stage.review', label: 'Review selected Margins' <AX element pid: 60844, elementOrHash.elementID: 4412159104.564>
+                    Button, 0x114ad0280, {{20.0, 782.3}, {362.0, 28.3}}, label: 'Package and placement details' <AX element pid: 60844, elementOrHash.elementID: 4434001216.565>
+                      StaticText, 0x114ad03c0, {{20.0, 782.3}, {362.0, 28.3}}, label: 'Package and placement details' <AX element pid: 60844, elementOrHash.elementID: 4433986432.578>
+                      Image, 0x114ad0500, {{374.3, 790.3}, {7.0, 12.0}}, identifier: 'collapsed' <AX element pid: 60844, elementOrHash.elementID: 4433994048.579>
+                    Button, 0x114ad0640, {{20.0, 830.7}, {120.7, 56.3}}, identifier: 'build23.sender.review.back', label: 'Back to selection' <AX element pid: 60844, elementOrHash.elementID: 4433989568.566>
+                      Image, 0x114ad0780, {{34.0, 841.7}, {15.7, 12.7}}, identifier: 'arrow.left', label: 'Left' <AX element pid: 60844, elementOrHash.elementID: 4434000768.580>
+                      StaticText, 0x114ad08c0, {{20.0, 830.7}, {120.7, 56.3}}, label: 'Back to selection' <AX element pid: 60844, elementOrHash.elementID: 4433988224.581>
+                    Button, 0x114ad0a00, {{152.7, 830.7}, {183.7, 56.3}}, identifier: 'build23.sender.preview.build', label: 'Preview package details' <AX element pid: 60844, elementOrHash.elementID: 4434000320.567>
+                      Image, 0x114ad0b40, {{166.7, 838.7}, {16.7, 20.3}}, identifier: 'doc.text.magnifyingglass', label: 'Search Document' <AX element pid: 60844, elementOrHash.elementID: 4433998976.582>
+                      StaticText, 0x114ad0c80, {{152.7, 830.7}, {183.7, 56.3}}, label: 'Preview package details' <AX element pid: 60844, elementOrHash.elementID: 4433996288.583>
+                  Other, 0x114ad0dc0, {{369.0, 100.0}, {30.0, 668.7}}, label: 'Vertical scroll bar, 2 pages', value: 0% <AX element pid: 60844, elementOrHash.elementID: 4441501184.311>
+                    Other, 0x114ad0f00, {{396.0, 103.0}, {3.0, 452.0}} <AX element pid: 60844, elementOrHash.elementID: 4433991360.326>
+                  Other, 0x114ad1040, {{369.0, 100.0}, {30.0, 668.7}}, label: 'Vertical scroll bar, 2 pages', value: 0% <AX element pid: 60844, elementOrHash.elementID: 4441501184.311>
+                    Other, 0x114ad1180, {{396.0, 103.0}, {3.0, 452.0}} <AX element pid: 60844, elementOrHash.elementID: 4433991360.326>
+                Button, 0x114ad12c0, {{63.3, 791.0}, {275.7, 37.0}}, identifier: 'build23.sender.recipient-test-session', label: 'Create recipient test session' <AX element pid: 60844, elementOrHash.elementID: 4434533824.503>
+                  Image, 0x114ad1400, {{77.3, 800.7}, {28.3, 19.3}}, identifier: 'person.2.badge.plus', label: 'person.2.badge.plus' <AX element pid: 60844, elementOrHash.elementID: 4434528448.504>
+                  StaticText, 0x114ad1540, {{63.3, 791.0}, {275.7, 37.0}}, label: 'Create recipient test session' <AX element pid: 60844, elementOrHash.elementID: 4434534272.505>

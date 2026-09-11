@@ -62,21 +62,29 @@ enum Podcasting2ChapterJSONParser {
 }
 
 enum TimestampedDescriptionChapterParser {
-    private static let timestampPattern = #"^\s*(?:[-*•]\s*)?\[?((?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d{1,3})?)\]?\s*(?:[-–—:|]\s*)?(.+?)\s*$"#
+    // Recognize a timestamp token at a line boundary, then validate its numeric
+    // components separately. Links contribute their visible text, not arbitrary
+    // numbers in their destination URLs.
+    private static let timestampRegex = try! NSRegularExpression(
+        pattern: #"^\s*(?:[-*•]\s*)?(?:\(((?:\d{1,3}:)?\d{1,3}:\d{2}(?:\.\d{1,3})?)\)|\[((?:\d{1,3}:)?\d{1,3}:\d{2}(?:\.\d{1,3})?)\]|((?:\d{1,3}:)?\d{1,3}:\d{2}(?:\.\d{1,3})?))(?=\s|[-–—:|])\s*(?:[-–—:|]\s*)?(.+?)\s*$"#
+    )
 
     static func parse(_ description: String) -> PublisherChapterCollection? {
+        guard description.utf8.count <= Podcasting2ChapterJSONParser.maximumDocumentBytes else { return nil }
         let lines = plainTextLines(from: description)
-        guard let regex = try? NSRegularExpression(pattern: timestampPattern) else { return nil }
         var chapters: [PublisherChapter] = []
         for line in lines {
             let range = NSRange(line.startIndex..<line.endIndex, in: line)
-            guard let match = regex.firstMatch(in: line, range: range),
-                  let timeRange = Range(match.range(at: 1), in: line),
-                  let titleRange = Range(match.range(at: 2), in: line),
+            guard let match = timestampRegex.firstMatch(in: line, range: range),
+                  let timeRange = (1...3).compactMap({ Range(match.range(at: $0), in: line) }).first,
+                  let titleRange = Range(match.range(at: 4), in: line),
                   let startMs = PodcastChapterTimeParser.milliseconds(String(line[timeRange])) else { continue }
             let title = String(line[titleRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !title.isEmpty, URL(string: title)?.scheme == nil else { continue }
+            guard title.contains(where: { $0.isLetter }),
+                  !title.lowercased().hasPrefix("https://"),
+                  !title.lowercased().hasPrefix("http://") else { continue }
             chapters.append(PublisherChapter(title: String(title.prefix(240)), startMs: startMs))
+            guard chapters.count <= Podcasting2ChapterJSONParser.maximumChapterCount else { return nil }
         }
         let normalized = deduplicatedAndSorted(chapters)
         guard normalized.count >= 2 else { return nil }
@@ -85,14 +93,30 @@ enum TimestampedDescriptionChapterParser {
 
     private static func plainTextLines(from html: String) -> [String] {
         var text = html
-        for pattern in [#"(?i)<br\s*/?>"#, #"(?i)</p\s*>"#, #"(?i)</li\s*>"#] {
+        text = text.replacingOccurrences(of: #"(?is)<(script|style)\b[^>]*>.*?</\1\s*>"#, with: "", options: .regularExpression)
+        for pattern in [#"(?i)<br\b[^>]*>"#, #"(?i)</?(?:p|li|div|h[1-6])\b[^>]*>"#] {
             text = text.replacingOccurrences(of: pattern, with: "\n", options: .regularExpression)
         }
-        text = text.replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
-        let entities = ["&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": "\"", "&#39;": "'"]
+        text = text.replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
+        // Markdown descriptions also commonly link the timestamp itself.
+        text = text.replacingOccurrences(of: #"\[([^\]\n]+)\]\(https?://[^\s)]+\)"#, with: "$1", options: .regularExpression)
+        if let numeric = try? NSRegularExpression(pattern: #"&#(x[0-9a-fA-F]+|[0-9]+);"#, options: .caseInsensitive) {
+            for match in numeric.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
+                guard let digitsRange = Range(match.range(at: 1), in: text),
+                      let entityRange = Range(match.range, in: text) else { continue }
+                let digits = String(text[digitsRange])
+                let value = digits.lowercased().hasPrefix("x")
+                    ? UInt32(digits.dropFirst(), radix: 16) : UInt32(digits)
+                if let value, let scalar = UnicodeScalar(value) {
+                    text.replaceSubrange(entityRange, with: String(scalar))
+                }
+            }
+        }
+        let entities = ["&lt;": "<", "&gt;": ">", "&quot;": "\"", "&nbsp;": " ", "&ndash;": "–", "&mdash;": "—", "&colon;": ":"]
         for (entity, replacement) in entities {
             text = text.replacingOccurrences(of: entity, with: replacement, options: .caseInsensitive)
         }
+        text = text.replacingOccurrences(of: "&amp;", with: "&", options: .caseInsensitive)
         return text.components(separatedBy: .newlines)
     }
 

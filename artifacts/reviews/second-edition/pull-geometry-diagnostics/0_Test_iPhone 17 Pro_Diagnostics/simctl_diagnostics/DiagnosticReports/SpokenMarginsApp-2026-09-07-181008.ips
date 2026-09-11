@@ -1,0 +1,124 @@
+{"app_name":"SpokenMarginsApp","timestamp":"2026-09-07 18:10:08.00 -0400","app_version":"0.1","slice_uuid":"810a9376-3ee8-3ae4-b7a9-972b731f6d40","build_version":"25","platform":7,"bundleID":"com.spokenmargins.native","share_with_app_devs":0,"is_first_party":0,"bug_type":"309","os_version":"macOS 26.6.2 (25G83)","roots_installed":0,"name":"SpokenMarginsApp","incident_id":"1D7C02F5-4946-4FC8-BD69-2C3B8F49CF95"}
+{
+  "uptime" : 44000,
+  "procRole" : "Non UI",
+  "version" : 2,
+  "userID" : 501,
+  "deployVersion" : 210,
+  "modelCode" : "MacBookPro18,3",
+  "coalitionID" : 11631,
+  "osVersion" : {
+    "train" : "macOS 26.6.2",
+    "build" : "25G83",
+    "releaseType" : "User"
+  },
+  "captureTime" : "2026-09-07 18:10:02.8683 -0400",
+  "codeSigningMonitor" : 2,
+  "incident" : "1D7C02F5-4946-4FC8-BD69-2C3B8F49CF95",
+  "pid" : 950,
+  "translated" : false,
+  "cpuType" : "ARM-64",
+  "procLaunch" : "2026-09-07 18:09:02.2706 -0400",
+  "procStartAbsTime" : 1055594491220,
+  "procExitAbsTime" : 1057042129394,
+  "procName" : "SpokenMarginsApp",
+  "procPath" : "\/Users\/USER\/Library\/Developer\/CoreSimulator\/Devices\/4AAAFEBA-6DA8-4166-8347-4106165C38C2\/data\/Containers\/Bundle\/Application\/E66F7C09-01B3-4466-AA97-FED2A7103E26\/SpokenMarginsApp.app\/SpokenMarginsApp",
+  "bundleInfo" : {"CFBundleShortVersionString":"0.1","CFBundleVersion":"25","CFBundleIdentifier":"com.spokenmargins.native"},
+  "storeInfo" : {"deviceIdentifierForVendor":"A465C248-350E-5485-9EDE-FC8B4EDB77BA","thirdParty":true},
+  "parentProc" : "launchd_sim",
+  "parentPid" : 738,
+  "coalitionName" : "com.apple.CoreSimulator.SimDevice.4AAAFEBA-6DA8-4166-8347-4106165C38C2",
+  "crashReporterKey" : "DCB61F52-1F18-2D48-3E40-0D3CF4B52B08",
+  "appleIntelligenceStatus" : {"state":"available"},
+  "developerMode" : 1,
+  "responsiblePid" : 1408,
+  "responsibleProc" : "SimulatorTrampoline",
+  "codeSigningID" : "com.spokenmargins.native",
+  "codeSigningTeamID" : "",
+  "codeSigningFlags" : 570425857,
+  "codeSigningValidationCategory" : 10,
+  "codeSigningTrustLevel" : 4294967295,
+  "codeSigningAuxiliaryInfo" : 0,
+  "instructionByteStream" : {"beforePC":"\/XvBqP8PX9YB\/\/+0YwAOMtAHHspQAPC2II441AEAABSwGIDSARAA1A==","atPC":"AwEAVH8jA9X9e7+p\/QMAkff2\/5e\/AwCR\/XvBqP8PX9bAA1\/WfyMD1Q=="},
+  "bootSessionUUID" : "62C36EFD-B1BA-470F-8FA4-CC67B5595EEB",
+  "wakeTime" : 31125,
+  "sleepWakeUUID" : "6DC1D230-8016-468E-95A1-50637DB87E43",
+  "sip" : "enabled",
+  "exception" : {"codes":"0x0000000000000000, 0x0000000000000000","rawCodes":[0,0],"type":"EXC_CRASH","signal":"SIGKILL"},
+  "termination" : {"code":2343432205,"flags":6,"namespace":"FRONTBOARD","reasons":["<RBSTerminateContext| domain:10 code:0x8BADF00D explanation:process-launch watchdog transgression: app<com.spokenmargins.native((null))>:950 exhausted real (wall clock) time allowance of 30.00 seconds","ProcessVisibility: Background","ProcessState: Running","WatchdogEvent: process-launch","WatchdogVisibility: Background","WatchdogCPUStatistics: (","\"Elapsed total CPU time (seconds): 111.110 (user 67.380, system 43.730), 46% CPU\",","\"Elapsed application CPU time (seconds): 0.000, 0% CPU\"",") reportType:CrashLog maxTerminationResistance:Interactive>"]},
+  "extMods" : {"caller":{"thread_create":0,"thread_set_state":0,"task_for_pid":0},"system":{"thread_create":0,"thread_set_state":0,"task_for_pid":137},"targeted":{"thread_create":0,"thread_set_state":0,"task_for_pid":0},"warnings":0},
+  "faultingThread" : 0,
+  "threads" : [{"triggered":true,"id":1354364,"threadState":{"x":[{"value":4345315328},{"value":0},{"value":5},{"value":262146},{"value":4},{"value":0},{"value":4346564976,"symbolLocation":0,"symbol":"mmap"},{"value":4347300600,"symbolLocation":0,"symbol":"dyld4::sSysCalls"},{"value":4347300600,"symbolLocation":0,"symbol":"dyld4::sSysCalls"},{"value":2809937920},{"value":2068987904},{"value":6},{"value":86147072},{"value":2068987904},{"value":8578547712},{"value":8578547712},{"value":197},{"value":4346560352,"symbolLocation":56,"symbol":"fcntl"},{"value":0},{"value":6121637312},{"value":6121578000},{"value":4},{"value":6121637200},{"value":6121573904},{"value":2815426560},{"value":6121557312},{"value":552},{"value":6121558056},{"value":1}],"flavor":"ARM_THREAD_STATE64","lr":{"value":4348168512},"cpsr":{"value":1073745920},"fp":{"value":6121573792},"sp":{"value":6121549936},"esr":{"value":1442840704,"description":"(Syscall)"},"pc":{"value":4346565052,"matchesCrashFrame":1},"far":{"value":0}},"frames":[{"imageOffset":20924,"symbol":"__mmap","symbolLocation":8,"imageIndex":2},{"imageOffset":215360,"symbol":"dyld3::preflightCacheFile(dyld3::SharedCacheOptions const&, dyld3::SharedCacheLoadInfo*, dyld3::CacheInfo*, int, std::__1::array<char [32], 128ul>*)","symbolLocation":784,"imageIndex":1},{"imageOffset":213348,"symbol":"dyld3::mapSplitCachePrivate(dyld3::SharedCacheOptions const&, dyld3::SharedCacheLoadInfo*)","symbolLocation":260,"imageIndex":1},{"imageOffset":40680,"symbol":"dyld4::SyscallDelegate::getDyldCache(dyld3::SharedCacheOptions const&, dyld3::SharedCacheLoadInfo&) const","symbolLocation":92,"imageIndex":1},{"imageOffset":58556,"symbol":"dyld4::ProcessConfig::DyldCache::DyldCache(dyld4::ProcessConfig::Process&, dyld4::ProcessConfig::Security const&, dyld4::ProcessConfig::Logging const&, dyld4::SyscallDelegate&, lsl::Allocator&, dyld4::ProcessConfig const&)","symbolLocation":592,"imageIndex":1},{"imageOffset":51020,"symbol":"dyld4::ProcessConfig::ProcessConfig(dyld4::KernelArgs const*, dyld4::SyscallDelegate&, lsl::Allocator&)","symbolLocation":124,"imageIndex":1},{"imageOffset":45000,"symbol":"_dyld_sim_prepare","symbolLocation":712,"imageIndex":1},{"imageOffset":141376,"symbol":"dyld4::prepareSim(dyld4::RuntimeState&, char const*)","symbolLocation":1300,"imageIndex":2},{"imageOffset":134304,"symbol":"dyld4::prepare(dyld4::APIs&, mach_o::UnsafeHeader const*)","symbolLocation":340,"imageIndex":2},{"imageOffset":133936,"symbol":"dyld4::start(dyld4::KernelArgs*, void*, void*, unsigned long long)::$_1::operator()() const","symbolLocation":320,"imageIndex":2},{"imageOffset":132236,"symbol":"start","symbolLocation":6904,"imageIndex":2}]}],
+  "usedImages" : [
+  {
+    "source" : "P",
+    "arch" : "arm64",
+    "base" : 4345233408,
+    "CFBundleShortVersionString" : "0.1",
+    "CFBundleIdentifier" : "com.spokenmargins.native",
+    "size" : 16384,
+    "uuid" : "810a9376-3ee8-3ae4-b7a9-972b731f6d40",
+    "path" : "\/Users\/USER\/Library\/Developer\/CoreSimulator\/Devices\/4AAAFEBA-6DA8-4166-8347-4106165C38C2\/data\/Containers\/Bundle\/Application\/E66F7C09-01B3-4466-AA97-FED2A7103E26\/SpokenMarginsApp.app\/SpokenMarginsApp",
+    "name" : "SpokenMarginsApp",
+    "CFBundleVersion" : "25"
+  },
+  {
+    "source" : "P",
+    "arch" : "arm64",
+    "base" : 4347953152,
+    "size" : 327680,
+    "uuid" : "ba544d9a-46ab-3c59-a00f-aba1479d2079",
+    "path" : "\/Volumes\/VOLUME\/*\/dyld_sim",
+    "name" : "dyld_sim"
+  },
+  {
+    "source" : "P",
+    "arch" : "arm64e",
+    "base" : 4346544128,
+    "size" : 737280,
+    "uuid" : "74e52480-c2bd-3c8d-812d-95fe2b74a096",
+    "path" : "\/usr\/lib\/dyld",
+    "name" : "dyld"
+  },
+  {
+    "size" : 0,
+    "source" : "A",
+    "base" : 0,
+    "uuid" : "00000000-0000-0000-0000-000000000000"
+  }
+],
+  "vmSummary" : "ReadOnly portion of Libraries: Total=1744K resident=0K(0%) swapped_out_or_unallocated=1744K(100%)\nWritable regions: Total=8384K written=64K(1%) resident=64K(1%) swapped_out=0K(0%) unallocated=8320K(99%)\n\n                                VIRTUAL   REGION \nREGION TYPE                        SIZE    COUNT (non-coalesced) \n===========                     =======  ======= \nSTACK GUARD                       56.0M        1 \nStack                             8176K        1 \n__AUTH_CONST                        32K        1 \n__DATA                             176K        4 \n__DATA_CONST                        64K        3 \n__DATA_DIRTY                        32K        2 \n__LINKEDIT                         688K        3 \n__TEXT                            1056K        3 \n__TPRO_CONST                       160K        2 \ndyld private memory                6.0G        1 \nmapped file                         16K        1 \npage table in kernel                64K        1 \n===========                     =======  ======= \nTOTAL                              6.1G       23 \n",
+  "legacyInfo" : {
+  "threadTriggered" : {
+
+  }
+},
+  "logWritingSignature" : "5e5a6d2e6f95acbe8988078f3b1258b87ceec444",
+  "bug_type" : "309",
+  "roots_installed" : 0,
+  "trmStatus" : 1,
+  "trialInfo" : {
+  "rollouts" : [
+    {
+      "rolloutId" : "6813dc6e1e50e5344eb573e9",
+      "factorPackIds" : [
+
+      ],
+      "deploymentId" : 240000021
+    },
+    {
+      "rolloutId" : "67181b10c68c361a728c7cfa",
+      "factorPackIds" : [
+
+      ],
+      "deploymentId" : 240000005
+    }
+  ],
+  "experiments" : [
+
+  ]
+},
+  "reportNotes" : [
+  "dyld_process_snapshot_get_shared_cache failed"
+]
+}

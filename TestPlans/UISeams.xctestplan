@@ -26,7 +26,10 @@
         "Gate1FlowUITests/testBuild23RecipientMissingSourceReturnsWithoutAutoplayAndShowsProvenance()",
         "Gate1FlowUITests/testBuild23LayoutRegressionsRemainOperableAtAccessibilityType()",
         "Gate1FlowUITests/testExportPreviewRemainsReachableAfterStartingAnotherSession()",
-        "Gate1FlowUITests/testSeededGate1FlowHasPlaybackMiniPlayerExportAndSettings()"
+        "Gate1FlowUITests/testSeededGate1FlowHasPlaybackMiniPlayerExportAndSettings()",
+        "Gate1FlowUITests/testPlaybackPrimaryActionsRemainVisibleWithLongTitleAndAccessibilityText()",
+        "Gate1FlowUITests/testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource()",
+        "Gate1FlowUITests/testLongTimelineResponseKeepsActionAboveEditorAndStartsPlayback()"
       ],
       "parallelizable": false
     }
