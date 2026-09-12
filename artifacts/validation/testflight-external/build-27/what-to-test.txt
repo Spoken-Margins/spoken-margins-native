@@ -1,0 +1,5 @@
+Build 27 updates the Library, Item detail, Timeline and Margins experience, including chapter/listening-map navigation, sharing from older sessions, clearer native-audio icons, natural-speed Skim speech, and visible Margin button feedback.
+
+Please upgrade without resetting your Library. Check your existing items, listening sessions and shared Margins. Large shared layers may still pause briefly (about one second) on first opening.
+
+If something fails, include the item/session, device and OS, reproduction steps, and Settings → Copy Privacy-Safe Diagnostics in your feedback.

@@ -97,7 +97,7 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(scrollToElement("playback.timeline.button").exists)
         openTimelineExperience()
         XCTAssertTrue(element("timeline.rail").exists)
-        XCTAssertTrue(scrollToButton(containingLabel: "Source").exists)
+        XCTAssertTrue(scrollToButton(containingLabel: "Chapter").exists)
         XCTAssertTrue(scrollToButton(containingLabel: "Assistant response").exists)
         returnToNowPlayingFromTimelineIfNeeded()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
