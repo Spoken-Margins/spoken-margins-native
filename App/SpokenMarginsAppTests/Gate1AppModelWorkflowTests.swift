@@ -1930,6 +1930,28 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(passCount, 3)
     }
 
+    func testBackgroundPreparationExpirationCancelsFromSchedulerQueue() async {
+        let started = expectation(description: "Background work started")
+        let operation = Task { @MainActor in
+            await AudioPreparationBackgroundController.drain {
+                started.fulfill()
+                do {
+                    try await Task.sleep(for: .seconds(60))
+                    XCTFail("Expiration did not cancel ongoing preparation")
+                } catch {
+                    XCTAssertTrue(Task.isCancelled)
+                }
+                return .continueNow
+            }
+        }
+        await fulfillment(of: [started], timeout: 2)
+        let expire = AudioPreparationBackgroundController.expirationHandler(for: operation)
+        await Task.detached { expire() }.value
+        let result = await operation.value
+        XCTAssertTrue(operation.isCancelled)
+        XCTAssertEqual(result, .continueNow)
+    }
+
     func testBackgroundPreparationWindowStopsWhenWorkMustRetryLater() async {
         var passCount = 0
 

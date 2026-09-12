@@ -24,7 +24,9 @@ final class AudioPreparationBackgroundController {
         guard !registered else { return }
         registered = BGTaskScheduler.shared.register(
             forTaskWithIdentifier: Self.identifier,
-            using: nil
+            // The launch closure inherits this controller’s MainActor isolation.
+            // BGTaskScheduler uses a background queue when this argument is nil.
+            using: .main
         ) { task in
             guard let processingTask = task as? BGProcessingTask else {
                 task.setTaskCompleted(success: false)
@@ -60,12 +62,20 @@ final class AudioPreparationBackgroundController {
             return
         }
         let operation = Task { await Self.drain(work: work) }
-        task.expirationHandler = { operation.cancel() }
+        task.expirationHandler = Self.expirationHandler(for: operation)
         let result = await operation.value
         task.setTaskCompleted(success: !operation.isCancelled)
         if result.hasRemainingWork && !operation.isCancelled {
             submitIfEnabled(true)
         }
+    }
+
+    // BGTask can invoke expiration off the main actor. Construct the callback
+    // outside actor isolation; cancellation itself is thread-safe.
+    nonisolated static func expirationHandler(
+        for operation: Task<BackgroundPreparationWorkResult, Never>
+    ) -> @Sendable () -> Void {
+        { operation.cancel() }
     }
 
     static func drain(

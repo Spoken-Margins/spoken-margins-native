@@ -1,3 +1,5 @@
+**Release decision, September 12:** the owner reports the candidate validated and authorizes internal distribution. Follow [Build 27 release status](../testflight-external/build-27/build-27-testflight-upload.md). Earlier pending feedback/checklist language below is historical for that acceptance; the roughly one-second shared-layer opening delay remains a known issue.
+
 # Current product-owner validation checklist
 
 **Latest retry:** [September 12 failures, repairs and recheck](september-12-retry.md). This supersedes the earlier six-row worksheet where observations changed. Older-session sharing, Skim behavior/speech speed, and Library icons are now owner-accepted. Copy executes correctly. Margin-detail tap feedback still fails, and shared-layer opening still hangs for about one second. See the latest retry for remaining checks.
