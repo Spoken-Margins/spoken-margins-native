@@ -1,3 +1,5 @@
+**Current internal candidate:** corrected Build 27 is uploaded and Testing for the internal Margins group (seven testers), source `adeb923fc1d081b19dfe9d650b50ac9fb036535a`. See [uploaded candidate and recheck](../testflight-external/build-27/build-27-testflight-upload.md). The background/Live Activity repair requires a tester recheck; older local-candidate and stopped-upload statements below are historical.
+
 **Release decision, September 12:** the owner reports the candidate validated and authorizes internal distribution. Follow [Build 27 release status](../testflight-external/build-27/build-27-testflight-upload.md). Earlier pending feedback/checklist language below is historical for that acceptance; the roughly one-second shared-layer opening delay remains a known issue.
 
 # Current product-owner validation checklist

@@ -1,52 +1,50 @@
-**Corrected rollout authorized:** the owner requests committing, pushing and internally distributing the background callback fix. A fresh archive will be created from the corrected source. Earlier archive/upload/stop records below are historical; those defective archives remain blocked. Build 27 is still unlisted in App Store Connect before this attempt.
-
-**Blocked by device crash:** the prepared archive contains the background-task launch callback isolation defect identified after upload cancellation. Do not upload this archive. See [crash investigation](../../gate-1/2026-09-12-background-task-crash.md).
-
 # Build 27 internal TestFlight handoff
 
-Status: upload canceled at owner request before completion. The uploader exited 143 at 0% during Apple package analysis; no upload success was reported. Do not resume without renewed owner direction.
+Status: corrected Build 27 uploaded successfully, processed by Apple, and confirmed **Testing** in the internal **Margins** group with **seven testers**.
 
-- Exact release source: `79d9357efc64331f9dd595fb5f7564bb4aafd6dc`, `codex/provisional-next`. Accepted runtime: `39e8b4ecf7453ab1f643b4df7f9b02a1640a0d52`; subsequent changes are release documentation and the test-only Chapter label correction.
-- Version 0.1 (27), bundle `com.spokenmargins.native`, team `J8SWC6J3VY`.
-- Release verification input: `52977e48f630caf4ff4dd2cd47cb2c068e5a98d7884c0613c1524ad15b4cb5c4`.
-- Owner acceptance: [September 12 release decision](../../gate-1/2026-09-12-build-27-acceptance.md). The owner reports “validated” and authorizes internal distribution. This supersedes the prior pending final-feedback check for the accepted candidate.
-- Destination: existing internal Margins group, seven testers, automatic distribution for Xcode builds verified in App Store Connect on September 12.
-- Deployment: iPhone/iPad, iOS/iPadOS 18+. Local intelligence availability remains dependent on supported hardware and OS. Simulator release destination is iPhone 17 Pro on iOS 26.5; tablet checks use iPad Pro 11-inch M5 on iPadOS 26.5.
+## Exact identity
 
-## Scope and known issues
+- Version: 0.1 (27); bundle `com.spokenmargins.native`; team `J8SWC6J3VY`.
+- Uploaded source: `adeb923fc1d081b19dfe9d650b50ac9fb036535a` on `codex/provisional-next`, preserved by `testflight/0.1-build-27`.
+- Verification input: `ead7d30e89f97d757fa02b19c42fc37185c04e8a9d0149428c452d06718dc476`.
+- IPA SHA-256: `d09a46ec3b964022d0b04e15c9aea1a4b4cb5f724f8b8e3885ad85f7fff56ff0`.
+- App Store Connect build ID: `b511ec0b-1c53-44aa-b6b5-85bf8bcabcdb`.
+- Upload succeeded September 12, 2026 at 11:49:58 Eastern.
+- Destination: existing internal Margins group, seven testers and automatic Xcode-build distribution observed before upload.
 
-Build 27 includes the second-edition app experience and subsequent accepted fixes to source import, chapters/listening maps, Margin/session export, completed-session playback, Skim speech, native-audio icons, imported-Margin loading, and button feedback. The final button feedback change is included in the accepted commit.
+## Scope and acceptance
 
-The owner previously observed about one second of initial shared-layer opening delay, improved from about five seconds. Retain this as a known issue, not a claim of zero loading latency. No new product work, tester membership changes, or external group assignment is included in this internal rollout.
+Contains the second-edition app experience, accepted chapter/Timeline, Margin sharing, Skim speech, native-audio icon and button-feedback changes, plus the background audio-preparation callback isolation repair. The owner explicitly requested incorporating that repair, committing/pushing, and submitting internally. Earlier accepted product flows remain accepted. The corrected physical-device Live Activity/capture flow remains an internal tester recheck; upload authorization is not a claim of human validation for that fix.
 
-## Upgrade and diagnostics
+Known limitation: large shared layers may still pause for about one second on first opening. Apple also reported a non-blocking missing ONNX Runtime dSYM warning (UUID `1BA1F8C6-2830-3F25-93C9-61601D46AA30`); framework crash symbolication may be limited. Upload succeeded.
 
-Upgrade in place through TestFlight; no Library reset is needed. Preserve the existing Dwarkesh item, generated map, completed sessions and shared Margins. On a disposable Simulator only, Reset Library and Load Sample provides seeded text including You Can’t Inspect the Pill. Do not reset the owner’s real Library.
+## Verification
 
-For a failure use Settings → Copy Privacy-Safe Diagnostics. Record Build 27, device/OS, affected item/session and reproduction steps. Enable device diagnostic recording only for a short reproduction, then disable it. Avoid publishing private source content or credentials.
+[Full release manifest](../../test-runs/20260912-111705-274440-release/manifest.json): **457 tests passed, zero failures/skips**, with fast checks passed; test execution 1375.491s. The focused crash repair additionally passed structured reconciliation of all 418 app tests, 11 adapter tests, and a physical iOS build; see [crash evidence](../../gate-1/2026-09-12-background-task-crash.md).
 
-## Release checklist
+The earlier [iPad layout run](../../test-runs/20260912-104338-610329-ui/manifest.json) passed all 11 checks. It predates the callback-only fix and is retained as evidence for unchanged layout; it is not represented as a fresh run on this source.
 
-- [x] Product owner reports validation accepted and requests internal distribution.
-- [x] Live App Store Connect confirms Build 27 is still available before upload.
-- [x] Release coverage resolved across all 456 cases; all 11 iPad checks pass.
-- [x] Signed archive/export and bundle identities verified.
-- [ ] Upload succeeds and Apple processing completes.
-- [ ] Margins group shows Build 27 Testing.
-- [ ] Exact uploaded source tagged and internal triage lane advanced.
+Signed Release archive, generic Simulator build and App Store export passed. App and all three extensions report 0.1 (27), minimum iOS 18.0, valid signatures, `get-task-allow=false` and `beta-reports-active=true`. Evidence: `.build/release-artifacts/build-27-background-fixed/manifest.json`; archive 165.591s, generic Simulator build 119.44s, export 37.436s, upload 239.109s.
 
-Old Build 27 archives in `.build/release-artifacts/build-27` are superseded and must not be uploaded. This release uses `.build/release-artifacts/build-27-accepted`.
+## Upgrade and tester recheck
 
-## Release-test label correction
+Supports iPhone/iPad on iOS/iPadOS 18+. On-device intelligence availability depends on supported hardware/OS. Upgrade in place through TestFlight, preserving the Library, podcasts, maps, sessions and Margins. No reset is required. Seeded You Can’t Inspect the Pill is available through Reset Library and Load Sample only for a disposable test installation.
 
-The full release run executed 456 cases: 455 passed and one failed because the seeded Timeline UI test still searched for the former “Source” provenance label. The accepted app calls it “Chapter.” Only that test assertion is updated; application/runtime sources remain identical to the owner-accepted commit. The failed run is retained at `artifacts/test-runs/20260912-101555-725995-release/manifest.json`. The focused correction and coverage reconciliation are recorded separately; the original run is not relabeled as passing.
+1. Play an existing podcast through headphones and allow background playback to advance.
+2. Use the Live Activity microphone. Confirm current position and successful Margin recording.
+3. Confirm app and Lock Screen pause/resume work. Repeat while connected to power with background preparation enabled.
+4. For failure, preserve Xcode’s stopped backtrace if attached, then export Settings → Copy Privacy-Safe Diagnostics with device/OS, item/session, timing and steps. Enable device recording only for a short reproduction and turn it off afterward.
 
-The corrected route passed on a clean Simulator installation; the first focused attempt was blocked by the preceding written-Margin test’s retained Library instead of its expected seeded item. Both attempts are retained. Final focused manifest: `artifacts/test-runs/20260912-build27-source-label-fresh/manifest.json`; combined coverage accounts for all 456 expected release cases. Fast checks also passed. The test-only assertion changes the full verification input to `52977e48f630caf4ff4dd2cd47cb2c068e5a98d7884c0613c1524ad15b4cb5c4`; runtime is unchanged from the accepted source. iPad verification and archive remain pending at this point.
+[Tester notes](what-to-test.txt). External group assignment, Beta App Review and main promotion are outside this rollout.
 
-iPad verification: `artifacts/test-runs/20260912-104338-610329-ui/manifest.json`, 11 passed, zero failures/skips, execution 535.134s. The full release suite ran once; only the stale-label route was rerun after diagnosis. No application code changed during this release process.
+## Earlier attempts
 
-## Owner stop before upload completion
+[Preserved pre-upload history](build-27-pre-upload-history.md) records the canceled upload and superseded defective archives. Do not distribute anything from `.build/release-artifacts/build-27` or `build-27-accepted`; the uploaded corrected archive is in `build-27-background-fixed`.
 
-The owner requested stopping if upload had not completed. Xcode had begun preliminary package analysis but remained at 0%, waiting for App Store Connect SPI analysis. The uploader was terminated, confirmed exit 143. No upload success, internal tester distribution, TestFlight tag, triage advancement or remote push is claimed.
+## Distribution confirmation
 
-The verified archive/export is retained at `.build/release-artifacts/build-27-accepted`. App and all three extensions report 0.1 (27), minimum iOS 18.0, valid signatures, `get-task-allow=false`, and `beta-reports-active=true`. Exported IPA SHA-256: `5503da5ee7def301220588a60b7d3a6e8f097d79c5da6bbe289fefe4b60df65b`. Archive 159.265s, generic Simulator build 191.392s, export 40.126s. Upload log: `.build/release-artifacts/build-27-accepted/upload.log`. Resume only on renewed owner instruction.
+App Store Connect shows Internal Group · 7 Testers · 14 Builds and Build 0.1 (27) **Testing**, uploaded September 12 at 11:50 AM. The internal triage ref and immutable TestFlight tag identify the exact uploaded source. External distribution and main are unchanged.
+
+## Git publication status
+
+Code and release records are committed locally. The attempted atomic push was canceled after discovering two historical diagnostic videos above GitHub’s per-file size limit. Remote branches and tags remain unchanged; [the exact blocker and proposed cleanup](git-push-blocker.md) are recorded for owner approval. Internal TestFlight distribution is complete independently of this Git publication blocker.
