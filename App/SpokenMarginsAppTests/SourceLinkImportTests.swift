@@ -62,6 +62,34 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(collections.first?.chapters.map(\.startMs), [0, 750_000])
     }
 
+    func testExactAppleEpisodeRetainsSevenChaptersWhenFeedReturns403() async throws {
+        // Shape and times from Apple episode 1000774870615; prose is synthetic.
+        let times = ["00:00:00", "00:11:32", "00:26:12", "00:38:08", "00:53:48", "01:07:07", "01:16:02"]
+        let description = times.enumerated().map { "(\($0.element)) – Topic \($0.offset + 1)" }.joined(separator: "\n")
+        let data = try JSONSerialization.data(withJSONObject: ["results": [[
+            "trackId": 1000774870615, "kind": "podcast-episode",
+            "trackName": "Grant Sanderson – AI and the future of math",
+            "collectionName": "Dwarkesh Podcast", "trackTimeMillis": 5619000,
+            "feedUrl": "https://feed.example/forbidden.rss", "episodeUrl": "https://audio.example/episode.mp3",
+            "description": description, "shortDescription": "Summary without chapters"
+        ]]])
+        let fetch: @Sendable (URL) throws -> Data = { url in
+            guard url.host == "itunes.apple.com" else { throw URLError(.badServerResponse) }
+            return data
+        }
+        let resolver = PublicPodcastLinkResolver(fetch: fetch, asynchronousFetch: { try fetch($0) })
+        let request = LinkResolutionRequest(id: "exact-apple", inputURL: "https://podcasts.apple.com/us/podcast/dwarkesh-podcast/id1516093381?i=1000774870615", sourceSurface: "paste", createdAt: Date())
+        let synchronous = try resolver.resolve(request)
+        let asynchronous = try await resolver.resolveAsync(request)
+        for result in [synchronous, asynchronous] {
+            XCTAssertEqual(result.status, .playable)
+            let candidate = try XCTUnwrap(result.selectedCandidate)
+            XCTAssertEqual(candidate.durationMs, 5_619_000)
+            XCTAssertEqual(candidate.publisherChapterCollections.first?.chapters.map(\.startMs), [0, 692000, 1572000, 2288000, 3228000, 4027000, 4562000])
+            XCTAssertEqual(candidate.publisherChapterCollections.first?.source, .timestampedDescription)
+        }
+    }
+
     override func tearDownWithError() throws {
         for directory in temporaryDirectories {
             try? FileManager.default.removeItem(at: directory)
@@ -84,7 +112,7 @@ final class SourceLinkImportTests: XCTestCase {
         let store = try SQLiteSessionStore(path: databaseURL.path)
         let subscription = FeedSubscription(id: "subscription", source: SourceIdentity(id: "source", kind: .podcastFeed, canonicalURL: "https://publisher.example/feed", host: "publisher.example", title: "Actual Publisher"), lastRefreshAt: Date())
         try store.saveFeedSubscription(subscription)
-        let entry = FeedEntry(id: "entry", subscriptionId: subscription.id, canonicalURL: "https://publisher.example/episode", audioURL: audioURL, title: "Actual episode title", author: "Actual author")
+        let entry = FeedEntry(id: "entry", subscriptionId: subscription.id, canonicalURL: "https://publisher.example/episode", audioURL: audioURL, title: "Actual episode title", author: "Actual author", summary: "00:00 Opening\n02:00 Discussion")
         try store.saveFeedEntry(entry)
         model.importFollowedSourceEntry(entry)
         try await waitFor("feed entry import") { model.libraryItems.contains { $0.title == entry.title } }
@@ -94,6 +122,7 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(persisted.sourceURL, subscription.source.canonicalURL)
         XCTAssertEqual(persisted.externalReference, entry.canonicalURL)
         XCTAssertEqual(persisted.author, "Actual author")
+        XCTAssertEqual(try store.loadTranscriptTimeline(itemId: row.id)?.timeline.chapters.map(\.startMs), [0, 120_000])
         XCTAssertEqual(model.snapshot.sessionId, activeSession)
         XCTAssertEqual(model.selectedItem.id, "item-pill")
     }
@@ -591,6 +620,47 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertNotNil(model.libraryItems.first(where: { $0.title == "Imported During Playback" }))
     }
     #endif
+
+    func testRetryContextUsesRelocatedOwnedAudiobookAndReportsCompletion() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        temporaryDirectories.append(root)
+        let db = root.appending(path: "library.sqlite")
+        let transcriber = RecordingSourceWindowTranscriptionClient(timeline: TranscriptTimeline(
+            segments: [MediaTimelineSegment(id: "context", startMs: 0, endMs: 10_000, text: "Recovered local context")], chapters: [], durationMs: 60_000))
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), sourceTranscriptionClient: transcriber, databaseURLOverride: db)
+        model.resetAndSeed()
+        model.declineCurrentTerms()
+        let store = try SQLiteSessionStore(path: db.path)
+        let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let relative = "Audiobooks/context-\(UUID().uuidString).caf"
+        let local = support.appending(path: relative)
+        try FileManager.default.createDirectory(at: local.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("fixture".utf8).write(to: local)
+        defer { try? FileManager.default.removeItem(at: local) }
+        let item = Item(id: "context-local", title: "Local audiobook", mediaType: "audiobook", text: nil,
+            externalReference: "file:///former-container/missing.caf", status: "ready", externalReferenceType: "audiobook",
+            media: ItemMedia(sourceType: .nativeMediaFile, url: "file:///former-container/missing.caf", durationMs: 60_000))
+        try store.seed(item: item)
+        try store.saveOwnedOfflineAsset(OwnedOfflineAsset(id: "owned-context", itemId: item.id, category: .audiobook,
+            relativePath: relative, byteCount: 7, checksumSHA256: "fixture", isReproducible: false))
+        model.openItem(id: item.id)
+        model.startItem(id: item.id)
+        let sessionID = try XCTUnwrap(model.snapshot.sessionId)
+        let note = Interjection(id: "retry-context", itemId: item.id, sessionId: sessionID, targetType: .item,
+            targetId: item.id, createdAt: Date(), roughPercent: 8,
+            anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 5_000),
+            audioPath: nil, audioStatus: "none", transcriptionStatus: "transcribed", transcript: "My note",
+            cleanedTranscript: nil, displayText: nil, status: "active", anchorContextStatus: .unavailable)
+        try store.saveInterjection(note)
+        model.retryAnchorContext(note)
+        XCTAssertTrue(model.isRetryingAnchorContext(note))
+        let request = await transcriber.waitForWindowRequest()
+        XCTAssertEqual(request.url.standardizedFileURL, local.standardizedFileURL)
+        try await waitFor("manual context recovery") { !model.isRetryingAnchorContext(note) }
+        XCTAssertEqual(try store.loadInterjections(sessionId: sessionID).first?.anchorContextStatus, .ready)
+        XCTAssertEqual(model.feedbackEvent?.message, "Source context recovered.")
+    }
 
     func testNativeAudioInterjectionRequestsFullShoulderContext() async throws {
         let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
@@ -2249,6 +2319,7 @@ private final class WindowContextAudioClient: AudioPlaybackClient {
 
 private actor RecordingSourceWindowTranscriptionClient: SourceTranscriptionClient {
     struct WindowRequest: Sendable {
+        var url: URL
         var anchorMediaTimeMs: Int
         var durationMs: Int?
         var windowBeforeMs: Int
@@ -2276,6 +2347,7 @@ private actor RecordingSourceWindowTranscriptionClient: SourceTranscriptionClien
         windowAfterMs: Int
     ) async throws -> TranscriptTimeline {
         let request = WindowRequest(
+            url: url,
             anchorMediaTimeMs: anchorMediaTimeMs,
             durationMs: durationMs,
             windowBeforeMs: windowBeforeMs,

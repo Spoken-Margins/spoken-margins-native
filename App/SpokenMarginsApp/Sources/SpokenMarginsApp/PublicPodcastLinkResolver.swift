@@ -30,9 +30,12 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
     }
 
     private let fetch: Fetch
+    private let asynchronousFetch: (@Sendable (URL) async throws -> Data)?
 
-    init(fetch: @escaping Fetch = PublicPodcastLinkResolver.fetchSynchronously) {
+    init(fetch: @escaping Fetch = PublicPodcastLinkResolver.fetchSynchronously,
+         asynchronousFetch: (@Sendable (URL) async throws -> Data)? = nil) {
         self.fetch = fetch
+        self.asynchronousFetch = asynchronousFetch
     }
 
     func canonicalFeedURL(for url: URL) throws -> URL? {
@@ -638,7 +641,7 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         }
         let title = episode["trackName"] as? String ?? episode["collectionName"] as? String
         if let feedURL = (episode["feedUrl"] as? String).flatMap(URL.init(string:)) ?? appleFeedURL(in: results),
-           let result = try resolveRSSFeed(feedURL, request: request, expectedTitle: title, expectedURL: url.absoluteString),
+           let result = try? resolveRSSFeed(feedURL, request: request, expectedTitle: title, expectedURL: url.absoluteString),
            result.status == .playable {
             return result
         }
@@ -649,7 +652,9 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
                 sourceLink: SourceLink(url: url.absoluteString, provider: "apple_podcasts", title: title, role: "discovery"),
                 title: title ?? "Apple Podcasts Episode",
                 showTitle: episode["collectionName"] as? String,
+                durationMs: (episode["trackTimeMillis"] as? NSNumber)?.intValue,
                 audioURL: episodeURL,
+                publisherChapterCollections: appleDescriptionChapters(episode),
                 confidence: 0.95
             )
             return playable(request: request, provider: "apple_podcasts", candidate: candidate)
@@ -686,7 +691,7 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         }
         let title = episode["trackName"] as? String ?? episode["collectionName"] as? String
         if let feedURL = (episode["feedUrl"] as? String).flatMap(URL.init(string:)) ?? appleFeedURL(in: results),
-           let result = try await resolveRSSFeedAsync(
+           let result = try? await resolveRSSFeedAsync(
                 feedURL,
                 request: request,
                 expectedTitle: title,
@@ -702,12 +707,20 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
                 sourceLink: SourceLink(url: url.absoluteString, provider: "apple_podcasts", title: title, role: "discovery"),
                 title: title ?? "Apple Podcasts Episode",
                 showTitle: episode["collectionName"] as? String,
+                durationMs: (episode["trackTimeMillis"] as? NSNumber)?.intValue,
                 audioURL: episodeURL,
+                publisherChapterCollections: appleDescriptionChapters(episode),
                 confidence: 0.95
             )
             return playable(request: request, provider: "apple_podcasts", candidate: candidate)
         }
         return nil
+    }
+
+    private func appleDescriptionChapters(_ episode: [String: Any]) -> [PublisherChapterCollection] {
+        ["description", "shortDescription"].compactMap { key in
+            (episode[key] as? String).flatMap(TimestampedDescriptionChapterParser.parse)
+        }.max { $0.chapters.count < $1.chapters.count }.map { [$0] } ?? []
     }
 
     private func resolveApplePage(_ url: URL, request: LinkResolutionRequest) throws -> LinkResolutionResult? {
@@ -1307,6 +1320,7 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
     }
 
     private func fetchAsync(_ url: URL, timeout: TimeInterval) async throws -> Data {
+        if let asynchronousFetch { return try await asynchronousFetch(url) }
         var request = URLRequest(url: url)
         request.timeoutInterval = timeout
         request.setValue("SpokenMargins/0.1", forHTTPHeaderField: "User-Agent")

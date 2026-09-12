@@ -98,17 +98,34 @@ enum Build23ImportedLayerPresentation {
 struct Build23ImportedMarginPresentation: View {
     @ObservedObject var coordinator: Build23SharingCoordinator
 
+    var showsMargins = true
+
+    var body: some View {
+        Build23ImportedLayerList(layers: coordinator.importedLayers, coordinator: coordinator, showsMargins: showsMargins)
+            .equatable()
+    }
+}
+
+private struct Build23ImportedLayerList: View, Equatable {
+    let layers: [Build23ImportedLayerSnapshot]
+    let coordinator: Build23SharingCoordinator
+    let showsMargins: Bool
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.layers == rhs.layers && lhs.coordinator === rhs.coordinator && lhs.showsMargins == rhs.showsMargins
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Shared Margins")
                 .font(.title3.weight(.bold))
                 .foregroundStyle(AppColors.text)
 
-            if coordinator.importedLayers.isEmpty {
+            if layers.isEmpty {
                 emptyState
             } else {
                 LazyVStack(alignment: .leading, spacing: 16) {
-                    ForEach(coordinator.importedLayers) { layer in
+                    ForEach(layers) { layer in
                         layerCard(layer)
                     }
                 }
@@ -122,7 +139,7 @@ struct Build23ImportedMarginPresentation: View {
         ExperienceSurface(tint: AppColors.plum.opacity(0.08)) {
             VStack(alignment: .leading, spacing: 16) {
                 provenanceHeader(layer)
-                marginRail(layer)
+                if showsMargins { marginRail(layer) }
 
                 DisclosureGroup("Layer options") {
                     VStack(alignment: .leading, spacing: 12) {
@@ -232,7 +249,7 @@ struct Build23ImportedMarginPresentation: View {
 
     @ViewBuilder
     private func marginRail(_ layer: Build23ImportedLayerSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        LazyVStack(alignment: .leading, spacing: 10) {
             Text("Margin placement")
                 .font(.headline)
                 .foregroundStyle(AppColors.text)

@@ -1,9 +1,12 @@
 # Internal-to-external readiness candidate — September 11, 2026
 
+**Current starting point:** [product-owner validation checklist](current-validation.md) · [efficient engineering test procedure](efficient-test-procedure.md). The evidence below is historical.
+
+
 > Superseded source, September 11 follow-up: the owner subsequently requested generated-scene scrolling/Timeline fixes and improved podcast-description chapter extraction. The archived IPA and verification below identify the earlier candidate only. The current working tree requires a new release gate and archive before upload; development verification for the follow-up is recorded separately.
 
 
-Status: engineering implementation, full release verification, iPad UI verification and signed export complete. Build 27 is prepared locally for the internal rollout sequence. This record is not an upload or human-validation claim.
+Historical status for the pre-chapter-fix candidate: engineering implementation, full release verification, iPad UI verification and signed export were complete. Its Build 27 archive does not contain the later chapter fixes. This record is not an upload or human-validation claim.
 
 ## Identity and release sequence
 

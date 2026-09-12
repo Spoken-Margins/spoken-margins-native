@@ -254,11 +254,12 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     }
 
     public func loadImportedCommentaryInterjections(layerId: String) throws -> [ImportedCommentaryInterjection] {
-        let interjections: [ImportedCommentaryInterjection] = try query(
-            "SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at ASC, id ASC;",
-            ["imported_commentary_interjection"]
+        // Filter before decoding: opening one layer must not materialize every
+        // imported recording, transcript and anchor in the Library.
+        try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? AND CASE WHEN json_valid(payload) THEN json_extract(payload, '$.layerId') = ? ELSE 1 END ORDER BY updated_at ASC, id ASC;",
+            ["imported_commentary_interjection", layerId]
         )
-        return interjections.filter { $0.layerId == layerId }
     }
 
     public func saveImportedCommentaryLayer(_ layer: ImportedCommentaryLayer) throws {

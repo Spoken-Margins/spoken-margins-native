@@ -239,7 +239,7 @@ private struct SourceLinkCandidateReviewView: View {
     }
 }
 
-private struct UserFeedbackBanner: View {
+struct UserFeedbackBanner: View {
     @EnvironmentObject private var model: Gate1AppModel
     let feedback: UserFeedbackEvent
 
@@ -4372,7 +4372,7 @@ private struct ExportScreen: View {
                             Text("Review the words, voice version, item transport, and anchor evidence that will leave your device.")
                                 .font(.callout)
                                 .foregroundStyle(AppColors.secondaryText)
-                            Button(action: model.prepareShareInterjections) {
+                            Button(action: model.prepareExportShareInterjections) {
                                 Label("Share Margins (\(shareableMarginCount))", systemImage: "person.wave.2")
                                     .frame(maxWidth: .infinity)
                             }
@@ -4526,7 +4526,7 @@ private struct ExportScreen: View {
     }
 
     private var shareableMarginCount: Int {
-        model.selectedItem.interjections.filter { $0.status == "active" && $0.targetType == .item }.count
+        model.exportShareCandidates.count
     }
 
     #if canImport(UIKit)

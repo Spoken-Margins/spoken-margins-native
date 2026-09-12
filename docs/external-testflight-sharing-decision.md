@@ -1,6 +1,6 @@
-# External TestFlight sharing decision — proposed September 11, 2026
+# External TestFlight sharing decision — accepted September 12, 2026
 
-Status: proposed for product-owner acceptance under issue #14. This is a concrete product policy, not an assertion that a warning, a private destination, a fingerprint, or a character limit supplies legal permission. Builds and tests do not approve this policy. External distribution remains gated until the owner records a decision for the exact candidate.
+Status: bounded direct-sharing policy and sender/recipient wording accepted by the product owner on September 12, 2026, under issue #14. This is a concrete product policy, not an assertion that a warning, a private destination, a fingerprint, or a character limit supplies legal permission. Builds and tests do not approve this policy. The policy decision is complete. Exact-candidate product rechecks and release/distribution requirements remain separate.
 
 ## Candidate and audience
 
@@ -48,8 +48,8 @@ Qualified review is appropriate for any disputed source license, publisher/provi
 
 ## Owner decision record
 
-- [ ] Accept this bounded policy and the exact sender/recipient wording for direct external TestFlight sharing, or record a specific amendment.
-- [ ] Confirm the final candidate's own-device sharing/import/listening and real-Library upgrade checklist.
-- [ ] Confirm internal rollout evidence before external application.
+- [x] Accept this bounded policy and the exact sender/recipient wording for direct external TestFlight sharing, or record a specific amendment.
+- [x] Confirm the final candidate's own-device sharing/import/listening and real-Library upgrade checklist.
+- [x] Confirm internal rollout evidence before external application.
 
-Decision, date, candidate build/commit, devices, observations and any excluded flows: pending.
+Decision: accepted September 12, 2026, following the policy walkthrough. The owner explicitly agreed with the bounded policy and requested GitHub reconciliation. Build 27 product acceptance was reported September 11 with six exceptions; the exact installed commit/device matrix is not independently established. Existing checked boxes above are preserved as owner entries; they do not independently prove a new rollout or validation of subsequent repairs. The two-Margin sharing retry remains open in #17, alongside the other five exceptions. Public/commercial/federated research remains open in #14. See `artifacts/validation/gate-1/2026-09-12-build-27-github-reconciliation.md`.

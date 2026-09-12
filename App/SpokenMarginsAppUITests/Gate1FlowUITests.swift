@@ -635,7 +635,7 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(savedMargin.waitForExistence(timeout: 4))
         savedMargin.tap()
         XCTAssertTrue(element("marginDetail.screen").waitForExistence(timeout: 4), "Tapping the saved Margin row did not open its detail")
-        let timelineAction = app.buttons["Open in Timeline"]
+        let timelineAction = app.buttons["Open Item"]
         let pinnedMoment = app.buttons["marginDetail.playMoment.button"]
         let detailList = element("marginDetail.screen").collectionViews.firstMatch
         for _ in 0..<5 {
@@ -647,8 +647,9 @@ final class Gate1FlowUITests: XCTestCase {
                           "The detail action cannot clear its fixed playback control")
         captureScreen(named: "second-edition-margin-detail-timeline-clearance")
         timelineAction.tap()
-        XCTAssertTrue(element("timeline.screen").waitForExistence(timeout: 4), "A Margins sheet hid the requested Timeline")
-        element("timeline.nowPlaying.button").tap()
+        XCTAssertTrue(element("item.screen").waitForExistence(timeout: 4), "A Margin must open its owning Item without replacing playback")
+        XCTAssertFalse(app.buttons["Open in Timeline"].exists)
+        element("miniPlayer.open.button").tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 4))
         element("playback.interject.button").tap()
         XCTAssertTrue(element("recording.screen").waitForExistence(timeout: 4))
@@ -692,6 +693,15 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("marginDetail.screen").waitForExistence(timeout: 4))
         XCTAssertTrue(app.staticTexts["Remember the amber doorway."].exists)
         XCTAssertFalse(app.buttons["Play Recording"].exists)
+        let copy = app.buttons["Copy with Context"]
+        XCTAssertTrue(copy.waitForExistence(timeout: 3))
+        captureScreen(named: "margin-detail-before-quick-tap")
+        // Exercise a short touch; video evidence checks the transient button
+        // highlight separately from the completion banner assertion below.
+        copy.press(forDuration: 0.05)
+        captureScreen(named: "margin-detail-after-quick-tap")
+        XCTAssertTrue(element("app.feedback.banner").waitForExistence(timeout: 3), "Copy confirmation must be visible inside the Margin sheet")
+        XCTAssertTrue(app.staticTexts["Copied interjection with its anchors."].exists)
         app.buttons["marginDetail.star.button"].tap()
         XCTAssertEqual(app.buttons["marginDetail.star.button"].label, "Unstar Margin")
         captureScreen(named: "second-edition-written-margin-detail")
@@ -844,8 +854,8 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertFalse(element("build23.sender.share.present").exists)
 
         openBuild23Review()
-        buildBuild23RecipientPreview()
-        scrollToBuild23SenderElement("build23.sender.share.present").tap()
+        // The primary Share action must build, verify and present in one tap.
+        scrollToBuild23SenderElement("build23.sender.review.share").tap()
 
         XCTAssertTrue(element("build23.sender.stage.share").waitForExistence(timeout: 5))
         let nativeShareSurface = element("ActivityListView")

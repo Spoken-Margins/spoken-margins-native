@@ -5,9 +5,10 @@ struct ExperienceMarginDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var pendingNavigation: NavigationIntent?
     @State private var showsManagement = false
+    @State private var actionFeedback: UserFeedbackEvent?
     let row: MarginRow
 
-    private enum NavigationIntent { case moment, timeline }
+    private enum NavigationIntent { case moment, item }
     private var current: MarginRow { model.marginRows.first { $0.id == row.id } ?? row }
 
     var body: some View {
@@ -46,18 +47,19 @@ struct ExperienceMarginDetailView: View {
                         ) { model.toggleInterjectionAudioPlayback(current.interjection) }
                     }
                     if current.canRetryTranscription {
-                        Button("Retry Transcription", systemImage: "arrow.clockwise") {
+                        Button(model.isRetryingInterjectionTranscription(current.interjection) ? "Transcribing…" : "Retry Transcription", systemImage: "arrow.clockwise") {
                             model.retryInterjectionTranscription(current.interjection)
                         }
                         .disabled(model.isRetryingInterjectionTranscription(current.interjection))
                     }
                     if !current.isWritten, current.interjection.anchorContextStatus == .unavailable {
-                        Button("Retry Context", systemImage: "arrow.clockwise") {
+                        Button(model.isRetryingAnchorContext(current.interjection) ? "Recovering Context…" : "Retry Context", systemImage: "arrow.clockwise") {
                             model.retryAnchorContext(current.interjection)
                         }
+                        .disabled(model.isRetryingAnchorContext(current.interjection))
                     }
-                    Button("Open in Timeline", systemImage: "list.bullet.rectangle") {
-                        pendingNavigation = .timeline
+                    Button("Open Item", systemImage: "doc.text.magnifyingglass") {
+                        pendingNavigation = .item
                         dismiss()
                     }
                     if model.selectedItem.id == current.interjection.itemId,
@@ -66,6 +68,11 @@ struct ExperienceMarginDetailView: View {
                     }
                 }
             }
+            .buttonStyle(MarginDetailActionButtonStyle())
+            .overlay(alignment: .top) {
+                if let actionFeedback { UserFeedbackBanner(feedback: actionFeedback).padding(.horizontal, 16) }
+            }
+            .onChange(of: model.feedbackEvent) { _, event in actionFeedback = event }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 Button("Play this moment", systemImage: "play.fill") {
                     pendingNavigation = .moment
@@ -103,12 +110,57 @@ struct ExperienceMarginDetailView: View {
                 if model.isPlayingInterjectionAudio(current.interjection) { model.stopInterjectionAudioPlayback() }
                 switch pendingNavigation {
                 case .moment: model.playMarginMoment(current)
-                case .timeline: model.openMarginInTimeline(current)
+                case .item: model.openItem(id: current.interjection.itemId)
                 case nil: break
                 }
                 pendingNavigation = nil
             }
         }
         .tint(AppColors.evergreen)
+    }
+}
+
+/// Keep activation visible after a quick tap, including when the action performs
+/// synchronous model work. A completion toast is a separate acknowledgement.
+private struct MarginDetailActionButtonStyle: PrimitiveButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        MarginDetailActionButton(configuration: configuration)
+    }
+}
+
+private struct MarginDetailActionButton: View {
+    let configuration: PrimitiveButtonStyleConfiguration
+    @State private var activated = false
+
+    var body: some View {
+        Button {
+            guard !activated else { return }
+            activated = true
+            Task { @MainActor in
+                // Let the highlighted frame render before copy, playback or dismissal.
+                try? await Task.sleep(for: .milliseconds(80))
+                configuration.trigger()
+                try? await Task.sleep(for: .milliseconds(350))
+                activated = false
+            }
+        } label: {
+            configuration.label
+        }
+        .buttonStyle(MarginDetailPressedButtonStyle(activated: activated))
+    }
+}
+
+private struct MarginDetailPressedButtonStyle: ButtonStyle {
+    let activated: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        let highlighted = configuration.isPressed || activated
+        configuration.label
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .padding(.horizontal, 12)
+            .foregroundStyle(highlighted ? AppColors.onEvergreen : AppColors.evergreen)
+            .background(highlighted ? AppColors.evergreen : AppColors.softGreen)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .opacity(highlighted ? 0.75 : 1)
     }
 }

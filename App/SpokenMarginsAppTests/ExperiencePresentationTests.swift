@@ -5,6 +5,33 @@ import SessionKitPersistence
 
 final class ExperiencePresentationTests: XCTestCase {
     @MainActor
+    func testTimelineDistinguishesPublisherSceneOwnAndSharedMargins() throws {
+        var item = ItemDetailState()
+        item.id = "item"
+        item.title = "Episode"
+        item.mediaDurationMs = 100_000
+        item.chapters = [Chapter(id: "chapter", title: "Publisher", startChar: 0, endChar: 1, percent: 0)]
+        item.listeningMapScenes = [MediaTimelineChapter(id: "scene", title: "Generated", startMs: 20_000, transcriptSegmentId: "segment")]
+        item.interjections = [interjection(id: "own", transcript: "My thought")]
+        let layer = ImportedCommentaryLayer(id: "layer", itemId: item.id, packageDigest: "digest", packageId: "package",
+            itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Episode"), importedAt: Date(),
+            sourceResolutionStatus: .resolved, isEnabled: true)
+        let margin = ImportedCommentaryInterjection(id: "own", layerId: layer.id, packageScopedId: "margin-1", createdAt: Date(),
+            anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 30_000), approvedTranscript: "Someone else's thought",
+            resolution: ImportedAnchorResolution(evidenceClass: .exactEdition, localMediaTimeMs: 30_000, confidence: 1))
+        item.importedCommentaryLayers = [layer]
+        item.importedCommentaryInterjections = [layer.id: [margin]]
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: "session")
+        XCTAssertEqual(Set(entries.map(\.provenance)), [.source, .listeningMap, .myMargin, .sharedMargin])
+        XCTAssertEqual(Set(entries.map(\.id)).count, entries.count, "Imported and own IDs may collide")
+        let shared = try XCTUnwrap(entries.first { $0.provenance == .sharedMargin })
+        XCTAssertEqual(shared.position, 30)
+        XCTAssertTrue(shared.detail.hasPrefix("Shared by "))
+        guard case .sharedMargin(let row) = shared.action else { return XCTFail("Must open shared context, not seek a chapter") }
+        XCTAssertEqual(row.interjection.approvedTranscript, "Someone else's thought")
+    }
+
+    @MainActor
     func testTimelineIncludesAllGeneratedScenesWithDistinctProvenanceAndSeekTargets() throws {
         var item = ItemDetailState()
         item.id = "episode"

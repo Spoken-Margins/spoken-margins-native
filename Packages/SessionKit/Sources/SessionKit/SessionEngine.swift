@@ -2178,7 +2178,11 @@ public final class SessionEngine {
         }
         let sourceWasComplete = session.completionPercent >= 100
         let targetWasComplete = audio.isPlaybackComplete(targetId: session.currentTargetId)
-        session = try syncCurrentPositionFromAudio(session)
+        // Inspecting completed history does not load that session into the audio
+        // adapter. Its idle/stale position must not rewrite the completed record.
+        if session.phase != .finished || !sourceWasComplete {
+            session = try syncCurrentPositionFromAudio(session)
+        }
         if targetWasComplete {
             switch session.currentTargetType {
             case .itemTextTTS, .transcriptBackedMedia, .browserOwnedMedia:

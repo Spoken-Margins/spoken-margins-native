@@ -51,10 +51,20 @@ private struct ResolvedSkimPlaybackPlan {
     let summaryAudioURL: URL
 }
 
+private struct SkimResourceContext {
+    let itemId: String
+    let projection: ResolvedListeningMapProjection?
+    let proposals: [PortableListeningMapProposalArtifact]
+    let assets: [OwnedOfflineAsset]
+}
+
 enum SummaryBridgeRatePolicy {
-    /// Summary audio is synthesized at the user's selected rate, so AVPlayer
-    /// must transport that prepared asset at unity instead of applying it twice.
-    static let preparedAssetTransportRate: Float = 1
+    // Keep pronunciation independent of listening speed. Version generated assets
+    // so summaries synthesized with the former accelerated policy are not reused.
+    static let synthesisSpeed: Float = 1
+    static let systemSynthesisRate: Float = 0.5
+    static let cacheVersion = "natural-rate-v2"
+    static func transportRate(_ listeningRate: Double) -> Float { Float(listeningRate) }
 }
 
 enum NativeTextStartupAudioState: String, Hashable {
@@ -74,6 +84,7 @@ struct LibraryItemRow: Identifiable, Hashable {
     let continuationProgressPercent: Int?
     let isCompleted: Bool
     let mediaType: String
+    let hasNativeAudio: Bool
     let sourceTitle: String?
     let sourceURL: String?
     let author: String?
@@ -87,6 +98,20 @@ struct LibraryItemRow: Identifiable, Hashable {
     let lastListenedAt: Date?
     let storageRecencyRank: Int
 
+    var mediaSymbol: String {
+        if hasNativeAudio { return "headphones" }
+        return switch mediaType.lowercased() {
+        case "podcast", "audio", "audiobook", "m4a", "m4b", "mp3":
+            "headphones"
+        case "pdf":
+            "doc.richtext"
+        case "epub":
+            "book.closed"
+        default:
+            "doc.text"
+        }
+    }
+
     init(
         id: String,
         title: String,
@@ -96,6 +121,7 @@ struct LibraryItemRow: Identifiable, Hashable {
         continuationProgressPercent: Int? = nil,
         isCompleted: Bool = false,
         mediaType: String = "text",
+        hasNativeAudio: Bool = false,
         sourceTitle: String? = nil,
         sourceURL: String? = nil,
         author: String? = nil,
@@ -116,6 +142,7 @@ struct LibraryItemRow: Identifiable, Hashable {
         self.hasContinuationSession = hasContinuationSession
         self.continuationProgressPercent = continuationProgressPercent
         self.isCompleted = isCompleted
+        self.hasNativeAudio = hasNativeAudio
         self.mediaType = mediaType
         self.sourceTitle = sourceTitle
         self.sourceURL = sourceURL
@@ -564,7 +591,7 @@ final class Gate1AppModel: ObservableObject {
             }
             reconcilePlaybackProgressTicker()
             reconcileTextPlaybackStartupBackgroundTask()
-            updateSkimAvailability()
+            updateSkimAvailability(refreshResources: false)
             updateGate2CompactState()
         }
     }
@@ -637,6 +664,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var feedbackEvent: UserFeedbackEvent?
     @Published var exportPreview = ""
     @Published private(set) var exportFileURL: URL?
+    @Published private(set) var exportShareCandidates: [Interjection] = []
     @Published var exportSessionId: String?
     @Published var exportFormat = UserDefaults.standard.string(forKey: "exportFormat") ?? "markdown"
     @Published var exportScope = UserDefaults.standard.string(forKey: "exportScope") ?? "full_session"
@@ -671,6 +699,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var trashUndo: TrashUndoState?
     @Published var selectedItem = ItemDetailState() {
         didSet {
+            skimResourceContext = nil
             if oldValue.id != selectedItem.id || oldValue.externalReference != selectedItem.externalReference {
                 storedSourceFollowSuggestionCandidates = []
                 sourceFollowSuggestionItemId = nil
@@ -944,7 +973,7 @@ final class Gate1AppModel: ObservableObject {
     private var isImportingPendingSourceLinkHandoffs = false
     private var pendingAutoPlayQueue = Gate1PlaybackAutoplayQueue()
     private var completedStreamingTurnIds: Set<String> = []
-    private var pendingSourceContextInterjectionIds: Set<String> = []
+    @Published private var pendingSourceContextInterjectionIds: Set<String> = []
     private var pendingFullSourceTranscriptionItemIds: Set<String> = []
     private var importedPodcastResolutionGenerations: [String: Int] = [:]
     private var importedPodcastRecipientLocalURLs: [String: URL] = [:]
@@ -3126,6 +3155,10 @@ final class Gate1AppModel: ObservableObject {
             identified.externalReference = feedEntry.canonicalURL
             identified.author = feedEntry.author ?? identified.author
             try store.saveItem(identified)
+            if let summary = feedEntry.summary,
+               let chapters = TimestampedDescriptionChapterParser.parse(summary) {
+                _ = try engine.attachPublisherChapters(itemId: item.id, collection: chapters)
+            }
             diagnostics["sourceEntryImport:\(feedEntry.id)"] = "item:\(item.id),subscription:\(feedEntry.subscriptionId),title:feed_entry"
         }
         libraryItems = try loadLibraryRows(store: store)
@@ -4269,7 +4302,7 @@ final class Gate1AppModel: ObservableObject {
 
     private func currentSummaryBridgeVoiceKey() -> String {
         let systemIdentifier = ttsVoiceSelection == .system ? speechVoiceIdentifier : ""
-        return safePodcastEvidenceComponent("\(ttsVoiceSelection.rawValue)-\(systemIdentifier)")
+        return safePodcastEvidenceComponent("\(ttsVoiceSelection.rawValue)-\(systemIdentifier)-\(SummaryBridgeRatePolicy.cacheVersion)")
     }
 
     private func summaryBridgeAssetID(itemId: String, proposalId: String, sceneId: String, suppliedAssetId: String? = nil) -> String {
@@ -4317,7 +4350,7 @@ final class Gate1AppModel: ObservableObject {
                     text: summary,
                     voice: voice,
                     language: "en",
-                    speed: Float(speechRate / 0.5),
+                    speed: SummaryBridgeRatePolicy.synthesisSpeed,
                     synthesisSteps: 8
                 )
                 sourceURL = result.audioURL
@@ -4325,7 +4358,7 @@ final class Gate1AppModel: ObservableObject {
                 let renderer = SystemTextAudioPreparationClient(
                     outputDirectory: directory,
                     voiceIdentifier: speechVoiceIdentifier,
-                    speechRate: Float(speechRate),
+                    speechRate: SummaryBridgeRatePolicy.systemSynthesisRate,
                     allowsSynchronousRendering: true
                 )
                 guard let prepared = try renderer.prepareTextAudio(
@@ -4362,10 +4395,17 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func updateSkimAvailability() {
+    private var skimResourceContext: SkimResourceContext?
+    #if DEBUG
+    private(set) var skimResourceLoadCount = 0
+    var skimAudioTransportRate: Float? { skimBridgePlayer?.rate }
+    #endif
+
+    private func updateSkimAvailability(refreshResources: Bool = true) {
+        if refreshResources { skimResourceContext = nil }
         guard !isUpdatingSkimAvailability else { return }
         let effectiveTime = snapshot.skimBridgeState?.destinationMediaTimeMs ?? snapshot.currentMediaTimeMs
-        let canForward = effectiveTime.flatMap { resolvedSkimPlaybackPlan(direction: .forward, at: $0) } != nil
+        let canForward = snapshot.skimBridgeState != nil || effectiveTime.flatMap { resolvedSkimPlaybackPlan(direction: .forward, at: $0) } != nil
         let canBackward = effectiveTime.flatMap { resolvedSkimPlaybackPlan(direction: .backward, at: $0) } != nil
         guard snapshot.canSkimForward != canForward || snapshot.canSkimBackward != canBackward else { return }
         isUpdatingSkimAvailability = true
@@ -4378,16 +4418,23 @@ final class Gate1AppModel: ObservableObject {
         direction: SkimDirection,
         at recipientMediaTimeMs: Int
     ) -> ResolvedSkimPlaybackPlan? {
-        guard isMediaPlaybackSnapshot,
-              !snapshot.isRecording,
-              let store,
-              let projection = try? store.loadResolvedListeningMapProjection(itemId: activeItemId) else {
-            return nil
+        guard isMediaPlaybackSnapshot, !snapshot.isRecording, let store else { return nil }
+        if skimResourceContext?.itemId != activeItemId {
+            #if DEBUG
+            skimResourceLoadCount += 1
+            #endif
+            let committed = (try? store.loadPortableListeningMapProposals(itemId: activeItemId)) ?? []
+            let imported = ((try? store.loadImportedCommentaryLayers(itemId: activeItemId)) ?? [])
+                .flatMap { $0.listeningMapProposals ?? [] }
+            skimResourceContext = SkimResourceContext(
+                itemId: activeItemId,
+                projection: try? store.loadResolvedListeningMapProjection(itemId: activeItemId),
+                proposals: committed + imported,
+                assets: (try? store.loadOwnedOfflineAssets()) ?? []
+            )
         }
-        let committed = (try? store.loadPortableListeningMapProposals(itemId: activeItemId)) ?? []
-        let imported = ((try? store.loadImportedCommentaryLayers(itemId: activeItemId)) ?? [])
-            .flatMap { $0.listeningMapProposals ?? [] }
-        let proposals = committed + imported
+        guard let resources = skimResourceContext, let projection = resources.projection else { return nil }
+        let proposals = resources.proposals
         guard let proposal = proposals.first(where: { $0.id == projection.proposalId }) ?? proposals.first else {
             return nil
         }
@@ -4442,7 +4489,7 @@ final class Gate1AppModel: ObservableObject {
             sceneId: summaryScene.id,
             suppliedAssetId: summaryScene.summaryAssetId
         )
-        guard let asset = (try? store.loadOwnedOfflineAssets())?.first(where: {
+        guard let asset = resources.assets.first(where: {
             $0.id == assetID && $0.category == .summaryBridge && $0.integrity == .valid
         }), let url = resolvedApplicationSupportAssetURL(for: asset.relativePath) else {
             return nil
@@ -4468,18 +4515,11 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func performSkim(direction: SkimDirection) {
-        if let active = snapshot.skimBridgeState {
-            if active.direction != direction {
-                cancelSkimBridge(restoringOrigin: true, resumeSource: false)
-                reportSuccess("Skim cancelled. Press again to skim (direction.rawValue).")
-                return
-            }
-            let pendingDestination = active.destinationMediaTimeMs
-            cancelSkimBridge(restoringOrigin: false, resumeSource: false)
-            if let engine {
-                snapshot = (try? engine.seekMedia(toMediaTimeMs: pendingDestination)) ?? snapshot
-                snapshot = (try? engine.pause()) ?? snapshot
-            }
+        if snapshot.skimBridgeState != nil {
+            // A second tap exits the current bridge at its destination. Do not
+            // resolve another summary against the asynchronous source seek.
+            completeSkimBridge()
+            return
         }
         let effectiveTime = snapshot.currentMediaTimeMs ?? 0
         guard let plan = resolvedSkimPlaybackPlan(direction: direction, at: effectiveTime) else {
@@ -4512,9 +4552,8 @@ final class Gate1AppModel: ObservableObject {
             skimBridgePlayer = player
             state.status = .playing
             snapshot.skimBridgeState = state
-            // Summary assets are rendered at the selected speech rate. Applying
-            // the same rate again here compounded 1.75× into roughly 3.06×.
-            player.playImmediately(atRate: SummaryBridgeRatePolicy.preparedAssetTransportRate)
+            player.currentItem?.audioTimePitchAlgorithm = .timeDomain
+            player.playImmediately(atRate: SummaryBridgeRatePolicy.transportRate(mediaPlaybackRate))
             skimBridgeTask?.cancel()
             skimBridgeTask = Task { @MainActor [weak self, weak player] in
                 while !Task.isCancelled {
@@ -4549,6 +4588,7 @@ final class Gate1AppModel: ObservableObject {
         snapshot.skimBridgeState = bridge
         skimBridgePlayer?.pause()
         skimBridgePlayer = nil
+        skimBridgeTask?.cancel()
         skimBridgeTask = nil
         protectSummaryBridgeAsset(bridge.summaryAssetId, protected: false)
         do {
@@ -4576,7 +4616,7 @@ final class Gate1AppModel: ObservableObject {
             player.pause()
             bridge.status = .paused
         } else {
-            player.playImmediately(atRate: SummaryBridgeRatePolicy.preparedAssetTransportRate)
+            player.playImmediately(atRate: SummaryBridgeRatePolicy.transportRate(mediaPlaybackRate))
             bridge.status = .playing
         }
         snapshot.skimBridgeState = bridge
@@ -4779,7 +4819,10 @@ final class Gate1AppModel: ObservableObject {
     /// to be restored in the engine.
     @discardableResult
     private func ensureSessionForSelectedItem(_ engine: SessionEngine) throws -> Bool {
-        guard engine.currentSession?.itemId != activeItemId else { return false }
+        if let session = engine.currentSession, session.itemId == activeItemId,
+           session.status != "finished", session.phase != .finished, session.completionPercent < 100 {
+            return false
+        }
         resetMixWithOtherAudioForNewSession()
         if engine.currentSession != nil {
             snapshot = try engine.endSession()
@@ -4991,7 +5034,7 @@ final class Gate1AppModel: ObservableObject {
     func openExport(sessionId: String?) {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_export") else { return }
         exportSessionId = sessionId
-            ?? snapshot.sessionId
+            ?? (snapshot.itemId == selectedItem.id ? snapshot.sessionId : nil)
             ?? selectedItem.sessions.first?.id
         screen = .export
         refreshExportPreview(reportStatus: false)
@@ -5454,6 +5497,9 @@ final class Gate1AppModel: ObservableObject {
         mediaPlaybackRate = clamped
         UserDefaults.standard.set(clamped, forKey: "mediaPlaybackRate")
         if var bridge = snapshot.skimBridgeState {
+            if bridge.status == .playing {
+                skimBridgePlayer?.rate = SummaryBridgeRatePolicy.transportRate(clamped)
+            }
             snapshot.playbackRate = clamped
             bridge.status = snapshot.skimBridgeState?.status ?? bridge.status
             snapshot.skimBridgeState = bridge
@@ -6257,12 +6303,16 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func refreshExportPreview(reportStatus: Bool) {
-        guard exportSessionId != nil else {
+        exportShareCandidates = []
+        guard let exportSessionId else {
             exportPreview = ""
             exportFileURL = nil
             return
         }
         run { engine in
+            let store = try requireStore()
+            exportShareCandidates = try store.loadInterjections(sessionId: exportSessionId)
+                .filter { $0.status == "active" && $0.targetType == .item }
             let export = try engine.buildExport(options: currentExportOptions())
             exportPreview = try renderExport(export)
             exportFileURL = exportFormat == "markdown"
@@ -6455,11 +6505,16 @@ final class Gate1AppModel: ObservableObject {
         retryingInterjectionTranscriptionIds.contains(Self.marginIdentity(interjection))
     }
 
+    func isRetryingAnchorContext(_ interjection: Interjection) -> Bool {
+        pendingSourceContextInterjectionIds.contains(Self.marginIdentity(interjection))
+    }
+
     func retryAnchorContext(_ interjection: Interjection) {
         guard interjection.captureKind != .written else { return }
         guard !pendingSourceContextInterjectionIds.contains(Self.marginIdentity(interjection)) else { return }
-        scheduleSourceWindowContextIfNeeded(for: interjection)
-        reportConfirmation("Retrying source context.")
+        if !scheduleSourceWindowContextIfNeeded(for: interjection, reportsResult: true) {
+            reportWarning("Context needs a source timestamp and completed Margin transcription. Retry when transcription finishes.")
+        }
     }
 
     func retryInterjectionTranscription(_ interjection: Interjection) {
@@ -6477,6 +6532,7 @@ final class Gate1AppModel: ObservableObject {
         guard interjection.captureKind != .written else { return }
         if isPlayingInterjectionAudio(interjection) {
             stopInterjectionAudioPlayback()
+            reportConfirmation("Recording stopped.")
             return
         }
         guard let audioPath = interjection.audioPath,
@@ -6507,6 +6563,11 @@ final class Gate1AppModel: ObservableObject {
                 while !Task.isCancelled, let item {
                     try? await Task.sleep(for: .milliseconds(250))
                     guard !Task.isCancelled else { return }
+                    if item.status == .failed {
+                        self?.stopInterjectionAudioPlayback()
+                        self?.reportFailure("The saved recording could not be played.")
+                        return
+                    }
                     let duration = item.duration.seconds
                     let current = item.currentTime().seconds
                     if duration.isFinite, duration > 0, current.isFinite, current >= duration - 0.05 {
@@ -6516,6 +6577,7 @@ final class Gate1AppModel: ObservableObject {
                 }
             }
             player.playImmediately(atRate: Float(rate))
+            reportConfirmation("Playing recording.")
         } catch {
             stopInterjectionAudioPlayback()
             reportFailure(error, context: "Interjection playback failed")
@@ -7495,7 +7557,8 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func prepareImportedLocalAudioBridges(itemId: String) {
-        guard let store, let item = try? store.loadItem(id: itemId), item.mediaType == "audiobook",
+        guard let store, let item = try? store.loadItem(id: itemId),
+              item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream,
               let projection = try? store.loadResolvedListeningMapProjection(itemId: itemId),
               let proposals = try? store.loadPortableListeningMapProposals(itemId: itemId),
               let proposal = proposals.first(where: { $0.id == projection.proposalId }),
@@ -10139,6 +10202,7 @@ final class Gate1AppModel: ObservableObject {
                 continuationProgressPercent: continuation?.completionPercent,
                 isCompleted: isCompleted,
                 mediaType: item.mediaType,
+                hasNativeAudio: item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream,
                 sourceTitle: item.sourceTitle ?? item.externalReference,
                 sourceURL: item.sourceURL,
                 author: item.author,
@@ -11409,7 +11473,8 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func scheduleSourceWindowContextIfNeeded(for interjection: Interjection) {
+    @discardableResult
+    private func scheduleSourceWindowContextIfNeeded(for interjection: Interjection, reportsResult: Bool = false) -> Bool {
         guard interjection.captureKind != .written,
               interjection.targetType == .item,
               let anchorMediaTimeMs = interjection.anchor.mediaTimeMs,
@@ -11417,19 +11482,19 @@ final class Gate1AppModel: ObservableObject {
               let item = try? store.loadItem(id: interjection.itemId),
               let sourceURLString = item.media?.url,
               let canonicalSourceURL = URL(string: sourceURLString) else {
-            return
+            return false
         }
         // Acoustic evidence can fail before note transcription even starts. That
         // fallback must not race the note for the speech-recognition service.
         let saved = try? store.loadInterjections(sessionId: interjection.sessionId)
             .first(where: { $0.id == interjection.id })
         guard saved?.transcriptionStatus != "pending",
-              !pendingSourceContextInterjectionIds.contains(Self.marginIdentity(interjection)) else { return }
+              !pendingSourceContextInterjectionIds.contains(Self.marginIdentity(interjection)) else { return false }
         switch item.media?.sourceType {
         case .some(.nativeMediaFile), .some(.remoteStream):
             break
         default:
-            return
+            return false
         }
         if let storedTimeline = try? store.loadTranscriptTimeline(itemId: item.id)?.timeline,
            let window = Self.sourceContextWindow(
@@ -11441,13 +11506,19 @@ final class Gate1AppModel: ObservableObject {
             run { engine in
                 snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjection.id, sessionId: interjection.sessionId, timeline: window)
                 refreshSelectedItem()
+                refreshMarginRows()
+                if reportsResult { reportConfirmation("Source context recovered.") }
                 diagnostics["sourceWindowTranscription:\(interjection.id)"] = "complete:stored_transcript"
                 diagnostics["sourceWindowContextProvenance:\(interjection.id)"] = "stored_transcript"
             }
-            return
+            return true
         }
+        if reportsResult { reportConfirmation("Recovering source context…") }
         diagnostics["sourceWindowTranscription:\(interjection.id)"] = "scheduled"
-        let transcriptionURL = podcastDownloadCoordinator?.validatedLocalURL(for: item.id) ?? canonicalSourceURL
+        let transcriptionURL = (item.media?.sourceType == .nativeMediaFile ? resolvedOwnedAudiobookURL(for: item) : nil)
+            ?? importedPodcastRecipientLocalURLs[item.id]
+            ?? podcastDownloadCoordinator?.validatedLocalURL(for: item.id)
+            ?? canonicalSourceURL
         let provenance = transcriptionURL.isFileURL ? "downloaded_local_audio" : "bounded_remote_window"
         diagnostics["sourceWindowContextProvenance:\(interjection.id)"] = provenance
         pendingSourceContextInterjectionIds.insert(Self.marginIdentity(interjection))
@@ -11528,6 +11599,7 @@ final class Gate1AppModel: ObservableObject {
                             ? "unavailable:\(referenceEvidenceFailure ?? "temporary_audio_unavailable")"
                             : "complete:\(referenceEvidence.count)"
                         self.pendingSourceContextInterjectionIds.remove(Self.marginIdentity(interjection))
+                        if reportsResult { self.reportConfirmation("Source context recovered.") }
                     }
                 }
             } catch {
@@ -11540,6 +11612,9 @@ final class Gate1AppModel: ObservableObject {
                         self.refreshSelectedItem()
                         self.refreshMarginRows()
                     }
+                    if reportsResult {
+                        self.reportWarning("Source context could not be recovered: \(error.localizedDescription)")
+                    }
                     // Source-window context is redundant, best-effort evidence.
                     // The Margin and its timestamp are already durable, and the
                     // Timeline exposes the retry state. Do not turn this expected
@@ -11547,6 +11622,7 @@ final class Gate1AppModel: ObservableObject {
                 }
             }
         }
+        return true
     }
 
     private func retrySourceWindowContexts(itemId: String) {
@@ -11948,9 +12024,25 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    func prepareExportShareInterjections() {
+        do {
+            let store = try requireStore()
+            guard let exportSessionId, let session = try store.loadSession(id: exportSessionId) else {
+                throw SessionKitError.persistenceFailed("export_session_missing")
+            }
+            let candidates = try store.loadInterjections(sessionId: session.id)
+            selectedItem = try loadItemDetail(id: session.itemId, store: store)
+            prepareShareInterjections(candidates: candidates)
+        } catch { reportFailure(error, context: "Prepare session sharing failed") }
+    }
+
     func prepareShareInterjections() {
+        prepareShareInterjections(candidates: selectedItem.interjections)
+    }
+
+    private func prepareShareInterjections(candidates source: [Interjection]) {
         cancelBulkSharePreparation()
-        let candidates = selectedItem.interjections.filter {
+        let candidates = source.filter {
             $0.status == "active" && $0.targetType == .item
         }
         guard !candidates.isEmpty else {
@@ -12502,6 +12594,27 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    static func mapProposalsForMarginExport(_ proposals: [PortableListeningMapProposalArtifact]) -> [PortableListeningMapProposalArtifact] {
+        // The app exports reviewed Margins and textual map proposals, not the
+        // local/imported Skim audio. Do not reference unselected voice assets.
+        proposals.map { proposal in
+            PortableListeningMapProposalArtifact(
+                id: proposal.id, schemaVersion: proposal.schemaVersion,
+                languageCode: proposal.languageCode, createdAt: proposal.createdAt,
+                generator: proposal.generator,
+                scenes: proposal.scenes.map { scene in
+                    PortableListeningMapScene(
+                        id: scene.id, order: scene.order, title: scene.title,
+                        summaryText: scene.summaryText, summaryAssetId: nil,
+                        summaryProvenance: scene.summaryProvenance,
+                        eligibility: scene.eligibility, eligibilityReason: scene.eligibilityReason,
+                        startAnchor: scene.startAnchor, endAnchor: scene.endAnchor
+                    )
+                }
+            )
+        }
+    }
+
     func exportSharedInterjections(presentsReadySheet: Bool = true) {
         guard !sharingState.isBulkPreparing else {
             sharingState.errorMessage = "Finish or cancel bulk preparation before sharing."
@@ -12585,7 +12698,7 @@ final class Gate1AppModel: ObservableObject {
                 ))
             }
 
-            let mapProposals = try store.loadPortableListeningMapProposals(itemId: item.id)
+            let mapProposals = Self.mapProposalsForMarginExport(try store.loadPortableListeningMapProposals(itemId: item.id))
             let fingerprintSpines = sharingState.includesAcousticEvidence
                 ? try store.loadEditionFingerprintSpine(itemId: item.id).map { [$0] } ?? []
                 : []

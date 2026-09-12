@@ -32,6 +32,12 @@ struct Build23SenderSharingExperience: View {
                     Spacer()
                     topPrimaryAction(snapshot)
                 }
+                if let error = shareError(snapshot) {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(AppColors.coral)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("build23.sender.share.error")
+                }
                 stageContent(snapshot)
             }
             .frame(maxWidth: 960, alignment: .leading)
@@ -685,6 +691,14 @@ struct Build23SenderSharingExperience: View {
         }
         shareAfterVerification = true
         coordinator.send(.buildRecipientPreview)
+        // Export can fail synchronously, before SwiftUI observes .building.
+        if case .failed = coordinator.previewState { shareAfterVerification = false }
+    }
+
+    private func shareError(_ snapshot: Build23SharingSnapshot) -> String? {
+        if case .failed(let message) = snapshot.previewState { return message }
+        if snapshot.previewState == .stale { return "Your selection changed. Review it and share again." }
+        return snapshot.errorMessage
     }
 
     private func finishSystemShare() {

@@ -77,8 +77,19 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         }
         XCTAssertGreaterThan(sourcePlayer.currentMediaTimeMs() ?? 0, pausedTime + 100)
         XCTAssertTrue(model.snapshot.canSkimForward)
+        let loadedResources = model.skimResourceLoadCount
+        for _ in 0..<40 { model.snapshot.currentMediaTimeMs = model.snapshot.currentMediaTimeMs }
+        XCTAssertEqual(model.skimResourceLoadCount, loadedResources, "Progress updates must reuse the loaded map and asset metadata")
+        let priorRate = model.mediaPlaybackRate
+        model.setMediaPlaybackRate(1.75)
         model.skimForward()
+        XCTAssertEqual(model.skimAudioTransportRate, 1.75, "Skim must apply listening speed in AVPlayer")
+        model.setMediaPlaybackRate(1.25)
+        XCTAssertEqual(model.skimAudioTransportRate, 1.25, "A rate change must update the active summary player")
+        model.setMediaPlaybackRate(priorRate)
         XCTAssertEqual(model.snapshot.skimBridgeState?.destinationMediaTimeMs, 5_000)
+        model.skimForward()
+        XCTAssertNil(model.snapshot.skimBridgeState, "Second Skim tap exits instead of restarting or chaining a summary")
         for _ in 0..<500 where model.snapshot.skimBridgeState != nil { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertNil(model.snapshot.skimBridgeState)
         for _ in 0..<150 where (sourcePlayer.currentMediaTimeMs() ?? 0) < 5_200 {

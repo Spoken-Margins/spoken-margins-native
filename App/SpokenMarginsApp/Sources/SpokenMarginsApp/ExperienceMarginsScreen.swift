@@ -201,7 +201,7 @@ struct ExperienceMarginsScreen: View {
     }
 }
 
-private struct SharedMarginDetailView: View {
+struct SharedMarginDetailView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var shouldOpenItem = false

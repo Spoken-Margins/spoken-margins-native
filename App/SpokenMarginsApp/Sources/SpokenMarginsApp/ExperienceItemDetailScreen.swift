@@ -48,7 +48,7 @@ struct ExperienceItemDetailScreen: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button("Export latest session", systemImage: "square.and.arrow.up") {
-                            model.openExport()
+                            model.openExport(sessionId: model.selectedItem.sessions.first?.id)
                         }
                         .disabled(model.selectedItem.sessions.isEmpty)
                         if !model.selectedItem.id.isEmpty {

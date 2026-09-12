@@ -7,6 +7,28 @@ import SessionKitPersistence
 private let testSQLiteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
 final class SQLiteSessionStoreSafetyTests: XCTestCase {
+    func testImportedLayerReadDoesNotDecodeOtherLayersAndStillQuarantinesMalformedJSON() throws {
+        let path = temporaryDatabasePath()
+        let store = try SQLiteSessionStore(path: path)
+        let note = ImportedCommentaryInterjection(id: "wanted", layerId: "selected", packageScopedId: "wanted", createdAt: Date(), anchorEvidence: PortableAnchorEvidence(anchorType: .text), approvedTranscript: "Selected words")
+        try store.saveImportedCommentaryInterjection(note)
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(path, &database), SQLITE_OK)
+        defer { sqlite3_close(database) }
+        // The unrelated layer is valid JSON but deliberately not decodable as
+        // a Margin. Reading selected must not inspect or quarantine that layer.
+        let sql = """
+        INSERT INTO records(kind,id,payload) VALUES('imported_commentary_interjection','other','{"layerId":"other"}');
+        INSERT INTO records(kind,id,payload) VALUES('imported_commentary_interjection','malformed','{not-json');
+        """
+        XCTAssertEqual(sqlite3_exec(database, sql, nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(try store.loadImportedCommentaryInterjections(layerId: "selected").map(\.id), ["wanted"])
+        XCTAssertEqual(try store.quarantinedRecordCount(), 1)
+        XCTAssertTrue(try recordExists(path: path, kind: "imported_commentary_interjection", id: "other"))
+        XCTAssertTrue(try store.loadImportedCommentaryInterjections(layerId: "other").isEmpty)
+        XCTAssertEqual(try store.quarantinedRecordCount(), 2)
+    }
+
     func testConcurrentReadsAndWritesShareOneConnectionSafely() async throws {
         let store = try SQLiteSessionStore(path: temporaryDatabasePath())
 

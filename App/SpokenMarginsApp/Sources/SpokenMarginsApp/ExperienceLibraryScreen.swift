@@ -464,18 +464,7 @@ private struct ExperienceLibraryCompactRow: View {
         return row.hasContinuationSession ? (dynamicTypeSize.isAccessibilitySize ? "Resume" : "Continue listening") : "Current item"
     }
 
-    private var mediaSymbol: String {
-        switch row.mediaType.lowercased() {
-        case "podcast", "audio", "audiobook", "m4a", "m4b", "mp3":
-            "headphones"
-        case "pdf":
-            "doc.richtext"
-        case "epub":
-            "book.closed"
-        default:
-            "doc.text"
-        }
-    }
+    private var mediaSymbol: String { row.mediaSymbol }
 
     private var listeningLabel: String? {
         if row.isCompleted {

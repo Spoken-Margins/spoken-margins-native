@@ -54,8 +54,81 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     }
     #endif
 
-    func testPreparedSkimSummaryUsesUnityTransportRate() {
-        XCTAssertEqual(SummaryBridgeRatePolicy.preparedAssetTransportRate, 1)
+    func testLibraryAudioIconUsesPlaybackRepresentationRatherThanFileExtension() {
+        for type in ["text", "pdf", "epub", "mp4", "podcast", "audiobook"] {
+            let row = LibraryItemRow(id: type, title: type, status: "ready", canDelete: true, mediaType: type, hasNativeAudio: true)
+            XCTAssertEqual(row.mediaSymbol, "headphones")
+        }
+        XCTAssertEqual(LibraryItemRow(id: "text", title: "Text", status: "ready", canDelete: true).mediaSymbol, "doc.text")
+    }
+
+    func testSkimSeparatesNaturalSynthesisFromListeningSpeed() {
+        XCTAssertEqual(SummaryBridgeRatePolicy.synthesisSpeed, 1)
+        XCTAssertEqual(SummaryBridgeRatePolicy.systemSynthesisRate, 0.5)
+        XCTAssertEqual(SummaryBridgeRatePolicy.transportRate(1.75), 1.75)
+        XCTAssertEqual(SummaryBridgeRatePolicy.transportRate(0.75), 0.75)
+    }
+
+    func testCompletedSessionExportUsesItsMarginsDespiteNewEmptySession() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: url)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let store = try SQLiteSessionStore(path: url.path)
+        let originalID = try XCTUnwrap(model.snapshot.sessionId)
+        model.endSession()
+        var original = try XCTUnwrap(store.loadSession(id: originalID))
+        original.status = "finished"
+        original.phase = .finished
+        original.completionPercent = 100
+        try store.saveSession(original)
+        for index in 0..<2 {
+            var note = shareableInterjection(itemId: "item-pill")
+            note.id = "old-note-\(index)"
+            note.sessionId = originalID
+            note.targetId = "item-pill"
+            try store.saveInterjection(note)
+        }
+        model.startNewSession(id: "item-pill")
+        let newSession = try XCTUnwrap(model.snapshot.sessionId)
+        XCTAssertNotEqual(newSession, originalID)
+        model.openExport(sessionId: originalID)
+        XCTAssertEqual(model.exportShareCandidates.count, 2)
+        model.prepareExportShareInterjections()
+        XCTAssertEqual(model.sharingState.drafts.count, 2)
+        XCTAssertTrue(model.sharingState.drafts.allSatisfy { $0.interjection.sessionId == originalID })
+        XCTAssertEqual(model.snapshot.sessionId, newSession)
+        XCTAssertEqual(try store.loadSession(id: originalID)?.completionPercent, 100)
+        model.openExport(sessionId: newSession)
+        XCTAssertTrue(model.exportShareCandidates.isEmpty)
+    }
+
+    func testChapterFromCompletedSessionStartsReplayWithoutChangingCompletedHistory() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: url)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let store = try SQLiteSessionStore(path: url.path)
+        let id = try XCTUnwrap(model.snapshot.sessionId)
+        model.endSession()
+        var session = try XCTUnwrap(store.loadSession(id: id))
+        session.status = "finished"
+        session.phase = .finished
+        session.completionPercent = 100
+        try store.saveSession(session)
+        model.openSession(session)
+        let chapter = try XCTUnwrap(model.selectedItem.chapters.dropFirst().first)
+        model.jumpToChapter(chapter, fromTimeline: true)
+        XCTAssertNotEqual(model.snapshot.sessionId, id)
+        XCTAssertEqual(model.snapshot.chapterTitle, chapter.title)
+        XCTAssertEqual(model.screen, .playback)
+        XCTAssertEqual(try store.loadSession(id: id)?.completionPercent, 100)
     }
 
     func testMixedAudioIsExplicitPerSessionAndRestoresDefaultSystemOwnership() {
@@ -2520,6 +2593,11 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNotEqual(model.visibleSharedMarginRows.first?.id, found.id)
         XCTAssertEqual(model.visibleSharedMarginRows.first?.collectionLabel, "A shared collection")
         XCTAssertEqual(model.snapshot, before)
+        let playbackBeforeBrowsing = model.snapshot
+        model.openItem(id: found.interjection.itemId)
+        XCTAssertEqual(model.screen, .item)
+        XCTAssertEqual(model.selectedItem.id, found.interjection.itemId)
+        XCTAssertEqual(model.snapshot, playbackBeforeBrowsing)
         XCTAssertTrue(model.playMarginMoment(found))
         XCTAssertEqual(model.snapshot.itemId, "retrieval-item")
         XCTAssertEqual(model.snapshot.sessionId, "retrieval-session")

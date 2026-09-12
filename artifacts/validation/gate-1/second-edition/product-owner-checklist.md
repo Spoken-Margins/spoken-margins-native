@@ -1,6 +1,6 @@
 # Second-edition native product check
 
-Status: pending owner use. No flow in this redesign is human_validated yet. Use the exact candidate and verification evidence in the companion handoff.
+Status: superseded by the owner’s September 11 Build 27 acceptance except six reported failures, reconciled September 12. See [current acceptance and GitHub disposition](../2026-09-12-build-27-github-reconciliation.md). The Pending cells below preserve the original worksheet; they are not a request to repeat accepted flows. No per-device matrix is inferred.
 
 Record device, OS, date and pass/fail observations for each task. Use your own content after checking the seeded samples; the synthetic fixtures establish reproducibility, not usefulness for your real collection.
 

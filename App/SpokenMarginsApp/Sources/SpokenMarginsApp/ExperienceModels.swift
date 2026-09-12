@@ -264,14 +264,16 @@ enum TimelineProvenance: String, CaseIterable, Hashable, Sendable {
     case source
     case listeningMap
     case myMargin
+    case sharedMargin
     case userResponse
     case assistantResponse
 
     var label: String {
         switch self {
-        case .source: "Source"
+        case .source: "Chapter"
         case .listeningMap: "Listening map"
         case .myMargin: "My Margin"
+        case .sharedMargin: "Shared Margin"
         case .userResponse: "My response"
         case .assistantResponse: "Assistant response"
         }
@@ -282,6 +284,7 @@ enum TimelineProvenance: String, CaseIterable, Hashable, Sendable {
         case .source: "doc.text"
         case .listeningMap: "map"
         case .myMargin: "quote.bubble.fill"
+        case .sharedMargin: "person.2.fill"
         case .userResponse: "person.crop.circle"
         case .assistantResponse: "sparkles"
         }

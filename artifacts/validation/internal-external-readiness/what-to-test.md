@@ -1,5 +1,8 @@
 # Build 27 — proposed internal TestFlight notes
 
+Draft notes for the earlier candidate; not a complete current checklist. Use [current validation](current-validation.md) and refresh these notes before posting for a newly built candidate.
+
+
 This build brings the second-edition Library, Following and Margins experience, including written Margins, together with playback and sharing fixes.
 
 Please update in place and keep your existing Library. Check that your items, listening positions, recordings, written Margins and imported collections are still present.

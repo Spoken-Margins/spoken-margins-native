@@ -7,6 +7,7 @@ struct ExperienceTimelineRailScreen: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @State private var selectedMargin: MarginRow?
+    @State private var selectedSharedMargin: SharedMarginRow?
     @State private var entries: [TimelineRailEntry] = []
     @FocusState private var responseEditorFocused: Bool
     @ScaledMetric(relativeTo: .body) private var responseEditorHeight: CGFloat = 160
@@ -36,7 +37,7 @@ struct ExperienceTimelineRailScreen: View {
 
                         if !sharingCoordinator.importedLayers.isEmpty {
                             DisclosureGroup("Shared Margins") {
-                                Build23ImportedMarginPresentation(coordinator: sharingCoordinator)
+                                Build23ImportedMarginPresentation(coordinator: sharingCoordinator, showsMargins: false)
                             }
                             .padding(.top, 16)
                         }
@@ -101,6 +102,9 @@ struct ExperienceTimelineRailScreen: View {
                         .accessibilityIdentifier("timeline.keyboard.done")
                 }
             }
+            .sheet(item: $selectedSharedMargin) { row in
+                SharedMarginDetailView(row: row).environmentObject(model)
+            }
             .sheet(item: $selectedMargin) { row in
                 ExperienceMarginDetailView(row: row)
                     .environmentObject(model)
@@ -117,6 +121,7 @@ struct ExperienceTimelineRailScreen: View {
                     isLast: index == entries.count - 1,
                     action: { perform(entry.action) }
                 )
+                .equatable()
                 .id(entry.id)
                 .accessibilityIdentifier(entry.accessibilityIdentifier)
             }
@@ -229,6 +234,22 @@ struct ExperienceTimelineRailScreen: View {
                 detail: "Generated scene · \(formatTime(scene.startMs))" + (summary.map { " · \($0)" } ?? ""),
                 action: .listeningMapScene(scene)
             ))
+        }
+
+        for layer in item.importedCommentaryLayers where layer.deletedAt == nil {
+            for margin in item.importedCommentaryInterjections[layer.id, default: []] {
+                let row = SharedMarginRow(interjection: margin, layer: layer, itemTitle: item.title)
+                let position = margin.resolution.localMediaTimeMs.map {
+                    max(0, min(100, Int((Double($0) / Double(duration) * 100).rounded())))
+                } ?? margin.anchorEvidence.roughPercent ?? 100
+                result.append(TimelineRailEntry(
+                    id: "shared.\(row.id)", position: position, rank: 1,
+                    provenance: .sharedMargin,
+                    title: TimelineTextPresentation.excerpt(margin.approvedTranscript, characterLimit: TimelineTextPresentation.marginCharacterLimit),
+                    detail: "Shared by \(row.collectionLabel) · \(row.positionDescription)",
+                    action: .sharedMargin(row)
+                ))
+            }
         }
 
         let margins = currentSessionMargins(in: item, sessionID: sessionID)
@@ -348,7 +369,7 @@ struct ExperienceTimelineRailScreen: View {
             } else if let first = model.selectedItem.mediaChapters.first {
                 model.jumpToMediaChapter(first, fromTimeline: true)
             } else {
-                model.openPlayback()
+                model.playSourceFromBeginning(fromTimeline: true)
             }
         case .chapter(let chapter):
             model.jumpToChapter(chapter, fromTimeline: true)
@@ -356,6 +377,8 @@ struct ExperienceTimelineRailScreen: View {
             model.jumpToMediaChapter(chapter, fromTimeline: true)
         case .listeningMapScene(let scene):
             model.jumpToListeningMapScene(scene, fromTimeline: true)
+        case .sharedMargin(let row):
+            selectedSharedMargin = row
         case .margin(let row):
             model.recordTimelineInterjectionViewed(interjectionId: row.interjection.id)
             selectedMargin = row
@@ -391,13 +414,14 @@ struct ExperienceTimelineRailScreen: View {
     }
 }
 
-struct TimelineRailEntry: Identifiable {
-    enum Action {
+struct TimelineRailEntry: Identifiable, Equatable {
+    enum Action: Equatable {
         case beginning
         case chapter(Chapter)
         case mediaChapter(MediaTimelineChapter)
         case listeningMapScene(MediaTimelineChapter)
         case margin(MarginRow)
+        case sharedMargin(SharedMarginRow)
         case turn(ConversationTurn)
         case turnChapter(ConversationTurn, Chapter)
     }
@@ -416,6 +440,7 @@ struct TimelineRailEntry: Identifiable {
 
     var accessibilityIdentifier: String {
         switch action {
+        case .sharedMargin(let row): "timeline.sharedMargin.\(row.id)"
         case .margin(let row): "timeline.interjection.\(row.interjection.id)"
         case .turn(let turn): "timeline.turn.play.\(turn.id)"
         case .turnChapter(let turn, let chapter): "timeline.turnChapter.jump.\(turn.id).\(chapter.id)"
@@ -427,12 +452,16 @@ struct TimelineRailEntry: Identifiable {
     }
 }
 
-private struct TimelineRailRow: View {
+private struct TimelineRailRow: View, Equatable {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let entry: TimelineRailEntry
     let isFirst: Bool
     let isLast: Bool
     let action: () -> Void
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.entry == rhs.entry && lhs.isFirst == rhs.isFirst && lhs.isLast == rhs.isLast
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
@@ -504,6 +533,8 @@ private struct TimelineRailRow: View {
             RoundedRectangle(cornerRadius: 2).fill(provenanceColor).frame(width: 13, height: 13).rotationEffect(.degrees(45))
         case .userResponse:
             Circle().stroke(provenanceColor, lineWidth: 3).frame(width: 14, height: 14)
+        case .sharedMargin:
+            Image(systemName: "person.2.fill").font(.caption.bold()).foregroundStyle(provenanceColor)
         case .assistantResponse:
             Image(systemName: "sparkle").font(.caption.bold()).foregroundStyle(provenanceColor)
         }
@@ -514,7 +545,7 @@ private struct TimelineRailRow: View {
         case .source, .listeningMap: AppColors.evergreen
         case .myMargin: AppColors.coral
         case .userResponse: AppColors.ochre
-        case .assistantResponse: AppColors.plum
+        case .sharedMargin, .assistantResponse: AppColors.plum
         }
     }
 
@@ -524,7 +555,7 @@ private struct TimelineRailRow: View {
         case .listeningMap: AppColors.evergreen.opacity(0.07)
         case .myMargin: AppColors.coral.opacity(0.08)
         case .userResponse: AppColors.ochre.opacity(0.08)
-        case .assistantResponse: AppColors.plum.opacity(0.07)
+        case .sharedMargin, .assistantResponse: AppColors.plum.opacity(0.07)
         }
     }
 }

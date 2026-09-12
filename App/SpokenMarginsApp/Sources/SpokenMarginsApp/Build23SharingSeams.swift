@@ -226,15 +226,38 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     private var previewFingerprint: String?
     private var previewGeneration = 0
     private var previewTask: Task<Void, Never>?
-    private var modelChangeCancellable: AnyCancellable?
+    private var modelChangeCancellables: Set<AnyCancellable> = []
+    private var modelChangePending = false
+    @Published private(set) var importedLayers: [Build23ImportedLayerSnapshot] = []
 
     init(model: Gate1AppModel) {
         self.model = model
-        modelChangeCancellable = model.objectWillChange.sink { [weak self] _ in
-            Task { @MainActor [weak self] in
-                await Task.yield()
-                self?.modelDidChange()
-            }
+        importedLayers = makeImportedLayers(from: model.selectedItem)
+        model.$selectedItem.sink { [weak self] item in
+            guard let self else { return }
+            let layers = self.makeImportedLayers(from: item)
+            if self.importedLayers != layers { self.importedLayers = layers }
+        }.store(in: &modelChangeCancellables)
+        // Playback position and diagnostics are not sharing inputs. Observe the
+        // relevant publishers and coalesce their willSet notifications.
+        model.$sharingState.map { _ in () }
+            .merge(with: model.$selectedItem.map { _ in () },
+                   model.$spokenMarginsPackageImportReview.map { _ in () },
+                   model.$isImportingSpokenMarginsPackage.map { _ in () },
+                   model.$spokenMarginsPackageImportError.map { _ in () },
+                   model.$sharedSpokenMarginsPackageURL.map { _ in () })
+            .sink { [weak self] in self?.scheduleModelChange() }
+            .store(in: &modelChangeCancellables)
+    }
+
+    private func scheduleModelChange() {
+        guard !modelChangePending else { return }
+        modelChangePending = true
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            guard let self else { return }
+            self.modelChangePending = false
+            self.modelDidChange()
         }
     }
 
@@ -326,11 +349,11 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         snapshot.canShareVerifiedFile ? verifiedPreview?.fileURL : nil
     }
 
-    var importedLayers: [Build23ImportedLayerSnapshot] {
-        model.selectedItem.importedCommentaryLayers
+    private func makeImportedLayers(from item: ItemDetailState) -> [Build23ImportedLayerSnapshot] {
+        item.importedCommentaryLayers
             .filter { $0.deletedAt == nil }
             .map { layer in
-                let margins = model.selectedItem.importedCommentaryInterjections[layer.id, default: []]
+                let margins = item.importedCommentaryInterjections[layer.id, default: []]
                     .map { margin in
                         Build23ImportedMarginSnapshot(
                             id: margin.id,
