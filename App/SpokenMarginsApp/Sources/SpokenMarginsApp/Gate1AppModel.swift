@@ -699,6 +699,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var trashUndo: TrashUndoState?
     @Published var selectedItem = ItemDetailState() {
         didSet {
+            if oldValue.id != selectedItem.id { selectedListeningEdition = try? ListeningEditionStore.application().load(itemID: selectedItem.id) }
             skimResourceContext = nil
             if oldValue.id != selectedItem.id || oldValue.externalReference != selectedItem.externalReference {
                 storedSourceFollowSuggestionCandidates = []
@@ -787,6 +788,13 @@ final class Gate1AppModel: ObservableObject {
     @Published var sourceLinkCandidateReview: SourceLinkCandidateReviewState?
     @Published private(set) var sourceLinkImportState = "idle"
     @Published private(set) var sourceLinkImportMessage: String?
+    @Published private(set) var selectedListeningEdition: ListeningEdition?
+    @Published var automaticMarginOutputEnabled = UserDefaults.standard.bool(forKey: "automaticMarginOutputEnabled")
+    @Published var marginOutputStatus = "Choose a folder and send a test note before enabling automatic delivery."
+    @Published private(set) var isImportingReadLater = false
+    private var automaticMarginOutputTask: Task<Void, Never>?
+    private var automaticMarginWriter: AutomaticMarginWriter?
+    private var isDeliveringMargins = false
     @Published var listeningMapJSON = ""
     @Published var isGeneratingListeningMap = false
     @Published private(set) var localFoundationModelAvailability: LocalFoundationModelAvailability = .unavailable("Checking availability")
@@ -1690,6 +1698,8 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleAppBecameInactiveOrBackground() {
+        automaticMarginOutputTask?.cancel()
+        automaticMarginOutputTask = nil
         supertonicRenderer?.setBackgroundInferencePacingEnabled(true)
         if snapshot.status == .starting,
            let supertonic = speechPlaybackClient as? SupertonicSpeechPlaybackClient,
@@ -1895,6 +1905,8 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleAppBecameActive() {
+        openReadyListeningEdition()
+        startAutomaticMarginOutput()
         supertonicRenderer?.setBackgroundInferencePacingEnabled(false)
         let refreshedAvailability = localFoundationModelClient.availability()
         if refreshedAvailability != localFoundationModelAvailability {
@@ -3143,7 +3155,11 @@ final class Gate1AppModel: ObservableObject {
             installEngine(try makeEngine(store: store))
         }
         guard let engine,
-              let item = try engine.importResolvedSourceLinkInBackground(request, result: result) else {
+              let item = try engine.importResolvedSourceLinkInBackground(
+                request,
+                result: result,
+                sourceIdentity: feedEntry.map { "\($0.subscriptionId):\($0.id)" }
+              ) else {
             throw SessionKitError.persistenceFailed("The shared podcast did not expose playable audio.")
         }
         if let feedEntry {
@@ -3155,7 +3171,9 @@ final class Gate1AppModel: ObservableObject {
             identified.externalReference = feedEntry.canonicalURL
             identified.author = feedEntry.author ?? identified.author
             try store.saveItem(identified)
-            if let summary = feedEntry.summary,
+            if item.media?.url == result.selectedCandidate?.audioURL,
+               try store.loadListeningMap(itemId: item.id) == nil,
+               let summary = feedEntry.summary,
                let chapters = TimestampedDescriptionChapterParser.parse(summary) {
                 _ = try engine.attachPublisherChapters(itemId: item.id, collection: chapters)
             }
@@ -3165,10 +3183,12 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["lastBackgroundSourceLinkImport"] = item.id
         markOnboardingSteps([.addedOwnSource, .addedPodcast])
         schedulePodcastDownloadIfNeeded(itemId: item.id)
-        scheduleSourceTranscriptImportIfAvailable(
-            result.selectedCandidate?.transcriptLinks ?? result.candidates.flatMap(\.transcriptLinks),
-            itemId: item.id
-        )
+        if item.media?.url == result.selectedCandidate?.audioURL, item.transcriptId == nil {
+            scheduleSourceTranscriptImportIfAvailable(
+                result.selectedCandidate?.transcriptLinks ?? result.candidates.flatMap(\.transcriptLinks),
+                itemId: item.id
+            )
+        }
         return item.id
     }
 
@@ -6354,6 +6374,7 @@ final class Gate1AppModel: ObservableObject {
             )
             UserDefaults.standard.set(bookmark, forKey: batchExportFolderBookmarkKey)
             UserDefaults.standard.set(url.lastPathComponent, forKey: "batchExportFolderName")
+            UserDefaults.standard.set(UUID().uuidString, forKey: "marginOutputDestinationID")
             batchExportFolderName = url.lastPathComponent
             batchExportResult = nil
             reportSuccess("Export folder set to \(url.lastPathComponent).")
@@ -7558,7 +7579,7 @@ final class Gate1AppModel: ObservableObject {
 
     private func prepareImportedLocalAudioBridges(itemId: String) {
         guard let store, let item = try? store.loadItem(id: itemId),
-              item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream,
+              item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream || item.media?.sourceType == .generatedTTSPrerendered,
               let projection = try? store.loadResolvedListeningMapProjection(itemId: itemId),
               let proposals = try? store.loadPortableListeningMapProposals(itemId: itemId),
               let proposal = proposals.first(where: { $0.id == projection.proposalId }),
@@ -7747,6 +7768,16 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleIncomingURL(_ url: URL) {
+        if url.isFileURL, url.pathExtension.lowercased() == "json" {
+            importListeningEditionFile(url); return
+        }
+        if url.scheme == "spokenmargins", url.host == "listening-edition" {
+            do {
+                let id = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "id" })?.value ?? ""
+                importListeningEditionFile(try ListeningEditionStore.stagedFile(id: id))
+            } catch { reportFailure(error, context: "Listening edition handoff failed") }
+            return
+        }
         if url.isFileURL, url.pathExtension.lowercased() == SpokenMarginsPackageArchive.fileExtension {
             stageSpokenMarginsPackageImport(from: url)
             return
@@ -9081,6 +9112,170 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    func openReadyListeningEdition() {
+        guard !snapshot.isRecording, let id = ListeningReadyNotifications.pendingItemID else { return }
+        ListeningReadyNotifications.pendingItemID = nil
+        openItem(id: id)
+    }
+    private func activateListeningEditionAudio(itemId: String, timeline: TranscriptTimeline) {
+        guard let edition = try? ListeningEditionStore.application().load(itemID: itemId), let store else { return }
+        do {
+            let (proposal, projection) = try edition.audioMap(timeline: timeline)
+            try store.savePortableListeningMapProposal(proposal, itemId: itemId)
+            try store.saveResolvedListeningMapProjection(projection)
+            if selectedItem.id == itemId { refreshSelectedItem() }
+            prepareImportedLocalAudioBridges(itemId: itemId)
+            Task { await ListeningReadyNotifications.notify(itemID: itemId, title: edition.title, revision: edition.revision) }
+        } catch { diagnostics["listeningEditionAudio"] = "not_ready" }
+    }
+
+    // MARK: Portable listening editions and personal knowledge output
+    func importListeningEditionData(_ data: Data, replaceMap: Bool = false) {
+        do {
+            guard !snapshot.isRecording else { throw EditionError.invalid("Finish recording before importing a listening edition.") }
+            let edition = try ListeningEdition.decode(data)
+            let editions = try ListeningEditionStore.application()
+            if let previous = try editions.load(itemID: edition.itemID), previous != edition, !replaceMap {
+                throw EditionError.invalid("This source already has a different Listening Map. Use Import Listening Edition in Settings to preview and explicitly replace it.")
+            }
+            let store = try requireStore()
+            // Stable source identity preserves every existing session and Margin on retry.
+            if (try? store.loadItem(id: edition.itemID)) == nil {
+                try store.saveItem(Item(id: edition.itemID, title: edition.title, mediaType: "text", text: edition.text,
+                                       externalReference: edition.sourceURL, status: "ready", externalReferenceType: "url", createdAt: Date()))
+            }
+            if snapshot.itemId == edition.itemID, snapshot.status.isPlaybackActive {
+                throw EditionError.invalid("Pause playback before importing a map for the current item.")
+            }
+            try editions.save(edition)
+            if let engine { snapshot = try engine.attachListeningMap(edition.listeningMap()) }
+            else { try store.saveListeningMap(edition.listeningMap()) }
+            if let timeline = try store.loadTranscriptTimeline(itemId: edition.itemID)?.timeline {
+                activateListeningEditionAudio(itemId: edition.itemID, timeline: timeline)
+            }
+            activeItemId = edition.itemID
+            libraryItems = try loadLibraryRows(store: store)
+            refreshSelectedItem()
+            screen = .item
+            scheduleTextAudioPrewarmIfNeeded(itemId: edition.itemID)
+            reportConfirmation("Imported item and Listening Map. Audio prepares separately; playback has not started.")
+        } catch { reportFailure(error, context: "Listening edition import failed") }
+    }
+
+
+
+    func importListeningEditionFile(_ url: URL) {
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            guard size <= 8_000_000 else { throw EditionError.invalid("Listening edition exceeds 8 MB.") }
+            importListeningEditionData(try Data(contentsOf: url))
+        } catch { reportFailure(error, context: "Listening edition file could not be opened") }
+    }
+
+    func importReadLaterDocument(_ document: ReadLaterDocument) {
+        guard !isImportingReadLater else { return }
+        isImportingReadLater = true
+        Task {
+            defer { isImportingReadLater = false }
+            do {
+                if let html = document.html, !html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    let handoff = Self.sanitizedBrowserTextHandoff(BrowserTextHandoff(
+                        captureMode: .readablePage,
+                        source: BrowserTextSource(url: document.url, title: document.title), text: html,
+                        contentFormat: .plainText
+                    ))
+                    let store = try requireStore()
+                    let id = "read-later-" + ListeningEdition.digest(document.url + "\n" + handoff.text)
+                    if (try? store.loadItem(id: id)) != nil {
+                        reportConfirmation("This article is already in your Library.")
+                        return
+                    }
+                    var stable = handoff; stable.itemId = id
+                    try importBrowserTextInBackground(stable)
+                    reportConfirmation("Added article. Your reading service has not been changed.")
+                } else {
+                    // URL-only services use the existing local readable-page importer,
+                    // including its visible unsupported/paywall failure behavior.
+                    guard let url = URL(string: document.url) else { throw EditionError.invalid("Invalid article URL.") }
+                    var handoff = try await readablePageExtractor.extract(url: url)
+                    let id = "read-later-" + ListeningEdition.digest(document.url + "\n" + handoff.text)
+                    let store = try requireStore()
+                    if (try? store.loadItem(id: id)) != nil {
+                        reportConfirmation("This article is already in your Library."); return
+                    }
+                    handoff.itemId = id
+                    try importBrowserTextInBackground(handoff)
+                    reportConfirmation("Added article from its original website.")
+                }
+            } catch { reportFailure(error, context: "Article import failed") }
+        }
+    }
+
+    func automaticMarginOutputChanged() {
+        UserDefaults.standard.set(automaticMarginOutputEnabled, forKey: "automaticMarginOutputEnabled")
+        if automaticMarginOutputEnabled { startAutomaticMarginOutput() }
+        else { automaticMarginOutputTask?.cancel(); automaticMarginOutputTask = nil; marginOutputStatus = "Automatic delivery is off. Exported files remain in your folder." }
+    }
+
+    func startAutomaticMarginOutput() {
+        guard automaticMarginOutputEnabled, automaticMarginOutputTask == nil else { return }
+        automaticMarginOutputTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                await self.deliverAutomaticMargins()
+                do { try await Task.sleep(for: .seconds(15)) } catch { break }
+            }
+        }
+    }
+
+    func testMarginOutput() {
+        Task {
+            do {
+                guard let folder = resolvedBatchExportFolderURL() else { throw EditionError.invalid("Choose an output folder first.") }
+                let writer = try marginWriter()
+                _ = try await writer.deliver([.init(id: "sample-margin", markdown: "# Spoken Margins test\n\nYour thoughts will arrive here as Markdown, with source context and anchors.\n")], to: folder, destinationID: marginOutputDestinationID)
+                marginOutputStatus = "Test note saved. Open Margin-\(ListeningEdition.digest("sample-margin")).md in your notes app."
+            } catch { marginOutputStatus = error.localizedDescription }
+        }
+    }
+
+    private var marginOutputDestinationID: String {
+        UserDefaults.standard.string(forKey: "marginOutputDestinationID") ?? "initial"
+    }
+    private func marginWriter() throws -> AutomaticMarginWriter {
+        if let automaticMarginWriter { return automaticMarginWriter }
+        let writer = AutomaticMarginWriter(journalURL: try applicationSupportDirectory().appendingPathComponent("SpokenMargins/MarginOutputJournal.json"))
+        automaticMarginWriter = writer
+        return writer
+    }
+    func deliverAutomaticMargins() async {
+        guard automaticMarginOutputEnabled, !isDeliveringMargins, !snapshot.isRecording, let store else { return }
+        isDeliveringMargins = true
+        defer { isDeliveringMargins = false }
+        do {
+            guard let folder = resolvedBatchExportFolderURL() else { throw EditionError.invalid("Choose or reselect an output folder. Your Margins remain safely in the Library.") }
+            if engine == nil { installEngine(try makeEngine(store: store)) }
+            guard let engine else { return }
+            var notes: [AutomaticMarginWriter.Note] = []
+            for session in try store.loadSessions() {
+                guard let item = try? store.loadItem(id: session.itemId), item.deletedAt == nil else { continue }
+                for margin in try store.loadInterjections(sessionId: session.id) where margin.status == "active" {
+                    guard !(margin.cleanedTranscript ?? margin.transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                    let export = try engine.buildExport(options: ExportOptions(sessionId: session.id,
+                        includeFullText: false, includeReference: true, includeListeningMap: false,
+                        includeInterjections: true, includeTurns: false, scope: "selected_interjections", interjectionIds: [margin.id]))
+                    let markdown = SessionExportMarkdownRenderer.renderMargin(export, createdAt: margin.createdAt)
+                    guard !markdown.isEmpty else { continue }
+                    notes.append(.init(id: session.id + ":" + margin.id, markdown: markdown))
+                }
+            }
+            let count = try await marginWriter().deliver(notes, to: folder, destinationID: marginOutputDestinationID)
+            marginOutputStatus = "\(count) Margins saved to \(folder.lastPathComponent). Last checked \(Date().formatted(date: .omitted, time: .shortened))."
+        } catch { marginOutputStatus = "Delivery needs attention: \(error.localizedDescription)" }
+    }
+
     private func run(_ operation: (SessionEngine) throws -> Void) {
         if engine == nil {
             do {
@@ -9601,6 +9796,7 @@ final class Gate1AppModel: ObservableObject {
                     selectedItem = try loadItemDetail(id: itemId, store: store)
                 }
             }
+            activateListeningEditionAudio(itemId: itemId, timeline: prepared.timeline)
             diagnostics["textAudioPrewarm:\(itemId)"] = diagnosticStatus
             preparedTextAudioStatus = preparedStatus
             snapshot.preparedTextAudioStatus = preparedStatus
@@ -13669,6 +13865,7 @@ final class Gate1AppModel: ObservableObject {
         guard let store, !activeItemId.isEmpty else { return }
         if let detail = try? loadItemDetail(id: activeItemId, store: store) {
             selectedItem = detail
+            selectedListeningEdition = try? ListeningEditionStore.application().load(itemID: activeItemId)
             offerFollowSuggestionIfEligible(itemId: activeItemId, store: store)
         }
     }
@@ -14869,6 +15066,7 @@ final class Gate1AppModel: ObservableObject {
                 } else {
                     let handoff = try await self.readablePageExtractor.extract(url: url)
                     self.diagnostics["followedArticleNetworkHosts"] = self.readablePageExtractor.contactedHosts.joined(separator: ",")
+                    self.diagnostics["followedArticleExtractor"] = self.readablePageExtractor.lastExtractor ?? "unknown"
                     if openWhenFinished {
                         imported = self.importBrowserText(handoff)
                     } else {

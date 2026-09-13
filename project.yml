@@ -89,6 +89,11 @@ targets:
             LSHandlerRank: Owner
             LSItemContentTypes:
               - com.spokenmargins.package
+          - CFBundleTypeName: Listening Edition JSON
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.json
         UTExportedTypeDeclarations:
           - UTTypeIdentifier: com.spokenmargins.package
             UTTypeDescription: Spoken Margins Package

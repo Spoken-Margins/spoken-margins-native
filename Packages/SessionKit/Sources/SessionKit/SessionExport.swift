@@ -92,6 +92,20 @@ public struct ExportOptions: Equatable {
 }
 
 public enum SessionExportMarkdownRenderer {
+    /// Stable single-note export: session progress must not rewrite a vault note
+    /// every playback tick. The canonical export already scopes/bounds context.
+    public static func renderMargin(_ export: SessionExport, createdAt: Date) -> String {
+        guard let note = export.interjections.first, export.interjections.count == 1 else { return "" }
+        var lines = ["# " + export.item.title, "", "Created: " + ISO8601DateFormatter().string(from: createdAt)]
+        if let reference = export.item.externalReference { lines += ["Source: " + reference] }
+        lines += ["Target: \(note.targetType) / \(note.targetId)", "Session: \(note.sessionId)", "Margin: \(note.id)"]
+        lines += ["Position: " + (note.mediaTimeMs.map { "\($0) ms" } ?? "\(note.roughPercent)%"), ""]
+        lines += [note.captureKind == .written ? "## Written Margin" : "## Listener Margin", "", note.transcript ?? "", ""]
+        if !note.anchorBefore.isEmpty { lines += ["## Context before", "", note.anchorBefore, ""] }
+        if !note.anchorAfter.isEmpty { lines += ["## Context after", "", note.anchorAfter, ""] }
+        return lines.joined(separator: "\n")
+    }
+
     public static func render(_ export: SessionExport) -> String {
         var lines: [String] = []
         lines.append("# Spoken Margins AI Handoff: \(export.item.title)")

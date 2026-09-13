@@ -14,6 +14,7 @@ SCHEMAS = CONTRACTS / "schemas"
 
 
 PATH_SCHEMA_RULES = [
+    ("fixtures/listening-editions/*.json", "listening-edition.schema.json"),
     ("fixtures/persistence/*.json", "persistence-fixture.schema.json"),
     ("fixtures/capabilities/*.json", "runtime-capability-profile.schema.json"),
     ("fixtures/items/*.json", "item.schema.json"),

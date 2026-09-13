@@ -25,6 +25,7 @@ struct ExperienceItemDetailScreen: View {
                     if !model.selectedItem.overview.isEmpty { overview }
                     sessions
                     structure
+                    if let edition = model.selectedListeningEdition { ListeningEditionScenes(edition: edition) }
                     if !model.selectedItem.listeningMapScenes.isEmpty { listeningMap }
                     recentMargins
                     advanced

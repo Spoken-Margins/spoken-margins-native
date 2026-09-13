@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public final class SessionEngine {
@@ -149,7 +150,7 @@ public final class SessionEngine {
             return snapshot
         }
 
-        let item = item(from: candidate, result: result, request: request)
+        let item = try sourceImportItem(from: candidate, result: result, request: request)
         try repository.saveItem(item)
         currentItem = item
         currentMap = nil
@@ -171,7 +172,9 @@ public final class SessionEngine {
         snapshot.currentTranscriptSegmentId = item.transcriptId
         snapshot.currentAnchorConfidence = .providerMetadata
 
-        if let publisherChapters = preferredPublisherChapterCollection(in: candidate) {
+        if item.media?.url == candidate.audioURL,
+           try repository.loadListeningMap(itemId: item.id) == nil,
+           let publisherChapters = preferredPublisherChapterCollection(in: candidate) {
             _ = try attachPublisherChapters(itemId: item.id, collection: publisherChapters)
         }
 
@@ -186,7 +189,8 @@ public final class SessionEngine {
     @discardableResult
     public func importResolvedSourceLinkInBackground(
         _ request: LinkResolutionRequest,
-        result: LinkResolutionResult
+        result: LinkResolutionResult,
+        sourceIdentity: String? = nil
     ) throws -> Item? {
         try require("importSourceLink", category: "sync", capabilities: ["canonical_persistence"])
         guard result.status == .playable,
@@ -195,9 +199,11 @@ public final class SessionEngine {
               !audioURL.isEmpty else {
             return nil
         }
-        let item = item(from: candidate, result: result, request: request)
+        let item = try sourceImportItem(from: candidate, result: result, request: request, sourceIdentity: sourceIdentity)
         try repository.saveItem(item)
-        if let publisherChapters = preferredPublisherChapterCollection(in: candidate) {
+        if item.media?.url == candidate.audioURL,
+           try repository.loadListeningMap(itemId: item.id) == nil,
+           let publisherChapters = preferredPublisherChapterCollection(in: candidate) {
             _ = try attachPublisherChapters(itemId: item.id, collection: publisherChapters)
         }
         return item
@@ -2864,10 +2870,29 @@ public final class SessionEngine {
         "ch-publisher-\(source.rawValue)-\(String(format: "%03d", index + 1))"
     }
 
-    private func item(from candidate: LinkResolutionCandidate, result: LinkResolutionResult, request: LinkResolutionRequest) -> Item {
+    private func sourceImportItem(
+        from candidate: LinkResolutionCandidate,
+        result: LinkResolutionResult,
+        request: LinkResolutionRequest,
+        sourceIdentity: String? = nil
+    ) throws -> Item {
+        let id = resolvedSourceItemId(for: candidate, request: request, sourceIdentity: sourceIdentity)
+        // Reimport is idempotent. Keep the accepted media edition, transcript,
+        // download and creation date; metadata is not permission to replace
+        // audio underneath already-anchored sessions or private maps.
+        do {
+            var existing = try repository.loadItem(id: id)
+            // Explicit import also restores a trashed item, without rebuilding
+            // it and discarding its existing media/transcript association.
+            existing.deletedAt = nil
+            return existing
+        } catch SessionKitError.missingFixture(let key) where key == "item:\(id)" || key == id {
+            // A new identity gets a fresh record, never a legacy title-slug's
+            // derivatives. Ambiguous old records remain available for recovery.
+        }
         let title = candidate.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? (candidate.sourceLink.title ?? request.inputURL) : candidate.title
         return Item(
-            id: resolvedSourceItemId(for: candidate, request: request),
+            id: id,
             title: title,
             mediaType: TargetType.transcriptBackedMedia.rawValue,
             text: nil,
@@ -2886,26 +2911,18 @@ public final class SessionEngine {
         )
     }
 
-    private func resolvedSourceItemId(for candidate: LinkResolutionCandidate, request: LinkResolutionRequest) -> String {
-        let base = [candidate.showTitle, candidate.title].compactMap { value -> String? in
-            guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-            return value
-        }.joined(separator: " ")
-        let seeded = base.isEmpty ? request.inputURL : base
-        let slug = seeded
-            .lowercased()
-            .unicodeScalars
-            .map { scalar -> Character in
-                CharacterSet.alphanumerics.contains(scalar) ? Character(scalar) : "-"
-            }
-            .reduce(into: "") { partial, character in
-                if character == "-", partial.last == "-" {
-                    return
-                }
-                partial.append(character)
-            }
-            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-        return "item-source-\(slug.isEmpty ? request.id : String(slug.prefix(80)))"
+    private func resolvedSourceItemId(
+        for candidate: LinkResolutionCandidate,
+        request: LinkResolutionRequest,
+        sourceIdentity: String?
+    ) -> String {
+        // Titles and filenames are presentation, not identity. In particular,
+        // unrelated CDN enclosures often all end in default.mp3. Preserve URL
+        // path case and query parameters: either can distinguish episodes.
+        let identity = sourceIdentity.map { "feed-entry:\($0)" }
+            ?? "audio-url:\(candidate.audioURL ?? request.inputURL)"
+        let digest = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
+        return "item-source-v2-\(digest)"
     }
 
     private func publish(status: PlaybackStatus, phase: SessionPhase) {
@@ -3282,7 +3299,19 @@ public final class SessionEngine {
         guard !text.isEmpty else {
             throw SessionKitError.invalidCommandForState("importBrowserText")
         }
-        let itemId = handoff.itemId ?? browserTextItemId(title: title, url: handoff.source.url)
+        var itemId = handoff.itemId ?? browserTextItemId(title: title, url: handoff.source.url)
+        if handoff.itemId == nil, handoff.captureMode == .readablePage {
+            // A corrected extraction must not move existing Margin anchors.
+            // Retain the original edition and give changed text its own identity.
+            if let existing = try existingItem(id: itemId), existing.text != text {
+                let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+                itemId += "-edition-\(digest)"
+            }
+            if var existing = try existingItem(id: itemId) {
+                existing.deletedAt = nil
+                return (existing, try repository.loadListeningMap(itemId: itemId))
+            }
+        }
         let sourceExtension = URL(string: handoff.source.url)?.pathExtension.lowercased()
         let mapPolicy: DeterministicListeningMapPolicy = handoff.captureMode == .markdownFile && sourceExtension == "pdf"
             ? .canonicalHeadings
@@ -3304,6 +3333,11 @@ public final class SessionEngine {
             documentStructure: handoff.documentStructure
         )
         return (item, deterministicMap)
+    }
+
+    private func existingItem(id: String) throws -> Item? {
+        do { return try repository.loadItem(id: id) }
+        catch SessionKitError.missingFixture(let key) where key == "item:\(id)" || key == id { return nil }
     }
 
     private func cleanedBrowserTextTitle(_ title: String, url: String) -> String {

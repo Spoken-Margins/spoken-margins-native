@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "spoken-margins.listening-edition.v1",
+  "title": "A short listening edition",
+  "sourceURL": "https://example.com/listening-edition",
+  "text": "Reading leaves us with more saved articles than time. Listening creates another opportunity to return to them.\n\nA useful note preserves the thought and its source. Keeping it in a chosen folder makes it available to a personal knowledge system.",
+  "generator": "Hand-authored example",
+  "overview": "Turning saved reading into useful notes.",
+  "scenes": [
+    {
+      "title": "Return to saved reading",
+      "description": "Why listening can help with a reading queue.",
+      "summary": "Listening offers another opportunity to revisit saved articles.",
+      "startBlock": 1,
+      "endBlock": 1
+    },
+    {
+      "title": "Keep the thought and source",
+      "description": "What makes a captured note useful later.",
+      "summary": "A useful note retains its source and can live in a chosen knowledge-management folder.",
+      "startBlock": 2,
+      "endBlock": 2
+    }
+  ]
+}

@@ -27,6 +27,30 @@ function articleDocument() {
   return document;
 }
 
+test("native and bundled fallbacks consume nested quotations and lists once, preserving authored repetition", () => {
+  const { document } = parseHTML(`<html><head><title>Quotation</title></head><body><article>
+    <blockquote><p>First quoted paragraph.</p><p>Second quoted paragraph.</p>
+      <blockquote><p>Nested quotation.</p></blockquote>
+      <ul><li>List parent.<ul><li>Nested list.</li></ul></li></ul>
+    </blockquote>
+    <p>Intentional repetition.</p><p>Intentional repetition.</p>
+  </article></body></html>`);
+  Object.defineProperty(document, "location", { value: { href: "https://example.com/quote" } });
+  // Execute the actual emergency script shipped in the native extractor, not
+  // a copied implementation that could pass while the native path regresses.
+  const swift = fs.readFileSync("App/SpokenMarginsApp/Sources/SpokenMarginsApp/AppOwnedReadablePageExtractor.swift", "utf8");
+  const script = swift.split('private static let semanticFallbackJavaScript = #"""')[1].split('"""#')[0];
+  const native = new Function("document", script)(document);
+  assert.equal(native.metadata.extractor, "native_semantic_dom_fallback");
+  for (const text of [native.text, fallbackReadableMarkdown(document)]) {
+    for (const passage of ["First quoted paragraph.", "Second quoted paragraph.", "Nested quotation.", "List parent.", "Nested list."]) {
+      assert.equal(text.split(passage).length - 1, 1, passage);
+    }
+    assert.equal(text.split("Intentional repetition.").length - 1, 2);
+    assert.ok(text.indexOf("First quoted paragraph.") < text.indexOf("Second quoted paragraph."));
+  }
+});
+
 test("social cards retain authored commentary and omit listening-hostile interface metadata", () => {
   const markdown = `Before the post.
 

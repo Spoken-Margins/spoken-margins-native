@@ -125,6 +125,23 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(try store.loadTranscriptTimeline(itemId: row.id)?.timeline.chapters.map(\.startMs), [0, 120_000])
         XCTAssertEqual(model.snapshot.sessionId, activeSession)
         XCTAssertEqual(model.selectedItem.id, "item-pill")
+
+        // Two feed entries can resolve through the same generic CDN filename
+        // (or even an enclosure endpoint). Their feed identities must remain
+        // separate before the display title is applied to the stored item.
+        let firstMap = ListeningMap(id: "first-entry-map", itemId: row.id, overview: "AI data centers", chapters: [])
+        try store.saveListeningMap(firstMap)
+        let secondEntry = FeedEntry(id: "second-entry", subscriptionId: subscription.id, canonicalURL: "https://publisher.example/second-episode", audioURL: audioURL, title: "End of history")
+        try store.saveFeedEntry(secondEntry)
+        model.importFollowedSourceEntry(secondEntry)
+        try await waitFor("second feed entry import") { model.libraryItems.contains { $0.title == secondEntry.title } }
+        let secondRow = try XCTUnwrap(model.libraryItems.first { $0.title == secondEntry.title })
+        XCTAssertNotEqual(secondRow.id, row.id)
+        XCTAssertNil(try store.loadListeningMap(itemId: secondRow.id))
+        XCTAssertEqual(try store.loadListeningMap(itemId: row.id), firstMap)
+        XCTAssertEqual(try store.loadItem(id: row.id).title, entry.title)
+        XCTAssertEqual(model.snapshot.sessionId, activeSession)
+        XCTAssertEqual(model.selectedItem.id, "item-pill")
     }
 
     func testFeedAliasesUseFinalResponseIdentityWithoutSelfLink() async throws {

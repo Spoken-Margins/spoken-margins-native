@@ -171,7 +171,11 @@ export function fallbackReadableMarkdown(documentRef) {
     throw new Error("No article, main content, or page body was available.");
   }
 
-  const blocks = Array.from(root.querySelectorAll("h1,h2,h3,h4,h5,h6,p,li,blockquote,pre"));
+  const selector = "h1,h2,h3,h4,h5,h6,p,li,blockquote,pre";
+  // Parent block text includes all descendants, including nested lists and
+  // quotations. Never deduplicate by prose: repeated sibling text is authored.
+  const blocks = Array.from(root.querySelectorAll(selector))
+    .filter(element => !element.parentElement?.closest(selector));
   const rendered = blocks.map(renderFallbackBlock).filter(Boolean);
   const markdown = rendered.join("\n\n").trim();
   const fallbackText = normalizeWhitespace(root.innerText || root.textContent || "");

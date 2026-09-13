@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 #if canImport(UIKit)
 import UIKit
 
@@ -21,6 +22,7 @@ final class SpokenMarginsAppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        UNUserNotificationCenter.current().delegate = ListeningReadyNotifications.shared
         #if canImport(BackgroundTasks)
         AudioPreparationBackgroundController.shared.register()
         #endif
@@ -64,6 +66,7 @@ struct SpokenMarginsApp: App {
             Gate1RootView()
                 .environmentObject(model)
                 .environmentObject(sharingCoordinator)
+                .onReceive(NotificationCenter.default.publisher(for: ListeningReadyNotifications.opened)) { _ in model.openReadyListeningEdition() }
                 .onOpenURL { url in
                     model.handleIncomingURL(url)
                 }

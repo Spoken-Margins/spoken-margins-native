@@ -142,3 +142,40 @@ struct AddArticleToSpokenMarginsIntent: AppIntent {
     }
 }
 #endif
+
+#if !SPOKEN_MARGINS_LEGACY
+struct ListeningMapPromptIntent: AppIntent {
+    static let title: LocalizedStringResource = "Make Listening Map Prompt"
+    static let description = IntentDescription("Numbers the original article blocks for your choice of model. Pass the result to a model action, then assemble a listening edition.")
+    @Parameter(title: "Article Text") var text: String
+    func perform() async throws -> some IntentResult & ReturnsValue<String> {
+        guard !text.isEmpty, text.utf8.count <= 5_000_000 else { throw EditionError.invalid("Provide article text up to 5 MB.") }
+        return .result(value: ListeningEdition.prompt(for: text))
+    }
+}
+
+struct AssembleListeningEditionIntent: AppIntent {
+    static let title: LocalizedStringResource = "Assemble Listening Edition"
+    static let description = IntentDescription("Combines unchanged article text with your model's map response into a portable JSON file. No AI request is made by this action.")
+    @Parameter(title: "Title") var title: String
+    @Parameter(title: "Source URL") var sourceURL: URL?
+    @Parameter(title: "Original Article Text") var text: String
+    @Parameter(title: "Model or Author", default: "User-selected model") var generator: String
+    @Parameter(title: "Map JSON") var mapJSON: String
+    func perform() async throws -> some IntentResult & ReturnsValue<IntentFile> {
+        let edition = try ListeningEdition.assemble(title: title, sourceURL: sourceURL?.absoluteString, text: text, generator: generator, mapJSON: mapJSON)
+        return .result(value: IntentFile(data: try edition.encoded(), filename: "Listening Edition.json", type: .json))
+    }
+}
+
+struct ImportListeningEditionIntent: AppIntent {
+    static let title: LocalizedStringResource = "Import Listening Edition"
+    static let description = IntentDescription("Opens Spoken Margins to import an item and its supplied map. Does not regenerate the map or start playback.")
+    static let openAppWhenRun = false
+    @Parameter(title: "Listening Edition JSON") var file: IntentFile
+    func perform() async throws -> some IntentResult & OpensIntent {
+        let edition = try ListeningEdition.decode(file.data)
+        return .result(opensIntent: OpenURLIntent(try ListeningEditionStore.stage(edition)))
+    }
+}
+#endif

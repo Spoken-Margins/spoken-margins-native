@@ -12,6 +12,21 @@ final class Gate1FlowUITests: XCTestCase {
         app.launch()
     }
 
+    func testListeningEditionPreviewShowsSuppliedScenesBeforeImport() throws {
+        openLibrarySettings()
+        scrollToButton(containingLabel: "Import Listening Edition").tap()
+        let editor = app.textViews["Listening edition JSON"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        editor.tap()
+        editor.typeText(#"{"schemaVersion":"spoken-margins.listening-edition.v1","title":"Portable test article","text":"A short source.","generator":"Fixture author","overview":"An overview","scenes":[{"title":"A scene","description":"Orientation text","summary":"Summary text","startBlock":1,"endBlock":1}]}"#)
+        scrollToButton(containingLabel: "Preview").tap()
+        let keyboardDismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
+        XCTAssertEqual(XCTWaiter().wait(for: [keyboardDismissed], timeout: 3), .completed)
+        XCTAssertTrue(app.staticTexts["Portable test article"].waitForExistence(timeout: 5))
+        XCTAssertTrue(scrollToButton(containingLabel: "Import Item and Map").isHittable)
+        captureScreen(named: "listening-edition-preview")
+    }
+
     func testLongTimelineResponseKeepsActionAboveEditorAndStartsPlayback() throws {
         app.buttons["queue.start.item-pill"].tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))

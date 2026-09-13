@@ -29,7 +29,8 @@
         "Gate1FlowUITests/testSeededGate1FlowHasPlaybackMiniPlayerExportAndSettings()",
         "Gate1FlowUITests/testPlaybackPrimaryActionsRemainVisibleWithLongTitleAndAccessibilityText()",
         "Gate1FlowUITests/testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource()",
-        "Gate1FlowUITests/testLongTimelineResponseKeepsActionAboveEditorAndStartsPlayback()"
+        "Gate1FlowUITests/testLongTimelineResponseKeepsActionAboveEditorAndStartsPlayback()",
+        "Gate1FlowUITests/testListeningEditionPreviewShowsSuppliedScenesBeforeImport()"
       ],
       "parallelizable": false
     }

@@ -295,6 +295,93 @@ final class SessionKitCoreTests: XCTestCase {
         )
     }
 
+    func testSpeechNormalizationPreservesDottedAbbreviationsAndTheirSourceOffsets() throws {
+        let source = "The U.S. economy, i.e. output, and U.K. policy. A Ph.D. at 9 a.m. See example.net/path and https://example.com."
+        let normalized = SpeechTextNormalizer.normalizeWithSourceOffsets(source)
+        for abbreviation in ["U.S.", "i.e.", "U.K.", "Ph.D.", "a.m."] {
+            let spokenRange = try XCTUnwrap(normalized.text.range(of: abbreviation))
+            let sourceRange = try XCTUnwrap(source.range(of: abbreviation))
+            XCTAssertEqual(
+                normalized.sourceOffset(atSpokenCharacterOffset: normalized.text.distance(from: normalized.text.startIndex, to: spokenRange.lowerBound)),
+                source.distance(from: source.startIndex, to: sourceRange.lowerBound)
+            )
+        }
+        XCTAssertFalse(normalized.text.contains("example"))
+        let parsed = try ObsidianMarkdownParser.parse(fileName: "Article", contents: "# U.S. policy\n\nThe U.S. economy (i.e. output).")
+        XCTAssertTrue(parsed.text.contains("The U.S. economy (i.e. output)."))
+        XCTAssertEqual(parsed.title, "U.S. policy")
+    }
+
+    func testCorrectedReadableArticleCreatesSeparateEditionAndPreservesOriginalSession() throws {
+        let repo = InMemorySessionRepository()
+        let engine = SessionEngine(profile: RuntimeCapabilityProfile(id: "browser", displayName: "Browser", capabilities: ["sync": ["canonical_persistence"]]), repository: repo)
+        var handoff = BrowserTextHandoff(captureMode: .readablePage, source: BrowserTextSource(url: "https://example.com/article", title: "Article"), text: "A quote. A quote.", requestedContinuation: BrowserTextContinuation(startSession: false, preferredPlaybackOwner: "app"))
+        let original = try engine.importBrowserTextInBackground(handoff)
+        let session = Session(id: "original-session", itemId: original.id, status: "finished", phase: .finished, currentTargetType: .itemTextTTS, currentTargetId: original.id, position: Position(charOffset: 10), completionPercent: 100, playbackRate: 1)
+        try repo.saveSession(session)
+        let oldMap = ListeningMap(id: "old-map", itemId: original.id, overview: "Original map", chapters: [])
+        try repo.saveListeningMap(oldMap)
+        handoff.text = "A quote."
+        let corrected = try engine.importBrowserTextInBackground(handoff)
+        XCTAssertNotEqual(corrected.id, original.id)
+        XCTAssertEqual(corrected.text, "A quote.")
+        XCTAssertNil(try repo.loadListeningMap(itemId: corrected.id))
+        XCTAssertEqual(try repo.loadItem(id: original.id), original)
+        XCTAssertEqual(try repo.loadSession(id: session.id), session)
+        XCTAssertEqual(try repo.loadListeningMap(itemId: original.id), oldMap)
+        XCTAssertEqual(try engine.importBrowserTextInBackground(handoff).id, corrected.id)
+        var trashed = corrected
+        trashed.deletedAt = Date(timeIntervalSince1970: 100)
+        try repo.saveItem(trashed)
+        XCTAssertNil(try engine.importBrowserTextInBackground(handoff).deletedAt)
+        XCTAssertEqual(try repo.loadItem(id: original.id), original)
+    }
+
+    func testPodcastIdentitySeparatesDefaultFilenamesAndTitlePrefixesAcrossPersistence() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appending(path: "identity.sqlite").path
+        let store = try SQLiteSessionStore(path: path)
+        let profile = RuntimeCapabilityProfile(id: "identity", displayName: "Identity", capabilities: ["sync": ["canonical_persistence"]])
+        let engine = SessionEngine(profile: profile, repository: store)
+        func resolve(_ url: String, title: String = "default", identity: String? = nil, using importer: SessionEngine) throws -> Item {
+            let request = LinkResolutionRequest(id: UUID().uuidString, inputURL: url, sourceSurface: "test", createdAt: Date(timeIntervalSince1970: 100))
+            let candidate = LinkResolutionCandidate(sourceLink: SourceLink(url: url, role: "audio_file"), title: title, audioURL: url, confidence: 1)
+            return try XCTUnwrap(importer.importResolvedSourceLinkInBackground(request, result: LinkResolutionResult(requestId: request.id, status: .playable, originalLink: candidate.sourceLink, selectedCandidate: candidate), sourceIdentity: identity))
+        }
+        let legacy = Item(id: "item-source-default", title: "Legacy episode", mediaType: "audio", text: nil, externalReference: nil, status: "ready")
+        try store.saveItem(legacy)
+        let legacyMap = ListeningMap(id: "legacy-map", itemId: legacy.id, overview: "Uncertain legacy ownership", chapters: [])
+        try store.saveListeningMap(legacyMap)
+        let firstURL = "https://audio.example/one/default.mp3?episode=1"
+        var first = try resolve(firstURL, using: engine)
+        first.transcriptId = "first-transcript"
+        first.media?.nativeMediaId = "file:///local/first.mp3"
+        try store.saveItem(first)
+        let map = ListeningMap(id: "first-map", itemId: first.id, overview: "AI data centers", chapters: [])
+        try store.saveListeningMap(map)
+        let session = Session(id: "podcast-session", itemId: first.id, status: "in_progress", phase: .itemPlayback, currentTargetType: .transcriptBackedMedia, currentTargetId: first.id, position: Position(mediaTimeMs: 12_000), completionPercent: 20, playbackRate: 1)
+        try store.saveSession(session)
+        let second = try resolve("https://audio.example/two/default.mp3?episode=2", using: engine)
+        XCTAssertNotEqual(first.id, second.id)
+        XCTAssertNotEqual(second.id, legacy.id)
+        XCTAssertNil(try store.loadListeningMap(itemId: second.id))
+        let reopened = try SQLiteSessionStore(path: path)
+        let restored = SessionEngine(profile: profile, repository: reopened)
+        XCTAssertEqual(try resolve(firstURL, title: "Renamed episode", using: restored), first)
+        XCTAssertEqual(try reopened.loadListeningMap(itemId: first.id), map)
+        XCTAssertEqual(try reopened.loadSession(id: session.id), session)
+        XCTAssertEqual(try reopened.loadListeningMap(itemId: legacy.id), legacyMap)
+        let longTitle = String(repeating: "Long title ", count: 12)
+        let a = try resolve("https://audio.example/default.mp3?episode=A", title: longTitle + "A", using: restored)
+        let b = try resolve("https://audio.example/default.mp3?episode=B", title: longTitle + "B", using: restored)
+        XCTAssertNotEqual(a.id, b.id)
+        let followed = try resolve(firstURL, identity: "subscription:entry", using: restored)
+        XCTAssertEqual(try resolve("https://audio.example/new-signed-url.mp3", title: "Updated title", identity: "subscription:entry", using: restored), followed)
+        XCTAssertNotEqual(try resolve(firstURL, identity: "subscription:other-entry", using: restored).id, followed.id)
+    }
+
     func testSpeechNormalizationReducesDefuddleSocialCardToAuthoredPost() throws {
         let source = """
         Before the post.

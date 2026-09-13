@@ -70,6 +70,10 @@ The native app reads the payload and imports it without replacing an active sess
 - Both the Safari Web Extension and Safari share preprocessor use the pinned local Defuddle 0.19.1 bundle with `useAsync: false`. Extraction cannot send the page to a third-party fallback.
 - The Safari popup reads the result directly from `scripting.executeScript`; it does not depend on a second `tabs.sendMessage` round trip after injection.
 - If Defuddle cannot produce readable Markdown, the extension falls back locally to semantic content from `article`, then `main`, then `body`, while preserving headings and paragraphs where possible.
+- Both bundled and native emergency semantic fallbacks consume each DOM block's text once: descendants already included in a quotation or list container are not emitted again. Identical sibling prose is retained, since it may be intentional repetition.
+- Speech cleanup preserves dotted abbreviations such as `U.S.`, `i.e.`, and `Ph.D.` as well as decimal references; bare-domain removal requires an alphabetic top-level label of at least two characters.
+- Reimporting an automatically identified readable page with changed text creates a separate content edition, preserving the earlier item's text, sessions, maps and Margin anchors. Reimporting unchanged text retains the existing edition and prepared media, restoring it from Trash if necessary. An explicit handoff `itemId` continues to honor its caller-specified target.
+- Followed-article diagnostics record `followedArticleExtractor` so a future capture can distinguish the primary, bundled fallback and native emergency extraction paths. This is diagnostic metadata, not a new handoff schema field.
 - Safari owns capture/extraction/metadata and delegates playback plus interjections to the native app.
 - Browser-owned TTS and browser recording remain follow-up work.
 - Summary and discussion continue in the app for Gate 5.

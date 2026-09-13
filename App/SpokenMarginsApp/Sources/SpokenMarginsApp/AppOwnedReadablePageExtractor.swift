@@ -32,6 +32,7 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate {
     private var redirectCount = 0
     private var requestedURL: URL?
     private(set) var contactedHosts: [String] = []
+    private(set) var lastExtractor: String?
 
     func extract(url: URL) async throws -> BrowserTextHandoff {
         guard url.scheme?.lowercased() == "https", url.host != nil else {
@@ -61,6 +62,7 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate {
         self.webView = webView
         redirectCount = 0
         requestedURL = url
+        lastExtractor = nil
         contactedHosts = [url.host!.lowercased()]
         return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
@@ -107,6 +109,7 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate {
         Task { @MainActor in
             do {
                 let payload = try await capturePayload(in: webView)
+                lastExtractor = (payload["metadata"] as? [String: Any])?["extractor"] as? String
                 finish(.success(try Self.handoff(from: payload)))
             } catch {
                 finish(.failure(ReadablePageExtractionError.invalidResult))
@@ -182,7 +185,11 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate {
     const root = document.querySelector("article") || document.querySelector("main") || document.body;
     if (!root) { return null; }
     const normalize = value => String(value || "").replace(/\s+/g, " ").trim();
-    const blocks = Array.from(root.querySelectorAll("h1,h2,h3,h4,h5,h6,p,li,blockquote,pre"));
+    const selector = "h1,h2,h3,h4,h5,h6,p,li,blockquote,pre";
+    // A container's text already includes its descendants. Consume each DOM
+    // passage once, without deleting intentional repetitions in sibling blocks.
+    const blocks = Array.from(root.querySelectorAll(selector))
+        .filter(element => !element.parentElement?.closest(selector));
     const text = blocks.map(element => {
         const value = normalize(element.innerText || element.textContent);
         if (!value) { return ""; }
@@ -196,6 +203,7 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate {
     const metadata = selector => document.querySelector(selector)?.getAttribute("content") || null;
     return {
         text,
+        metadata: { extractor: "native_semantic_dom_fallback" },
         source: {
             url: document.location.href,
             title: normalize(metadata("meta[property='og:title']") || document.title || "Browser Text"),
