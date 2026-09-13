@@ -7,6 +7,7 @@ struct PlaybackPositionSlider: UIViewRepresentable {
     @Binding var value: Double
     var range: ClosedRange<Double>
     var onEditingChanged: (Bool) -> Void
+    var preparedFraction: Double? = nil
     @Environment(\.isEnabled) private var isEnabled
 
     func makeUIView(context: Context) -> TrackingPlaybackSlider {
@@ -20,6 +21,7 @@ struct PlaybackPositionSlider: UIViewRepresentable {
         slider.onValue = { value = $0 }
         slider.onEditing = onEditingChanged
         slider.isEnabled = isEnabled
+        slider.preparedFraction = preparedFraction
         if slider.minimumValue != Float(range.lowerBound) {
             slider.minimumValue = Float(range.lowerBound)
         }
@@ -41,9 +43,26 @@ final class TrackingPlaybackSlider: UISlider {
     var onValue: ((Double) -> Void)?
     var onEditing: ((Bool) -> Void)?
     private(set) var gestureActive = false
+    var preparedFraction: Double? { didSet { if oldValue != preparedFraction { setNeedsLayout() } } }
+    private let preparedTrack = CALayer()
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let track = trackRect(forBounds: bounds)
+        let thumb = thumbRect(forBounds: bounds, trackRect: track, value: value)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        preparedTrack.isHidden = preparedFraction == nil
+        preparedTrack.backgroundColor = UIColor.systemTeal.cgColor
+        preparedTrack.frame = CGRect(x: track.minX, y: max(track.maxY, thumb.maxY) + 3, width: track.width * CGFloat(min(1, max(0, preparedFraction ?? 0))), height: 3)
+        preparedTrack.cornerRadius = 1.5
+        CATransaction.commit()
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        preparedTrack.name = "prepared-audio-track"
+        layer.addSublayer(preparedTrack)
         let touch = UILongPressGestureRecognizer(target: self, action: #selector(trackTouch(_:)))
         touch.minimumPressDuration = 0
         touch.allowableMovement = .greatestFiniteMagnitude

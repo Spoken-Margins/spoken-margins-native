@@ -29,6 +29,16 @@ struct ExperienceMarginsScreen: View {
                         .textFieldStyle(.roundedBorder)
                         .accessibilityIdentifier("margins.search.field")
                         .padding(.bottom, 12)
+                    HStack {
+                        Picker("Scope", selection: $model.marginCollectionQuery.itemID) {
+                            Text("All items").tag(String?.none)
+                            ForEach(model.marginScopeItems) { item in Text(item.title).tag(Optional(item.id)) }
+                        }
+                        .accessibilityIdentifier("margins.scope.picker")
+                        Spacer()
+                        Text("\(model.marginCollectionQuery.filter == .shared ? model.visibleSharedMarginRows.count : filteredRows.count) Margins")
+                            .font(.caption).foregroundStyle(AppColors.secondaryText)
+                    }
                     filterBar
                         .padding(.bottom, 8)
                     if model.marginCollectionQuery.filter == .shared { sharedCollection } else { collection }
@@ -51,13 +61,13 @@ struct ExperienceMarginsScreen: View {
                     .accessibilityLabel("Settings")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(action: model.refreshMarginRows) {
-                        Image(systemName: "arrow.clockwise").frame(width: 44, height: 44)
-                    }
-                    .accessibilityLabel("Refresh Margins")
+                    Button("Export Sessions", systemImage: "square.and.arrow.up.on.square", action: model.openBatchExport)
+                        .accessibilityIdentifier("margins.export.button")
                 }
             }
             .task { model.refreshMarginRows() }
+            .refreshable { model.refreshMarginRows() }
+            .scrollDismissesKeyboard(.interactively)
             .sheet(item: $selectedMargin) { row in
                 ExperienceMarginDetailView(row: row).environmentObject(model)
             }
@@ -70,7 +80,7 @@ struct ExperienceMarginsScreen: View {
     private var filterBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(MarginCollectionFilter.allCases, id: \.self) { option in
+                ForEach(MarginCollectionFilter.allCases.filter { $0 != .attention }, id: \.self) { option in
                     Button { model.marginCollectionQuery.filter = option } label: {
                         ExperienceFilterChip(isActive: model.marginCollectionQuery.filter == option) { Text(option.title) }
                     }
@@ -136,6 +146,13 @@ struct ExperienceMarginsScreen: View {
                         .buttonStyle(.plain)
                         .accessibilityLabel("My Margin. \(row.preview). \(group.itemTitle). \(group.sessionDescription)")
                         .accessibilityIdentifier("margins.row.\(row.id)")
+                        .contextMenu {
+                            Button("Play this moment", systemImage: "play.fill") { _ = model.playMarginMoment(row) }
+                            Button("Copy with Context", systemImage: "doc.on.doc") { model.copyInterjectionWithContext(row.interjection) }
+                            Button(row.interjection.isStarredForSharing == true ? "Unstar" : "Star", systemImage: "star") {
+                                model.setInterjectionStarredForSharing(row.interjection.id, sessionId: row.interjection.sessionId, starred: row.interjection.isStarredForSharing != true)
+                            }
+                        }
                         .overlay(alignment: .bottom) {
                             Rectangle().fill(AppColors.border.opacity(0.75)).frame(height: 1)
                         }

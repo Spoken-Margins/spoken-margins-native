@@ -1639,9 +1639,7 @@ private struct ItemScreen: View {
             if let downloadStatus = model.selectedPodcastDownloadDescription {
                 HStack(spacing: 10) {
                     Label(downloadStatus, systemImage: model.selectedPodcastDownloadState == .availableOffline ? "arrow.down.circle.fill" : "antenna.radiowaves.left.and.right")
-                    if model.selectedPodcastDownloadState == .failed || model.selectedPodcastDownloadState == .evicted {
-                        Button("Retry", action: model.retrySelectedPodcastDownload)
-                    }
+                    Button(model.selectedPodcastDownloadState == .availableOffline ? "Download Again" : "Download Now", action: model.redownloadSelectedPodcast)
                 }
                 .font(.subheadline)
                 .foregroundStyle(AppColors.secondaryText)
@@ -2100,6 +2098,13 @@ private struct PlaybackScreen: View {
                 }
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("playback.screen")
+                .task(id: model.renderFrontierKey) { await model.observeRenderedFrontier() }
+                .task(id: "\(model.snapshot.itemId ?? "")|\(model.snapshot.status.rawValue)") {
+                    guard model.snapshot.status == .starting, let id = model.snapshot.itemId,
+                          model.selectedPodcastDownloadState != nil else { return }
+                    do { try await Task.sleep(for: .seconds(30)) } catch { return }
+                    model.stopStalledPodcastStart(itemID: id)
+                }
                 .onCompatibleChange(of: model.guidedOnboardingStage) { stage in
                     if stage == .reviewTimeline {
                         withAnimation {
@@ -2584,10 +2589,12 @@ private struct PlaybackScreen: View {
                             model.seekMedia(toMediaTimeMs: Int((targetSeconds * 1_000).rounded()))
                             mediaScrubState.finish()
                         }
-                    }
+                    },
+                    preparedFraction: model.renderedFractionForPlayback
                 )
                 .tint(AppColors.accent)
                 .accessibilityLabel("Playback position")
+                .accessibilityHint(model.renderedFractionForPlayback.map { "Prepared audio through \(Int($0 * 100)) percent of source" } ?? "")
                 .accessibilityValue("\(formatPlaybackTime(Int(scrubberDisplaySeconds * 1_000))) of \(formatPlaybackTime(mediaDurationMs))")
                 .accessibilityIdentifier("playback.scrubber")
                 .onCompatibleChange(of: canonicalMediaSeconds) { value in
@@ -2627,10 +2634,12 @@ private struct PlaybackScreen: View {
                             model.seekText(toCharOffset: Int(targetOffset.rounded()))
                             textScrubState.finish()
                         }
-                    }
+                    },
+                    preparedFraction: model.renderedFractionForPlayback
                 )
                 .tint(AppColors.accent)
                 .accessibilityLabel("Playback position")
+                .accessibilityHint(model.renderedFractionForPlayback.map { "Prepared audio through \(Int($0 * 100)) percent of source" } ?? "")
                 .accessibilityValue("\(textScrubberPercent) percent")
                 .accessibilityIdentifier("playback.scrubber")
                 .onCompatibleChange(of: canonicalTextOffset) { value in
@@ -2649,7 +2658,16 @@ private struct PlaybackScreen: View {
                     .accessibilityIdentifier("playback.progress.label")
                 ProgressView(value: Double(model.displayPlaybackProgressPercent), total: 100)
                     .tint(AppColors.accent)
+                    .overlay(alignment: .bottomLeading) {
+                        if let fraction = model.renderedFractionForPlayback {
+                            GeometryReader { geometry in
+                                Capsule().fill(Color(uiColor: .systemTeal))
+                                    .frame(width: geometry.size.width * fraction, height: 3).offset(y: 7)
+                            }.allowsHitTesting(false).accessibilityHidden(true)
+                        }
+                    }
                     .accessibilityLabel("Playback progress")
+                    .accessibilityHint(model.renderedFractionForPlayback.map { "Prepared audio through \(Int($0 * 100)) percent of source" } ?? "")
                     .accessibilityValue("\(model.displayPlaybackProgressPercent) percent")
                 Text("100%")
                     .frame(minWidth: 34, alignment: .leading)
@@ -2711,17 +2729,17 @@ private struct PlaybackScreen: View {
                model.snapshot.canSkimBackward || model.snapshot.canSkimForward || model.snapshot.skimBridgeState != nil {
                 HStack(spacing: 14) {
                     Button(action: model.skimBackward) {
-                        Label("Skim Back", systemImage: "backward.end.alt.fill")
+                        Label(model.skimBackwardTitle, systemImage: "backward.end.alt.fill")
                     }
                     .disabled(!model.snapshot.canSkimBackward)
-                    .accessibilityLabel("Skim backward by scene summary")
+                    .accessibilityLabel(model.skimBackwardTitle + " by scene summary")
                     .accessibilityIdentifier("playback.skim.backward.button")
 
                     Button(action: model.skimForward) {
-                        Label("Skim Forward", systemImage: "forward.end.alt.fill")
+                        Label(model.skimForwardTitle, systemImage: "forward.end.alt.fill")
                     }
                     .disabled(!model.snapshot.canSkimForward)
-                    .accessibilityLabel("Skim forward by scene summary")
+                    .accessibilityLabel(model.skimForwardTitle + " by scene summary")
                     .accessibilityIdentifier("playback.skim.forward.button")
                 }
                 .buttonStyle(.bordered)
@@ -2749,6 +2767,12 @@ private struct PlaybackScreen: View {
 
     @ViewBuilder
     private var playbackSecondaryControls: some View {
+        if let state = model.selectedPodcastDownloadState {
+            Button(state == .availableOffline ? "Download Again" : "Download Audio", action: model.redownloadSelectedPodcast)
+                .disabled(state == .downloading)
+                .accessibilityIdentifier("playback.download.button")
+        }
+
         if model.snapshot.targetType == TargetType.itemTextTTS.rawValue {
             Button {
                 sourceTextOffsetAtPresentation = model.snapshot.currentTextStart ?? 0

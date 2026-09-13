@@ -12,6 +12,7 @@ public enum LibraryContentTypeFilter: String, Codable, Equatable, CaseIterable, 
 
 public enum LibraryListeningStateFilter: String, Codable, Equatable, CaseIterable, Sendable {
     case all
+    case unfinished
     case unplayed
     case inProgress = "in_progress"
     case completed
@@ -42,7 +43,7 @@ public struct LibraryQuery: Codable, Equatable, Sendable {
     public init(
         query: String = "",
         contentType: LibraryContentTypeFilter = .all,
-        listeningState: LibraryListeningStateFilter = .all,
+        listeningState: LibraryListeningStateFilter = .unfinished,
         offlineState: LibraryOfflineStateFilter = .all,
         sort: LibrarySort = .recentlyAdded
     ) {

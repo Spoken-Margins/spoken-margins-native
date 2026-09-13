@@ -1653,6 +1653,64 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.selectedItem.sessions.isEmpty, "Restoring an item should restore its existing sessions")
     }
 
+    func testLibraryUnfinishedPreferenceTransitionRunsOnceAndPreservesSpecificChoices() throws {
+        let suite = "library-preferences-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertEqual(Gate1AppModel.loadLibraryListeningFilter(defaults: defaults), .unfinished)
+        defaults.set("all", forKey: "libraryListeningStateFilter")
+        XCTAssertEqual(Gate1AppModel.loadLibraryListeningFilter(defaults: defaults), .all)
+        defaults.removePersistentDomain(forName: suite)
+        defaults.set("all", forKey: "libraryListeningStateFilter")
+        XCTAssertEqual(Gate1AppModel.loadLibraryListeningFilter(defaults: defaults), .unfinished)
+        for choice in ["completed", "in_progress", "unplayed"] {
+            defaults.removePersistentDomain(forName: suite)
+            defaults.set(choice, forKey: "libraryListeningStateFilter")
+            XCTAssertEqual(Gate1AppModel.loadLibraryListeningFilter(defaults: defaults).rawValue, choice)
+        }
+    }
+
+    func testUnfinishedLibraryCompletionUndoPreservesHistoryAndSearch() throws {
+        let keys = ["libraryContentTypeFilter", "libraryListeningStateFilter", "libraryOfflineStateFilter", "librarySort", "libraryUnfinishedDefaultApplied"]
+        let saved = keys.map { ($0, UserDefaults.standard.object(forKey: $0)) }
+        defer {
+            for (key, value) in saved {
+                if let value { UserDefaults.standard.set(value, forKey: key) }
+                else { UserDefaults.standard.removeObject(forKey: key) }
+            }
+        }
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.libraryQuery = LibraryQuery()
+        model.startItem(id: "item-pill")
+        let history = model.selectedItem.sessions
+        let snapshot = model.snapshot
+        XCTAssertTrue(model.visibleLibraryItems.contains { $0.id == "item-pill" })
+        model.markItemCompleted(id: "item-pill")
+        XCTAssertFalse(model.visibleLibraryItems.contains { $0.id == "item-pill" })
+        model.undoMarkedCompletion()
+        XCTAssertNil(model.completionUndo)
+        XCTAssertTrue(model.visibleLibraryItems.contains { $0.id == "item-pill" })
+        XCTAssertEqual(model.selectedItem.sessions, history)
+        XCTAssertEqual(model.snapshot, snapshot)
+        model.markItemCompleted(id: "item-pill")
+        model.libraryQuery.query = "pill"
+        XCTAssertTrue(model.libraryHidesCompleted)
+        XCTAssertFalse(model.visibleLibraryItems.contains { $0.id == "item-pill" })
+        model.libraryQuery.listeningState = .all
+        XCTAssertTrue(model.visibleLibraryItems.contains { $0.id == "item-pill" })
+        model.libraryQuery.contentType = .pdf
+        model.resetLibraryFilters()
+        XCTAssertEqual(model.libraryQuery.query, "pill")
+        XCTAssertEqual(model.libraryQuery.listeningState, .unfinished)
+        model.libraryQuery.query = ""
+        for item in model.libraryItems where !item.isCompleted { model.markItemCompleted(id: item.id) }
+        XCTAssertTrue(model.libraryIsCaughtUp)
+        model.showCompletedLibraryItems()
+        XCTAssertFalse(model.libraryIsCaughtUp)
+        XCTAssertFalse(model.visibleLibraryItems.isEmpty)
+    }
+
     func testMarkItemCompletedPersistsListeningStateAndStopsOfferingItAsContinueHero() throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
@@ -2605,6 +2663,16 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(try reconstructed.loadInterjections(sessionId: "retrieval-session").first { $0.id == "same-note-id" }?.isStarredForSharing, true)
         model.marginCollectionQuery = MarginCollectionQuery(text: "", filter: .starred)
         XCTAssertEqual(model.visiblePrivateMarginRows.map(\.id), [found.id])
+        model.marginCollectionQuery.itemID = "item-pill"
+        XCTAssertTrue(model.visiblePrivateMarginRows.isEmpty)
+        model.marginCollectionQuery.itemID = "retrieval-item"
+        XCTAssertEqual(model.visiblePrivateMarginRows.map(\.id), [found.id])
+        model.marginCollectionQuery = MarginCollectionQuery(filter: .shared, itemID: "item-pill")
+        XCTAssertTrue(model.visibleSharedMarginRows.isEmpty)
+        model.marginCollectionQuery.itemID = "retrieval-item"
+        XCTAssertEqual(model.visibleSharedMarginRows.count, 1)
+        XCTAssertEqual(model.snapshot, before)
+
         model.marginCollectionQuery = MarginCollectionQuery(text: "private-source-only-marker", filter: .all)
         XCTAssertTrue(model.visiblePrivateMarginRows.isEmpty)
         model.marginCollectionQuery = MarginCollectionQuery(text: "absent words", filter: .all)
@@ -3149,6 +3217,24 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.status, "Ready to listen")
     }
 
+    func testPDFRunningHeadersAreRemovedOnlyFromPageMargins() throws {
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let data = renderer.pdfData { context in
+            for page in 0..<5 {
+                context.beginPage()
+                let font: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 12)]
+                ("Repeated publication header" as NSString).draw(at: CGPoint(x: 40, y: 30), withAttributes: font)
+                ("Unique body paragraph \(page)." as NSString).draw(at: CGPoint(x: 40, y: 200), withAttributes: font)
+                ("Repeated publication header" as NSString).draw(at: CGPoint(x: 40, y: 240), withAttributes: font)
+                ("\(page + 1)" as NSString).draw(at: CGPoint(x: 300, y: 760), withAttributes: font)
+            }
+        }
+        let document = try XCTUnwrap(PDFDocument(data: data))
+        let text = try PDFStructuredTextExtractor.markdown(from: document)
+        XCTAssertEqual(text.components(separatedBy: "Repeated publication header").count - 1, 6)
+        for page in 0..<5 { XCTAssertTrue(text.contains("Unique body paragraph \(page).")) }
+    }
+
     func testPDFOutlineMatchesNumberedVisibleHeadingWithoutDuplicatingDestination() throws {
         let directory = FileManager.default.temporaryDirectory
             .appending(path: "spoken-margins-numbered-outline-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -3631,7 +3717,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
                 storageRecencyRank: 1
             )
         ]
-        model.libraryQuery.sort = .recentlyAdded
+        model.libraryQuery = LibraryQuery(listeningState: .all, sort: .recentlyAdded)
 
         XCTAssertEqual(model.visibleLibraryItems.map(\.id), ["new-legacy", "older-dated"])
     }

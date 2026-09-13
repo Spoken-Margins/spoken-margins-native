@@ -1,0 +1,160 @@
+{
+  "head": "de9dc82060a19c435d4045c30f957c04a4dbe871",
+  "input_sha256": "5b7ac051aecb4b34b7ec313e710f0ceeb749da029808b112b991bb168f6f0204",
+  "executable_sha256": "28490ba6aefe13b8584dbc1adea9e4bc2d43f83e0f05491a65c476dff58e1965",
+  "version": "0.1",
+  "build": "27",
+  "evidence": [
+    {
+      "manifest": "artifacts/test-runs/20260913-163649-470190-fast/manifest.json",
+      "status": "verified",
+      "steps": [
+        {
+          "name": "runner-tests",
+          "exit_code": 0,
+          "counts": null
+        },
+        {
+          "name": "contracts",
+          "exit_code": 0,
+          "counts": null
+        },
+        {
+          "name": "surfaces",
+          "exit_code": 0,
+          "counts": null
+        },
+        {
+          "name": "inventory",
+          "exit_code": 0,
+          "counts": null
+        },
+        {
+          "name": "browser",
+          "exit_code": 0,
+          "counts": null
+        },
+        {
+          "name": "package",
+          "exit_code": 0,
+          "counts": {
+            "passed": 297,
+            "failed": 0,
+            "skipped": 1
+          }
+        }
+      ]
+    },
+    {
+      "manifest": "artifacts/test-runs/20260913-163702-401088-app/manifest.json",
+      "status": "failed_or_incomplete",
+      "steps": [
+        {
+          "name": "generate",
+          "exit_code": 0,
+          "counts": null
+        },
+        {
+          "name": "build-for-testing",
+          "exit_code": 0,
+          "counts": null
+        },
+        {
+          "name": "bundle-contracts",
+          "exit_code": 0,
+          "counts": null
+        },
+        {
+          "name": "simulator-boot",
+          "exit_code": 0,
+          "counts": null
+        },
+        {
+          "name": "simulator-ready",
+          "exit_code": 0,
+          "counts": null
+        },
+        {
+          "name": "xcode-tests",
+          "exit_code": 65,
+          "counts": {
+            "passed": 426,
+            "failed": 1,
+            "skipped": 0
+          }
+        }
+      ]
+    },
+    {
+      "manifest": "artifacts/test-runs/20260913-164605-713746-adapters/manifest.json",
+      "status": "verified",
+      "steps": [
+        {
+          "name": "generate",
+          "exit_code": 0,
+          "counts": null
+        },
+        {
+          "name": "bundle-contracts",
+          "exit_code": 0,
+          "counts": null
+        },
+        {
+          "name": "simulator-boot",
+          "exit_code": 0,
+          "counts": null
+        },
+        {
+          "name": "simulator-ready",
+          "exit_code": 0,
+          "counts": null
+        },
+        {
+          "name": "xcode-tests",
+          "exit_code": 0,
+          "counts": {
+            "passed": 11,
+            "failed": 0,
+            "skipped": 0
+          }
+        }
+      ]
+    },
+    {
+      "manifest": "artifacts/test-runs/phone-feedback-20260913/manifest.json",
+      "status": null,
+      "steps": [
+        {
+          "name": "app-retry",
+          "exit_code": 0,
+          "counts": null
+        },
+        {
+          "name": "adapters",
+          "exit_code": 1,
+          "counts": null
+        },
+        {
+          "name": "adapters-cleanboot",
+          "exit_code": 0,
+          "counts": null
+        },
+        {
+          "name": "device-build",
+          "exit_code": 0,
+          "counts": null
+        }
+      ]
+    }
+  ],
+  "app_tests": "426 passed initially; existing database-lock failure passed isolated retry (427 total).",
+  "adapter_note": "First launch stalled before tests and was interrupted; clean simulator retry passed.",
+  "physical_install": "succeeded; launched without test arguments or reset",
+  "human_validated": false,
+  "usage": {
+    "start_used_percent": 85,
+    "end_used_percent": 89,
+    "remaining_percent": 11,
+    "scope": "account-wide rounded readings"
+  }
+}

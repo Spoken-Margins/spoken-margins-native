@@ -1,0 +1,14 @@
+{
+  "installed_at": "2026-09-13T16:04:19.279496+00:00",
+  "head": "de9dc82060a19c435d4045c30f957c04a4dbe871",
+  "input_sha256": "c9131079cf3200190c483a8f7e407ac898714d5bfe7331c94631998a8e87f671",
+  "version": "0.1",
+  "build": "27",
+  "executable_sha256": "e567e9cb215df52f7b7122547140a342126f30281a563b619f05c4dee35cf32f",
+  "device": "Slaw\u2019s iPhone, iPhone 17 Pro, iOS 26.6.2",
+  "install": "succeeded",
+  "launch": "succeeded",
+  "method": "Xcode device build and devicectl over local network",
+  "data_reset": false,
+  "human_validated": false
+}

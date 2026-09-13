@@ -221,8 +221,8 @@ targets:
               ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.url" ||
               ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.text" ||
               ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "com.apple.property-list"
-              ).@count == $extensionItem.attachments.@count
-              ).@count == 1
+              ).@count > 0
+              ).@count > 0
   SpokenMarginsAppUITests:
     type: bundle.ui-testing
     platform: iOS

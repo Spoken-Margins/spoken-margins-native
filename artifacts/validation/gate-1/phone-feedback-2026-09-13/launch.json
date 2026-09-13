@@ -1,0 +1,56 @@
+{
+  "info" : {
+    "arguments" : [
+      "devicectl",
+      "device",
+      "process",
+      "launch",
+      "--device",
+      "F9855B5E-675A-5050-8010-4B17AE843875",
+      "com.spokenmargins.native",
+      "--json-output",
+      "artifacts/validation/gate-1/phone-feedback-2026-09-13/launch.json"
+    ],
+    "commandType" : "devicectl.device.process.launch",
+    "environment" : {
+      "TERM" : "dumb"
+    },
+    "jsonVersion" : 3,
+    "outcome" : "success",
+    "version" : "518.33"
+  },
+  "result" : {
+    "deviceIdentifier" : "F9855B5E-675A-5050-8010-4B17AE843875",
+    "launchOptions" : {
+      "activatedWhenStarted" : true,
+      "arguments" : [
+
+      ],
+      "environmentVariables" : {
+        "TERM" : "dumb"
+      },
+      "platformSpecificOptions" : {
+
+      },
+      "startStopped" : false,
+      "terminateExistingInstances" : false,
+      "user" : {
+        "active" : true
+      }
+    },
+    "process" : {
+      "auditToken" : [
+        4294967295,
+        501,
+        501,
+        501,
+        501,
+        958,
+        0,
+        2609
+      ],
+      "executable" : "file:///private/var/containers/Bundle/Application/6715D61F-445B-45F9-A04A-695EC9799604/SpokenMarginsApp.app/SpokenMarginsApp",
+      "processIdentifier" : 958
+    }
+  }
+}

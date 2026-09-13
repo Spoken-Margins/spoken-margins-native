@@ -130,15 +130,15 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     func status(itemId: String) -> PodcastDownloadState? { recordsByItemId[itemId]?.state }
 
     func validatedLocalURL(for itemId: String) -> URL? {
-        guard let record = recordsByItemId[itemId],
-              record.state == .availableOffline,
-              let url = localURL(for: record),
-              FileManager.default.fileExists(atPath: url.path) else {
-            return nil
-        }
-        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
-        guard size > 0 else { return nil }
-        return url
+        guard var record = recordsByItemId[itemId], record.state == .availableOffline else { return nil }
+        if let url = localURL(for: record),
+           let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+           size > 0, record.bytesWritten == 0 || Int64(size) == record.bytesWritten { return url }
+        record.state = .failed
+        record.localRelativePath = nil
+        record.failureReason = "Downloaded file is missing or incomplete. Download it again."
+        persist(record)
+        return nil
     }
 
     func configureActiveItem(_ itemId: String?) {
@@ -198,6 +198,15 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
             record.state = .streamingOnly
             persist(record)
         }
+    }
+
+    func redownload(itemId: String) {
+        guard var record = recordsByItemId[itemId] else { return }
+        record.state = .failed
+        record.localRelativePath = nil
+        record.failureReason = nil
+        persist(record)
+        retry(itemId: itemId)
     }
 
     func retry(itemId: String) {

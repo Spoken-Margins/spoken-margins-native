@@ -77,6 +77,8 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         }
         XCTAssertGreaterThan(sourcePlayer.currentMediaTimeMs() ?? 0, pausedTime + 100)
         XCTAssertTrue(model.snapshot.canSkimForward)
+        XCTAssertEqual(model.skimForwardDestinationMs, 5_000)
+        XCTAssertEqual(model.skimForwardTitle, "Skim to 0:05")
         let loadedResources = model.skimResourceLoadCount
         for _ in 0..<40 { model.snapshot.currentMediaTimeMs = model.snapshot.currentMediaTimeMs }
         XCTAssertEqual(model.skimResourceLoadCount, loadedResources, "Progress updates must reuse the loaded map and asset metadata")
@@ -88,6 +90,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         XCTAssertEqual(model.skimAudioTransportRate, 1.25, "A rate change must update the active summary player")
         model.setMediaPlaybackRate(priorRate)
         XCTAssertEqual(model.snapshot.skimBridgeState?.destinationMediaTimeMs, 5_000)
+        XCTAssertEqual(model.skimForwardDestinationMs, model.snapshot.skimBridgeState?.destinationMediaTimeMs)
         model.skimForward()
         XCTAssertNil(model.snapshot.skimBridgeState, "Second Skim tap exits instead of restarting or chaining a summary")
         for _ in 0..<500 where model.snapshot.skimBridgeState != nil { try await Task.sleep(for: .milliseconds(20)) }

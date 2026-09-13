@@ -21,6 +21,7 @@
       "selectedTests": [
         "Gate1FlowUITests/testPlaybackScrubberAcceptsPhysicalDrag()",
         "Gate1FlowUITests/testLibraryCompactRowStaysDense()",
+        "Gate1FlowUITests/testLibraryUnfinishedCompletionUndoAndSearchDiscovery()",
         "Gate1FlowUITests/testRecordingExclusivelyOwnsTheAccessibleExperience()",
         "Gate1FlowUITests/testAmbiguousPodcastImportImmediatelyReplacesAddSourceWithEpisodePicker()",
         "Gate1FlowUITests/testBuild23RecipientMissingSourceReturnsWithoutAutoplayAndShowsProvenance()",
@@ -30,7 +31,8 @@
         "Gate1FlowUITests/testPlaybackPrimaryActionsRemainVisibleWithLongTitleAndAccessibilityText()",
         "Gate1FlowUITests/testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource()",
         "Gate1FlowUITests/testLongTimelineResponseKeepsActionAboveEditorAndStartsPlayback()",
-        "Gate1FlowUITests/testListeningEditionPreviewShowsSuppliedScenesBeforeImport()"
+        "Gate1FlowUITests/testListeningEditionPreviewShowsSuppliedScenesBeforeImport()",
+        "Gate1FlowUITests/testBatchExportOffersPersistentJumpToDestination()"
       ],
       "parallelizable": false
     }

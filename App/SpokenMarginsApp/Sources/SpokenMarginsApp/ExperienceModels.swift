@@ -34,6 +34,9 @@ enum MarginCollectionFilter: String, CaseIterable, Equatable, Sendable {
 struct MarginCollectionQuery: Equatable, Sendable {
     var text = ""
     var filter: MarginCollectionFilter = .all
+    var itemID: String? = nil
+
+    func includes(itemID: String?) -> Bool { self.itemID == nil || self.itemID == itemID }
 
     func matches(_ values: [String]) -> Bool {
         let query = text.trimmingCharacters(in: .whitespacesAndNewlines)

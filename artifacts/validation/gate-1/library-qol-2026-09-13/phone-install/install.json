@@ -1,0 +1,37 @@
+{
+  "info" : {
+    "arguments" : [
+      "devicectl",
+      "device",
+      "install",
+      "app",
+      "--device",
+      "F9855B5E-675A-5050-8010-4B17AE843875",
+      ".build/verification/SpokenMarginsAppBehavior/Build/Products/Debug-iphoneos/SpokenMarginsApp.app",
+      "--json-output",
+      "artifacts/validation/gate-1/library-qol-2026-09-13/phone-install/install.json"
+    ],
+    "commandType" : "devicectl.device.install.app",
+    "environment" : {
+      "TERM" : "dumb"
+    },
+    "jsonVersion" : 3,
+    "outcome" : "success",
+    "version" : "518.33"
+  },
+  "result" : {
+    "deviceIdentifier" : "F9855B5E-675A-5050-8010-4B17AE843875",
+    "installedApplications" : [
+      {
+        "bundleID" : "com.spokenmargins.native",
+        "databaseSequenceNumber" : 2496,
+        "databaseUUID" : "586BC8DC-EA34-48E6-AC35-092ED9E191C3",
+        "installationURL" : "file:///private/var/containers/Bundle/Application/56226F89-DCE3-4432-BF61-D31175C3FAE6/SpokenMarginsApp.app/",
+        "launchServicesIdentifier" : "unknown",
+        "options" : {
+
+        }
+      }
+    ]
+  }
+}

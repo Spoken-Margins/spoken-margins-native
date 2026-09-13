@@ -53,9 +53,16 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             createdAt: Date()
         )
         let result = try resolve(request)
-        return ([result.selectedCandidate].compactMap { $0 } + result.candidates)
-            .first { $0.sourceLink.role == "canonical_feed" }
-            .flatMap { URL(string: $0.sourceLink.url) }
+        let candidates = [result.selectedCandidate].compactMap { $0 } + result.candidates
+        if let feed = candidates.first(where: { $0.sourceLink.role == "canonical_feed" }) {
+            return URL(string: feed.sourceLink.url)
+        }
+        // Spotify resolution proves episode identity through an Apple episode;
+        // use that matched show's lookup to obtain its public RSS feed.
+        if let apple = candidates.compactMap({ URL(string: $0.sourceLink.url) }).first(where: isApplePodcastsURL) {
+            return try canonicalFeedURL(for: apple)
+        }
+        return nil
     }
 
     func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult {

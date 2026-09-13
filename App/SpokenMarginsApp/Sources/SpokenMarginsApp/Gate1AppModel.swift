@@ -688,7 +688,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var recentlyPreparedAudio: [RecentlyPreparedAudioRow] = []
     @Published var libraryQuery = LibraryQuery(
         contentType: LibraryContentTypeFilter(rawValue: UserDefaults.standard.string(forKey: "libraryContentTypeFilter") ?? "") ?? .all,
-        listeningState: LibraryListeningStateFilter(rawValue: UserDefaults.standard.string(forKey: "libraryListeningStateFilter") ?? "") ?? .all,
+        listeningState: Gate1AppModel.loadLibraryListeningFilter(defaults: .standard),
         offlineState: LibraryOfflineStateFilter(rawValue: UserDefaults.standard.string(forKey: "libraryOfflineStateFilter") ?? "") ?? .all,
         sort: LibrarySort(rawValue: UserDefaults.standard.string(forKey: "librarySort") ?? "") ?? .recentlyAdded
     )
@@ -696,6 +696,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var sleepTimerRemainingSeconds: Int?
     @Published private(set) var libraryAccessError: String?
     @Published var recentlyDeletedItems: [LibraryItemRow] = []
+    @Published var completionUndo: (itemID: String, title: String, markedAt: Date)?
     @Published var trashUndo: TrashUndoState?
     @Published var selectedItem = ItemDetailState() {
         didSet {
@@ -1490,7 +1491,9 @@ final class Gate1AppModel: ObservableObject {
     static let supportedRenderedSpeechCacheLimitsMB = [128, 256, 512, 1_024]
 
     var selectedPodcastDownloadState: PodcastDownloadState? {
-        podcastDownloadRecords[selectedItem.id]?.state
+        if let state = podcastDownloadRecords[selectedItem.id]?.state { return state }
+        if let item = try? store?.loadItem(id: selectedItem.id), item.media?.sourceType == .remoteStream { return .streamingOnly }
+        return nil
     }
 
     var selectedPodcastDownloadDescription: String? {
@@ -1852,6 +1855,7 @@ final class Gate1AppModel: ObservableObject {
         snapshot = SessionSnapshot()
         libraryItems = try loadLibraryRows(store: store)
         recentlyDeletedItems = []
+        completionUndo = nil
         dismissTrashUndo()
         selectedItem = try loadItemDetail(id: item.id, store: store)
         diagnostics = [
@@ -2019,6 +2023,11 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    var marginScopeItems: [LibraryItemRow] {
+        let ids = Set(marginRows.map { $0.interjection.itemId } + sharedMarginRows.compactMap { $0.layer.itemId } + [selectedItem.id])
+        return libraryItems.filter { ids.contains($0.id) }.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+
     var visiblePrivateMarginRows: [MarginRow] {
         marginRows.filter { row in
             let matchesFilter: Bool
@@ -2028,14 +2037,14 @@ final class Gate1AppModel: ObservableObject {
             case .attention: matchesFilter = row.needsAttention
             case .shared: matchesFilter = false
             }
-            return matchesFilter && marginCollectionQuery.matches([row.fullText, row.itemTitle])
+            return matchesFilter && marginCollectionQuery.includes(itemID: row.interjection.itemId) && marginCollectionQuery.matches([row.fullText, row.itemTitle])
         }
     }
 
     var visibleSharedMarginRows: [SharedMarginRow] {
         guard marginCollectionQuery.filter == .shared else { return [] }
         return sharedMarginRows.filter {
-            marginCollectionQuery.matches([$0.interjection.approvedTranscript, $0.itemTitle, $0.collectionLabel])
+            marginCollectionQuery.includes(itemID: $0.layer.itemId) && marginCollectionQuery.matches([$0.interjection.approvedTranscript, $0.itemTitle, $0.collectionLabel])
         }
     }
 
@@ -2249,6 +2258,7 @@ final class Gate1AppModel: ObservableObject {
             snapshot = SessionSnapshot()
             libraryItems = try loadLibraryRows(store: store)
             recentlyDeletedItems = []
+            completionUndo = nil
             dismissTrashUndo()
             selectedItem = try loadItemDetail(id: item.id, store: store)
             diagnostics = [
@@ -4415,6 +4425,10 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    @Published private(set) var skimForwardDestinationMs: Int?
+    @Published private(set) var skimBackwardDestinationMs: Int?
+    var skimForwardTitle: String { PlaybackQualityPresentation.skimTitle(destinationMs: skimForwardDestinationMs, backward: false) }
+    var skimBackwardTitle: String { PlaybackQualityPresentation.skimTitle(destinationMs: skimBackwardDestinationMs, backward: true) }
     private var skimResourceContext: SkimResourceContext?
     #if DEBUG
     private(set) var skimResourceLoadCount = 0
@@ -4425,8 +4439,14 @@ final class Gate1AppModel: ObservableObject {
         if refreshResources { skimResourceContext = nil }
         guard !isUpdatingSkimAvailability else { return }
         let effectiveTime = snapshot.skimBridgeState?.destinationMediaTimeMs ?? snapshot.currentMediaTimeMs
-        let canForward = snapshot.skimBridgeState != nil || effectiveTime.flatMap { resolvedSkimPlaybackPlan(direction: .forward, at: $0) } != nil
-        let canBackward = effectiveTime.flatMap { resolvedSkimPlaybackPlan(direction: .backward, at: $0) } != nil
+        let forward = effectiveTime.flatMap { resolvedSkimPlaybackPlan(direction: .forward, at: $0) }
+        let backward = effectiveTime.flatMap { resolvedSkimPlaybackPlan(direction: .backward, at: $0) }
+        let forwardTime = snapshot.skimBridgeState?.destinationMediaTimeMs ?? forward?.destinationMediaTimeMs
+        let backwardTime = snapshot.skimBridgeState?.destinationMediaTimeMs ?? backward?.destinationMediaTimeMs
+        if skimForwardDestinationMs != forwardTime { skimForwardDestinationMs = forwardTime }
+        if skimBackwardDestinationMs != backwardTime { skimBackwardDestinationMs = backwardTime }
+        let canForward = forwardTime != nil
+        let canBackward = backwardTime != nil
         guard snapshot.canSkimForward != canForward || snapshot.canSkimBackward != canBackward else { return }
         isUpdatingSkimAvailability = true
         snapshot.canSkimForward = canForward
@@ -4910,6 +4930,7 @@ final class Gate1AppModel: ObservableObject {
             let listeningMatch: Bool
             switch libraryQuery.listeningState {
             case .all: listeningMatch = true
+            case .unfinished: listeningMatch = !row.isCompleted
             case .unplayed: listeningMatch = !row.isCompleted && (row.continuationProgressPercent ?? 0) == 0
             case .inProgress: listeningMatch = !row.isCompleted && (row.continuationProgressPercent ?? 0) > 0
             case .completed: listeningMatch = row.isCompleted
@@ -4941,6 +4962,42 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    static func loadLibraryListeningFilter(defaults: UserDefaults) -> LibraryListeningStateFilter {
+        let key = "libraryListeningStateFilter"
+        let saved = LibraryListeningStateFilter(rawValue: defaults.string(forKey: key) ?? "")
+        if !defaults.bool(forKey: "libraryUnfinishedDefaultApplied") {
+            let selection = saved == nil || saved == .all ? LibraryListeningStateFilter.unfinished : saved!
+            defaults.set(selection.rawValue, forKey: key)
+            defaults.set(true, forKey: "libraryUnfinishedDefaultApplied")
+            return selection
+        }
+        return saved ?? .unfinished
+    }
+
+    var libraryIsCaughtUp: Bool {
+        !libraryItems.isEmpty && libraryItems.allSatisfy(\.isCompleted)
+            && libraryQuery.listeningState == .unfinished
+            && libraryQuery.contentType == .all && libraryQuery.offlineState == .all
+            && libraryQuery.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var libraryHidesCompleted: Bool {
+        [.unfinished, .unplayed, .inProgress].contains(libraryQuery.listeningState)
+    }
+
+    func showCompletedLibraryItems() {
+        libraryQuery.listeningState = .completed
+        libraryQueryChanged()
+    }
+
+    func resetLibraryFilters() {
+        // Preserve the search and sort while restoring the everyday view.
+        libraryQuery.contentType = .all
+        libraryQuery.listeningState = .unfinished
+        libraryQuery.offlineState = .all
+        libraryQueryChanged()
+    }
+
     func libraryQueryChanged() {
         let persisted = libraryQuery.persistedSelection
         UserDefaults.standard.set(persisted.contentType.rawValue, forKey: "libraryContentTypeFilter")
@@ -4960,7 +5017,7 @@ final class Gate1AppModel: ObservableObject {
         if libraryQuery.offlineState != .all {
             selections.append(Self.displayName(libraryQuery.offlineState.rawValue))
         }
-        return selections.isEmpty ? "Filter" : selections.joined(separator: " · ")
+        return selections.isEmpty ? "All items" : selections.joined(separator: " · ")
     }
 
     var librarySortDescription: String {
@@ -5252,16 +5309,38 @@ final class Gate1AppModel: ObservableObject {
             let store = try requireStore()
             var item = try store.loadItem(id: id)
             // Completion is an item-level fact, not fabricated listening history.
-            item.sourceCompletedAt = item.sourceCompletedAt ?? Date()
+            guard item.sourceCompletedAt == nil else { return }
+            let markedAt = Date()
+            item.sourceCompletedAt = markedAt
             try store.saveItem(item)
             try refreshLibraryRows(store: store)
             if selectedItem.id == id {
                 selectedItem = try loadItemDetail(id: id, store: store)
             }
-            reportConfirmation("Marked \(item.title) complete.")
+            completionUndo = (id, item.title, try store.loadItem(id: id).sourceCompletedAt ?? markedAt)
         } catch {
             reportFailure(error, context: "Mark complete failed")
         }
+    }
+
+    func undoMarkedCompletion() {
+        guard let undo = completionUndo,
+              !rejectNavigationOrSessionMutationWhileRecording("undo_mark_item_completed") else { return }
+        do {
+            let store = try requireStore()
+            var item = try store.loadItem(id: undo.itemID)
+            // Do not overwrite a later completion or rewrite natural session completion.
+            guard item.sourceCompletedAt == undo.markedAt else {
+                completionUndo = nil
+                return
+            }
+            item.sourceCompletedAt = nil
+            try store.saveItem(item)
+            try refreshLibraryRows(store: store)
+            if selectedItem.id == item.id { selectedItem = try loadItemDetail(id: item.id, store: store) }
+            completionUndo = nil
+            reportConfirmation("Undid Mark Complete for \(item.title).")
+        } catch { reportFailure(error, context: "Undo completion failed") }
     }
 
     func prioritizeOfflinePreparation(id: String) {
@@ -5756,6 +5835,21 @@ final class Gate1AppModel: ObservableObject {
         renderedSpeechDiskCache?.setLimitBytes(renderedSpeechCacheLimitMB * 1024 * 1024)
         diagnostics["renderedSpeechCacheLimitMB"] = "\(renderedSpeechCacheLimitMB)"
         reportSuccess("Rendered speech cache limit set to \(renderedSpeechCacheLimitMB) MB.")
+    }
+
+    func stopStalledPodcastStart(itemID: String) {
+        guard snapshot.itemId == itemID, snapshot.status == .starting,
+              selectedPodcastDownloadState != nil else { return }
+        pause()
+        reportFailure("Podcast playback did not start. Use Download Again in More to replace the saved audio, then press Play.")
+    }
+
+    func redownloadSelectedPodcast() {
+        guard let coordinator = podcastDownloadCoordinator else { return }
+        if coordinator.recordsByItemId[selectedItem.id] == nil {
+            prioritizeOfflinePreparation(id: selectedItem.id)
+        } else { coordinator.redownload(itemId: selectedItem.id) }
+        reportConfirmation("Downloading a fresh copy of the podcast.")
     }
 
     func retrySelectedPodcastDownload() {
@@ -9109,6 +9203,60 @@ final class Gate1AppModel: ObservableObject {
             }
         } catch {
             diagnostics["streamingSpeechObservationError"] = String(describing: error)
+        }
+    }
+
+    @Published private(set) var renderedSourceFraction: Double?
+    private var frontierSignatures: [String: TTSRenderSignature] = [:]
+    private var frontierPublicationKey: String?
+    var renderedFractionForPlayback: Double? {
+        guard frontierPublicationKey == renderFrontierKey else { return nil }
+        if ttsVoiceSelection.supertonicVoice != nil,
+           snapshot.targetType == TargetType.itemTextTTS.rawValue,
+           onDeviceSpeechGenerationProgress.totalChunks > 0 {
+            return Double(onDeviceSpeechGenerationProgress.percent) / 100
+        }
+        return renderedSourceFraction
+    }
+    var renderFrontierKey: String { "\(snapshot.itemId ?? "")|\(snapshot.targetType ?? "")|\(ttsVoiceSelection.rawValue)" }
+
+    /// Runs only while the playback surface is present; publication never reads disk in body.
+    func observeRenderedFrontier() async {
+        let key = renderFrontierKey
+        renderedSourceFraction = nil
+        frontierPublicationKey = key
+        guard let itemID = snapshot.itemId, let voice = ttsVoiceSelection.supertonicVoice,
+              [TargetType.itemTextTTS.rawValue, TargetType.transcriptBackedMedia.rawValue].contains(snapshot.targetType ?? ""),
+              let store, let resources = Bundle.main.resourceURL else { return }
+        do {
+            let signature: TTSRenderSignature
+            if let cached = frontierSignatures[voice.rawValue] { signature = cached }
+            else {
+                let assets = SupertonicAssetLocation(rootURL: resources.appendingPathComponent("Supertonic"))
+                let existing = currentSupertonicRenderSignature
+                signature = try await Task.detached(priority: .utility) {
+                    if let existing,
+                       existing.voiceStyleHash == SupertonicRenderIdentity.sha256(try Data(contentsOf: assets.voiceStyleURL(for: voice))) { return existing }
+                    return try SupertonicRenderIdentity.make(assets: assets, voice: voice)
+                }.value
+                frontierSignatures[voice.rawValue] = signature
+            }
+            let root = try applicationSupportDirectory().appendingPathComponent("PreparedAudio")
+            while !Task.isCancelled, renderFrontierKey == key {
+                let item = try store.loadItem(id: itemID)
+                guard let text = item.text, !text.isEmpty else { return }
+                let source = try store.loadCanonicalSource(itemId: itemID)
+                let manifest = try store.loadPreparedAudioManifests(itemId: itemID).first { $0.signature == signature }
+                let canonical = source?.segments.map(\.text).joined(separator: "\n\n") ?? ""
+                let fraction = await Task.detached(priority: .utility) {
+                    PreparedRenderFrontier.fraction(manifest: manifest, signature: signature, sourceText: text, canonicalSourceText: canonical, root: root)
+                }.value
+                guard !Task.isCancelled, renderFrontierKey == key else { return }
+                if renderedSourceFraction != fraction { renderedSourceFraction = fraction }
+                try await Task.sleep(for: .seconds(2))
+            }
+        } catch {
+            if renderFrontierKey == key, !Task.isCancelled { renderedSourceFraction = nil }
         }
     }
 
@@ -14925,10 +15073,9 @@ final class Gate1AppModel: ObservableObject {
     ) async throws -> [SourceCandidateEvidence] {
         if let followCandidateDiscoveryHandler { return try await followCandidateDiscoveryHandler(item, preferredURL) }
         do {
-            return try await coordinator.discover(urlString: preferredURL.absoluteString, requiringItemMembership: true)
+            return try await coordinator.discover(urlString: preferredURL.absoluteString, requiringItemMembership: item.sourceURL == nil)
         } catch {
-            guard item.sourceURL == nil,
-                  let originalReference = item.externalReference,
+            guard let originalReference = item.externalReference,
                   let originalURL = URL(string: originalReference),
                   originalURL.scheme?.lowercased() == "https" else { throw error }
             let resolver = PublicPodcastLinkResolver()
@@ -15122,7 +15269,7 @@ final class Gate1AppModel: ObservableObject {
             snapshot = try engine.updatePlaybackTransport(
                 itemId: itemId,
                 playbackURL: url.absoluteString,
-                replaceActivePlayback: false
+                replaceActivePlayback: snapshot.status == .starting
             )
             refreshSelectedItem()
         }
@@ -15478,7 +15625,11 @@ final class Gate1AppModel: ObservableObject {
            let remoteURL = URL(string: record.remoteURL) {
             coordinator.register(itemId: itemId, remoteURL: remoteURL)
         }
-        guard let localURL = coordinator.validatedLocalURL(for: itemId) else { return }
+        guard let localURL = coordinator.validatedLocalURL(for: itemId) else {
+            // Clear a cached local override when its file has disappeared.
+            _ = try engine?.updatePlaybackTransport(itemId: itemId, playbackURL: nil, replaceActivePlayback: false)
+            return
+        }
         _ = try? engine?.updatePlaybackTransport(itemId: itemId, playbackURL: localURL.absoluteString)
         resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
     }

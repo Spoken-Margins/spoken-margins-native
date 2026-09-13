@@ -1989,6 +1989,61 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(result.selectedCandidate?.audioURL, "https://cdn.example.com/shared.mp3")
     }
 
+    func testSpotifyMatchedAppleEpisodeResolvesCanonicalFeed() throws {
+        let oEmbed = #"{"title":"The Shared Episode!"}"#
+        let appleSearch = """
+        {
+          "resultCount": 2,
+          "results": [
+            {
+              "wrapperType": "podcastEpisode",
+              "kind": "podcast-episode",
+              "trackName": "A Different Episode",
+              "collectionName": "Wrong Show",
+              "episodeUrl": "https://cdn.example.com/wrong.mp3"
+            },
+            {
+              "wrapperType": "podcastEpisode",
+              "kind": "podcast-episode",
+              "trackName": "The Shared Episode",
+              "collectionName": "Shared Show",
+              "trackViewUrl": "https://podcasts.apple.com/us/podcast/shared-show/id123?i=456",
+              "episodeUrl": "https://cdn.example.com/shared.mp3",
+              "trackTimeMillis": 123000,
+              "releaseDate": "2026-07-01T12:00:00Z"
+            }
+          ]
+        }
+        """
+        let request = LinkResolutionRequest(
+            id: "request-spotify-apple-match",
+            inputURL: "https://open.spotify.com/episode/shared123",
+            sourceSurface: "paste",
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+
+        let feed = try PublicPodcastLinkResolver(fetch: { url in
+            if url.path == "/oembed" {
+                XCTAssertEqual(
+                    URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "url" })?.value,
+                    request.inputURL
+                )
+                return Data(oEmbed.utf8)
+            }
+            if url.host?.contains("spotify.com") == true {
+                return Data()
+            }
+            if url.path == "/lookup" {
+                return Data(#"{"results":[{"feedUrl":"https://example.com/show.rss"}]}"#.utf8)
+            }
+            XCTAssertEqual(url.host, "itunes.apple.com")
+            XCTAssertEqual(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "entity" })?.value, "podcastEpisode")
+            return Data(appleSearch.utf8)
+        }).canonicalFeedURL(for: try XCTUnwrap(URL(string: request.inputURL)))
+
+        XCTAssertEqual(feed?.absoluteString, "https://example.com/show.rss")
+    }
+
     func testPublicResolverDoesNotGuessBetweenAmbiguousSpotifyAppleMatches() throws {
         let oEmbed = #"{"title":"Trailer"}"#
         let appleSearch = """

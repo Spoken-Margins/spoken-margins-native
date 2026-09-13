@@ -224,6 +224,11 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.validatedLocalURL(for: "valid"), validFile)
         XCTAssertNil(coordinator.validatedLocalURL(for: "empty"))
         XCTAssertNil(coordinator.validatedLocalURL(for: "missing"))
+        try FileManager.default.removeItem(at: validFile)
+        XCTAssertNil(coordinator.validatedLocalURL(for: "valid"))
+        XCTAssertEqual(coordinator.recordsByItemId["valid"]?.state, .failed)
+        XCTAssertNil(coordinator.recordsByItemId["valid"]?.localRelativePath)
+        XCTAssertEqual(try fixture.store.loadPodcastDownloads().first { $0.itemId == "valid" }?.state, .failed)
     }
 
     private func makeFixture() throws -> (root: URL, support: URL, store: SQLiteSessionStore) {

@@ -25,11 +25,40 @@ struct ExperienceLibraryScreen: View {
         return continueItem
     }
 
+    private var completionUndoActions: some View {
+        HStack {
+            Button("Undo Mark Complete", action: model.undoMarkedCompletion)
+                .accessibilityIdentifier("completion.undo.button")
+            Button { model.completionUndo = nil } label: { Image(systemName: "xmark") }
+                .accessibilityLabel("Dismiss completion notification")
+        }
+        .buttonStyle(.borderless)
+    }
+
     var body: some View {
         NavigationStack {
             List {
                 controls
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+
+                if let undo = model.completionUndo {
+                        ViewThatFits(in: .horizontal) {
+                            HStack {
+                                Text("Marked \(undo.title) complete.").lineLimit(2)
+                                completionUndoActions
+                            }
+                            VStack(alignment: .leading) {
+                                Text("Marked \(undo.title) complete.")
+                                completionUndoActions
+                            }
+                        }
+                        .font(.subheadline)
+                        .padding(12)
+                        .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 12))
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("completion.undo.banner")
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                    }
 
                 if let continueItem = visibleContinueItem {
                     ExperienceLibraryCompactRow(
@@ -82,7 +111,6 @@ struct ExperienceLibraryScreen: View {
                 Button("Offline Rendering", systemImage: "waveform.badge.magnifyingglass") {
                     isAudioPreparationQueuePresented = true
                 }
-                Button("Export Sessions", systemImage: "square.and.arrow.up.on.square", action: model.openBatchExport)
             } label: {
                 Image(systemName: "ellipsis.circle")
                     .frame(width: 44, height: 44)
@@ -201,6 +229,41 @@ struct ExperienceLibraryScreen: View {
                 libraryFiltersMenu
                 sortMenu
             }
+
+            HStack(alignment: .top) {
+                Text(model.libraryFilterDescription)
+                    .font(.caption)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .accessibilityIdentifier("library.filter.summary")
+                Spacer()
+                if hasActiveFilters {
+                    Button("Reset filters", action: model.resetLibraryFilters)
+                        .font(.caption)
+                        .accessibilityIdentifier("library.filters.reset")
+                }
+            }
+            if model.libraryHidesCompleted {
+                ViewThatFits(in: .horizontal) {
+                    HStack {
+                        Text("Completed items hidden")
+                        Button(model.libraryQuery.query.isEmpty ? "Show completed" : "Include in search") {
+                            if model.libraryQuery.query.isEmpty { model.showCompletedLibraryItems() }
+                            else { model.libraryQuery.listeningState = .all }
+                        }
+                    }
+                    VStack(alignment: .leading) {
+                        Text("Completed items hidden")
+                        Button(model.libraryQuery.query.isEmpty ? "Show completed" : "Include in search") {
+                            if model.libraryQuery.query.isEmpty { model.showCompletedLibraryItems() }
+                            else { model.libraryQuery.listeningState = .all }
+                        }
+                    }
+                }
+                .font(.subheadline)
+                .foregroundStyle(AppColors.evergreen)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("library.completed.visibility")
+            }
         }
         .onChange(of: model.libraryQuery) { _, _ in model.libraryQueryChanged() }
     }
@@ -270,7 +333,7 @@ struct ExperienceLibraryScreen: View {
 
     private var hasActiveFilters: Bool {
         model.libraryQuery.contentType != .all
-            || model.libraryQuery.listeningState != .all
+            || model.libraryQuery.listeningState != .unfinished
             || model.libraryQuery.offlineState != .all
     }
 
@@ -284,12 +347,20 @@ struct ExperienceLibraryScreen: View {
                 actionTitle: "Add Source"
             ) { addSourceRoute = .linkOrPodcast }
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
+        } else if model.libraryIsCaughtUp {
+            SMExperienceEmptyState(
+                systemImage: "checkmark.circle",
+                title: "You’re caught up",
+                detail: "Your completed items and Margins are still here.",
+                actionTitle: "Show completed"
+            ) { model.showCompletedLibraryItems() }
+            .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
         } else if model.visibleLibraryItems.isEmpty {
             SMExperienceEmptyState(
                 systemImage: "magnifyingglass",
                 title: "No matches",
                 detail: "Change the search or clear the active filters.",
-                actionTitle: "Clear filters"
+                actionTitle: "Reset search and filters"
             ) {
                 model.libraryQuery = LibraryQuery()
                 model.libraryQueryChanged()

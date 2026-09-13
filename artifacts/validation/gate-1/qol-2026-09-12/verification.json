@@ -1,0 +1,79 @@
+{
+  "head": "de9dc82060a19c435d4045c30f957c04a4dbe871",
+  "branch": "codex/provisional-next",
+  "input_sha256": "3ddff56f725a53f385c234f139141a8b17538379db118b9d4c7f68ffa7ac1a4f",
+  "build": "0.1 (27), local uncommitted candidate",
+  "implementation_state": "implemented",
+  "human_validation_state": "pending",
+  "verification": [
+    {
+      "manifest": "artifacts/test-runs/20260912-232248-527668-fast/manifest.json",
+      "status": "verified",
+      "input_sha256": "3ddff56f725a53f385c234f139141a8b17538379db118b9d4c7f68ffa7ac1a4f",
+      "counts": [
+        {
+          "passed": 296,
+          "failed": 0,
+          "skipped": 1
+        }
+      ]
+    },
+    {
+      "manifest": "artifacts/test-runs/20260912-232359-708762-app/manifest.json",
+      "status": "verified",
+      "input_sha256": "3ddff56f725a53f385c234f139141a8b17538379db118b9d4c7f68ffa7ac1a4f",
+      "counts": [
+        {
+          "passed": 422,
+          "failed": 0,
+          "skipped": 0
+        }
+      ]
+    },
+    {
+      "manifest": "artifacts/test-runs/20260912-232621-802381-ui/manifest.json",
+      "status": "verified",
+      "input_sha256": "3ddff56f725a53f385c234f139141a8b17538379db118b9d4c7f68ffa7ac1a4f",
+      "counts": [
+        {
+          "passed": 13,
+          "failed": 0,
+          "skipped": 0
+        }
+      ]
+    },
+    {
+      "manifest": "artifacts/test-runs/20260912-233900-399794-ui/manifest.json",
+      "status": "failed_or_incomplete",
+      "input_sha256": "3ddff56f725a53f385c234f139141a8b17538379db118b9d4c7f68ffa7ac1a4f",
+      "counts": [
+        {
+          "passed": 12,
+          "failed": 0,
+          "skipped": 0
+        }
+      ]
+    }
+  ],
+  "targeted_ipad_retry": "artifacts/test-runs/qol-ipad-written-margin-retry/manifest.json",
+  "generic_builds": {
+    "status": "verified",
+    "scheme": "SpokenMarginsApp",
+    "destinations": [
+      "generic/platform=iOS Simulator",
+      "generic/platform=iOS"
+    ],
+    "jobs": 1,
+    "logs": "artifacts/test-runs/qol-generic-builds"
+  },
+  "retained_failures": [
+    "Initial app run: existing source-link test database lock; clean app run passed all 422.",
+    "iPad UI: 12 passed; written-Margin test timed out before reaching Margins. Isolated unchanged retry passed."
+  ],
+  "usage": {
+    "weekly_used_percent_start": 49,
+    "weekly_used_percent_end": 53,
+    "weekly_remaining_percent": 47,
+    "note": "Account-wide rounded meter; not exact per-task attribution."
+  }
+}

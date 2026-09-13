@@ -7,7 +7,10 @@ final class Gate1FlowUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         app = XCUIApplication()
-        app.launchArguments = ["--ui-testing"]
+        app.launchArguments = ["--ui-testing",
+            "-libraryContentTypeFilter", "all", "-libraryListeningStateFilter", "unfinished",
+            "-libraryOfflineStateFilter", "all", "-librarySort", "recently_added",
+            "-libraryUnfinishedDefaultApplied", "YES"]
         app.launchEnvironment["SPOKEN_MARGINS_UI_TESTING"] = "1"
         app.launch()
     }
@@ -142,6 +145,35 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(scrollToElement("settings.ai.releaseBoundary").exists)
         XCTAssertFalse(element("provider.name").exists)
         XCTAssertFalse(element("provider.apiKey.field").exists)
+    }
+
+    func testLibraryUnfinishedCompletionUndoAndSearchDiscovery() throws {
+        app.terminate()
+        app.launch()
+        let row = app.buttons["library.row.item-pill"]
+        XCTAssertTrue(row.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Completed items hidden"].exists)
+        row.press(forDuration: 0.8)
+        app.buttons["Mark Complete"].tap()
+        XCTAssertTrue(element("completion.undo.button").waitForExistence(timeout: 4))
+        XCTAssertFalse(row.exists)
+        element("completion.undo.button").tap()
+        XCTAssertTrue(row.waitForExistence(timeout: 4))
+        row.press(forDuration: 0.8)
+        app.buttons["Mark Complete"].tap()
+        let search = app.textFields["library.search.field"]
+        search.tap()
+        search.typeText("pill")
+        XCTAssertFalse(row.exists)
+        app.buttons["Include in search"].tap()
+        XCTAssertTrue(row.waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["All items"].exists)
+        captureScreen(named: "library-completed-search-and-undo")
+        element("completion.undo.button").tap()
+        XCTAssertTrue(row.waitForExistence(timeout: 4))
+        app.buttons["Clear search"].tap()
+        element("library.filters.reset").tap()
+        XCTAssertTrue(app.staticTexts["Completed items hidden"].exists)
     }
 
     func testLibraryCompactRowStaysDense() throws {
@@ -825,8 +857,10 @@ final class Gate1FlowUITests: XCTestCase {
         app.buttons["playback.home.button"].tap()
         XCTAssertTrue(element("library.screen").waitForExistence(timeout: 4))
 
-        app.buttons["home.settings.button"].tap()
-        let exportSessions = app.buttons["Export Sessions"]
+        tapRoot("Margins")
+        XCTAssertTrue(element("margins.scope.picker").waitForExistence(timeout: 4))
+        captureScreen(named: "margins-scoped-workspace")
+        let exportSessions = app.buttons["margins.export.button"]
         XCTAssertTrue(exportSessions.waitForExistence(timeout: 2))
         exportSessions.tap()
         XCTAssertTrue(element("batchExport.screen").waitForExistence(timeout: 4))

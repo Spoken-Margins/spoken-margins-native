@@ -138,6 +138,13 @@ final class QualityOfLifeModelsTests: XCTestCase {
         XCTAssertEqual(horizon.estimatedDurationMs, 30 * 60 * 1_000)
     }
 
+    func testUnfinishedLibraryQueryRoundTripsWithoutDroppingSelection() throws {
+        let query = LibraryQuery()
+        XCTAssertEqual(query.listeningState, .unfinished)
+        let restored = try JSONDecoder().decode(LibraryQuery.self, from: JSONEncoder().encode(query))
+        XCTAssertEqual(restored, query)
+    }
+
     func testLibraryPersistedSelectionDropsSearchQuery() {
         let query = LibraryQuery(query: "résumé", contentType: .epub, listeningState: .inProgress, offlineState: .readyOffline, sort: .title)
         XCTAssertEqual(query.persistedSelection.query, "")

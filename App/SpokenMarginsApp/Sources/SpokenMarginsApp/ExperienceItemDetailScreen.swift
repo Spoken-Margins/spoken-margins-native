@@ -180,6 +180,7 @@ struct ExperienceItemDetailScreen: View {
 
         if !itemMargins.isEmpty {
             Button {
+                model.marginCollectionQuery = MarginCollectionQuery(itemID: model.selectedItem.id)
                 model.openMargins()
             } label: {
                 Label("Review Margins", systemImage: "quote.bubble")
@@ -408,7 +409,10 @@ struct ExperienceItemDetailScreen: View {
                 }
             }
             .accessibilityIdentifier("item.podcastDownload.status")
-        case .availableOffline, .none:
+        case .availableOffline:
+            Button("Download Again", action: model.redownloadSelectedPodcast)
+                .buttonStyle(.bordered)
+        case .none:
             EmptyView()
         }
     }

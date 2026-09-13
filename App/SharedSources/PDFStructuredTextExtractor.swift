@@ -56,6 +56,32 @@ enum PDFStructuredTextExtractor {
         for pageIndex in 0..<document.pageCount {
             pages.append(document.page(at: pageIndex).map { lines(from: $0) } ?? [])
         }
+        // Repeated text in physical page margins is running furniture, not prose.
+        // Keep the cover page and all interior occurrences of the same words.
+        func marginKey(_ line: TextLine, page: PDFPage) -> String? {
+            guard let bounds = line.bounds else { return nil }
+            let box = page.bounds(for: .mediaBox)
+            guard bounds.midY > box.maxY - box.height * 0.14 || bounds.midY < box.minY + box.height * 0.10 else { return nil }
+            return normalized(line.text)
+        }
+        if pages.count >= 3 {
+            var occurrences: [String: Set<Int>] = [:]
+            for (index, lines) in pages.enumerated() {
+                guard let page = document.page(at: index) else { continue }
+                for line in lines {
+                    if let key = marginKey(line, page: page) { occurrences[key, default: []].insert(index) }
+                }
+            }
+            let threshold = max(3, Int(ceil(Double(pages.count) * 0.3)))
+            for index in pages.indices where index > 0 {
+                guard let page = document.page(at: index) else { continue }
+                pages[index].removeAll { line in
+                    guard let key = marginKey(line, page: page) else { return false }
+                    let pageNumber = line.text.range(of: "^(?:[0-9]+|[ivxlcdm]+)$", options: [.regularExpression, .caseInsensitive]) != nil
+                    return occurrences[key, default: []].count >= threshold || pageNumber
+                }
+            }
+        }
         let allLines = pages.flatMap { $0 }
         guard allLines.contains(where: { !$0.text.isEmpty }) else {
             throw ExtractionError.noExtractableText

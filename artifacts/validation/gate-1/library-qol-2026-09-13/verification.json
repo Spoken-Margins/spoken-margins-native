@@ -1,0 +1,1794 @@
+{
+  "head": "de9dc82060a19c435d4045c30f957c04a4dbe871",
+  "branch": "codex/provisional-next",
+  "input_sha256": "c9131079cf3200190c483a8f7e407ac898714d5bfe7331c94631998a8e87f671",
+  "state": "implemented; verified at affected Library boundaries; broader iPad accessibility gate incomplete",
+  "human_validated": false,
+  "checks": [
+    {
+      "manifest": "artifacts/test-runs/20260913-085008-752503-fast/manifest.json",
+      "status": "verified",
+      "steps": []
+    },
+    {
+      "manifest": "artifacts/test-runs/20260913-085023-766456-app/manifest.json",
+      "status": "verified",
+      "steps": [
+        {
+          "name": "xcode-tests",
+          "exit_code": 0,
+          "counts": {
+            "passed": 424,
+            "failed": 0,
+            "skipped": 0
+          },
+          "tests": {
+            "SpokenMarginsAppTests/AppNavigationStateTests/testEachRootRetainsAnIndependentNavigationPath": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/AppNavigationStateTests/testExplicitRootPushDoesNotChangeTheSelectedRoot": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/AppNavigationStateTests/testRecordingLockRejectsRootPathAndTaskMutations": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/AppNavigationStateTests/testTaskCanBeDismissedAfterRecordingUnlocks": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/BatchSessionExportWorkflowTests/testBatchExportDefaultsToSessionsWithInterjectionsAndWritesSelectedMarkdown": {
+              "status": "passed",
+              "seconds": 0.313
+            },
+            "SpokenMarginsAppTests/Build23ExperiencePolishTests/testAccessibilityDynamicTypeUsesWrappedCompositionAtRegularWidth": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/Build23ExperiencePolishTests/testAddSourceKeepsPositiveBottomClearance": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/Build23ExperiencePolishTests/testCompactLibraryUsesWrappedComposition": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/Build23ExperiencePolishTests/testRegularWidthAtStandardDynamicTypeKeepsHorizontalComposition": {
+              "status": "passed",
+              "seconds": 0.004
+            },
+            "SpokenMarginsAppTests/Build23ExperiencePolishTests/testRootContentClearanceTracksPersistentMiniPlayerVisibility": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Build23RecipientSharingExperienceTests/testCompanionIsTheDisplayedDefaultProjection": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Build23RecipientSharingExperienceTests/testImportCannotBeConfirmedWhileSourceIsMissing": {
+              "status": "passed",
+              "seconds": 0.006
+            },
+            "SpokenMarginsAppTests/Build23RecipientSharingExperienceTests/testImportDisclosureExplicitlyRulesOutAutoplay": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Build23RecipientSharingExperienceTests/testMissingSourceReturnRestoresExplicitImportWithoutReopeningPackage": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Build23RecipientSharingExperienceTests/testProvenanceUsesStableLabelAndSymbolRatherThanColorAlone": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Build23SenderSharingExperienceTests/testBulkSelectionCanIncludeOrExcludeEveryVisibleMarginInOneAction": {
+              "status": "passed",
+              "seconds": 0.021
+            },
+            "SpokenMarginsAppTests/Build23SenderSharingExperienceTests/testFirstShareChoiceIsRememberedAndControlsFutureDefault": {
+              "status": "passed",
+              "seconds": 0.023
+            },
+            "SpokenMarginsAppTests/Build23SenderSharingExperienceTests/testPackageMutationInvalidatesVerifiedRecipientPreviewAsStale": {
+              "status": "passed",
+              "seconds": 0.073
+            },
+            "SpokenMarginsAppTests/Build23SenderSharingExperienceTests/testPresentationReturnsExactlyOneExpandedEditorForTheSelectedMargin": {
+              "status": "passed",
+              "seconds": 0.081
+            },
+            "SpokenMarginsAppTests/Build23SenderSharingExperienceTests/testReferenceTransportNeverRequiresPayloadRightsAssertion": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Build23SenderSharingExperienceTests/testSelectAndReviewOwnDistinctPresentationSurfaces": {
+              "status": "passed",
+              "seconds": 0.014
+            },
+            "SpokenMarginsAppTests/Build23SenderSharingExperienceTests/testShareURLIsAbsentAndShareStageIsGatedBeforeVerification": {
+              "status": "passed",
+              "seconds": 0.01
+            },
+            "SpokenMarginsAppTests/Build23SenderSharingExperienceTests/testStageGatingKeepsSenderInSelectWithoutAnIncludedMargin": {
+              "status": "passed",
+              "seconds": 0.009
+            },
+            "SpokenMarginsAppTests/Build23SharingSeamsTests/testAcousticOptOutOmitsStoredEditionSpineAndRetainsReviewedDisclosures": {
+              "status": "passed",
+              "seconds": 0.068
+            },
+            "SpokenMarginsAppTests/Build23SharingSeamsTests/testRecipientPreviewComesFromVerifiedFileAndMutationInvalidatesIt": {
+              "status": "passed",
+              "seconds": 0.046
+            },
+            "SpokenMarginsAppTests/Build23SharingSeamsTests/testSenderStageVocabularyIsFrozenInReleaseOrder": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/Build23SharingSeamsTests/testSharingCoordinatorIgnoresPlaybackAndDiagnosticTicks": {
+              "status": "passed",
+              "seconds": 0.015
+            },
+            "SpokenMarginsAppTests/Build23SharingSeamsTests/testTwoMarginsWithLocalSkimReferencesProduceVerifiedShareFile": {
+              "status": "passed",
+              "seconds": 0.04
+            },
+            "SpokenMarginsAppTests/ExperienceColorContrastTests/testSemanticTextBackgroundPairsMeetWCAGAAInLightAndDarkAppearances": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/ExperiencePresentationTests/testAddSourceStartsWithFourObjectRoutesAndKeepsFolderManagementSecondary": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/ExperiencePresentationTests/testCompactItemsRemoveOnlyTheContinueItemIdentity": {
+              "status": "passed",
+              "seconds": 0.004
+            },
+            "SpokenMarginsAppTests/ExperiencePresentationTests/testContinueItemDoesNotSuggestNinetyNinePercentItems": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/ExperiencePresentationTests/testContinueItemFallsBackToMostRecentlyListenedUnfinishedItem": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/ExperiencePresentationTests/testContinueItemIsNilWithoutAnEligibleUnfinishedItem": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/ExperiencePresentationTests/testContinueItemPrefersTheActiveUnfinishedItem": {
+              "status": "passed",
+              "seconds": 0.002
+            },
+            "SpokenMarginsAppTests/ExperiencePresentationTests/testContinueItemUsesIdentifierAsStableTieBreaker": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/ExperiencePresentationTests/testItemDetailRetainsNestedCanonicalNavigation": {
+              "status": "passed",
+              "seconds": 0.014
+            },
+            "SpokenMarginsAppTests/ExperiencePresentationTests/testMarginNeedsAttentionReflectsTranscriptionContextAndRecordingState": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/ExperiencePresentationTests/testMarginPreviewPrefersApprovedThenCleanedThenRawText": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/ExperiencePresentationTests/testMarginRowIdentityComposesSessionAndInterjectionIDs": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/ExperiencePresentationTests/testMarkedCompleteItemIsExcludedEvenWhenActiveSessionStillHasProgress": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/ExperiencePresentationTests/testOfflineStorageSnapshotAccountsForReservationsCategoriesAndProtection": {
+              "status": "passed",
+              "seconds": 0.002
+            },
+            "SpokenMarginsAppTests/ExperiencePresentationTests/testPodcastDownloadStateDrivesTruthfulLibraryOfflinePresentation": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/ExperiencePresentationTests/testSeededOnboardingItemsDoNotCountAsUserSourceEvidence": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/ExperiencePresentationTests/testTimelineDistinguishesPublisherSceneOwnAndSharedMargins": {
+              "status": "passed",
+              "seconds": 0.002
+            },
+            "SpokenMarginsAppTests/ExperiencePresentationTests/testTimelineIncludesAllGeneratedScenesWithDistinctProvenanceAndSeekTargets": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/ExperiencePresentationTests/testTimelineKeepsEachAssistantMarginsInItsOwnCoordinateSpace": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/ExperiencePresentationTests/testTimelinePullMeasuresShortContentFromItsInsetRestingPosition": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/ExperiencePresentationTests/testTimelinePullRequiresDeliberateBottomOverscroll": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/ExperiencePresentationTests/testTimelineRailOrdersBySourcePositionThenProvenanceRank": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/ExperiencePresentationTests/testTimelineTextExcerptCollapsesWhitespaceAndBoundsLongMargins": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/ExperiencePresentationTests/testUserOwnedSourcesProduceTypedOnboardingEvidence": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/ExperiencePresentationTests/testWrittenMediaMarginHasNoAudioRepairOrPendingContextWork": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testActivePlaybackPreparationSortsAheadOfOtherWork": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testAssistantMarginCaptureRetainsTurnPositionAcrossReloadAndExport": {
+              "status": "passed",
+              "seconds": 0.139
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testAvailableLocalFoundationModelCompletesInterjectionSummaryWithoutAPIKey": {
+              "status": "passed",
+              "seconds": 0.077
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testBackgroundPreparationExpirationCancelsFromSchedulerQueue": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testBackgroundPreparationWindowContinuesOnlyWhileDurableProgressIsMade": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testBackgroundPreparationWindowStopsWhenWorkMustRetryLater": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testBootstrapRestoresNewestUnfinishedSessionPausedWithoutAutoplay": {
+              "status": "passed",
+              "seconds": 0.041
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testBuildingVisibleExportPreviewDoesNotPresentFeedback": {
+              "status": "passed",
+              "seconds": 0.034
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testBulkSharePreparationFallsBackToOriginalVoiceWhenRenderingFails": {
+              "status": "passed",
+              "seconds": 0.073
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testBulkSharePreparationProcessesFiftyThreeMarginsSequentiallyAndPreservesOriginals": {
+              "status": "passed",
+              "seconds": 0.204
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testBundledSampleExplainsTheAppInsteadOfSeedingTheContractArticle": {
+              "status": "passed",
+              "seconds": 0.024
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testCancellingBulkSharePreparationMakesInFlightMarginEligibleAgain": {
+              "status": "passed",
+              "seconds": 0.052
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testChapterFromAnotherItemClosesRestoredSessionAndStartsSelectedItem": {
+              "status": "passed",
+              "seconds": 0.075
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testChapterFromCompletedSessionStartsReplayWithoutChangingCompletedHistory": {
+              "status": "passed",
+              "seconds": 0.063
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testClearAudioPreparationQueueKeepsLibraryItemsAndRemovesEveryJob": {
+              "status": "passed",
+              "seconds": 0.033
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testCompletedItemIsLabeledCompleteAndPurgedFromPreparationQueue": {
+              "status": "passed",
+              "seconds": 0.017
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testCompletedSessionExportUsesItsMarginsDespiteNewEmptySession": {
+              "status": "passed",
+              "seconds": 0.063
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testCompletedSummaryPlaybackDoesNotBlockSummarizingANewInterjection": {
+              "status": "passed",
+              "seconds": 0.137
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testCompletingFinalAudioRetainsFinishedSessionForReview": {
+              "status": "passed",
+              "seconds": 0.035
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testConfiguredProviderKeyIgnoresWhitespaceOnlyValues": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testCopyingAssistantTurnNotesOmitsTheFullAssistantResponse": {
+              "status": "passed",
+              "seconds": 0.118
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testDefaultReleaseBuildsDeterministicTextMapOnPasteInsteadOfUsingFoundationModel": {
+              "status": "passed",
+              "seconds": 0.038
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testDeletedInterjectionsAreNeverEligibleForAnotherSummary": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testDeniedMicrophoneOffersIndependentWrittenCapture": {
+              "status": "passed",
+              "seconds": 0.054
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testDeveloperRecordingIsOptInBoundedAndStops": {
+              "status": "passed",
+              "seconds": 0.002
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testDiagnosticsCopyPublishesSafePayloadAndSuccessFeedback": {
+              "status": "passed",
+              "seconds": 0.025
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testDifferentCanonicalSourceDoesNotHideManualFollowForMatchingTitle": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testDismissingMiniPlayerHidesItBeforeSessionCleanupCompletes": {
+              "status": "passed",
+              "seconds": 0.071
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testEmptyRecentlyDeletedPermanentlyDeletesEveryTrashedItem": {
+              "status": "passed",
+              "seconds": 0.06
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testEndOfChapterSleepTimerIsUnavailableForMaplessAndLastChapterPositions": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testExplicitOfflinePreparationJobsSortAheadOfAutomaticWork": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testExplicitStartNewSessionCreatesOneAdditionalSession": {
+              "status": "passed",
+              "seconds": 0.057
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testFailedLocalSummaryExitsBusyStateAndCanBeRetried": {
+              "status": "passed",
+              "seconds": 1.39
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testFinishAndCancelAreTheOnlyRecordingExits": {
+              "status": "passed",
+              "seconds": 0.05
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testFinishedSessionAtOneHundredPercentIsPreferredOverOlderInProgressSession": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testFollowCandidatesDeduplicateIdentityAndURLWithoutMergingDistinctFeeds": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testFollowDiscoveryRechecksSubscriptionsBeforePublishing": {
+              "status": "passed",
+              "seconds": 0.036
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testFollowedSourceIdentityUsesCanonicalURLInsteadOfDisplayTitle": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testGlobalMarginDestructiveActionsAndPrivateCurationAddressTheForeignSession": {
+              "status": "passed",
+              "seconds": 0.028
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testGlobalMarginSearchStarsAndSharedRowsKeepSessionIdentity": {
+              "status": "passed",
+              "seconds": 0.061
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testGuidedOnboardingAdvancesOnlyFromCompletedProductActions": {
+              "status": "passed",
+              "seconds": 0.048
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testGuidedOnboardingTimelineChapterCompletesReviewStep": {
+              "status": "passed",
+              "seconds": 0.067
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testHomePlayResumesLatestSessionWithoutCreatingAnother": {
+              "status": "passed",
+              "seconds": 0.046
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testHomeReflectsCompletionAndReplayPreservesBothPriorSessions": {
+              "status": "passed",
+              "seconds": 3.888
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testImportedCommentaryPlaybackAcceptsVerifiedTextAndPodcastAnchors": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testItemReplayStartsANewSessionAndPreservesTheCompletedSession": {
+              "status": "passed",
+              "seconds": 0.062
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testLargeExportUsesBoundedVisiblePreviewWithoutChangingCopiedPayload": {
+              "status": "passed",
+              "seconds": 0.004
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testLateFollowDiscoveryCannotPublishUnderAnotherItem": {
+              "status": "passed",
+              "seconds": 1.916
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testLateMicrophoneGrantCannotReplaceWrittenCaptureOrRestartCancelledCapture": {
+              "status": "passed",
+              "seconds": 0.076
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testLateSliderWriteCannotFreezeCanonicalPlaybackAfterRelease": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testLeavingPlaybackKeepsSessionPlayingAndShowsMiniPlayer": {
+              "status": "passed",
+              "seconds": 0.041
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testLegacyEmbeddedPiperModeSanitizesToBundledJamesPath": {
+              "status": "passed",
+              "seconds": 0.013
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testLibraryAudioIconUsesPlaybackRepresentationRatherThanFileExtension": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testLibraryFiltersInferLegacyPDFAndExposeActiveSelections": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testLibraryStartOpensPlaybackWhileOpeningAudioIsStillPreparing": {
+              "status": "passed",
+              "seconds": 0.031
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testLibraryUnfinishedPreferenceTransitionRunsOnceAndPreservesSpecificChoices": {
+              "status": "passed",
+              "seconds": 0.008
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testLifecycleSyncPersistsLatestTextPlaybackPosition": {
+              "status": "passed",
+              "seconds": 0.034
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testLinklessTextSharingOffersPrivateRightsOrRecipientSuppliedTransport": {
+              "status": "passed",
+              "seconds": 0.033
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testManualImportBuildsListeningMapFromPastedMarkdownHeadings": {
+              "status": "passed",
+              "seconds": 0.037
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testManualImportClearsEntryFieldsAfterSuccessfulCreate": {
+              "status": "passed",
+              "seconds": 0.034
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testManualImportCountsAsOwnSourceButNotAsSafariFileOrPodcast": {
+              "status": "passed",
+              "seconds": 0.037
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testManualImportDoesNotInventChaptersForUnstructuredText": {
+              "status": "passed",
+              "seconds": 0.033
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testMarginPlaybackRateMatchesItemRateAndClampsInvalidValues": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testMarkItemCompletedPersistsListeningStateAndStopsOfferingItAsContinueHero": {
+              "status": "passed",
+              "seconds": 0.034
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testMissingAPIKeySummaryPreflightDoesNotMutateSession": {
+              "status": "passed",
+              "seconds": 0.033
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testMixedAudioIsExplicitPerSessionAndRestoresDefaultSystemOwnership": {
+              "status": "passed",
+              "seconds": 0.037
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testNativeAudioExportDisablesFullSourceTextOption": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testNativePDFEnhancementPausesForPowerOrSeriousThermalPressure": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testNaturalCompletionPreservesAnOpenItemAndItsFinishedSourceSession": {
+              "status": "passed",
+              "seconds": 0.033
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testNewestOpeningBufferComesFirstAndExplicitPriorityOverridesIt": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testObsidianImportRunsInBackgroundAndLoadsHeadingBasedListeningMap": {
+              "status": "passed",
+              "seconds": 2.701
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testOpeningAudioPreparationStopsAfterTwoChunks": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testOpeningBufferSortsAheadOfFullItemPreparation": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testOpeningMarginFromAnotherSessionDoesNotReplaceNowPlaying": {
+              "status": "passed",
+              "seconds": 0.039
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPartialPreparedTextAudioDoesNotAdvertiseAFullScrubber": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPDFOutlineDestinationsBypassContentsEntriesAndPreserveMoreThanTwelveChapters": {
+              "status": "passed",
+              "seconds": 0.312
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPDFOutlineMatchesNumberedVisibleHeadingWithoutDuplicatingDestination": {
+              "status": "passed",
+              "seconds": 0.022
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPDFTableRegionIsAnnouncedOnceAndFlattenedCellsAreNotSpoken": {
+              "status": "passed",
+              "seconds": 0.01
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPDFVisualHeadingsPrebuildDeterministicListeningMap": {
+              "status": "passed",
+              "seconds": 0.06
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPermanentDeletionCannotCrossFireIntoRestore": {
+              "status": "passed",
+              "seconds": 0.011
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPlaybackControlsRemainUsableWhileObsidianImportIsPending": {
+              "status": "passed",
+              "seconds": 0.827
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPlaybackHeaderInfersCurrentGeneratedChapterWhenSnapshotStillReportsItemTitle": {
+              "status": "passed",
+              "seconds": 0.004
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPlaybackHeaderKeepsTheItemTitleUnprefixedWhenItIsNotAChapter": {
+              "status": "passed",
+              "seconds": 0.002
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPlaybackHeaderNumbersARealPodcastChapter": {
+              "status": "passed",
+              "seconds": 0.002
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPlaybackHeaderOpensCurrentItemWithoutStoppingItsSession": {
+              "status": "passed",
+              "seconds": 0.031
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPlaybackHeaderPrefixesARealChapterWithItsNumber": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPlaybackHeaderUsesPrivateListeningMapSceneWhenPodcastHasNoPublisherChapters": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPlaybackRateCycleOmitsQuarterSpeedAndWraps": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPlaybackScrubStateClampsGestureToCanonicalDuration": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPlaybackScrubStateKeepsGestureValueAuthoritativeUntilCommit": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPlaybackSpeechRateChangeRestartsActiveNativeTextAtCurrentOffset": {
+              "status": "passed",
+              "seconds": 0.034
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPodcastItemExposesManualFollow": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPreOnePointZeroTTSMigrationDefaultsToJamesAndRetainsAppleFallbackVoice": {
+              "status": "passed",
+              "seconds": 0.007
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPreparedSupertonicOverviewNeverReplacesCanonicalItemTextOrOffsets": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPrioritizePinsOnlySelectedJobAndLeavesFutureImportsOrderedByRecency": {
+              "status": "passed",
+              "seconds": 0.01
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPublisherChaptersAreNotPresentedAsANeedForAListeningMap": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testQuickAddFeedCombinesFolderFilesAndFollowedEntriesByRecency": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testQuickAddFeedExcludesImportedEpisodeAndDismissedFolderRevision": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testQuickFolderScanOffersOnlyImportableTextAndPDFFiles": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testRapidManualImportsReceiveDistinctIdentifiers": {
+              "status": "passed",
+              "seconds": 0.056
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testRecentlyAddedUsesStorageRecencyWhenLegacyTimestampIsMissing": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testRecordingBlocksNavigationAndSessionReplacementWithoutMutatingListeningState": {
+              "status": "passed",
+              "seconds": 0.049
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testReleaseFeatureFlagDisablesRemoteProviderAndProbe": {
+              "status": "passed",
+              "seconds": 0.002
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testRemotePDFHandoffRoutingRecognizesShareSurfaceAndPDFPath": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testReplacingTrashUndoCancelsOlderDismissal": {
+              "status": "passed",
+              "seconds": 1.732
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testResolvedPrivateListeningMapIsLoadedAsVisibleNavigableScenes": {
+              "status": "passed",
+              "seconds": 0.018
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testResumeCompletedSessionAfterExportRequiresExplicitRestart": {
+              "status": "passed",
+              "seconds": 0.054
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testRoutinePlaybackAndNavigationActionsDoNotPresentFeedback": {
+              "status": "passed",
+              "seconds": 0.057
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testSchemaFiveLibraryRemainsVisibleAcrossEveryReportedIngestionRoute": {
+              "status": "passed",
+              "seconds": 0.05
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testShareWordDeletionSupportsUndoAndRedoWithoutAllowingInsertedText": {
+              "status": "passed",
+              "seconds": 0.035
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testSkimSeparatesNaturalSynthesisFromListeningSpeed": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testSleepTimerExpiryDefersThroughInterjectionRecording": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testSourceSuggestionEngagementUsesLivePlaybackProgressBeforeLibraryRefresh": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testStartupRecoveryIncludesOlderUnpreparedItemsInNewestFirstOrder": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testStoppingTextPlaybackKeepsSessionInProgressAndResumable": {
+              "status": "passed",
+              "seconds": 0.047
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testSupertonicGenerationStatusSupportsNativeAndGeneratedTextTargets": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testSupertonicVoiceChangeStopsPlaybackAndCanResumeFromConfirmedPosition": {
+              "status": "passed",
+              "seconds": 0.058
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testTextAudioPreparationSkipsAnyCompletedOrGreaterThanNinetyEightPercentSession": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testTextBasedPDFImportExtractsReadableText": {
+              "status": "passed",
+              "seconds": 2.546
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testTextImportKeepsLiveSpeechStableWhilePreparedMediaRendersInBackground": {
+              "status": "passed",
+              "seconds": 0.093
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testTextImportStartsLiveSpeechWhenPreparedRenderingIsUnavailable": {
+              "status": "passed",
+              "seconds": 0.082
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testTimedSleepTimerUsesWallClockAndStaysArmedWhilePaused": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testTimelineDoesNotMarkASourceChapterDuringAssistantPlayback": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testTimelineMarksTheCurrentPreparedAudioChapter": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testTimelineMarksTheCurrentSourceChapter": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testTimelineShareCurationPersistsAndCreatesAStarredSenderShortlist": {
+              "status": "passed",
+              "seconds": 0.045
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testTrashUndoAutoDismissesAfterConfiguredDelay": {
+              "status": "passed",
+              "seconds": 0.068
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testTrashUndoPreservesItemSessions": {
+              "status": "passed",
+              "seconds": 0.037
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testTurningOffAutomaticCleanupRestoresAutomaticallyCleanedDrafts": {
+              "status": "passed",
+              "seconds": 0.09
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testUnavailableLocalModelDoesNotCreateRemoteSummaryOrDiscussionJobs": {
+              "status": "passed",
+              "seconds": 0.033
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testUnfinishedLibraryCompletionUndoPreservesHistoryAndSearch": {
+              "status": "passed",
+              "seconds": 0.034
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testUnplayedItemCanBeMarkedCompletedWithoutStartingPlayback": {
+              "status": "passed",
+              "seconds": 0.017
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testUnsupportedFutureSchemaShowsDataPreservationMessageInsteadOfEmptyLibrary": {
+              "status": "passed",
+              "seconds": 0.017
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testUserQueuePriorityOrdersJobsWithinTheSameTier": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testVoiceChangeWhilePausedDoesNotCreatePhantomPlaybackProgress": {
+              "status": "passed",
+              "seconds": 0.036
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testWelcomeSampleSeedsOnlyForANewEmptyNonUITestLibrary": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testWrittenMarginAppDraftLocksNavigationAndSurvivesReconstruction": {
+              "status": "passed",
+              "seconds": 0.039
+            },
+            "SpokenMarginsAppTests/Gate1DiscussionContextTests/testDiscussionUsesAllCurrentAssistantTurnInterjectionsRegardlessOfSummaryState": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1DiscussionContextTests/testDiscussionUsesItemInterjectionsWhenCurrentTargetIsSource": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/Gate1DiscussionContextTests/testExplicitFollowupRemainsPrimaryWhenProvided": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/Gate1DiscussionContextTests/testPrimaryRequestFallsBackToCurrentInterjectionBundle": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/Gate1PlaybackAutoplayQueueTests/testAITurnSummaryEligibilityUsesCurrentTurnOnly": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/Gate1PlaybackAutoplayQueueTests/testCompletedCurrentAudioPreventsDeferringGeneratedSummaryOnStalePlayingSnapshot": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1PlaybackAutoplayQueueTests/testFailedPartialSummaryKeepsItsInterjectionsEligibleForRetry": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1PlaybackAutoplayQueueTests/testInterjectionSummaryFinishAllowsQueuedDiscussionToAutoplay": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1PlaybackAutoplayQueueTests/testManualTimelineNavigationClearsPendingAutoplay": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1PlaybackAutoplayQueueTests/testMultipleGeneratedTurnsDrainFIFO": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/Gate1PlaybackAutoplayQueueTests/testPartialOriginalSourceBlocksGeneratedTurnEvenAfterCurrentAudioCompletes": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/Gate1PlaybackAutoplayQueueTests/testSourceFinishAllowsQueuedSummaryToAutoplay": {
+              "status": "passed",
+              "seconds": 0.005
+            },
+            "SpokenMarginsAppTests/Gate1PlaybackAutoplayQueueTests/testSummaryRegenerationIsBlockedUntilNewInterjectionExistsForCurrentTarget": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1ProviderRequestFactoryTests/testConversationPromptMakesCurrentFollowupPrimary": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate1ProviderRequestFactoryTests/testKeychainStoreAddsUpdatesAndDeletesProtectedSecret": {
+              "status": "passed",
+              "seconds": 0.006
+            },
+            "SpokenMarginsAppTests/Gate1ProviderRequestFactoryTests/testModelRoutingUsesThreeGate1ActivitiesAndListeningMapFallback": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/Gate1ProviderRequestFactoryTests/testResponsesRequestUsesFixedOpenAIEndpointAndStreamingPayload": {
+              "status": "passed",
+              "seconds": 0.002
+            },
+            "SpokenMarginsAppTests/Gate1ProviderRequestFactoryTests/testResponsesSSEParserEmitsTextAndSurfacesErrors": {
+              "status": "passed",
+              "seconds": 0.004
+            },
+            "SpokenMarginsAppTests/Gate1ProviderRequestFactoryTests/testSpokenPromptsContainNoStructuredTags": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testAIResponsePlaybackStateStaysSynchronizedAcrossAppAndCompactControls": {
+              "status": "passed",
+              "seconds": 0.04
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testApplicationTerminationExplicitlyEndsLiveActivities": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testClosingSessionExplicitlyEndsLiveActivityAndNowPlaying": {
+              "status": "passed",
+              "seconds": 0.032
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testCompactControllerOverlaysAppOwnedSkimReadinessWithoutRemappingTimeSkips": {
+              "status": "passed",
+              "seconds": 0.002
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testCompactControllerPublishesPendingSharedMarginToLiveActivity": {
+              "status": "passed",
+              "seconds": 0.031
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testCompactSnapshotIsPublishedForSeededSession": {
+              "status": "passed",
+              "seconds": 0.031
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testCompactTransportCommandsDelegateAndUpdateDiagnostics": {
+              "status": "passed",
+              "seconds": 0.039
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testLifecycleRefreshRepublishesCompactAndLockScreenSurfaces": {
+              "status": "passed",
+              "seconds": 0.031
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testLiveActivityContentStateCarriesPendingSharedMargin": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testLiveActivityContentStateCarriesSharedMarginNavigationKind": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testLiveActivityContentStateDecodesLegacyPayloadWithoutAvailableCommands": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testLiveActivityFindsNextNativeAudioChapterAndStopsAtTheLastChapter": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testLiveActivityOrdersPublisherChaptersAndSharedMarginsBySourcePosition": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testLiveActivityPolicyRejectsFinishedAndStaleSessions": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testLiveActivityPolicyRetainsInterjectionButRemovesSuspensionUnsafeControls": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testLiveActivityUsesOpenSpaceForTheFollowingSourceChapter": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testLiveTextNowPlayingTimelineDoesNotInventDurationOrElapsedTime": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testNativeMediaNowPlayingTimelineUsesCanonicalMediaTime": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testNowPlayingAvailabilityUsesCompactAvailableCommandsForSeekAndRate": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testNowPlayingKeepsNativePlayAndPauseRegisteredWhileTextIsPaused": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testNowPlayingPoliciesKeepNativeMediaMetadataWithoutSharingCommandOwnership": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testPeriodicCompactRefreshIgnoresRawElapsedTimeButRetainsMeaningfulChanges": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testQueuedCommandDecodesPayloadWrittenBeforeChapterArguments": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testQueuedNextChapterPreservesItsBoundedIntentArgument": {
+              "status": "passed",
+              "seconds": 0.004
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testQueuedSharedMarginNavigationPreservesItsTarget": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testSessionMixingPolicyCanRelinquishAndRestoreNowPlaying": {
+              "status": "passed",
+              "seconds": 0.002
+            },
+            "SpokenMarginsAppTests/Gate2CompactControlTests/testSharedMarginNavigationMovesToVerifiedAnchorAndPublishesPrompt": {
+              "status": "passed",
+              "seconds": 0.033
+            },
+            "SpokenMarginsAppTests/Gate5BrowserTextImportTests/testArticleShortcutBuildsReadablePageHandoff": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate5BrowserTextImportTests/testArticleShortcutEnqueuesPayloadForAppImport": {
+              "status": "passed",
+              "seconds": 0.004
+            },
+            "SpokenMarginsAppTests/Gate5BrowserTextImportTests/testArticleShortcutRejectsUnsupportedURLAndEmptyArticleFields": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate5BrowserTextImportTests/testBrowserTextImportStartsPlaybackAndPreservesSourceURL": {
+              "status": "passed",
+              "seconds": 0.033
+            },
+            "SpokenMarginsAppTests/Gate5BrowserTextImportTests/testBrowserTextPayloadRejectsMissingText": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/Gate5BrowserTextImportTests/testBrowserTextPayloadURLParsesHandoffFromStore": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate5BrowserTextImportTests/testBrowserTextURLParsesHandoff": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate5BrowserTextImportTests/testExactEmojiArticleImportPreservesSourceWhileSystemSpeechProjectionRemovesUnsafeContent": {
+              "status": "passed",
+              "seconds": 0.079
+            },
+            "SpokenMarginsAppTests/Gate5BrowserTextImportTests/testIncomingBrowserPayloadDoesNotReplacePlaybackFromLibraryRoot": {
+              "status": "passed",
+              "seconds": 0.034
+            },
+            "SpokenMarginsAppTests/Gate5BrowserTextImportTests/testIncomingBrowserTextURLRoutesToGate5Import": {
+              "status": "passed",
+              "seconds": 0.01
+            },
+            "SpokenMarginsAppTests/Gate5BrowserTextImportTests/testPayloadIsDeletedAfterSuccessfulImport": {
+              "status": "passed",
+              "seconds": 0.033
+            },
+            "SpokenMarginsAppTests/Gate5BrowserTextImportTests/testPendingMarkdownShareImportsMapWithoutReplacingPlayback": {
+              "status": "passed",
+              "seconds": 2.172
+            },
+            "SpokenMarginsAppTests/Gate5BrowserTextImportTests/testPlainTextAndMarkdownHandoffsAreNotHTMLStripped": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate5BrowserTextImportTests/testReadablePagePayloadMapsToTypedHandoffWithoutExposingWebKitDetails": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/Gate5BrowserTextImportTests/testReadablePagePayloadRejectsEmptyFallbackTextWithTypedError": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/InterjectionPositionPresentationTests/testKnownDurationOverridesStaleStoredZeroPercent": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/InterjectionPositionPresentationTests/testUnknownDurationUsesDurableTimestampInsteadOfFalseZeroPercent": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/LocalAudioListeningPackageTests/testExactAudioImportActivatesMapResolvesMarginsAndSurvivesReconstruction": {
+              "status": "passed",
+              "seconds": 1.798
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testActualFourSightAttributionPointsCompactWithoutDroppingQualification": {
+              "status": "passed",
+              "seconds": 0.012
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testActualFourSightDictationArtifactsRepairAndCompactAgainstSourceNames": {
+              "status": "passed",
+              "seconds": 0.007
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testActualFourSightLowPreferenceNoteRejectsPolarityReversal": {
+              "status": "passed",
+              "seconds": 0.009
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testActualPromptLeakageSummaryMustPreserveNamedConcerns": {
+              "status": "passed",
+              "seconds": 0.007
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testBestCandidateRejectsTranscriptCleanupAndSelectsConciseCoveredRewrite": {
+              "status": "passed",
+              "seconds": 0.011
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testCapabilityFrontierFalsificationQuestionDropsDictationFalseStart": {
+              "status": "passed",
+              "seconds": 0.002
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testCausalDirectionRejectsFrontierPersistenceReversal": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testCleanupRemovesGeneratedYesAfterQuestionWithoutRemovingAssertion": {
+              "status": "passed",
+              "seconds": 0.002
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testCompactMeaningSummaryRemovesModelClaimSetScaffolding": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testExplicitQuestionAndVerifiedZeroDayConditionsAreAudited": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testGeoffreyInterjectionRepairsContextProvenDictationAndAuditsEveryClaim": {
+              "status": "passed",
+              "seconds": 0.005
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testInterjectionSummaryPromptsUseOnlyOneNoteAndNeverSourceAnchors": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testLongInterjectionConditionsAreAudited": {
+              "status": "passed",
+              "seconds": 0.002
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testMapMetadataValidatorRejectsLongSourceQuotation": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testMeaningSlotDecoderDoesNotInventQuestionModalityForActualPromptLeakageNote": {
+              "status": "passed",
+              "seconds": 0.005
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testMeaningSlotDecoderPreservesActualFourSightQuestionAndAttributionPoints": {
+              "status": "passed",
+              "seconds": 0.008
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testNegationAuditRejectsDontForgetPolarityReversal": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testNegationAuditTreatsDontUnderstandWhyAsRhetoricalProposal": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testPartialSummaryReductionProducesStructuredListenerOnlyPayload": {
+              "status": "passed",
+              "seconds": 0.002
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testPermissiveTransformationInstructionsConstrainTaskToTextEditing": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testPlainTextPointDecoderAcceptsFencedJSONWithoutGenerableDecoding": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testPlannerCarriesExactMediaNavigationAnchorsIntoDraft": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testPlannerUsesSemanticShiftAfterMinimumChunkSize": {
+              "status": "passed",
+              "seconds": 0.006
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testRiskReportInterjectionsHaveValidMateriallyShorterSummaries": {
+              "status": "passed",
+              "seconds": 0.011
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testSafetyNormalizationRoundTripsExplicitInterjectionTerms": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testSourceAnchorsOnlyRepairLikelyProperNamesAfterMeaningExtraction": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testSpokenNoteCleanupRemovesFillersAndRepeatedWordsWithoutRemovingUncertainty": {
+              "status": "passed",
+              "seconds": 0.005
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testSummaryValidationNeverExpandsShortNotesOrAcceptsTranscriptEquivalentText": {
+              "status": "passed",
+              "seconds": 0.006
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testSummaryValidationPreservesQuestionsAndRejectsLowCoverageHallucination": {
+              "status": "passed",
+              "seconds": 0.018
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testSummaryValidationRejectsAnchorCopyAndResidualFillers": {
+              "status": "passed",
+              "seconds": 0.004
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testSummaryValidationRejectsLightlyCleanedTranscriptInsteadOfCompressedIntent": {
+              "status": "passed",
+              "seconds": 0.007
+            },
+            "SpokenMarginsAppTests/LocalFoundationModelsTests/testUncoveredTermsCollapseInflectionsAndExcludePriorMeaning": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/OfflineStorageLedgerTests/testAdoptionIsIdempotentAndLedgerMatchesTrackedFiles": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/OfflineStorageLedgerTests/testAdoptionToleratesHistoricalDuplicatePaths": {
+              "status": "passed",
+              "seconds": 0.002
+            },
+            "SpokenMarginsAppTests/OfflineStorageLedgerTests/testBudgetUsesDecimalGigabytesMatchingSettingsLabel": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/OfflineStorageLedgerTests/testCommitRejectsOutputLargerThanReservation": {
+              "status": "passed",
+              "seconds": 0.002
+            },
+            "SpokenMarginsAppTests/OfflineStorageLedgerTests/testEPUBImporterRejectsNonFileURLBeforeLoading": {
+              "status": "passed",
+              "seconds": 0.002
+            },
+            "SpokenMarginsAppTests/OfflineStorageLedgerTests/testLocalSourceImporterCoordinatesFileSizeAndCopy": {
+              "status": "passed",
+              "seconds": 0.005
+            },
+            "SpokenMarginsAppTests/OfflineStorageLedgerTests/testLoweredBudgetImmediatelyEvictsReproducibleAssets": {
+              "status": "passed",
+              "seconds": 0.002
+            },
+            "SpokenMarginsAppTests/OfflineStorageLedgerTests/testReservationPreventsWriterFromExceedingBudget": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/PKMWorkflowTests/testAutomaticDeliveryRetriesWithoutDuplicatesAndPreservesExternalEdits": {
+              "status": "passed",
+              "seconds": 0.016
+            },
+            "SpokenMarginsAppTests/PKMWorkflowTests/testEditionImportPreservesActiveSessionAndRejectsSilentMapReplacement": {
+              "status": "passed",
+              "seconds": 0.05
+            },
+            "SpokenMarginsAppTests/PlaybackQualityTests/testFrontierStopsAtMissingChunkAndRejectsStaleSourceOrVoice": {
+              "status": "passed",
+              "seconds": 0.005
+            },
+            "SpokenMarginsAppTests/PlaybackQualityTests/testSkimDestinationFormattingDoesNotInventATarget": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/PodcastDownloadCoordinatorTests/testCellularRegistrationStreamsWithoutAutomaticDownloadAndDeduplicatesRecord": {
+              "status": "passed",
+              "seconds": 0.01
+            },
+            "SpokenMarginsAppTests/PodcastDownloadCoordinatorTests/testClearDownloadsProtectsActivePlaybackAndEvictsOtherLocalFile": {
+              "status": "passed",
+              "seconds": 0.008
+            },
+            "SpokenMarginsAppTests/PodcastDownloadCoordinatorTests/testManualDownloadDoesNotClaimToStartWithoutAConnection": {
+              "status": "passed",
+              "seconds": 0.007
+            },
+            "SpokenMarginsAppTests/PodcastDownloadCoordinatorTests/testPermanentItemRemovalDeletesLocalRemoteAndDownloadRecords": {
+              "status": "passed",
+              "seconds": 0.007
+            },
+            "SpokenMarginsAppTests/PodcastDownloadCoordinatorTests/testRegistrationPersistsSecureDownloadTransportForExistingHTTPEnclosure": {
+              "status": "passed",
+              "seconds": 0.007
+            },
+            "SpokenMarginsAppTests/PodcastDownloadCoordinatorTests/testRetryMigratesPreviouslyFailedBBCDownloadWithoutReimport": {
+              "status": "passed",
+              "seconds": 0.007
+            },
+            "SpokenMarginsAppTests/PodcastDownloadCoordinatorTests/testValidatedLocalURLRequiresAvailableNonemptyFile": {
+              "status": "passed",
+              "seconds": 0.007
+            },
+            "SpokenMarginsAppTests/PreparedAudioCoordinatorTests/testCommittedChunksSurviveCoordinatorReconstructionAndAreReused": {
+              "status": "passed",
+              "seconds": 0.019
+            },
+            "SpokenMarginsAppTests/PreparedAudioCoordinatorTests/testCorruptCommittedChunkIsRejectedAndMarksManifestForRepreparation": {
+              "status": "passed",
+              "seconds": 0.856
+            },
+            "SpokenMarginsAppTests/PreparedAudioCoordinatorTests/testIdentityMutationInvalidatesPriorManifestWithoutDeletingChunks": {
+              "status": "passed",
+              "seconds": 0.011
+            },
+            "SpokenMarginsAppTests/PreparedAudioCoordinatorTests/testLivePlaybackCommitsWithoutCreatingSpeculativeJob": {
+              "status": "passed",
+              "seconds": 0.011
+            },
+            "SpokenMarginsAppTests/PreparedAudioCoordinatorTests/testStopPersistsCancellationWithoutDiscardingEarlierCommits": {
+              "status": "passed",
+              "seconds": 0.012
+            },
+            "SpokenMarginsAppTests/SessionMarkdownFileWriterTests/testFileNameFallsBackToSessionIdentifierWhenTimestampIsMissing": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SessionMarkdownFileWriterTests/testFileNameUsesItemTitleAndSessionDate": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SessionMarkdownFileWriterTests/testWriterDoesNotOverwriteAnExistingExport": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testAmbiguousFormImportEntersReviewStateInsteadOfReportingFailure": {
+              "status": "passed",
+              "seconds": 0.038
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testAmbiguousPodcastCandidatesRequireSelectionBeforeImport": {
+              "status": "passed",
+              "seconds": 0.054
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testAppleFeedFallbackNeverSelectsADifferentEpisode": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testAppleProviderDoesNotUseSpotifyExclusiveFailureCopy": {
+              "status": "passed",
+              "seconds": 0.011
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testAsyncSourceLinkFormClearsLinkAfterSuccessfulProcessing": {
+              "status": "passed",
+              "seconds": 0.048
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testBackgroundPodcastTranscriptCompletionDoesNotSpliceItIntoActivePlayback": {
+              "status": "passed",
+              "seconds": 0.058
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testClipboardButtonExtractsSourceLinkURL": {
+              "status": "passed",
+              "seconds": 0.023
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testCompletedPodcastDownloadDoesNotTranscribeFullSourceWithoutListeningMapRequest": {
+              "status": "passed",
+              "seconds": 0.015
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testConfiguredNativeAudioSkipIntervalsAreAppliedAndPersisted": {
+              "status": "passed",
+              "seconds": 0.034
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testDeletingFailedLocalPDFHandoffRemovesManagedCopy": {
+              "status": "passed",
+              "seconds": 0.006
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testDescriptionChaptersAcceptLinkedParenthesesAndPreserveTitleColons": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testDescriptionChaptersValidateTimesAndIgnoreProseAndURLOnlyLines": {
+              "status": "passed",
+              "seconds": 0.012
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testExactAppleEpisodeRetainsSevenChaptersWhenFeedReturns403": {
+              "status": "passed",
+              "seconds": 0.005
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testFeedAliasesUseFinalResponseIdentityWithoutSelfLink": {
+              "status": "passed",
+              "seconds": 0.015
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testFeedDescriptionChaptersSurviveAnEarlierShortSummary": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testFeedEntryImportPreservesTitleAndSourceWithoutChangingActivePlayback": {
+              "status": "passed",
+              "seconds": 0.062
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testFollowedSourceAcceptsLargeFeedAndRetainsOnlyNewestTwentyFiveSuggestions": {
+              "status": "passed",
+              "seconds": 0.052
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testForegroundActivationImportsSavedShareWithoutReplacingPlayback": {
+              "status": "passed",
+              "seconds": 0.05
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testIncomingPayloadIsQuarantinedAfterUnsupportedImport": {
+              "status": "passed",
+              "seconds": 0.022
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testIncomingSourceLinkAddsToLibraryWithoutReplacingPlaybackFromLibraryRoot": {
+              "status": "passed",
+              "seconds": 0.037
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testIncomingSourceLinkURLImportsAndStartsPlayableItem": {
+              "status": "passed",
+              "seconds": 0.014
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testInterjectionTranscriptionFinishesBeforeSourceWindowTranscriptionStarts": {
+              "status": "passed",
+              "seconds": 0.073
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testNativeAudioInterjectionRequestsFullShoulderContext": {
+              "status": "passed",
+              "seconds": 2.561
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testNativeAudioPlaybackRatePreferenceSurvivesSessionSnapshotsAndRemoteChanges": {
+              "status": "passed",
+              "seconds": 0.082
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testOlderPodcastSessionKeepsExactPositionAfterOpeningAndClosingNewSession": {
+              "status": "passed",
+              "seconds": 0.057
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testPDFImportPreservesActiveNativeMediaSession": {
+              "status": "passed",
+              "seconds": 0.084
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testPendingSourceLinkHandoffImportsAndDeletesOnSuccess": {
+              "status": "passed",
+              "seconds": 0.022
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testPrivateEpisodeMapRequiresExplicitRequestBeforeDownloadTranscription": {
+              "status": "passed",
+              "seconds": 0.016
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testPublicResolverAcceptsAppleLookupExtensionlessAudioURL": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testPublicResolverAcceptsDirectAudioURL": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testPublicResolverAcceptsLegacyPodcastingNamespaceUsedByNoAgendaFeed": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testPublicResolverAsyncAcceptsDirectAudioURL": {
+              "status": "passed",
+              "seconds": 0.002
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testPublicResolverDoesNotAutoSelectExactTitleFromConflictingShow": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testPublicResolverDoesNotGuessBetweenAmbiguousSpotifyAppleMatches": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testPublicResolverExplainsWhenSpotifyEpisodeHasNoAppleMatch": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testPublicResolverExtractsRSSAudioEnclosure": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testPublicResolverFallsBackToApplePageStreamWhenLookupIsEmpty": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testPublicResolverFallsBackToFeedWhenEpisodeIsOutsideAppleLookupWindow": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testPublicResolverImportsStructuredPodcastEpisodePageWithPublisherChapters": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testPublicResolverNormalizesSpotifyEpisodeToExactAppleMatch": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testPublicResolverRecoversCanonicalFeedForExistingAppleEpisode": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testPublicResolverRejectsInsecureHTTPBeforeFetching": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testPublicResolverRequiresASpecificSpotifyEpisodeLink": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testPublicResolverRetriesSpotifyEpisodeNumberTitleWithoutPrefix": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testPublicResolverUsesAppleLookupAudioURL": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testPublicResolverUsesApplePageWhenShowSlugCannotIdentifyEpisodeInFeed": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testPublicResolverUsesShowDateAndDurationToDisambiguateSpotifyEpisode": {
+              "status": "passed",
+              "seconds": 0.002
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testRetryContextUsesRelocatedOwnedAudiobookAndReportsCompletion": {
+              "status": "passed",
+              "seconds": 0.052
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testSavedInterjectionAudioCanReplaceATruncatedTranscript": {
+              "status": "passed",
+              "seconds": 0.068
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testShareRepresentationAcceptsObjectiveCURLVendedBySafari": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testSourceLinkFormRejectsMalformedURLWithoutClearingAndDeduplicatesActiveResolution": {
+              "status": "passed",
+              "seconds": 2.733
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testSourceLinkPayloadStoreQuarantinesAndRetriesFailure": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testSourceLinkPayloadStoreRoundTripsAndDeletes": {
+              "status": "passed",
+              "seconds": 0.002
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testSourceLinkStoreCopiesAndDeletesManagedPDF": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testSourceLinkStorePersistsPDFDataRepresentation": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testSourceLinkStoreRejectsNonPDFDataRepresentation": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testSourceLinkURLParsesHandoff": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testStoredTranscriptWindowUsesFullShoulderAndAllowsTimestampGaps": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testTextClipboardButtonFillsManualImportField": {
+              "status": "passed",
+              "seconds": 0.012
+            },
+            "SpokenMarginsAppTests/SourceLinkImportTests/testUnavailablePodcastContextKeepsTimestampAndPersistedRetryState": {
+              "status": "passed",
+              "seconds": 0.108
+            },
+            "SpokenMarginsAppTests/SpokenMarginsPackageHandoffTests/testAppConsumesShareExtensionPackageIntoRecipientImportFlow": {
+              "status": "passed",
+              "seconds": 0.093
+            },
+            "SpokenMarginsAppTests/SpokenMarginsPackageHandoffTests/testImportedAssetPathRebasesAfterApplicationContainerRelocation": {
+              "status": "passed",
+              "seconds": 0.002
+            },
+            "SpokenMarginsAppTests/SpokenMarginsPackageHandoffTests/testImportedPodcastRequestsTranscriptFallbackAndResolvesFuzzyContext": {
+              "status": "passed",
+              "seconds": 0.063
+            },
+            "SpokenMarginsAppTests/SpokenMarginsPackageHandoffTests/testMixedImportedLayerKeepsItsVerifiedMarginsPlaybackEligible": {
+              "status": "passed",
+              "seconds": 0.0
+            },
+            "SpokenMarginsAppTests/SpokenMarginsPackageHandoffTests/testPackageHandoffPreservesExactBytesUntilConsumed": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/SpokenMarginsPackageHandoffTests/testPackageHandoffRejectsAFileWithoutTheOwnedExtension": {
+              "status": "passed",
+              "seconds": 0.002
+            },
+            "SpokenMarginsAppTests/SpokenMarginsPackageHandoffTests/testPodcastPackageImportBindsToImportedItemInsteadOfStaleSelection": {
+              "status": "passed",
+              "seconds": 0.096
+            },
+            "SpokenMarginsAppTests/SpokenMarginsPackageHandoffTests/testReopeningCorruptedWrongSourcePackageRepairsItsItemAssociation": {
+              "status": "passed",
+              "seconds": 0.047
+            },
+            "SpokenMarginsAppTests/SpokenMarginsPackageHandoffTests/testSystemShareDeclaresTheOwnedPackageType": {
+              "status": "passed",
+              "seconds": 0.003
+            },
+            "SpokenMarginsAppTests/SpokenMarginsTermsStorageTests/testAcceptanceIsVersionedAndExpiresWhenTheVersionChanges": {
+              "status": "passed",
+              "seconds": 0.005
+            },
+            "SpokenMarginsAppTests/SpokenMarginsTermsStorageTests/testBundledTermsContainTheOpenRAILAgreementAndMaterialChangeRule": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/StreamingSpeechQueueTests/testQueueReportsStartedOnlyAfterTheSpeechClientConfirmsPlayback": {
+              "status": "passed",
+              "seconds": 0.366
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testAirPodRouteLossPublishesCanonicalPauseAndRemoteResumeDuringPartialGeneration": {
+              "status": "passed",
+              "seconds": 0.17
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testBackgroundingDuringInitialRenderPreservesSelectedSupertonicVoice": {
+              "status": "passed",
+              "seconds": 0.01
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testChunkerMaintainsSourceOffsetsAcrossEmojiAndWhitespace": {
+              "status": "passed",
+              "seconds": 0.002
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testChunkerPlansLongSourcesInOneMonotonicPass": {
+              "status": "passed",
+              "seconds": 0.426
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testChunkerPrefersSentenceThenCommaThenWhitespaceAndCapsLength": {
+              "status": "passed",
+              "seconds": 0.002
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testDefaultPlaybackStartsWithFirstChunkWhileLaterChunkIsStillRendering": {
+              "status": "passed",
+              "seconds": 0.035
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testForwardSeekDoesNotWrapRenderingBackToSkippedPrefix": {
+              "status": "passed",
+              "seconds": 0.034
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testFullGenerationPersistsPodcastStyleAudioWhilePlaybackIsPaused": {
+              "status": "passed",
+              "seconds": 0.042
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testGenerationTokenCancelsStaleRenderAfterReplay": {
+              "status": "passed",
+              "seconds": 0.031
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testIdleSupertonicMixPolicyForwardsWithoutActivatingAnAudioSession": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testMalformedRenderedAudioFallsBackWithoutAdvancingOffset": {
+              "status": "passed",
+              "seconds": 0.009
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testManifestAndChunkCommitFinishBeforeRenderingAdvances": {
+              "status": "passed",
+              "seconds": 0.223
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testMediaServicesResetCheckpointsIntraChunkProgressBeforeCanonicalPause": {
+              "status": "passed",
+              "seconds": 0.111
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testMediaServicesResetRetainsRenderedChunkForExplicitResume": {
+              "status": "passed",
+              "seconds": 0.108
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testObservedPlaybackStartRemainsPendingWhilePlayerIsStillPaused": {
+              "status": "passed",
+              "seconds": 0.029
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testPausedPlaybackCanSeekWithinRenderedChunk": {
+              "status": "passed",
+              "seconds": 0.152
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testPauseDuringInitialRenderPreventsAutoplayAndResumeReusesResult": {
+              "status": "passed",
+              "seconds": 0.201
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testPlaybackRendersEveryChunkWithoutWaitingForPlaybackToAdvance": {
+              "status": "passed",
+              "seconds": 0.046
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testPlaybackStartsOnlyAfterTwoSupertonicChunksAreReady": {
+              "status": "passed",
+              "seconds": 0.35
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testRateChangeUsesTransportWithoutChangingSynthesisOrRestartingRender": {
+              "status": "passed",
+              "seconds": 0.155
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testRenderedSpeechDiskCacheReusesAudioAcrossPlaybackClients": {
+              "status": "passed",
+              "seconds": 0.057
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testRenderFailureFallsBackAtLastConfirmedSourceOffset": {
+              "status": "passed",
+              "seconds": 0.004
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testRenderGapWaitsForSupertonicAndNeverFallsBack": {
+              "status": "passed",
+              "seconds": 0.694
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testResourcePressureStopsGenerationBeforeSystemFallbackBecomesAudible": {
+              "status": "passed",
+              "seconds": 0.331
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testSeekingCancelsObsoleteRenderBeforeStartingReplacementGeneration": {
+              "status": "passed",
+              "seconds": 0.014
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testSelectableCatalogExposesOnlyJamesLilyAndSystem": {
+              "status": "passed",
+              "seconds": 0.001
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testSentenceBoundaryDelayRemainsWaitingInsteadOfReportingUserPause": {
+              "status": "passed",
+              "seconds": 0.014
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testSlowSpeculativeChunkDoesNotSwitchAudiblePreparedPlaybackToFallback": {
+              "status": "passed",
+              "seconds": 0.877
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testSourceOffsetsSurviveWhitespaceAndURLNormalization": {
+              "status": "passed",
+              "seconds": 0.038
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testStalledRendererFallsBackWithinBoundAndCanRetryCurrentTarget": {
+              "status": "passed",
+              "seconds": 0.134
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testStopGenerationPreservesPausedTransportAndForwardsFallbackRate": {
+              "status": "passed",
+              "seconds": 0.01
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testUnavailableConfiguredSystemVoiceDoesNotSilentlyUseGenericVoice": {
+              "status": "passed",
+              "seconds": 0.017
+            },
+            "SpokenMarginsAppTests/SupertonicSpeechTests/testUserCanStopOnDeviceRenderingAndContinueWithSystemVoice": {
+              "status": "passed",
+              "seconds": 0.793
+            },
+            "SpokenMarginsAppTests/SupertonicTermsGateTests/testCurrentAcceptancePreservesStoredSupertonicVoice": {
+              "status": "passed",
+              "seconds": 0.008
+            },
+            "SpokenMarginsAppTests/SupertonicTermsGateTests/testDecliningFirstPlaybackTermsContinuesWithIOSVoice": {
+              "status": "passed",
+              "seconds": 0.041
+            },
+            "SpokenMarginsAppTests/SupertonicTermsGateTests/testDecliningTermsKeepsSystemVoiceAndDoesNotRecordAcceptance": {
+              "status": "passed",
+              "seconds": 0.007
+            },
+            "SpokenMarginsAppTests/SupertonicTermsGateTests/testFirstPlaybackPromptsForTermsAndAcceptanceContinuesWithSupertonic": {
+              "status": "passed",
+              "seconds": 0.031
+            },
+            "SpokenMarginsAppTests/SupertonicTermsGateTests/testSelectingSupertonicPresentsTermsAndAcceptanceEnablesPendingVoice": {
+              "status": "passed",
+              "seconds": 0.008
+            },
+            "SpokenMarginsAppTests/SupertonicTermsGateTests/testStoredSupertonicVoiceFallsBackToSystemUntilTermsAreAccepted": {
+              "status": "passed",
+              "seconds": 0.009
+            }
+          }
+        }
+      ]
+    },
+    {
+      "manifest": "artifacts/test-runs/library-qol-ui-complete/manifest.json",
+      "status": "partial: iPad broad accessibility timeout",
+      "steps": [
+        {
+          "name": "phone-ui",
+          "exit_code": 0,
+          "counts": null,
+          "tests": {
+            "SpokenMarginsAppUITests/Gate1FlowUITests/testBuild23LayoutRegressionsRemainOperableAtAccessibilityType": {
+              "status": "passed",
+              "seconds": 120.016
+            },
+            "SpokenMarginsAppUITests/Gate1FlowUITests/testLibraryCompactRowStaysDense": {
+              "status": "passed",
+              "seconds": 7.173
+            },
+            "SpokenMarginsAppUITests/Gate1FlowUITests/testLibraryUnfinishedCompletionUndoAndSearchDiscovery": {
+              "status": "passed",
+              "seconds": 27.873
+            }
+          }
+        },
+        {
+          "name": "ipad-ui",
+          "exit_code": 65,
+          "counts": null,
+          "tests": {
+            "SpokenMarginsAppUITests/Gate1FlowUITests/testLibraryCompactRowStaysDense": {
+              "status": "passed",
+              "seconds": 7.129
+            },
+            "SpokenMarginsAppUITests/Gate1FlowUITests/testLibraryUnfinishedCompletionUndoAndSearchDiscovery": {
+              "status": "passed",
+              "seconds": 29.519
+            }
+          }
+        },
+        {
+          "name": "simulator-build",
+          "exit_code": 0,
+          "counts": null,
+          "tests": null
+        },
+        {
+          "name": "device-build",
+          "exit_code": 0,
+          "counts": null,
+          "tests": null
+        }
+      ]
+    }
+  ],
+  "weekly_usage": {
+    "start_used_percent": 62,
+    "end_used_percent": 66,
+    "remaining_percent": 34,
+    "scope": "rounded account-wide readings"
+  },
+  "known_verification_limit": "iPad testBuild23LayoutRegressionsRemainOperableAtAccessibilityType exceeded 180 seconds later in Add Source; no further unchanged retries. Library checks in that route and the two dedicated Library tests completed.",
+  "retained_failures": [
+    "20260913-082125-619627-app: stale module build; clean outputs resolved.",
+    "20260913-083345-126311-app: sorting test inherited preference; test isolation repaired.",
+    "20260913-083631-620398-app: launch stalled before tests; interrupted and simulator restarted.",
+    "20260913-084129-980049-app: existing audio-resume timing assertion; final complete 424-test run passed.",
+    "library-qol-ui-final: test defaults/identifier failure; repaired. Remaining obsolete driver interrupted.",
+    "library-qol-ui-recheck: phone accessibility exceeded 120 seconds; interaction tests passed. Obsolete iPad run interrupted for visible toolbar overlap repair."
+  ]
+}
