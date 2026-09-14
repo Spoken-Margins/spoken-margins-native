@@ -296,12 +296,13 @@ public enum PodcastAcousticAnchorResolver {
         var resolutions: [String: ImportedAnchorResolution] = [:]
         for query in queries {
             var candidates: [(timeMs: Int, confidence: Double)] = []
+            var matchedAnchorOffsets: [Int] = []
             for evidence in query.evidence {
                 let signature: SHSignature
                 do {
                     signature = try SHSignature(dataRepresentation: evidence.signatureData)
                 } catch {
-                    throw PodcastAnchorEvidenceError.invalidSignature(evidence.id)
+                    continue // One unreadable variant must not discard the other flanks.
                 }
                 guard let session else { continue }
                 switch await session.result(from: signature) {
@@ -315,6 +316,7 @@ public enum PodcastAcousticAnchorResolver {
                         confidence = 0.9
                     }
                     candidates.append((matchedStartMs + evidence.anchorOffsetMs, confidence))
+                    matchedAnchorOffsets.append(evidence.anchorOffsetMs)
                 case .noMatch, .error:
                     continue
                 }
@@ -325,7 +327,8 @@ public enum PodcastAcousticAnchorResolver {
                 senderDurationMs: senderDurationMs,
                 recipientDurationMs: recipientDurationMs,
                 strongSourceIdentity: strongSourceIdentity,
-                exactDigestContradiction: senderExactEditionSHA256 != nil
+                exactDigestContradiction: senderExactEditionSHA256 != nil,
+                matchedAnchorOffsets: matchedAnchorOffsets
             )
         }
         return corroboratePartialFlanks(queries: queries, resolutions: resolutions)
@@ -348,7 +351,8 @@ public enum PodcastAcousticAnchorResolver {
         senderDurationMs: Int?,
         recipientDurationMs: Int?,
         strongSourceIdentity: Bool,
-        exactDigestContradiction: Bool
+        exactDigestContradiction: Bool,
+        matchedAnchorOffsets: [Int] = []
     ) -> ImportedAnchorResolution {
         guard !candidates.isEmpty else {
             if !query.evidenceWasDeclared {
@@ -361,11 +365,16 @@ public enum PodcastAcousticAnchorResolver {
                 )
             }
             return ImportedAnchorResolution(
-                evidenceClass: .absentFromRecipientEdition,
+                evidenceClass: .unresolved,
                 algorithmVersion: "podcast-anchor.v1"
             )
         }
-        guard query.evidence.count <= 1 || candidates.count == query.evidence.count else {
+        // Redundant signature variants need not all match, but both temporal
+        // flanks must agree. The spread check below still rejects conflicts.
+        let matchedBothFlanks = matchedAnchorOffsets.contains { $0 > 0 }
+            && matchedAnchorOffsets.contains { $0 < 0 }
+            && candidates.allSatisfy { $0.confidence >= minimumPartialFlankConfidence }
+        guard query.evidence.count <= 1 || candidates.count == query.evidence.count || matchedBothFlanks else {
             let strongest = candidates.max { lhs, rhs in lhs.confidence < rhs.confidence }
             if candidates.count == 1,
                query.evidence.count == 2,

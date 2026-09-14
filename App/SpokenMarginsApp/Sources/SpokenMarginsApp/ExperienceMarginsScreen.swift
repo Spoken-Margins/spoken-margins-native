@@ -249,7 +249,7 @@ struct SharedMarginDetailView: View {
                 }
                 Section {
                     DisclosureGroup("Package details") {
-                        Text("Package integrity checked. This collection is unsigned; its label is not verified sender identity.")
+                        Text("Package integrity checked. Sender identity is unverified; this does not restrict playback.")
                         Text("Imported \(row.layer.importedAt.formatted(date: .abbreviated, time: .omitted))")
                     }
                 }

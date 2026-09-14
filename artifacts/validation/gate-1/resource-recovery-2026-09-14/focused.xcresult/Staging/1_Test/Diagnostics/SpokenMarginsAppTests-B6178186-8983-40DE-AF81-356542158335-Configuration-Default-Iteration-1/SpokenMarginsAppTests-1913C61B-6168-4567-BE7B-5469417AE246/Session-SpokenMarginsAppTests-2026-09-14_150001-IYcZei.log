@@ -1,0 +1,253 @@
+Xcode version: 26.6 (17F113)
+15:00:01.829 xcodebuild[30568:7170204] Beginning test session SpokenMarginsAppTests-BFC08793-92A7-4FBC-B374-3560449ABB80 at 2026-09-14 15:00:01.828 on target <DVTiPhoneSimulator: 0xbe797c500> {
+		SimDevice: iPhone 17 Pro (856FA6EF-5E03-4120-939B-F0EF42A804E8, iOS 26.5, Shutdown)
+} (26.5 (23F77))
+15:00:01.829 xcodebuild[30568:7170204] 	/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild
+-project
+SpokenMarginsNative.xcodeproj
+-scheme
+SpokenMarginsAppBehavior
+-testPlan
+AppBehavior
+-destination
+id=856FA6EF-5E03-4120-939B-F0EF42A804E8
+-derivedDataPath
+/tmp/spoken-margins-verification-derived
+-parallel-testing-enabled
+NO
+-only-testing:SpokenMarginsAppTests/SupertonicSpeechTests
+-only-testing:SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPDFRunningHeadersAreRemovedOnlyFromPageMargins
+-only-testing:SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPDFOutlineMatchesNumberedVisibleHeadingWithoutDuplicatingDestination
+-only-testing:SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPDFOutlineDestinationsBypassContentsEntriesAndPreserveMoreThanTwelveChapters
+-only-testing:SpokenMarginsAppTests/Gate1AppModelWorkflowTests/testPDFTableRegionIsAnnouncedOnceAndFlattenedCellsAreNotSpoken
+-resultBundlePath
+artifacts/validation/gate-1/resource-recovery-2026-09-14/focused.xcresult
+test
+15:00:01.830 xcodebuild[30568:7170204] Test standard output and standard error is at /Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/validation/gate-1/resource-recovery-2026-09-14/focused.xcresult/Staging/1_Test/Diagnostics/SpokenMarginsAppTests-B6178186-8983-40DE-AF81-356542158335-Configuration-Default-Iteration-1/SpokenMarginsAppTests-1913C61B-6168-4567-BE7B-5469417AE246/StandardOutputAndStandardError.txt
+15:00:02.089 xcodebuild[30568:7176011] /Users/colemiller/Library/Developer/CoreSimulator/Devices: Received sim device set notification: {
+    device = "iPhone 17 Pro (856FA6EF-5E03-4120-939B-F0EF42A804E8, iOS 26.5, Booting)";
+    "last_booted_at" = "2026-09-14 19:00:02 +0000";
+    "new_state" = 2;
+    notification = "device_state";
+    "prev_state" = 1;
+}
+15:00:02.089 xcodebuild[30568:7170204] 856FA6EF-5E03-4120-939B-F0EF42A804E8: Received sim device notification: {
+    notification = "availableDevices_changed";
+}
+15:00:02.089 xcodebuild[30568:7170204] 856FA6EF-5E03-4120-939B-F0EF42A804E8: Received sim device notification: {
+    device = "iPhone 17 Pro (856FA6EF-5E03-4120-939B-F0EF42A804E8, iOS 26.5, Booting)";
+    "last_booted_at" = "2026-09-14 19:00:02 +0000";
+    "new_state" = 2;
+    notification = "device_state";
+    "prev_state" = 1;
+}
+15:00:02.117 xcodebuild[30568:7170204] /Users/colemiller/Library/Developer/CoreSimulator/Devices: Received sim device set notification: {
+    device = "iPhone 17 Pro (856FA6EF-5E03-4120-939B-F0EF42A804E8, iOS 26.5, Booting)";
+    "last_booted_at" = "2026-09-14 19:00:02 +0000";
+    "new_state" = 2;
+    notification = "device_state";
+    "prev_state" = 1;
+}
+15:00:02.117 xcodebuild[30568:7170204] /Users/colemiller/Library/Developer/CoreSimulator/Devices: Received sim device set notification: {
+    device = "iPhone 17 Pro (856FA6EF-5E03-4120-939B-F0EF42A804E8, iOS 26.5, Booting)";
+    "last_booted_at" = "2026-09-14 19:00:02 +0000";
+    "new_state" = 2;
+    notification = "device_state";
+    "prev_state" = 1;
+}
+15:00:02.117 xcodebuild[30568:7170204] /Users/colemiller/Library/Developer/CoreSimulator/Devices: Received sim device set notification: {
+    device = "iPhone 17 Pro (856FA6EF-5E03-4120-939B-F0EF42A804E8, iOS 26.5, Booting)";
+    "last_booted_at" = "2026-09-14 19:00:02 +0000";
+    "new_state" = 2;
+    notification = "device_state";
+    "prev_state" = 1;
+}
+15:00:02.117 xcodebuild[30568:7170204] /Users/colemiller/Library/Developer/CoreSimulator/Devices: Received sim device set notification: {
+    device = "iPhone 17 Pro (856FA6EF-5E03-4120-939B-F0EF42A804E8, iOS 26.5, Booting)";
+    "last_booted_at" = "2026-09-14 19:00:02 +0000";
+    "new_state" = 2;
+    notification = "device_state";
+    "prev_state" = 1;
+}
+15:00:02.117 xcodebuild[30568:7170204] /Users/colemiller/Library/Developer/CoreSimulator/Devices: Received sim device set notification: {
+    device = "iPhone 17 Pro (856FA6EF-5E03-4120-939B-F0EF42A804E8, iOS 26.5, Booting)";
+    "last_booted_at" = "2026-09-14 19:00:02 +0000";
+    "new_state" = 2;
+    notification = "device_state";
+    "prev_state" = 1;
+}
+15:00:02.117 xcodebuild[30568:7170204] /Users/colemiller/Library/Developer/CoreSimulator/Devices: Received sim device set notification: {
+    device = "iPhone 17 Pro (856FA6EF-5E03-4120-939B-F0EF42A804E8, iOS 26.5, Booting)";
+    "last_booted_at" = "2026-09-14 19:00:02 +0000";
+    "new_state" = 2;
+    notification = "device_state";
+    "prev_state" = 1;
+}
+15:00:02.117 xcodebuild[30568:7170204] /Users/colemiller/Library/Developer/CoreSimulator/Devices: Received sim device set notification: {
+    device = "iPhone 17 Pro (856FA6EF-5E03-4120-939B-F0EF42A804E8, iOS 26.5, Booting)";
+    "last_booted_at" = "2026-09-14 19:00:02 +0000";
+    "new_state" = 2;
+    notification = "device_state";
+    "prev_state" = 1;
+}
+15:00:02.117 xcodebuild[30568:7170204] /Users/colemiller/Library/Developer/CoreSimulator/Devices: Received sim device set notification: {
+    device = "iPhone 17 Pro (856FA6EF-5E03-4120-939B-F0EF42A804E8, iOS 26.5, Booting)";
+    "last_booted_at" = "2026-09-14 19:00:02 +0000";
+    "new_state" = 2;
+    notification = "device_state";
+    "prev_state" = 1;
+}
+15:00:02.499 xcodebuild[30568:7170204] 856FA6EF-5E03-4120-939B-F0EF42A804E8: Received sim device notification: {
+    notification = "availableDevices_changed";
+}
+15:00:02.499 xcodebuild[30568:7170204] 856FA6EF-5E03-4120-939B-F0EF42A804E8: Received sim device notification: {
+    device = "iPhone 17 Pro (856FA6EF-5E03-4120-939B-F0EF42A804E8, iOS 26.5, Booted)";
+    "new_state" = 3;
+    notification = "device_state";
+    "prev_state" = 2;
+}
+15:00:02.499 xcodebuild[30568:7175189] /Users/colemiller/Library/Developer/CoreSimulator/Devices: Received sim device set notification: {
+    device = "iPhone 17 Pro (856FA6EF-5E03-4120-939B-F0EF42A804E8, iOS 26.5, Booted)";
+    "new_state" = 3;
+    notification = "device_state";
+    "prev_state" = 2;
+}
+15:00:02.506 xcodebuild[30568:7171122] 📱<DVTiPhoneSimulator (0xbe797c500), iPhone 17 Pro, unknown class, 26.5 (23F77), 856FA6EF-5E03-4120-939B-F0EF42A804E8> claim LaunchSessionClaim_0xbeaa08900 on simulator was issued, 2 claims exist.
+15:00:02.530 xcodebuild[30568:7170204] /Users/colemiller/Library/Developer/CoreSimulator/Devices: Received sim device set notification: {
+    device = "iPhone 17 Pro (856FA6EF-5E03-4120-939B-F0EF42A804E8, iOS 26.5, Booted)";
+    "new_state" = 3;
+    notification = "device_state";
+    "prev_state" = 2;
+}
+15:00:02.530 xcodebuild[30568:7170204] /Users/colemiller/Library/Developer/CoreSimulator/Devices: Received sim device set notification: {
+    device = "iPhone 17 Pro (856FA6EF-5E03-4120-939B-F0EF42A804E8, iOS 26.5, Booted)";
+    "new_state" = 3;
+    notification = "device_state";
+    "prev_state" = 2;
+}
+15:00:02.530 xcodebuild[30568:7170204] /Users/colemiller/Library/Developer/CoreSimulator/Devices: Received sim device set notification: {
+    device = "iPhone 17 Pro (856FA6EF-5E03-4120-939B-F0EF42A804E8, iOS 26.5, Booted)";
+    "new_state" = 3;
+    notification = "device_state";
+    "prev_state" = 2;
+}
+15:00:02.530 xcodebuild[30568:7170204] /Users/colemiller/Library/Developer/CoreSimulator/Devices: Received sim device set notification: {
+    device = "iPhone 17 Pro (856FA6EF-5E03-4120-939B-F0EF42A804E8, iOS 26.5, Booted)";
+    "new_state" = 3;
+    notification = "device_state";
+    "prev_state" = 2;
+}
+15:00:02.530 xcodebuild[30568:7170204] /Users/colemiller/Library/Developer/CoreSimulator/Devices: Received sim device set notification: {
+    device = "iPhone 17 Pro (856FA6EF-5E03-4120-939B-F0EF42A804E8, iOS 26.5, Booted)";
+    "new_state" = 3;
+    notification = "device_state";
+    "prev_state" = 2;
+}
+15:00:02.530 xcodebuild[30568:7170204] /Users/colemiller/Library/Developer/CoreSimulator/Devices: Received sim device set notification: {
+    device = "iPhone 17 Pro (856FA6EF-5E03-4120-939B-F0EF42A804E8, iOS 26.5, Booted)";
+    "new_state" = 3;
+    notification = "device_state";
+    "prev_state" = 2;
+}
+15:00:02.530 xcodebuild[30568:7170204] /Users/colemiller/Library/Developer/CoreSimulator/Devices: Received sim device set notification: {
+    device = "iPhone 17 Pro (856FA6EF-5E03-4120-939B-F0EF42A804E8, iOS 26.5, Booted)";
+    "new_state" = 3;
+    notification = "device_state";
+    "prev_state" = 2;
+}
+15:00:02.530 xcodebuild[30568:7170204] /Users/colemiller/Library/Developer/CoreSimulator/Devices: Received sim device set notification: {
+    device = "iPhone 17 Pro (856FA6EF-5E03-4120-939B-F0EF42A804E8, iOS 26.5, Booted)";
+    "new_state" = 3;
+    notification = "device_state";
+    "prev_state" = 2;
+}
+15:00:02.532 xcodebuild[30568:7170204] Setting up test runner session
+15:00:02.532 xcodebuild[30568:7175175] Sim iPhone 17 Pro: Unregistering for sim device notification with token 5
+15:00:02.532 xcodebuild[30568:7175175] Calling -[SimDevice getenv:error:] for TESTMANAGERD_SIM_SOCK
+15:00:02.533 xcodebuild[30568:7170204] Registering/updating daemon-based crash report observer for process names (
+    xctest,
+    debugserver,
+    FrontBoard,
+    assertiond,
+    runningboardd,
+    SpringBoard,
+    testmanagerd,
+    backboardd,
+    DTServiceHub,
+    SpokenMarginsApp,
+    SpokenMarginsAppTests
+)
+15:00:02.570 xcodebuild[30568:7175175] Sim iPhone 17 Pro has testmanagerd socket at /private/var/tmp/com.apple.launchd.HAm6WnXknz/com.apple.testmanagerd.unix-domain.socket
+15:00:02.570 xcodebuild[30568:7175175] Validating test connection socket path (/private/var/tmp/com.apple.launchd.HAm6WnXknz/com.apple.testmanagerd.unix-domain.socket)
+15:00:02.570 xcodebuild[30568:7175175] Constructing transport for test connection socket
+15:00:02.570 xcodebuild[30568:7175175] Connected socket 35 to testmanagerd for Sim iPhone 17 Pro
+15:00:02.571 xcodebuild[30568:7170267] Received connection for test runner session
+15:00:02.571 xcodebuild[30568:7170267] Listening for proxy connection request from the test bundle
+15:00:02.571 xcodebuild[30568:7170204] Test runner session acquired connection.
+15:00:02.571 xcodebuild[30568:7170267] Initiating session with identifier: BFC08793-92A7-4FBC-B374-3560449ABB80
+15:00:04.405 xcodebuild[30568:7170267] Got reply to session initiation request with identifier BFC08793-92A7-4FBC-B374-3560449ABB80 (error: (null))
+15:00:04.895 xcodebuild[30568:7170204] Finished requesting crash reports. Continuing with testing.
+15:00:04.958 xcodebuild[30568:7170204] Launch session started.
+15:00:04.967 xcodebuild[30568:7171122] 📱<DVTiPhoneSimulator (0xbe797c500), iPhone 17 Pro, unknown class, 26.5 (23F77), 856FA6EF-5E03-4120-939B-F0EF42A804E8> claim LaunchSessionClaim_0xbeaa08900 on simulator was issued, 2 claims exist.
+15:00:04.980 xcodebuild[30568:7170267] 📱<DVTiPhoneSimulator (0xbe797c500), iPhone 17 Pro, unknown class, 26.5 (23F77), 856FA6EF-5E03-4120-939B-F0EF42A804E8> claim LaunchSessionClaim_0xbeaa08900 on simulator was issued, 2 claims exist.
+15:00:04.980 xcodebuild[30568:7170267] 856FA6EF-5E03-4120-939B-F0EF42A804E8: Registered for sim device notification, got token 8
+15:00:04.980 xcodebuild[30568:7171122] 856FA6EF-5E03-4120-939B-F0EF42A804E8: Unregistering for sim device notification with token 8
+15:00:05.030 xcodebuild[30568:7171122] 856FA6EF-5E03-4120-939B-F0EF42A804E8: Installing app at path: /tmp/spoken-margins-verification-derived/Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app and options: {
+    SkipWatchAppInstall = 1;
+}
+15:00:22.385 xcodebuild[30568:7171122] 856FA6EF-5E03-4120-939B-F0EF42A804E8: Installed app at path: /tmp/spoken-margins-verification-derived/Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app and options: {
+    SkipWatchAppInstall = 1;
+}
+15:00:22.402 xcodebuild[30568:7171122] 856FA6EF-5E03-4120-939B-F0EF42A804E8: Launching app with identifier: com.spokenmargins.native and options: {
+    "activate_suspended" = 0;
+    arguments =     (
+    );
+    environment =     {
+        "APP_DISTRIBUTOR_ID_OVERRIDE" = "com.apple.AppStore";
+        "CA_ASSERT_MAIN_THREAD_TRANSACTIONS" = 0;
+        "CA_DEBUG_TRANSACTIONS" = 0;
+        "DYLD_FRAMEWORK_PATH" = "/tmp/spoken-margins-verification-derived/Build/Products/Debug-iphonesimulator:/tmp/spoken-margins-verification-derived/Build/Products/Debug-iphonesimulator/PackageFrameworks:/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/Frameworks";
+        "DYLD_INSERT_LIBRARIES" = "/usr/lib/libRPAC.dylib:/tmp/spoken-margins-verification-derived/Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app/Frameworks/libXCTestBundleInject.dylib:/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/usr/lib/libMainThreadChecker.dylib:/usr/lib/libRPAC.dylib";
+        "DYLD_LIBRARY_PATH" = "/tmp/spoken-margins-verification-derived/Build/Products/Debug-iphonesimulator:/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/usr/lib";
+        "LLVM_PROFILE_FILE" = "/var/folders/wl/bzxblr0n30l1_8v666j7xnx40000gn/T/com.spokenmargins.native/3463F2D9-9E7B-4225-AD30-7CE2C895460F-30568-000005D05258B599/804CE671-92CB-4871-84CB-EA604BEFDB8E-%p%c.profraw";
+        NSApplicationQuitWithoutSuddenTermination = YES;
+        NSUnbufferedIO = YES;
+        "OS_ACTIVITY_DT_MODE" = YES;
+        "PERFC_ENABLE_EXTENDED_DIAGNOSTIC_FORMAT" = 1;
+        "PERFC_ENABLE_PROFILE_MODE" = 1;
+        "PERFC_RESET_INSERT_LIBRARIES" = 1;
+        "PERFC_SUPPRESS_SYSTEM_REPORTS" = 1;
+        "RUN_DESTINATION_DEVICE_NAME" = "iPhone 17 Pro";
+        "RUN_DESTINATION_DEVICE_PLATFORM_IDENTIFIER" = "com.apple.platform.iphonesimulator";
+        "RUN_DESTINATION_DEVICE_UDID" = "856FA6EF-5E03-4120-939B-F0EF42A804E8";
+        "SQLITE_ENABLE_THREAD_ASSERTIONS" = 1;
+        "SWIFT_BACKTRACE" = "enable=no";
+        TERM = dumb;
+        XCInjectBundleInto = unused;
+        "XCODE_SCHEME_NAME" = SpokenMarginsAppBehavior;
+        "XCODE_TEST_PLAN_NAME" = AppBehavior;
+        XCTestBundleInjectPath = "/usr/lib/libRPAC.dylib:/tmp/spoken-margins-verification-derived/Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app/Frameworks/libXCTestBundleInject.dylib:/Library/Developer/CoreSimulator/Volumes/iOS_23F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.5.simruntime/Contents/Resources/RuntimeRoot/usr/lib/libMainThreadChecker.dylib:/usr/lib/libRPAC.dylib";
+        XCTestBundlePath = "PlugIns/SpokenMarginsAppTests.xctest";
+        XCTestConfigurationFilePath = "";
+        XCTestSessionIdentifier = "BFC08793-92A7-4FBC-B374-3560449ABB80";
+        "__XCODE_BUILT_PRODUCTS_DIR_PATHS" = "/tmp/spoken-margins-verification-derived/Build/Products/Debug-iphonesimulator";
+        "__XPC_DYLD_FRAMEWORK_PATH" = "/tmp/spoken-margins-verification-derived/Build/Products/Debug-iphonesimulator";
+        "__XPC_DYLD_LIBRARY_PATH" = "/tmp/spoken-margins-verification-derived/Build/Products/Debug-iphonesimulator";
+        "__XPC_LLVM_PROFILE_FILE" = "/var/folders/wl/bzxblr0n30l1_8v666j7xnx40000gn/T/com.spokenmargins.native/3463F2D9-9E7B-4225-AD30-7CE2C895460F-30568-000005D05258B599/804CE671-92CB-4871-84CB-EA604BEFDB8E-%p%c.profraw";
+    };
+    stderr = "/dev/ttys000";
+    stdout = "/dev/ttys000";
+    "terminate_running_process" = 1;
+    "wait_for_debugger" = 1;
+}
+15:00:38.678 xcodebuild[30568:7175250] 856FA6EF-5E03-4120-939B-F0EF42A804E8: Launched app with identifier: com.spokenmargins.native (pid = 31660)
+15:00:38.691 xcodebuild[30568:7175250] 📱<DVTiPhoneSimulator (0xbe797c500), iPhone 17 Pro, unknown class, 26.5 (23F77), 856FA6EF-5E03-4120-939B-F0EF42A804E8> tracking pid 31660
+15:00:38.692 xcodebuild[30568:7175250] 📱<DVTiPhoneSimulator (0xbe797c500), iPhone 17 Pro, unknown class, 26.5 (23F77), 856FA6EF-5E03-4120-939B-F0EF42A804E8> checking to see if pid 31660 is valid: kill(pid, 0) = 0 (YES, it's still running)
+15:00:38.699 xcodebuild[30568:7178176] 856FA6EF-5E03-4120-939B-F0EF42A804E8: Registered for sim device notification, got token 10
+15:00:38.699 xcodebuild[30568:7179082] 856FA6EF-5E03-4120-939B-F0EF42A804E8: Unregistering for sim device notification with token 10
+15:00:40.085 xcodebuild[30568:7170204] Test process runnable PID is 31660.
+15:00:40.086 xcodebuild[30568:7175250] XCTHTestOperationStateMachine: Transitioning from state Initial to AcquiredPID
+15:04:48.135 xcodebuild[30568:7170204] Test operation failure: Error Domain=XCTHTestOperationCoordinatorErrorDomain Code=9 "Testing was canceled" UserInfo={NSLocalizedDescription=Testing was canceled}
+15:04:48.135 xcodebuild[30568:7170204] _finishWithError:Error Domain=XCTHTestOperationCoordinatorErrorDomain Code=9 "Testing was canceled" UserInfo={NSLocalizedDescription=Testing was canceled}
+15:04:48.136 xcodebuild[30568:7170204] Current state: testRunnerLaunchSessionHasFinishedReceivingData: NO, delegateBlockQueue.count: 0
+15:04:48.136 xcodebuild[30568:7170204] <XCTHTestOperationCoordinator: 0xbeaa08c00>: _considerFlushingDelegateBlockQueue - nothing to flush

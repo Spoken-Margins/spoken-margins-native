@@ -11,7 +11,60 @@ struct PreparedChunkPlan: Equatable, Sendable {
     var text: String
 }
 
+/// Single-entry cache: bounds retained text/plans while reusing a document
+/// across successive chunk jobs. Changed source always requires a new plan.
+final class PreparedChunkPlanCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var source: String?
+    private var plan: [PreparedChunkPlan] = []
+
+    func removeAll() {
+        lock.lock()
+        source = nil
+        plan.removeAll()
+        lock.unlock()
+    }
+
+    func value(for text: String, build: () -> [PreparedChunkPlan]) -> [PreparedChunkPlan] {
+        lock.lock()
+        if source == text {
+            let result = plan
+            lock.unlock()
+            return result
+        }
+        lock.unlock()
+        let result = build()
+        lock.lock()
+        source = text
+        plan = result
+        lock.unlock()
+        return result
+    }
+}
+
+private final class BundledModelHashCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var hashes: [URL: String] = [:]
+
+    func value(at url: URL, compute: () throws -> String) rethrows -> String {
+        // Only installed bundle resources are immutable for this process.
+        // Imported/test assets must be rehashed, including same-size edits.
+        let root = Bundle.main.bundleURL.standardizedFileURL.path + "/"
+        guard url.standardizedFileURL.path.hasPrefix(root) else { return try compute() }
+        lock.lock()
+        let cached = hashes[url]
+        lock.unlock()
+        if let cached { return cached }
+        let result = try compute()
+        lock.lock()
+        hashes[url] = result
+        lock.unlock()
+        return result
+    }
+}
+
 enum SupertonicRenderIdentity {
+    private static let bundledHashes = BundledModelHashCache()
     static let modelRevision = "supertonic-3-int8"
     static let normalizationVersion = "speech-normalizer.v2"
     static let chunkingVersion = "rendered-speech-chunker.v1"
@@ -24,7 +77,9 @@ enum SupertonicRenderIdentity {
         speed: Float = 1,
         fileManager: FileManager = .default
     ) throws -> TTSRenderSignature {
-        let assetHash = try treeHash(at: assets.onnxDirectoryURL, fileManager: fileManager)
+        let assetHash = try bundledHashes.value(at: assets.onnxDirectoryURL) {
+            try treeHash(at: assets.onnxDirectoryURL, fileManager: fileManager)
+        }
         let voiceHash = try fileHash(at: assets.voiceStyleURL(for: voice), fileManager: fileManager)
         let parameters = "language=\(language)\u{1f}steps=\(synthesisSteps)\u{1f}synthesisSpeed=\(speed)"
         let parametersHash = sha256(Data(parameters.utf8))
@@ -56,14 +111,18 @@ enum SupertonicRenderIdentity {
             options: [.skipsHiddenFiles]
         ).filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
-        var data = Data()
+        var digest = SHA256()
         for url in urls {
-            data.append(Data(url.lastPathComponent.utf8))
-            data.append(0)
-            data.append(try Data(contentsOf: url, options: [.mappedIfSafe]))
-            data.append(0)
+            digest.update(data: Data(url.lastPathComponent.utf8))
+            digest.update(data: Data([0]))
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            while let block = try handle.read(upToCount: 64 * 1_024), !block.isEmpty {
+                digest.update(data: block)
+            }
+            digest.update(data: Data([0]))
         }
-        return sha256(data)
+        return digest.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     private static func fileHash(at url: URL, fileManager: FileManager) throws -> String {

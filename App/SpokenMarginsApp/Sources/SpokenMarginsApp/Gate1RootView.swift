@@ -3493,8 +3493,15 @@ struct SourceFollowSuggestionCard: View {
                     .font(.caption)
                     .foregroundStyle(secondaryColor)
                 ForEach(model.sourceFollowSuggestionCandidates) { candidate in
-                    Button("Follow \(candidate.source.title ?? candidate.source.host)") {
+                    Button {
                         model.acceptSourceFollowSuggestion(candidate)
+                    } label: {
+                        VStack(alignment: .leading) {
+                            Text("Follow \(candidate.source.title ?? candidate.source.host)")
+                            if model.sourceFollowSuggestionCandidates.filter({ $0.source.title == candidate.source.title }).count > 1 {
+                                Text(candidate.source.canonicalURL).font(.caption).lineLimit(2)
+                            }
+                        }
                     }
                     .buttonStyle(SecondaryButtonStyle())
                     .accessibilityIdentifier("source.followSuggestion.accept.\(candidate.id)")
@@ -4040,9 +4047,7 @@ private struct SettingsScreen: View {
                         .accessibilityIdentifier("settings.reset.button")
                         Button("Refresh Diagnostics", action: model.refreshDiagnostics)
                             .accessibilityIdentifier("settings.diagnostics.button")
-                        ForEach(model.diagnostics.keys.sorted(), id: \.self) { key in
-                            LabeledContent(key, value: model.diagnostics[key] ?? "")
-                        }
+                        RuntimeDiagnosticRows(diagnostics: model.runtimeDiagnostics)
                         ForEach(model.knownIssues, id: \.self) { issue in
                             Text(issue)
                                 .font(.caption)
@@ -5474,5 +5479,15 @@ private struct InterjectButtonStyle: ButtonStyle {
             .foregroundStyle(AppColors.interjectText)
             .background(AppColors.captureBackground.opacity(configuration.isPressed ? 0.78 : 1))
             .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct RuntimeDiagnosticRows: View {
+    @ObservedObject var diagnostics: RuntimeDiagnostics
+
+    var body: some View {
+        ForEach(diagnostics.values.keys.sorted(), id: \.self) { key in
+            LabeledContent(key, value: diagnostics.values[key] ?? "")
+        }
     }
 }

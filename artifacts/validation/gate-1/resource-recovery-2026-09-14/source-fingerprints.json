@@ -1,0 +1,6 @@
+{
+  "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift": "655b7dc935e01e29da51d883dbe8a50337ea5505922a3c334c81364bf35ad3f5",
+  "App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicSpeechPlaybackClient.swift": "6c334be626f4d6e1bd286baa15f6a8aeb2eb43ea89d8dc16ef82260af7db58a2",
+  "App/SpokenMarginsAppTests/SupertonicSpeechTests.swift": "b2083afc1f95a58b6789a7bb40a55ef4dac6247e0eca265545eda512bfa09cf0",
+  "Packages/SessionKit/Sources/SessionKitSupertonic/SupertonicNarrationRenderer.swift": "4f4a594b75e8e036d69a7feac2a286b88db8e00cf0d099529a294726a8447d60"
+}

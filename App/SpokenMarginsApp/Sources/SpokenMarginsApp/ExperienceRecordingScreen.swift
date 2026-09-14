@@ -24,6 +24,7 @@ struct ExperienceRecordingView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) { finishControl.padding(24) }
         .safeAreaInset(edge: .bottom, spacing: 0) { actionDock }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("recording.screen")
@@ -34,6 +35,7 @@ struct ExperienceRecordingView: View {
             Text("This Margin has not been saved. Discarding returns to the locked listening position.")
         }
         .accessibilityAction(.escape) {
+            guard !model.isFinishingInterjection else { return }
             if model.snapshot.isRecording {
                 isDiscardConfirmationPresented = true
             } else {
@@ -44,7 +46,7 @@ struct ExperienceRecordingView: View {
 
     private var status: some View {
         Label(
-            isPreparing ? "Preparing microphone" : "Recording Margin",
+            model.isFinishingInterjection ? "Saving Margin…" : (isPreparing ? "Preparing microphone" : "Recording Margin"),
             systemImage: isPreparing ? "mic.badge.plus" : "record.circle.fill"
         )
         .font(.headline)
@@ -102,18 +104,20 @@ struct ExperienceRecordingView: View {
         }
     }
 
+    private var finishControl: some View {
+        Button(action: model.requestFinishInterjection) {
+            Label(model.isFinishingInterjection ? "Saving Margin…" : "Save & resume", systemImage: "checkmark")
+                .frame(maxWidth: .infinity, minHeight: 52)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(AppColors.captureBackground)
+        .foregroundStyle(AppColors.listeningBackground)
+        .disabled(isPreparing || model.isFinishingInterjection)
+        .accessibilityIdentifier("recording.finish.button")
+    }
+
     private var actionDock: some View {
         VStack(spacing: 8) {
-            Button(action: model.finishInterjection) {
-                Label("Save & resume", systemImage: "checkmark")
-                    .frame(maxWidth: .infinity, minHeight: 52)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(AppColors.captureBackground)
-            .foregroundStyle(AppColors.listeningBackground)
-            .disabled(isPreparing)
-            .accessibilityIdentifier("recording.finish.button")
-
             if isPreparing {
                 Button("Write instead", systemImage: "square.and.pencil", action: model.switchPendingVoiceCaptureToWrittenMargin)
                     .foregroundStyle(.white)
@@ -126,6 +130,7 @@ struct ExperienceRecordingView: View {
             }
             .buttonStyle(.borderless)
             .foregroundStyle(.white)
+            .disabled(model.isFinishingInterjection)
             .accessibilityIdentifier("recording.cancel.button")
         }
         .padding(.horizontal, 24)
@@ -147,6 +152,7 @@ struct ExperienceRecordingView: View {
     }
 
     private func requestDiscard() {
+        guard !model.isFinishingInterjection else { return }
         if model.snapshot.isRecording {
             isDiscardConfirmationPresented = true
         } else {

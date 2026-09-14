@@ -1,3 +1,15 @@
+> Owner chapter-skip follow-up, September 14: inspect the attached live iPhone/Xcode diagnostics and investigate apparent forward-skip regression. Bounded evidence-backed chapter-position repair and focused tests remain in scope; preserve the running phone and existing Library.
+
+> Owner PDF follow-up, September 14: investigate the supplied NASA space-tether report and device diagnostics; repair evidenced ToC narration and chapter detection defects on `codex/provisional-next`. Preserve rendering, existing source/audio identities and pending changes. Focused checks only; full app testing remains deferred.
+
+> Owner implementation approval, September 14: implement the navigation/compute audit improvements on `codex/provisional-next`, prioritizing shared rendering overhead, incremental presentation, diagnostic observation and responsive navigation. Preserve pending repairs and source/audio identity. Focused regression checks only; hold full app testing and release suites. No commit, installation or distribution requested.
+
+> Owner investigation and repair request, September 14: on `codex/provisional-next`, investigate #122 local-build memory terminations, iPhone 14 performance and Low Power Mode voice fallback, and internal Build 27 PDF repetition. Implement evidence-backed bounded repairs while preserving existing dirty work. Use focused affected-feature tests only for this pass; defer full suites and release checks until internal TestFlight publication is requested. Single agent, minimal model usage, sparse automated-test supervision; no commit or distribution authorized.
+
+> Owner decision, September 14: implement duplicate Follow and shared-podcast placement repairs on provisional-next. Code changes only; the owner assigns all testing, builds and monitoring to Luna. The stated 3% remaining supersedes the prior reserve for this bounded pass; minimize usage. Preserve prior work, recordings and anchors; no commit or distribution.
+
+> Owner feedback, September 13: authorize bounded iPhone Margin finish-response and accidental double-tap repair on `codex/provisional-next`, preserving capture and playback. Record a linked Watch gesture/minimal-interaction issue; Watch implementation is deferred. Retain the last explicit 5% usage floor (the latest spoken budget sentence was incomplete). No commit or distribution requested.
+
 > Owner repair request, September 13: fix physical-phone podcast playback/download recovery, render indicator geometry and live-progress mismatch, Spotify follow discovery, Share Sheet eligibility, and repeated PDF running headers. Preserve source/history. Personal phone reinstall is authorized. Usage target is 10% remaining, hard floor 5%, superseding the earlier 20% reserve for this pass.
 
 > Owner device-testing request, September 13, 2026: install and launch the current QoL candidate on the owner’s paired iPhone using Xcode over the local network. This authorizes the personal development install only; no reset, commit, TestFlight upload, or release promotion. Installation and source evidence: `artifacts/validation/gate-1/library-qol-2026-09-13/phone-install/`.

@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import SessionKit
 import SessionKitPersistence
@@ -10,6 +11,40 @@ import PDFKit
 
 @MainActor
 final class Gate1AppModelWorkflowTests: XCTestCase {
+    func testDiagnosticUpdatesDoNotInvalidateNavigationModel() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        var modelNotifications = 0
+        var diagnosticNotifications = 0
+        let modelObserver = model.objectWillChange.sink { modelNotifications += 1 }
+        let diagnosticObserver = model.runtimeDiagnostics.objectWillChange.sink { diagnosticNotifications += 1 }
+        model.diagnostics["renderProgress"] = "1/20"
+        model.diagnostics["renderProgress"] = "1/20"
+        XCTAssertEqual(modelNotifications, 0)
+        XCTAssertEqual(diagnosticNotifications, 1)
+        withExtendedLifetime((modelObserver, diagnosticObserver)) {}
+    }
+
+    func testDeferredHomeRefreshCannotReplaceNewerLibraryPresentation() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let readStarted = expectation(description: "navigation snapshot captured")
+        let release = AsyncStream<Void>.makeStream()
+        model.navigationLibraryRead = { store in
+            let data = try LibraryReadSnapshot.read(store: store)
+            readStarted.fulfill()
+            for await _ in release.stream { break }
+            return data
+        }
+        model.openHome()
+        XCTAssertEqual(model.screen, .home)
+        await fulfillment(of: [readStarted], timeout: 2)
+        model.libraryItems = [LibraryItemRow(id: "newer-item", title: "Newer state", status: "Ready", canDelete: true)]
+        release.continuation.yield(())
+        release.continuation.finish()
+        await model.navigationRefreshTask?.value
+        XCTAssertEqual(model.libraryItems.map(\.id), ["newer-item"])
+    }
+
     func testDeveloperRecordingIsOptInBoundedAndStops() throws {
         let recorder = DeveloperDiagnosticRecording(limit: 4)
         recorder.record("ignored")
@@ -849,6 +884,24 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(eligible.map(\.id), ["active"])
     }
 
+    func testCurrentPDFChapterUsesExactPositionWhenPercentagesCollide() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        let starts = [0, 21, 174, 185]
+        let chapters = starts.enumerated().map { index, start in
+            Chapter(id: "chapter-\(index)", title: "Section \(index)", startChar: start,
+                    endChar: index + 1 < starts.count ? starts[index + 1] : 2904, percent: 0)
+        }
+        model.selectedItem = ItemDetailState(id: "pdf", title: "Report", chapters: chapters)
+        model.snapshot.targetType = TargetType.itemTextTTS.rawValue
+        model.snapshot.sourceProgressPercent = 0
+        for (index, offset) in starts.enumerated() {
+            model.snapshot.currentTextStart = offset
+            XCTAssertEqual(model.currentChapter?.id, chapters[index].id)
+        }
+        model.snapshot.currentTextStart = 180
+        XCTAssertEqual(model.currentChapter?.id, chapters[2].id)
+    }
+
     func testTimelineMarksTheCurrentSourceChapter() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         let opening = Chapter(id: "chapter-1", title: "Opening", startChar: 0, endChar: 100, percent: 0)
@@ -1129,6 +1182,32 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.isHelpPresented)
         XCTAssertNotNil(model.recordingPresentationContext)
         XCTAssertTrue(model.statusMessage.contains("Finish or cancel"))
+    }
+
+    func testFinishAcknowledgesImmediatelyAndRejectsAccidentalRestart() async throws {
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: NoopRecordingClient()
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        XCTAssertTrue(model.snapshot.isRecording)
+        model.requestFinishInterjection()
+        XCTAssertTrue(model.isFinishingInterjection)
+        model.requestFinishInterjection()
+        model.beginInterjection()
+        try await waitFor("Margin finish") { !model.isFinishingInterjection }
+        XCTAssertFalse(model.snapshot.isRecording)
+        XCTAssertEqual(model.selectedItem.interjections.count, 1)
+        XCTAssertTrue(model.isMarginCaptureCoolingDown)
+        model.beginInterjection()
+        XCTAssertFalse(model.isRequestingRecordingPermission)
+        XCTAssertFalse(model.snapshot.isRecording)
+        try await waitFor("capture cooldown") { !model.isMarginCaptureCoolingDown }
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        XCTAssertTrue(model.snapshot.isRecording)
+        model.dispatchGate2CompactCommand(.cancelInterjection)
     }
 
     func testFinishAndCancelAreTheOnlyRecordingExits() {
@@ -3215,6 +3294,35 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.title, "A Structured Report")
         XCTAssertEqual(model.selectedItem.chapters.map(\.title), ["Context", "Evidence", "Tradeoffs", "Recommendations", "Conclusion"])
         XCTAssertEqual(model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.status, "Ready to listen")
+    }
+
+    func testPDFContinuedContentsAreNotNarratedOrPromotedToChapters() throws {
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let data = renderer.pdfData { context in
+            let pages = [
+                ["June 2006", "Publisher information remains readable."],
+                ["TABLE OF CONTENTS", "I. INTRODUCTION ........ 1", "II. RESULTS ........ 7"],
+                ["TABLE OF CONTENTS (Continued)", "8.4 Solar Radiation Pressure ........ 55", "References ........ 61"],
+                ["I. INTRODUCTION", "Ordinary prose remains intact, including a measured value of 55"],
+                ["II. RESULTS", "The results contain enough ordinary prose to establish the document body font size."]
+            ]
+            for lines in pages {
+                context.beginPage()
+                for (index, line) in lines.enumerated() {
+                    (line as NSString).draw(at: CGPoint(x: 40, y: 100 + index * 35), withAttributes: [
+                        .font: index == 0 ? UIFont.boldSystemFont(ofSize: 20) : UIFont.systemFont(ofSize: 12)
+                    ])
+                }
+            }
+        }
+        let text = try PDFStructuredTextExtractor.markdown(from: XCTUnwrap(PDFDocument(data: data)))
+        XCTAssertFalse(text.contains("CONTENTS"))
+        XCTAssertFalse(text.contains("........"))
+        XCTAssertFalse(text.contains("Solar Radiation Pressure"))
+        XCTAssertTrue(text.contains("Publisher information remains readable."))
+        XCTAssertTrue(text.contains("Ordinary prose remains intact, including a measured value of 55"))
+        let headings = text.components(separatedBy: .newlines).filter { $0.hasPrefix("#") }
+        XCTAssertEqual(headings.map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "# ")) }, ["I. INTRODUCTION", "II. RESULTS"])
     }
 
     func testPDFRunningHeadersAreRemovedOnlyFromPageMargins() throws {

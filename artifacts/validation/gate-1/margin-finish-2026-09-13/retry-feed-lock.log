@@ -1,0 +1,43 @@
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild test-without-building -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsAppBehavior -testPlan AppBehavior -destination id=856FA6EF-5E03-4120-939B-F0EF42A804E8 -derivedDataPath .build/verification/SpokenMarginsAppBehavior "-only-testing:SpokenMarginsAppTests/SourceLinkImportTests/testFeedEntryImportPreservesTitleAndSourceWithoutChangingActivePlayback" -resultBundlePath artifacts/validation/gate-1/margin-finish-2026-09-13/retry.xcresult
+
+Resolve Package Graph
+
+
+Resolved source packages:
+  ZIPFoundation: https://github.com/weichsel/ZIPFoundation.git @ 0.9.20
+  SessionKit: /Users/colemiller/Documents/GitHub/spoken-margins-native/Packages/SessionKit
+  onnxruntime: https://github.com/microsoft/onnxruntime-swift-package-manager.git @ 1.24.2
+
+Writing result bundle at path:
+	/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/validation/gate-1/margin-finish-2026-09-13/retry.xcresult
+
+2026-09-13 17:29:34.710058-0400 SpokenMarginsApp[18890:6636898] [plugin] AddInstanceForFactory: No factory registered for id <CFUUID 0x108779860> F8BB1C28-BAE8-11D6-9C31-00039315CD46
+2026-09-13 17:29:35.360883-0400 SpokenMarginsApp[18890:6637038] [General] Failed to send CA Event for app launch measurements for ca_event_type: 0 event_name: com.apple.app_launch_measurement.FirstFramePresentationMetric
+Test Suite 'Selected tests' started at 2026-09-13 17:29:35.497.
+Test Suite 'SpokenMarginsAppTests.xctest' started at 2026-09-13 17:29:35.498.
+Test Suite 'SourceLinkImportTests' started at 2026-09-13 17:29:35.498.
+Test Case '-[SpokenMarginsAppTests.SourceLinkImportTests testFeedEntryImportPreservesTitleAndSourceWithoutChangingActivePlayback]' started.
+2026-09-13 17:29:35.784240-0400 SpokenMarginsApp[18890:6637035] [logging] BUG IN CLIENT OF libsqlite3.dylib: database integrity compromised by API violation: vnode unlinked while in use: /Users/colemiller/Library/Developer/CoreSimulator/Devices/856FA6EF-5E03-4120-939B-F0EF42A804E8/data/Containers/Data/Application/2CBA1546-1336-4692-86B5-D170E9D88A57/tmp/6DB26031-F45F-4CE5-8614-16D618631633/library.sqlite-shm
+2026-09-13 17:29:35.784279-0400 SpokenMarginsApp[18890:6637029] [logging] BUG IN CLIENT OF libsqlite3.dylib: database integrity compromised by API violation: vnode unlinked while in use: /Users/colemiller/Library/Developer/CoreSimulator/Devices/856FA6EF-5E03-4120-939B-F0EF42A804E8/data/Containers/Data/Application/2CBA1546-1336-4692-86B5-D170E9D88A57/tmp/6DB26031-F45F-4CE5-8614-16D618631633/library.sqlite
+2026-09-13 17:29:35.784252-0400 SpokenMarginsApp[18890:6637038] [logging] BUG IN CLIENT OF libsqlite3.dylib: database integrity compromised by API violation: vnode unlinked while in use: /Users/colemiller/Library/Developer/CoreSimulator/Devices/856FA6EF-5E03-4120-939B-F0EF42A804E8/data/Containers/Data/Application/2CBA1546-1336-4692-86B5-D170E9D88A57/tmp/6DB26031-F45F-4CE5-8614-16D618631633/library.sqlite-wal
+2026-09-13 17:29:35.784355-0400 SpokenMarginsApp[18890:6637035] [logging] invalidated open fd: 18 (0x11)
+2026-09-13 17:29:35.784379-0400 SpokenMarginsApp[18890:6637029] [logging] invalidated open fd: 16 (Test Case '-[SpokenMarginsAppTests.SourceLinkImportTests testFeedEntryImportPreservesTitleAndSourceWithoutChangingActivePlayback]' passed (0.286 seconds).
+2026-09-13 17:29:35.784398-0400 SpokenMarginsApp[18890:6637038] [logging] invalidated open fd: 17 (0x11)
+Test Suite 'SourceLinkImportTests' passed at 2026-09-13 17:29:35.786.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.286 (0.288) seconds
+Test Suite 'SpokenMarginsAppTests.xctest' passed at 2026-09-13 17:29:35.786.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.286 (0.289) seconds
+0x11)
+Test Suite 'Selected tests' passed at 2026-09-13 17:29:35.787.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.286 (0.289) seconds
+2026-09-13 17:29:53.863 xcodebuild[18844:6636390] [MT] IDETestOperationsObserverDebug: 23.357 elapsed -- Testing started completed.
+2026-09-13 17:29:53.864 xcodebuild[18844:6636390] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-09-13 17:29:53.864 xcodebuild[18844:6636390] [MT] IDETestOperationsObserverDebug: 23.357 sec, +23.357 sec -- end
+
+Test session results, code coverage, and logs:
+	/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/validation/gate-1/margin-finish-2026-09-13/retry.xcresult
+
+** TEST EXECUTE SUCCEEDED **
+
+Testing started

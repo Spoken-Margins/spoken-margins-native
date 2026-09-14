@@ -671,8 +671,11 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Following"].exists)
         XCTAssertFalse(app.buttons["Margins"].exists)
 
-        element("recording.finish.button").tap()
+        let finish = element("recording.finish.button")
+        XCTAssertLessThan(finish.frame.maxY, app.frame.midY, "Finish must stay away from the bottom capture control")
+        finish.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).doubleTap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
+        XCTAssertFalse(element("recording.screen").exists, "A second finish tap started another Margin")
         XCTAssertEqual(element("playback.play.button").label, "Pause", "Saving a voice Margin did not resume playback")
         pausePlaybackIfNeeded()
         element("playback.margins.button").tap()

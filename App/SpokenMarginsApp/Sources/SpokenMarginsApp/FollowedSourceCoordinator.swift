@@ -69,6 +69,7 @@ actor FollowedSourceCoordinator {
             }
         }
         var candidates: [SourceCandidateEvidence] = []
+        var seenFeedContents = Set<String>()
         for (candidateURL, relation, confidence) in evidence.prefix(8) {
             guard let parsed = try? await fetch(url: candidateURL, subscription: nil) else { continue }
             // Discovery is evidence of membership, not merely a feed on the
@@ -77,6 +78,13 @@ actor FollowedSourceCoordinator {
                 Self.itemURLKey($0.url) == Self.itemURLKey(url.absoluteString)
                     || Self.itemURLKey($0.audioURL) == Self.itemURLKey(url.absoluteString)
             }) else { continue }
+            // Alternate feed formats can have different URLs but the same entries.
+            // Compare actual membership, never publication title alone.
+            let entryURLs = Set(parsed.items.compactMap { Self.itemURLKey($0.url) }).sorted()
+            if !entryURLs.isEmpty {
+                let contentKey = entryURLs.joined(separator: "\n")
+                guard seenFeedContents.insert(contentKey).inserted else { continue }
+            }
             let found = candidate(url: candidateURL, parsed: parsed, relation: relation, confidence: confidence)
             if !candidates.contains(where: { $0.source.id == found.source.id }) {
                 candidates.append(found)

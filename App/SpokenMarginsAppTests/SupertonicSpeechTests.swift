@@ -7,6 +7,53 @@ import XCTest
 
 @MainActor
 final class SupertonicSpeechTests: XCTestCase {
+    func testMemoryBackoffExtendsOnRepeatedWarningsAndExpires() {
+        let backoff = SupertonicMemoryBackoff()
+        XCTAssertFalse(backoff.isActive(now: 100))
+        backoff.recordWarning(now: 100)
+        XCTAssertTrue(backoff.isActive(now: 159))
+        backoff.recordWarning(now: 150)
+        XCTAssertTrue(backoff.isActive(now: 209))
+        XCTAssertFalse(backoff.isActive(now: 210))
+    }
+
+    func testResourceFallbackExplainsObservedCauseAndRecovery() {
+        let lowPower = SupertonicResourcePolicy.fallbackMessage(
+            lowPowerMode: true, memoryPressure: false, thermalState: .nominal)
+        XCTAssertTrue(lowPower.contains("Turn off Low Power Mode"))
+        XCTAssertFalse(lowPower.contains("memory warning"))
+        let memory = SupertonicResourcePolicy.fallbackMessage(
+            lowPowerMode: true, memoryPressure: true, thermalState: .nominal)
+        XCTAssertTrue(memory.contains("iOS memory warning"))
+        XCTAssertFalse(memory.contains("Turn off Low Power Mode"))
+        let thermal = SupertonicResourcePolicy.fallbackMessage(
+            lowPowerMode: false, memoryPressure: false, thermalState: .serious)
+        XCTAssertTrue(thermal.contains("cool down"))
+    }
+
+    func testPreparedAudioPlaysWithoutInferenceWhenResourcesDisallowRendering() async throws {
+        let template = try makeTestWAV(duration: 1)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let fallback = RecordingFallbackAudioClient()
+        let started = expectation(description: "prepared audio started")
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1,
+            fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in started.fulfill() },
+            observesPlayerLifecycle: false, onDeviceRenderingAllowed: { false },
+            fallbackClient: fallback,
+            preparedChunkLookup: { _, _, _ in .init(audioURL: template, duration: 1) }
+        )
+        _ = try client.prepareSpeechText("Prepared audio stays available in Low Power Mode.")
+        try client.play(targetId: "prepared-low-power")
+        await fulfillment(of: [started], timeout: 2)
+        let count = await renderer.renderCount
+        XCTAssertEqual(count, 0)
+        XCTAssertTrue(fallback.playedOffsets.isEmpty)
+        try client.stop()
+    }
+
     func testSelectableCatalogExposesOnlyJamesLilyAndSystem() {
         XCTAssertEqual(AppTTSVoiceSelection.allCases, [.james, .lily, .system])
         XCTAssertEqual(AppTTSVoiceSelection.james.rawValue, "supertonic:M2")
@@ -544,6 +591,39 @@ final class SupertonicSpeechTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(650))
         XCTAssertGreaterThan(client.debugActiveAudioState().startOffset, secondOffset)
         XCTAssertTrue(fallback.playedOffsets.isEmpty)
+        try client.stop()
+    }
+
+    func testRenderGapTimeoutContinuesAfterFinishedPassage() async throws {
+        let template = try makeTestWAV(duration: 1)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(
+            templateURL: template, renderDelays: [2: .seconds(5)]
+        )
+        let firstStarted = expectation(description: "first passage started")
+        let fellBack = expectation(description: "next passage timed out")
+        let fallback = RecordingFallbackAudioClient()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1,
+            fallbackVoiceIdentifier: nil, fallbackRate: 0.5, maxCharacters: 120,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in firstStarted.fulfill() },
+            observesPlayerLifecycle: false, fallbackClient: fallback,
+            onFallback: { reason, _, _ in
+                XCTAssertEqual(reason, "supertonic_render_timeout")
+                fellBack.fulfill()
+            }, renderWaitLimit: .milliseconds(300)
+        )
+        let source = String(repeating: "A distinct passage contains enough ordinary words to make a full narration chunk. ", count: 5)
+        let firstLength = RenderedSpeechChunker.sourceSlice(from: source, startOffset: 0, maxCharacters: 120).sourceLength
+        _ = try client.prepareSpeechText(source)
+        try client.play(targetId: "passage-gap")
+        await fulfillment(of: [firstStarted], timeout: 2)
+        client.debugFinishActiveChunk()
+        XCTAssertEqual(client.playbackTransportState(targetId: "passage-gap"), .waiting)
+        XCTAssertEqual(client.currentCharOffset(), firstLength)
+        XCTAssertEqual(client.currentRecoveryCharOffset(), firstLength)
+        await fulfillment(of: [fellBack], timeout: 2)
+        XCTAssertEqual(fallback.playedOffsets, [firstLength])
         try client.stop()
     }
 

@@ -326,8 +326,26 @@ private extension RenderedSpeechSourceSlice {
     }
 }
 
+/// A warning backs off new inference across playback and Library workers.
+/// Use monotonic time so clock changes cannot prematurely end the backoff.
+final class SupertonicMemoryBackoff: @unchecked Sendable {
+    private let lock = NSLock()
+    private var blockedUntil: TimeInterval = 0
+
+    func recordWarning(now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        lock.withLock { blockedUntil = max(blockedUntil, now + 60) }
+    }
+
+    func isActive(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
+        lock.withLock { now < blockedUntil }
+    }
+}
+
 enum SupertonicResourcePolicy {
+    static let memoryBackoff = SupertonicMemoryBackoff()
+
     static func allowsRendering(processInfo: ProcessInfo = .processInfo) -> Bool {
+        guard !memoryBackoff.isActive() else { return false }
         #if os(iOS)
         return !processInfo.isLowPowerModeEnabled
             && processInfo.thermalState != .serious
@@ -335,6 +353,23 @@ enum SupertonicResourcePolicy {
         #else
         return true
         #endif
+    }
+
+    static func fallbackMessage(
+        lowPowerMode: Bool = ProcessInfo.processInfo.isLowPowerModeEnabled,
+        memoryPressure: Bool = memoryBackoff.isActive(),
+        thermalState: ProcessInfo.ThermalState = ProcessInfo.processInfo.thermalState
+    ) -> String {
+        if memoryPressure {
+            return "Supertonic paused after an iOS memory warning. Using your configured iOS voice. Try the higher-quality voice again after the device has recovered."
+        }
+        if lowPowerMode {
+            return "Supertonic paused because Low Power Mode is on. Using your configured iOS voice. Turn off Low Power Mode, then retry Supertonic for the higher-quality voice."
+        }
+        if thermalState == .serious || thermalState == .critical {
+            return "Supertonic paused because the device is too warm. Using your configured iOS voice. Let the device cool down, then retry Supertonic."
+        }
+        return "Supertonic paused to reduce resource use. Using your configured iOS voice."
     }
 }
 
@@ -967,6 +1002,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         removePlaybackEndObserver()
         let snapshot = lock.withLock { () -> (Int, String?, Int, CachedAudio?, TimeInterval, UUID, URL?) in
             let nextOffset = currentStartOffset + max(1, currentChunkLength)
+            // Commit audible progress before detaching the finished player.
+            // During an underrun, timeout/fallback and pause/resume must start
+            // at the next chunk, not repeat the passage that just finished.
+            currentStartOffset = nextOffset
+            currentChunkLength = 0
             let cached = renderedCache.removeValue(forKey: nextOffset)
             let finishedURL = activeAudioURL
             player?.replaceCurrentItem(with: nil)
@@ -1147,14 +1187,6 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             return true
         }
         guard shouldStart else { return }
-        guard onDeviceRenderingAllowed() else {
-            renderFailed(
-                request: request,
-                shouldPlayWhenReady: shouldPlayWhenReady,
-                reason: "supertonic_resource_pressure"
-            )
-            return
-        }
         reportGenerationState(.rendering)
         let waitLimit = renderWaitLimit
         let task = Task { [weak self, renderer, voice] in
@@ -1179,15 +1211,19 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 try Task.checkCancellation()
                 let preparation = self?.lock.withLock { () -> (String, [PreparedChunkPlan], Bool) in
                     guard let self else { return ("", [], false) }
-                    return (self.activeSourceText, self.generationPlan.enumerated().map { index, part in
+                    let needsPlan = self.onPreparationPlan != nil
+                        && request.startOffset == self.generationRenderOrder.first?.startOffset
+                    let plan = needsPlan ? self.generationPlan.enumerated().map { index, part in
                         PreparedChunkPlan(index: index, startOffset: part.startOffset, sourceLength: part.sourceLength, text: part.text)
-                    }, request.startOffset == self.generationRenderOrder.first?.startOffset)
+                    } : []
+                    return (self.activeSourceText, plan, needsPlan)
                 }
                 if let preparation, preparation.2 {
                     await self?.onPreparationPlan?(request.targetId, preparation.0, preparation.1)
                 }
                 try Task.checkCancellation()
                 let result: SupertonicNarrationResult
+                var performedInference = false
                 let chunkPlan = self?.lock.withLock { () -> PreparedChunkPlan? in
                     guard let self,
                           let index = self.generationPlan.firstIndex(where: { $0.startOffset == request.startOffset }) else { return nil }
@@ -1216,6 +1252,14 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 ) {
                     result = cached
                 } else {
+                    guard self?.onDeviceRenderingAllowed() != false else {
+                        await MainActor.run {
+                            self?.renderFailed(request: request, shouldPlayWhenReady: shouldPlayWhenReady,
+                                               reason: "supertonic_resource_pressure")
+                        }
+                        return
+                    }
+                    performedInference = true
                     let rendered = try await renderer.render(
                         text: request.text,
                         voice: voice,
@@ -1239,7 +1283,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                     }
                 }
                 try Task.checkCancellation()
-                guard self?.onDeviceRenderingAllowed() != false else {
+                guard !performedInference || self?.onDeviceRenderingAllowed() != false else {
                     await renderer.discardGeneratedAudio(at: result.audioURL)
                     await MainActor.run {
                         self?.renderFailed(

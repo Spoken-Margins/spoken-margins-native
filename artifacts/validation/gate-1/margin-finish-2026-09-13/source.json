@@ -1,0 +1,11 @@
+{
+  "commit": "ad533d6604dbacf892df85dc06f36d63c2f97a08",
+  "input_sha256": "fa55ea1b91f236c5b9975bcc8a654deba20dbc3e66ac6a65c3181d441d31aed7",
+  "version": "0.1",
+  "build": "27",
+  "minimumOS": "18.0",
+  "executable_sha256": "dad46923d452333509845047dffb4ab63fbb2272429c272699c5f6749d02d1c1",
+  "installed": false,
+  "installReason": "Owner iPhone disconnected",
+  "weeklyRemainingPercent": 9
+}

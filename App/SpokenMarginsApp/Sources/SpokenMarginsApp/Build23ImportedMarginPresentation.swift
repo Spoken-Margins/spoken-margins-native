@@ -29,7 +29,7 @@ enum Build23ImportedLayerPresentation {
     static func sourceResolutionLabel(_ status: ImportedSourceResolutionStatus) -> String {
         switch status {
         case .pending:
-            return "Improving placement while the episode downloads · timestamps are approximate"
+            return "Matching positions in your episode"
         case .resolved:
             return "Resolved"
         case .contextOnly:
@@ -66,7 +66,7 @@ enum Build23ImportedLayerPresentation {
         case .ambiguous:
             return "Ambiguous"
         case .absentFromRecipientEdition:
-            return "Absent from this edition"
+            return "Position not matched in this edition"
         case .unresolved:
             return "Unresolved"
         @unknown default:

@@ -1,10 +1,68 @@
 import Foundation
 import SessionKit
 import SessionKitPersistence
+import SessionKitSupertonic
 import XCTest
 @testable import SpokenMarginsApp
 
 final class PreparedAudioCoordinatorTests: XCTestCase {
+    func testStreamingRenderIdentityMatchesLegacyBytesAndRehashesMutableAssets() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let assets = SupertonicAssetLocation(rootURL: root)
+        try FileManager.default.createDirectory(at: assets.onnxDirectoryURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: assets.voiceStylesDirectoryURL, withIntermediateDirectories: true)
+        let payloads = [("a.onnx", Data(repeating: 7, count: 150_000)), ("z.onnx", Data([8, 9]))]
+        var legacy = Data()
+        for (name, data) in payloads {
+            try data.write(to: assets.onnxDirectoryURL.appending(path: name))
+            legacy.append(Data(name.utf8)); legacy.append(0); legacy.append(data); legacy.append(0)
+        }
+        try Data([1, 2]).write(to: assets.voiceStyleURL(for: .m2))
+        let before = try SupertonicRenderIdentity.make(assets: assets, voice: .m2)
+        XCTAssertEqual(before.assetManifestHash, SupertonicRenderIdentity.sha256(legacy))
+        try Data([9, 8]).write(to: assets.onnxDirectoryURL.appending(path: "z.onnx"))
+        let after = try SupertonicRenderIdentity.make(assets: assets, voice: .m2)
+        XCTAssertNotEqual(before.digest, after.digest, "Mutable assets must not use the immutable bundle cache")
+    }
+
+    func testChunkPlanCacheReusesOnlyExactSource() {
+        let cache = PreparedChunkPlanCache()
+        var builds = 0
+        func value(_ source: String) -> [PreparedChunkPlan] {
+            cache.value(for: source) {
+                builds += 1
+                return [.init(index: 0, startOffset: 0, sourceLength: source.count, text: source)]
+            }
+        }
+        XCTAssertEqual(value("First"), value("First"))
+        XCTAssertEqual(builds, 1)
+        XCTAssertEqual(value("Other").first?.text, "Other")
+        XCTAssertEqual(builds, 2)
+        _ = value("First")
+        XCTAssertEqual(builds, 3, "Retain just the most recent document plan")
+        cache.removeAll()
+        _ = value("First")
+        XCTAssertEqual(builds, 4, "Memory pressure releases the cached plan")
+    }
+
+    @MainActor
+    func testChunkProgressUpdatesOnlyAffectedLibraryRowWithoutReloadingStorage() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
+        let manifest = try await coordinator.begin(itemId: "item", sourceText: "First chunk. Second chunk.", signature: signature("one"), plan: plans())
+        let item = Item(id: "item", title: "PDF", mediaType: "pdf", text: "First chunk. Second chunk.", externalReference: nil, status: "ready")
+        let model = Gate1AppModel()
+        let unrelated = LibraryItemRow(id: "unrelated", title: "Preserved", status: "Ready", canDelete: true)
+        model.libraryItems = [LibraryItemRow(id: item.id, title: item.title, status: "Ready", canDelete: true), unrelated]
+        let job = AudioPreparationJob(id: "job", itemId: item.id, manifestId: manifest.id, policy: .explicit, requestedAt: Date())
+        model.applyPreparedChunkProgress(item: item, manifest: manifest, remainingJobs: [job])
+        XCTAssertEqual(model.libraryItems.count, 2)
+        XCTAssertEqual(model.libraryItems[1], unrelated)
+        XCTAssertEqual(model.libraryItems[0].offlineState, .preparing)
+    }
+
     func testCommittedChunksSurviveCoordinatorReconstructionAndAreReused() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }

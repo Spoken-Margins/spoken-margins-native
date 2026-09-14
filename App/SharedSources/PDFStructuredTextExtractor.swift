@@ -87,6 +87,10 @@ enum PDFStructuredTextExtractor {
             throw ExtractionError.noExtractableText
         }
 
+        // A contents page establishes front matter without guessing from dates,
+        // publisher names, or particular report titles. Keep that text, but do
+        // not promote its typography to listening chapters.
+        let firstContentsPage = pages.firstIndex { $0.contains { isTableOfContentsTitle($0.text) } }
         let bodySize = inferredBodyPointSize(from: allLines)
         var insertedOutlineHeadingIDs = Set<Int>()
         var output: [String] = []
@@ -126,13 +130,17 @@ enum PDFStructuredTextExtractor {
                 }
                 let key = headingKey(line.text)
                 if tableOfContentsLines.contains(lineIndex) {
-                    appendParagraph(line.text, to: &output)
+                    // Directory entries are navigation, not a second reading
+                    // of every heading (and their dotted leaders confuse TTS).
+                    continue
                 } else if let heading = pageOutline.first(where: {
                     !insertedOutlineHeadingIDs.contains($0.id) && headingKey($0.title) == key
                 }) {
                     insertedOutlineHeadingIDs.insert(heading.id)
                     appendHeading(line.text, level: heading.level, to: &output)
-                } else if outline.isEmpty && isVisualHeading(line, bodySize: bodySize) {
+                } else if outline.isEmpty
+                    && (firstContentsPage.map({ pageIndex > $0 }) ?? true)
+                    && isVisualHeading(line, bodySize: bodySize) {
                     appendHeading(line.text, level: visualHeadingLevel(line, bodySize: bodySize), to: &output)
                 } else {
                     appendParagraph(line.text, to: &output)
@@ -275,7 +283,7 @@ enum PDFStructuredTextExtractor {
 
     private static func isTableOfContentsTitle(_ value: String) -> Bool {
         let key = normalized(value)
-        return key == "contents" || key == "tableofcontents"
+        return ["contents", "tableofcontents", "contentscontinued", "tableofcontentscontinued"].contains(key)
     }
 
     private static func looksLikeTableOfContentsEntry(_ value: String) -> Bool {
@@ -336,6 +344,7 @@ enum PDFStructuredTextExtractor {
 
     private static func cleaned(_ value: String) -> String {
         value
+            .replacingOccurrences(of: #"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }

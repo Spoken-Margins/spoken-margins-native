@@ -1,0 +1,130 @@
+{
+  "packageSHA256": "adeedd94f43d54cf70afaf6906d856b2e1123ffcac836029bd73588d45bf4c30",
+  "senderDurationMs": 4616736,
+  "recipientDurationMs": 4666752,
+  "assetHashesPassed": true,
+  "margins": [
+    {
+      "margin": "margin-0001",
+      "senderMs": 344397,
+      "resolution": {
+        "isAmbiguous": true,
+        "confidence": 1,
+        "localMediaTimeMs": 365059,
+        "algorithmVersion": "podcast-anchor.v1",
+        "evidenceClass": "ambiguous"
+      }
+    },
+    {
+      "margin": "margin-0002",
+      "senderMs": 1000587,
+      "resolution": {
+        "isAmbiguous": true,
+        "confidence": 1,
+        "localMediaTimeMs": 1021231,
+        "algorithmVersion": "podcast-anchor.v1",
+        "evidenceClass": "ambiguous"
+      }
+    },
+    {
+      "margin": "margin-0003",
+      "senderMs": 1009001,
+      "resolution": {
+        "isAmbiguous": true,
+        "confidence": 1,
+        "localMediaTimeMs": 1029655,
+        "algorithmVersion": "podcast-anchor.v1",
+        "evidenceClass": "ambiguous"
+      }
+    },
+    {
+      "margin": "margin-0004",
+      "senderMs": 1051306,
+      "resolution": {
+        "isAmbiguous": true,
+        "confidence": 1,
+        "localMediaTimeMs": 1071924,
+        "algorithmVersion": "podcast-anchor.v1",
+        "evidenceClass": "ambiguous"
+      }
+    },
+    {
+      "margin": "margin-0005",
+      "senderMs": 1122097,
+      "resolution": {
+        "isAmbiguous": true,
+        "confidence": 1,
+        "localMediaTimeMs": 1142736,
+        "algorithmVersion": "podcast-anchor.v1",
+        "evidenceClass": "ambiguous"
+      }
+    },
+    {
+      "margin": "margin-0006",
+      "senderMs": 1380305,
+      "resolution": {
+        "isAmbiguous": true,
+        "confidence": 1,
+        "localMediaTimeMs": 1400965,
+        "algorithmVersion": "podcast-anchor.v1",
+        "evidenceClass": "ambiguous"
+      }
+    },
+    {
+      "margin": "margin-0007",
+      "senderMs": 1464261,
+      "resolution": {
+        "isAmbiguous": true,
+        "confidence": 1,
+        "localMediaTimeMs": 1484919,
+        "algorithmVersion": "podcast-anchor.v1",
+        "evidenceClass": "ambiguous"
+      }
+    },
+    {
+      "margin": "margin-0008",
+      "senderMs": 3665625,
+      "resolution": {
+        "isAmbiguous": false,
+        "algorithmVersion": "podcast-anchor.v1",
+        "evidenceClass": "absent_from_recipient_edition"
+      }
+    },
+    {
+      "margin": "margin-0009",
+      "senderMs": 3913703,
+      "resolution": {
+        "isAmbiguous": false,
+        "algorithmVersion": "podcast-anchor.v1",
+        "evidenceClass": "absent_from_recipient_edition"
+      }
+    },
+    {
+      "margin": "margin-0010",
+      "senderMs": 3913703,
+      "resolution": {
+        "isAmbiguous": false,
+        "algorithmVersion": "podcast-anchor.v1",
+        "evidenceClass": "absent_from_recipient_edition"
+      }
+    },
+    {
+      "margin": "margin-0011",
+      "senderMs": 4519967,
+      "resolution": {
+        "isAmbiguous": false,
+        "algorithmVersion": "podcast-anchor.v1",
+        "evidenceClass": "absent_from_recipient_edition"
+      }
+    },
+    {
+      "margin": "margin-0012",
+      "senderMs": 4519967,
+      "resolution": {
+        "isAmbiguous": false,
+        "algorithmVersion": "podcast-anchor.v1",
+        "evidenceClass": "absent_from_recipient_edition"
+      }
+    }
+  ]
+}
