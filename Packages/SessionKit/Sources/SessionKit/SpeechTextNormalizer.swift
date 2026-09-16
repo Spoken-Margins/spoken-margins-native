@@ -298,6 +298,11 @@ public enum SpeechTextNormalizer {
     }
 
     private static func systemSpeechCharacters(_ mapped: MappedCharacter) -> [MappedCharacter] {
+        // Newlines, tabs and CRLF are word boundaries, even though their
+        // scalars are controls. Preserve them before filtering unsafe scalars.
+        if mapped.character.isWhitespace {
+            return [MappedCharacter(character: " ", sourceOffset: mapped.sourceOffset)]
+        }
         let replacements: [Character: String] = [
             "“": "\"", "”": "\"", "„": "\"",
             "‘": "'", "’": "'", "‚": "'",

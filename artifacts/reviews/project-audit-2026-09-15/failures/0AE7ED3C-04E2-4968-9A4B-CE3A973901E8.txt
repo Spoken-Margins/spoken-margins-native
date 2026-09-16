@@ -1,0 +1,117 @@
+XCTAssertTrue failed - Optional(Attributes: Application, 0x115888280, pid: 84150, label: 'Spoken Margins'
+Element subtree:
+ →Application, 0x115888280, pid: 84150, label: 'Spoken Margins'
+    Window (Main), 0x1158883c0, {{0.0, 0.0}, {402.0, 874.0}}
+      Other, 0x115888500, {{0.0, 0.0}, {402.0, 874.0}}
+        Other, 0x115888640, {{0.0, 0.0}, {402.0, 874.0}}
+          Other, 0x115888780, {{0.0, 0.0}, {402.0, 874.0}}
+            Other, 0x1158888c0, {{0.0, 0.0}, {402.0, 874.0}}
+              Other, 0x115888a00, {{0.0, 0.0}, {402.0, 874.0}}
+                Other, 0x115888b40, {{0.0, 0.0}, {402.0, 874.0}}
+                  Other, 0x115888c80, {{0.0, 0.0}, {402.0, 874.0}}
+                    Other, 0x115888dc0, {{0.0, 0.0}, {402.0, 874.0}}
+                      Other, 0x115888f00, {{0.0, 0.0}, {402.0, 874.0}}
+                        Other, 0x115889040, {{0.0, 0.0}, {402.0, 874.0}}
+                          Other, 0x115889180, {{0.0, 0.0}, {402.0, 874.0}}, identifier: 'library.screen'
+                            NavigationBar, 0x1158892c0, {{0.0, 62.0}, {402.0, 54.0}}, identifier: 'Library'
+                              Other, 0x115889400, {{20.0, 66.0}, {48.0, 36.0}}, identifier: 'home.settings.button', label: 'Library options'
+                                Other, 0x115889540, {{20.0, 66.0}, {48.0, 36.0}}
+                                  Button, 0x115889680, {{20.0, 66.0}, {48.0, 36.0}}, identifier: 'home.settings.button', label: 'Library options'
+                                    Button, 0x1158897c0, {{20.0, 66.0}, {48.0, 36.0}}
+                                      Image, 0x115889900, {{33.0, 73.0}, {22.0, 22.0}}, identifier: 'ellipsis.circle', label: 'More'
+                              StaticText, 0x115889a40, {{172.7, 73.7}, {56.3, 20.7}}, label: 'Library'
+                              Button, 0x115889b80, {{346.0, 66.0}, {36.0, 36.0}}, identifier: 'home.addSource.button', label: 'Add'
+                            Other, 0x115889cc0, {{0.0, 0.0}, {402.0, 874.0}}
+                              Other, 0x115889e00, {{0.0, 0.0}, {402.0, 874.0}}
+                                Other, 0x115889f40, {{0.0, 0.0}, {402.0, 874.0}}
+                                  Other, 0x11588a080, {{0.0, 0.0}, {402.0, 874.0}}
+                                    CollectionView, 0x11588a1c0, {{0.0, 0.0}, {402.0, 874.0}}, identifier: 'home.screen'
+                                      Other, 0x11588a300, {{0.0, -1632.0}, {402.0, 3741.7}}
+                                      Other, 0x11588a440, {{0.0, 0.0}, {402.0, 874.0}}
+                                        Other, 0x11588a580, {{0.0, 0.0}, {402.0, 170.8}}
+                                        Other, 0x11588a6c0, {{0.0, 726.2}, {402.0, 147.8}}
+                                      Other, 0x11588a800, {{0.0, 0.0}, {402.0, 874.0}}
+                                      Cell, 0x11588a940, {{0.0, 116.0}, {402.0, 162.3}}
+                                        Other, 0x11588aa80, {{0.0, 116.0}, {402.0, 162.3}}
+                                          Other, 0x11588abc0, {{0.0, 116.0}, {402.0, 162.3}}
+                                            Other, 0x11588ad00, {{0.0, 116.0}, {402.0, 162.3}}
+                                        Other, 0x11588ae40, {{0.0, 116.0}, {402.0, 162.3}}
+                                          Other, 0x11588af80, {{0.0, 116.0}, {402.0, 162.3}}
+                                            Other, 0x11588b0c0, {{0.0, 116.0}, {402.0, 162.3}}
+                                              Image, 0x11588b200, {{32.0, 135.7}, {16.3, 16.7}}, identifier: 'magnifyingglass', label: 'Search'
+                                              TextField, 0x11588b340, {{60.3, 133.0}, {311.7, 22.0}}, identifier: 'library.search.field', placeholderValue: 'Search title, source, or author'
+                                              Button, 0x11588b480, {{16.0, 180.0}, {102.7, 38.0}}, identifier: 'library.filter.menu', label: 'Filter Library'
+                                                Button, 0x11588b5c0, {{16.0, 180.0}, {102.7, 38.0}}
+                                                  Image, 0x11588b700, {{31.3, 189.3}, {19.7, 19.7}}, identifier: 'line.3.horizontal.decrease.circle', label: 'Filter'
+                                                  StaticText, 0x11588b840, {{31.3, 189.3}, {74.3, 19.7}}, label: 'Filter'
+                                              Button, 0x11588b980, {{126.7, 180.0}, {179.0, 38.0}}, identifier: 'library.sort.menu', label: 'Sort Library', value: Recently Added
+                                                Button, 0x11588bac0, {{126.7, 180.0}, {179.0, 38.0}}
+                                                  Image, 0x11588bc00, {{140.3, 189.7}, {22.7, 18.7}}, identifier: 'arrow.up.arrow.down', label: 'Sort'
+                                                  StaticText, 0x11588bd40, {{140.3, 189.7}, {152.3, 18.7}}, label: 'Recently Added'
+                                              StaticText, 0x11588be80, {{16.0, 230.0}, {61.0, 14.3}}, identifier: 'library.filter.summary', label: 'Unfinished'
+                                              Other, 0x115860000, {{16.0, 256.3}, {290.3, 18.0}}, identifier: 'library.completed.visibility'
+                                                StaticText, 0x115860140, {{16.0, 256.3}, {167.7, 18.0}}, label: 'Completed items hidden'
+                                                Button, 0x115860280, {{191.7, 256.3}, {114.7, 18.0}}, label: 'Show completed'
+                                      Cell, 0x1158603c0, {{0.0, 278.3}, {402.0, 83.3}}
+                                        Other, 0x115860500, {{0.0, 278.3}, {402.0, 83.3}}
+                                          Other, 0x115860640, {{0.0, 278.3}, {402.0, 83.3}}
+                                            Other, 0x115860780, {{0.0, 278.3}, {402.0, 83.3}}
+                                        Other, 0x1158608c0, {{0.0, 278.3}, {402.0, 83.3}}
+                                          Other, 0x115860a00, {{0.0, 278.3}, {402.0, 83.3}}
+                                            Other, 0x115860b40, {{0.0, 278.3}, {402.0, 83.3}}
+                                              Image, 0x115860c80, {{38.0, 311.0}, {17.7, 18.3}}, identifier: 'headphones', label: 'Audiobook'
+                                              Button, 0x115860dc0, {{78.0, 288.3}, {244.0, 63.3}}, identifier: 'library.row.guided-onboarding', label: 'A Guided Tour of Spoken Margins, Spoken Margins · Guided Tour · Offline'
+                                                StaticText, 0x115860f00, {{78.0, 288.3}, {137.0, 42.3}}, label: 'A Guided Tour of Spoken Margins'
+                                                StaticText, 0x115861040, {{78.0, 333.7}, {241.3, 18.0}}, label: 'Spoken Margins · Guided Tour · Offline'
+                                              Button, 0x115861180, {{334.0, 300.0}, {40.0, 40.0}}, identifier: 'queue.start.guided-onboarding', label: 'Start A Guided Tour of Spoken Margins', value: Ready offline
+                                      Other, 0x1158612c0, {{369.0, 116.0}, {30.0, 675.0}}, label: 'Vertical scroll bar, 1 page', value: 0%
+                                        Other, 0x115861400, {{396.0, 781.0}, {3.0, 7.0}}
+                                      Other, 0x115861540, {{369.0, 116.0}, {30.0, 675.0}}, label: 'Vertical scroll bar, 1 page', value: 0%
+                                        Other, 0x115861680, {{396.0, 781.0}, {3.0, 7.0}}
+                            Other, 0x1158617c0, {{0.0, 0.0}, {402.0, 874.0}}
+                              Other, 0x115861900, {{0.0, 0.0}, {402.0, 874.0}}
+                          Other, 0x115861a40, {{11.5, 728.5}, {379.0, 59.0}}, identifier: 'miniPlayer.bar'
+                            Button, 0x115861b80, {{26.0, 736.0}, {208.0, 44.0}}, identifier: 'miniPlayer.open.button', label: 'Open Now Playing', value: You Can't Inspect ...
+                              StaticText, 0x115861cc0, {{26.0, 739.8}, {178.3, 18.0}}, label: 'You Can't Inspect the Pill'
+                              StaticText, 0x115861e00, {{26.0, 761.8}, {127.3, 14.3}}, label: 'Ch. 3: Inspect process'
+                              StaticText, 0x115861f40, {{160.3, 761.8}, {26.3, 14.3}}, label: '69%'
+                            Button, 0x115862080, {{255.3, 745.0}, {17.3, 26.0}}, identifier: 'miniPlayer.interject.button', label: 'Record an interjection'
+                            Button, 0x1158621c0, {{290.0, 735.0}, {46.0, 46.0}}, identifier: 'miniPlayer.playPause.button', label: 'Play'
+                            Button, 0x115862300, {{351.0, 747.0}, {22.0, 22.0}}, identifier: 'miniPlayer.close.button', label: 'Close and save listening session'
+                Other, 0x115862440, {{0.0, 791.0}, {402.0, 83.0}}
+                  Other, 0x115862580, {{0.0, 0.0}, {402.0, 874.0}}
+                    TabBar, 0x1158626c0, {{0.0, 791.0}, {402.0, 83.0}}, label: 'Tab Bar'
+                      Other, 0x115862800, {{64.0, 791.0}, {274.0, 62.0}}
+                        Other, 0x115862940, {{64.0, 791.0}, {94.0, 54.0}}
+                        Other, 0x115862a80, {{64.0, 791.0}, {274.0, 62.0}}
+                          Button, 0x115862bc0, {{68.0, 795.0}, {94.0, 54.0}}, identifier: 'navigation.tab.library', label: 'Library', Selected
+                            Image, 0x115862d00, {{98.0, 800.0}, {33.3, 29.3}}, identifier: 'books.vertical.fill', label: 'Bookshelf'
+                          Button, 0x115862e40, {{154.0, 795.0}, {94.0, 54.0}}, identifier: 'navigation.tab.sources', label: 'Following'
+                            Image, 0x115862f80, {{184.0, 802.7}, {33.7, 24.7}}, identifier: 'dot.radiowaves.left.and.right', label: 'radio'
+                          Button, 0x1158630c0, {{240.0, 795.0}, {94.0, 54.0}}, identifier: 'navigation.tab.margins', label: 'Margins'
+                            Image, 0x115863200, {{271.0, 801.7}, {31.3, 27.7}}, identifier: 'quote.bubble.fill', label: 'Bubble'
+                        Other, 0x115863340, {{68.0, 795.0}, {94.0, 54.0}}
+                          Other, 0x115863480, {{68.0, 795.0}, {94.0, 54.0}}
+                            Other, 0x1158635c0, {{68.0, 795.0}, {94.0, 54.0}}
+                            Other, 0x115863700, {{68.0, 795.0}, {94.0, 54.0}}
+                              Other, 0x115863840, {{68.0, 795.0}, {94.0, 54.0}}
+                                Other, 0x115863980, {{68.0, 795.0}, {94.0, 54.0}}
+                                  Other, 0x115863ac0, {{68.0, 795.0}, {94.0, 54.0}}
+                                Other, 0x115863c00, {{68.0, 795.0}, {94.0, 54.0}}
+                              Other, 0x115863d40, {{68.0, 795.0}, {94.0, 54.0}}
+                  Other, 0x115863e80, {{0.0, 791.0}, {402.0, 83.0}}
+                    Other, 0x115850000, {{0.0, 791.0}, {402.0, 83.0}}
+                      Other, 0x115850140, {{0.0, 791.0}, {402.0, 83.0}}
+                        Other, 0x115850280, {{0.0, 791.0}, {402.0, 83.0}}
+                          Other, 0x1158503c0, {{0.0, 791.0}, {402.0, 83.0}}
+                            Other, 0x115850500, {{0.0, 791.0}, {402.0, 83.0}}
+                        Other, 0x115850640, {{0.0, 791.0}, {402.0, 83.0}}
+                          Other, 0x115850780, {{0.0, 791.0}, {402.0, 83.0}}
+Path to element:
+ →Application, 0x115888280, pid: 84150, label: 'Spoken Margins'
+Query chain:
+ →Find: Target Application 'com.spokenmargins.native'
+  Output: {
+    Application, 0x1158508c0, pid: 84150, label: 'Spoken Margins'
+  }
+)

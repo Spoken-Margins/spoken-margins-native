@@ -63,6 +63,44 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         XCTAssertEqual(model.libraryItems[0].offlineState, .preparing)
     }
 
+    @MainActor
+    func testFinalChunkSnapshotCannotUndoPersistedOfflineCompletion() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "final-chunk-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(),
+                                  databaseURLOverride: root.appending(path: "store.sqlite"))
+        let store = try model.libraryStoreForTesting()
+        let fixture = Fixture(root: root, prepared: root.appending(path: "Prepared"), store: store)
+        addTeardownBlock { [weak model, weak store] in
+            // Startup tasks can retain the connection after the test finishes.
+            // Never unlink a live SQLite/WAL fixture.
+            if model == nil, store == nil { try FileManager.default.removeItem(at: root) }
+        }
+        let item = Item(id: "final-item", title: "Finished PDF", mediaType: "pdf",
+                        text: "First chunk. Second chunk.", externalReference: nil, status: "ready")
+        try fixture.store.saveItem(item)
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
+        let begun = try await coordinator.begin(itemId: item.id, sourceText: item.text!, signature: signature("one"), plan: plans())
+        for plan in plans() {
+            let file = fixture.root.appending(path: "chunk-\(plan.index).wav")
+            try Data([1, 2, 3]).write(to: file)
+            _ = try await coordinator.commit(itemId: item.id, signature: signature("one"), plan: plan,
+                                             sourceText: item.text!, audioURL: file, durationMs: 1000)
+        }
+        let stale = try XCTUnwrap(fixture.store.loadPreparedAudioManifest(id: begun.id))
+        XCTAssertEqual(stale.state, .preparing)
+        var complete = stale
+        complete.state = .readyOffline
+        complete.artifact = PreparedAudioArtifact(relativePath: "assembled.m4a", byteCount: 6,
+                                                  checksumSHA256: "test", durationMs: 2000)
+        try fixture.store.savePreparedAudioManifest(complete)
+        model.libraryItems = [LibraryItemRow(id: item.id, title: item.title, status: "Ready", canDelete: true,
+                                            offlineState: .readyOffline)]
+        model.applyPreparedChunkProgress(item: item, manifest: stale, remainingJobs: [])
+        XCTAssertEqual(model.libraryItems.first?.offlineState, .readyOffline)
+        XCTAssertEqual(try fixture.store.loadPreparedAudioManifest(id: begun.id)?.state, .readyOffline)
+    }
+
     func testCommittedChunksSurviveCoordinatorReconstructionAndAreReused() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }

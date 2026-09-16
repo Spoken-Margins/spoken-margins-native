@@ -1,0 +1,46 @@
+Test Suite 'Selected tests' started at 2026-09-14 17:52:35.539.
+Test Suite 'SpokenMarginsAppTests.xctest' started at 2026-09-14 17:52:35.539.
+Test Suite 'OfflineStorageLedgerTests' started at 2026-09-14 17:52:35.540.
+Test Case '-[SpokenMarginsAppTests.OfflineStorageLedgerTests testAdoptionIsIdempotentAndLedgerMatchesTrackedFiles]' started.
+Test Case '-[SpokenMarginsAppTests.OfflineStorageLedgerTests testAdoptionIsIdempotentAndLedgerMatchesTrackedFiles]' passed (0.015 seconds).
+Test Case '-[SpokenMarginsAppTests.OfflineStorageLedgerTests testAdoptionToleratesHistoricalDuplicatePaths]' started.
+Test Case '-[SpokenMarginsAppTests.OfflineStorageLedgerTests testAdoptionToleratesHistoricalDuplicatePaths]' passed (0.006 seconds).
+Test Case '-[SpokenMarginsAppTests.OfflineStorageLedgerTests testBudgetUsesDecimalGigabytesMatchingSettingsLabel]' started.
+Test Case '-[SpokenMarginsAppTests.OfflineStorageLedgerTests testBudgetUsesDecimalGigabytesMatchingSettingsLabel]' passed (0.001 seconds).
+Test Case '-[SpokenMarginsAppTests.OfflineStorageLedgerTests testCommitRejectsOutputLargerThanReservation]' started.
+Test Case '-[SpokenMarginsAppTests.OfflineStorageLedgerTests testCommitRejectsOutputLargerThanReservation]' passed (0.004 seconds).
+Test Case '-[SpokenMarginsAppTests.OfflineStorageLedgerTests testEPUBImporterRejectsNonFileURLBeforeLoading]' started.
+Test Case '-[SpokenMarginsAppTests.OfflineStorageLedgerTests testEPUBImporterRejectsNonFileURLBeforeLoading]' passed (0.003 seconds).
+Test Case '-[SpokenMarginsAppTests.OfflineStorageLedgerTests testLocalSourceImporterCoordinatesFileSizeAndCopy]' started.
+Test Case '-[SpokenMarginsAppTests.OfflineStorageLedgerTests testLocalSourceImporterCoordinatesFileSizeAndCopy]' passed (0.008 seconds).
+Test Case '-[SpokenMarginsAppTests.OfflineStorageLedgerTests testLoweredBudgetImmediatelyEvictsReproducibleAssets]' started.
+Test Case '-[SpokenMarginsAppTests.OfflineStorageLedgerTests testLoweredBudgetImmediatelyEvictsReproducibleAssets]' passed (0.002 seconds).
+Test Case '-[SpokenMarginsAppTests.OfflineStorageLedgerTests testReservationPreventsWriterFromExceedingBudget]' started.
+Test Case '-[SpokenMarginsAppTests.OfflineStorageLedgerTests testReservationPreventsWriterFromExceedingBudget]' passed (0.020 seconds).
+Test Suite 'OfflineStorageLedgerTests' passed at 2026-09-14 17:52:35.603.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.059 (0.063) seconds
+Test Suite 'PodcastDownloadCoordinatorTests' started at 2026-09-14 17:52:35.603.
+Test Case '-[SpokenMarginsAppTests.PodcastDownloadCoordinatorTests testCellularRegistrationStreamsWithoutAutomaticDownloadAndDeduplicatesRecord]' started.
+Test Case '-[SpokenMarginsAppTests.PodcastDownloadCoordinatorTests testCellularRegistrationStreamsWithoutAutomaticDownloadAndDeduplicatesRecord]' passed (0.014 seconds).
+Test Case '-[SpokenMarginsAppTests.PodcastDownloadCoordinatorTests testClearDownloadsProtectsActivePlaybackAndEvictsOtherLocalFile]' started.
+Test Case '-[SpokenMarginsAppTests.PodcastDownloadCoordinatorTests testClearDownloadsProtectsActivePlaybackAndEvictsOtherLocalFile]' passed (0.012 seconds).
+Test Case '-[SpokenMarginsAppTests.PodcastDownloadCoordinatorTests testManualDownloadDoesNotClaimToStartWithoutAConnection]' started.
+Test Case '-[SpokenMarginsAppTests.PodcastDownloadCoordinatorTests testManualDownloadDoesNotClaimToStartWithoutAConnection]' passed (0.009 seconds).
+Test Case '-[SpokenMarginsAppTests.PodcastDownloadCoordinatorTests testPermanentItemRemovalDeletesLocalRemoteAndDownloadRecords]' started.
+Test Case '-[SpokenMarginsAppTests.PodcastDownloadCoordinatorTests testPermanentItemRemovalDeletesLocalRemoteAndDownloadRecords]' passed (0.007 seconds).
+Test Case '-[SpokenMarginsAppTests.PodcastDownloadCoordinatorTests testRegistrationPersistsSecureDownloadTransportForExistingHTTPEnclosure]' started.
+Test Case '-[SpokenMarginsAppTests.PodcastDownloadCoordinatorTests testRegistrationPersistsSecureDownloadTransportForExistingHTTPEnclosure]' passed (0.013 seconds).
+Test Case '-[SpokenMarginsAppTests.PodcastDownloadCoordinatorTests testRetryMigratesPreviouslyFailedBBCDownloadWithoutReimport]' started.
+Test Case '-[SpokenMarginsAppTests.PodcastDownloadCoordinatorTests testRetryMigratesPreviouslyFailedBBCDownloadWithoutReimport]' passed (0.006 seconds).
+Test Case '-[SpokenMarginsAppTests.PodcastDownloadCoordinatorTests testSharedStorageReservationCannotEvictActivePodcastIncludingAdoptedFiles]' started.
+Test Case '-[SpokenMarginsAppTests.PodcastDownloadCoordinatorTests testSharedStorageReservationCannotEvictActivePodcastIncludingAdoptedFiles]' passed (0.011 seconds).
+Test Case '-[SpokenMarginsAppTests.PodcastDownloadCoordinatorTests testValidatedLocalURLRequiresAvailableNonemptyFile]' started.
+Test Case '-[SpokenMarginsAppTests.PodcastDownloadCoordinatorTests testValidatedLocalURLRequiresAvailableNonemptyFile]' passed (0.006 seconds).
+Test Suite 'PodcastDownloadCoordinatorTests' passed at 2026-09-14 17:52:35.684.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.078 (0.081) seconds
+Test Suite 'SpokenMarginsAppTests.xctest' passed at 2026-09-14 17:52:35.684.
+	 Executed 16 tests, with 0 failures (0 unexpected) in 0.137 (0.145) seconds
+Test Suite 'Selected tests' passed at 2026-09-14 17:52:35.684.
+	 Executed 16 tests, with 0 failures (0 unexpected) in 0.137 (0.145) seconds
+	/Users/colemiller/Documents/GitHub/spoken-margins-native/.build/verification/SpokenMarginsAppBehavior/Logs/Test/Test-SpokenMarginsAppBehavior-2026.09.14_17-51-02--0400.xcresult
+** TEST SUCCEEDED **

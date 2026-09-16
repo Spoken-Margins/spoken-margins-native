@@ -101,7 +101,7 @@ final class SourceLinkImportTests: XCTestCase {
     func testFeedEntryImportPreservesTitleAndSourceWithoutChangingActivePlayback() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        temporaryDirectories.append(root)
+        // Model background tasks retain SQLite beyond this test; do not unlink its open WAL.
         let databaseURL = root.appending(path: "library.sqlite")
         let audioURL = "https://audio.example/episode.mp3"
         let resolver = StaticAppLinkResolver(result: LinkResolutionResult(requestId: "ignored", status: .playable, originalLink: SourceLink(url: audioURL, role: "discovery"), selectedCandidate: LinkResolutionCandidate(sourceLink: SourceLink(url: audioURL, role: "media"), title: "audio", durationMs: 300_000, audioURL: audioURL, confidence: 1)))
@@ -820,6 +820,46 @@ final class SourceLinkImportTests: XCTestCase {
             model.diagnostics["sourceTranscriptionAfterDownload:\(itemId)"],
             "not_requested"
         )
+    }
+
+    func testExplicitPodcastRedownloadCanReplacePausedTransportWhileAutomaticCompletionCannot() async throws {
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: "https://example.com/episode", provider: "rss", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://feeds.example.com/show.xml", provider: "rss", role: "canonical_feed"),
+                title: "Battery-Safe Episode",
+                durationMs: 300_000,
+                audioURL: "https://cdn.example.com/battery-safe.mp3",
+                confidence: 1
+            )
+        ))
+        let transcriber = RecordingFullSourceTranscriptionClient()
+        let audio = WindowContextAudioClient()
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: audio,
+            sourceTranscriptionClient: transcriber,
+            localFoundationModelClient: SourceLinkFoundationModelStub()
+        )
+        model.resetAndSeed()
+
+        XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/episode", sourceSurface: "paste"))
+        let itemId = try XCTUnwrap(model.snapshot.itemId)
+        let localURL = FileManager.default.temporaryDirectory.appendingPathComponent("battery-safe.mp3")
+        model.podcastLocalAssetDidBecomeReady(itemId: itemId, url: localURL)
+        model.pause()
+        model.resumePlayback()
+        XCTAssertNil(audio.lastMediaContext?.playbackURL, "Automatic completion changed the active edition")
+        model.pause()
+        model.redownloadSelectedPodcast()
+        let replacement = localURL.deletingLastPathComponent().appendingPathComponent("replacement.mp3")
+        model.podcastLocalAssetDidBecomeReady(itemId: itemId, url: replacement)
+        XCTAssertEqual(audio.lastMediaContext?.playbackURL, replacement.absoluteString)
+        XCTAssertEqual(model.snapshot.status, .paused)
+        model.resumePlayback()
+        XCTAssertEqual(audio.lastMediaContext?.playbackURL, replacement.absoluteString)
     }
 
     func testPrivateEpisodeMapRequiresExplicitRequestBeforeDownloadTranscription() async throws {
@@ -2352,9 +2392,11 @@ private struct ThrowingSourceTranscriptionClient: SourceTranscriptionClient {
 }
 
 private final class WindowContextAudioClient: AudioPlaybackClient {
+    private(set) var lastMediaContext: PlaybackMediaContext?
     private var durationMs = 300_000
 
     func configureMediaContext(_ context: PlaybackMediaContext?) throws {
+        lastMediaContext = context
         if let duration = context?.durationMs { durationMs = duration }
     }
 

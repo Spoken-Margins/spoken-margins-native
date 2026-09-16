@@ -58,7 +58,13 @@
               "scrub.media.display",
               "scrub.text.drag",
               "scrub.text.editing",
-              "scrub.text.display"
+              "scrub.text.display",
+              "recording.launch",
+              "playback.state",
+              "skip.request",
+              "transport.request",
+              "seek.media.result",
+              "download.state"
             ]
           },
           "fields": {

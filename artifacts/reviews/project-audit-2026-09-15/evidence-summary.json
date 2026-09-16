@@ -1,0 +1,87 @@
+{
+  "head": "6432044bdc5ebff4691a69bee2699c309222ebac",
+  "branch": "codex/provisional-next",
+  "runs": [
+    {
+      "manifest": "artifacts/test-runs/project-audit-2026-09-15-complete/manifest.json",
+      "status": "failed_or_incomplete",
+      "input_sha256": "ecd03a42292954ff26dcb56631d39149516fb0fd2b4839eb09fcaf15536171dd",
+      "counts": {
+        "package": {
+          "passed": 300,
+          "failed": 0,
+          "skipped": 1
+        },
+        "xcode-tests": {
+          "passed": 476,
+          "failed": 7,
+          "skipped": 0
+        }
+      }
+    },
+    {
+      "manifest": "artifacts/test-runs/project-audit-2026-09-15-app-final/manifest.json",
+      "status": "failed_or_incomplete",
+      "input_sha256": "3afed8bc92f7d7dab04a962bdaa2f19273f32e4b8b8d7c11c88c0217768f0efe",
+      "counts": {
+        "xcode-tests": {
+          "passed": 437,
+          "failed": 5,
+          "skipped": 0
+        }
+      }
+    }
+  ],
+  "focused_final": {
+    "tests": [
+      [
+        "-[SpokenMarginsAppTests.Gate1AppModelWorkflowTests testFollowDiscoveryRechecksSubscriptionsBeforePublishing]",
+        "passed",
+        "0.053"
+      ],
+      [
+        "-[SpokenMarginsAppTests.Gate1AppModelWorkflowTests testGlobalMarginSearchStarsAndSharedRowsKeepSessionIdentity]",
+        "passed",
+        "0.338"
+      ],
+      [
+        "-[SpokenMarginsAppTests.Gate1AppModelWorkflowTests testLateFollowDiscoveryCannotPublishUnderAnotherItem]",
+        "passed",
+        "0.090"
+      ],
+      [
+        "-[SpokenMarginsAppTests.LocalAudioListeningPackageTests testExactAudioImportActivatesMapResolvesMarginsAndSurvivesReconstruction]",
+        "passed",
+        "2.476"
+      ],
+      [
+        "-[SpokenMarginsAppTests.PreparedAudioCoordinatorTests testFinalChunkSnapshotCannotUndoPersistedOfflineCompletion]",
+        "passed",
+        "0.023"
+      ],
+      [
+        "-[SpokenMarginsAppTests.SourceLinkImportTests testFeedEntryImportPreservesTitleAndSourceWithoutChangingActivePlayback]",
+        "passed",
+        "0.065"
+      ],
+      [
+        "-[SpokenMarginsAppTests.SupertonicSpeechTests testAirPodRouteLossPublishesCanonicalPauseAndRemoteResumeDuringPartialGeneration]",
+        "passed",
+        "0.171"
+      ],
+      [
+        "-[SpokenMarginsAppTests.SupertonicSpeechTests testGenerationTokenCancelsStaleRenderAfterReplay]",
+        "passed",
+        "0.033"
+      ],
+      [
+        "-[SpokenMarginsAppTests.SupertonicSpeechTests testObservedPlaybackStartRemainsPendingWhilePlayerIsStillPaused]",
+        "passed",
+        "0.029"
+      ]
+    ],
+    "status": "verified_9_selected_cases"
+  },
+  "release_status": "failed_six_unresolved_UI_cases; do not distribute",
+  "human_validated": false
+}

@@ -45,6 +45,27 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.libraryItems.map(\.id), ["newer-item"])
     }
 
+    func testAutomaticPlaybackHistorySurvivesRestartAndIgnoresSamples() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("events.json")
+        let recorder = DeveloperDiagnosticRecording(limit: 4, fileURL: url, automatic: true)
+        recorder.record("transport.request", ["command": "skipForward", "mediaTimeMs": "1200000"])
+        for _ in 0..<1500 { recorder.record("sample", ["textOffset": "0"]) }
+        XCTAssertEqual(recorder.events.count, 2)
+        await recorder.flush()
+        let restored = DeveloperDiagnosticRecording(limit: 4, fileURL: url, automatic: true)
+        XCTAssertEqual(restored.events.count, 3)
+        XCTAssertEqual(restored.events[1].fields["command"], "skipForward")
+        restored.record("seek.media.result", ["outcome": "accepted:1260000"])
+        restored.record("playback.state", ["status": "paused"])
+        XCTAssertEqual(restored.events.count, 4)
+        XCTAssertEqual(restored.events.first?.kind, "transport.request")
+        await restored.flush()
+        let saved = try JSONDecoder().decode(DeveloperDiagnosticRecording.Capture.self, from: Data(contentsOf: url))
+        XCTAssertEqual(saved.events.last?.fields["status"], "paused")
+    }
+
     func testDeveloperRecordingIsOptInBoundedAndStops() throws {
         let recorder = DeveloperDiagnosticRecording(limit: 4)
         recorder.record("ignored")
@@ -77,6 +98,11 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             "runtimeProfile": "test-profile",
             "lastBrowserTextSource": "private source content"
         ]
+        for _ in 0..<400 {
+            model.recordDeveloperDiagnostic("scrub.media.display", ["canonical": "100"])
+            model.recordDeveloperDiagnostic("sample", ["textOffset": "0"])
+        }
+        model.recordDeveloperDiagnostic("transport.request", ["command": "skipForward", "origin": "now_playing"])
         model.copyDiagnosticsExport()
         let text = try XCTUnwrap(UIPasteboard.general.string)
         let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: String])
@@ -84,6 +110,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(payload["runtimeProfile"], "test-profile")
         XCTAssertNil(payload["lastBrowserTextSource"])
         XCTAssertFalse(text.contains("private source content"))
+        let eventJSON = try XCTUnwrap(payload["playbackEvents"]?.data(using: .utf8))
+        let events = try JSONDecoder().decode(DeveloperDiagnosticRecording.Capture.self, from: eventJSON).events
+        XCTAssertFalse(events.contains { $0.kind == "sample" || $0.kind.hasPrefix("scrub.") })
+        XCTAssertEqual(events.last?.fields["origin"], "now_playing")
         XCTAssertEqual(model.feedbackEvent?.kind, .success)
         XCTAssertEqual(model.feedbackEvent?.message, "Copied privacy-safe diagnostics.")
     }

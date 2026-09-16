@@ -102,6 +102,23 @@ final class SessionKitCoreTests: XCTestCase {
     }
 
     #if canImport(AVFoundation)
+    func testRetiredSpeechSynthesizerCannotConfirmOrCancelCurrentPlayback() throws {
+        let client = SystemSpeechPlaybackClient(voiceIdentifier: nil, speechRate: AVSpeechUtteranceDefaultSpeechRate)
+        _ = try client.prepareSpeechText(String(repeating: "Keep the current speech request intact. ", count: 30))
+        try client.play(targetId: "current", from: 0)
+        let status = client.playbackStartStatus(targetId: "current")
+        let position = client.currentCharOffset()
+        let retired = AVSpeechSynthesizer()
+        let obsolete = AVSpeechUtterance(string: "Earlier request")
+        client.speechSynthesizer(retired, didStart: obsolete)
+        client.speechSynthesizer(retired, didCancel: obsolete)
+        client.speechSynthesizer(retired, didFinish: obsolete)
+        XCTAssertEqual(client.playbackStartStatus(targetId: "current"), status)
+        XCTAssertEqual(client.currentCharOffset(), position)
+        XCTAssertFalse(client.isPlaybackComplete(targetId: "current"))
+        try client.stop()
+    }
+
     func testSystemSpeechPlaybackRateReportsEffectiveTransportMultiplier() throws {
         let client = SystemSpeechPlaybackClient(
             voiceIdentifier: nil,
@@ -582,6 +599,20 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertFalse(resumedSpoken.contains("29.7M"))
         XCTAssertFalse(resumedSpoken.localizedCaseInsensitiveContains("Replies"))
         XCTAssertFalse(resumedSpoken.localizedCaseInsensitiveContains("x.com"))
+    }
+
+    func testSystemSpeechPreservesWhitespaceWordBoundariesAndSourceOffsets() {
+        for separator in ["\n", "\r\n", "\t"] {
+            let source = "First" + separator + "second"
+            let projected = SpeechTextNormalizer.projectForSystemSpeech(source)
+            XCTAssertEqual(projected.text, "First second")
+            XCTAssertEqual(projected.sourceOffsets.last, source.count - 1)
+            XCTAssertEqual(projected.text.count, projected.sourceOffsets.count)
+        }
+        let source = "meridian-protocol[.]org\nmeridiangroup-corp[.]com\nprojectnightcrawler[.]dev"
+        let projected = SpeechTextNormalizer.projectForSystemSpeech(source)
+        XCTAssertEqual(projected.text, source.replacingOccurrences(of: "\n", with: " "))
+        XCTAssertTrue(zip(projected.sourceOffsets, projected.sourceOffsets.dropFirst()).allSatisfy { $0.0 <= $0.1 })
     }
 
     func testSystemSpeechProjectionGuaranteesOneUTF16UnitPerSpokenCharacter() {
@@ -1245,6 +1276,86 @@ final class SessionKitCoreTests: XCTestCase {
         let failed = try engine.startSession(itemId: "item-pill")
         XCTAssertEqual(failed.status, .failed)
         XCTAssertEqual(failed.lastFailure, "playback_start_failed:native_audio_failed")
+    }
+
+    func testRemoteChapterStartupRecreatesTransportOnceAndPreservesDestination() throws {
+        for failsImmediately in [false, true] {
+            for retrySucceeds in [false, true] {
+                let audio = RecordingAudioClient()
+                var clock = Date(timeIntervalSince1970: 100)
+                let item = Item(
+                    id: "remote-chapter", title: "Podcast", mediaType: "audio",
+                    text: nil, externalReference: nil, status: "ready",
+                    media: ItemMedia(sourceType: .remoteStream,
+                                     url: "https://example.com/episode.mp3", durationMs: 600_000)
+                )
+                let repo = InMemorySessionRepository(items: [item.id: item])
+                try repo.saveTranscriptTimeline(SourceTranscriptTimeline(
+                    id: "chapters", itemId: item.id, createdAt: clock,
+                    timeline: TranscriptTimeline(segments: [
+                        MediaTimelineSegment(id: "seg-grabby", startMs: 18_000, endMs: 600_000, startChar: 0, endChar: 6, text: "Aliens")
+                    ], chapters: [
+                        MediaTimelineChapter(id: "grabby", title: "Grabby aliens", startMs: 18_000, transcriptSegmentId: "seg-grabby")
+                    ], durationMs: 600_000)
+                ))
+                let profile = RuntimeCapabilityProfile(
+                    id: "phone", displayName: "Phone",
+                    capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media"],
+                                   "timeline": ["media_time", "chapter_timing"]]
+                )
+                let engine = SessionEngine(profile: profile, repository: repo, audio: audio,
+                                           playbackStartTimeout: 10, now: { clock })
+                _ = try engine.startSession(itemId: item.id)
+                audio.startStatus = .pending
+                _ = try engine.jumpToChapter(chapterId: "grabby")
+                let stops = audio.stopCount
+                // A cold player can still report the previous position while loading.
+                audio.currentMediaTimeValue = 0
+                if failsImmediately { audio.startStatus = .failed("network_failure") }
+                clock = clock.addingTimeInterval(11)
+                let recovering = try engine.syncPlaybackProgress()
+                XCTAssertEqual(recovering.status, .starting)
+                XCTAssertEqual(audio.stopCount, stops + 1)
+                XCTAssertEqual(audio.playedOffsets.last, 18_000)
+                XCTAssertEqual(engine.currentSession?.position.chapterId, "grabby")
+                XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 18_000)
+                audio.startStatus = retrySucceeds ? .confirmed : .pending
+                clock = clock.addingTimeInterval(11)
+                let result = try engine.syncPlaybackProgress()
+                XCTAssertEqual(result.status, retrySucceeds ? .playing : .failed)
+                _ = try engine.syncPlaybackProgress()
+                XCTAssertEqual(audio.stopCount, stops + 1, "Never retry indefinitely")
+                XCTAssertEqual(try repo.loadItem(id: item.id).media?.url, item.media?.url)
+            }
+        }
+    }
+
+    func testRemoteStartupRecoveryDoesNotRestartPausedPlaybackOrLocalFiles() throws {
+        for localFile in [false, true] {
+            let audio = RecordingAudioClient()
+            audio.startStatus = .pending
+            var clock = Date(timeIntervalSince1970: 100)
+            let item = Item(
+                id: "podcast", title: "Podcast", mediaType: "audio", text: nil,
+                externalReference: nil, status: "ready",
+                media: ItemMedia(sourceType: .remoteStream,
+                                 url: localFile ? "file:///tmp/episode.mp3" : "https://example.com/episode.mp3")
+            )
+            let engine = SessionEngine(
+                profile: RuntimeCapabilityProfile(id: "phone", displayName: "Phone",
+                                                   capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media"]]),
+                repository: InMemorySessionRepository(items: [item.id: item]), audio: audio,
+                playbackStartTimeout: 10, now: { clock }
+            )
+            _ = try engine.startSession(itemId: item.id)
+            if !localFile { _ = try engine.pause() }
+            let stops = audio.stopCount
+            clock = clock.addingTimeInterval(11)
+            let result = try engine.syncPlaybackProgress()
+            XCTAssertEqual(result.status, localFile ? .failed : .paused)
+            XCTAssertEqual(audio.stopCount, stops)
+            XCTAssertEqual(audio.playedTargets.count, 1)
+        }
     }
 
     func testPlaybackStartPendingTimesOutAsFailure() throws {
@@ -2171,6 +2282,41 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(repo.interjections[interjection.id]?.roughPercent, 25)
     }
 
+    func testStableMediaProgressDoesNotRepeatNotePercentageRepair() throws {
+        for noteCount in [0, 100, 1000] {
+            let item = Item(id: "measured-podcast", title: "Measured", mediaType: "audio", text: nil, externalReference: nil,
+                status: "ready", media: ItemMedia(sourceType: .remoteStream,
+                    url: "https://example.com/audio", durationMs: 900_000))
+            let repo = CountingInterjectionRepository(items: [item.id: item])
+            let audio = RecordingAudioClient()
+            audio.currentDurationMs = 900_000
+            let engine = SessionEngine(profile: phonePlaybackProfile(), repository: repo, audio: audio)
+            _ = try engine.startSession(itemId: item.id)
+            let sessionId = try XCTUnwrap(engine.currentSession?.id)
+            for index in 0..<noteCount {
+                try repo.saveInterjection(Interjection(id: "note-\(index)", itemId: item.id,
+                    sessionId: sessionId, targetType: .item, targetId: item.id, createdAt: Date(),
+                    roughPercent: 0, anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0,
+                        anchorBefore: "", anchorAfter: "", mediaTimeMs: 225_000),
+                    audioPath: nil, audioStatus: "discarded", transcriptionStatus: "transcribed",
+                    transcript: "Saved note", cleanedTranscript: nil, displayText: nil, status: "active"))
+            }
+            _ = try engine.inspectSession(sessionId: sessionId)
+            repo.noteLoads = 0
+            for tick in 1...20 {
+                audio.currentMediaTimeValue = tick * 500
+                _ = try engine.syncPlaybackProgress()
+            }
+            // Publication reads note counts once; percentage repair must not add a second scan.
+            XCTAssertEqual(repo.noteLoads, 20, "Repeated repair with \(noteCount) notes")
+            XCTAssertTrue(repo.interjections.values.allSatisfy { $0.roughPercent == 25 })
+            audio.currentDurationMs = 450_000
+            _ = try engine.syncPlaybackProgress()
+            XCTAssertEqual(repo.noteLoads, 22, "Changed duration must trigger one repair")
+            XCTAssertTrue(repo.interjections.values.allSatisfy { $0.roughPercent == 50 })
+        }
+    }
+
     func testObservedPlayerDurationIsPersistedAndUsedForMediaInterjectionPercent() throws {
         let item = Item(
             id: "item-source-observed-duration",
@@ -2710,12 +2856,13 @@ final class SessionKitCoreTests: XCTestCase {
         audio.currentMediaTimeValue = 30_000
         let forward = try engine.skipForward(unit: "time_15s")
         XCTAssertEqual(forward.currentMediaTimeMs, 45_000)
-        XCTAssertEqual(audio.playedOffsets.last, 45_000)
+        XCTAssertEqual(audio.seekRequests.last, 45_000)
 
         audio.currentMediaTimeValue = 45_000
         let back = try engine.skipBack(unit: "time_15s")
         XCTAssertEqual(back.currentMediaTimeMs, 30_000)
-        XCTAssertEqual(audio.playedOffsets.last, 30_000)
+        XCTAssertEqual(audio.seekRequests.last, 30_000)
+        XCTAssertEqual(audio.playedTargets.count, 1)
     }
 
     func testNativeAudioSkipAcceptsConfiguredTimeUnits() throws {
@@ -5955,7 +6102,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(audio.mediaContexts.last??.playbackURL, "file:///tmp/episode.mp3")
     }
 
-    func testCompletedPodcastDownloadDefersTransportReplacementUntilResume() throws {
+    func testCompletedPodcastDownloadKeepsEditionAcrossSkipAndResumeUntilNewSession() throws {
         let profile = RuntimeCapabilityProfile(
             id: "podcast-deferred-cache",
             displayName: "Podcast deferred cache",
@@ -5989,11 +6136,29 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(audio.playedTargets.count, playCountBeforeDownload)
         XCTAssertNil(audio.mediaContexts.last??.playbackURL)
 
+        // A transport skip must not adopt the newly downloaded edition.
+        let skipped = try engine.skipForward(unit: "time_60s")
+        XCTAssertEqual(skipped.currentMediaTimeMs, 102_000)
+        XCTAssertEqual(audio.seekRequests.last, 102_000)
+        XCTAssertEqual(audio.playedTargets.count, playCountBeforeDownload)
+        XCTAssertNil(audio.mediaContexts.last??.playbackURL)
+        _ = try engine.skipBack(unit: "time_15s")
+        XCTAssertEqual(audio.seekRequests.last, 87_000)
+        XCTAssertEqual(audio.playedTargets.count, playCountBeforeDownload)
+
         _ = try engine.pause()
         _ = try engine.resumePlayback()
 
-        XCTAssertEqual(audio.playedOffsets.last, 42_000)
+        XCTAssertEqual(audio.playedOffsets.last, 87_000)
         XCTAssertEqual(audio.mediaContexts.last??.sourceURL, remote)
+        XCTAssertNil(audio.mediaContexts.last??.playbackURL)
+
+        // Completion while already paused must also preserve this edition.
+        _ = try engine.pause()
+        _ = try engine.updatePlaybackTransport(itemId: item.id, playbackURL: local, replaceActivePlayback: false)
+        _ = try engine.resumePlayback()
+        XCTAssertNil(audio.mediaContexts.last??.playbackURL)
+        _ = try engine.startSession(itemId: item.id)
         XCTAssertEqual(audio.mediaContexts.last??.playbackURL, local)
     }
 }
@@ -6319,6 +6484,14 @@ private final class RecordingAudioClient: AudioPlaybackClient {
         postResumeSampleRequests.append(request)
         eventLog.append("arm_post_resume_sample")
         return acceptsPostResumeSamples
+    }
+}
+
+private final class CountingInterjectionRepository: InMemorySessionRepository {
+    var noteLoads = 0
+    override func loadInterjections(sessionId: String) throws -> [Interjection] {
+        noteLoads += 1
+        return try super.loadInterjections(sessionId: sessionId)
     }
 }
 

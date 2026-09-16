@@ -739,10 +739,14 @@ final class SharingTests: XCTestCase {
             evidence: [],
             evidenceWasDeclared: true
         )
-        XCTAssertEqual(PodcastAcousticAnchorResolver.resolveCandidates(
+        // No acoustic match is insufficient proof that the passage is absent.
+        // Preserve the September 14 conservative placement policy and no autoplay.
+        let unmatched = PodcastAcousticAnchorResolver.resolveCandidates(
             [], query: declaredButUnmatched, senderDurationMs: 100_000, recipientDurationMs: 100_000,
             strongSourceIdentity: true, exactDigestContradiction: false
-        ).evidenceClass, .absentFromRecipientEdition)
+        )
+        XCTAssertEqual(unmatched.evidenceClass, .unresolved)
+        XCTAssertNil(unmatched.localMediaTimeMs)
         XCTAssertEqual(PodcastAcousticAnchorResolver.resolveCandidates(
             [], query: missingEvidence, senderDurationMs: 100_000, recipientDurationMs: 100_000,
             strongSourceIdentity: true, exactDigestContradiction: true

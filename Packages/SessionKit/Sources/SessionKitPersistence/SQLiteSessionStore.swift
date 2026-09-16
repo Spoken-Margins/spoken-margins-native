@@ -25,6 +25,9 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         ) == SQLITE_OK else {
             throw SessionKitError.persistenceFailed("sqlite_open")
         }
+        // WAL permits concurrent readers, but only one connection may write.
+        // Allow brief independent transactions to finish instead of dropping a save.
+        sqlite3_busy_timeout(db, 1_000)
         try migrate()
     }
 

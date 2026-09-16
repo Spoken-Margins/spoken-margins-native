@@ -591,6 +591,7 @@ final class Gate1AppModel: ObservableObject {
     }
     @Published var snapshot = SessionSnapshot() {
         didSet {
+            recordPlaybackEventState(previous: oldValue)
             if playingImportedCommentary != nil,
                oldValue.sessionId != snapshot.sessionId || oldValue.itemId != snapshot.itemId
                 || oldValue.targetId != snapshot.targetId || snapshot.status.isPlaybackActive {
@@ -629,8 +630,37 @@ final class Gate1AppModel: ObservableObject {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
             .appendingPathComponent("DeveloperDiagnostics/latest.json"))
 
+    private let playbackEventRecording = DeveloperDiagnosticRecording(
+        limit: 300,
+        fileURL: Gate1AppModel.isRunningUnitTests ? nil : FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("DeveloperDiagnostics/playback-events.json"),
+        automatic: true
+    )
+    private var lastPlaybackEventCheckpoint: TimeInterval = 0
+
     func recordDeveloperDiagnostic(_ kind: String, _ fields: [String: String] = [:]) {
         developerRecording.record(kind, fields)
+        // High-frequency samples and rendering events must not erase transport history.
+        if kind != "sample", !kind.hasPrefix("preparation."),
+           !kind.hasPrefix("scrub."), kind != "main.delayed" {
+            playbackEventRecording.record(kind, fields)
+        }
+    }
+
+    private func recordPlaybackEventState(previous: SessionSnapshot) {
+        let now = ProcessInfo.processInfo.systemUptime
+        let changed = previous.status != snapshot.status || previous.targetId != snapshot.targetId
+            || previous.lastFailure != snapshot.lastFailure
+        guard changed || (snapshot.status.isPlaybackActive && now - lastPlaybackEventCheckpoint >= 30) else { return }
+        lastPlaybackEventCheckpoint = now
+        playbackEventRecording.record("playback.state", [
+            "item": DeveloperDiagnosticRecording.token(snapshot.itemId),
+            "target": DeveloperDiagnosticRecording.token(snapshot.targetId),
+            "status": snapshot.status.rawValue,
+            "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1),
+            "durationMs": String(snapshot.currentPlaybackDurationMs ?? -1),
+            "failure": DeveloperDiagnosticRecording.token(snapshot.lastFailure)
+        ])
     }
 
     private func configureDeveloperDiagnosticRecording() {
@@ -953,6 +983,7 @@ final class Gate1AppModel: ObservableObject {
     private let audioPlaybackClientOverride: AudioPlaybackClient?
     private var mediaPlaybackClient: AVPlayerStreamPlaybackClient?
     private var podcastDownloadCoordinator: PodcastDownloadCoordinator?
+    private var requestedPodcastTransportReplacements: Set<String> = []
     private var offlineStorageLedger: OfflineStorageLedger?
     private var localSourceImporter: LocalSourceImporter?
     private var followedSourceCoordinator: FollowedSourceCoordinator?
@@ -1020,6 +1051,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private var pendingSourceContextInterjectionIds: Set<String> = []
     private var pendingFullSourceTranscriptionItemIds: Set<String> = []
     private var importedPodcastResolutionGenerations: [String: Int] = [:]
+    private var importedPodcastResolutionURLs: [String: URL] = [:]
     private var importedTranscriptRetryDates: [String: Date] = [:]
     private var transcriptAssistedResolutionItems: Set<String> = []
     private var importedPodcastRecipientLocalURLs: [String: URL] = [:]
@@ -2026,7 +2058,10 @@ final class Gate1AppModel: ObservableObject {
     func refreshMarginRows() {
         do {
             let store = try requireStore()
-            let activeItems = Dictionary(uniqueKeysWithValues: libraryItems.map { ($0.id, $0.title) })
+            // Library rows refresh asynchronously on navigation. Retrieval must
+            // use durable membership so freshly imported items are not omitted.
+            let activeItems = Dictionary(uniqueKeysWithValues: try store.listItems()
+                .filter { $0.deletedAt == nil }.map { ($0.id, $0.title) })
             let rows = try store.loadSessions().flatMap { session -> [MarginRow] in
                 guard let itemTitle = activeItems[session.itemId] else { return [] }
                 return try store.loadInterjections(sessionId: session.id)
@@ -4918,6 +4953,7 @@ final class Gate1AppModel: ObservableObject {
     /// to be restored in the engine.
     @discardableResult
     private func ensureSessionForSelectedItem(_ engine: SessionEngine) throws -> Bool {
+        try prepareSourceMediaPlayback(itemId: activeItemId)
         if let session = engine.currentSession, session.itemId == activeItemId,
            session.status != "finished", session.phase != .finished, session.completionPercent < 100 {
             return false
@@ -5626,6 +5662,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func skipBack() {
+        recordDeveloperDiagnostic("skip.request", ["direction": "back", "origin": "app_ui", "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1)])
         restoreSkimOriginBeforeCanonicalTransport()
         synchronizeStreamingSpeechAnchorIfNeeded()
         run { engine in
@@ -5637,6 +5674,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func skipBackMedia() {
+        recordDeveloperDiagnostic("skip.request", ["direction": "back", "origin": "app_ui", "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1)])
         restoreSkimOriginBeforeCanonicalTransport()
         run { engine in
             snapshot = try engine.skipBack(unit: mediaSkipUnit(seconds: mediaSkipBackSeconds))
@@ -5645,6 +5683,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func skipForward() {
+        recordDeveloperDiagnostic("skip.request", ["direction": "forward", "origin": "app_ui", "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1)])
         restoreSkimOriginBeforeCanonicalTransport()
         synchronizeStreamingSpeechAnchorIfNeeded()
         run { engine in
@@ -5657,6 +5696,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func skipForwardMedia() {
+        recordDeveloperDiagnostic("skip.request", ["direction": "forward", "origin": "app_ui", "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1)])
         restoreSkimOriginBeforeCanonicalTransport()
         run { engine in
             snapshot = try engine.skipForward(unit: mediaSkipUnit(seconds: mediaSkipForwardSeconds))
@@ -5830,7 +5870,12 @@ final class Gate1AppModel: ObservableObject {
         case .failed(let actualMediaTimeMs, let reason):
             outcome = "failed:\(actualMediaTimeMs.map(String.init) ?? "unknown"):\(reason)"
         }
-        diagnostics["mediaSeek"] = "id:\(request.id),requested:\(request.requestedMediaTimeMs),outcome:\(outcome)"
+        let evidence = "id:\(request.id),requested:\(request.requestedMediaTimeMs),outcome:\(outcome)"
+        if diagnostics["mediaSeek"] != evidence {
+            recordDeveloperDiagnostic("seek.media.result", ["id": String(request.id),
+                "requested": String(request.requestedMediaTimeMs), "outcome": outcome])
+        }
+        diagnostics["mediaSeek"] = evidence
     }
 
     func seekText(toCharOffset charOffset: Int) {
@@ -5933,6 +5978,7 @@ final class Gate1AppModel: ObservableObject {
 
     func redownloadSelectedPodcast() {
         guard let coordinator = podcastDownloadCoordinator else { return }
+        requestedPodcastTransportReplacements.insert(selectedItem.id)
         if coordinator.recordsByItemId[selectedItem.id] == nil {
             prioritizeOfflinePreparation(id: selectedItem.id)
         } else { coordinator.redownload(itemId: selectedItem.id) }
@@ -7321,6 +7367,7 @@ final class Gate1AppModel: ObservableObject {
             .mapValues(Self.redactedDiagnosticValue)
         safe["developerBuild"] = developerDiagnosticBuild
         safe["developerRecording"] = developerRecording.exportJSON()
+        safe["playbackEvents"] = playbackEventRecording.exportJSON()
         safe["schemaVersion"] = "spoken-margins.diagnostics.v1"
         safe["exportedAt"] = ISO8601DateFormatter().string(from: Date())
         safe["playbackStatus"] = snapshot.status.rawValue
@@ -9156,6 +9203,11 @@ final class Gate1AppModel: ObservableObject {
         playbackRate: Double? = nil,
         origin: String = "app_ui"
     ) {
+        recordDeveloperDiagnostic("transport.request", [
+            "command": command.rawValue, "origin": origin,
+            "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1),
+            "requestedMediaTimeMs": String(mediaTimeMs ?? -1)
+        ])
         if playingImportedCommentary != nil {
             switch command {
             case .play: resumePlayback()
@@ -10781,6 +10833,16 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func applyPreparedChunkProgress(item: Item, manifest: PreparedAudioManifest, remainingJobs: [AudioPreparationJob]) {
+        var manifest = manifest
+        // Finishing the final chunk persists a terminal state and removes its
+        // job. The caller's pre-finalization snapshot must not downgrade that
+        // result. Intermediate chunks still avoid any persistence reload.
+        if manifest.state == .preparing,
+           manifest.chunks.count == manifest.plannedChunkCount,
+           !remainingJobs.contains(where: { $0.manifestId == manifest.id && !$0.isCancelled }),
+           let persisted = try? store?.loadPreparedAudioManifest(id: manifest.id) {
+            manifest = persisted
+        }
         let job = remainingJobs.first { $0.manifestId == manifest.id && !$0.isCancelled }
         if let index = libraryItems.firstIndex(where: { $0.id == item.id }), !libraryItems[index].isCompleted {
             let startup = libraryStartupAudioPresentation(item: item, manifest: manifest, job: job)
@@ -14414,6 +14476,11 @@ final class Gate1AppModel: ObservableObject {
                     libraryItems[index].offlineState = state
                 }
             }
+            if diagnostics["podcastDownload:\(record.itemId)"] != record.state.rawValue {
+                recordDeveloperDiagnostic("download.state", ["item": DeveloperDiagnosticRecording.token(record.itemId),
+                    "state": record.state.rawValue, "bytes": String(record.bytesWritten),
+                    "failure": DeveloperDiagnosticRecording.token(record.failureReason)])
+            }
             diagnostics["podcastDownload:\(record.itemId)"] = record.state.rawValue
         }
         coordinator.onLocalAssetReady = { [weak self] itemId, url in
@@ -15170,10 +15237,13 @@ final class Gate1AppModel: ObservableObject {
               let reference = item.sourceURL ?? item.externalReference,
               let url = URL(string: reference),
               url.scheme?.lowercased() == "https" else { return }
+        // Opening Item loads its sessions synchronously; Home's display cache
+        // may still be awaiting refresh or may have been superseded by navigation.
+        let persistedProgress = selectedItem.id == itemId
+            ? Self.preferredContinuationSession(in: selectedItem.sessions)?.completionPercent
+            : libraryItems.first(where: { $0.id == itemId })?.continuationProgressPercent
         let progress = Self.sourceSuggestionEngagementProgress(
-            itemId: itemId,
-            persistedProgress: libraryItems.first(where: { $0.id == itemId })?.continuationProgressPercent,
-            snapshot: snapshot
+            itemId: itemId, persistedProgress: persistedProgress, snapshot: snapshot
         )
         guard progress >= 25 || (selectedItem.id == itemId && !selectedItem.interjections.isEmpty) else { return }
         sourceSuggestionChecks.insert(itemId)
@@ -15433,15 +15503,15 @@ final class Gate1AppModel: ObservableObject {
     func podcastLocalAssetDidBecomeReady(itemId: String, url: URL) {
         guard let engine, let store else { return }
         importedPodcastRecipientLocalURLs[itemId] = url
+        let requestedReplacement = requestedPodcastTransportReplacements.remove(itemId) != nil
         run { _ in
-            // Keep an already-playing remote stream intact. Replacing AVPlayer
-            // while the app is locked can interrupt the audio session and make
-            // Now Playing disappear. The cached file becomes the preferred
-            // transport on the next resume/restart.
+            // Automatic completion keeps the current session's audio edition.
+            // Explicit Download Again and a pending startup may adopt the new
+            // file, including when a paused session's old local file was replaced.
             snapshot = try engine.updatePlaybackTransport(
                 itemId: itemId,
                 playbackURL: url.absoluteString,
-                replaceActivePlayback: snapshot.status == .starting
+                replaceActivePlayback: snapshot.status == .starting || requestedReplacement
             )
             refreshSelectedItem()
         }
@@ -15478,11 +15548,10 @@ final class Gate1AppModel: ObservableObject {
                     durationMs: item.media?.durationMs
                 )
                 self.pendingFullSourceTranscriptionItemIds.remove(item.id)
-                self.resolveImportedPodcastCommentary(
-                    itemId: item.id,
-                    localURL: localSourceURL,
-                    recipientTranscriptOverride: timeline
-                )
+                if self.importedPodcastResolutionURLs[item.id] == localSourceURL {
+                    self.resolveImportedPodcastCommentary(
+                        itemId: item.id, localURL: localSourceURL, recipientTranscriptOverride: timeline)
+                }
                 try? self.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
                 self.diagnostics["recipientAlignmentTranscript:\(item.id)"] = "consumed_and_deleted"
             } catch {
@@ -15491,6 +15560,39 @@ final class Gate1AppModel: ObservableObject {
                 self.diagnostics["recipientAlignmentTranscript:\(item.id)"] = "failed_and_deleted:\(error.localizedDescription)"
             }
         }
+    }
+
+    nonisolated static func invalidatePodcastEdition(itemId: String, digest: String, store: SQLiteSessionStore) throws {
+        for var layer in try store.loadImportedCommentaryLayers(itemId: itemId)
+        where layer.deletedAt == nil && layer.itemIdentity.itemType == .podcast
+            && layer.resolvedRecipientEditionSHA256 != digest {
+            layer.sourceResolutionStatus = .pending
+            layer.resolvedRecipientEditionSHA256 = nil
+            try store.saveImportedCommentaryLayer(layer)
+            for var note in try store.loadImportedCommentaryInterjections(layerId: layer.id) {
+                note.resolution = ImportedAnchorResolution(evidenceClass: .unresolved)
+                try store.saveImportedCommentaryInterjection(note)
+            }
+        }
+        if let projection = try store.loadResolvedListeningMapProjection(itemId: itemId),
+           projection.recipientEditionSHA256 != digest {
+            try store.saveResolvedListeningMapProjection(ResolvedListeningMapProjection(
+                id: projection.id, itemId: itemId, proposalId: projection.proposalId,
+                recipientEditionSHA256: digest, points: [], intervals: []))
+        }
+    }
+
+    nonisolated static func podcastResolution(
+        previous: ImportedAnchorResolution, proposed: ImportedAnchorResolution,
+        previousEdition: String?, currentEdition: String?, hasTranscript: Bool
+    ) -> ImportedAnchorResolution {
+        let sameEdition = currentEdition != nil && currentEdition == previousEdition
+        let verified = isInlinePodcastResolution(previous)
+            && previous.evidenceClass != .timestampFallback && previous.evidenceClass != .mapInterpolated
+        let weaker = proposed.evidenceClass == .unresolved || proposed.evidenceClass == .absentFromRecipientEdition
+            || (!hasTranscript && proposed.evidenceClass == .ambiguous
+                && (previous.evidenceClass == .transcriptVerified || previous.evidenceClass == .fused))
+        return sameEdition && verified && weaker ? previous : proposed
     }
 
     private func resolveImportedPodcastCommentary(
@@ -15503,10 +15605,14 @@ final class Gate1AppModel: ObservableObject {
               let layers = try? store.loadImportedCommentaryLayers(itemId: itemId),
               !layers.isEmpty else { return }
         // Playback refreshes must not cancel a stronger transient-transcript pass.
-        guard recipientTranscriptOverride != nil || !transcriptAssistedResolutionItems.contains(itemId) else { return }
+        guard recipientTranscriptOverride != nil || !transcriptAssistedResolutionItems.contains(itemId)
+            || importedPodcastResolutionURLs[itemId] != localURL else { return }
+        if importedPodcastResolutionURLs[itemId] != localURL { transcriptAssistedResolutionItems.remove(itemId) }
+        importedPodcastResolutionURLs[itemId] = localURL
         let localItem = localSharedItemIdentity(for: item)
+        // Persisted transcripts have no byte-edition binding. Only this pass's
+        // transient transcript is evidence for the supplied recipient file.
         let recipientTranscript = recipientTranscriptOverride
-            ?? (try? store.loadTranscriptTimeline(itemId: itemId)?.timeline)
         let work = layers.compactMap { layer -> (ImportedCommentaryLayer, [ImportedCommentaryInterjection])? in
             guard layer.deletedAt == nil,
                   layer.itemIdentity.itemType == .podcast,
@@ -15525,6 +15631,14 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "scheduled:\(work.count)"
         Task.detached { [weak self] in
             do {
+                let recipientDigest = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: localURL)
+                let isCurrent = try await MainActor.run { [weak self] in
+                    guard let self, self.importedPodcastResolutionGenerations[itemId] == generation else { return false }
+                    try Self.invalidatePodcastEdition(itemId: itemId, digest: recipientDigest, store: store)
+                    if self.selectedItem.id == itemId { self.refreshSelectedItem() }
+                    return true
+                }
+                guard isCurrent else { return }
                 var resolvedWork: [(ImportedCommentaryLayer, [ImportedCommentaryInterjection], ResolvedListeningMapProjection?)] = []
                 for (var layer, records) in work {
                     let queries = records.map { record in
@@ -15590,19 +15704,13 @@ final class Gate1AppModel: ObservableObject {
                     var updated = records
                     for index in updated.indices {
                         if let resolution = fusedResolutions[updated[index].packageScopedId] {
-                            let previous = updated[index].resolution
-                            let hasVerifiedPrevious = Self.isInlinePodcastResolution(previous)
-                                && previous.evidenceClass != .timestampFallback
-                                && previous.evidenceClass != .mapInterpolated
-                            let lostEvidence = resolution.evidenceClass == .unresolved
-                                || resolution.evidenceClass == .absentFromRecipientEdition
-                                || (recipientTranscript == nil && resolution.evidenceClass == .ambiguous
-                                    && (previous.evidenceClass == .transcriptVerified || previous.evidenceClass == .fused))
-                            if !(hasVerifiedPrevious && lostEvidence) {
-                                updated[index].resolution = resolution
-                            }
+                            updated[index].resolution = Self.podcastResolution(
+                                previous: updated[index].resolution, proposed: resolution,
+                                previousEdition: layer.resolvedRecipientEditionSHA256,
+                                currentEdition: recipientDigest, hasTranscript: recipientTranscript != nil)
                         }
                     }
+                    layer.resolvedRecipientEditionSHA256 = recipientDigest
                     let resolutionValues = updated.map(\.resolution)
                     if resolutionValues.allSatisfy(Self.isInlinePodcastResolution) {
                         layer.sourceResolutionStatus = .resolved
@@ -15682,10 +15790,10 @@ final class Gate1AppModel: ObservableObject {
                             id: "imported-projection-\(layer.id)",
                             itemId: itemId,
                             proposalId: layer.listeningMapProposals?.first?.id,
-                            recipientEditionSHA256: try? PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: localURL),
+                            recipientEditionSHA256: recipientDigest,
                             matches: matches,
                             exactEdition: spine.producingEditionSHA256 != nil
-                                && spine.producingEditionSHA256 == (try? PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: localURL))
+                                && spine.producingEditionSHA256 == recipientDigest
                         )
                     }
                     resolvedWork.append((layer, updated, mapProjection))
@@ -15719,6 +15827,9 @@ final class Gate1AppModel: ObservableObject {
                         if self.selectedItem.id == itemId { self.refreshSelectedItem() }
                         let resolvedCount = resolvedWork.filter { $0.0.sourceResolutionStatus == .resolved }.count
                         self.diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "complete:\(resolvedCount)/\(resolvedWork.count)"
+                        if recipientTranscript == nil, self.importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store) {
+                            self.scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: localURL)
+                        }
                     } catch {
                         self.diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "persistence_failed:\(error.localizedDescription)"
                     }
@@ -15737,8 +15848,7 @@ final class Gate1AppModel: ObservableObject {
         itemId: String,
         store: SQLiteSessionStore
     ) -> Bool {
-        guard (try? store.loadTranscriptTimeline(itemId: itemId)) == nil,
-              let layers = try? store.loadImportedCommentaryLayers(itemId: itemId) else { return false }
+        guard let layers = try? store.loadImportedCommentaryLayers(itemId: itemId) else { return false }
         return layers.contains { layer in
             guard layer.deletedAt == nil,
                   layer.itemIdentity.itemType == .podcast,
@@ -15822,7 +15932,7 @@ final class Gate1AppModel: ObservableObject {
             _ = try engine?.updatePlaybackTransport(itemId: itemId, playbackURL: nil, replaceActivePlayback: false)
             return
         }
-        _ = try? engine?.updatePlaybackTransport(itemId: itemId, playbackURL: localURL.absoluteString)
+        _ = try? engine?.updatePlaybackTransport(itemId: itemId, playbackURL: localURL.absoluteString, replaceActivePlayback: false)
         resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
     }
 

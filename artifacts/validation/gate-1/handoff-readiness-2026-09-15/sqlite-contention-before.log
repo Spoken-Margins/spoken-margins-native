@@ -1,0 +1,45 @@
+Building for debugging...
+[Computing dependencies]
+[Using on-disk description]
+[1 / 4]
+[2 / 6] SessionKitTests-product
+/Users/colemiller/Documents/GitHub/spoken-margins-native/Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests.swift:6490:21: warning: class 'CountingInterjectionRepository' must restate inherited '@unchecked Sendable' conformance
+6488 | }
+6489 | 
+6490 | private final class CountingInterjectionRepository: InMemorySessionRepository {
+     |                     `- warning: class 'CountingInterjectionRepository' must restate inherited '@unchecked Sendable' conformance
+6491 |     var noteLoads = 0
+6492 |     override func loadInterjections(sessionId: String) throws -> [Interjection] {
+
+/Users/colemiller/Documents/GitHub/spoken-margins-native/Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests.swift:6498:21: warning: class 'FailingWrittenInterjectionRepository' must restate inherited '@unchecked Sendable' conformance
+6496 | }
+6497 | 
+6498 | private final class FailingWrittenInterjectionRepository: InMemorySessionRepository {
+     |                     `- warning: class 'FailingWrittenInterjectionRepository' must restate inherited '@unchecked Sendable' conformance
+6499 |     var failNextInterjectionSave = false
+6500 |     var failNextSessionSave = false
+[4 / 8] SessionKitTests-product
+[10 / 12] SessionKitTests-product
+[12 / 12] SessionKitTests-product
+Build complete! (3.40 sec)
+Test Suite 'Selected tests' started at 2026-09-15 19:09:59.294.
+Test Suite 'SessionKitTraceTests.xctest' started at 2026-09-15 19:09:59.298.
+Test Suite 'SessionKitTraceTests.xctest' passed at 2026-09-15 19:09:59.298.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-09-15 19:09:59.298.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.004) seconds
+Test Suite 'Selected tests' started at 2026-09-15 19:09:59.358.
+Test Suite 'SessionKitTests.xctest' started at 2026-09-15 19:09:59.360.
+Test Suite 'SQLiteSessionStoreSafetyTests' started at 2026-09-15 19:09:59.360.
+Test Case '-[SessionKitTests.SQLiteSessionStoreSafetyTests testBriefIndependentWriterContentionDoesNotDropTheNextSave]' started.
+/Users/colemiller/Documents/GitHub/spoken-margins-native/Packages/SessionKit/Tests/SessionKitTests/SQLiteSessionStoreSafetyTests.swift:21: error: -[SessionKitTests.SQLiteSessionStoreSafetyTests testBriefIndependentWriterContentionDoesNotDropTheNextSave] : XCTAssertNoThrow failed: threw error "persistence_failed:step_save:5:database is locked"
+/Users/colemiller/Documents/GitHub/spoken-margins-native/Packages/SessionKit/Tests/SessionKitTests/SQLiteSessionStoreSafetyTests.swift:23: error: -[SessionKitTests.SQLiteSessionStoreSafetyTests testBriefIndependentWriterContentionDoesNotDropTheNextSave] : XCTAssertEqual failed: threw error "missing_fixture:item:contended"
+Test Case '-[SessionKitTests.SQLiteSessionStoreSafetyTests testBriefIndependentWriterContentionDoesNotDropTheNextSave]' failed (2.058 seconds).
+Test Suite 'SQLiteSessionStoreSafetyTests' failed at 2026-09-15 19:10:01.418.
+	 Executed 1 test, with 2 failures (1 unexpected) in 2.058 (2.058) seconds
+Test Suite 'SessionKitTests.xctest' failed at 2026-09-15 19:10:01.418.
+	 Executed 1 test, with 2 failures (1 unexpected) in 2.058 (2.058) seconds
+Test Suite 'Selected tests' failed at 2026-09-15 19:10:01.418.
+	 Executed 1 test, with 2 failures (1 unexpected) in 2.058 (2.060) seconds
+Note: Some test targets reported failures:
+  - SessionKitTests (XCTest)

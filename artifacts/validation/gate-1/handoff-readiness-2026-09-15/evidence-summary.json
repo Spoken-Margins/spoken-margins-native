@@ -1,0 +1,26 @@
+{
+  "status": "verified",
+  "base_commit": "6432044bdc5ebff4691a69bee2699c309222ebac",
+  "input_sha256": "cd1c246eb016b34e0794fc336d5b137a32d42ae57e9ac6768390b7d1553121f7",
+  "xcode": {
+    "passed": 491,
+    "failed": 0,
+    "skipped": 0
+  },
+  "package": {
+    "passed": 303,
+    "failed": 0,
+    "skipped": 1
+  },
+  "browser_passed": 12,
+  "runner_passed": 10,
+  "generic_ios_device_build": "passed",
+  "human_validation": "pending",
+  "distribution": "not_authorized_or_performed",
+  "limitations": [
+    "Original Lock Screen jump not reproduced or conclusively attributed",
+    "Physical device/background/audio/memory checks pending owner evidence",
+    "Unknown or mismatched HTTP content length can still prevent offline download",
+    "iPad follow-up test launch was incomplete; final full gate ran on iPhone"
+  ]
+}

@@ -31,6 +31,20 @@ enum PodcastDownloadTransportURLPolicy {
     }
 }
 
+/// Stored by URLSession with the task, so process reconstruction preserves ownership.
+struct PodcastDownloadAttempt: Codable, Equatable, Sendable {
+    let itemId: String
+    let generation: String
+    let reservationId: String
+    let userInitiated: Bool
+
+    var taskDescription: String { String(decoding: try! JSONEncoder().encode(self), as: UTF8.self) }
+    static func decode(_ value: String?) -> Self? {
+        guard let value, let data = value.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(Self.self, from: data)
+    }
+}
+
 @MainActor
 final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked Sendable {
     static let backgroundSessionIdentifier = "com.spokenmargins.podcast-downloads"
@@ -48,7 +62,12 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     private var cacheLimit: PodcastCacheLimitGB
     private var activeItemId: String?
     private var activeTaskItemIds: Set<String> = []
-    private var reservationsByItemId: [String: OfflineStorageReservation] = [:]
+    private var generations: [String: String] = [:]
+    private var userInitiatedByItemId: [String: Bool] = [:]
+    private(set) var preparationTasks: [String: Task<Void, Never>] = [:]
+    private var attempts: [String: PodcastDownloadAttempt] = [:]
+    private let contentLength: (@Sendable (URL, Bool) async throws -> Int64)?
+    private let startDownload: ((URLRequest, String) -> Void)?
     private var userInitiatedTaskIds: Set<Int> = []
     private var lastProgressPublishDateByItemId: [String: Date] = [:]
     private var session: URLSession!
@@ -59,9 +78,13 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         applicationSupportDirectory: URL,
         cacheLimit: PodcastCacheLimitGB,
         monitorsNetwork: Bool = true,
-        usesBackgroundSession: Bool = true
+        usesBackgroundSession: Bool = true,
+        contentLength: (@Sendable (URL, Bool) async throws -> Int64)? = nil,
+        startDownload: ((URLRequest, String) -> Void)? = nil
     ) throws {
         self.store = store
+        self.contentLength = contentLength
+        self.startDownload = startDownload
         self.ledger = ledger ?? OfflineStorageLedger(
             repository: store,
             rootDirectory: applicationSupportDirectory
@@ -97,11 +120,17 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
                 Task { @MainActor in
                     guard let self else { return }
                     for task in tasks {
-                        guard let itemId = task.taskDescription else { continue }
-                        self.activeTaskItemIds.insert(itemId)
-                        if var record = self.recordsByItemId[itemId] {
-                            record.state = .downloading
-                            self.persist(record)
+                        if let attempt = PodcastDownloadAttempt.decode(task.taskDescription),
+                           self.restoreAttempt(attempt) {
+                            if attempt.userInitiated { self.userInitiatedTaskIds.insert(task.taskIdentifier) }
+                        } else {
+                            // Old unscoped tasks cannot safely publish into a replacement item.
+                            task.cancel()
+                            let owner = task.taskDescription.map { "podcast-download-\($0)" }
+                            for reservation in (try? self.store.loadOfflineStorageReservations()) ?? []
+                            where reservation.ownerId == owner {
+                                try? self.store.deleteOfflineStorageReservation(id: reservation.id)
+                            }
                         }
                     }
                     self.startNetworkMonitor()
@@ -118,13 +147,47 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     func shutdown() {
         monitor.cancel()
         session.invalidateAndCancel()
-        let reservations = Array(reservationsByItemId.values)
-        reservationsByItemId.removeAll()
-        Task {
-            for reservation in reservations {
-                try? await ledger.release(reservationId: reservation.id)
+        for itemId in Array(generations.keys) { invalidateAttempt(itemId: itemId) }
+    }
+
+    private func invalidateAttempt(itemId: String) {
+        let generation = generations.removeValue(forKey: itemId)
+        userInitiatedByItemId[itemId] = nil
+        preparationTasks.removeValue(forKey: itemId)?.cancel()
+        activeTaskItemIds.remove(itemId)
+        lastProgressPublishDateByItemId[itemId] = nil
+        if let attempt = attempts.removeValue(forKey: itemId) {
+            try? store.deleteOfflineStorageReservation(id: attempt.reservationId)
+        }
+        session.getAllTasks { tasks in
+            for task in tasks {
+                let attempt = PodcastDownloadAttempt.decode(task.taskDescription)
+                if (attempt?.itemId == itemId && attempt?.generation == generation)
+                    || task.taskDescription == itemId { task.cancel() }
             }
         }
+    }
+
+    /// Used both during URLSession reconstruction and by early delegate callbacks.
+    @discardableResult
+    func restoreAttempt(_ attempt: PodcastDownloadAttempt) -> Bool {
+        if let current = generations[attempt.itemId] { return current == attempt.generation }
+        guard var record = recordsByItemId[attempt.itemId],
+              record.state == .downloading || record.state == .waitingForWiFi,
+              let reservation = try? store.loadOfflineStorageReservations().first(where: { $0.id == attempt.reservationId }),
+              reservation.ownerId == "podcast-download-\(attempt.itemId):\(attempt.generation)",
+              reservation.expiresAt > Date() else { return false }
+        generations[attempt.itemId] = attempt.generation
+        attempts[attempt.itemId] = attempt
+        userInitiatedByItemId[attempt.itemId] = attempt.userInitiated
+        activeTaskItemIds.insert(attempt.itemId)
+        record.state = .downloading
+        persist(record)
+        return true
+    }
+
+    private func owns(_ attempt: PodcastDownloadAttempt) -> Bool {
+        generations[attempt.itemId] == attempt.generation && recordsByItemId[attempt.itemId] != nil
     }
 
     func status(itemId: String) -> PodcastDownloadState? { recordsByItemId[itemId]?.state }
@@ -143,6 +206,20 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
 
     func configureActiveItem(_ itemId: String?) {
         activeItemId = itemId
+        // The shared ledger can evict independently of the podcast cache.
+        // Keep protection for the whole listening session, including Margins
+        // and paused playback, and transfer it only when the active item changes.
+        let activePath = itemId.flatMap { recordsByItemId[$0]?.localRelativePath }
+            .map { "PodcastAudio/\($0)" }
+        for var asset in (try? store.loadOwnedOfflineAssets()) ?? [] where asset.category == .podcast {
+            let isActive = itemId != nil && (asset.itemId == itemId
+                || (activePath != nil && asset.relativePath == activePath))
+            let wasActive = asset.protections.contains(.activePlayback)
+            guard isActive != wasActive else { continue }
+            if isActive { asset.protections.insert(.activePlayback) }
+            else { asset.protections.remove(.activePlayback) }
+            try? store.saveOwnedOfflineAsset(asset)
+        }
         guard let itemId, var record = recordsByItemId[itemId] else { return }
         record.lastPlayedAt = Date()
         record.updatedAt = Date()
@@ -202,8 +279,8 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
 
     func redownload(itemId: String) {
         guard var record = recordsByItemId[itemId] else { return }
+        invalidateAttempt(itemId: itemId)
         record.state = .failed
-        record.localRelativePath = nil
         record.failureReason = nil
         persist(record)
         retry(itemId: itemId)
@@ -239,15 +316,14 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     }
 
     func removeItem(_ itemId: String) {
-        session.getAllTasks { tasks in
-            tasks.filter { $0.taskDescription == itemId }.forEach { $0.cancel() }
-        }
+        invalidateAttempt(itemId: itemId)
         if let record = recordsByItemId[itemId], let localURL = localURL(for: record) {
             try? FileManager.default.removeItem(at: localURL)
         }
         recordsByItemId[itemId] = nil
         try? store.deleteAudioAsset(id: "podcast-local-\(itemId)")
         try? store.deleteAudioAsset(id: "podcast-remote-\(itemId)")
+        try? store.deleteOwnedOfflineAsset(id: "podcast-offline-\(itemId)")
         if let id = try? store.loadPodcastDownload(itemId: itemId)?.id {
             try? store.deletePodcastDownload(id: id)
         }
@@ -285,15 +361,12 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
             }
             for record in waiting { beginDownload(record: record, userInitiated: false) }
         } else {
-            session.getAllTasks { [weak self] tasks in
-                Task { @MainActor in
-                    guard let self else { return }
-                    for task in tasks where !self.userInitiatedTaskIds.contains(task.taskIdentifier) {
-                        task.cancel()
-                    }
-                }
-            }
-            for var record in recordsByItemId.values where record.state == .downloading || record.state == .waitingForWiFi {
+            // Invalidate preparation as well as URLSession work. A delayed HEAD
+            // response must not start an automatic download after leaving Wi-Fi.
+            for var record in Array(recordsByItemId.values)
+            where record.state == .downloading || record.state == .waitingForWiFi {
+                guard userInitiatedByItemId[record.itemId] != true else { continue }
+                invalidateAttempt(itemId: record.itemId)
                 record.state = transport == .cellular ? .streamingOnly : .waitingForWiFi
                 persist(record)
             }
@@ -325,6 +398,9 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
             return
         }
         activeTaskItemIds.insert(record.itemId)
+        let generation = UUID().uuidString
+        generations[record.itemId] = generation
+        userInitiatedByItemId[record.itemId] = userInitiated
         var updated = record
         updated.remoteURL = url.absoluteString
         updated.state = .downloading
@@ -332,42 +408,55 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         updated.expectedBytes = nil
         updated.failureReason = nil
         persist(updated)
-        Task { @MainActor [weak self] in
+        preparationTasks[record.itemId] = Task { @MainActor [weak self] in
             guard let self else { return }
+            defer {
+                if self.generations[record.itemId] == generation { self.preparationTasks[record.itemId] = nil }
+            }
             do {
                 let length = try await self.expectedContentLength(at: url, userInitiated: userInitiated)
+                guard self.generations[record.itemId] == generation else { return }
                 let reservation = try await self.ledger.reserve(
-                    ownerId: "podcast-download-\(record.itemId)",
+                    ownerId: "podcast-download-\(record.itemId):\(generation)",
                     byteCount: length,
                     lifetime: 24 * 60 * 60
                 )
-                guard self.activeTaskItemIds.contains(record.itemId) else {
+                guard self.generations[record.itemId] == generation else {
                     try? await self.ledger.release(reservationId: reservation.id)
                     return
                 }
-                self.reservationsByItemId[record.itemId] = reservation
+                let attempt = PodcastDownloadAttempt(itemId: record.itemId, generation: generation,
+                                                      reservationId: reservation.id, userInitiated: userInitiated)
+                self.attempts[record.itemId] = attempt
                 var request = URLRequest(url: url)
                 request.allowsCellularAccess = userInitiated
                 if #available(iOS 13.0, macOS 10.15, *) {
                     request.allowsExpensiveNetworkAccess = userInitiated
                     request.allowsConstrainedNetworkAccess = userInitiated
                 }
-                let task = self.session.downloadTask(with: request)
-                task.taskDescription = record.itemId
-                if userInitiated { self.userInitiatedTaskIds.insert(task.taskIdentifier) }
                 var reserved = updated
                 reserved.expectedBytes = length
                 self.persist(reserved)
-                task.resume()
+                if let startDownload = self.startDownload {
+                    startDownload(request, attempt.taskDescription)
+                } else {
+                    let task = self.session.downloadTask(with: request)
+                    task.taskDescription = attempt.taskDescription
+                    if userInitiated { self.userInitiatedTaskIds.insert(task.taskIdentifier) }
+                    task.resume()
+                }
             } catch {
-                self.activeTaskItemIds.remove(record.itemId)
+                guard self.generations[record.itemId] == generation else { return }
+                self.invalidateAttempt(itemId: record.itemId)
                 self.fail(updated, reason: error.localizedDescription)
             }
         }
     }
 
     private func expectedContentLength(at url: URL, userInitiated: Bool) async throws -> Int64 {
+        if let contentLength { return try await contentLength(url, userInitiated) }
         var request = URLRequest(url: url)
+        request.timeoutInterval = 30
         request.httpMethod = "HEAD"
         request.allowsCellularAccess = userInitiated
         let (_, response) = try await URLSession.shared.data(for: request)
@@ -423,112 +512,114 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         persist(updated)
     }
 
-    nonisolated private func destinationURL(for task: URLSessionDownloadTask) -> URL? {
-        guard let itemId = task.taskDescription else { return nil }
-        let suggested = task.response?.suggestedFilename ?? task.originalRequest?.url?.lastPathComponent ?? "episode.m4a"
-        let ext = URL(fileURLWithPath: suggested).pathExtension
-        let filename = ext.isEmpty ? "\(itemId).audio" : "\(itemId).\(ext)"
-        return directory.appending(path: filename)
+    /// Adopts only the current attempt. Staging filenames are unique, so a late
+    /// callback never removes or overwrites a newer rendition's file.
+    func finishDownload(_ attempt: PodcastDownloadAttempt, stagedURL: URL?, responseOK: Bool) async {
+        defer { if let stagedURL { try? FileManager.default.removeItem(at: stagedURL) } }
+        guard owns(attempt) || restoreAttempt(attempt) else {
+            try? await ledger.release(reservationId: attempt.reservationId)
+            return
+        }
+        guard var record = recordsByItemId[attempt.itemId] else { return }
+        do {
+            guard responseOK, let stagedURL,
+                  let size = try stagedURL.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 0 else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            let destination = directory.appending(path: "\(attempt.generation).\(stagedURL.pathExtension)")
+            try FileManager.default.moveItem(at: stagedURL, to: destination)
+            do {
+                try await ledger.commit(reservationId: attempt.reservationId, asset: OwnedOfflineAsset(
+                    id: "podcast-offline-\(attempt.itemId)", itemId: attempt.itemId, category: .podcast,
+                    relativePath: "PodcastAudio/\(destination.lastPathComponent)", byteCount: Int64(size),
+                    isReproducible: true, protections: activeItemId == attempt.itemId ? [.activePlayback] : []))
+                guard owns(attempt) else {
+                    removeAdoptedFile(destination, itemId: attempt.itemId)
+                    return
+                }
+                // Save the asset before publishing availability.
+                try store.saveAudioAsset(AudioAsset(id: "podcast-local-\(attempt.itemId)", itemId: attempt.itemId,
+                    audioSourceType: .nativeMediaFile, availability: .localPhone, filePath: destination.lastPathComponent))
+                let previousFile = localURL(for: record)
+                record.state = .availableOffline
+                record.localRelativePath = destination.lastPathComponent
+                record.bytesWritten = Int64(size)
+                record.expectedBytes = Int64(size)
+                record.failureReason = nil
+                record.updatedAt = Date()
+                try store.savePodcastDownload(record)
+                recordsByItemId[record.itemId] = record
+                onRecordChanged?(record)
+                invalidateAttempt(itemId: attempt.itemId)
+                if let previousFile, previousFile != destination { try? FileManager.default.removeItem(at: previousFile) }
+                onLocalAssetReady?(attempt.itemId, destination)
+            } catch {
+                removeAdoptedFile(destination, itemId: attempt.itemId)
+                throw error
+            }
+        } catch {
+            guard owns(attempt) else { return }
+            invalidateAttempt(itemId: attempt.itemId)
+            fail(record, reason: error.localizedDescription)
+        }
+    }
+
+    private func removeAdoptedFile(_ url: URL, itemId: String) {
+        try? FileManager.default.removeItem(at: url)
+        if let asset = try? store.loadOwnedOfflineAssets().first(where: { $0.id == "podcast-offline-\(itemId)" }),
+           asset.relativePath == "PodcastAudio/\(url.lastPathComponent)" {
+            try? store.deleteOwnedOfflineAsset(id: asset.id)
+        }
+    }
+
+    func completeDownload(_ attempt: PodcastDownloadAttempt, error: Error?) {
+        // A successful URLSession completion may precede async file adoption.
+        guard let error, owns(attempt) || restoreAttempt(attempt),
+              let record = recordsByItemId[attempt.itemId] else { return }
+        invalidateAttempt(itemId: attempt.itemId)
+        if !attempt.userInitiated && networkTransport != .wifi {
+            var waiting = record
+            waiting.state = networkTransport == .cellular ? .streamingOnly : .waitingForWiFi
+            waiting.failureReason = nil
+            persist(waiting)
+        } else {
+            fail(record, reason: error.localizedDescription)
+        }
     }
 }
 
 extension PodcastDownloadCoordinator: URLSessionDownloadDelegate {
-    nonisolated func urlSession(
-        _ session: URLSession,
-        downloadTask: URLSessionDownloadTask,
-        didWriteData bytesWritten: Int64,
-        totalBytesWritten: Int64,
-        totalBytesExpectedToWrite: Int64
-    ) {
-        guard let itemId = downloadTask.taskDescription else { return }
+    nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                               didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
+                               totalBytesExpectedToWrite: Int64) {
+        guard let attempt = PodcastDownloadAttempt.decode(downloadTask.taskDescription) else { return }
         Task { @MainActor [weak self] in
-            guard let self, var record = self.recordsByItemId[itemId] else { return }
+            guard let self, self.owns(attempt) || self.restoreAttempt(attempt),
+                  var record = self.recordsByItemId[attempt.itemId] else { return }
             let now = Date()
-            let isComplete = totalBytesExpectedToWrite > 0 && totalBytesWritten >= totalBytesExpectedToWrite
-            if !isComplete,
-               let lastPublish = self.lastProgressPublishDateByItemId[itemId],
-               now.timeIntervalSince(lastPublish) < 0.5 {
-                return
-            }
-            self.lastProgressPublishDateByItemId[itemId] = now
+            let complete = totalBytesExpectedToWrite > 0 && totalBytesWritten >= totalBytesExpectedToWrite
+            if !complete, let last = self.lastProgressPublishDateByItemId[attempt.itemId], now.timeIntervalSince(last) < 0.5 { return }
+            self.lastProgressPublishDateByItemId[attempt.itemId] = now
             record.bytesWritten = totalBytesWritten
             record.expectedBytes = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : nil
             self.persist(record)
         }
     }
 
-    nonisolated func urlSession(
-        _ session: URLSession,
-        downloadTask: URLSessionDownloadTask,
-        didFinishDownloadingTo location: URL
-    ) {
-        guard let itemId = downloadTask.taskDescription,
-              let destination = destinationURL(for: downloadTask),
-              let response = downloadTask.response as? HTTPURLResponse,
-              (200..<300).contains(response.statusCode) else {
-            Task { @MainActor [weak self] in
-                guard let self, let itemId = downloadTask.taskDescription,
-                      let record = self.recordsByItemId[itemId] else { return }
-                self.fail(record, reason: "The podcast server did not return a complete audio file.")
-            }
-            return
-        }
-        do {
-            let values = try location.resourceValues(forKeys: [.fileSizeKey])
-            guard let fileSize = values.fileSize, fileSize > 0 else {
-                throw CocoaError(.fileReadCorruptFile)
-            }
-            try? FileManager.default.removeItem(at: destination)
-            try FileManager.default.moveItem(at: location, to: destination)
-            var resourceValues = URLResourceValues()
-            resourceValues.isExcludedFromBackup = true
-            var mutableDestination = destination
-            try mutableDestination.setResourceValues(resourceValues)
-            Task { @MainActor [weak self] in
-                guard let self, var record = self.recordsByItemId[itemId] else { return }
-                guard let reservation = self.reservationsByItemId.removeValue(forKey: itemId) else {
-                    try? FileManager.default.removeItem(at: destination)
-                    self.fail(record, reason: "Offline storage was not reserved before download.")
-                    return
-                }
-                do {
-                    try await self.ledger.commit(
-                        reservationId: reservation.id,
-                        asset: OwnedOfflineAsset(
-                            id: "podcast-offline-\(itemId)",
-                            itemId: itemId,
-                            category: .podcast,
-                            relativePath: "PodcastAudio/\(destination.lastPathComponent)",
-                            byteCount: Int64(fileSize),
-                            isReproducible: true
-                        )
-                    )
-                    record.state = .availableOffline
-                    record.localRelativePath = destination.lastPathComponent
-                    record.bytesWritten = Int64(fileSize)
-                    record.expectedBytes = Int64(fileSize)
-                    record.failureReason = nil
-                    self.persist(record)
-                    let asset = AudioAsset(
-                        id: "podcast-local-\(itemId)",
-                        itemId: itemId,
-                        audioSourceType: .nativeMediaFile,
-                        availability: .localPhone,
-                        filePath: destination.lastPathComponent
-                    )
-                    try self.store.saveAudioAsset(asset)
-                    self.onLocalAssetReady?(itemId, destination)
-                } catch {
-                    try? FileManager.default.removeItem(at: destination)
-                    try? await self.ledger.release(reservationId: reservation.id)
-                    self.fail(record, reason: error.localizedDescription)
-                }
-            }
-        } catch {
-            Task { @MainActor [weak self] in
-                guard let self, let record = self.recordsByItemId[itemId] else { return }
-                self.fail(record, reason: "Downloaded audio was corrupt or could not be saved.")
-            }
+    nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                               didFinishDownloadingTo location: URL) {
+        guard let attempt = PodcastDownloadAttempt.decode(downloadTask.taskDescription) else { return }
+        let responseOK = (downloadTask.response as? HTTPURLResponse).map { (200..<300).contains($0.statusCode) } ?? false
+        // The URLSession temporary file is only valid until this delegate returns.
+        let ext = URL(fileURLWithPath: downloadTask.response?.suggestedFilename ?? "episode.audio").pathExtension
+        let safeExtension = !ext.isEmpty && ext.count <= 10 && ext.allSatisfy({ $0.isLetter || $0.isNumber }) ? ext : "audio"
+        let staged = directory.appending(path: "staging-\(UUID().uuidString).\(safeExtension)")
+        let preserved: URL?
+        do { try FileManager.default.moveItem(at: location, to: staged); preserved = staged }
+        catch { preserved = nil }
+        Task { @MainActor [weak self] in
+            guard let self else { if let preserved { try? FileManager.default.removeItem(at: preserved) }; return }
+            await self.finishDownload(attempt, stagedURL: preserved, responseOK: responseOK)
         }
     }
 }
@@ -563,34 +654,10 @@ extension PodcastDownloadCoordinator: URLSessionTaskDelegate {
         task: URLSessionTask,
         didCompleteWithError error: Error?
     ) {
-        guard let itemId = task.taskDescription else { return }
+        guard let attempt = PodcastDownloadAttempt.decode(task.taskDescription) else { return }
         Task { @MainActor [weak self] in
-            guard let self else { return }
-            self.activeTaskItemIds.remove(itemId)
-            self.lastProgressPublishDateByItemId[itemId] = nil
-            defer { self.userInitiatedTaskIds.remove(task.taskIdentifier) }
-            guard let error else { return }
-            if let reservation = self.reservationsByItemId.removeValue(forKey: itemId) {
-                try? await self.ledger.release(reservationId: reservation.id)
-            }
-            if let record = self.recordsByItemId[itemId],
-               record.state != .downloading,
-               self.networkTransport == .wifi,
-               record.state == .waitingForWiFi || record.state == .streamingOnly {
-                self.beginDownload(record: record, userInitiated: false)
-                return
-            }
-            guard let record = self.recordsByItemId[itemId], record.state == .downloading else { return }
-            let nsError = error as NSError
-            if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorCancelled { return }
-            if self.networkTransport != .wifi, !self.userInitiatedTaskIds.contains(task.taskIdentifier) {
-                var waiting = record
-                waiting.state = self.networkTransport == .cellular ? .streamingOnly : .waitingForWiFi
-                waiting.failureReason = nil
-                self.persist(waiting)
-            } else {
-                self.fail(record, reason: error.localizedDescription)
-            }
+            self?.userInitiatedTaskIds.remove(task.taskIdentifier)
+            self?.completeDownload(attempt, error: error)
         }
     }
 }

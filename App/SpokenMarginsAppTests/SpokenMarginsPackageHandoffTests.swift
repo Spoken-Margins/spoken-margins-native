@@ -112,7 +112,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
     @MainActor
     func testPodcastPackageImportBindsToImportedItemInsteadOfStaleSelection() async throws {
         let root = try temporaryDirectory(named: "spoken-margins-podcast-binding")
-        defer { try? FileManager.default.removeItem(at: root) }
+        // Background model work can retain SQLite; let the process close it before cleanup.
         let databaseURL = root.appendingPathComponent("recipient.sqlite")
         let packageURL = root.appendingPathComponent("different-episode.spokenmargins")
         let manifest = try writePodcastPackage(to: packageURL, packageID: "package-different-episode")
@@ -170,7 +170,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
     @MainActor
     func testReopeningCorruptedWrongSourcePackageRepairsItsItemAssociation() async throws {
         let root = try temporaryDirectory(named: "spoken-margins-package-repair")
-        defer { try? FileManager.default.removeItem(at: root) }
+        // Background model work can retain SQLite; let the process close it before cleanup.
         let databaseURL = root.appendingPathComponent("recipient.sqlite")
         let packageURL = root.appendingPathComponent("repair-episode.spokenmargins")
         let manifest = try writePodcastPackage(to: packageURL, packageID: "package-repair-episode")
@@ -234,6 +234,54 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
             ),
             relocated
         )
+    }
+
+    func testWeakerPodcastEvidenceRetainsPositionOnlyForSameKnownAudioEdition() throws {
+        let previous = ImportedAnchorResolution(evidenceClass: .acousticVerified, localMediaTimeMs: 45_000)
+        let absent = ImportedAnchorResolution(evidenceClass: .unresolved)
+        for (old, current) in [("old", "new"), (nil, "new"), (nil, nil)] as [(String?, String?)] {
+            let result = Gate1AppModel.podcastResolution(previous: previous, proposed: absent,
+                previousEdition: old, currentEdition: current, hasTranscript: false)
+            XCTAssertEqual(result.evidenceClass, .unresolved)
+            XCTAssertNil(result.localMediaTimeMs)
+        }
+        XCTAssertEqual(Gate1AppModel.podcastResolution(previous: previous, proposed: absent,
+            previousEdition: "same", currentEdition: "same", hasTranscript: false), previous)
+        let moved = ImportedAnchorResolution(evidenceClass: .acousticVerified, localMediaTimeMs: 65_000)
+        XCTAssertEqual(Gate1AppModel.podcastResolution(previous: previous, proposed: moved,
+            previousEdition: "old", currentEdition: "new", hasTranscript: true), moved)
+    }
+
+    func testReplacingRecipientEditionInvalidatesDurablePlacementsAndProjection() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let store = try SQLiteSessionStore(path: root.appending(path: "store.sqlite").path)
+        let layer = ImportedCommentaryLayer(id: "layer", itemId: "item", packageDigest: "package-digest",
+            packageId: "package", itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Episode"),
+            importedAt: Date(), sourceResolutionStatus: .resolved, isEnabled: true,
+            resolvedRecipientEditionSHA256: "old")
+        try store.saveImportedCommentaryLayer(layer)
+        try store.saveImportedCommentaryInterjection(ImportedCommentaryInterjection(id: "note", layerId: layer.id,
+            packageScopedId: "note", createdAt: Date(), anchorEvidence: PortableAnchorEvidence(anchorType: .media),
+            approvedTranscript: "Preserve my words", resolution: ImportedAnchorResolution(
+                evidenceClass: .acousticVerified, localMediaTimeMs: 45_000)))
+        try store.saveResolvedListeningMapProjection(ResolvedListeningMapProjection(id: "projection", itemId: "item",
+            recipientEditionSHA256: "old", algorithmVersion: "episode-projection.exact-edition.v1", points: [], intervals: []))
+        try Gate1AppModel.invalidatePodcastEdition(itemId: "item", digest: "old", store: store)
+        XCTAssertEqual(try store.loadImportedCommentaryInterjections(layerId: layer.id).first?.resolution.localMediaTimeMs, 45_000)
+        try Gate1AppModel.invalidatePodcastEdition(itemId: "item", digest: "new", store: store)
+        let reopened = try SQLiteSessionStore(path: root.appending(path: "store.sqlite").path)
+        let note = try XCTUnwrap(reopened.loadImportedCommentaryInterjections(layerId: layer.id).first)
+        XCTAssertEqual(note.approvedTranscript, "Preserve my words")
+        XCTAssertNil(note.resolution.localMediaTimeMs)
+        XCTAssertEqual(note.resolution.evidenceClass, .unresolved)
+        XCTAssertEqual(try reopened.loadImportedCommentaryLayers(itemId: "item").first?.sourceResolutionStatus, .pending)
+        XCTAssertNil(try reopened.loadResolvedListeningMapProjection(itemId: "item")?.projectedRecipientTime(for: 45_000))
+        let encoded = try JSONEncoder().encode(layer)
+        XCTAssertEqual(try JSONDecoder().decode(ImportedCommentaryLayer.self, from: encoded).resolvedRecipientEditionSHA256, "old")
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        legacy.removeValue(forKey: "resolvedRecipientEditionSHA256")
+        XCTAssertNil(try JSONDecoder().decode(ImportedCommentaryLayer.self, from: JSONSerialization.data(withJSONObject: legacy)).resolvedRecipientEditionSHA256)
     }
 
     func testMixedImportedLayerKeepsItsVerifiedMarginsPlaybackEligible() {

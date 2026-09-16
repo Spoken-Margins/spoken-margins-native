@@ -7,7 +7,6 @@ import SessionKitPersistence
 final class PodcastDownloadCoordinatorTests: XCTestCase {
     func testRegistrationPersistsSecureDownloadTransportForExistingHTTPEnclosure() throws {
         let fixture = try makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
         let coordinator = try PodcastDownloadCoordinator(
             store: fixture.store,
             applicationSupportDirectory: fixture.support,
@@ -51,7 +50,6 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
 
     func testRetryMigratesPreviouslyFailedBBCDownloadWithoutReimport() throws {
         let fixture = try makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
         let original = "http://open.live.bbc.co.uk/mediaselector/6/redir/version/2.0/mediaset/audio-nondrm-download-rss/proto/http/vpid/p0kbxb7s.mp3"
         try fixture.store.savePodcastDownload(PodcastDownloadRecord(
             id: "download-bbc-episode",
@@ -82,7 +80,6 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
 
     func testCellularRegistrationStreamsWithoutAutomaticDownloadAndDeduplicatesRecord() throws {
         let fixture = try makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
         let coordinator = try PodcastDownloadCoordinator(
             store: fixture.store,
             applicationSupportDirectory: fixture.support,
@@ -103,7 +100,6 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
 
     func testManualDownloadDoesNotClaimToStartWithoutAConnection() throws {
         let fixture = try makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
         let coordinator = try PodcastDownloadCoordinator(
             store: fixture.store,
             applicationSupportDirectory: fixture.support,
@@ -121,7 +117,6 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
 
     func testClearDownloadsProtectsActivePlaybackAndEvictsOtherLocalFile() throws {
         let fixture = try makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
         let audioDirectory = fixture.support.appending(path: "PodcastAudio", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: true)
         for itemId in ["active", "old"] {
@@ -164,7 +159,6 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
 
     func testPermanentItemRemovalDeletesLocalRemoteAndDownloadRecords() throws {
         let fixture = try makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
         let audioDirectory = fixture.support.appending(path: "PodcastAudio", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: true)
         let file = audioDirectory.appending(path: "episode.mp3")
@@ -187,8 +181,13 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
             usesBackgroundSession: false
         )
 
+        try fixture.store.saveOwnedOfflineAsset(OwnedOfflineAsset(
+            id: "podcast-offline-episode", itemId: "episode", category: .podcast,
+            relativePath: "PodcastAudio/episode.mp3", byteCount: 1, isReproducible: true
+        ))
         coordinator.removeItem("episode")
 
+        XCTAssertTrue(try fixture.store.loadOwnedOfflineAssets().isEmpty)
         XCTAssertNil(try fixture.store.loadPodcastDownload(itemId: "episode"))
         XCTAssertTrue(try fixture.store.loadAudioAssets(itemId: "episode").isEmpty)
         XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
@@ -196,7 +195,6 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
 
     func testValidatedLocalURLRequiresAvailableNonemptyFile() throws {
         let fixture = try makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
         let audioDirectory = fixture.support.appending(path: "PodcastAudio", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: true)
         let validFile = audioDirectory.appending(path: "valid.mp3")
@@ -231,6 +229,175 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         XCTAssertEqual(try fixture.store.loadPodcastDownloads().first { $0.itemId == "valid" }?.state, .failed)
     }
 
+    func testSharedStorageReservationCannotEvictActivePodcastIncludingAdoptedFiles() async throws {
+        let fixture = try makeFixture()
+        let directory = fixture.support.appending(path: "PodcastAudio")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try fixture.store.saveOfflineStorageBudget(OfflineStorageBudget(limitBytes: 6))
+        for id in ["active", "old"] {
+            try Data([1, 2, 3]).write(to: directory.appending(path: "\(id).mp3"))
+            try fixture.store.savePodcastDownload(PodcastDownloadRecord(
+                id: "download-\(id)", itemId: id, remoteURL: "https://example.com/\(id).mp3",
+                localRelativePath: "\(id).mp3", state: .availableOffline, bytesWritten: 3
+            ))
+            // Inventory-adopted files have no item ID.
+            try fixture.store.saveOwnedOfflineAsset(OwnedOfflineAsset(
+                id: "asset-\(id)", category: .podcast, relativePath: "PodcastAudio/\(id).mp3",
+                byteCount: 3, isReproducible: true
+            ))
+        }
+        let ledger = OfflineStorageLedger(repository: fixture.store, rootDirectory: fixture.support)
+        let coordinator = try PodcastDownloadCoordinator(
+            store: fixture.store, ledger: ledger, applicationSupportDirectory: fixture.support,
+            cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false
+        )
+        coordinator.configureActiveItem("active")
+        let reservation = try await ledger.reserve(ownerId: "margin-work", byteCount: 3)
+        XCTAssertNotNil(coordinator.validatedLocalURL(for: "active"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appending(path: "old.mp3").path))
+        do {
+            _ = try await ledger.reserve(ownerId: "more-work", byteCount: 1)
+            XCTFail("Must refuse storage rather than delete the active episode")
+        } catch is OfflineStorageLedgerError {}
+        XCTAssertNotNil(coordinator.validatedLocalURL(for: "active"))
+        try await ledger.release(reservationId: reservation.id)
+        coordinator.configureActiveItem(nil)
+        _ = try await ledger.reserve(ownerId: "after-listening", byteCount: 6)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appending(path: "active.mp3").path))
+    }
+
+    func testDeletionWhileHeadIsSuspendedCannotRecreateDownload() async throws {
+        let fixture = try makeFixture()
+        let head = DownloadHeadGate()
+        var starts = 0
+        let coordinator = try PodcastDownloadCoordinator(store: fixture.store, applicationSupportDirectory: fixture.support,
+            cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false,
+            contentLength: { _, _ in await head.length() }, startDownload: { _, _ in starts += 1 })
+        coordinator.setNetworkTransportForTesting(.wifi)
+        coordinator.register(itemId: "episode", remoteURL: URL(string: "https://example.com/audio")!)
+        await head.waitUntilRequested()
+        let preparation = try XCTUnwrap(coordinator.preparationTasks["episode"])
+        coordinator.removeItem("episode")
+        await head.finish(8)
+        await preparation.value
+        XCTAssertEqual(starts, 0)
+        XCTAssertNil(try fixture.store.loadPodcastDownload(itemId: "episode"))
+        XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty)
+        coordinator.shutdown()
+    }
+
+    func testLeavingWiFiWhileHeadIsSuspendedCancelsOnlyAutomaticPreparation() async throws {
+        let fixture = try makeFixture()
+        let head = DownloadHeadGate()
+        var starts = 0
+        let coordinator = try PodcastDownloadCoordinator(store: fixture.store, applicationSupportDirectory: fixture.support,
+            cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false,
+            contentLength: { _, _ in await head.length() }, startDownload: { _, _ in starts += 1 })
+        coordinator.setNetworkTransportForTesting(.wifi)
+        coordinator.register(itemId: "episode", remoteURL: URL(string: "https://example.com/audio")!)
+        await head.waitUntilRequested()
+        let preparation = try XCTUnwrap(coordinator.preparationTasks["episode"])
+        coordinator.setNetworkTransportForTesting(.cellular)
+        await head.finish(8)
+        await preparation.value
+        XCTAssertEqual(starts, 0)
+        XCTAssertEqual(try fixture.store.loadPodcastDownload(itemId: "episode")?.state, .streamingOnly)
+        XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty)
+        coordinator.shutdown()
+    }
+
+    func testRestoredTaskAdoptsPersistedReservationAndPublishesOnlyAfterCommit() async throws {
+        let fixture = try makeFixture()
+        let ledger = OfflineStorageLedger(repository: fixture.store, rootDirectory: fixture.support)
+        let reservation = try await ledger.reserve(ownerId: "podcast-download-episode:restored", byteCount: 8)
+        let attempt = PodcastDownloadAttempt(itemId: "episode", generation: "restored",
+                                             reservationId: reservation.id, userInitiated: true)
+        try fixture.store.savePodcastDownload(PodcastDownloadRecord(id: "download", itemId: "episode",
+            remoteURL: "https://example.com/audio", state: .downloading))
+        let coordinator = try PodcastDownloadCoordinator(store: fixture.store, ledger: ledger,
+            applicationSupportDirectory: fixture.support, cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false)
+        XCTAssertEqual(PodcastDownloadAttempt.decode(attempt.taskDescription), attempt)
+        XCTAssertTrue(coordinator.restoreAttempt(attempt))
+        let staged = fixture.root.appending(path: "restored.mp3")
+        try Data([1, 2, 3]).write(to: staged)
+        var published = false
+        coordinator.onLocalAssetReady = { id, url in
+            published = true
+            XCTAssertEqual(id, "episode")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+            XCTAssertEqual(try? fixture.store.loadOwnedOfflineAssets().first?.byteCount, 3)
+            XCTAssertEqual(try? fixture.store.loadOfflineStorageReservations().count, 0)
+        }
+        coordinator.completeDownload(attempt, error: nil)
+        await coordinator.finishDownload(attempt, stagedURL: staged, responseOK: true)
+        XCTAssertTrue(published)
+        XCTAssertEqual(coordinator.status(itemId: "episode"), .availableOffline)
+        XCTAssertNotNil(coordinator.validatedLocalURL(for: "episode"))
+        coordinator.shutdown()
+    }
+
+    func testLateAttemptCannotOverwriteOrFailReplacementDownload() async throws {
+        let fixture = try makeFixture()
+        let ledger = OfflineStorageLedger(repository: fixture.store, rootDirectory: fixture.support)
+        var started: [PodcastDownloadAttempt] = []
+        let coordinator = try PodcastDownloadCoordinator(store: fixture.store, ledger: ledger,
+            applicationSupportDirectory: fixture.support, cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false,
+            contentLength: { _, _ in 8 }, startDownload: { _, description in
+                started.append(PodcastDownloadAttempt.decode(description)!)
+            })
+        coordinator.setNetworkTransportForTesting(.wifi)
+        coordinator.register(itemId: "episode", remoteURL: URL(string: "https://example.com/audio")!)
+        try await waitForStarts(1, starts: { started.count })
+        let old = started[0]
+        coordinator.removeItem("episode")
+        coordinator.register(itemId: "episode", remoteURL: URL(string: "https://example.com/new-audio")!)
+        try await waitForStarts(2, starts: { started.count })
+        let current = started[1]
+        let newFile = fixture.root.appending(path: "new.mp3")
+        try Data([4, 5, 6]).write(to: newFile)
+        await coordinator.finishDownload(current, stagedURL: newFile, responseOK: true)
+        let local = try XCTUnwrap(coordinator.validatedLocalURL(for: "episode"))
+        let oldFile = fixture.root.appending(path: "old.mp3")
+        try Data([9]).write(to: oldFile)
+        coordinator.completeDownload(old, error: URLError(.networkConnectionLost))
+        await coordinator.finishDownload(old, stagedURL: oldFile, responseOK: true)
+        XCTAssertEqual(try Data(contentsOf: local), Data([4, 5, 6]))
+        XCTAssertEqual(coordinator.status(itemId: "episode"), .availableOffline)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldFile.path))
+        XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty)
+        XCTAssertEqual(try fixture.store.loadOwnedOfflineAssets().count, 1)
+        coordinator.shutdown()
+    }
+
+    func testHTTPAndOversizedFileFailuresReleaseReservationWithoutAvailability() async throws {
+        for httpOK in [false, true] {
+            let fixture = try makeFixture()
+            let ledger = OfflineStorageLedger(repository: fixture.store, rootDirectory: fixture.support)
+            let reservation = try await ledger.reserve(ownerId: "podcast-download-episode:failure", byteCount: 1)
+            let attempt = PodcastDownloadAttempt(itemId: "episode", generation: "failure",
+                reservationId: reservation.id, userInitiated: true)
+            try fixture.store.savePodcastDownload(PodcastDownloadRecord(id: "download", itemId: "episode",
+                remoteURL: "https://example.com/audio", state: .downloading))
+            let coordinator = try PodcastDownloadCoordinator(store: fixture.store, ledger: ledger,
+                applicationSupportDirectory: fixture.support, cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false)
+            let staged = fixture.root.appending(path: "failure.mp3")
+            try Data([1, 2, 3]).write(to: staged)
+            await coordinator.finishDownload(attempt, stagedURL: staged, responseOK: httpOK)
+            XCTAssertEqual(coordinator.status(itemId: "episode"), .failed)
+            XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty)
+            XCTAssertTrue(try fixture.store.loadOwnedOfflineAssets().isEmpty)
+            XCTAssertNil(coordinator.validatedLocalURL(for: "episode"))
+            coordinator.shutdown()
+        }
+    }
+
+    private func waitForStarts(_ count: Int, starts: () -> Int) async throws {
+        for _ in 0..<100 where starts() < count { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(starts(), count)
+    }
+
+    // Keep SQLite files until the test process exits: URLSession callbacks may
+    // retain the store after a test returns. Unlinking an open WAL corrupts fixtures.
     private func makeFixture() throws -> (root: URL, support: URL, store: SQLiteSessionStore) {
         let root = FileManager.default.temporaryDirectory.appending(path: "podcast-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
         let support = root.appending(path: "ApplicationSupport", directoryHint: .isDirectory)
@@ -238,4 +405,13 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         let store = try SQLiteSessionStore(path: root.appending(path: "store.sqlite").path)
         return (root, support, store)
     }
+}
+
+private actor DownloadHeadGate {
+    private var continuation: CheckedContinuation<Int64, Never>?
+    func length() async -> Int64 { await withCheckedContinuation { continuation = $0 } }
+    func waitUntilRequested() async {
+        while continuation == nil { await Task.yield() }
+    }
+    func finish(_ value: Int64) { continuation?.resume(returning: value); continuation = nil }
 }

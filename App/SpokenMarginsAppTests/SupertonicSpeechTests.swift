@@ -557,11 +557,17 @@ final class SupertonicSpeechTests: XCTestCase {
     func testRenderGapWaitsForSupertonicAndNeverFallsBack() async throws {
         let template = try makeTestWAV(duration: 0.1)
         defer { try? FileManager.default.removeItem(at: template) }
+        let thirdRender = AsyncStream<Void>.makeStream()
+        defer { thirdRender.continuation.finish() }
         let renderer = CountingAudioSupertonicRenderer(
             templateURL: template,
-            renderDelays: [3: .milliseconds(500)]
+            renderGates: [3: thirdRender.stream]
         )
         let fallback = RecordingFallbackAudioClient()
+        let firstChunkStarted = expectation(description: "first chunk started")
+        let secondChunkStarted = expectation(description: "second chunk started")
+        let nextChunkStarted = expectation(description: "rendered chunk starts after gap")
+        var starts = 0
         let client = SupertonicSpeechPlaybackClient(
             renderer: renderer,
             voice: .m2,
@@ -569,7 +575,12 @@ final class SupertonicSpeechTests: XCTestCase {
             fallbackVoiceIdentifier: nil,
             fallbackRate: 0.5,
             audioSessionActivator: {},
-            audioPlayerStarter: { _, _ in },
+            audioPlayerStarter: { _, _ in
+                starts += 1
+                if starts == 1 { firstChunkStarted.fulfill() }
+                if starts == 2 { secondChunkStarted.fulfill() }
+                if starts == 3 { nextChunkStarted.fulfill() }
+            },
             observesPlayerLifecycle: false,
             fallbackClient: fallback
         )
@@ -579,16 +590,17 @@ final class SupertonicSpeechTests: XCTestCase {
 
         _ = try client.prepareSpeechText(source)
         try client.play(targetId: "underrun")
-        for _ in 0..<50 where !client.debugActiveAudioState().hasURL {
-            try? await Task.sleep(for: .milliseconds(20))
-        }
+        await fulfillment(of: [firstChunkStarted], timeout: 3)
         client.debugFinishActiveChunk()
+        await fulfillment(of: [secondChunkStarted], timeout: 3)
         let secondOffset = client.debugActiveAudioState().startOffset
         XCTAssertGreaterThan(secondOffset, 0)
         client.debugFinishActiveChunk()
 
         XCTAssertEqual(client.playbackTransportState(targetId: "underrun"), .waiting)
-        try await Task.sleep(for: .milliseconds(650))
+        XCTAssertFalse(client.debugActiveAudioState().hasURL, "Third render must still be blocked")
+        thirdRender.continuation.finish()
+        await fulfillment(of: [nextChunkStarted], timeout: 3)
         XCTAssertGreaterThan(client.debugActiveAudioState().startOffset, secondOffset)
         XCTAssertTrue(fallback.playedOffsets.isEmpty)
         try client.stop()
@@ -1470,6 +1482,7 @@ private actor CountingAudioSupertonicRenderer: SupertonicRendering {
     let firstRenderDelay: Duration?
     let firstRenderGate: AsyncStream<Void>?
     let renderDelays: [Int: Duration]
+    let renderGates: [Int: AsyncStream<Void>]
     private(set) var renderCount = 0
     private(set) var discardCount = 0
     private(set) var requestedSpeeds: [Float] = []
@@ -1478,12 +1491,14 @@ private actor CountingAudioSupertonicRenderer: SupertonicRendering {
         templateURL: URL,
         firstRenderDelay: Duration? = nil,
         firstRenderGate: AsyncStream<Void>? = nil,
-        renderDelays: [Int: Duration] = [:]
+        renderDelays: [Int: Duration] = [:],
+        renderGates: [Int: AsyncStream<Void>] = [:]
     ) {
         self.templateURL = templateURL
         self.firstRenderDelay = firstRenderDelay
         self.firstRenderGate = firstRenderGate
         self.renderDelays = renderDelays
+        self.renderGates = renderGates
     }
 
     func render(
@@ -1495,6 +1510,10 @@ private actor CountingAudioSupertonicRenderer: SupertonicRendering {
     ) async throws -> SupertonicNarrationResult {
         renderCount += 1
         requestedSpeeds.append(speed)
+        if let gate = renderGates[renderCount] {
+            for await _ in gate {}
+            try Task.checkCancellation()
+        }
         if renderCount == 1, let firstRenderGate {
             for await _ in firstRenderGate {}
             try Task.checkCancellation()

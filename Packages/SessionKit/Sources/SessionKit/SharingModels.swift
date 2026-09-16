@@ -400,6 +400,9 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
     public let suggestedRevealMode: ImportedCommentaryRevealMode?
     public let importedAt: Date
     public let integrityStatus: ImportedCommentaryIntegrityStatus
+    /// Recipient-local audio identity for the saved anchor results. Older rows
+    /// decode as unknown and must be reverified before retaining stale evidence.
+    public var resolvedRecipientEditionSHA256: String?
     public var sourceResolutionStatus: ImportedSourceResolutionStatus
     public var isEnabled: Bool
     public var isMuted: Bool
@@ -432,8 +435,10 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
         listeningMapProposals: [PortableListeningMapProposalArtifact]? = nil,
         editionFingerprintSpines: [EditionFingerprintSpineArtifact]? = nil,
         transcriptPhraseSketches: [TranscriptPhraseSketchArtifact]? = nil,
-        episodeMapEvidencePaths: [String: String]? = nil
+        episodeMapEvidencePaths: [String: String]? = nil,
+        resolvedRecipientEditionSHA256: String? = nil
     ) {
+        self.resolvedRecipientEditionSHA256 = resolvedRecipientEditionSHA256
         self.id = id
         self.itemId = itemId
         self.packageDigest = packageDigest
@@ -457,12 +462,14 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
     private enum CodingKeys: String, CodingKey {
         case id, itemId, packageDigest, packageId, itemIdentity, sourceIdentity
         case displayLabel, suggestedRevealMode, importedAt, integrityStatus
+        case resolvedRecipientEditionSHA256
         case sourceResolutionStatus, isEnabled, isMuted, revealMode, deletedAt
         case listeningMapProposals, editionFingerprintSpines, transcriptPhraseSketches, episodeMapEvidencePaths
     }
 
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
+        resolvedRecipientEditionSHA256 = try values.decodeIfPresent(String.self, forKey: .resolvedRecipientEditionSHA256)
         id = try values.decode(String.self, forKey: .id)
         itemId = try values.decodeIfPresent(String.self, forKey: .itemId)
         packageDigest = try values.decode(String.self, forKey: .packageDigest)
@@ -501,6 +508,7 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
 
     public func encode(to encoder: Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encodeIfPresent(resolvedRecipientEditionSHA256, forKey: .resolvedRecipientEditionSHA256)
         try values.encode(id, forKey: .id)
         try values.encodeIfPresent(itemId, forKey: .itemId)
         try values.encode(packageDigest, forKey: .packageDigest)

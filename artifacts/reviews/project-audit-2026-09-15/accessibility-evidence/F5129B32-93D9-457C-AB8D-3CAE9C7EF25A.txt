@@ -1,0 +1,4 @@
+Query chain:
+ →Find: Target Application 'com.spokenmargins.native'
+  ↪︎Find: Descendants matching type Any
+    ↪︎Find: Elements matching predicate '"playback.interject.button" IN identifiers'

@@ -1,0 +1,1657 @@
+[
+  {
+    "labels": [],
+    "number": 122,
+    "state": "OPEN",
+    "title": "Bug: app terminated for excessive memory around shared-Margin podcast \u2192 native-text playback",
+    "updatedAt": "2026-09-14T14:00:51Z"
+  },
+  {
+    "labels": [],
+    "number": 121,
+    "state": "OPEN",
+    "title": "Feature: hands-free Watch gestures for starting and ending a Margin",
+    "updatedAt": "2026-09-13T21:25:56Z"
+  },
+  {
+    "labels": [],
+    "number": 120,
+    "state": "OPEN",
+    "title": "Process: Generate onboarding screen recordings as a beta-release QA gate",
+    "updatedAt": "2026-09-12T12:23:01Z"
+  },
+  {
+    "labels": [],
+    "number": 119,
+    "state": "OPEN",
+    "title": "Build 27: podcast description timestamps missing from imported chapters",
+    "updatedAt": "2026-09-12T12:14:00Z"
+  },
+  {
+    "labels": [],
+    "number": 118,
+    "state": "OPEN",
+    "title": "Feature: opt-in headphone remote shortcut for bookmarks",
+    "updatedAt": "2026-09-12T11:26:50Z"
+  },
+  {
+    "labels": [],
+    "number": 117,
+    "state": "OPEN",
+    "title": "Feature: lightweight bookmarks with Lock Screen / Live Activity capture",
+    "updatedAt": "2026-09-12T11:26:30Z"
+  },
+  {
+    "labels": [],
+    "number": 116,
+    "state": "OPEN",
+    "title": "Feature: show native-text render frontier on the playback scrubber",
+    "updatedAt": "2026-09-12T11:26:08Z"
+  },
+  {
+    "labels": [],
+    "number": 115,
+    "state": "OPEN",
+    "title": "UI/UX: show Skim destination before skipping",
+    "updatedAt": "2026-09-11T17:50:05Z"
+  },
+  {
+    "labels": [],
+    "number": 114,
+    "state": "OPEN",
+    "title": "Feature/App Request: Spoken Margins Unplugged \u2014 verifiably local-only edition",
+    "updatedAt": "2026-09-11T15:36:27Z"
+  },
+  {
+    "labels": [],
+    "number": 113,
+    "state": "OPEN",
+    "title": "Post-App-Store launch: email margin.fm founder about independent convergence and book-club cooperation",
+    "updatedAt": "2026-09-11T15:32:45Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-eA",
+        "name": "bug",
+        "description": "Something isn't working",
+        "color": "d73a4a"
+      }
+    ],
+    "number": 112,
+    "state": "CLOSED",
+    "title": "Bug: interjections on AI responses are placed by source-relative percentage instead of AI-turn position",
+    "updatedAt": "2026-09-12T12:14:42Z"
+  },
+  {
+    "labels": [],
+    "number": 111,
+    "state": "OPEN",
+    "title": "Bug: Native-text narration mangles domain lists into unintelligible speech",
+    "updatedAt": "2026-09-10T20:42:58Z"
+  },
+  {
+    "labels": [],
+    "number": 110,
+    "state": "CLOSED",
+    "title": "Imported Margin play/pause controls target source playback and leave the Margin card active",
+    "updatedAt": "2026-09-12T12:14:41Z"
+  },
+  {
+    "labels": [],
+    "number": 109,
+    "state": "OPEN",
+    "title": "UI/UX: turn Margins into an actionable scoped workspace",
+    "updatedAt": "2026-09-12T13:12:38Z"
+  },
+  {
+    "labels": [],
+    "number": 108,
+    "state": "OPEN",
+    "title": "UI/UX: tighten Library hierarchy, filtering, sorting, and compact Now Playing",
+    "updatedAt": "2026-09-12T13:12:37Z"
+  },
+  {
+    "labels": [],
+    "number": 107,
+    "state": "OPEN",
+    "title": "UI/UX: simplify Item Detail hierarchy and make readiness/actions genuinely useful",
+    "updatedAt": "2026-09-12T12:15:37Z"
+  },
+  {
+    "labels": [],
+    "number": 106,
+    "state": "OPEN",
+    "title": "UI regression: swipe navigation transition does not track the gesture interactively",
+    "updatedAt": "2026-09-08T15:40:02Z"
+  },
+  {
+    "labels": [],
+    "number": 105,
+    "state": "OPEN",
+    "title": "Feature: narrate meaningful figures during PDF playback",
+    "updatedAt": "2026-09-05T15:01:54Z"
+  },
+  {
+    "labels": [],
+    "number": 104,
+    "state": "CLOSED",
+    "title": "Regression: AI-response playback cannot scrub or skip while paused, and Supertonic Retry is misleading",
+    "updatedAt": "2026-09-08T15:39:34Z"
+  },
+  {
+    "labels": [],
+    "number": 103,
+    "state": "CLOSED",
+    "title": "Regression: AI-response Supertonic rendering ignores current playback position and starts from the beginning",
+    "updatedAt": "2026-09-08T15:39:32Z"
+  },
+  {
+    "labels": [],
+    "number": 102,
+    "state": "CLOSED",
+    "title": "Regression: completed source items can remain \u201cin progress\u201d because of AI-response or stale session state",
+    "updatedAt": "2026-09-08T15:39:31Z"
+  },
+  {
+    "labels": [],
+    "number": 101,
+    "state": "CLOSED",
+    "title": "Regression: Sources-feed podcast import loses episode title and falls back to \u201caudio\u201d",
+    "updatedAt": "2026-09-08T15:39:29Z"
+  },
+  {
+    "labels": [],
+    "number": 100,
+    "state": "CLOSED",
+    "title": "UI polish: simplify playback card and restyle secondary controls",
+    "updatedAt": "2026-09-12T12:14:40Z"
+  },
+  {
+    "labels": [],
+    "number": 99,
+    "state": "CLOSED",
+    "title": "Regression: unrelated source-follow suggestion appears on active podcast item",
+    "updatedAt": "2026-09-08T15:39:28Z"
+  },
+  {
+    "labels": [],
+    "number": 98,
+    "state": "CLOSED",
+    "title": "Build 26 regression: native text preparation stalls after first rendered chunk, blocking playback",
+    "updatedAt": "2026-09-12T12:14:39Z"
+  },
+  {
+    "labels": [],
+    "number": 97,
+    "state": "OPEN",
+    "title": "Investigate main-thread hitches and animation stalls when adding Quick Add items",
+    "updatedAt": "2026-09-12T12:16:22Z"
+  },
+  {
+    "labels": [],
+    "number": 96,
+    "state": "OPEN",
+    "title": "[QoL] Capture interjections directly from Apple Watch while iPhone is locked",
+    "updatedAt": "2026-08-30T16:42:26Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-eA",
+        "name": "bug",
+        "description": "Something isn't working",
+        "color": "d73a4a"
+      }
+    ],
+    "number": 95,
+    "state": "CLOSED",
+    "title": "[UI overhaul regression] Pasted AI responses are difficult to import and no longer start playback",
+    "updatedAt": "2026-09-12T12:14:38Z"
+  },
+  {
+    "labels": [],
+    "number": 94,
+    "state": "CLOSED",
+    "title": "Feature: Search margins by text",
+    "updatedAt": "2026-09-12T12:14:37Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-eA",
+        "name": "bug",
+        "description": "Something isn't working",
+        "color": "d73a4a"
+      }
+    ],
+    "number": 93,
+    "state": "OPEN",
+    "title": "Regression: UI/UX revamp scrolling remains severely janky under realistic app load",
+    "updatedAt": "2026-09-12T13:12:37Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      }
+    ],
+    "number": 92,
+    "state": "CLOSED",
+    "title": "Feature: Make summarized interjections the primary Margins callout",
+    "updatedAt": "2026-09-12T12:17:21Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-eA",
+        "name": "bug",
+        "description": "Something isn't working",
+        "color": "d73a4a"
+      }
+    ],
+    "number": 91,
+    "state": "CLOSED",
+    "title": "Regression: duplicate Follow choices lead to article-entry WKErrorDomain import failure",
+    "updatedAt": "2026-09-12T12:14:35Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssio1g",
+        "name": "phase: post-mvp",
+        "description": "Explicitly outside the active Recovery MVP scope",
+        "color": "5319E7"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipnQ",
+        "name": "area: anchors",
+        "description": "Source, transcript, media-time, and cross-edition anchors",
+        "color": "1D76DB"
+      }
+    ],
+    "number": 90,
+    "state": "OPEN",
+    "title": "[Post-MVP] Add Skim Forward and Skim Backward semantic transport",
+    "updatedAt": "2026-09-12T13:12:36Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssio1g",
+        "name": "phase: post-mvp",
+        "description": "Explicitly outside the active Recovery MVP scope",
+        "color": "5319E7"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipnQ",
+        "name": "area: anchors",
+        "description": "Source, transcript, media-time, and cross-edition anchors",
+        "color": "1D76DB"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiqDQ",
+        "name": "area: rights",
+        "description": "Copyright, attribution, consent, provenance, and retention",
+        "color": "D4C5F9"
+      }
+    ],
+    "number": 89,
+    "state": "OPEN",
+    "title": "[Post-MVP] Generate Skim-ready scenes, summaries, and eligibility",
+    "updatedAt": "2026-09-12T12:15:33Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssio1g",
+        "name": "phase: post-mvp",
+        "description": "Explicitly outside the active Recovery MVP scope",
+        "color": "5319E7"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipnQ",
+        "name": "area: anchors",
+        "description": "Source, transcript, media-time, and cross-edition anchors",
+        "color": "1D76DB"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipyA",
+        "name": "area: sharing",
+        "description": "Export, packages, import, and sharing boundaries",
+        "color": "C2E0C6"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiqDQ",
+        "name": "area: rights",
+        "description": "Copyright, attribution, consent, provenance, and retention",
+        "color": "D4C5F9"
+      }
+    ],
+    "number": 88,
+    "state": "OPEN",
+    "title": "[Post-MVP] Define portable Listening Map scenes and Skim summaries",
+    "updatedAt": "2026-09-12T12:15:32Z"
+  },
+  {
+    "labels": [],
+    "number": 87,
+    "state": "OPEN",
+    "title": "[Post-MVP] Sleep timer with timed and end-of-chapter modes",
+    "updatedAt": "2026-08-27T19:52:15Z"
+  },
+  {
+    "labels": [],
+    "number": 86,
+    "state": "CLOSED",
+    "title": "[Post-MVP] Library search, filters, and sorting",
+    "updatedAt": "2026-09-12T12:14:34Z"
+  },
+  {
+    "labels": [],
+    "number": 85,
+    "state": "CLOSED",
+    "title": "Prevent timeline/source navigation from cancelling an active interjection recording",
+    "updatedAt": "2026-09-12T12:14:33Z"
+  },
+  {
+    "labels": [],
+    "number": 84,
+    "state": "CLOSED",
+    "title": "Regression: podcast scrubbing sticks and progress/remaining time desynchronizes from playback",
+    "updatedAt": "2026-09-08T15:39:26Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-eA",
+        "name": "bug",
+        "description": "Something isn't working",
+        "color": "d73a4a"
+      }
+    ],
+    "number": 83,
+    "state": "OPEN",
+    "title": "Native text can become unresumable after AirPod pause while Supersonic is still rendering",
+    "updatedAt": "2026-09-12T12:16:21Z"
+  },
+  {
+    "labels": [],
+    "number": 82,
+    "state": "OPEN",
+    "title": "[Post-MVP] Validate transport-neutral classroom assignment and return packets",
+    "updatedAt": "2026-09-08T15:39:54Z"
+  },
+  {
+    "labels": [],
+    "number": 81,
+    "state": "OPEN",
+    "title": "[Audit] Reconcile claimed interjection-sharing implementation with source",
+    "updatedAt": "2026-09-12T12:16:20Z"
+  },
+  {
+    "labels": [],
+    "number": 80,
+    "state": "OPEN",
+    "title": "[Post-MVP] Record app-observed source coverage for listening and in-app reading",
+    "updatedAt": "2026-08-25T04:02:20Z"
+  },
+  {
+    "labels": [],
+    "number": 79,
+    "state": "CLOSED",
+    "title": "[Post-MVP] Import DRM-free local audiobooks as native audio",
+    "updatedAt": "2026-09-12T12:14:32Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiqww",
+        "name": "status: needs-human-validation",
+        "description": "Implemented or verified but awaiting product-owner validation",
+        "color": "FEF2C0"
+      }
+    ],
+    "number": 78,
+    "state": "OPEN",
+    "title": "Preserve canonical PDF chapters and distinguish table of contents/front matter",
+    "updatedAt": "2026-09-12T12:16:19Z"
+  },
+  {
+    "labels": [],
+    "number": 77,
+    "state": "OPEN",
+    "title": "[Post-MVP] Engagement-based feed suggestions for podcast and article items",
+    "updatedAt": "2026-09-08T15:39:42Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      }
+    ],
+    "number": 76,
+    "state": "OPEN",
+    "title": "[Post-MVP] Local feed subscriptions and \u201cNew from Sources\u201d inbox",
+    "updatedAt": "2026-09-12T12:16:18Z"
+  },
+  {
+    "labels": [],
+    "number": 75,
+    "state": "OPEN",
+    "title": "[Post-MVP] Restore untethered Apple Watch playback and interjection sync",
+    "updatedAt": "2026-08-25T04:01:54Z"
+  },
+  {
+    "labels": [],
+    "number": 74,
+    "state": "OPEN",
+    "title": "[Post-MVP] Charging-only background preparation for native-text audio",
+    "updatedAt": "2026-08-25T04:01:56Z"
+  },
+  {
+    "labels": [],
+    "number": 73,
+    "state": "OPEN",
+    "title": "[Post-MVP] Power-aware demand-window TTS preparation for long-form text and EPUBs",
+    "updatedAt": "2026-09-12T12:16:17Z"
+  },
+  {
+    "labels": [],
+    "number": 72,
+    "state": "OPEN",
+    "title": "[Post-MVP] Unified offline-storage budget for podcasts, prepared text, and Watch packages",
+    "updatedAt": "2026-09-12T12:16:16Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-eA",
+        "name": "bug",
+        "description": "Something isn't working",
+        "color": "d73a4a"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiqww",
+        "name": "status: needs-human-validation",
+        "description": "Implemented or verified but awaiting product-owner validation",
+        "color": "FEF2C0"
+      }
+    ],
+    "number": 71,
+    "state": "CLOSED",
+    "title": "Native-text interjection resume jumps backward and desynchronizes play/pause state",
+    "updatedAt": "2026-09-12T12:14:31Z"
+  },
+  {
+    "labels": [],
+    "number": 70,
+    "state": "OPEN",
+    "title": "[Post-MVP] Classroom assignments, interjection returns, and app-observed participation receipts",
+    "updatedAt": "2026-09-08T15:39:53Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      }
+    ],
+    "number": 69,
+    "state": "OPEN",
+    "title": "Onboarding: remotely configurable guided podcast and import hotlinks",
+    "updatedAt": "2026-09-11T14:59:58Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      }
+    ],
+    "number": 68,
+    "state": "OPEN",
+    "title": "Visually distinguish user interjections from source entries in the Timeline",
+    "updatedAt": "2026-09-12T13:12:35Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipnQ",
+        "name": "area: anchors",
+        "description": "Source, transcript, media-time, and cross-edition anchors",
+        "color": "1D76DB"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipyA",
+        "name": "area: sharing",
+        "description": "Export, packages, import, and sharing boundaries",
+        "color": "C2E0C6"
+      }
+    ],
+    "number": 67,
+    "state": "CLOSED",
+    "title": "Deterministic clean up interjections",
+    "updatedAt": "2026-09-12T12:17:20Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-eA",
+        "name": "bug",
+        "description": "Something isn't working",
+        "color": "d73a4a"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiotw",
+        "name": "phase: recovery-mvp",
+        "description": "Required before Recovery MVP human validation",
+        "color": "B60205"
+      }
+    ],
+    "number": 66,
+    "state": "CLOSED",
+    "title": "[Critical regression] Native-audio interjections lose source context despite available/offline audio",
+    "updatedAt": "2026-08-21T17:35:24Z"
+  },
+  {
+    "labels": [],
+    "number": 65,
+    "state": "CLOSED",
+    "title": "Regression: native-text playback can no longer be scrubbed in-app",
+    "updatedAt": "2026-08-21T17:35:22Z"
+  },
+  {
+    "labels": [],
+    "number": 64,
+    "state": "OPEN",
+    "title": "[Post-MVP] Durable prepared native-text audio and Lock Screen scrubbing",
+    "updatedAt": "2026-09-12T12:16:14Z"
+  },
+  {
+    "labels": [],
+    "number": 63,
+    "state": "CLOSED",
+    "title": "[Investigation] Podcast rewind / fast-forward can be temporarily unresponsive after Spotify link import",
+    "updatedAt": "2026-08-21T17:35:23Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-eA",
+        "name": "bug",
+        "description": "Something isn't working",
+        "color": "d73a4a"
+      }
+    ],
+    "number": 62,
+    "state": "CLOSED",
+    "title": "Lock-screen rewind can desynchronize native-text playback, switch voice, and freeze scrubber",
+    "updatedAt": "2026-08-21T17:35:21Z"
+  },
+  {
+    "labels": [],
+    "number": 61,
+    "state": "OPEN",
+    "title": "Support DRM-free EPUBs with canonical chapter playback and interjections",
+    "updatedAt": "2026-08-25T04:03:14Z"
+  },
+  {
+    "labels": [],
+    "number": 60,
+    "state": "CLOSED",
+    "title": "Generate deterministic listening maps for pasted-text items",
+    "updatedAt": "2026-08-26T14:14:18Z"
+  },
+  {
+    "labels": [],
+    "number": 59,
+    "state": "CLOSED",
+    "title": "Playback session state bugs: AI response progress, Live Activity interject, and play/pause drift",
+    "updatedAt": "2026-08-26T14:14:17Z"
+  },
+  {
+    "labels": [],
+    "number": 58,
+    "state": "CLOSED",
+    "title": "Live Activity play/pause state is stale and cannot resume paused playback",
+    "updatedAt": "2026-08-26T14:14:39Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-eA",
+        "name": "bug",
+        "description": "Something isn't working",
+        "color": "d73a4a"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiotw",
+        "name": "phase: recovery-mvp",
+        "description": "Required before Recovery MVP human validation",
+        "color": "B60205"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipyA",
+        "name": "area: sharing",
+        "description": "Export, packages, import, and sharing boundaries",
+        "color": "C2E0C6"
+      }
+    ],
+    "number": 57,
+    "state": "CLOSED",
+    "title": "[Recovery MVP] Large Share Session export renders a blank preview",
+    "updatedAt": "2026-08-26T14:14:26Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-eA",
+        "name": "bug",
+        "description": "Something isn't working",
+        "color": "d73a4a"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiotw",
+        "name": "phase: recovery-mvp",
+        "description": "Required before Recovery MVP human validation",
+        "color": "B60205"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiqww",
+        "name": "status: needs-human-validation",
+        "description": "Implemented or verified but awaiting product-owner validation",
+        "color": "FEF2C0"
+      }
+    ],
+    "number": 56,
+    "state": "OPEN",
+    "title": "[Recovery MVP] On-device interjection summary rejects a valid multi-note podcast session",
+    "updatedAt": "2026-08-26T14:14:59Z"
+  },
+  {
+    "labels": [],
+    "number": 55,
+    "state": "CLOSED",
+    "title": "Starting a session from a native-audio chapter shows an error",
+    "updatedAt": "2026-08-26T14:14:25Z"
+  },
+  {
+    "labels": [],
+    "number": 54,
+    "state": "CLOSED",
+    "title": "Add an \u201cEmpty Recently Deleted\u201d action in Settings",
+    "updatedAt": "2026-08-26T14:14:20Z"
+  },
+  {
+    "labels": [],
+    "number": 53,
+    "state": "CLOSED",
+    "title": "Open item details by tapping the title in a listening session",
+    "updatedAt": "2026-08-26T14:14:22Z"
+  },
+  {
+    "labels": [],
+    "number": 52,
+    "state": "CLOSED",
+    "title": "Limit library item titles to three lines",
+    "updatedAt": "2026-08-26T14:14:23Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssio1g",
+        "name": "phase: post-mvp",
+        "description": "Explicitly outside the active Recovery MVP scope",
+        "color": "5319E7"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipVw",
+        "name": "type: spike",
+        "description": "Bounded experiment ending in a go or no-go decision",
+        "color": "FBCA04"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiqDQ",
+        "name": "area: rights",
+        "description": "Copyright, attribution, consent, provenance, and retention",
+        "color": "D4C5F9"
+      }
+    ],
+    "number": 51,
+    "state": "OPEN",
+    "title": "[Post-MVP][Spike] Server-hosted AI Listening Maps",
+    "updatedAt": "2026-08-03T21:39:19Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssio1g",
+        "name": "phase: post-mvp",
+        "description": "Explicitly outside the active Recovery MVP scope",
+        "color": "5319E7"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipCg",
+        "name": "type: research",
+        "description": "Research and decision framing without production implementation",
+        "color": "0E8A16"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipnQ",
+        "name": "area: anchors",
+        "description": "Source, transcript, media-time, and cross-edition anchors",
+        "color": "1D76DB"
+      }
+    ],
+    "number": 49,
+    "state": "OPEN",
+    "title": "[Post-MVP] Desktop browser extension for interjectable web content",
+    "updatedAt": "2026-08-03T13:39:00Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssio1g",
+        "name": "phase: post-mvp",
+        "description": "Explicitly outside the active Recovery MVP scope",
+        "color": "5319E7"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipCg",
+        "name": "type: research",
+        "description": "Research and decision framing without production implementation",
+        "color": "0E8A16"
+      }
+    ],
+    "number": 48,
+    "state": "OPEN",
+    "title": "[Post-MVP][Research] Semantic links, embeddings, and cross-item Listening Maps",
+    "updatedAt": "2026-08-03T21:40:04Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiotw",
+        "name": "phase: recovery-mvp",
+        "description": "Required before Recovery MVP human validation",
+        "color": "B60205"
+      }
+    ],
+    "number": 47,
+    "state": "CLOSED",
+    "title": "Persist native-audio playback speed across subsequent items",
+    "updatedAt": "2026-08-03T21:40:41Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-eA",
+        "name": "bug",
+        "description": "Something isn't working",
+        "color": "d73a4a"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-uw",
+        "name": "help wanted",
+        "description": "Extra attention is needed",
+        "color": "008672"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiotw",
+        "name": "phase: recovery-mvp",
+        "description": "Required before Recovery MVP human validation",
+        "color": "B60205"
+      }
+    ],
+    "number": 46,
+    "state": "CLOSED",
+    "title": "MVP: Resolve podcast links and import publisher chapters",
+    "updatedAt": "2026-08-03T21:58:19Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-eA",
+        "name": "bug",
+        "description": "Something isn't working",
+        "color": "d73a4a"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiotw",
+        "name": "phase: recovery-mvp",
+        "description": "Required before Recovery MVP human validation",
+        "color": "B60205"
+      }
+    ],
+    "number": 45,
+    "state": "CLOSED",
+    "title": "MVP: Complete final playback, close the session, and clamp skip-forward",
+    "updatedAt": "2026-08-03T21:58:17Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-eA",
+        "name": "bug",
+        "description": "Something isn't working",
+        "color": "d73a4a"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-uw",
+        "name": "help wanted",
+        "description": "Extra attention is needed",
+        "color": "008672"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiotw",
+        "name": "phase: recovery-mvp",
+        "description": "Required before Recovery MVP human validation",
+        "color": "B60205"
+      }
+    ],
+    "number": 44,
+    "state": "CLOSED",
+    "title": "Loading a PDF pauses native audio playback",
+    "updatedAt": "2026-08-03T13:16:56Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-eA",
+        "name": "bug",
+        "description": "Something isn't working",
+        "color": "d73a4a"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-uw",
+        "name": "help wanted",
+        "description": "Extra attention is needed",
+        "color": "008672"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiotw",
+        "name": "phase: recovery-mvp",
+        "description": "Required before Recovery MVP human validation",
+        "color": "B60205"
+      }
+    ],
+    "number": 43,
+    "state": "CLOSED",
+    "title": "Synchronize AI-response playback controls and Live Activity lifecycle",
+    "updatedAt": "2026-08-03T21:40:40Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiotw",
+        "name": "phase: recovery-mvp",
+        "description": "Required before Recovery MVP human validation",
+        "color": "B60205"
+      }
+    ],
+    "number": 42,
+    "state": "CLOSED",
+    "title": "[Recovery MVP] On-device interjection summaries and tracker-free release mode",
+    "updatedAt": "2026-08-03T21:58:15Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-hg",
+        "name": "documentation",
+        "description": "Improvements or additions to documentation",
+        "color": "0075ca"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiotw",
+        "name": "phase: recovery-mvp",
+        "description": "Required before Recovery MVP human validation",
+        "color": "B60205"
+      }
+    ],
+    "number": 41,
+    "state": "OPEN",
+    "title": "Refresh App Store screenshots for the current submission UI",
+    "updatedAt": "2026-08-21T18:05:34Z"
+  },
+  {
+    "labels": [],
+    "number": 40,
+    "state": "CLOSED",
+    "title": "TestFlight build 9 \u2014 normal and legacy processing and validation",
+    "updatedAt": "2026-08-10T16:18:12Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-eA",
+        "name": "bug",
+        "description": "Something isn't working",
+        "color": "d73a4a"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-uw",
+        "name": "help wanted",
+        "description": "Extra attention is needed",
+        "color": "008672"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiotw",
+        "name": "phase: recovery-mvp",
+        "description": "Required before Recovery MVP human validation",
+        "color": "B60205"
+      }
+    ],
+    "number": 39,
+    "state": "CLOSED",
+    "title": "MVP: Auto-dismiss delete toast after ~5 seconds",
+    "updatedAt": "2026-08-03T13:16:54Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      }
+    ],
+    "number": 38,
+    "state": "CLOSED",
+    "title": "Shortcuts for Spoken Margins",
+    "updatedAt": "2026-07-28T14:08:52Z"
+  },
+  {
+    "labels": [],
+    "number": 35,
+    "state": "OPEN",
+    "title": "Bring Spoken Margins to Android",
+    "updatedAt": "2026-07-23T10:07:32Z"
+  },
+  {
+    "labels": [],
+    "number": 34,
+    "state": "OPEN",
+    "title": "[Post-MVP] Remove residual Kokoro/MLX code and formalize Supertonic render identity",
+    "updatedAt": "2026-08-25T04:03:13Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiotw",
+        "name": "phase: recovery-mvp",
+        "description": "Required before Recovery MVP human validation",
+        "color": "B60205"
+      }
+    ],
+    "number": 33,
+    "state": "CLOSED",
+    "title": "[External TestFlight] Podcast link Return and focus loss should submit once",
+    "updatedAt": "2026-07-23T16:25:41Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-eA",
+        "name": "bug",
+        "description": "Something isn't working",
+        "color": "d73a4a"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiotw",
+        "name": "phase: recovery-mvp",
+        "description": "Required before Recovery MVP human validation",
+        "color": "B60205"
+      }
+    ],
+    "number": 32,
+    "state": "CLOSED",
+    "title": "[External TestFlight] Action feedback and destructive rows can cross-fire",
+    "updatedAt": "2026-07-23T16:27:21Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiotw",
+        "name": "phase: recovery-mvp",
+        "description": "Required before Recovery MVP human validation",
+        "color": "B60205"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiqww",
+        "name": "status: needs-human-validation",
+        "description": "Implemented or verified but awaiting product-owner validation",
+        "color": "FEF2C0"
+      }
+    ],
+    "number": 30,
+    "state": "CLOSED",
+    "title": "External TestFlight 0.1 \u2014 archive, validation, metadata, and submission",
+    "updatedAt": "2026-07-23T16:26:16Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-eA",
+        "name": "bug",
+        "description": "Something isn't working",
+        "color": "d73a4a"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiotw",
+        "name": "phase: recovery-mvp",
+        "description": "Required before Recovery MVP human validation",
+        "color": "B60205"
+      }
+    ],
+    "number": 29,
+    "state": "CLOSED",
+    "title": "Podcasts stop when internet connection is lost",
+    "updatedAt": "2026-07-23T15:50:29Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-uw",
+        "name": "help wanted",
+        "description": "Extra attention is needed",
+        "color": "008672"
+      }
+    ],
+    "number": 28,
+    "state": "CLOSED",
+    "title": "TestFlight Review Full AI feature access",
+    "updatedAt": "2026-07-24T19:07:14Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssio1g",
+        "name": "phase: post-mvp",
+        "description": "Explicitly outside the active Recovery MVP scope",
+        "color": "5319E7"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipVw",
+        "name": "type: spike",
+        "description": "Bounded experiment ending in a go or no-go decision",
+        "color": "FBCA04"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipnQ",
+        "name": "area: anchors",
+        "description": "Source, transcript, media-time, and cross-edition anchors",
+        "color": "1D76DB"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipyA",
+        "name": "area: sharing",
+        "description": "Export, packages, import, and sharing boundaries",
+        "color": "C2E0C6"
+      }
+    ],
+    "number": 27,
+    "state": "OPEN",
+    "title": "[Spike] Resolve shared podcast anchors across differing audio editions",
+    "updatedAt": "2026-09-08T15:39:50Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssio1g",
+        "name": "phase: post-mvp",
+        "description": "Explicitly outside the active Recovery MVP scope",
+        "color": "5319E7"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiqDQ",
+        "name": "area: rights",
+        "description": "Copyright, attribution, consent, provenance, and retention",
+        "color": "D4C5F9"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiqbQ",
+        "name": "area: collaboration",
+        "description": "Imported layers, replies, and multi-person experiences",
+        "color": "006B75"
+      }
+    ],
+    "number": 26,
+    "state": "OPEN",
+    "title": "[Post-MVP] Generate attributed AI synthesis from co-op margin layers",
+    "updatedAt": "2026-07-21T17:05:36Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssio1g",
+        "name": "phase: post-mvp",
+        "description": "Explicitly outside the active Recovery MVP scope",
+        "color": "5319E7"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipCg",
+        "name": "type: research",
+        "description": "Research and decision framing without production implementation",
+        "color": "0E8A16"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipyA",
+        "name": "area: sharing",
+        "description": "Export, packages, import, and sharing boundaries",
+        "color": "C2E0C6"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiqbQ",
+        "name": "area: collaboration",
+        "description": "Imported layers, replies, and multi-person experiences",
+        "color": "006B75"
+      }
+    ],
+    "number": 25,
+    "state": "OPEN",
+    "title": "[Research] Evaluate ActivityPub as an optional transport for shared margin layers",
+    "updatedAt": "2026-07-21T17:05:34Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssio1g",
+        "name": "phase: post-mvp",
+        "description": "Explicitly outside the active Recovery MVP scope",
+        "color": "5319E7"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipCg",
+        "name": "type: research",
+        "description": "Research and decision framing without production implementation",
+        "color": "0E8A16"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiqDQ",
+        "name": "area: rights",
+        "description": "Copyright, attribution, consent, provenance, and retention",
+        "color": "D4C5F9"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiqbQ",
+        "name": "area: collaboration",
+        "description": "Imported layers, replies, and multi-person experiences",
+        "color": "006B75"
+      }
+    ],
+    "number": 24,
+    "state": "OPEN",
+    "title": "[Research] Curated creator commentary editions",
+    "updatedAt": "2026-07-21T17:07:50Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssio1g",
+        "name": "phase: post-mvp",
+        "description": "Explicitly outside the active Recovery MVP scope",
+        "color": "5319E7"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiqDQ",
+        "name": "area: rights",
+        "description": "Copyright, attribution, consent, provenance, and retention",
+        "color": "D4C5F9"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiqbQ",
+        "name": "area: collaboration",
+        "description": "Imported layers, replies, and multi-person experiences",
+        "color": "006B75"
+      }
+    ],
+    "number": 23,
+    "state": "OPEN",
+    "title": "[Post-MVP] Register connection claims and return recurrence/prior-art receipts",
+    "updatedAt": "2026-07-21T17:08:57Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssio1g",
+        "name": "phase: post-mvp",
+        "description": "Explicitly outside the active Recovery MVP scope",
+        "color": "5319E7"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipVw",
+        "name": "type: spike",
+        "description": "Bounded experiment ending in a go or no-go decision",
+        "color": "FBCA04"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipyA",
+        "name": "area: sharing",
+        "description": "Export, packages, import, and sharing boundaries",
+        "color": "C2E0C6"
+      }
+    ],
+    "number": 22,
+    "state": "OPEN",
+    "title": "[Spike] Use biometric signing as user-cost proof for sharing and connection registration",
+    "updatedAt": "2026-07-21T17:08:55Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssio1g",
+        "name": "phase: post-mvp",
+        "description": "Explicitly outside the active Recovery MVP scope",
+        "color": "5319E7"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipVw",
+        "name": "type: spike",
+        "description": "Bounded experiment ending in a go or no-go decision",
+        "color": "FBCA04"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipnQ",
+        "name": "area: anchors",
+        "description": "Source, transcript, media-time, and cross-edition anchors",
+        "color": "1D76DB"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiqDQ",
+        "name": "area: rights",
+        "description": "Copyright, attribution, consent, provenance, and retention",
+        "color": "D4C5F9"
+      }
+    ],
+    "number": 21,
+    "state": "OPEN",
+    "title": "[Spike] Anchor interjections to externally playing content with a rolling microphone buffer",
+    "updatedAt": "2026-07-21T17:08:47Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssio1g",
+        "name": "phase: post-mvp",
+        "description": "Explicitly outside the active Recovery MVP scope",
+        "color": "5319E7"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipyA",
+        "name": "area: sharing",
+        "description": "Export, packages, import, and sharing boundaries",
+        "color": "C2E0C6"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiqbQ",
+        "name": "area: collaboration",
+        "description": "Imported layers, replies, and multi-person experiences",
+        "color": "006B75"
+      }
+    ],
+    "number": 19,
+    "state": "OPEN",
+    "title": "[Post-MVP] Layered asynchronous co-op interjection conversations",
+    "updatedAt": "2026-09-08T15:39:52Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssio1g",
+        "name": "phase: post-mvp",
+        "description": "Explicitly outside the active Recovery MVP scope",
+        "color": "5319E7"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipnQ",
+        "name": "area: anchors",
+        "description": "Source, transcript, media-time, and cross-edition anchors",
+        "color": "1D76DB"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipyA",
+        "name": "area: sharing",
+        "description": "Export, packages, import, and sharing boundaries",
+        "color": "C2E0C6"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiqbQ",
+        "name": "area: collaboration",
+        "description": "Imported layers, replies, and multi-person experiences",
+        "color": "006B75"
+      }
+    ],
+    "number": 18,
+    "state": "OPEN",
+    "title": "[Post-MVP] Import and listen to another person\u2019s interjection layer",
+    "updatedAt": "2026-09-12T12:15:30Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssio1g",
+        "name": "phase: post-mvp",
+        "description": "Explicitly outside the active Recovery MVP scope",
+        "color": "5319E7"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipyA",
+        "name": "area: sharing",
+        "description": "Export, packages, import, and sharing boundaries",
+        "color": "C2E0C6"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiqDQ",
+        "name": "area: rights",
+        "description": "Copyright, attribution, consent, provenance, and retention",
+        "color": "D4C5F9"
+      }
+    ],
+    "number": 17,
+    "state": "OPEN",
+    "title": "[Post-MVP] Share reviewed interjection packages",
+    "updatedAt": "2026-09-12T13:12:34Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssio1g",
+        "name": "phase: post-mvp",
+        "description": "Explicitly outside the active Recovery MVP scope",
+        "color": "5319E7"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipyA",
+        "name": "area: sharing",
+        "description": "Export, packages, import, and sharing boundaries",
+        "color": "C2E0C6"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiqDQ",
+        "name": "area: rights",
+        "description": "Copyright, attribution, consent, provenance, and retention",
+        "color": "D4C5F9"
+      }
+    ],
+    "number": 16,
+    "state": "OPEN",
+    "title": "[Post-MVP] Export interjections as portable Markdown for Obsidian and other PKM tools",
+    "updatedAt": "2026-09-12T12:16:13Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssio1g",
+        "name": "phase: post-mvp",
+        "description": "Explicitly outside the active Recovery MVP scope",
+        "color": "5319E7"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipnQ",
+        "name": "area: anchors",
+        "description": "Source, transcript, media-time, and cross-edition anchors",
+        "color": "1D76DB"
+      }
+    ],
+    "number": 15,
+    "state": "CLOSED",
+    "title": "[Post-MVP] Add typed interjections with the same playback anchors as voice notes",
+    "updatedAt": "2026-09-12T12:14:30Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-hg",
+        "name": "documentation",
+        "description": "Improvements or additions to documentation",
+        "color": "0075ca"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssipCg",
+        "name": "type: research",
+        "description": "Research and decision framing without production implementation",
+        "color": "0E8A16"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiqDQ",
+        "name": "area: rights",
+        "description": "Copyright, attribution, consent, provenance, and retention",
+        "color": "D4C5F9"
+      }
+    ],
+    "number": 14,
+    "state": "OPEN",
+    "title": "[Research] Define excerpt rights, attribution, and sharing policy",
+    "updatedAt": "2026-09-12T12:15:28Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-eA",
+        "name": "bug",
+        "description": "Something isn't working",
+        "color": "d73a4a"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiotw",
+        "name": "phase: recovery-mvp",
+        "description": "Required before Recovery MVP human validation",
+        "color": "B60205"
+      }
+    ],
+    "number": 13,
+    "state": "CLOSED",
+    "title": "[Recovery MVP][Regression] Native text rate changes can advance scrubber without audio",
+    "updatedAt": "2026-07-23T16:27:48Z"
+  },
+  {
+    "labels": [],
+    "number": 11,
+    "state": "CLOSED",
+    "title": "Bug: playback speed ignored and interject skips to end for native text items",
+    "updatedAt": "2026-07-20T17:17:13Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-eA",
+        "name": "bug",
+        "description": "Something isn't working",
+        "color": "d73a4a"
+      }
+    ],
+    "number": 10,
+    "state": "CLOSED",
+    "title": "Bug: native text playback falls back from Piper voice, stalls, then loses resume position",
+    "updatedAt": "2026-07-20T17:17:12Z"
+  },
+  {
+    "labels": [],
+    "number": 9,
+    "state": "CLOSED",
+    "title": "Feature request: use Defuddle/Readability-style extraction for website imports",
+    "updatedAt": "2026-07-20T17:17:12Z"
+  },
+  {
+    "labels": [
+      {
+        "id": "LA_kwDOS-cS0c8AAAACn9Y-pg",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiotw",
+        "name": "phase: recovery-mvp",
+        "description": "Required before Recovery MVP human validation",
+        "color": "B60205"
+      },
+      {
+        "id": "LA_kwDOS-cS0c8AAAACssiqww",
+        "name": "status: needs-human-validation",
+        "description": "Implemented or verified but awaiting product-owner validation",
+        "color": "FEF2C0"
+      }
+    ],
+    "number": 8,
+    "state": "CLOSED",
+    "title": "[Recovery MVP] Validate system share-sheet source intake",
+    "updatedAt": "2026-07-23T16:28:38Z"
+  }
+]

@@ -1,0 +1,2473 @@
+diff --git a/App/SpokenMarginsApp/Sources/SpokenMarginsApp/DeveloperDiagnosticRecording.swift b/App/SpokenMarginsApp/Sources/SpokenMarginsApp/DeveloperDiagnosticRecording.swift
+index 640dd40..4ebb3c8 100644
+--- a/App/SpokenMarginsApp/Sources/SpokenMarginsApp/DeveloperDiagnosticRecording.swift
++++ b/App/SpokenMarginsApp/Sources/SpokenMarginsApp/DeveloperDiagnosticRecording.swift
+@@ -1,18 +1,18 @@
+ import Foundation
+ import CryptoKit
+ 
+-/// Bounded, opt-in event history. Call from the main actor; disk writes are serial
++/// Bounded event history with optional automatic, persistent breadcrumbs. Call from the main actor; disk writes are serial
+ /// and off-main. Fields at call sites are state/counters, never source content.
+ @MainActor
+ final class DeveloperDiagnosticRecording {
+     static let buildIdentity = "device-diagnostics-20260908-C"
+-    struct Event: Codable {
++    struct Event: Codable, Sendable {
+         let time: String
+         let elapsedMs: Int
+         let kind: String
+         let fields: [String: String]
+     }
+-    struct Capture: Codable {
++    struct Capture: Codable, Sendable {
+         let schemaVersion: String
+         let build: String
+         let captureID: String
+@@ -25,13 +25,23 @@ final class DeveloperDiagnosticRecording {
+     private var started = ProcessInfo.processInfo.systemUptime
+     private let limit: Int
+     private let fileURL: URL?
++    private let automatic: Bool
+     private let writer = DispatchQueue(label: "spoken-margins.diagnostic-recording", qos: .utility)
+     private let formatter = ISO8601DateFormatter()
+ 
+-    init(limit: Int = 1200, fileURL: URL? = nil) {
++    init(limit: Int = 1200, fileURL: URL? = nil, automatic: Bool = false) {
++        self.automatic = automatic
+         self.limit = max(2, limit)
+         self.fileURL = fileURL
+         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
++        if automatic {
++            if let fileURL, let data = try? Data(contentsOf: fileURL),
++               let capture = try? JSONDecoder().decode(Capture.self, from: data) {
++                events = Array(capture.events.suffix(self.limit - 1))
++            }
++            enabled = true
++            record("recording.launch")
++        }
+     }
+     static func token(_ value: String?) -> String {
+         guard let value else { return "none" }
+@@ -52,13 +62,13 @@ final class DeveloperDiagnosticRecording {
+         persist()
+     }
+     func record(_ kind: String, _ fields: [String: String] = [:]) {
+-        guard enabled else { return }
++        guard enabled, !automatic || kind != "sample" else { return }
+         events.append(Event(time: formatter.string(from: Date()),
+                             elapsedMs: Int((ProcessInfo.processInfo.systemUptime - started) * 1000),
+                             kind: kind, fields: fields))
+         if events.count > limit { events.removeFirst(events.count - limit) }
+         recordedCount += 1
+-        if recordedCount % 20 == 0 { persist() }
++        if automatic || recordedCount % 20 == 0 { persist() }
+     }
+     func exportJSON() -> String? {
+         if events.isEmpty, let fileURL,
+@@ -69,13 +79,23 @@ final class DeveloperDiagnosticRecording {
+         guard let data = encoded() else { return nil }
+         return String(data: data, encoding: .utf8)
+     }
++    // Awaiting the serial writer is useful at a controlled lifecycle/test boundary.
++    func flush() async {
++        await withCheckedContinuation { continuation in
++            writer.async { continuation.resume() }
++        }
++    }
++
+     private func encoded() -> Data? {
+         try? JSONEncoder().encode(Capture(schemaVersion: "spoken-margins.developer-recording.v1",
+                                         build: Self.buildIdentity, captureID: captureID, events: events))
+     }
+     private func persist() {
+-        guard let fileURL, let data = encoded() else { return }
++        guard let fileURL else { return }
++        let capture = Capture(schemaVersion: "spoken-margins.developer-recording.v1",
++                              build: Self.buildIdentity, captureID: captureID, events: events)
+         writer.async {
++            guard let data = try? JSONEncoder().encode(capture) else { return }
+             try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+             try? data.write(to: fileURL, options: .atomic)
+         }
+diff --git a/App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift b/App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift
+index 14129f1..001e54d 100644
+--- a/App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift
++++ b/App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift
+@@ -591,6 +591,7 @@ final class Gate1AppModel: ObservableObject {
+     }
+     @Published var snapshot = SessionSnapshot() {
+         didSet {
++            recordPlaybackEventState(previous: oldValue)
+             if playingImportedCommentary != nil,
+                oldValue.sessionId != snapshot.sessionId || oldValue.itemId != snapshot.itemId
+                 || oldValue.targetId != snapshot.targetId || snapshot.status.isPlaybackActive {
+@@ -629,8 +630,37 @@ final class Gate1AppModel: ObservableObject {
+         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+             .appendingPathComponent("DeveloperDiagnostics/latest.json"))
+ 
++    private let playbackEventRecording = DeveloperDiagnosticRecording(
++        limit: 300,
++        fileURL: Gate1AppModel.isRunningUnitTests ? nil : FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
++            .appendingPathComponent("DeveloperDiagnostics/playback-events.json"),
++        automatic: true
++    )
++    private var lastPlaybackEventCheckpoint: TimeInterval = 0
++
+     func recordDeveloperDiagnostic(_ kind: String, _ fields: [String: String] = [:]) {
+         developerRecording.record(kind, fields)
++        // High-frequency samples and rendering events must not erase transport history.
++        if kind != "sample", !kind.hasPrefix("preparation."),
++           !kind.hasPrefix("scrub."), kind != "main.delayed" {
++            playbackEventRecording.record(kind, fields)
++        }
++    }
++
++    private func recordPlaybackEventState(previous: SessionSnapshot) {
++        let now = ProcessInfo.processInfo.systemUptime
++        let changed = previous.status != snapshot.status || previous.targetId != snapshot.targetId
++            || previous.lastFailure != snapshot.lastFailure
++        guard changed || (snapshot.status.isPlaybackActive && now - lastPlaybackEventCheckpoint >= 30) else { return }
++        lastPlaybackEventCheckpoint = now
++        playbackEventRecording.record("playback.state", [
++            "item": DeveloperDiagnosticRecording.token(snapshot.itemId),
++            "target": DeveloperDiagnosticRecording.token(snapshot.targetId),
++            "status": snapshot.status.rawValue,
++            "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1),
++            "durationMs": String(snapshot.currentPlaybackDurationMs ?? -1),
++            "failure": DeveloperDiagnosticRecording.token(snapshot.lastFailure)
++        ])
+     }
+ 
+     private func configureDeveloperDiagnosticRecording() {
+@@ -953,6 +983,7 @@ final class Gate1AppModel: ObservableObject {
+     private let audioPlaybackClientOverride: AudioPlaybackClient?
+     private var mediaPlaybackClient: AVPlayerStreamPlaybackClient?
+     private var podcastDownloadCoordinator: PodcastDownloadCoordinator?
++    private var requestedPodcastTransportReplacements: Set<String> = []
+     private var offlineStorageLedger: OfflineStorageLedger?
+     private var localSourceImporter: LocalSourceImporter?
+     private var followedSourceCoordinator: FollowedSourceCoordinator?
+@@ -1020,6 +1051,7 @@ final class Gate1AppModel: ObservableObject {
+     @Published private var pendingSourceContextInterjectionIds: Set<String> = []
+     private var pendingFullSourceTranscriptionItemIds: Set<String> = []
+     private var importedPodcastResolutionGenerations: [String: Int] = [:]
++    private var importedPodcastResolutionURLs: [String: URL] = [:]
+     private var importedTranscriptRetryDates: [String: Date] = [:]
+     private var transcriptAssistedResolutionItems: Set<String> = []
+     private var importedPodcastRecipientLocalURLs: [String: URL] = [:]
+@@ -2026,7 +2058,10 @@ final class Gate1AppModel: ObservableObject {
+     func refreshMarginRows() {
+         do {
+             let store = try requireStore()
+-            let activeItems = Dictionary(uniqueKeysWithValues: libraryItems.map { ($0.id, $0.title) })
++            // Library rows refresh asynchronously on navigation. Retrieval must
++            // use durable membership so freshly imported items are not omitted.
++            let activeItems = Dictionary(uniqueKeysWithValues: try store.listItems()
++                .filter { $0.deletedAt == nil }.map { ($0.id, $0.title) })
+             let rows = try store.loadSessions().flatMap { session -> [MarginRow] in
+                 guard let itemTitle = activeItems[session.itemId] else { return [] }
+                 return try store.loadInterjections(sessionId: session.id)
+@@ -4918,6 +4953,7 @@ final class Gate1AppModel: ObservableObject {
+     /// to be restored in the engine.
+     @discardableResult
+     private func ensureSessionForSelectedItem(_ engine: SessionEngine) throws -> Bool {
++        try prepareSourceMediaPlayback(itemId: activeItemId)
+         if let session = engine.currentSession, session.itemId == activeItemId,
+            session.status != "finished", session.phase != .finished, session.completionPercent < 100 {
+             return false
+@@ -5626,6 +5662,7 @@ final class Gate1AppModel: ObservableObject {
+     }
+ 
+     func skipBack() {
++        recordDeveloperDiagnostic("skip.request", ["direction": "back", "origin": "app_ui", "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1)])
+         restoreSkimOriginBeforeCanonicalTransport()
+         synchronizeStreamingSpeechAnchorIfNeeded()
+         run { engine in
+@@ -5637,6 +5674,7 @@ final class Gate1AppModel: ObservableObject {
+     }
+ 
+     func skipBackMedia() {
++        recordDeveloperDiagnostic("skip.request", ["direction": "back", "origin": "app_ui", "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1)])
+         restoreSkimOriginBeforeCanonicalTransport()
+         run { engine in
+             snapshot = try engine.skipBack(unit: mediaSkipUnit(seconds: mediaSkipBackSeconds))
+@@ -5645,6 +5683,7 @@ final class Gate1AppModel: ObservableObject {
+     }
+ 
+     func skipForward() {
++        recordDeveloperDiagnostic("skip.request", ["direction": "forward", "origin": "app_ui", "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1)])
+         restoreSkimOriginBeforeCanonicalTransport()
+         synchronizeStreamingSpeechAnchorIfNeeded()
+         run { engine in
+@@ -5657,6 +5696,7 @@ final class Gate1AppModel: ObservableObject {
+     }
+ 
+     func skipForwardMedia() {
++        recordDeveloperDiagnostic("skip.request", ["direction": "forward", "origin": "app_ui", "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1)])
+         restoreSkimOriginBeforeCanonicalTransport()
+         run { engine in
+             snapshot = try engine.skipForward(unit: mediaSkipUnit(seconds: mediaSkipForwardSeconds))
+@@ -5830,7 +5870,12 @@ final class Gate1AppModel: ObservableObject {
+         case .failed(let actualMediaTimeMs, let reason):
+             outcome = "failed:\(actualMediaTimeMs.map(String.init) ?? "unknown"):\(reason)"
+         }
+-        diagnostics["mediaSeek"] = "id:\(request.id),requested:\(request.requestedMediaTimeMs),outcome:\(outcome)"
++        let evidence = "id:\(request.id),requested:\(request.requestedMediaTimeMs),outcome:\(outcome)"
++        if diagnostics["mediaSeek"] != evidence {
++            recordDeveloperDiagnostic("seek.media.result", ["id": String(request.id),
++                "requested": String(request.requestedMediaTimeMs), "outcome": outcome])
++        }
++        diagnostics["mediaSeek"] = evidence
+     }
+ 
+     func seekText(toCharOffset charOffset: Int) {
+@@ -5933,6 +5978,7 @@ final class Gate1AppModel: ObservableObject {
+ 
+     func redownloadSelectedPodcast() {
+         guard let coordinator = podcastDownloadCoordinator else { return }
++        requestedPodcastTransportReplacements.insert(selectedItem.id)
+         if coordinator.recordsByItemId[selectedItem.id] == nil {
+             prioritizeOfflinePreparation(id: selectedItem.id)
+         } else { coordinator.redownload(itemId: selectedItem.id) }
+@@ -7321,6 +7367,7 @@ final class Gate1AppModel: ObservableObject {
+             .mapValues(Self.redactedDiagnosticValue)
+         safe["developerBuild"] = developerDiagnosticBuild
+         safe["developerRecording"] = developerRecording.exportJSON()
++        safe["playbackEvents"] = playbackEventRecording.exportJSON()
+         safe["schemaVersion"] = "spoken-margins.diagnostics.v1"
+         safe["exportedAt"] = ISO8601DateFormatter().string(from: Date())
+         safe["playbackStatus"] = snapshot.status.rawValue
+@@ -9156,6 +9203,11 @@ final class Gate1AppModel: ObservableObject {
+         playbackRate: Double? = nil,
+         origin: String = "app_ui"
+     ) {
++        recordDeveloperDiagnostic("transport.request", [
++            "command": command.rawValue, "origin": origin,
++            "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1),
++            "requestedMediaTimeMs": String(mediaTimeMs ?? -1)
++        ])
+         if playingImportedCommentary != nil {
+             switch command {
+             case .play: resumePlayback()
+@@ -10781,6 +10833,16 @@ final class Gate1AppModel: ObservableObject {
+     }
+ 
+     func applyPreparedChunkProgress(item: Item, manifest: PreparedAudioManifest, remainingJobs: [AudioPreparationJob]) {
++        var manifest = manifest
++        // Finishing the final chunk persists a terminal state and removes its
++        // job. The caller's pre-finalization snapshot must not downgrade that
++        // result. Intermediate chunks still avoid any persistence reload.
++        if manifest.state == .preparing,
++           manifest.chunks.count == manifest.plannedChunkCount,
++           !remainingJobs.contains(where: { $0.manifestId == manifest.id && !$0.isCancelled }),
++           let persisted = try? store?.loadPreparedAudioManifest(id: manifest.id) {
++            manifest = persisted
++        }
+         let job = remainingJobs.first { $0.manifestId == manifest.id && !$0.isCancelled }
+         if let index = libraryItems.firstIndex(where: { $0.id == item.id }), !libraryItems[index].isCompleted {
+             let startup = libraryStartupAudioPresentation(item: item, manifest: manifest, job: job)
+@@ -14414,6 +14476,11 @@ final class Gate1AppModel: ObservableObject {
+                     libraryItems[index].offlineState = state
+                 }
+             }
++            if diagnostics["podcastDownload:\(record.itemId)"] != record.state.rawValue {
++                recordDeveloperDiagnostic("download.state", ["item": DeveloperDiagnosticRecording.token(record.itemId),
++                    "state": record.state.rawValue, "bytes": String(record.bytesWritten),
++                    "failure": DeveloperDiagnosticRecording.token(record.failureReason)])
++            }
+             diagnostics["podcastDownload:\(record.itemId)"] = record.state.rawValue
+         }
+         coordinator.onLocalAssetReady = { [weak self] itemId, url in
+@@ -15170,10 +15237,13 @@ final class Gate1AppModel: ObservableObject {
+               let reference = item.sourceURL ?? item.externalReference,
+               let url = URL(string: reference),
+               url.scheme?.lowercased() == "https" else { return }
++        // Opening Item loads its sessions synchronously; Home's display cache
++        // may still be awaiting refresh or may have been superseded by navigation.
++        let persistedProgress = selectedItem.id == itemId
++            ? Self.preferredContinuationSession(in: selectedItem.sessions)?.completionPercent
++            : libraryItems.first(where: { $0.id == itemId })?.continuationProgressPercent
+         let progress = Self.sourceSuggestionEngagementProgress(
+-            itemId: itemId,
+-            persistedProgress: libraryItems.first(where: { $0.id == itemId })?.continuationProgressPercent,
+-            snapshot: snapshot
++            itemId: itemId, persistedProgress: persistedProgress, snapshot: snapshot
+         )
+         guard progress >= 25 || (selectedItem.id == itemId && !selectedItem.interjections.isEmpty) else { return }
+         sourceSuggestionChecks.insert(itemId)
+@@ -15433,15 +15503,15 @@ final class Gate1AppModel: ObservableObject {
+     func podcastLocalAssetDidBecomeReady(itemId: String, url: URL) {
+         guard let engine, let store else { return }
+         importedPodcastRecipientLocalURLs[itemId] = url
++        let requestedReplacement = requestedPodcastTransportReplacements.remove(itemId) != nil
+         run { _ in
+-            // Keep an already-playing remote stream intact. Replacing AVPlayer
+-            // while the app is locked can interrupt the audio session and make
+-            // Now Playing disappear. The cached file becomes the preferred
+-            // transport on the next resume/restart.
++            // Automatic completion keeps the current session's audio edition.
++            // Explicit Download Again and a pending startup may adopt the new
++            // file, including when a paused session's old local file was replaced.
+             snapshot = try engine.updatePlaybackTransport(
+                 itemId: itemId,
+                 playbackURL: url.absoluteString,
+-                replaceActivePlayback: snapshot.status == .starting
++                replaceActivePlayback: snapshot.status == .starting || requestedReplacement
+             )
+             refreshSelectedItem()
+         }
+@@ -15478,11 +15548,10 @@ final class Gate1AppModel: ObservableObject {
+                     durationMs: item.media?.durationMs
+                 )
+                 self.pendingFullSourceTranscriptionItemIds.remove(item.id)
+-                self.resolveImportedPodcastCommentary(
+-                    itemId: item.id,
+-                    localURL: localSourceURL,
+-                    recipientTranscriptOverride: timeline
+-                )
++                if self.importedPodcastResolutionURLs[item.id] == localSourceURL {
++                    self.resolveImportedPodcastCommentary(
++                        itemId: item.id, localURL: localSourceURL, recipientTranscriptOverride: timeline)
++                }
+                 try? self.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
+                 self.diagnostics["recipientAlignmentTranscript:\(item.id)"] = "consumed_and_deleted"
+             } catch {
+@@ -15493,6 +15562,39 @@ final class Gate1AppModel: ObservableObject {
+         }
+     }
+ 
++    nonisolated static func invalidatePodcastEdition(itemId: String, digest: String, store: SQLiteSessionStore) throws {
++        for var layer in try store.loadImportedCommentaryLayers(itemId: itemId)
++        where layer.deletedAt == nil && layer.itemIdentity.itemType == .podcast
++            && layer.resolvedRecipientEditionSHA256 != digest {
++            layer.sourceResolutionStatus = .pending
++            layer.resolvedRecipientEditionSHA256 = nil
++            try store.saveImportedCommentaryLayer(layer)
++            for var note in try store.loadImportedCommentaryInterjections(layerId: layer.id) {
++                note.resolution = ImportedAnchorResolution(evidenceClass: .unresolved)
++                try store.saveImportedCommentaryInterjection(note)
++            }
++        }
++        if let projection = try store.loadResolvedListeningMapProjection(itemId: itemId),
++           projection.recipientEditionSHA256 != digest {
++            try store.saveResolvedListeningMapProjection(ResolvedListeningMapProjection(
++                id: projection.id, itemId: itemId, proposalId: projection.proposalId,
++                recipientEditionSHA256: digest, points: [], intervals: []))
++        }
++    }
++
++    nonisolated static func podcastResolution(
++        previous: ImportedAnchorResolution, proposed: ImportedAnchorResolution,
++        previousEdition: String?, currentEdition: String?, hasTranscript: Bool
++    ) -> ImportedAnchorResolution {
++        let sameEdition = currentEdition != nil && currentEdition == previousEdition
++        let verified = isInlinePodcastResolution(previous)
++            && previous.evidenceClass != .timestampFallback && previous.evidenceClass != .mapInterpolated
++        let weaker = proposed.evidenceClass == .unresolved || proposed.evidenceClass == .absentFromRecipientEdition
++            || (!hasTranscript && proposed.evidenceClass == .ambiguous
++                && (previous.evidenceClass == .transcriptVerified || previous.evidenceClass == .fused))
++        return sameEdition && verified && weaker ? previous : proposed
++    }
++
+     private func resolveImportedPodcastCommentary(
+         itemId: String,
+         localURL: URL,
+@@ -15503,10 +15605,14 @@ final class Gate1AppModel: ObservableObject {
+               let layers = try? store.loadImportedCommentaryLayers(itemId: itemId),
+               !layers.isEmpty else { return }
+         // Playback refreshes must not cancel a stronger transient-transcript pass.
+-        guard recipientTranscriptOverride != nil || !transcriptAssistedResolutionItems.contains(itemId) else { return }
++        guard recipientTranscriptOverride != nil || !transcriptAssistedResolutionItems.contains(itemId)
++            || importedPodcastResolutionURLs[itemId] != localURL else { return }
++        if importedPodcastResolutionURLs[itemId] != localURL { transcriptAssistedResolutionItems.remove(itemId) }
++        importedPodcastResolutionURLs[itemId] = localURL
+         let localItem = localSharedItemIdentity(for: item)
++        // Persisted transcripts have no byte-edition binding. Only this pass's
++        // transient transcript is evidence for the supplied recipient file.
+         let recipientTranscript = recipientTranscriptOverride
+-            ?? (try? store.loadTranscriptTimeline(itemId: itemId)?.timeline)
+         let work = layers.compactMap { layer -> (ImportedCommentaryLayer, [ImportedCommentaryInterjection])? in
+             guard layer.deletedAt == nil,
+                   layer.itemIdentity.itemType == .podcast,
+@@ -15525,6 +15631,14 @@ final class Gate1AppModel: ObservableObject {
+         diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "scheduled:\(work.count)"
+         Task.detached { [weak self] in
+             do {
++                let recipientDigest = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: localURL)
++                let isCurrent = try await MainActor.run { [weak self] in
++                    guard let self, self.importedPodcastResolutionGenerations[itemId] == generation else { return false }
++                    try Self.invalidatePodcastEdition(itemId: itemId, digest: recipientDigest, store: store)
++                    if self.selectedItem.id == itemId { self.refreshSelectedItem() }
++                    return true
++                }
++                guard isCurrent else { return }
+                 var resolvedWork: [(ImportedCommentaryLayer, [ImportedCommentaryInterjection], ResolvedListeningMapProjection?)] = []
+                 for (var layer, records) in work {
+                     let queries = records.map { record in
+@@ -15590,19 +15704,13 @@ final class Gate1AppModel: ObservableObject {
+                     var updated = records
+                     for index in updated.indices {
+                         if let resolution = fusedResolutions[updated[index].packageScopedId] {
+-                            let previous = updated[index].resolution
+-                            let hasVerifiedPrevious = Self.isInlinePodcastResolution(previous)
+-                                && previous.evidenceClass != .timestampFallback
+-                                && previous.evidenceClass != .mapInterpolated
+-                            let lostEvidence = resolution.evidenceClass == .unresolved
+-                                || resolution.evidenceClass == .absentFromRecipientEdition
+-                                || (recipientTranscript == nil && resolution.evidenceClass == .ambiguous
+-                                    && (previous.evidenceClass == .transcriptVerified || previous.evidenceClass == .fused))
+-                            if !(hasVerifiedPrevious && lostEvidence) {
+-                                updated[index].resolution = resolution
+-                            }
++                            updated[index].resolution = Self.podcastResolution(
++                                previous: updated[index].resolution, proposed: resolution,
++                                previousEdition: layer.resolvedRecipientEditionSHA256,
++                                currentEdition: recipientDigest, hasTranscript: recipientTranscript != nil)
+                         }
+                     }
++                    layer.resolvedRecipientEditionSHA256 = recipientDigest
+                     let resolutionValues = updated.map(\.resolution)
+                     if resolutionValues.allSatisfy(Self.isInlinePodcastResolution) {
+                         layer.sourceResolutionStatus = .resolved
+@@ -15682,10 +15790,10 @@ final class Gate1AppModel: ObservableObject {
+                             id: "imported-projection-\(layer.id)",
+                             itemId: itemId,
+                             proposalId: layer.listeningMapProposals?.first?.id,
+-                            recipientEditionSHA256: try? PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: localURL),
++                            recipientEditionSHA256: recipientDigest,
+                             matches: matches,
+                             exactEdition: spine.producingEditionSHA256 != nil
+-                                && spine.producingEditionSHA256 == (try? PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: localURL))
++                                && spine.producingEditionSHA256 == recipientDigest
+                         )
+                     }
+                     resolvedWork.append((layer, updated, mapProjection))
+@@ -15719,6 +15827,9 @@ final class Gate1AppModel: ObservableObject {
+                         if self.selectedItem.id == itemId { self.refreshSelectedItem() }
+                         let resolvedCount = resolvedWork.filter { $0.0.sourceResolutionStatus == .resolved }.count
+                         self.diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "complete:\(resolvedCount)/\(resolvedWork.count)"
++                        if recipientTranscript == nil, self.importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store) {
++                            self.scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: localURL)
++                        }
+                     } catch {
+                         self.diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "persistence_failed:\(error.localizedDescription)"
+                     }
+@@ -15737,8 +15848,7 @@ final class Gate1AppModel: ObservableObject {
+         itemId: String,
+         store: SQLiteSessionStore
+     ) -> Bool {
+-        guard (try? store.loadTranscriptTimeline(itemId: itemId)) == nil,
+-              let layers = try? store.loadImportedCommentaryLayers(itemId: itemId) else { return false }
++        guard let layers = try? store.loadImportedCommentaryLayers(itemId: itemId) else { return false }
+         return layers.contains { layer in
+             guard layer.deletedAt == nil,
+                   layer.itemIdentity.itemType == .podcast,
+@@ -15822,7 +15932,7 @@ final class Gate1AppModel: ObservableObject {
+             _ = try engine?.updatePlaybackTransport(itemId: itemId, playbackURL: nil, replaceActivePlayback: false)
+             return
+         }
+-        _ = try? engine?.updatePlaybackTransport(itemId: itemId, playbackURL: localURL.absoluteString)
++        _ = try? engine?.updatePlaybackTransport(itemId: itemId, playbackURL: localURL.absoluteString, replaceActivePlayback: false)
+         resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
+     }
+ 
+diff --git a/App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift b/App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift
+index 29cbc95..2f2e0c5 100644
+--- a/App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift
++++ b/App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift
+@@ -4027,9 +4027,9 @@ private struct SettingsScreen: View {
+                 #if DEBUG
+                 Section("Developer") {
+                     DisclosureGroup("Developer tools", isExpanded: $showsDeveloperTools) {
+-                        Toggle("Record Device Diagnostics", isOn: $model.developerDiagnosticRecordingEnabled)
++                        Toggle("Record Detailed Device Diagnostics", isOn: $model.developerDiagnosticRecordingEnabled)
+                             .accessibilityIdentifier("settings.developer.recordDiagnostics")
+-                        Text("Turn on, reproduce the problem, then turn off and Copy Privacy-Safe Diagnostics. Keeps the latest 1,200 events; enabling starts a new recording. Off after app restart.")
++                        Text("Basic playback events are saved locally automatically (latest 300 events, no source text or audio). For detailed sampling, turn on, reproduce, then turn off and Copy Privacy-Safe Diagnostics. Detailed recording keeps 1,200 events and is off after restart.")
+                             .font(.caption)
+                         Text(model.developerDiagnosticBuild).font(.caption.monospaced())
+                         Button("Add Sample Item", action: model.addSampleItem)
+diff --git a/App/SpokenMarginsApp/Sources/SpokenMarginsApp/PodcastDownloadCoordinator.swift b/App/SpokenMarginsApp/Sources/SpokenMarginsApp/PodcastDownloadCoordinator.swift
+index 8165298..ae0fb4a 100644
+--- a/App/SpokenMarginsApp/Sources/SpokenMarginsApp/PodcastDownloadCoordinator.swift
++++ b/App/SpokenMarginsApp/Sources/SpokenMarginsApp/PodcastDownloadCoordinator.swift
+@@ -31,6 +31,20 @@ enum PodcastDownloadTransportURLPolicy {
+     }
+ }
+ 
++/// Stored by URLSession with the task, so process reconstruction preserves ownership.
++struct PodcastDownloadAttempt: Codable, Equatable, Sendable {
++    let itemId: String
++    let generation: String
++    let reservationId: String
++    let userInitiated: Bool
++
++    var taskDescription: String { String(decoding: try! JSONEncoder().encode(self), as: UTF8.self) }
++    static func decode(_ value: String?) -> Self? {
++        guard let value, let data = value.data(using: .utf8) else { return nil }
++        return try? JSONDecoder().decode(Self.self, from: data)
++    }
++}
++
+ @MainActor
+ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked Sendable {
+     static let backgroundSessionIdentifier = "com.spokenmargins.podcast-downloads"
+@@ -48,7 +62,12 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
+     private var cacheLimit: PodcastCacheLimitGB
+     private var activeItemId: String?
+     private var activeTaskItemIds: Set<String> = []
+-    private var reservationsByItemId: [String: OfflineStorageReservation] = [:]
++    private var generations: [String: String] = [:]
++    private var userInitiatedByItemId: [String: Bool] = [:]
++    private(set) var preparationTasks: [String: Task<Void, Never>] = [:]
++    private var attempts: [String: PodcastDownloadAttempt] = [:]
++    private let contentLength: (@Sendable (URL, Bool) async throws -> Int64)?
++    private let startDownload: ((URLRequest, String) -> Void)?
+     private var userInitiatedTaskIds: Set<Int> = []
+     private var lastProgressPublishDateByItemId: [String: Date] = [:]
+     private var session: URLSession!
+@@ -59,9 +78,13 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
+         applicationSupportDirectory: URL,
+         cacheLimit: PodcastCacheLimitGB,
+         monitorsNetwork: Bool = true,
+-        usesBackgroundSession: Bool = true
++        usesBackgroundSession: Bool = true,
++        contentLength: (@Sendable (URL, Bool) async throws -> Int64)? = nil,
++        startDownload: ((URLRequest, String) -> Void)? = nil
+     ) throws {
+         self.store = store
++        self.contentLength = contentLength
++        self.startDownload = startDownload
+         self.ledger = ledger ?? OfflineStorageLedger(
+             repository: store,
+             rootDirectory: applicationSupportDirectory
+@@ -97,11 +120,17 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
+                 Task { @MainActor in
+                     guard let self else { return }
+                     for task in tasks {
+-                        guard let itemId = task.taskDescription else { continue }
+-                        self.activeTaskItemIds.insert(itemId)
+-                        if var record = self.recordsByItemId[itemId] {
+-                            record.state = .downloading
+-                            self.persist(record)
++                        if let attempt = PodcastDownloadAttempt.decode(task.taskDescription),
++                           self.restoreAttempt(attempt) {
++                            if attempt.userInitiated { self.userInitiatedTaskIds.insert(task.taskIdentifier) }
++                        } else {
++                            // Old unscoped tasks cannot safely publish into a replacement item.
++                            task.cancel()
++                            let owner = task.taskDescription.map { "podcast-download-\($0)" }
++                            for reservation in (try? self.store.loadOfflineStorageReservations()) ?? []
++                            where reservation.ownerId == owner {
++                                try? self.store.deleteOfflineStorageReservation(id: reservation.id)
++                            }
+                         }
+                     }
+                     self.startNetworkMonitor()
+@@ -118,15 +147,49 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
+     func shutdown() {
+         monitor.cancel()
+         session.invalidateAndCancel()
+-        let reservations = Array(reservationsByItemId.values)
+-        reservationsByItemId.removeAll()
+-        Task {
+-            for reservation in reservations {
+-                try? await ledger.release(reservationId: reservation.id)
++        for itemId in Array(generations.keys) { invalidateAttempt(itemId: itemId) }
++    }
++
++    private func invalidateAttempt(itemId: String) {
++        let generation = generations.removeValue(forKey: itemId)
++        userInitiatedByItemId[itemId] = nil
++        preparationTasks.removeValue(forKey: itemId)?.cancel()
++        activeTaskItemIds.remove(itemId)
++        lastProgressPublishDateByItemId[itemId] = nil
++        if let attempt = attempts.removeValue(forKey: itemId) {
++            try? store.deleteOfflineStorageReservation(id: attempt.reservationId)
++        }
++        session.getAllTasks { tasks in
++            for task in tasks {
++                let attempt = PodcastDownloadAttempt.decode(task.taskDescription)
++                if (attempt?.itemId == itemId && attempt?.generation == generation)
++                    || task.taskDescription == itemId { task.cancel() }
+             }
+         }
+     }
+ 
++    /// Used both during URLSession reconstruction and by early delegate callbacks.
++    @discardableResult
++    func restoreAttempt(_ attempt: PodcastDownloadAttempt) -> Bool {
++        if let current = generations[attempt.itemId] { return current == attempt.generation }
++        guard var record = recordsByItemId[attempt.itemId],
++              record.state == .downloading || record.state == .waitingForWiFi,
++              let reservation = try? store.loadOfflineStorageReservations().first(where: { $0.id == attempt.reservationId }),
++              reservation.ownerId == "podcast-download-\(attempt.itemId):\(attempt.generation)",
++              reservation.expiresAt > Date() else { return false }
++        generations[attempt.itemId] = attempt.generation
++        attempts[attempt.itemId] = attempt
++        userInitiatedByItemId[attempt.itemId] = attempt.userInitiated
++        activeTaskItemIds.insert(attempt.itemId)
++        record.state = .downloading
++        persist(record)
++        return true
++    }
++
++    private func owns(_ attempt: PodcastDownloadAttempt) -> Bool {
++        generations[attempt.itemId] == attempt.generation && recordsByItemId[attempt.itemId] != nil
++    }
++
+     func status(itemId: String) -> PodcastDownloadState? { recordsByItemId[itemId]?.state }
+ 
+     func validatedLocalURL(for itemId: String) -> URL? {
+@@ -143,6 +206,20 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
+ 
+     func configureActiveItem(_ itemId: String?) {
+         activeItemId = itemId
++        // The shared ledger can evict independently of the podcast cache.
++        // Keep protection for the whole listening session, including Margins
++        // and paused playback, and transfer it only when the active item changes.
++        let activePath = itemId.flatMap { recordsByItemId[$0]?.localRelativePath }
++            .map { "PodcastAudio/\($0)" }
++        for var asset in (try? store.loadOwnedOfflineAssets()) ?? [] where asset.category == .podcast {
++            let isActive = itemId != nil && (asset.itemId == itemId
++                || (activePath != nil && asset.relativePath == activePath))
++            let wasActive = asset.protections.contains(.activePlayback)
++            guard isActive != wasActive else { continue }
++            if isActive { asset.protections.insert(.activePlayback) }
++            else { asset.protections.remove(.activePlayback) }
++            try? store.saveOwnedOfflineAsset(asset)
++        }
+         guard let itemId, var record = recordsByItemId[itemId] else { return }
+         record.lastPlayedAt = Date()
+         record.updatedAt = Date()
+@@ -202,8 +279,8 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
+ 
+     func redownload(itemId: String) {
+         guard var record = recordsByItemId[itemId] else { return }
++        invalidateAttempt(itemId: itemId)
+         record.state = .failed
+-        record.localRelativePath = nil
+         record.failureReason = nil
+         persist(record)
+         retry(itemId: itemId)
+@@ -239,15 +316,14 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
+     }
+ 
+     func removeItem(_ itemId: String) {
+-        session.getAllTasks { tasks in
+-            tasks.filter { $0.taskDescription == itemId }.forEach { $0.cancel() }
+-        }
++        invalidateAttempt(itemId: itemId)
+         if let record = recordsByItemId[itemId], let localURL = localURL(for: record) {
+             try? FileManager.default.removeItem(at: localURL)
+         }
+         recordsByItemId[itemId] = nil
+         try? store.deleteAudioAsset(id: "podcast-local-\(itemId)")
+         try? store.deleteAudioAsset(id: "podcast-remote-\(itemId)")
++        try? store.deleteOwnedOfflineAsset(id: "podcast-offline-\(itemId)")
+         if let id = try? store.loadPodcastDownload(itemId: itemId)?.id {
+             try? store.deletePodcastDownload(id: id)
+         }
+@@ -285,15 +361,12 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
+             }
+             for record in waiting { beginDownload(record: record, userInitiated: false) }
+         } else {
+-            session.getAllTasks { [weak self] tasks in
+-                Task { @MainActor in
+-                    guard let self else { return }
+-                    for task in tasks where !self.userInitiatedTaskIds.contains(task.taskIdentifier) {
+-                        task.cancel()
+-                    }
+-                }
+-            }
+-            for var record in recordsByItemId.values where record.state == .downloading || record.state == .waitingForWiFi {
++            // Invalidate preparation as well as URLSession work. A delayed HEAD
++            // response must not start an automatic download after leaving Wi-Fi.
++            for var record in Array(recordsByItemId.values)
++            where record.state == .downloading || record.state == .waitingForWiFi {
++                guard userInitiatedByItemId[record.itemId] != true else { continue }
++                invalidateAttempt(itemId: record.itemId)
+                 record.state = transport == .cellular ? .streamingOnly : .waitingForWiFi
+                 persist(record)
+             }
+@@ -325,6 +398,9 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
+             return
+         }
+         activeTaskItemIds.insert(record.itemId)
++        let generation = UUID().uuidString
++        generations[record.itemId] = generation
++        userInitiatedByItemId[record.itemId] = userInitiated
+         var updated = record
+         updated.remoteURL = url.absoluteString
+         updated.state = .downloading
+@@ -332,42 +408,55 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
+         updated.expectedBytes = nil
+         updated.failureReason = nil
+         persist(updated)
+-        Task { @MainActor [weak self] in
++        preparationTasks[record.itemId] = Task { @MainActor [weak self] in
+             guard let self else { return }
++            defer {
++                if self.generations[record.itemId] == generation { self.preparationTasks[record.itemId] = nil }
++            }
+             do {
+                 let length = try await self.expectedContentLength(at: url, userInitiated: userInitiated)
++                guard self.generations[record.itemId] == generation else { return }
+                 let reservation = try await self.ledger.reserve(
+-                    ownerId: "podcast-download-\(record.itemId)",
++                    ownerId: "podcast-download-\(record.itemId):\(generation)",
+                     byteCount: length,
+                     lifetime: 24 * 60 * 60
+                 )
+-                guard self.activeTaskItemIds.contains(record.itemId) else {
++                guard self.generations[record.itemId] == generation else {
+                     try? await self.ledger.release(reservationId: reservation.id)
+                     return
+                 }
+-                self.reservationsByItemId[record.itemId] = reservation
++                let attempt = PodcastDownloadAttempt(itemId: record.itemId, generation: generation,
++                                                      reservationId: reservation.id, userInitiated: userInitiated)
++                self.attempts[record.itemId] = attempt
+                 var request = URLRequest(url: url)
+                 request.allowsCellularAccess = userInitiated
+                 if #available(iOS 13.0, macOS 10.15, *) {
+                     request.allowsExpensiveNetworkAccess = userInitiated
+                     request.allowsConstrainedNetworkAccess = userInitiated
+                 }
+-                let task = self.session.downloadTask(with: request)
+-                task.taskDescription = record.itemId
+-                if userInitiated { self.userInitiatedTaskIds.insert(task.taskIdentifier) }
+                 var reserved = updated
+                 reserved.expectedBytes = length
+                 self.persist(reserved)
+-                task.resume()
++                if let startDownload = self.startDownload {
++                    startDownload(request, attempt.taskDescription)
++                } else {
++                    let task = self.session.downloadTask(with: request)
++                    task.taskDescription = attempt.taskDescription
++                    if userInitiated { self.userInitiatedTaskIds.insert(task.taskIdentifier) }
++                    task.resume()
++                }
+             } catch {
+-                self.activeTaskItemIds.remove(record.itemId)
++                guard self.generations[record.itemId] == generation else { return }
++                self.invalidateAttempt(itemId: record.itemId)
+                 self.fail(updated, reason: error.localizedDescription)
+             }
+         }
+     }
+ 
+     private func expectedContentLength(at url: URL, userInitiated: Bool) async throws -> Int64 {
++        if let contentLength { return try await contentLength(url, userInitiated) }
+         var request = URLRequest(url: url)
++        request.timeoutInterval = 30
+         request.httpMethod = "HEAD"
+         request.allowsCellularAccess = userInitiated
+         let (_, response) = try await URLSession.shared.data(for: request)
+@@ -423,112 +512,114 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
+         persist(updated)
+     }
+ 
+-    nonisolated private func destinationURL(for task: URLSessionDownloadTask) -> URL? {
+-        guard let itemId = task.taskDescription else { return nil }
+-        let suggested = task.response?.suggestedFilename ?? task.originalRequest?.url?.lastPathComponent ?? "episode.m4a"
+-        let ext = URL(fileURLWithPath: suggested).pathExtension
+-        let filename = ext.isEmpty ? "\(itemId).audio" : "\(itemId).\(ext)"
+-        return directory.appending(path: filename)
++    /// Adopts only the current attempt. Staging filenames are unique, so a late
++    /// callback never removes or overwrites a newer rendition's file.
++    func finishDownload(_ attempt: PodcastDownloadAttempt, stagedURL: URL?, responseOK: Bool) async {
++        defer { if let stagedURL { try? FileManager.default.removeItem(at: stagedURL) } }
++        guard owns(attempt) || restoreAttempt(attempt) else {
++            try? await ledger.release(reservationId: attempt.reservationId)
++            return
++        }
++        guard var record = recordsByItemId[attempt.itemId] else { return }
++        do {
++            guard responseOK, let stagedURL,
++                  let size = try stagedURL.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 0 else {
++                throw CocoaError(.fileReadCorruptFile)
++            }
++            let destination = directory.appending(path: "\(attempt.generation).\(stagedURL.pathExtension)")
++            try FileManager.default.moveItem(at: stagedURL, to: destination)
++            do {
++                try await ledger.commit(reservationId: attempt.reservationId, asset: OwnedOfflineAsset(
++                    id: "podcast-offline-\(attempt.itemId)", itemId: attempt.itemId, category: .podcast,
++                    relativePath: "PodcastAudio/\(destination.lastPathComponent)", byteCount: Int64(size),
++                    isReproducible: true, protections: activeItemId == attempt.itemId ? [.activePlayback] : []))
++                guard owns(attempt) else {
++                    removeAdoptedFile(destination, itemId: attempt.itemId)
++                    return
++                }
++                // Save the asset before publishing availability.
++                try store.saveAudioAsset(AudioAsset(id: "podcast-local-\(attempt.itemId)", itemId: attempt.itemId,
++                    audioSourceType: .nativeMediaFile, availability: .localPhone, filePath: destination.lastPathComponent))
++                let previousFile = localURL(for: record)
++                record.state = .availableOffline
++                record.localRelativePath = destination.lastPathComponent
++                record.bytesWritten = Int64(size)
++                record.expectedBytes = Int64(size)
++                record.failureReason = nil
++                record.updatedAt = Date()
++                try store.savePodcastDownload(record)
++                recordsByItemId[record.itemId] = record
++                onRecordChanged?(record)
++                invalidateAttempt(itemId: attempt.itemId)
++                if let previousFile, previousFile != destination { try? FileManager.default.removeItem(at: previousFile) }
++                onLocalAssetReady?(attempt.itemId, destination)
++            } catch {
++                removeAdoptedFile(destination, itemId: attempt.itemId)
++                throw error
++            }
++        } catch {
++            guard owns(attempt) else { return }
++            invalidateAttempt(itemId: attempt.itemId)
++            fail(record, reason: error.localizedDescription)
++        }
++    }
++
++    private func removeAdoptedFile(_ url: URL, itemId: String) {
++        try? FileManager.default.removeItem(at: url)
++        if let asset = try? store.loadOwnedOfflineAssets().first(where: { $0.id == "podcast-offline-\(itemId)" }),
++           asset.relativePath == "PodcastAudio/\(url.lastPathComponent)" {
++            try? store.deleteOwnedOfflineAsset(id: asset.id)
++        }
++    }
++
++    func completeDownload(_ attempt: PodcastDownloadAttempt, error: Error?) {
++        // A successful URLSession completion may precede async file adoption.
++        guard let error, owns(attempt) || restoreAttempt(attempt),
++              let record = recordsByItemId[attempt.itemId] else { return }
++        invalidateAttempt(itemId: attempt.itemId)
++        if !attempt.userInitiated && networkTransport != .wifi {
++            var waiting = record
++            waiting.state = networkTransport == .cellular ? .streamingOnly : .waitingForWiFi
++            waiting.failureReason = nil
++            persist(waiting)
++        } else {
++            fail(record, reason: error.localizedDescription)
++        }
+     }
+ }
+ 
+ extension PodcastDownloadCoordinator: URLSessionDownloadDelegate {
+-    nonisolated func urlSession(
+-        _ session: URLSession,
+-        downloadTask: URLSessionDownloadTask,
+-        didWriteData bytesWritten: Int64,
+-        totalBytesWritten: Int64,
+-        totalBytesExpectedToWrite: Int64
+-    ) {
+-        guard let itemId = downloadTask.taskDescription else { return }
++    nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
++                               didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
++                               totalBytesExpectedToWrite: Int64) {
++        guard let attempt = PodcastDownloadAttempt.decode(downloadTask.taskDescription) else { return }
+         Task { @MainActor [weak self] in
+-            guard let self, var record = self.recordsByItemId[itemId] else { return }
++            guard let self, self.owns(attempt) || self.restoreAttempt(attempt),
++                  var record = self.recordsByItemId[attempt.itemId] else { return }
+             let now = Date()
+-            let isComplete = totalBytesExpectedToWrite > 0 && totalBytesWritten >= totalBytesExpectedToWrite
+-            if !isComplete,
+-               let lastPublish = self.lastProgressPublishDateByItemId[itemId],
+-               now.timeIntervalSince(lastPublish) < 0.5 {
+-                return
+-            }
+-            self.lastProgressPublishDateByItemId[itemId] = now
++            let complete = totalBytesExpectedToWrite > 0 && totalBytesWritten >= totalBytesExpectedToWrite
++            if !complete, let last = self.lastProgressPublishDateByItemId[attempt.itemId], now.timeIntervalSince(last) < 0.5 { return }
++            self.lastProgressPublishDateByItemId[attempt.itemId] = now
+             record.bytesWritten = totalBytesWritten
+             record.expectedBytes = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : nil
+             self.persist(record)
+         }
+     }
+ 
+-    nonisolated func urlSession(
+-        _ session: URLSession,
+-        downloadTask: URLSessionDownloadTask,
+-        didFinishDownloadingTo location: URL
+-    ) {
+-        guard let itemId = downloadTask.taskDescription,
+-              let destination = destinationURL(for: downloadTask),
+-              let response = downloadTask.response as? HTTPURLResponse,
+-              (200..<300).contains(response.statusCode) else {
+-            Task { @MainActor [weak self] in
+-                guard let self, let itemId = downloadTask.taskDescription,
+-                      let record = self.recordsByItemId[itemId] else { return }
+-                self.fail(record, reason: "The podcast server did not return a complete audio file.")
+-            }
+-            return
+-        }
+-        do {
+-            let values = try location.resourceValues(forKeys: [.fileSizeKey])
+-            guard let fileSize = values.fileSize, fileSize > 0 else {
+-                throw CocoaError(.fileReadCorruptFile)
+-            }
+-            try? FileManager.default.removeItem(at: destination)
+-            try FileManager.default.moveItem(at: location, to: destination)
+-            var resourceValues = URLResourceValues()
+-            resourceValues.isExcludedFromBackup = true
+-            var mutableDestination = destination
+-            try mutableDestination.setResourceValues(resourceValues)
+-            Task { @MainActor [weak self] in
+-                guard let self, var record = self.recordsByItemId[itemId] else { return }
+-                guard let reservation = self.reservationsByItemId.removeValue(forKey: itemId) else {
+-                    try? FileManager.default.removeItem(at: destination)
+-                    self.fail(record, reason: "Offline storage was not reserved before download.")
+-                    return
+-                }
+-                do {
+-                    try await self.ledger.commit(
+-                        reservationId: reservation.id,
+-                        asset: OwnedOfflineAsset(
+-                            id: "podcast-offline-\(itemId)",
+-                            itemId: itemId,
+-                            category: .podcast,
+-                            relativePath: "PodcastAudio/\(destination.lastPathComponent)",
+-                            byteCount: Int64(fileSize),
+-                            isReproducible: true
+-                        )
+-                    )
+-                    record.state = .availableOffline
+-                    record.localRelativePath = destination.lastPathComponent
+-                    record.bytesWritten = Int64(fileSize)
+-                    record.expectedBytes = Int64(fileSize)
+-                    record.failureReason = nil
+-                    self.persist(record)
+-                    let asset = AudioAsset(
+-                        id: "podcast-local-\(itemId)",
+-                        itemId: itemId,
+-                        audioSourceType: .nativeMediaFile,
+-                        availability: .localPhone,
+-                        filePath: destination.lastPathComponent
+-                    )
+-                    try self.store.saveAudioAsset(asset)
+-                    self.onLocalAssetReady?(itemId, destination)
+-                } catch {
+-                    try? FileManager.default.removeItem(at: destination)
+-                    try? await self.ledger.release(reservationId: reservation.id)
+-                    self.fail(record, reason: error.localizedDescription)
+-                }
+-            }
+-        } catch {
+-            Task { @MainActor [weak self] in
+-                guard let self, let record = self.recordsByItemId[itemId] else { return }
+-                self.fail(record, reason: "Downloaded audio was corrupt or could not be saved.")
+-            }
++    nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
++                               didFinishDownloadingTo location: URL) {
++        guard let attempt = PodcastDownloadAttempt.decode(downloadTask.taskDescription) else { return }
++        let responseOK = (downloadTask.response as? HTTPURLResponse).map { (200..<300).contains($0.statusCode) } ?? false
++        // The URLSession temporary file is only valid until this delegate returns.
++        let ext = URL(fileURLWithPath: downloadTask.response?.suggestedFilename ?? "episode.audio").pathExtension
++        let safeExtension = !ext.isEmpty && ext.count <= 10 && ext.allSatisfy({ $0.isLetter || $0.isNumber }) ? ext : "audio"
++        let staged = directory.appending(path: "staging-\(UUID().uuidString).\(safeExtension)")
++        let preserved: URL?
++        do { try FileManager.default.moveItem(at: location, to: staged); preserved = staged }
++        catch { preserved = nil }
++        Task { @MainActor [weak self] in
++            guard let self else { if let preserved { try? FileManager.default.removeItem(at: preserved) }; return }
++            await self.finishDownload(attempt, stagedURL: preserved, responseOK: responseOK)
+         }
+     }
+ }
+@@ -563,34 +654,10 @@ extension PodcastDownloadCoordinator: URLSessionTaskDelegate {
+         task: URLSessionTask,
+         didCompleteWithError error: Error?
+     ) {
+-        guard let itemId = task.taskDescription else { return }
++        guard let attempt = PodcastDownloadAttempt.decode(task.taskDescription) else { return }
+         Task { @MainActor [weak self] in
+-            guard let self else { return }
+-            self.activeTaskItemIds.remove(itemId)
+-            self.lastProgressPublishDateByItemId[itemId] = nil
+-            defer { self.userInitiatedTaskIds.remove(task.taskIdentifier) }
+-            guard let error else { return }
+-            if let reservation = self.reservationsByItemId.removeValue(forKey: itemId) {
+-                try? await self.ledger.release(reservationId: reservation.id)
+-            }
+-            if let record = self.recordsByItemId[itemId],
+-               record.state != .downloading,
+-               self.networkTransport == .wifi,
+-               record.state == .waitingForWiFi || record.state == .streamingOnly {
+-                self.beginDownload(record: record, userInitiated: false)
+-                return
+-            }
+-            guard let record = self.recordsByItemId[itemId], record.state == .downloading else { return }
+-            let nsError = error as NSError
+-            if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorCancelled { return }
+-            if self.networkTransport != .wifi, !self.userInitiatedTaskIds.contains(task.taskIdentifier) {
+-                var waiting = record
+-                waiting.state = self.networkTransport == .cellular ? .streamingOnly : .waitingForWiFi
+-                waiting.failureReason = nil
+-                self.persist(waiting)
+-            } else {
+-                self.fail(record, reason: error.localizedDescription)
+-            }
++            self?.userInitiatedTaskIds.remove(task.taskIdentifier)
++            self?.completeDownload(attempt, error: error)
+         }
+     }
+ }
+diff --git a/App/SpokenMarginsAppTests/Gate1AppModelWorkflowTests.swift b/App/SpokenMarginsAppTests/Gate1AppModelWorkflowTests.swift
+index 3c3a4ac..32fc9c5 100644
+--- a/App/SpokenMarginsAppTests/Gate1AppModelWorkflowTests.swift
++++ b/App/SpokenMarginsAppTests/Gate1AppModelWorkflowTests.swift
+@@ -45,6 +45,27 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
+         XCTAssertEqual(model.libraryItems.map(\.id), ["newer-item"])
+     }
+ 
++    func testAutomaticPlaybackHistorySurvivesRestartAndIgnoresSamples() async throws {
++        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
++        defer { try? FileManager.default.removeItem(at: root) }
++        let url = root.appendingPathComponent("events.json")
++        let recorder = DeveloperDiagnosticRecording(limit: 4, fileURL: url, automatic: true)
++        recorder.record("transport.request", ["command": "skipForward", "mediaTimeMs": "1200000"])
++        for _ in 0..<1500 { recorder.record("sample", ["textOffset": "0"]) }
++        XCTAssertEqual(recorder.events.count, 2)
++        await recorder.flush()
++        let restored = DeveloperDiagnosticRecording(limit: 4, fileURL: url, automatic: true)
++        XCTAssertEqual(restored.events.count, 3)
++        XCTAssertEqual(restored.events[1].fields["command"], "skipForward")
++        restored.record("seek.media.result", ["outcome": "accepted:1260000"])
++        restored.record("playback.state", ["status": "paused"])
++        XCTAssertEqual(restored.events.count, 4)
++        XCTAssertEqual(restored.events.first?.kind, "transport.request")
++        await restored.flush()
++        let saved = try JSONDecoder().decode(DeveloperDiagnosticRecording.Capture.self, from: Data(contentsOf: url))
++        XCTAssertEqual(saved.events.last?.fields["status"], "paused")
++    }
++
+     func testDeveloperRecordingIsOptInBoundedAndStops() throws {
+         let recorder = DeveloperDiagnosticRecording(limit: 4)
+         recorder.record("ignored")
+@@ -77,6 +98,11 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
+             "runtimeProfile": "test-profile",
+             "lastBrowserTextSource": "private source content"
+         ]
++        for _ in 0..<400 {
++            model.recordDeveloperDiagnostic("scrub.media.display", ["canonical": "100"])
++            model.recordDeveloperDiagnostic("sample", ["textOffset": "0"])
++        }
++        model.recordDeveloperDiagnostic("transport.request", ["command": "skipForward", "origin": "now_playing"])
+         model.copyDiagnosticsExport()
+         let text = try XCTUnwrap(UIPasteboard.general.string)
+         let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: String])
+@@ -84,6 +110,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
+         XCTAssertEqual(payload["runtimeProfile"], "test-profile")
+         XCTAssertNil(payload["lastBrowserTextSource"])
+         XCTAssertFalse(text.contains("private source content"))
++        let eventJSON = try XCTUnwrap(payload["playbackEvents"]?.data(using: .utf8))
++        let events = try JSONDecoder().decode(DeveloperDiagnosticRecording.Capture.self, from: eventJSON).events
++        XCTAssertFalse(events.contains { $0.kind == "sample" || $0.kind.hasPrefix("scrub.") })
++        XCTAssertEqual(events.last?.fields["origin"], "now_playing")
+         XCTAssertEqual(model.feedbackEvent?.kind, .success)
+         XCTAssertEqual(model.feedbackEvent?.message, "Copied privacy-safe diagnostics.")
+     }
+diff --git a/App/SpokenMarginsAppTests/PodcastDownloadCoordinatorTests.swift b/App/SpokenMarginsAppTests/PodcastDownloadCoordinatorTests.swift
+index e1acd3b..3983054 100644
+--- a/App/SpokenMarginsAppTests/PodcastDownloadCoordinatorTests.swift
++++ b/App/SpokenMarginsAppTests/PodcastDownloadCoordinatorTests.swift
+@@ -7,7 +7,6 @@ import SessionKitPersistence
+ final class PodcastDownloadCoordinatorTests: XCTestCase {
+     func testRegistrationPersistsSecureDownloadTransportForExistingHTTPEnclosure() throws {
+         let fixture = try makeFixture()
+-        defer { try? FileManager.default.removeItem(at: fixture.root) }
+         let coordinator = try PodcastDownloadCoordinator(
+             store: fixture.store,
+             applicationSupportDirectory: fixture.support,
+@@ -51,7 +50,6 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
+ 
+     func testRetryMigratesPreviouslyFailedBBCDownloadWithoutReimport() throws {
+         let fixture = try makeFixture()
+-        defer { try? FileManager.default.removeItem(at: fixture.root) }
+         let original = "http://open.live.bbc.co.uk/mediaselector/6/redir/version/2.0/mediaset/audio-nondrm-download-rss/proto/http/vpid/p0kbxb7s.mp3"
+         try fixture.store.savePodcastDownload(PodcastDownloadRecord(
+             id: "download-bbc-episode",
+@@ -82,7 +80,6 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
+ 
+     func testCellularRegistrationStreamsWithoutAutomaticDownloadAndDeduplicatesRecord() throws {
+         let fixture = try makeFixture()
+-        defer { try? FileManager.default.removeItem(at: fixture.root) }
+         let coordinator = try PodcastDownloadCoordinator(
+             store: fixture.store,
+             applicationSupportDirectory: fixture.support,
+@@ -103,7 +100,6 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
+ 
+     func testManualDownloadDoesNotClaimToStartWithoutAConnection() throws {
+         let fixture = try makeFixture()
+-        defer { try? FileManager.default.removeItem(at: fixture.root) }
+         let coordinator = try PodcastDownloadCoordinator(
+             store: fixture.store,
+             applicationSupportDirectory: fixture.support,
+@@ -121,7 +117,6 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
+ 
+     func testClearDownloadsProtectsActivePlaybackAndEvictsOtherLocalFile() throws {
+         let fixture = try makeFixture()
+-        defer { try? FileManager.default.removeItem(at: fixture.root) }
+         let audioDirectory = fixture.support.appending(path: "PodcastAudio", directoryHint: .isDirectory)
+         try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: true)
+         for itemId in ["active", "old"] {
+@@ -164,7 +159,6 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
+ 
+     func testPermanentItemRemovalDeletesLocalRemoteAndDownloadRecords() throws {
+         let fixture = try makeFixture()
+-        defer { try? FileManager.default.removeItem(at: fixture.root) }
+         let audioDirectory = fixture.support.appending(path: "PodcastAudio", directoryHint: .isDirectory)
+         try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: true)
+         let file = audioDirectory.appending(path: "episode.mp3")
+@@ -187,8 +181,13 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
+             usesBackgroundSession: false
+         )
+ 
++        try fixture.store.saveOwnedOfflineAsset(OwnedOfflineAsset(
++            id: "podcast-offline-episode", itemId: "episode", category: .podcast,
++            relativePath: "PodcastAudio/episode.mp3", byteCount: 1, isReproducible: true
++        ))
+         coordinator.removeItem("episode")
+ 
++        XCTAssertTrue(try fixture.store.loadOwnedOfflineAssets().isEmpty)
+         XCTAssertNil(try fixture.store.loadPodcastDownload(itemId: "episode"))
+         XCTAssertTrue(try fixture.store.loadAudioAssets(itemId: "episode").isEmpty)
+         XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+@@ -196,7 +195,6 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
+ 
+     func testValidatedLocalURLRequiresAvailableNonemptyFile() throws {
+         let fixture = try makeFixture()
+-        defer { try? FileManager.default.removeItem(at: fixture.root) }
+         let audioDirectory = fixture.support.appending(path: "PodcastAudio", directoryHint: .isDirectory)
+         try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: true)
+         let validFile = audioDirectory.appending(path: "valid.mp3")
+@@ -231,6 +229,175 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
+         XCTAssertEqual(try fixture.store.loadPodcastDownloads().first { $0.itemId == "valid" }?.state, .failed)
+     }
+ 
++    func testSharedStorageReservationCannotEvictActivePodcastIncludingAdoptedFiles() async throws {
++        let fixture = try makeFixture()
++        let directory = fixture.support.appending(path: "PodcastAudio")
++        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
++        try fixture.store.saveOfflineStorageBudget(OfflineStorageBudget(limitBytes: 6))
++        for id in ["active", "old"] {
++            try Data([1, 2, 3]).write(to: directory.appending(path: "\(id).mp3"))
++            try fixture.store.savePodcastDownload(PodcastDownloadRecord(
++                id: "download-\(id)", itemId: id, remoteURL: "https://example.com/\(id).mp3",
++                localRelativePath: "\(id).mp3", state: .availableOffline, bytesWritten: 3
++            ))
++            // Inventory-adopted files have no item ID.
++            try fixture.store.saveOwnedOfflineAsset(OwnedOfflineAsset(
++                id: "asset-\(id)", category: .podcast, relativePath: "PodcastAudio/\(id).mp3",
++                byteCount: 3, isReproducible: true
++            ))
++        }
++        let ledger = OfflineStorageLedger(repository: fixture.store, rootDirectory: fixture.support)
++        let coordinator = try PodcastDownloadCoordinator(
++            store: fixture.store, ledger: ledger, applicationSupportDirectory: fixture.support,
++            cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false
++        )
++        coordinator.configureActiveItem("active")
++        let reservation = try await ledger.reserve(ownerId: "margin-work", byteCount: 3)
++        XCTAssertNotNil(coordinator.validatedLocalURL(for: "active"))
++        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appending(path: "old.mp3").path))
++        do {
++            _ = try await ledger.reserve(ownerId: "more-work", byteCount: 1)
++            XCTFail("Must refuse storage rather than delete the active episode")
++        } catch is OfflineStorageLedgerError {}
++        XCTAssertNotNil(coordinator.validatedLocalURL(for: "active"))
++        try await ledger.release(reservationId: reservation.id)
++        coordinator.configureActiveItem(nil)
++        _ = try await ledger.reserve(ownerId: "after-listening", byteCount: 6)
++        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appending(path: "active.mp3").path))
++    }
++
++    func testDeletionWhileHeadIsSuspendedCannotRecreateDownload() async throws {
++        let fixture = try makeFixture()
++        let head = DownloadHeadGate()
++        var starts = 0
++        let coordinator = try PodcastDownloadCoordinator(store: fixture.store, applicationSupportDirectory: fixture.support,
++            cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false,
++            contentLength: { _, _ in await head.length() }, startDownload: { _, _ in starts += 1 })
++        coordinator.setNetworkTransportForTesting(.wifi)
++        coordinator.register(itemId: "episode", remoteURL: URL(string: "https://example.com/audio")!)
++        await head.waitUntilRequested()
++        let preparation = try XCTUnwrap(coordinator.preparationTasks["episode"])
++        coordinator.removeItem("episode")
++        await head.finish(8)
++        await preparation.value
++        XCTAssertEqual(starts, 0)
++        XCTAssertNil(try fixture.store.loadPodcastDownload(itemId: "episode"))
++        XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty)
++        coordinator.shutdown()
++    }
++
++    func testLeavingWiFiWhileHeadIsSuspendedCancelsOnlyAutomaticPreparation() async throws {
++        let fixture = try makeFixture()
++        let head = DownloadHeadGate()
++        var starts = 0
++        let coordinator = try PodcastDownloadCoordinator(store: fixture.store, applicationSupportDirectory: fixture.support,
++            cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false,
++            contentLength: { _, _ in await head.length() }, startDownload: { _, _ in starts += 1 })
++        coordinator.setNetworkTransportForTesting(.wifi)
++        coordinator.register(itemId: "episode", remoteURL: URL(string: "https://example.com/audio")!)
++        await head.waitUntilRequested()
++        let preparation = try XCTUnwrap(coordinator.preparationTasks["episode"])
++        coordinator.setNetworkTransportForTesting(.cellular)
++        await head.finish(8)
++        await preparation.value
++        XCTAssertEqual(starts, 0)
++        XCTAssertEqual(try fixture.store.loadPodcastDownload(itemId: "episode")?.state, .streamingOnly)
++        XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty)
++        coordinator.shutdown()
++    }
++
++    func testRestoredTaskAdoptsPersistedReservationAndPublishesOnlyAfterCommit() async throws {
++        let fixture = try makeFixture()
++        let ledger = OfflineStorageLedger(repository: fixture.store, rootDirectory: fixture.support)
++        let reservation = try await ledger.reserve(ownerId: "podcast-download-episode:restored", byteCount: 8)
++        let attempt = PodcastDownloadAttempt(itemId: "episode", generation: "restored",
++                                             reservationId: reservation.id, userInitiated: true)
++        try fixture.store.savePodcastDownload(PodcastDownloadRecord(id: "download", itemId: "episode",
++            remoteURL: "https://example.com/audio", state: .downloading))
++        let coordinator = try PodcastDownloadCoordinator(store: fixture.store, ledger: ledger,
++            applicationSupportDirectory: fixture.support, cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false)
++        XCTAssertEqual(PodcastDownloadAttempt.decode(attempt.taskDescription), attempt)
++        XCTAssertTrue(coordinator.restoreAttempt(attempt))
++        let staged = fixture.root.appending(path: "restored.mp3")
++        try Data([1, 2, 3]).write(to: staged)
++        var published = false
++        coordinator.onLocalAssetReady = { id, url in
++            published = true
++            XCTAssertEqual(id, "episode")
++            XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
++            XCTAssertEqual(try? fixture.store.loadOwnedOfflineAssets().first?.byteCount, 3)
++            XCTAssertEqual(try? fixture.store.loadOfflineStorageReservations().count, 0)
++        }
++        coordinator.completeDownload(attempt, error: nil)
++        await coordinator.finishDownload(attempt, stagedURL: staged, responseOK: true)
++        XCTAssertTrue(published)
++        XCTAssertEqual(coordinator.status(itemId: "episode"), .availableOffline)
++        XCTAssertNotNil(coordinator.validatedLocalURL(for: "episode"))
++        coordinator.shutdown()
++    }
++
++    func testLateAttemptCannotOverwriteOrFailReplacementDownload() async throws {
++        let fixture = try makeFixture()
++        let ledger = OfflineStorageLedger(repository: fixture.store, rootDirectory: fixture.support)
++        var started: [PodcastDownloadAttempt] = []
++        let coordinator = try PodcastDownloadCoordinator(store: fixture.store, ledger: ledger,
++            applicationSupportDirectory: fixture.support, cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false,
++            contentLength: { _, _ in 8 }, startDownload: { _, description in
++                started.append(PodcastDownloadAttempt.decode(description)!)
++            })
++        coordinator.setNetworkTransportForTesting(.wifi)
++        coordinator.register(itemId: "episode", remoteURL: URL(string: "https://example.com/audio")!)
++        try await waitForStarts(1, starts: { started.count })
++        let old = started[0]
++        coordinator.removeItem("episode")
++        coordinator.register(itemId: "episode", remoteURL: URL(string: "https://example.com/new-audio")!)
++        try await waitForStarts(2, starts: { started.count })
++        let current = started[1]
++        let newFile = fixture.root.appending(path: "new.mp3")
++        try Data([4, 5, 6]).write(to: newFile)
++        await coordinator.finishDownload(current, stagedURL: newFile, responseOK: true)
++        let local = try XCTUnwrap(coordinator.validatedLocalURL(for: "episode"))
++        let oldFile = fixture.root.appending(path: "old.mp3")
++        try Data([9]).write(to: oldFile)
++        coordinator.completeDownload(old, error: URLError(.networkConnectionLost))
++        await coordinator.finishDownload(old, stagedURL: oldFile, responseOK: true)
++        XCTAssertEqual(try Data(contentsOf: local), Data([4, 5, 6]))
++        XCTAssertEqual(coordinator.status(itemId: "episode"), .availableOffline)
++        XCTAssertFalse(FileManager.default.fileExists(atPath: oldFile.path))
++        XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty)
++        XCTAssertEqual(try fixture.store.loadOwnedOfflineAssets().count, 1)
++        coordinator.shutdown()
++    }
++
++    func testHTTPAndOversizedFileFailuresReleaseReservationWithoutAvailability() async throws {
++        for httpOK in [false, true] {
++            let fixture = try makeFixture()
++            let ledger = OfflineStorageLedger(repository: fixture.store, rootDirectory: fixture.support)
++            let reservation = try await ledger.reserve(ownerId: "podcast-download-episode:failure", byteCount: 1)
++            let attempt = PodcastDownloadAttempt(itemId: "episode", generation: "failure",
++                reservationId: reservation.id, userInitiated: true)
++            try fixture.store.savePodcastDownload(PodcastDownloadRecord(id: "download", itemId: "episode",
++                remoteURL: "https://example.com/audio", state: .downloading))
++            let coordinator = try PodcastDownloadCoordinator(store: fixture.store, ledger: ledger,
++                applicationSupportDirectory: fixture.support, cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false)
++            let staged = fixture.root.appending(path: "failure.mp3")
++            try Data([1, 2, 3]).write(to: staged)
++            await coordinator.finishDownload(attempt, stagedURL: staged, responseOK: httpOK)
++            XCTAssertEqual(coordinator.status(itemId: "episode"), .failed)
++            XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty)
++            XCTAssertTrue(try fixture.store.loadOwnedOfflineAssets().isEmpty)
++            XCTAssertNil(coordinator.validatedLocalURL(for: "episode"))
++            coordinator.shutdown()
++        }
++    }
++
++    private func waitForStarts(_ count: Int, starts: () -> Int) async throws {
++        for _ in 0..<100 where starts() < count { try await Task.sleep(for: .milliseconds(10)) }
++        XCTAssertEqual(starts(), count)
++    }
++
++    // Keep SQLite files until the test process exits: URLSession callbacks may
++    // retain the store after a test returns. Unlinking an open WAL corrupts fixtures.
+     private func makeFixture() throws -> (root: URL, support: URL, store: SQLiteSessionStore) {
+         let root = FileManager.default.temporaryDirectory.appending(path: "podcast-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
+         let support = root.appending(path: "ApplicationSupport", directoryHint: .isDirectory)
+@@ -239,3 +406,12 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
+         return (root, support, store)
+     }
+ }
++
++private actor DownloadHeadGate {
++    private var continuation: CheckedContinuation<Int64, Never>?
++    func length() async -> Int64 { await withCheckedContinuation { continuation = $0 } }
++    func waitUntilRequested() async {
++        while continuation == nil { await Task.yield() }
++    }
++    func finish(_ value: Int64) { continuation?.resume(returning: value); continuation = nil }
++}
+diff --git a/App/SpokenMarginsAppTests/PreparedAudioCoordinatorTests.swift b/App/SpokenMarginsAppTests/PreparedAudioCoordinatorTests.swift
+index 83a9a6f..b4c31d7 100644
+--- a/App/SpokenMarginsAppTests/PreparedAudioCoordinatorTests.swift
++++ b/App/SpokenMarginsAppTests/PreparedAudioCoordinatorTests.swift
+@@ -63,6 +63,44 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
+         XCTAssertEqual(model.libraryItems[0].offlineState, .preparing)
+     }
+ 
++    @MainActor
++    func testFinalChunkSnapshotCannotUndoPersistedOfflineCompletion() async throws {
++        let root = FileManager.default.temporaryDirectory.appending(path: "final-chunk-\(UUID().uuidString)")
++        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
++        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(),
++                                  databaseURLOverride: root.appending(path: "store.sqlite"))
++        let store = try model.libraryStoreForTesting()
++        let fixture = Fixture(root: root, prepared: root.appending(path: "Prepared"), store: store)
++        addTeardownBlock { [weak model, weak store] in
++            // Startup tasks can retain the connection after the test finishes.
++            // Never unlink a live SQLite/WAL fixture.
++            if model == nil, store == nil { try FileManager.default.removeItem(at: root) }
++        }
++        let item = Item(id: "final-item", title: "Finished PDF", mediaType: "pdf",
++                        text: "First chunk. Second chunk.", externalReference: nil, status: "ready")
++        try fixture.store.saveItem(item)
++        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
++        let begun = try await coordinator.begin(itemId: item.id, sourceText: item.text!, signature: signature("one"), plan: plans())
++        for plan in plans() {
++            let file = fixture.root.appending(path: "chunk-\(plan.index).wav")
++            try Data([1, 2, 3]).write(to: file)
++            _ = try await coordinator.commit(itemId: item.id, signature: signature("one"), plan: plan,
++                                             sourceText: item.text!, audioURL: file, durationMs: 1000)
++        }
++        let stale = try XCTUnwrap(fixture.store.loadPreparedAudioManifest(id: begun.id))
++        XCTAssertEqual(stale.state, .preparing)
++        var complete = stale
++        complete.state = .readyOffline
++        complete.artifact = PreparedAudioArtifact(relativePath: "assembled.m4a", byteCount: 6,
++                                                  checksumSHA256: "test", durationMs: 2000)
++        try fixture.store.savePreparedAudioManifest(complete)
++        model.libraryItems = [LibraryItemRow(id: item.id, title: item.title, status: "Ready", canDelete: true,
++                                            offlineState: .readyOffline)]
++        model.applyPreparedChunkProgress(item: item, manifest: stale, remainingJobs: [])
++        XCTAssertEqual(model.libraryItems.first?.offlineState, .readyOffline)
++        XCTAssertEqual(try fixture.store.loadPreparedAudioManifest(id: begun.id)?.state, .readyOffline)
++    }
++
+     func testCommittedChunksSurviveCoordinatorReconstructionAndAreReused() async throws {
+         let fixture = try makeFixture()
+         defer { try? FileManager.default.removeItem(at: fixture.root) }
+diff --git a/App/SpokenMarginsAppTests/SourceLinkImportTests.swift b/App/SpokenMarginsAppTests/SourceLinkImportTests.swift
+index f38266f..8bf69ff 100644
+--- a/App/SpokenMarginsAppTests/SourceLinkImportTests.swift
++++ b/App/SpokenMarginsAppTests/SourceLinkImportTests.swift
+@@ -101,7 +101,7 @@ final class SourceLinkImportTests: XCTestCase {
+     func testFeedEntryImportPreservesTitleAndSourceWithoutChangingActivePlayback() async throws {
+         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+-        temporaryDirectories.append(root)
++        // Model background tasks retain SQLite beyond this test; do not unlink its open WAL.
+         let databaseURL = root.appending(path: "library.sqlite")
+         let audioURL = "https://audio.example/episode.mp3"
+         let resolver = StaticAppLinkResolver(result: LinkResolutionResult(requestId: "ignored", status: .playable, originalLink: SourceLink(url: audioURL, role: "discovery"), selectedCandidate: LinkResolutionCandidate(sourceLink: SourceLink(url: audioURL, role: "media"), title: "audio", durationMs: 300_000, audioURL: audioURL, confidence: 1)))
+@@ -822,6 +822,46 @@ final class SourceLinkImportTests: XCTestCase {
+         )
+     }
+ 
++    func testExplicitPodcastRedownloadCanReplacePausedTransportWhileAutomaticCompletionCannot() async throws {
++        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
++            requestId: "ignored",
++            status: .playable,
++            originalLink: SourceLink(url: "https://example.com/episode", provider: "rss", role: "discovery"),
++            selectedCandidate: LinkResolutionCandidate(
++                sourceLink: SourceLink(url: "https://feeds.example.com/show.xml", provider: "rss", role: "canonical_feed"),
++                title: "Battery-Safe Episode",
++                durationMs: 300_000,
++                audioURL: "https://cdn.example.com/battery-safe.mp3",
++                confidence: 1
++            )
++        ))
++        let transcriber = RecordingFullSourceTranscriptionClient()
++        let audio = WindowContextAudioClient()
++        let model = Gate1AppModel(
++            sourceLinkResolver: resolver,
++            audioPlaybackClient: audio,
++            sourceTranscriptionClient: transcriber,
++            localFoundationModelClient: SourceLinkFoundationModelStub()
++        )
++        model.resetAndSeed()
++
++        XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/episode", sourceSurface: "paste"))
++        let itemId = try XCTUnwrap(model.snapshot.itemId)
++        let localURL = FileManager.default.temporaryDirectory.appendingPathComponent("battery-safe.mp3")
++        model.podcastLocalAssetDidBecomeReady(itemId: itemId, url: localURL)
++        model.pause()
++        model.resumePlayback()
++        XCTAssertNil(audio.lastMediaContext?.playbackURL, "Automatic completion changed the active edition")
++        model.pause()
++        model.redownloadSelectedPodcast()
++        let replacement = localURL.deletingLastPathComponent().appendingPathComponent("replacement.mp3")
++        model.podcastLocalAssetDidBecomeReady(itemId: itemId, url: replacement)
++        XCTAssertEqual(audio.lastMediaContext?.playbackURL, replacement.absoluteString)
++        XCTAssertEqual(model.snapshot.status, .paused)
++        model.resumePlayback()
++        XCTAssertEqual(audio.lastMediaContext?.playbackURL, replacement.absoluteString)
++    }
++
+     func testPrivateEpisodeMapRequiresExplicitRequestBeforeDownloadTranscription() async throws {
+         let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+             requestId: "ignored",
+@@ -2352,9 +2392,11 @@ private struct ThrowingSourceTranscriptionClient: SourceTranscriptionClient {
+ }
+ 
+ private final class WindowContextAudioClient: AudioPlaybackClient {
++    private(set) var lastMediaContext: PlaybackMediaContext?
+     private var durationMs = 300_000
+ 
+     func configureMediaContext(_ context: PlaybackMediaContext?) throws {
++        lastMediaContext = context
+         if let duration = context?.durationMs { durationMs = duration }
+     }
+ 
+diff --git a/App/SpokenMarginsAppTests/SpokenMarginsPackageHandoffTests.swift b/App/SpokenMarginsAppTests/SpokenMarginsPackageHandoffTests.swift
+index 5aa4a79..60bc29d 100644
+--- a/App/SpokenMarginsAppTests/SpokenMarginsPackageHandoffTests.swift
++++ b/App/SpokenMarginsAppTests/SpokenMarginsPackageHandoffTests.swift
+@@ -112,7 +112,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
+     @MainActor
+     func testPodcastPackageImportBindsToImportedItemInsteadOfStaleSelection() async throws {
+         let root = try temporaryDirectory(named: "spoken-margins-podcast-binding")
+-        defer { try? FileManager.default.removeItem(at: root) }
++        // Background model work can retain SQLite; let the process close it before cleanup.
+         let databaseURL = root.appendingPathComponent("recipient.sqlite")
+         let packageURL = root.appendingPathComponent("different-episode.spokenmargins")
+         let manifest = try writePodcastPackage(to: packageURL, packageID: "package-different-episode")
+@@ -170,7 +170,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
+     @MainActor
+     func testReopeningCorruptedWrongSourcePackageRepairsItsItemAssociation() async throws {
+         let root = try temporaryDirectory(named: "spoken-margins-package-repair")
+-        defer { try? FileManager.default.removeItem(at: root) }
++        // Background model work can retain SQLite; let the process close it before cleanup.
+         let databaseURL = root.appendingPathComponent("recipient.sqlite")
+         let packageURL = root.appendingPathComponent("repair-episode.spokenmargins")
+         let manifest = try writePodcastPackage(to: packageURL, packageID: "package-repair-episode")
+@@ -236,6 +236,54 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
+         )
+     }
+ 
++    func testWeakerPodcastEvidenceRetainsPositionOnlyForSameKnownAudioEdition() throws {
++        let previous = ImportedAnchorResolution(evidenceClass: .acousticVerified, localMediaTimeMs: 45_000)
++        let absent = ImportedAnchorResolution(evidenceClass: .unresolved)
++        for (old, current) in [("old", "new"), (nil, "new"), (nil, nil)] as [(String?, String?)] {
++            let result = Gate1AppModel.podcastResolution(previous: previous, proposed: absent,
++                previousEdition: old, currentEdition: current, hasTranscript: false)
++            XCTAssertEqual(result.evidenceClass, .unresolved)
++            XCTAssertNil(result.localMediaTimeMs)
++        }
++        XCTAssertEqual(Gate1AppModel.podcastResolution(previous: previous, proposed: absent,
++            previousEdition: "same", currentEdition: "same", hasTranscript: false), previous)
++        let moved = ImportedAnchorResolution(evidenceClass: .acousticVerified, localMediaTimeMs: 65_000)
++        XCTAssertEqual(Gate1AppModel.podcastResolution(previous: previous, proposed: moved,
++            previousEdition: "old", currentEdition: "new", hasTranscript: true), moved)
++    }
++
++    func testReplacingRecipientEditionInvalidatesDurablePlacementsAndProjection() throws {
++        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
++        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
++        let store = try SQLiteSessionStore(path: root.appending(path: "store.sqlite").path)
++        let layer = ImportedCommentaryLayer(id: "layer", itemId: "item", packageDigest: "package-digest",
++            packageId: "package", itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Episode"),
++            importedAt: Date(), sourceResolutionStatus: .resolved, isEnabled: true,
++            resolvedRecipientEditionSHA256: "old")
++        try store.saveImportedCommentaryLayer(layer)
++        try store.saveImportedCommentaryInterjection(ImportedCommentaryInterjection(id: "note", layerId: layer.id,
++            packageScopedId: "note", createdAt: Date(), anchorEvidence: PortableAnchorEvidence(anchorType: .media),
++            approvedTranscript: "Preserve my words", resolution: ImportedAnchorResolution(
++                evidenceClass: .acousticVerified, localMediaTimeMs: 45_000)))
++        try store.saveResolvedListeningMapProjection(ResolvedListeningMapProjection(id: "projection", itemId: "item",
++            recipientEditionSHA256: "old", algorithmVersion: "episode-projection.exact-edition.v1", points: [], intervals: []))
++        try Gate1AppModel.invalidatePodcastEdition(itemId: "item", digest: "old", store: store)
++        XCTAssertEqual(try store.loadImportedCommentaryInterjections(layerId: layer.id).first?.resolution.localMediaTimeMs, 45_000)
++        try Gate1AppModel.invalidatePodcastEdition(itemId: "item", digest: "new", store: store)
++        let reopened = try SQLiteSessionStore(path: root.appending(path: "store.sqlite").path)
++        let note = try XCTUnwrap(reopened.loadImportedCommentaryInterjections(layerId: layer.id).first)
++        XCTAssertEqual(note.approvedTranscript, "Preserve my words")
++        XCTAssertNil(note.resolution.localMediaTimeMs)
++        XCTAssertEqual(note.resolution.evidenceClass, .unresolved)
++        XCTAssertEqual(try reopened.loadImportedCommentaryLayers(itemId: "item").first?.sourceResolutionStatus, .pending)
++        XCTAssertNil(try reopened.loadResolvedListeningMapProjection(itemId: "item")?.projectedRecipientTime(for: 45_000))
++        let encoded = try JSONEncoder().encode(layer)
++        XCTAssertEqual(try JSONDecoder().decode(ImportedCommentaryLayer.self, from: encoded).resolvedRecipientEditionSHA256, "old")
++        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
++        legacy.removeValue(forKey: "resolvedRecipientEditionSHA256")
++        XCTAssertNil(try JSONDecoder().decode(ImportedCommentaryLayer.self, from: JSONSerialization.data(withJSONObject: legacy)).resolvedRecipientEditionSHA256)
++    }
++
+     func testMixedImportedLayerKeepsItsVerifiedMarginsPlaybackEligible() {
+         let layer = ImportedCommentaryLayer(
+             id: "layer",
+diff --git a/App/SpokenMarginsAppTests/SupertonicSpeechTests.swift b/App/SpokenMarginsAppTests/SupertonicSpeechTests.swift
+index 6182e74..71949e7 100644
+--- a/App/SpokenMarginsAppTests/SupertonicSpeechTests.swift
++++ b/App/SpokenMarginsAppTests/SupertonicSpeechTests.swift
+@@ -557,11 +557,17 @@ final class SupertonicSpeechTests: XCTestCase {
+     func testRenderGapWaitsForSupertonicAndNeverFallsBack() async throws {
+         let template = try makeTestWAV(duration: 0.1)
+         defer { try? FileManager.default.removeItem(at: template) }
++        let thirdRender = AsyncStream<Void>.makeStream()
++        defer { thirdRender.continuation.finish() }
+         let renderer = CountingAudioSupertonicRenderer(
+             templateURL: template,
+-            renderDelays: [3: .milliseconds(500)]
++            renderGates: [3: thirdRender.stream]
+         )
+         let fallback = RecordingFallbackAudioClient()
++        let firstChunkStarted = expectation(description: "first chunk started")
++        let secondChunkStarted = expectation(description: "second chunk started")
++        let nextChunkStarted = expectation(description: "rendered chunk starts after gap")
++        var starts = 0
+         let client = SupertonicSpeechPlaybackClient(
+             renderer: renderer,
+             voice: .m2,
+@@ -569,7 +575,12 @@ final class SupertonicSpeechTests: XCTestCase {
+             fallbackVoiceIdentifier: nil,
+             fallbackRate: 0.5,
+             audioSessionActivator: {},
+-            audioPlayerStarter: { _, _ in },
++            audioPlayerStarter: { _, _ in
++                starts += 1
++                if starts == 1 { firstChunkStarted.fulfill() }
++                if starts == 2 { secondChunkStarted.fulfill() }
++                if starts == 3 { nextChunkStarted.fulfill() }
++            },
+             observesPlayerLifecycle: false,
+             fallbackClient: fallback
+         )
+@@ -579,16 +590,17 @@ final class SupertonicSpeechTests: XCTestCase {
+ 
+         _ = try client.prepareSpeechText(source)
+         try client.play(targetId: "underrun")
+-        for _ in 0..<50 where !client.debugActiveAudioState().hasURL {
+-            try? await Task.sleep(for: .milliseconds(20))
+-        }
++        await fulfillment(of: [firstChunkStarted], timeout: 3)
+         client.debugFinishActiveChunk()
++        await fulfillment(of: [secondChunkStarted], timeout: 3)
+         let secondOffset = client.debugActiveAudioState().startOffset
+         XCTAssertGreaterThan(secondOffset, 0)
+         client.debugFinishActiveChunk()
+ 
+         XCTAssertEqual(client.playbackTransportState(targetId: "underrun"), .waiting)
+-        try await Task.sleep(for: .milliseconds(650))
++        XCTAssertFalse(client.debugActiveAudioState().hasURL, "Third render must still be blocked")
++        thirdRender.continuation.finish()
++        await fulfillment(of: [nextChunkStarted], timeout: 3)
+         XCTAssertGreaterThan(client.debugActiveAudioState().startOffset, secondOffset)
+         XCTAssertTrue(fallback.playedOffsets.isEmpty)
+         try client.stop()
+@@ -1470,6 +1482,7 @@ private actor CountingAudioSupertonicRenderer: SupertonicRendering {
+     let firstRenderDelay: Duration?
+     let firstRenderGate: AsyncStream<Void>?
+     let renderDelays: [Int: Duration]
++    let renderGates: [Int: AsyncStream<Void>]
+     private(set) var renderCount = 0
+     private(set) var discardCount = 0
+     private(set) var requestedSpeeds: [Float] = []
+@@ -1478,12 +1491,14 @@ private actor CountingAudioSupertonicRenderer: SupertonicRendering {
+         templateURL: URL,
+         firstRenderDelay: Duration? = nil,
+         firstRenderGate: AsyncStream<Void>? = nil,
+-        renderDelays: [Int: Duration] = [:]
++        renderDelays: [Int: Duration] = [:],
++        renderGates: [Int: AsyncStream<Void>] = [:]
+     ) {
+         self.templateURL = templateURL
+         self.firstRenderDelay = firstRenderDelay
+         self.firstRenderGate = firstRenderGate
+         self.renderDelays = renderDelays
++        self.renderGates = renderGates
+     }
+ 
+     func render(
+@@ -1495,6 +1510,10 @@ private actor CountingAudioSupertonicRenderer: SupertonicRendering {
+     ) async throws -> SupertonicNarrationResult {
+         renderCount += 1
+         requestedSpeeds.append(speed)
++        if let gate = renderGates[renderCount] {
++            for await _ in gate {}
++            try Task.checkCancellation()
++        }
+         if renderCount == 1, let firstRenderGate {
+             for await _ in firstRenderGate {}
+             try Task.checkCancellation()
+diff --git a/Packages/SessionKit/Sources/SessionKit/SessionEngine.swift b/Packages/SessionKit/Sources/SessionKit/SessionEngine.swift
+index fe47b5a..29ab8f8 100644
+--- a/Packages/SessionKit/Sources/SessionKit/SessionEngine.swift
++++ b/Packages/SessionKit/Sources/SessionKit/SessionEngine.swift
+@@ -38,12 +38,15 @@ public final class SessionEngine {
+     private var streamingBuffers: [String: String] = [:]
+     private var spokenPrefixes: [String: Int] = [:]
+     private var externallyStreamedTurnId: String?
++    private var playbackStartRecoveryAttemptId: Int?
+     private var playbackStartAttemptId = 0
+     private var activePlaybackStartAttemptId: Int?
+     private var playbackStartPendingAttemptId: Int?
+     private var playbackStartPendingTargetId: String?
+     private var playbackStartDeadline: Date?
+     private var playbackURLOverrides: [String: String] = [:]
++    private var pinnedMediaTransport: (sessionId: String, targetId: String, playbackURL: String?)?
++    private var lastMediaPercentageRepair: (sessionId: String, durationMs: Int)?
+     private var pendingPlaybackPosition: PendingPlaybackPosition?
+     private var pendingWrittenInterjection: WrittenInterjectionCapture?
+ 
+@@ -313,12 +316,13 @@ public final class SessionEngine {
+               session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia else {
+             return snapshot
+         }
+-        guard replaceActivePlayback || !snapshot.status.isPlaybackActive else {
+-            // The override is durable in this engine and will be selected by
+-            // playCurrentTarget on the next resume. Do not rebuild a live media
+-            // player merely because its background download completed.
++        guard replaceActivePlayback else {
++            // A second request can contain different dynamically inserted ads.
++            // Keep this session on its original edition across skips, pauses and
++            // interjections; a new session may select the completed download.
+             return snapshot
+         }
++        pinnedMediaTransport = nil
+         session = try syncCurrentPositionFromAudio(session)
+         currentSession = session
+         try persistSession(session)
+@@ -1145,7 +1149,7 @@ public final class SessionEngine {
+             try persistSession(session)
+         }
+         if let durationMs = durableMediaDurationMs(for: session) {
+-            session = try repairMediaPercentages(session, durationMs: durationMs)
++            session = try repairMediaPercentages(session, durationMs: durationMs, forceNotes: true)
+         }
+         currentSession = session
+         publish(status: .paused, phase: session.phase)
+@@ -1286,6 +1290,7 @@ public final class SessionEngine {
+             captureKind: .written
+         )
+         try repository.saveInterjection(interjection)
++        lastMediaPercentageRepair = nil
+         pendingWrittenInterjection = nil
+         do {
+             try restoreWrittenInterjectionTransport(wasPlaying: capture.wasPlaying, session: session)
+@@ -1511,6 +1516,7 @@ public final class SessionEngine {
+                 : nil
+         )
+         try repository.saveInterjection(interjection)
++        lastMediaPercentageRepair = nil
+         if shouldCapturePostResumePodcastEvidence,
+            let anchorMediaTimeMs = anchor.mediaTimeMs {
+             let evidenceRequest = PostResumeAudioSampleRequest(
+@@ -1527,6 +1533,7 @@ public final class SessionEngine {
+                 interjection.podcastAnchorEvidenceCaptureStatus = .unavailable
+                 interjection.podcastAnchorEvidenceFailureReason = "decoded_playback_sample_unavailable"
+                 try repository.saveInterjection(interjection)
++                lastMediaPercentageRepair = nil
+             }
+         }
+         try transcriber.scheduleTranscription(interjection: interjection)
+@@ -2990,8 +2997,7 @@ public final class SessionEngine {
+             }
+             return .confirmed
+         case .failed(let message):
+-            clearPlaybackStartPending()
+-            return .failed(message)
++            return recoverRemotePlaybackStart(targetId: targetId, attemptId: attemptId, failure: message)
+         case .pending:
+             if playbackStartPendingTargetId != targetId || playbackStartPendingAttemptId != attemptId {
+                 playbackStartPendingTargetId = targetId
+@@ -3000,13 +3006,47 @@ public final class SessionEngine {
+                 return .pending
+             }
+             if let playbackStartDeadline, now() >= playbackStartDeadline {
+-                clearPlaybackStartPending()
+-                return .failed("playback_start_timeout")
++                return recoverRemotePlaybackStart(
++                    targetId: targetId, attemptId: attemptId, failure: "playback_start_timeout"
++                )
+             }
+             return .pending
+         }
+     }
+ 
++    /// Recreate a stalled remote transport once, just as closing and reopening
++    /// playback does, while retaining the requested chapter rather than a stale
++    /// player observation. A second failure remains terminal for this attempt.
++    private func recoverRemotePlaybackStart(
++        targetId: String, attemptId: Int, failure: String
++    ) -> PlaybackStartStatus {
++        guard playbackStartRecoveryAttemptId != attemptId,
++              let session = currentSession,
++              session.currentTargetId == targetId,
++              session.currentTargetType == .transcriptBackedMedia,
++              session.phase == .itemPlayback,
++              let context = playbackMediaContext(for: session),
++              context.sourceType == .remoteStream,
++              let url = URL(string: context.playbackURL ?? targetId),
++              ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
++            clearPlaybackStartPending()
++            return .failed(failure)
++        }
++        playbackStartRecoveryAttemptId = attemptId
++        do {
++            try audio.stop()
++            protectPlaybackPosition(for: session)
++            try playCurrentTarget(session)
++            playbackStartPendingTargetId = targetId
++            playbackStartPendingAttemptId = attemptId
++            playbackStartDeadline = now().addingTimeInterval(playbackStartTimeout)
++            return .pending
++        } catch {
++            clearPlaybackStartPending()
++            return .failed("\(failure); recovery_failed:\(error.localizedDescription)")
++        }
++    }
++
+     private func clearPlaybackStartPending() {
+         activePlaybackStartAttemptId = nil
+         playbackStartPendingAttemptId = nil
+@@ -3570,11 +3610,13 @@ public final class SessionEngine {
+             }
+             mutate(&interjection)
+             try repository.saveInterjection(interjection)
++            lastMediaPercentageRepair = nil
+             return
+         }
+         if let memory = repository as? InMemorySessionRepository, var interjection = memory.interjections[id] {
+             mutate(&interjection)
+             try repository.saveInterjection(interjection)
++            lastMediaPercentageRepair = nil
+             return
+         }
+         guard let session = currentSession else { throw SessionKitError.invalidCommandForState("updateInterjection") }
+@@ -3585,10 +3627,12 @@ public final class SessionEngine {
+             guard var fallback = all.first(where: { $0.id == id }) else { throw SessionKitError.invalidCommandForState("updateInterjection") }
+             mutate(&fallback)
+             try repository.saveInterjection(fallback)
++            lastMediaPercentageRepair = nil
+             return
+         }
+         mutate(&interjection)
+         try repository.saveInterjection(interjection)
++        lastMediaPercentageRepair = nil
+     }
+ 
+     private func ensureWatchPackageRecords(_ package: WatchAudioPackage) throws {
+@@ -3667,6 +3711,7 @@ public final class SessionEngine {
+             anchorContextStatus: resolved.transcriptSegmentId == nil ? .pending : .ready
+         )
+         try repository.saveInterjection(interjection)
++        lastMediaPercentageRepair = nil
+         try transcriber.scheduleTranscription(interjection: interjection)
+         lastScheduledTranscriptionInterjectionId = interjection.id
+         lastResolvedMediaAnchor = resolved
+@@ -3859,8 +3904,13 @@ public final class SessionEngine {
+         }
+         let clampedNext = duration.map { max(0, min(next, $0)) } ?? max(0, next)
+         updated = mediaSession(updated, movedTo: clampedNext)
+-        protectPlaybackPosition(for: updated)
+         let reachedEnd = duration.map { $0 > 0 && clampedNext >= $0 } ?? playbackCompleted
++        if snapshot.status == .playing, !reachedEnd {
++            // Keep the current stream/edition. Starting playback here can adopt
++            // a background download whose ad timing differs from the stream.
++            return try seekMedia(toMediaTimeMs: clampedNext)
++        }
++        protectPlaybackPosition(for: updated)
+         if reachedEnd {
+             updated = markPlaybackComplete(updated, item: item(for: updated))
+             currentSession = updated
+@@ -3901,6 +3951,9 @@ public final class SessionEngine {
+             previous = current - 15_000
+         }
+         updated = mediaSession(updated, movedTo: previous)
++        if snapshot.status == .playing {
++            return try seekMedia(toMediaTimeMs: updated.position.mediaTimeMs ?? 0)
++        }
+         currentSession = updated
+         try persistSession(updated)
+         protectPlaybackPosition(for: updated)
+@@ -4031,6 +4084,10 @@ public final class SessionEngine {
+ 
+     private func playbackMediaContext(for session: Session) -> PlaybackMediaContext? {
+         guard let item = currentItem ?? (try? repository.loadItem(id: session.itemId)) else { return nil }
++        if pinnedMediaTransport?.sessionId != session.id || pinnedMediaTransport?.targetId != session.currentTargetId {
++            pinnedMediaTransport = (session.id, session.currentTargetId, playbackURLOverrides[item.id]
++                ?? (item.media?.sourceType == .nativeMediaFile ? item.media?.url : nil))
++        }
+         let timeline = sourceTranscriptTimeline(for: session)
+         let subtitle = [item.externalReferenceType, item.externalReference]
+             .compactMap { value -> String? in
+@@ -4046,8 +4103,7 @@ public final class SessionEngine {
+             subtitle: subtitle.isEmpty ? nil : subtitle,
+             sourceURL: item.media?.url ?? item.externalReference,
+             // Native media IDs name library assets; they need not be playable URLs.
+-            playbackURL: playbackURLOverrides[item.id]
+-                ?? (item.media?.sourceType == .nativeMediaFile ? item.media?.url : nil),
++            playbackURL: pinnedMediaTransport?.playbackURL,
+             artworkURL: nil,
+             durationMs: item.media?.durationMs ?? timeline?.durationMs,
+             sourceType: item.media?.sourceType,
+@@ -4162,7 +4218,7 @@ public final class SessionEngine {
+         }
+     }
+ 
+-    private func repairMediaPercentages(_ session: Session, durationMs: Int) throws -> Session {
++    private func repairMediaPercentages(_ session: Session, durationMs: Int, forceNotes: Bool = false) throws -> Session {
+         guard durationMs > 0,
+               !isGeneratedTextMedia(item(for: session)?.media) else {
+             return session
+@@ -4175,6 +4231,8 @@ public final class SessionEngine {
+                 try persistSession(updatedSession)
+             }
+         }
++        guard forceNotes || lastMediaPercentageRepair?.sessionId != session.id
++                || lastMediaPercentageRepair?.durationMs != durationMs else { return updatedSession }
+         for var interjection in try repository.loadInterjections(sessionId: session.id)
+         where interjection.targetType == .item {
+             guard let mediaTimeMs = interjection.anchor.mediaTimeMs else { continue }
+@@ -4182,7 +4240,9 @@ public final class SessionEngine {
+             guard percent != interjection.roughPercent else { continue }
+             interjection.roughPercent = percent
+             try repository.saveInterjection(interjection)
++            lastMediaPercentageRepair = nil
+         }
++        lastMediaPercentageRepair = (session.id, durationMs)
+         return updatedSession
+     }
+ 
+diff --git a/Packages/SessionKit/Sources/SessionKit/SharingModels.swift b/Packages/SessionKit/Sources/SessionKit/SharingModels.swift
+index fb168a6..ee713b7 100644
+--- a/Packages/SessionKit/Sources/SessionKit/SharingModels.swift
++++ b/Packages/SessionKit/Sources/SessionKit/SharingModels.swift
+@@ -400,6 +400,9 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
+     public let suggestedRevealMode: ImportedCommentaryRevealMode?
+     public let importedAt: Date
+     public let integrityStatus: ImportedCommentaryIntegrityStatus
++    /// Recipient-local audio identity for the saved anchor results. Older rows
++    /// decode as unknown and must be reverified before retaining stale evidence.
++    public var resolvedRecipientEditionSHA256: String?
+     public var sourceResolutionStatus: ImportedSourceResolutionStatus
+     public var isEnabled: Bool
+     public var isMuted: Bool
+@@ -432,8 +435,10 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
+         listeningMapProposals: [PortableListeningMapProposalArtifact]? = nil,
+         editionFingerprintSpines: [EditionFingerprintSpineArtifact]? = nil,
+         transcriptPhraseSketches: [TranscriptPhraseSketchArtifact]? = nil,
+-        episodeMapEvidencePaths: [String: String]? = nil
++        episodeMapEvidencePaths: [String: String]? = nil,
++        resolvedRecipientEditionSHA256: String? = nil
+     ) {
++        self.resolvedRecipientEditionSHA256 = resolvedRecipientEditionSHA256
+         self.id = id
+         self.itemId = itemId
+         self.packageDigest = packageDigest
+@@ -457,12 +462,14 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
+     private enum CodingKeys: String, CodingKey {
+         case id, itemId, packageDigest, packageId, itemIdentity, sourceIdentity
+         case displayLabel, suggestedRevealMode, importedAt, integrityStatus
++        case resolvedRecipientEditionSHA256
+         case sourceResolutionStatus, isEnabled, isMuted, revealMode, deletedAt
+         case listeningMapProposals, editionFingerprintSpines, transcriptPhraseSketches, episodeMapEvidencePaths
+     }
+ 
+     public init(from decoder: Decoder) throws {
+         let values = try decoder.container(keyedBy: CodingKeys.self)
++        resolvedRecipientEditionSHA256 = try values.decodeIfPresent(String.self, forKey: .resolvedRecipientEditionSHA256)
+         id = try values.decode(String.self, forKey: .id)
+         itemId = try values.decodeIfPresent(String.self, forKey: .itemId)
+         packageDigest = try values.decode(String.self, forKey: .packageDigest)
+@@ -501,6 +508,7 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
+ 
+     public func encode(to encoder: Encoder) throws {
+         var values = encoder.container(keyedBy: CodingKeys.self)
++        try values.encodeIfPresent(resolvedRecipientEditionSHA256, forKey: .resolvedRecipientEditionSHA256)
+         try values.encode(id, forKey: .id)
+         try values.encodeIfPresent(itemId, forKey: .itemId)
+         try values.encode(packageDigest, forKey: .packageDigest)
+diff --git a/Packages/SessionKit/Sources/SessionKit/SpeechTextNormalizer.swift b/Packages/SessionKit/Sources/SessionKit/SpeechTextNormalizer.swift
+index 0ea032e..eb6ceb3 100644
+--- a/Packages/SessionKit/Sources/SessionKit/SpeechTextNormalizer.swift
++++ b/Packages/SessionKit/Sources/SessionKit/SpeechTextNormalizer.swift
+@@ -298,6 +298,11 @@ public enum SpeechTextNormalizer {
+     }
+ 
+     private static func systemSpeechCharacters(_ mapped: MappedCharacter) -> [MappedCharacter] {
++        // Newlines, tabs and CRLF are word boundaries, even though their
++        // scalars are controls. Preserve them before filtering unsafe scalars.
++        if mapped.character.isWhitespace {
++            return [MappedCharacter(character: " ", sourceOffset: mapped.sourceOffset)]
++        }
+         let replacements: [Character: String] = [
+             "“": "\"", "”": "\"", "„": "\"",
+             "‘": "'", "’": "'", "‚": "'",
+diff --git a/Packages/SessionKit/Sources/SessionKitAudio/AudioAdapters.swift b/Packages/SessionKit/Sources/SessionKitAudio/AudioAdapters.swift
+index 3415fbb..bd886fb 100644
+--- a/Packages/SessionKit/Sources/SessionKitAudio/AudioAdapters.swift
++++ b/Packages/SessionKit/Sources/SessionKitAudio/AudioAdapters.swift
+@@ -888,10 +888,12 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
+ 
+     public func setPlaybackRate(_ rate: Double) throws {
+         let multiplier = Float(max(0.25, min(2.0, rate)))
+-        speechRate = max(
++        let updatedRate = max(
+             AVSpeechUtteranceMinimumSpeechRate,
+             min(AVSpeechUtteranceMaximumSpeechRate, AVSpeechUtteranceDefaultSpeechRate * multiplier)
+         )
++        guard speechRate != updatedRate else { return }
++        speechRate = updatedRate
+         #if canImport(AVFoundation)
+         guard synthesizer.isSpeaking,
+               !paused,
+@@ -1179,11 +1181,11 @@ extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
+         _ synthesizer: AVSpeechSynthesizer,
+         didStart utterance: AVSpeechUtterance
+     ) {
++        guard synthesizer === self.synthesizer,
++              let chunk = chunksByUtteranceId[ObjectIdentifier(utterance)] else { return }
+         activeUtterance = utterance
+-        if let chunk = chunksByUtteranceId[ObjectIdentifier(utterance)] {
+-            currentOffset = chunk.sourceStart
+-            currentRangeLength = 0
+-        }
++        currentOffset = chunk.sourceStart
++        currentRangeLength = 0
+         startedTargetId = lastTargetId
+         pendingStartTargetId = nil
+         playbackStartFailure = nil
+@@ -1194,7 +1196,8 @@ extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
+         willSpeakRangeOfSpeechString characterRange: NSRange,
+         utterance: AVSpeechUtterance
+     ) {
+-        guard let chunk = chunksByUtteranceId[ObjectIdentifier(utterance)] else { return }
++        guard synthesizer === self.synthesizer,
++              let chunk = chunksByUtteranceId[ObjectIdentifier(utterance)] else { return }
+         let spokenLength = chunk.spokenText.utf16.count
+         let markerStart = min(characterRange.location, spokenLength)
+         let markerLength = min(characterRange.length, spokenLength - markerStart)
+@@ -1208,6 +1211,7 @@ extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
+         _ synthesizer: AVSpeechSynthesizer,
+         didFinish utterance: AVSpeechUtterance
+     ) {
++        guard synthesizer === self.synthesizer else { return }
+         let identifier = ObjectIdentifier(utterance)
+         guard let chunk = chunksByUtteranceId.removeValue(forKey: identifier) else { return }
+         if activeUtterance === utterance {
+@@ -1230,14 +1234,15 @@ extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
+         _ synthesizer: AVSpeechSynthesizer,
+         didCancel utterance: AVSpeechUtterance
+     ) {
++        guard synthesizer === self.synthesizer else { return }
+         let identifier = ObjectIdentifier(utterance)
+-        let wasPlaybackUtterance = chunksByUtteranceId.removeValue(forKey: identifier) != nil
++        guard chunksByUtteranceId.removeValue(forKey: identifier) != nil else { return }
+         if activeUtterance === utterance {
+             activeUtterance = nil
+         }
+         playbackComplete = false
+         completedTargetId = nil
+-        if wasPlaybackUtterance, pendingStartTargetId == lastTargetId {
++        if pendingStartTargetId == lastTargetId {
+             playbackStartFailure = "speech_cancelled_before_start"
+         }
+         pendingStartTargetId = nil
+diff --git a/Packages/SessionKit/Sources/SessionKitPersistence/SQLiteSessionStore.swift b/Packages/SessionKit/Sources/SessionKitPersistence/SQLiteSessionStore.swift
+index 4dc1e67..a9a0a9e 100644
+--- a/Packages/SessionKit/Sources/SessionKitPersistence/SQLiteSessionStore.swift
++++ b/Packages/SessionKit/Sources/SessionKitPersistence/SQLiteSessionStore.swift
+@@ -25,6 +25,9 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
+         ) == SQLITE_OK else {
+             throw SessionKitError.persistenceFailed("sqlite_open")
+         }
++        // WAL permits concurrent readers, but only one connection may write.
++        // Allow brief independent transactions to finish instead of dropping a save.
++        sqlite3_busy_timeout(db, 1_000)
+         try migrate()
+     }
+ 
+diff --git a/Packages/SessionKit/Tests/SessionKitTests/SQLiteSessionStoreSafetyTests.swift b/Packages/SessionKit/Tests/SessionKitTests/SQLiteSessionStoreSafetyTests.swift
+index 7528029..0ea3f10 100644
+--- a/Packages/SessionKit/Tests/SessionKitTests/SQLiteSessionStoreSafetyTests.swift
++++ b/Packages/SessionKit/Tests/SessionKitTests/SQLiteSessionStoreSafetyTests.swift
+@@ -7,6 +7,22 @@ import SessionKitPersistence
+ private let testSQLiteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+ 
+ final class SQLiteSessionStoreSafetyTests: XCTestCase {
++    func testBriefIndependentWriterContentionDoesNotDropTheNextSave() throws {
++        let path = temporaryDatabasePath()
++        let store = try SQLiteSessionStore(path: path)
++        let blocker = try SQLiteTestWriteLock(path: path)
++        let released = expectation(description: "independent writer releases its transaction")
++        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) {
++            blocker.release()
++            released.fulfill()
++        }
++        let item = Item(id: "contended", title: "Preserved", mediaType: "text", text: "Body",
++                        externalReference: nil, status: "ready")
++        XCTAssertNoThrow(try store.saveItem(item))
++        wait(for: [released], timeout: 2)
++        XCTAssertEqual(try store.loadItem(id: item.id), item)
++    }
++
+     func testImportedLayerReadDoesNotDecodeOtherLayersAndStillQuarantinesMalformedJSON() throws {
+         let path = temporaryDatabasePath()
+         let store = try SQLiteSessionStore(path: path)
+@@ -323,3 +339,15 @@ final class SQLiteSessionStoreSafetyTests: XCTestCase {
+         return sqlite3_step(statement) == SQLITE_ROW
+     }
+ }
++
++private final class SQLiteTestWriteLock: @unchecked Sendable {
++    private var database: OpaquePointer?
++    init(path: String) throws {
++        guard sqlite3_open_v2(path, &database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK,
++              sqlite3_exec(database, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK else {
++            throw SessionKitError.persistenceFailed("test_write_lock")
++        }
++    }
++    func release() { XCTAssertEqual(sqlite3_exec(database, "COMMIT", nil, nil, nil), SQLITE_OK) }
++    deinit { sqlite3_close(database) }
++}
+diff --git a/Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests.swift b/Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests.swift
+index a5a0890..7de9ff3 100644
+--- a/Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests.swift
++++ b/Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests.swift
+@@ -102,6 +102,23 @@ final class SessionKitCoreTests: XCTestCase {
+     }
+ 
+     #if canImport(AVFoundation)
++    func testRetiredSpeechSynthesizerCannotConfirmOrCancelCurrentPlayback() throws {
++        let client = SystemSpeechPlaybackClient(voiceIdentifier: nil, speechRate: AVSpeechUtteranceDefaultSpeechRate)
++        _ = try client.prepareSpeechText(String(repeating: "Keep the current speech request intact. ", count: 30))
++        try client.play(targetId: "current", from: 0)
++        let status = client.playbackStartStatus(targetId: "current")
++        let position = client.currentCharOffset()
++        let retired = AVSpeechSynthesizer()
++        let obsolete = AVSpeechUtterance(string: "Earlier request")
++        client.speechSynthesizer(retired, didStart: obsolete)
++        client.speechSynthesizer(retired, didCancel: obsolete)
++        client.speechSynthesizer(retired, didFinish: obsolete)
++        XCTAssertEqual(client.playbackStartStatus(targetId: "current"), status)
++        XCTAssertEqual(client.currentCharOffset(), position)
++        XCTAssertFalse(client.isPlaybackComplete(targetId: "current"))
++        try client.stop()
++    }
++
+     func testSystemSpeechPlaybackRateReportsEffectiveTransportMultiplier() throws {
+         let client = SystemSpeechPlaybackClient(
+             voiceIdentifier: nil,
+@@ -584,6 +601,20 @@ final class SessionKitCoreTests: XCTestCase {
+         XCTAssertFalse(resumedSpoken.localizedCaseInsensitiveContains("x.com"))
+     }
+ 
++    func testSystemSpeechPreservesWhitespaceWordBoundariesAndSourceOffsets() {
++        for separator in ["\n", "\r\n", "\t"] {
++            let source = "First" + separator + "second"
++            let projected = SpeechTextNormalizer.projectForSystemSpeech(source)
++            XCTAssertEqual(projected.text, "First second")
++            XCTAssertEqual(projected.sourceOffsets.last, source.count - 1)
++            XCTAssertEqual(projected.text.count, projected.sourceOffsets.count)
++        }
++        let source = "meridian-protocol[.]org\nmeridiangroup-corp[.]com\nprojectnightcrawler[.]dev"
++        let projected = SpeechTextNormalizer.projectForSystemSpeech(source)
++        XCTAssertEqual(projected.text, source.replacingOccurrences(of: "\n", with: " "))
++        XCTAssertTrue(zip(projected.sourceOffsets, projected.sourceOffsets.dropFirst()).allSatisfy { $0.0 <= $0.1 })
++    }
++
+     func testSystemSpeechProjectionGuaranteesOneUTF16UnitPerSpokenCharacter() {
+         let source = "Emoji evolve: 💅 💪💪🏻💪🏼💪🏽💪🏾💪🏿 ❤️ 👨‍👩‍👧‍👦. Café क् ⛲ \u{200D} remains readable."
+         let projected = SpeechTextNormalizer.projectForSystemSpeech(source)
+@@ -1247,6 +1278,86 @@ final class SessionKitCoreTests: XCTestCase {
+         XCTAssertEqual(failed.lastFailure, "playback_start_failed:native_audio_failed")
+     }
+ 
++    func testRemoteChapterStartupRecreatesTransportOnceAndPreservesDestination() throws {
++        for failsImmediately in [false, true] {
++            for retrySucceeds in [false, true] {
++                let audio = RecordingAudioClient()
++                var clock = Date(timeIntervalSince1970: 100)
++                let item = Item(
++                    id: "remote-chapter", title: "Podcast", mediaType: "audio",
++                    text: nil, externalReference: nil, status: "ready",
++                    media: ItemMedia(sourceType: .remoteStream,
++                                     url: "https://example.com/episode.mp3", durationMs: 600_000)
++                )
++                let repo = InMemorySessionRepository(items: [item.id: item])
++                try repo.saveTranscriptTimeline(SourceTranscriptTimeline(
++                    id: "chapters", itemId: item.id, createdAt: clock,
++                    timeline: TranscriptTimeline(segments: [
++                        MediaTimelineSegment(id: "seg-grabby", startMs: 18_000, endMs: 600_000, startChar: 0, endChar: 6, text: "Aliens")
++                    ], chapters: [
++                        MediaTimelineChapter(id: "grabby", title: "Grabby aliens", startMs: 18_000, transcriptSegmentId: "seg-grabby")
++                    ], durationMs: 600_000)
++                ))
++                let profile = RuntimeCapabilityProfile(
++                    id: "phone", displayName: "Phone",
++                    capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media"],
++                                   "timeline": ["media_time", "chapter_timing"]]
++                )
++                let engine = SessionEngine(profile: profile, repository: repo, audio: audio,
++                                           playbackStartTimeout: 10, now: { clock })
++                _ = try engine.startSession(itemId: item.id)
++                audio.startStatus = .pending
++                _ = try engine.jumpToChapter(chapterId: "grabby")
++                let stops = audio.stopCount
++                // A cold player can still report the previous position while loading.
++                audio.currentMediaTimeValue = 0
++                if failsImmediately { audio.startStatus = .failed("network_failure") }
++                clock = clock.addingTimeInterval(11)
++                let recovering = try engine.syncPlaybackProgress()
++                XCTAssertEqual(recovering.status, .starting)
++                XCTAssertEqual(audio.stopCount, stops + 1)
++                XCTAssertEqual(audio.playedOffsets.last, 18_000)
++                XCTAssertEqual(engine.currentSession?.position.chapterId, "grabby")
++                XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 18_000)
++                audio.startStatus = retrySucceeds ? .confirmed : .pending
++                clock = clock.addingTimeInterval(11)
++                let result = try engine.syncPlaybackProgress()
++                XCTAssertEqual(result.status, retrySucceeds ? .playing : .failed)
++                _ = try engine.syncPlaybackProgress()
++                XCTAssertEqual(audio.stopCount, stops + 1, "Never retry indefinitely")
++                XCTAssertEqual(try repo.loadItem(id: item.id).media?.url, item.media?.url)
++            }
++        }
++    }
++
++    func testRemoteStartupRecoveryDoesNotRestartPausedPlaybackOrLocalFiles() throws {
++        for localFile in [false, true] {
++            let audio = RecordingAudioClient()
++            audio.startStatus = .pending
++            var clock = Date(timeIntervalSince1970: 100)
++            let item = Item(
++                id: "podcast", title: "Podcast", mediaType: "audio", text: nil,
++                externalReference: nil, status: "ready",
++                media: ItemMedia(sourceType: .remoteStream,
++                                 url: localFile ? "file:///tmp/episode.mp3" : "https://example.com/episode.mp3")
++            )
++            let engine = SessionEngine(
++                profile: RuntimeCapabilityProfile(id: "phone", displayName: "Phone",
++                                                   capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media"]]),
++                repository: InMemorySessionRepository(items: [item.id: item]), audio: audio,
++                playbackStartTimeout: 10, now: { clock }
++            )
++            _ = try engine.startSession(itemId: item.id)
++            if !localFile { _ = try engine.pause() }
++            let stops = audio.stopCount
++            clock = clock.addingTimeInterval(11)
++            let result = try engine.syncPlaybackProgress()
++            XCTAssertEqual(result.status, localFile ? .failed : .paused)
++            XCTAssertEqual(audio.stopCount, stops)
++            XCTAssertEqual(audio.playedTargets.count, 1)
++        }
++    }
++
+     func testPlaybackStartPendingTimesOutAsFailure() throws {
+         let audio = RecordingAudioClient()
+         audio.startStatus = .pending
+@@ -2171,6 +2282,41 @@ final class SessionKitCoreTests: XCTestCase {
+         XCTAssertEqual(repo.interjections[interjection.id]?.roughPercent, 25)
+     }
+ 
++    func testStableMediaProgressDoesNotRepeatNotePercentageRepair() throws {
++        for noteCount in [0, 100, 1000] {
++            let item = Item(id: "measured-podcast", title: "Measured", mediaType: "audio", text: nil, externalReference: nil,
++                status: "ready", media: ItemMedia(sourceType: .remoteStream,
++                    url: "https://example.com/audio", durationMs: 900_000))
++            let repo = CountingInterjectionRepository(items: [item.id: item])
++            let audio = RecordingAudioClient()
++            audio.currentDurationMs = 900_000
++            let engine = SessionEngine(profile: phonePlaybackProfile(), repository: repo, audio: audio)
++            _ = try engine.startSession(itemId: item.id)
++            let sessionId = try XCTUnwrap(engine.currentSession?.id)
++            for index in 0..<noteCount {
++                try repo.saveInterjection(Interjection(id: "note-\(index)", itemId: item.id,
++                    sessionId: sessionId, targetType: .item, targetId: item.id, createdAt: Date(),
++                    roughPercent: 0, anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0,
++                        anchorBefore: "", anchorAfter: "", mediaTimeMs: 225_000),
++                    audioPath: nil, audioStatus: "discarded", transcriptionStatus: "transcribed",
++                    transcript: "Saved note", cleanedTranscript: nil, displayText: nil, status: "active"))
++            }
++            _ = try engine.inspectSession(sessionId: sessionId)
++            repo.noteLoads = 0
++            for tick in 1...20 {
++                audio.currentMediaTimeValue = tick * 500
++                _ = try engine.syncPlaybackProgress()
++            }
++            // Publication reads note counts once; percentage repair must not add a second scan.
++            XCTAssertEqual(repo.noteLoads, 20, "Repeated repair with \(noteCount) notes")
++            XCTAssertTrue(repo.interjections.values.allSatisfy { $0.roughPercent == 25 })
++            audio.currentDurationMs = 450_000
++            _ = try engine.syncPlaybackProgress()
++            XCTAssertEqual(repo.noteLoads, 22, "Changed duration must trigger one repair")
++            XCTAssertTrue(repo.interjections.values.allSatisfy { $0.roughPercent == 50 })
++        }
++    }
++
+     func testObservedPlayerDurationIsPersistedAndUsedForMediaInterjectionPercent() throws {
+         let item = Item(
+             id: "item-source-observed-duration",
+@@ -2710,12 +2856,13 @@ final class SessionKitCoreTests: XCTestCase {
+         audio.currentMediaTimeValue = 30_000
+         let forward = try engine.skipForward(unit: "time_15s")
+         XCTAssertEqual(forward.currentMediaTimeMs, 45_000)
+-        XCTAssertEqual(audio.playedOffsets.last, 45_000)
++        XCTAssertEqual(audio.seekRequests.last, 45_000)
+ 
+         audio.currentMediaTimeValue = 45_000
+         let back = try engine.skipBack(unit: "time_15s")
+         XCTAssertEqual(back.currentMediaTimeMs, 30_000)
+-        XCTAssertEqual(audio.playedOffsets.last, 30_000)
++        XCTAssertEqual(audio.seekRequests.last, 30_000)
++        XCTAssertEqual(audio.playedTargets.count, 1)
+     }
+ 
+     func testNativeAudioSkipAcceptsConfiguredTimeUnits() throws {
+@@ -5955,7 +6102,7 @@ final class SessionKitCoreTests: XCTestCase {
+         XCTAssertEqual(audio.mediaContexts.last??.playbackURL, "file:///tmp/episode.mp3")
+     }
+ 
+-    func testCompletedPodcastDownloadDefersTransportReplacementUntilResume() throws {
++    func testCompletedPodcastDownloadKeepsEditionAcrossSkipAndResumeUntilNewSession() throws {
+         let profile = RuntimeCapabilityProfile(
+             id: "podcast-deferred-cache",
+             displayName: "Podcast deferred cache",
+@@ -5989,11 +6136,29 @@ final class SessionKitCoreTests: XCTestCase {
+         XCTAssertEqual(audio.playedTargets.count, playCountBeforeDownload)
+         XCTAssertNil(audio.mediaContexts.last??.playbackURL)
+ 
++        // A transport skip must not adopt the newly downloaded edition.
++        let skipped = try engine.skipForward(unit: "time_60s")
++        XCTAssertEqual(skipped.currentMediaTimeMs, 102_000)
++        XCTAssertEqual(audio.seekRequests.last, 102_000)
++        XCTAssertEqual(audio.playedTargets.count, playCountBeforeDownload)
++        XCTAssertNil(audio.mediaContexts.last??.playbackURL)
++        _ = try engine.skipBack(unit: "time_15s")
++        XCTAssertEqual(audio.seekRequests.last, 87_000)
++        XCTAssertEqual(audio.playedTargets.count, playCountBeforeDownload)
++
+         _ = try engine.pause()
+         _ = try engine.resumePlayback()
+ 
+-        XCTAssertEqual(audio.playedOffsets.last, 42_000)
++        XCTAssertEqual(audio.playedOffsets.last, 87_000)
+         XCTAssertEqual(audio.mediaContexts.last??.sourceURL, remote)
++        XCTAssertNil(audio.mediaContexts.last??.playbackURL)
++
++        // Completion while already paused must also preserve this edition.
++        _ = try engine.pause()
++        _ = try engine.updatePlaybackTransport(itemId: item.id, playbackURL: local, replaceActivePlayback: false)
++        _ = try engine.resumePlayback()
++        XCTAssertNil(audio.mediaContexts.last??.playbackURL)
++        _ = try engine.startSession(itemId: item.id)
+         XCTAssertEqual(audio.mediaContexts.last??.playbackURL, local)
+     }
+ }
+@@ -6322,6 +6487,14 @@ private final class RecordingAudioClient: AudioPlaybackClient {
+     }
+ }
+ 
++private final class CountingInterjectionRepository: InMemorySessionRepository {
++    var noteLoads = 0
++    override func loadInterjections(sessionId: String) throws -> [Interjection] {
++        noteLoads += 1
++        return try super.loadInterjections(sessionId: sessionId)
++    }
++}
++
+ private final class FailingWrittenInterjectionRepository: InMemorySessionRepository {
+     var failNextInterjectionSave = false
+     var failNextSessionSave = false
+diff --git a/Packages/SessionKit/Tests/SessionKitTests/SharingTests.swift b/Packages/SessionKit/Tests/SessionKitTests/SharingTests.swift
+index e41806e..2f7f55f 100644
+--- a/Packages/SessionKit/Tests/SessionKitTests/SharingTests.swift
++++ b/Packages/SessionKit/Tests/SessionKitTests/SharingTests.swift
+@@ -739,10 +739,14 @@ final class SharingTests: XCTestCase {
+             evidence: [],
+             evidenceWasDeclared: true
+         )
+-        XCTAssertEqual(PodcastAcousticAnchorResolver.resolveCandidates(
++        // No acoustic match is insufficient proof that the passage is absent.
++        // Preserve the September 14 conservative placement policy and no autoplay.
++        let unmatched = PodcastAcousticAnchorResolver.resolveCandidates(
+             [], query: declaredButUnmatched, senderDurationMs: 100_000, recipientDurationMs: 100_000,
+             strongSourceIdentity: true, exactDigestContradiction: false
+-        ).evidenceClass, .absentFromRecipientEdition)
++        )
++        XCTAssertEqual(unmatched.evidenceClass, .unresolved)
++        XCTAssertNil(unmatched.localMediaTimeMs)
+         XCTAssertEqual(PodcastAcousticAnchorResolver.resolveCandidates(
+             [], query: missingEvidence, senderDurationMs: 100_000, recipientDurationMs: 100_000,
+             strongSourceIdentity: true, exactDigestContradiction: true
+diff --git a/SpokenMarginsNative.xcodeproj/xcshareddata/xcschemes/SpokenMarginsApp.xcscheme b/SpokenMarginsNative.xcodeproj/xcshareddata/xcschemes/SpokenMarginsApp.xcscheme
+index c70bb4f..e018fa2 100644
+--- a/SpokenMarginsNative.xcodeproj/xcshareddata/xcschemes/SpokenMarginsApp.xcscheme
++++ b/SpokenMarginsNative.xcodeproj/xcshareddata/xcschemes/SpokenMarginsApp.xcscheme
+@@ -1,10 +1,11 @@
+ <?xml version="1.0" encoding="UTF-8"?>
+ <Scheme
+    LastUpgradeVersion = "1430"
+-   version = "1.3">
++   version = "1.7">
+    <BuildAction
+       parallelizeBuildables = "YES"
+-      buildImplicitDependencies = "YES">
++      buildImplicitDependencies = "YES"
++      runPostActionsOnFailure = "NO">
+       <BuildActionEntries>
+          <BuildActionEntry
+             buildForTesting = "YES"
+@@ -26,7 +27,8 @@
+       buildConfiguration = "Debug"
+       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
+       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
+-      shouldUseLaunchSchemeArgsEnv = "YES">
++      shouldUseLaunchSchemeArgsEnv = "YES"
++      onlyGenerateCoverageForSpecifiedTargets = "NO">
+       <MacroExpansion>
+          <BuildableReference
+             BuildableIdentifier = "primary"
+@@ -49,7 +51,8 @@
+             </BuildableReference>
+          </TestableReference>
+          <TestableReference
+-            skipped = "NO">
++            skipped = "NO"
++            parallelizable = "NO">
+             <BuildableReference
+                BuildableIdentifier = "primary"
+                BlueprintIdentifier = "62CEABDB2B6F38CA17ED8324"
+@@ -59,6 +62,8 @@
+             </BuildableReference>
+          </TestableReference>
+       </Testables>
++      <CommandLineArguments>
++      </CommandLineArguments>
+    </TestAction>
+    <LaunchAction
+       buildConfiguration = "Debug"
+@@ -80,6 +85,8 @@
+             ReferencedContainer = "container:SpokenMarginsNative.xcodeproj">
+          </BuildableReference>
+       </BuildableProductRunnable>
++      <CommandLineArguments>
++      </CommandLineArguments>
+    </LaunchAction>
+    <ProfileAction
+       buildConfiguration = "Release"
+diff --git a/docs/interjection-sharing-and-article-acquisition.md b/docs/interjection-sharing-and-article-acquisition.md
+index b0bd9a6..cf98437 100644
+--- a/docs/interjection-sharing-and-article-acquisition.md
++++ b/docs/interjection-sharing-and-article-acquisition.md
+@@ -85,3 +85,7 @@ Item-transport assertions are implemented. External acceptance of the proposed r
+ The regression target is broader historical code from `codex/sharingV1` accidentally importing app, playback, reply, article-acquisition, project, or site behavior. The lane audit compares every historical path with this bounded implementation and fails the packet if a forbidden path changes.
+ 
+ The falsification suite covers deterministic archive bytes and digest, preview tampering, malformed archive/JSON, unsupported versions, private-path rejection, invalid audio, destination rollback, transport/rights mismatches, linkless embedding without an assertion, recipient-supplied items, data minimization, unselected-audio omission, immutable revision IDs, cleanup substring and all-filler safety, manual-word undo, acoustic edge-silence detection, sustained-noise non-speaking-gap detection without aligned-speech overlap, context bounds, normalized-hash offset collisions, recipient-controlled activation, recipient-local ID mapping, per-note resolution, duplicate import, SQLite preservation, ordered chapter/Margin navigation, and resolved/ambiguous/wrong-source/context-only outcomes. The stopping rule is any confidently wrong resolution, undisclosed outgoing field, nondeterministic duplicate, private-original mutation, transport that contradicts the sender disclosure, navigation to an unresolved Margin, or need for an unapproved trust decision.
++
++### Recipient audio replacement
++
++Imported podcast layers persist the optional recipient-local `resolvedRecipientEditionSHA256` alongside saved anchor results. This is an additive SQLite payload field, not a sender package field; older rows decode without an identity and require verification. A weaker matching pass can retain a verified result only when both passes refer to the same exact recipient bytes. A changed or unknown edition clears saved timed placements and stale map projections before matching. Persisted transcripts without a byte-edition binding are not matching evidence; recipient alignment uses the transient transcript produced from that exact local file. Download attempts use unique filenames, and late transcript results from a superseded file are ignored.
+diff --git a/docs/release-lanes.md b/docs/release-lanes.md
+index 0a535ec..62afee7 100644
+--- a/docs/release-lanes.md
++++ b/docs/release-lanes.md
+@@ -1,3 +1,13 @@
++> Owner handoff-readiness work, September 15: continue the project audit into repairs and an engineering candidate for owner validation. Authorize fixing the unresolved UI/playback boundaries, download lifecycle and audio-edition identity defects, measured performance work, full automated verification and handoff documentation on `codex/provisional-next`. Remain single-agent and preserve pending changes and owner data. New account-usage floor is 50% remaining, superseding 65%; check in at that floor or finish under budget (66% observed at start). No commit, physical-device install or distribution is authorized. Product acceptance remains the owner’s responsibility.
++
++> Owner full-project audit, September 15: investigate whether prior repairs introduced current regressions; review other feature issues across the project and use simulators. Broad automated verification is now authorized for this audit, superseding the prior focused-only restriction. Work remains single-agent on `codex/provisional-next`, preserving the dirty candidate and owner data. Maintain at least 65% account usage remaining (74% observed at start). Audit/reproductions and bounded evidence-backed repairs are authorized; no commit, physical-phone install or distribution.
++
++> Owner reliability investigation, September 15: investigate feed-start failure and backward skip reported for Pod Save America, sweep related playback, download, persistence and performance paths, and evaluate default diagnostics on `codex/provisional-next`. Bounded evidence-backed repairs and focused regressions are in scope; preserve pending work and Library data. No commit, installation, distribution or product-validation claim. Full release checks remain deferred.
++
++> Owner offline podcast follow-up, September 14: investigate downloaded audio becoming unavailable after an interjection during a walk; repair evidenced active-download eviction gaps on `codex/provisional-next`, preserving files and existing repairs. Focused checks; no install or distribution.
++
++> Owner podcast startup repair, September 14: fix remote-stream chapter startup for Lex Fridman #292, “Grabby aliens,” on `codex/provisional-next`. Add bounded fresh-player recovery with focused regression checks; preserve chapter position, Library and source identity. No commit, installation or distribution requested.
++
+ > Owner chapter-skip follow-up, September 14: inspect the attached live iPhone/Xcode diagnostics and investigate apparent forward-skip regression. Bounded evidence-backed chapter-position repair and focused tests remain in scope; preserve the running phone and existing Library.
+ 
+ > Owner PDF follow-up, September 14: investigate the supplied NASA space-tether report and device diagnostics; repair evidenced ToC narration and chapter detection defects on `codex/provisional-next`. Preserve rendering, existing source/audio identities and pending changes. Focused checks only; full app testing remains deferred.
+diff --git a/schemas/developer-recording.schema.json b/schemas/developer-recording.schema.json
+index 9e92d86..1f38033 100644
+--- a/schemas/developer-recording.schema.json
++++ b/schemas/developer-recording.schema.json
+@@ -58,7 +58,13 @@
+               "scrub.media.display",
+               "scrub.text.drag",
+               "scrub.text.editing",
+-              "scrub.text.display"
++              "scrub.text.display",
++              "recording.launch",
++              "playback.state",
++              "skip.request",
++              "transport.request",
++              "seek.media.result",
++              "download.state"
+             ]
+           },
+           "fields": {
+diff --git a/scripts/run-sessionkit-tests.sh b/scripts/run-sessionkit-tests.sh
+index 8f9a604..80a1688 100755
+--- a/scripts/run-sessionkit-tests.sh
++++ b/scripts/run-sessionkit-tests.sh
+@@ -5,13 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ PACKAGE="$ROOT/Packages/SessionKit"
+ 
+ cd "$PACKAGE"
+-swift build --build-tests
+-
+-BIN_PATH="$(swift build --show-bin-path)"
+-XCTEST_BUNDLE="$BIN_PATH/SessionKitPackageTests.xctest"
+-if [[ ! -d "$XCTEST_BUNDLE" ]]; then
+-  echo "Expected XCTest bundle not found at $XCTEST_BUNDLE." >&2
+-  exit 1
+-fi
+-
+-xcrun xctest "$XCTEST_BUNDLE"
++# Let SwiftPM select every test product. Toolchains can emit either an aggregate
++# PackageTests bundle or separate target bundles; a fixed bundle path skips/fails
++# valid tests after that layout changes. The outer runner verifies exact test IDs.
++swift test
+diff --git a/scripts/validate-developer-recording.py b/scripts/validate-developer-recording.py
+index 6416cb2..29c7f4d 100644
+--- a/scripts/validate-developer-recording.py
++++ b/scripts/validate-developer-recording.py
+@@ -6,7 +6,10 @@ from pathlib import Path
+ import jsonschema
+ schema = json.loads((Path(__file__).resolve().parents[1] / 'schemas/developer-recording.schema.json').read_text())
+ data = json.loads(Path(sys.argv[1]).read_text())
+-if 'developerRecording' in data:
+-    data = json.loads(data['developerRecording'])
+-jsonschema.Draft202012Validator(schema).validate(data)
+-print(f"Developer recording verified: {len(data['events'])} events")
++validator = jsonschema.Draft202012Validator(schema)
++recordings = {key: json.loads(data[key]) for key in ('developerRecording', 'playbackEvents') if key in data}
++if not recordings:
++    recordings = {'capture': data}
++for label, capture in recordings.items():
++    validator.validate(capture)
++    print(f"Developer recording verified ({label}): {len(capture['events'])} events")

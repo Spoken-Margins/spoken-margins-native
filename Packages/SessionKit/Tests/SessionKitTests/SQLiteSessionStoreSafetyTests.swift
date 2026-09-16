@@ -7,6 +7,22 @@ import SessionKitPersistence
 private let testSQLiteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
 final class SQLiteSessionStoreSafetyTests: XCTestCase {
+    func testBriefIndependentWriterContentionDoesNotDropTheNextSave() throws {
+        let path = temporaryDatabasePath()
+        let store = try SQLiteSessionStore(path: path)
+        let blocker = try SQLiteTestWriteLock(path: path)
+        let released = expectation(description: "independent writer releases its transaction")
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) {
+            blocker.release()
+            released.fulfill()
+        }
+        let item = Item(id: "contended", title: "Preserved", mediaType: "text", text: "Body",
+                        externalReference: nil, status: "ready")
+        XCTAssertNoThrow(try store.saveItem(item))
+        wait(for: [released], timeout: 2)
+        XCTAssertEqual(try store.loadItem(id: item.id), item)
+    }
+
     func testImportedLayerReadDoesNotDecodeOtherLayersAndStillQuarantinesMalformedJSON() throws {
         let path = temporaryDatabasePath()
         let store = try SQLiteSessionStore(path: path)
@@ -322,4 +338,16 @@ final class SQLiteSessionStoreSafetyTests: XCTestCase {
         sqlite3_bind_text(statement, 2, id, -1, testSQLiteTransient)
         return sqlite3_step(statement) == SQLITE_ROW
     }
+}
+
+private final class SQLiteTestWriteLock: @unchecked Sendable {
+    private var database: OpaquePointer?
+    init(path: String) throws {
+        guard sqlite3_open_v2(path, &database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK,
+              sqlite3_exec(database, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK else {
+            throw SessionKitError.persistenceFailed("test_write_lock")
+        }
+    }
+    func release() { XCTAssertEqual(sqlite3_exec(database, "COMMIT", nil, nil, nil), SQLITE_OK) }
+    deinit { sqlite3_close(database) }
 }

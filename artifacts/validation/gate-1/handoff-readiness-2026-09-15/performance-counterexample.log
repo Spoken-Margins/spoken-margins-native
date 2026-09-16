@@ -1,0 +1,48 @@
+warning: 'zipfoundation': /Users/colemiller/Documents/GitHub/spoken-margins-native/Packages/SessionKit/.build/checkouts/ZIPFoundation/Package@swift-5.9.swift:23:61: warning: 'v4' is deprecated: watchOS 9.0 is the oldest supported version [#DeprecatedDeclaration]
+21 |     name: "ZIPFoundation",
+22 |     platforms: [
+23 |         .macOS(.v10_13), .iOS(.v12), .tvOS(.v12), .watchOS(.v4), .visionOS(.v1)
+   |                                                             `- warning: 'v4' is deprecated: watchOS 9.0 is the oldest supported version [#DeprecatedDeclaration]
+24 |     ],
+25 |     products: [
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+Building for debugging...
+[Computing dependencies]
+[Using on-disk description]
+[1 / 4]
+[2 / 5] SessionKit
+[3 / 6] SessionKit
+[7 / 10] SessionKit
+[10 / 11] SessionKitTests-product
+[12 / 12] SessionKitTests-product
+[13 / 14] SessionKitTraceTests-product
+[22 / 22] SessionKitFeeds-product
+[22 / 22] SessionKitAudio-product
+[22 / 22] SessionKitSharing-product
+Build complete! (7.81 sec)
+Test Suite 'Selected tests' started at 2026-09-15 19:03:11.172.
+Test Suite 'SessionKitTraceTests.xctest' started at 2026-09-15 19:03:11.177.
+Test Suite 'SessionKitTraceTests.xctest' passed at 2026-09-15 19:03:11.177.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-09-15 19:03:11.178.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.006) seconds
+Test Suite 'Selected tests' started at 2026-09-15 19:03:11.242.
+Test Suite 'SessionKitTests.xctest' started at 2026-09-15 19:03:11.243.
+Test Suite 'SessionKitCoreTests' started at 2026-09-15 19:03:11.243.
+Test Case '-[SessionKitTests.SessionKitCoreTests testStableMediaProgressDoesNotRepeatNotePercentageRepair]' started.
+/Users/colemiller/Documents/GitHub/spoken-margins-native/Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests.swift:2311: error: -[SessionKitTests.SessionKitCoreTests testStableMediaProgressDoesNotRepeatNotePercentageRepair] : XCTAssertEqual failed: ("40") is not equal to ("20") - Repeated repair with 0 notes
+/Users/colemiller/Documents/GitHub/spoken-margins-native/Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests.swift:2315: error: -[SessionKitTests.SessionKitCoreTests testStableMediaProgressDoesNotRepeatNotePercentageRepair] : XCTAssertEqual failed: ("42") is not equal to ("22") - Changed duration must trigger one repair
+/Users/colemiller/Documents/GitHub/spoken-margins-native/Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests.swift:2311: error: -[SessionKitTests.SessionKitCoreTests testStableMediaProgressDoesNotRepeatNotePercentageRepair] : XCTAssertEqual failed: ("40") is not equal to ("20") - Repeated repair with 100 notes
+/Users/colemiller/Documents/GitHub/spoken-margins-native/Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests.swift:2315: error: -[SessionKitTests.SessionKitCoreTests testStableMediaProgressDoesNotRepeatNotePercentageRepair] : XCTAssertEqual failed: ("42") is not equal to ("22") - Changed duration must trigger one repair
+/Users/colemiller/Documents/GitHub/spoken-margins-native/Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests.swift:2311: error: -[SessionKitTests.SessionKitCoreTests testStableMediaProgressDoesNotRepeatNotePercentageRepair] : XCTAssertEqual failed: ("40") is not equal to ("20") - Repeated repair with 1000 notes
+/Users/colemiller/Documents/GitHub/spoken-margins-native/Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests.swift:2315: error: -[SessionKitTests.SessionKitCoreTests testStableMediaProgressDoesNotRepeatNotePercentageRepair] : XCTAssertEqual failed: ("42") is not equal to ("22") - Changed duration must trigger one repair
+Test Case '-[SessionKitTests.SessionKitCoreTests testStableMediaProgressDoesNotRepeatNotePercentageRepair]' failed (2.268 seconds).
+Test Suite 'SessionKitCoreTests' failed at 2026-09-15 19:03:13.512.
+	 Executed 1 test, with 6 failures (0 unexpected) in 2.268 (2.269) seconds
+Test Suite 'SessionKitTests.xctest' failed at 2026-09-15 19:03:13.512.
+	 Executed 1 test, with 6 failures (0 unexpected) in 2.268 (2.269) seconds
+Test Suite 'Selected tests' failed at 2026-09-15 19:03:13.512.
+	 Executed 1 test, with 6 failures (0 unexpected) in 2.268 (2.270) seconds
+Note: Some test targets reported failures:
+  - SessionKitTests (XCTest)

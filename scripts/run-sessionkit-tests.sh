@@ -5,13 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE="$ROOT/Packages/SessionKit"
 
 cd "$PACKAGE"
-swift build --build-tests
-
-BIN_PATH="$(swift build --show-bin-path)"
-XCTEST_BUNDLE="$BIN_PATH/SessionKitPackageTests.xctest"
-if [[ ! -d "$XCTEST_BUNDLE" ]]; then
-  echo "Expected XCTest bundle not found at $XCTEST_BUNDLE." >&2
-  exit 1
-fi
-
-xcrun xctest "$XCTEST_BUNDLE"
+# Let SwiftPM select every test product. Toolchains can emit either an aggregate
+# PackageTests bundle or separate target bundles; a fixed bundle path skips/fails
+# valid tests after that layout changes. The outer runner verifies exact test IDs.
+swift test

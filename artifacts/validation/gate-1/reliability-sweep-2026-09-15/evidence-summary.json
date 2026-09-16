@@ -1,0 +1,27 @@
+{
+  "attachment_sha256": "bdb98a2e129eb45e6a19b9e3d3f83c92671385fdcfe1e582cf2b2270b862cf1e",
+  "exportedAt": "2026-09-15T21:20:37Z",
+  "recording_first": "2026-09-14T21:35:41.775Z",
+  "recording_last": "2026-09-14T21:46:10.861Z",
+  "event_counts": {
+    "sample": 1195,
+    "scrub.media.display": 2,
+    "miniPlayer.close": 1,
+    "main.delayed": 2
+  },
+  "offlineFilesystemBytes": "1201426554",
+  "offlineLedgerBytes": "4999317401",
+  "last_media_seek": "id:76,requested:1620792,outcome:accepted:1620792",
+  "build_marker": "device-diagnostics-20260908-C",
+  "installed_commit": "unknown",
+  "source_check": {
+    "date": "2026-09-15",
+    "method": "HEAD",
+    "status": 200,
+    "redirects": 8,
+    "content_type": "audio/mpeg",
+    "content_length": 91342051,
+    "accept_ranges": "bytes",
+    "limits": "Current desktop reachability only; no media body downloaded or device playback reproduced."
+  }
+}

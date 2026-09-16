@@ -1,0 +1,46 @@
+Building for debugging...
+[Computing dependencies]
+[Using on-disk description]
+[1 / 4]
+[2 / 6] SessionKitTests-product
+/Users/colemiller/Documents/GitHub/spoken-margins-native/Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests.swift:6430:21: warning: class 'FailingWrittenInterjectionRepository' must restate inherited '@unchecked Sendable' conformance
+6428 | }
+6429 | 
+6430 | private final class FailingWrittenInterjectionRepository: InMemorySessionRepository {
+     |                     `- warning: class 'FailingWrittenInterjectionRepository' must restate inherited '@unchecked Sendable' conformance
+6431 |     var failNextInterjectionSave = false
+6432 |     var failNextSessionSave = false
+[5 / 9] SessionKitTests-product
+/Users/colemiller/Documents/GitHub/spoken-margins-native/Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests.swift:6430:21: warning: class 'FailingWrittenInterjectionRepository' must restate inherited '@unchecked Sendable' conformance
+6428 | }
+6429 | 
+6430 | private final class FailingWrittenInterjectionRepository: InMemorySessionRepository {
+     |                     `- warning: class 'FailingWrittenInterjectionRepository' must restate inherited '@unchecked Sendable' conformance
+6431 |     var failNextInterjectionSave = false
+6432 |     var failNextSessionSave = false
+[11 / 13] SessionKitTests-product
+[13 / 13] SessionKitTests-product
+Build complete! (7.78 sec)
+Test Suite 'Selected tests' started at 2026-09-15 17:54:12.480.
+Test Suite 'SessionKitTraceTests.xctest' started at 2026-09-15 17:54:12.482.
+Test Suite 'SessionKitTraceTests.xctest' passed at 2026-09-15 17:54:12.482.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-09-15 17:54:12.483.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.003) seconds
+Test Suite 'Selected tests' started at 2026-09-15 17:54:12.547.
+Test Suite 'SessionKitTests.xctest' started at 2026-09-15 17:54:12.548.
+Test Suite 'SessionKitCoreTests' started at 2026-09-15 17:54:12.548.
+Test Case '-[SessionKitTests.SessionKitCoreTests testSystemSpeechPreservesWhitespaceWordBoundariesAndSourceOffsets]' started.
+/Users/colemiller/Documents/GitHub/spoken-margins-native/Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests.swift:591: error: -[SessionKitTests.SessionKitCoreTests testSystemSpeechPreservesWhitespaceWordBoundariesAndSourceOffsets] : XCTAssertEqual failed: ("Firstsecond") is not equal to ("First second")
+/Users/colemiller/Documents/GitHub/spoken-margins-native/Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests.swift:591: error: -[SessionKitTests.SessionKitCoreTests testSystemSpeechPreservesWhitespaceWordBoundariesAndSourceOffsets] : XCTAssertEqual failed: ("Firstsecond") is not equal to ("First second")
+/Users/colemiller/Documents/GitHub/spoken-margins-native/Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests.swift:591: error: -[SessionKitTests.SessionKitCoreTests testSystemSpeechPreservesWhitespaceWordBoundariesAndSourceOffsets] : XCTAssertEqual failed: ("Firstsecond") is not equal to ("First second")
+/Users/colemiller/Documents/GitHub/spoken-margins-native/Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests.swift:597: error: -[SessionKitTests.SessionKitCoreTests testSystemSpeechPreservesWhitespaceWordBoundariesAndSourceOffsets] : XCTAssertEqual failed: ("meridian-protocol[.]orgmeridiangroup-corp[.]comprojectnightcrawler[.]dev") is not equal to ("meridian-protocol[.]org meridiangroup-corp[.]com projectnightcrawler[.]dev")
+Test Case '-[SessionKitTests.SessionKitCoreTests testSystemSpeechPreservesWhitespaceWordBoundariesAndSourceOffsets]' failed (0.558 seconds).
+Test Suite 'SessionKitCoreTests' failed at 2026-09-15 17:54:13.107.
+	 Executed 1 test, with 4 failures (0 unexpected) in 0.558 (0.559) seconds
+Test Suite 'SessionKitTests.xctest' failed at 2026-09-15 17:54:13.107.
+	 Executed 1 test, with 4 failures (0 unexpected) in 0.558 (0.559) seconds
+Test Suite 'Selected tests' failed at 2026-09-15 17:54:13.107.
+	 Executed 1 test, with 4 failures (0 unexpected) in 0.558 (0.560) seconds
+Note: Some test targets reported failures:
+  - SessionKitTests (XCTest)

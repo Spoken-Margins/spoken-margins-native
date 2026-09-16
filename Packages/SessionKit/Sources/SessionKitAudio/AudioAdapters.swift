@@ -888,10 +888,12 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, @u
 
     public func setPlaybackRate(_ rate: Double) throws {
         let multiplier = Float(max(0.25, min(2.0, rate)))
-        speechRate = max(
+        let updatedRate = max(
             AVSpeechUtteranceMinimumSpeechRate,
             min(AVSpeechUtteranceMaximumSpeechRate, AVSpeechUtteranceDefaultSpeechRate * multiplier)
         )
+        guard speechRate != updatedRate else { return }
+        speechRate = updatedRate
         #if canImport(AVFoundation)
         guard synthesizer.isSpeaking,
               !paused,
@@ -1179,11 +1181,11 @@ extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
         _ synthesizer: AVSpeechSynthesizer,
         didStart utterance: AVSpeechUtterance
     ) {
+        guard synthesizer === self.synthesizer,
+              let chunk = chunksByUtteranceId[ObjectIdentifier(utterance)] else { return }
         activeUtterance = utterance
-        if let chunk = chunksByUtteranceId[ObjectIdentifier(utterance)] {
-            currentOffset = chunk.sourceStart
-            currentRangeLength = 0
-        }
+        currentOffset = chunk.sourceStart
+        currentRangeLength = 0
         startedTargetId = lastTargetId
         pendingStartTargetId = nil
         playbackStartFailure = nil
@@ -1194,7 +1196,8 @@ extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
         willSpeakRangeOfSpeechString characterRange: NSRange,
         utterance: AVSpeechUtterance
     ) {
-        guard let chunk = chunksByUtteranceId[ObjectIdentifier(utterance)] else { return }
+        guard synthesizer === self.synthesizer,
+              let chunk = chunksByUtteranceId[ObjectIdentifier(utterance)] else { return }
         let spokenLength = chunk.spokenText.utf16.count
         let markerStart = min(characterRange.location, spokenLength)
         let markerLength = min(characterRange.length, spokenLength - markerStart)
@@ -1208,6 +1211,7 @@ extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
         _ synthesizer: AVSpeechSynthesizer,
         didFinish utterance: AVSpeechUtterance
     ) {
+        guard synthesizer === self.synthesizer else { return }
         let identifier = ObjectIdentifier(utterance)
         guard let chunk = chunksByUtteranceId.removeValue(forKey: identifier) else { return }
         if activeUtterance === utterance {
@@ -1230,14 +1234,15 @@ extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
         _ synthesizer: AVSpeechSynthesizer,
         didCancel utterance: AVSpeechUtterance
     ) {
+        guard synthesizer === self.synthesizer else { return }
         let identifier = ObjectIdentifier(utterance)
-        let wasPlaybackUtterance = chunksByUtteranceId.removeValue(forKey: identifier) != nil
+        guard chunksByUtteranceId.removeValue(forKey: identifier) != nil else { return }
         if activeUtterance === utterance {
             activeUtterance = nil
         }
         playbackComplete = false
         completedTargetId = nil
-        if wasPlaybackUtterance, pendingStartTargetId == lastTargetId {
+        if pendingStartTargetId == lastTargetId {
             playbackStartFailure = "speech_cancelled_before_start"
         }
         pendingStartTargetId = nil

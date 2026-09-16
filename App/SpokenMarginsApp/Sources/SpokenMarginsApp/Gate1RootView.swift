@@ -4027,9 +4027,9 @@ private struct SettingsScreen: View {
                 #if DEBUG
                 Section("Developer") {
                     DisclosureGroup("Developer tools", isExpanded: $showsDeveloperTools) {
-                        Toggle("Record Device Diagnostics", isOn: $model.developerDiagnosticRecordingEnabled)
+                        Toggle("Record Detailed Device Diagnostics", isOn: $model.developerDiagnosticRecordingEnabled)
                             .accessibilityIdentifier("settings.developer.recordDiagnostics")
-                        Text("Turn on, reproduce the problem, then turn off and Copy Privacy-Safe Diagnostics. Keeps the latest 1,200 events; enabling starts a new recording. Off after app restart.")
+                        Text("Basic playback events are saved locally automatically (latest 300 events, no source text or audio). For detailed sampling, turn on, reproduce, then turn off and Copy Privacy-Safe Diagnostics. Detailed recording keeps 1,200 events and is off after restart.")
                             .font(.caption)
                         Text(model.developerDiagnosticBuild).font(.caption.monospaced())
                         Button("Add Sample Item", action: model.addSampleItem)

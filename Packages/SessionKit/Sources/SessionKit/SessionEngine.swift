@@ -38,12 +38,15 @@ public final class SessionEngine {
     private var streamingBuffers: [String: String] = [:]
     private var spokenPrefixes: [String: Int] = [:]
     private var externallyStreamedTurnId: String?
+    private var playbackStartRecoveryAttemptId: Int?
     private var playbackStartAttemptId = 0
     private var activePlaybackStartAttemptId: Int?
     private var playbackStartPendingAttemptId: Int?
     private var playbackStartPendingTargetId: String?
     private var playbackStartDeadline: Date?
     private var playbackURLOverrides: [String: String] = [:]
+    private var pinnedMediaTransport: (sessionId: String, targetId: String, playbackURL: String?)?
+    private var lastMediaPercentageRepair: (sessionId: String, durationMs: Int)?
     private var pendingPlaybackPosition: PendingPlaybackPosition?
     private var pendingWrittenInterjection: WrittenInterjectionCapture?
 
@@ -313,12 +316,13 @@ public final class SessionEngine {
               session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia else {
             return snapshot
         }
-        guard replaceActivePlayback || !snapshot.status.isPlaybackActive else {
-            // The override is durable in this engine and will be selected by
-            // playCurrentTarget on the next resume. Do not rebuild a live media
-            // player merely because its background download completed.
+        guard replaceActivePlayback else {
+            // A second request can contain different dynamically inserted ads.
+            // Keep this session on its original edition across skips, pauses and
+            // interjections; a new session may select the completed download.
             return snapshot
         }
+        pinnedMediaTransport = nil
         session = try syncCurrentPositionFromAudio(session)
         currentSession = session
         try persistSession(session)
@@ -1145,7 +1149,7 @@ public final class SessionEngine {
             try persistSession(session)
         }
         if let durationMs = durableMediaDurationMs(for: session) {
-            session = try repairMediaPercentages(session, durationMs: durationMs)
+            session = try repairMediaPercentages(session, durationMs: durationMs, forceNotes: true)
         }
         currentSession = session
         publish(status: .paused, phase: session.phase)
@@ -1286,6 +1290,7 @@ public final class SessionEngine {
             captureKind: .written
         )
         try repository.saveInterjection(interjection)
+        lastMediaPercentageRepair = nil
         pendingWrittenInterjection = nil
         do {
             try restoreWrittenInterjectionTransport(wasPlaying: capture.wasPlaying, session: session)
@@ -1511,6 +1516,7 @@ public final class SessionEngine {
                 : nil
         )
         try repository.saveInterjection(interjection)
+        lastMediaPercentageRepair = nil
         if shouldCapturePostResumePodcastEvidence,
            let anchorMediaTimeMs = anchor.mediaTimeMs {
             let evidenceRequest = PostResumeAudioSampleRequest(
@@ -1527,6 +1533,7 @@ public final class SessionEngine {
                 interjection.podcastAnchorEvidenceCaptureStatus = .unavailable
                 interjection.podcastAnchorEvidenceFailureReason = "decoded_playback_sample_unavailable"
                 try repository.saveInterjection(interjection)
+                lastMediaPercentageRepair = nil
             }
         }
         try transcriber.scheduleTranscription(interjection: interjection)
@@ -2990,8 +2997,7 @@ public final class SessionEngine {
             }
             return .confirmed
         case .failed(let message):
-            clearPlaybackStartPending()
-            return .failed(message)
+            return recoverRemotePlaybackStart(targetId: targetId, attemptId: attemptId, failure: message)
         case .pending:
             if playbackStartPendingTargetId != targetId || playbackStartPendingAttemptId != attemptId {
                 playbackStartPendingTargetId = targetId
@@ -3000,10 +3006,44 @@ public final class SessionEngine {
                 return .pending
             }
             if let playbackStartDeadline, now() >= playbackStartDeadline {
-                clearPlaybackStartPending()
-                return .failed("playback_start_timeout")
+                return recoverRemotePlaybackStart(
+                    targetId: targetId, attemptId: attemptId, failure: "playback_start_timeout"
+                )
             }
             return .pending
+        }
+    }
+
+    /// Recreate a stalled remote transport once, just as closing and reopening
+    /// playback does, while retaining the requested chapter rather than a stale
+    /// player observation. A second failure remains terminal for this attempt.
+    private func recoverRemotePlaybackStart(
+        targetId: String, attemptId: Int, failure: String
+    ) -> PlaybackStartStatus {
+        guard playbackStartRecoveryAttemptId != attemptId,
+              let session = currentSession,
+              session.currentTargetId == targetId,
+              session.currentTargetType == .transcriptBackedMedia,
+              session.phase == .itemPlayback,
+              let context = playbackMediaContext(for: session),
+              context.sourceType == .remoteStream,
+              let url = URL(string: context.playbackURL ?? targetId),
+              ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
+            clearPlaybackStartPending()
+            return .failed(failure)
+        }
+        playbackStartRecoveryAttemptId = attemptId
+        do {
+            try audio.stop()
+            protectPlaybackPosition(for: session)
+            try playCurrentTarget(session)
+            playbackStartPendingTargetId = targetId
+            playbackStartPendingAttemptId = attemptId
+            playbackStartDeadline = now().addingTimeInterval(playbackStartTimeout)
+            return .pending
+        } catch {
+            clearPlaybackStartPending()
+            return .failed("\(failure); recovery_failed:\(error.localizedDescription)")
         }
     }
 
@@ -3570,11 +3610,13 @@ public final class SessionEngine {
             }
             mutate(&interjection)
             try repository.saveInterjection(interjection)
+            lastMediaPercentageRepair = nil
             return
         }
         if let memory = repository as? InMemorySessionRepository, var interjection = memory.interjections[id] {
             mutate(&interjection)
             try repository.saveInterjection(interjection)
+            lastMediaPercentageRepair = nil
             return
         }
         guard let session = currentSession else { throw SessionKitError.invalidCommandForState("updateInterjection") }
@@ -3585,10 +3627,12 @@ public final class SessionEngine {
             guard var fallback = all.first(where: { $0.id == id }) else { throw SessionKitError.invalidCommandForState("updateInterjection") }
             mutate(&fallback)
             try repository.saveInterjection(fallback)
+            lastMediaPercentageRepair = nil
             return
         }
         mutate(&interjection)
         try repository.saveInterjection(interjection)
+        lastMediaPercentageRepair = nil
     }
 
     private func ensureWatchPackageRecords(_ package: WatchAudioPackage) throws {
@@ -3667,6 +3711,7 @@ public final class SessionEngine {
             anchorContextStatus: resolved.transcriptSegmentId == nil ? .pending : .ready
         )
         try repository.saveInterjection(interjection)
+        lastMediaPercentageRepair = nil
         try transcriber.scheduleTranscription(interjection: interjection)
         lastScheduledTranscriptionInterjectionId = interjection.id
         lastResolvedMediaAnchor = resolved
@@ -3859,8 +3904,13 @@ public final class SessionEngine {
         }
         let clampedNext = duration.map { max(0, min(next, $0)) } ?? max(0, next)
         updated = mediaSession(updated, movedTo: clampedNext)
-        protectPlaybackPosition(for: updated)
         let reachedEnd = duration.map { $0 > 0 && clampedNext >= $0 } ?? playbackCompleted
+        if snapshot.status == .playing, !reachedEnd {
+            // Keep the current stream/edition. Starting playback here can adopt
+            // a background download whose ad timing differs from the stream.
+            return try seekMedia(toMediaTimeMs: clampedNext)
+        }
+        protectPlaybackPosition(for: updated)
         if reachedEnd {
             updated = markPlaybackComplete(updated, item: item(for: updated))
             currentSession = updated
@@ -3901,6 +3951,9 @@ public final class SessionEngine {
             previous = current - 15_000
         }
         updated = mediaSession(updated, movedTo: previous)
+        if snapshot.status == .playing {
+            return try seekMedia(toMediaTimeMs: updated.position.mediaTimeMs ?? 0)
+        }
         currentSession = updated
         try persistSession(updated)
         protectPlaybackPosition(for: updated)
@@ -4031,6 +4084,10 @@ public final class SessionEngine {
 
     private func playbackMediaContext(for session: Session) -> PlaybackMediaContext? {
         guard let item = currentItem ?? (try? repository.loadItem(id: session.itemId)) else { return nil }
+        if pinnedMediaTransport?.sessionId != session.id || pinnedMediaTransport?.targetId != session.currentTargetId {
+            pinnedMediaTransport = (session.id, session.currentTargetId, playbackURLOverrides[item.id]
+                ?? (item.media?.sourceType == .nativeMediaFile ? item.media?.url : nil))
+        }
         let timeline = sourceTranscriptTimeline(for: session)
         let subtitle = [item.externalReferenceType, item.externalReference]
             .compactMap { value -> String? in
@@ -4046,8 +4103,7 @@ public final class SessionEngine {
             subtitle: subtitle.isEmpty ? nil : subtitle,
             sourceURL: item.media?.url ?? item.externalReference,
             // Native media IDs name library assets; they need not be playable URLs.
-            playbackURL: playbackURLOverrides[item.id]
-                ?? (item.media?.sourceType == .nativeMediaFile ? item.media?.url : nil),
+            playbackURL: pinnedMediaTransport?.playbackURL,
             artworkURL: nil,
             durationMs: item.media?.durationMs ?? timeline?.durationMs,
             sourceType: item.media?.sourceType,
@@ -4162,7 +4218,7 @@ public final class SessionEngine {
         }
     }
 
-    private func repairMediaPercentages(_ session: Session, durationMs: Int) throws -> Session {
+    private func repairMediaPercentages(_ session: Session, durationMs: Int, forceNotes: Bool = false) throws -> Session {
         guard durationMs > 0,
               !isGeneratedTextMedia(item(for: session)?.media) else {
             return session
@@ -4175,6 +4231,8 @@ public final class SessionEngine {
                 try persistSession(updatedSession)
             }
         }
+        guard forceNotes || lastMediaPercentageRepair?.sessionId != session.id
+                || lastMediaPercentageRepair?.durationMs != durationMs else { return updatedSession }
         for var interjection in try repository.loadInterjections(sessionId: session.id)
         where interjection.targetType == .item {
             guard let mediaTimeMs = interjection.anchor.mediaTimeMs else { continue }
@@ -4182,7 +4240,9 @@ public final class SessionEngine {
             guard percent != interjection.roughPercent else { continue }
             interjection.roughPercent = percent
             try repository.saveInterjection(interjection)
+            lastMediaPercentageRepair = nil
         }
+        lastMediaPercentageRepair = (session.id, durationMs)
         return updatedSession
     }
 
