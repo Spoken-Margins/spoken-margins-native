@@ -12,3 +12,13 @@ artifacts/releases/
 
 artifacts/test-runs/
 __pycache__/
+
+# Local review/simulator recordings; keep video binaries out of Git.
+*.[mM][pP]4
+*.[mM][oO][vV]
+*.[mM]4[vV]
+*.[wW][eE][bB][mM]
+*.[aA][vV][iI]
+*.[mM][kK][vV]
+*.[mM][pP][eE][gG]
+*.[mM][pP][gG]

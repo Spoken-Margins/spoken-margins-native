@@ -1,3 +1,5 @@
+> Resolved locally September 16: owner-authorized video history cleanup removed all tracked videos from unpublished commits. See [cleanup and source mapping](video-history-cleanup.md). Original blocker details below are historical; no remote publication was performed.
+
 # Git publication blocker after successful internal distribution
 
 Build 27 is uploaded and Testing in internal Margins (seven testers). Code is committed at `adeb923fc1d081b19dfe9d650b50ac9fb036535a`. The atomic Git push was stopped before publication after preflight found these historical blobs above GitHub’s 100 MiB limit:
