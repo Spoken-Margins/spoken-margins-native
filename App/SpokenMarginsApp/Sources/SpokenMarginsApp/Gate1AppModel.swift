@@ -6058,12 +6058,7 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         #if canImport(AVFoundation) && os(iOS)
-        let recordPermissionIsGranted: Bool
-        if #available(iOS 17.0, *) {
-            recordPermissionIsGranted = AVAudioApplication.shared.recordPermission == .granted
-        } else {
-            recordPermissionIsGranted = AVAudioSession.sharedInstance().recordPermission == .granted
-        }
+        let recordPermissionIsGranted = AVAudioApplication.shared.recordPermission == .granted
         if recordPermissionIsGranted, microphonePermissionRequest == nil {
             diagnostics["lastMicrophonePermissionResult"] = "granted"
             Task { @MainActor [weak self] in

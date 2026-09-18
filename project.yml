@@ -2,7 +2,7 @@ name: SpokenMarginsNative
 options:
   bundleIdPrefix: com.spokenmargins
   deploymentTarget:
-    iOS: "18.0"
+    iOS: "26.0"
 packages:
   SessionKit:
     path: Packages/SessionKit

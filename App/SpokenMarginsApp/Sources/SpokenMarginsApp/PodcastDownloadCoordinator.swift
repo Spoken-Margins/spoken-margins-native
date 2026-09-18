@@ -430,10 +430,8 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
                 self.attempts[record.itemId] = attempt
                 var request = URLRequest(url: url)
                 request.allowsCellularAccess = userInitiated
-                if #available(iOS 13.0, macOS 10.15, *) {
-                    request.allowsExpensiveNetworkAccess = userInitiated
-                    request.allowsConstrainedNetworkAccess = userInitiated
-                }
+                request.allowsExpensiveNetworkAccess = userInitiated
+                request.allowsConstrainedNetworkAccess = userInitiated
                 var reserved = updated
                 reserved.expectedBytes = length
                 self.persist(reserved)

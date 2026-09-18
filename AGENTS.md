@@ -15,6 +15,10 @@ Parallel-agent rules are archived in `docs/parallel-agent-workflow-archive.md`. 
 - Preserve unrelated working-tree changes. Stop broadening verification once required checks pass; rerun only for a changed input, a failure diagnosis, or an unresolved concern. If an unchanged failure persists after diagnosis and a justified retry, report the blocker and continue independent authorized work instead of repeating the same check.
 - Treat model usage and user attention as limited resources, separate from machine execution time. Long-running checks can require substantial execution without requiring repeated agent analysis. Before inspecting progress again, identify what new evidence could change the next action; if none is expected, prefer tool-managed waiting and compact status reporting within platform constraints. Repeated unchanged results are a signal to simplify supervision. Preserve required verification and investigate failures; optimize the overhead around the work.
 
+### Simulator crash incidents
+
+If simulator system processes start producing crash dialogs, stop the active test and shut down the affected simulator. Do not repeat unchanged tests, reboot repeatedly, or switch devices to bypass the incident. Preserve crash evidence, diagnose the failing system state, and apply an evidence-backed repair before a bounded recovery check. A successful recovery check is distinct from app verification. Honor an explicit owner stop before any further simulator boot.
+
 ### Second-edition status
 
 The September 10 redesign implementation and verification are complete; all delegated leases are returned. The single-agent default applies to subsequent tasks. The task-specific agent names, Terra assignments, and usage budget in `docs/second-edition-release-decision.md` and `docs/second-edition-work-packets.md` are historical authorization, not standing assignments for new work.

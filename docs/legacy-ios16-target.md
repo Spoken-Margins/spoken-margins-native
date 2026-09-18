@@ -4,7 +4,7 @@
 
 The product owner retired `SpokenMarginsLegacy` on 2026-08-10 after the final intended user obtained a device capable of running the normal app.
 
-The legacy application, Share extension, Safari extension, targets, and scheme are no longer part of the generated Xcode project or supported validation matrix. The supported app remains `SpokenMarginsApp` on iOS 18+.
+The legacy application, Share extension, Safari extension, targets, and scheme are no longer part of the generated Xcode project or supported validation matrix. At retirement, the supported app was `SpokenMarginsApp` on iOS 18+. The September 16, 2026 platform decision subsequently raised its minimum to iOS/iPadOS 26; see `release-lanes.md`.
 
 ## Consequences
 

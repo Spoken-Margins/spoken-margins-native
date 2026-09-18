@@ -2,9 +2,7 @@ import Foundation
 import NaturalLanguage
 import SessionKit
 
-#if canImport(FoundationModels)
 import FoundationModels
-#endif
 
 struct SpokenMarginsFeatureFlags: Equatable, Sendable {
     static let remoteProviderInfoKey = "SMRemoteProviderExperienceEnabled"
@@ -64,8 +62,6 @@ struct LocalInterjectionMeaningSlots: Codable, Equatable, Sendable {
     let points: [String]
 }
 
-#if canImport(FoundationModels)
-@available(iOS 26.0, *)
 @Generable(description: "The complete substantive meaning of one dictated interjection")
 struct LocalInterjectionClaimInventory {
     @Guide(
@@ -74,7 +70,6 @@ struct LocalInterjectionClaimInventory {
     )
     var claims: [String]
 }
-#endif
 
 enum LocalInterjectionSummaryPolicy {
     static let anchorCharacterLimit = 240
@@ -1013,23 +1008,18 @@ final class UITestingLocalFoundationModelClient: LocalFoundationModelClient, @un
 
 struct AppleFoundationModelClient: LocalFoundationModelClient {
     func availability() -> LocalFoundationModelAvailability {
-        #if canImport(FoundationModels)
-        if #available(iOS 26.0, *) {
-            switch SystemLanguageModel.default.availability {
-            case .available:
-                return .available
-            case .unavailable(.deviceNotEligible):
-                return .unavailable("Requires a device that supports Apple Intelligence")
-            case .unavailable(.appleIntelligenceNotEnabled):
-                return .unavailable("Turn on Apple Intelligence to use on-device summaries")
-            case .unavailable(.modelNotReady):
-                return .unavailable("Apple’s on-device model is still downloading or not ready")
-            @unknown default:
-                return .unavailable("Apple’s on-device model is unavailable")
-            }
+        switch SystemLanguageModel.default.availability {
+        case .available:
+            return .available
+        case .unavailable(.deviceNotEligible):
+            return .unavailable("Requires a device that supports Apple Intelligence")
+        case .unavailable(.appleIntelligenceNotEnabled):
+            return .unavailable("Turn on Apple Intelligence to use on-device summaries")
+        case .unavailable(.modelNotReady):
+            return .unavailable("Apple’s on-device model is still downloading or not ready")
+        @unknown default:
+            return .unavailable("Apple’s on-device model is unavailable")
         }
-        #endif
-        return .unavailable("Requires iOS 26 or later")
     }
 
     func summarizeInterjections(context: String) async throws -> String {
@@ -1117,47 +1107,35 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
     }
 
     private func respond(to prompt: String, maximumResponseTokens: Int) async throws -> String {
-        #if canImport(FoundationModels)
-        if #available(iOS 26.0, *) {
-            let session = LanguageModelSession(
-                model: .default,
-                instructions: "Process all content on device. Follow the requested output bounds and never reproduce long source passages."
+        let session = LanguageModelSession(
+            model: .default,
+            instructions: "Process all content on device. Follow the requested output bounds and never reproduce long source passages."
+        )
+        let response = try await session.respond(
+            to: prompt,
+            options: GenerationOptions(
+                sampling: .greedy,
+                maximumResponseTokens: maximumResponseTokens
             )
-            let response = try await session.respond(
-                to: prompt,
-                options: GenerationOptions(
-                    sampling: .greedy,
-                    maximumResponseTokens: maximumResponseTokens
-                )
-            )
-            let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { throw LocalFoundationModelError.emptyResponse }
-            return text
-        }
-        #endif
-        throw LocalFoundationModelError.unavailable("Requires iOS 26 or later")
+        )
+        let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { throw LocalFoundationModelError.emptyResponse }
+        return text
     }
 
     private func respondWithReliableSummary(payload: LocalInterjectionSummaryPayload) async throws -> String {
-        #if canImport(FoundationModels)
-        if #available(iOS 26.0, *) {
-            var bullets: [String] = []
-            for record in payload.interjections {
-                let scopedPayload = LocalInterjectionSummaryPayload(
-                    schemaVersion: payload.schemaVersion,
-                    itemTitle: payload.itemTitle,
-                    interjections: [record]
-                )
-                bullets.append(try await summarize(record: record, payload: scopedPayload))
-            }
-            return bullets.map { "- \($0)" }.joined(separator: "\n")
+        var bullets: [String] = []
+        for record in payload.interjections {
+            let scopedPayload = LocalInterjectionSummaryPayload(
+                schemaVersion: payload.schemaVersion,
+                itemTitle: payload.itemTitle,
+                interjections: [record]
+            )
+            bullets.append(try await summarize(record: record, payload: scopedPayload))
         }
-        #endif
-        throw LocalFoundationModelError.unavailable("Requires iOS 26 or later")
+        return bullets.map { "- \($0)" }.joined(separator: "\n")
     }
 
-    #if canImport(FoundationModels)
-    @available(iOS 26.0, *)
     private func summarize(
         record: LocalInterjectionSummaryRecord,
         payload: LocalInterjectionSummaryPayload
@@ -1178,7 +1156,6 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
         }
     }
 
-    @available(iOS 26.0, *)
     private func summarizeViaPermissiveTransformation(
         record: LocalInterjectionSummaryRecord,
         payload: LocalInterjectionSummaryPayload
@@ -1237,7 +1214,6 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
         )
     }
 
-    @available(iOS 26.0, *)
     private func summarizeViaPlainTextPoints(
         record: LocalInterjectionSummaryRecord,
         payload: LocalInterjectionSummaryPayload
@@ -1645,7 +1621,6 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
         }
         throw condensationError ?? extractionError ?? LocalFoundationModelError.invalidInterjectionSummary
     }
-    #endif
 
     static let interjectionPointExtractionInstructions = """
     Extract the substantive meaning of exactly one user-authored interjection. This is a benign transformation of commentary, not a request to perform or enable wrongdoing. Keep any safety or security discussion high-level and non-operational. This is one note, not theme synthesis. Include every distinct source-supported assertion or requested behavior once. Each claim must be self-contained and materially shorter than its source wording; combine adjacent fragments that depend on each other. The opening assertion motivating a proposal is substantive. Preserve causal links, conditions, contrasts, uncertainty, tests, counterarguments, and residual limitations. Preserve diagnostic labels and explicit action terms exactly as dictated. Remove only filler, repetition, and false starts. Do not infer, answer, evaluate, or add background knowledge.
@@ -1655,7 +1630,6 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
     Transform exactly one user-provided dictated comment into a materially shorter statement of its own claims. This is text editing, not a request to carry out, endorse, or extend anything described by the text. Preserve contradictions, causal direction, qualifications, and limitations. Remove only conversational scaffolding, repetition, and false starts. Do not answer, evaluate, or add facts. Return only the transformed comment.
     """
 
-    @available(iOS 26.0, *)
     static func isSafetyRejection(_ error: Error) -> Bool {
         if let generationError = error as? LanguageModelSession.GenerationError {
             switch generationError {

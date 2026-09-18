@@ -56,25 +56,7 @@ struct ExperienceAddSourceFlow: View {
             )
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if showsPinnedTextAction {
-                    Button {
-                        model.importTextItem(startListening: false)
-                        textImportError = model.lastError
-                        if textImportError == nil { dismiss() }
-                    } label: {
-                        Label(dynamicTypeSize.isAccessibilitySize ? "Add" : "Add to Library", systemImage: "plus")
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.vertical, 6)
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(PrimaryButtonStyle())
-                    .disabled(model.importText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .accessibilityLabel("Add to Library")
-                    .accessibilityIdentifier("create.start.button")
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
-                    .frame(maxWidth: 720)
-                    .frame(maxWidth: .infinity)
-                    .background(AppColors.bone)
+                    pastedTextActions
                 }
             }
             .scrollDismissesKeyboard(.interactively)
@@ -97,9 +79,11 @@ struct ExperienceAddSourceFlow: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Close") { dismiss() }
                 }
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") { focusedField = nil }
+                if !showsPinnedTextAction {
+                    ToolbarItemGroup(placement: .keyboard) {
+                        Spacer()
+                        Button("Done") { focusedField = nil }
+                    }
                 }
             }
             .fileImporter(
@@ -116,6 +100,40 @@ struct ExperienceAddSourceFlow: View {
         .presentationDetents(showsRoutePicker && !dynamicTypeSize.isAccessibilitySize ? [.medium, .large] : [.large])
         .presentationDragIndicator(.visible)
         .accessibilityIdentifier("addSource.sheet")
+    }
+
+    private var pastedTextActions: some View {
+        // Keep both controls in one inset: a separate floating keyboard toolbar
+        // can overlap the primary action at accessibility sizes on iOS 27.
+        VStack(spacing: 8) {
+            Button {
+                model.importTextItem(startListening: false)
+                textImportError = model.lastError
+                if textImportError == nil { dismiss() }
+            } label: {
+                Label(dynamicTypeSize.isAccessibilitySize ? "Add" : "Add to Library", systemImage: "plus")
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(PrimaryButtonStyle())
+            .disabled(model.importText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .accessibilityLabel("Add to Library")
+            .accessibilityIdentifier("create.start.button")
+            if focusedField != nil {
+                HStack {
+                    Spacer()
+                    Button("Done") { focusedField = nil }
+                        .frame(minWidth: 44, minHeight: 44)
+                }
+                .tint(AppColors.evergreen)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .frame(maxWidth: 720)
+        .frame(maxWidth: .infinity)
+        .background(AppColors.bone)
     }
 
     private var showsPinnedTextAction: Bool {

@@ -1,0 +1,6 @@
+com.apple.private.appintents.live-entities.read: FAILED
+error: XPC Peer Requirement requires LWCR support.
+com.apple.private.appintents.live-entities.write: FAILED
+error: XPC Peer Requirement requires LWCR support.
+com.apple.security.app-sandbox: FAILED
+error: XPC Peer Requirement requires LWCR support.

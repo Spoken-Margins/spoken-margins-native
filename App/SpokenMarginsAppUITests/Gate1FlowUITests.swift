@@ -986,6 +986,9 @@ final class Gate1FlowUITests: XCTestCase {
     }
 
     func testBuild23LayoutRegressionsRemainOperableAtAccessibilityType() throws {
+        // This multi-screen route took 120s on iOS 26 and exceeded the default
+        // allowance on iOS 27; retain its assertions within the plan's 180s cap.
+        executionTimeAllowance = 180
         app.terminate()
         app.launchArguments += [
             "-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue,
@@ -1041,6 +1044,12 @@ final class Gate1FlowUITests: XCTestCase {
             addToLibrary.frame.maxY,
             keyboardTop,
             "The Add Source action is covered by the keyboard or its accessory toolbar."
+        )
+        XCTAssertTrue(keyboardDone.isHittable)
+        XCTAssertLessThanOrEqual(
+            keyboardDone.frame.maxY,
+            app.keyboards.firstMatch.frame.minY,
+            "The keyboard dismissal action must also remain above the keyboard."
         )
         captureScreen(named: "second-edition-add-text-keyboard-accessibility")
         keyboardDone.tap()

@@ -18,6 +18,69 @@ spec.loader.exec_module(verification)
 
 
 class VerificationTests(unittest.TestCase):
+    def test_any_simulator_crash_stops_command_and_shuts_down(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'test')
+            run.manifest['destination'] = {'udid': 'synthetic-device'}
+            run.crash_baseline = {}
+            with patch.object(verification, 'new_crash', return_value=Path('WidgetRenderer_Default.ips')), \
+                    patch.object(verification.subprocess, 'run') as shutdown:
+                shutdown.return_value.returncode = 0
+                with self.assertRaises(RuntimeError):
+                    run.command('crash-check', [sys.executable, '-c', 'import time; time.sleep(60)'])
+                self.assertEqual(shutdown.call_args.args[0],
+                                 ['xcrun', 'simctl', 'shutdown', 'synthetic-device'])
+            step = run.manifest['steps'][-1]
+            self.assertEqual(step['simulator_crash_report'], 'WidgetRenderer_Default.ips')
+            self.assertEqual(step['exit_code'], 124)
+
+    def simulator_inventory(self):
+        return {
+            f'com.apple.CoreSimulator.SimRuntime.iOS-{version}': [{
+                'udid': str(version), 'name': 'Renamed verification device',
+                'state': 'Booted' if version == 18 else 'Shutdown', 'isAvailable': True,
+                'deviceTypeIdentifier': 'com.apple.CoreSimulator.SimDeviceType.iPhone-17',
+            }] for version in (18, 26, 27)
+        }
+
+    def test_simulator_selection_excludes_old_os_and_recognizes_renamed_phones(self):
+        devices = self.simulator_inventory()
+        self.assertEqual(verification.select_simulator(devices)['udid'], '27')
+        devices['com.apple.CoreSimulator.SimRuntime.iOS-26'][0]['state'] = 'Booted'
+        self.assertEqual(verification.select_simulator(devices)['udid'], '26')
+        self.assertEqual(verification.select_simulator(devices, ios=27)['udid'], '27')
+
+    def test_requested_os_or_device_never_silently_falls_back(self):
+        devices = self.simulator_inventory()
+        for arguments in ({'device': '18'}, {'ios': 18}, {'ios': 28},
+                          {'device': 'missing'}, {'device': '26', 'ios': 27}):
+            with self.subTest(arguments=arguments), self.assertRaisesRegex(RuntimeError, 'supported simulator'):
+                verification.select_simulator(devices, **arguments)
+        devices['com.apple.CoreSimulator.SimRuntime.iOS-27'][0]['isAvailable'] = False
+        with self.assertRaises(RuntimeError):
+            verification.select_simulator(devices, ios=27)
+
+    def test_explicit_ipad_is_supported_but_not_selected_as_default_phone(self):
+        devices = self.simulator_inventory()
+        tablet = devices['com.apple.CoreSimulator.SimRuntime.iOS-27'][0]
+        tablet['deviceTypeIdentifier'] = 'com.apple.CoreSimulator.SimDeviceType.iPad-Pro'
+        self.assertEqual(verification.select_simulator(devices)['udid'], '26')
+        self.assertEqual(verification.select_simulator(devices, device='27')['udid'], '27')
+
+    def test_non_ios_runtime_is_not_a_supported_destination(self):
+        devices = self.simulator_inventory()
+        devices['com.apple.CoreSimulator.SimRuntime.tvOS-27'] = devices.pop(
+            'com.apple.CoreSimulator.SimRuntime.iOS-27')
+        with self.assertRaises(RuntimeError):
+            verification.select_simulator(devices, device='27')
+
+    def test_simulator_minimum_matches_shipping_targets(self):
+        import re
+        project = (inventory.ROOT / 'project.yml').read_text()
+        package = (inventory.ROOT / 'Packages/SessionKit/Package.swift').read_text()
+        self.assertEqual(int(re.search(r'iOS: "(\d+)\.0"', project)[1]), verification.MINIMUM_IOS_MAJOR)
+        self.assertEqual(int(re.search(r'\.iOS\("(\d+)\.0"\)', package)[1]), verification.MINIMUM_IOS_MAJOR)
+
     def test_browser_and_surface_inputs_invalidate_build_identity(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

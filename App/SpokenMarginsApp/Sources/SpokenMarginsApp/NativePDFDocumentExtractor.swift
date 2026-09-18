@@ -88,20 +88,6 @@ enum NativePDFDocumentExtractor {
 
     private static func extract(from document: PDFDocument) async throws -> NativePDFImportExtraction {
         let baselineMarkdown = try? PDFStructuredTextExtractor.markdown(from: document)
-        guard #available(iOS 26.0, *) else {
-            guard let baselineMarkdown else {
-                throw PDFStructuredTextExtractor.ExtractionError.noExtractableText
-            }
-            return NativePDFImportExtraction(
-                markdown: baselineMarkdown,
-                documentStructure: PDFDocumentStructure(
-                    extractionEngine: .pdfKit,
-                    analysisStatus: .unavailableOnOS,
-                    pageCount: document.pageCount,
-                    analyzedPageCount: 0
-                )
-            )
-        }
 
         let processInfo = ProcessInfo.processInfo
         if enhancedAnalysisShouldPause(
@@ -130,17 +116,13 @@ enum NativePDFDocumentExtractor {
             markdown: try PDFStructuredTextExtractor.markdown(from: document),
             documentStructure: PDFDocumentStructure(
                 extractionEngine: .pdfKit,
-                analysisStatus: {
-                    if #available(iOS 26.0, *) { return .partial }
-                    return .unavailableOnOS
-                }(),
+                analysisStatus: .partial,
                 pageCount: document.pageCount,
                 analyzedPageCount: 0
             )
         )
     }
 
-    @available(iOS 26.0, *)
     private static func enhancedExtraction(
         from document: PDFDocument,
         baselineMarkdown: String?
@@ -279,7 +261,6 @@ enum NativePDFDocumentExtractor {
         return page.thumbnail(of: size, for: .cropBox)
     }
 
-    @available(iOS 26.0, *)
     private static func structuredTable(
         from table: DocumentObservation.Container.Table,
         page: PDFPage,
@@ -323,7 +304,6 @@ enum NativePDFDocumentExtractor {
         )
     }
 
-    @available(iOS 26.0, *)
     private static func exactPDFText(in normalizedBounds: CGRect, page: PDFPage) -> String? {
         guard page.rotation % 360 == 0 else { return nil }
         let cropBounds = page.bounds(for: .cropBox)

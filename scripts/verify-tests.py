@@ -14,6 +14,8 @@ import subprocess
 import sys
 import time
 
+from check_posterboard_repair import new_crash
+
 from test_inventory import ROOT, plan_tests, swift_tests, validate
 
 PLANS = {
@@ -24,6 +26,35 @@ PLANS = {
     'speech-canary': ('SpokenMarginsUISeams', 'SpeechCanary', 1000),
     'release': ('SpokenMarginsReleaseTests', 'Release', 3600),
 }
+
+# Keep aligned with project.yml and the SessionKit iOS deployment target.
+MINIMUM_IOS_MAJOR = 26
+
+
+def select_simulator(devices, device=None, ios=None):
+    """Reject unsupported destinations; prefer a booted phone, then newest OS."""
+    candidates = []
+    for runtime, group in devices.items():
+        match = re.fullmatch(r'com\.apple\.CoreSimulator\.SimRuntime\.iOS-(\d+)(?:-(\d+))?(?:-(\d+))?', runtime)
+        if not match:
+            continue
+        version = tuple(int(part or 0) for part in match.groups())
+        if version[0] < MINIMUM_IOS_MAJOR or (ios is not None and version[0] != ios):
+            continue
+        for entry in group:
+            if not entry.get('isAvailable', False):
+                continue
+            if device:
+                if entry['udid'] != device:
+                    continue
+            elif '.iPhone-' not in entry.get('deviceTypeIdentifier', ''):
+                continue
+            candidates.append((entry['state'] == 'Booted', version, entry['udid'],
+                               dict(entry, runtime=runtime)))
+    if not candidates:
+        raise RuntimeError(f'No matching supported simulator (iOS {MINIMUM_IOS_MAJOR}+). '
+                           'Supply --ios or --device with an available supported destination.')
+    return sorted(candidates, key=lambda candidate: candidate[:3], reverse=True)[0][3]
 
 
 def capture(command):
@@ -88,6 +119,7 @@ class Run:
         self.manifest = {'plan': plan, 'head': capture(['git', 'rev-parse', 'HEAD']),
                          'branch': capture(['git', 'branch', '--show-current']),
                          'input_sha256': input_identity(), 'status': 'running', 'steps': []}
+        self.crash_baseline = None
         self.save()
 
     def save(self):
@@ -100,12 +132,30 @@ class Run:
         self.save()
         print(f'{name} …', flush=True)
         start = time.monotonic()
+        device = self.manifest.get('destination', {}).get('udid')
+        reports = Path.home() / 'Library/Logs/DiagnosticReports'
+        if device and self.crash_baseline is None:
+            if not reports.is_dir():
+                raise RuntimeError('Simulator crash reports are unavailable')
+            self.crash_baseline = {p: (p.stat().st_mtime_ns, p.stat().st_size)
+                                   for p in reports.glob('*.ips')}
         with (self.output / f'{name}.log').open('w') as log:
             process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
                                        start_new_session=True)
             try:
-                result = process.wait(timeout=timeout)
-            except (subprocess.TimeoutExpired, KeyboardInterrupt):
+                while True:
+                    if device and (report := new_crash(reports, self.crash_baseline, device)):
+                        entry['simulator_crash_report'] = str(report)
+                        raise InterruptedError('Simulator process crashed')
+                    remaining = timeout - (time.monotonic() - start)
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired(args, timeout)
+                    try:
+                        result = process.wait(timeout=min(0.25, remaining))
+                        break
+                    except subprocess.TimeoutExpired:
+                        continue
+            except (subprocess.TimeoutExpired, KeyboardInterrupt, InterruptedError):
                 entry['interrupted'] = True
                 os.killpg(process.pid, signal.SIGTERM)
                 try:
@@ -114,6 +164,10 @@ class Run:
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait()
                 result = 124
+                if entry.get('simulator_crash_report'):
+                    shutdown = subprocess.run(['xcrun', 'simctl', 'shutdown', device],
+                                              stdout=log, stderr=subprocess.STDOUT, timeout=20)
+                    entry['simulator_shutdown_exit'] = shutdown.returncode
         entry.update(exit_code=result, seconds=round(time.monotonic() - start, 3))
         text = (self.output / f'{name}.log').read_text(errors='replace')
         errors = []
@@ -158,16 +212,12 @@ class Run:
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError('Inputs changed during fast verification')
 
-    def xcode(self, plan, device, rebuild):
+    def xcode(self, plan, device, rebuild, ios=None):
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError('Inputs changed before Xcode verification')
         scheme, name, timeout = PLANS[plan]
         devices = json.loads(capture(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
-        available = [dict(d, runtime=runtime) for runtime, group in devices.items() for d in group]
-        chosen = next((d for d in available if d['udid'] == device), None) if device else next(
-            (d for d in available if d['name'].startswith('iPhone')), None)
-        if chosen is None:
-            raise RuntimeError('No matching simulator. Supply --device with an available simulator UDID.')
+        chosen = select_simulator(devices, device, ios)
         self.manifest['destination'] = chosen
         self.command('generate', ['xcodegen', 'generate'])
         identity = input_identity()
@@ -194,6 +244,7 @@ class Run:
         self.command('simulator-ready', ['xcrun', 'simctl', 'bootstatus', chosen['udid'], '-b'], timeout=180)
         expected = plan_tests(ROOT, name)
         self.command('xcode-tests', base + ['test-without-building', '-parallel-testing-enabled', 'NO',
+                     '-collect-test-diagnostics', 'never',
                      '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(self.output / 'tests.xcresult')],
                      timeout=timeout, expected=expected, tests=True)
         if input_identity() != identity:
@@ -203,7 +254,8 @@ class Run:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--plan', choices=['fast', *PLANS], default='fast')
-    parser.add_argument('--device', help='Simulator UDID; defaults to the first available iPhone')
+    parser.add_argument('--device', help='Supported simulator UDID (including iPad); overrides phone preference')
+    parser.add_argument('--ios', type=int, help='Required iOS major version, e.g. 26 or 27; never falls back to another OS')
     parser.add_argument('--rebuild', action='store_true', help='Ignore the compatible build stamp')
     parser.add_argument('--output', type=Path, help='New evidence directory')
     parser.add_argument('--list', action='store_true', help='Inspect selection without running tests')
@@ -224,7 +276,7 @@ def main():
             if args.plan in ('fast', 'release'):
                 run.fast()
             if args.plan != 'fast':
-                run.xcode(args.plan, args.device, args.rebuild)
+                run.xcode(args.plan, args.device, args.rebuild, args.ios)
             if input_identity() != run.manifest['input_sha256']:
                 raise RuntimeError('Inputs changed during verification; rerun on a stable source state')
             run.manifest['status'] = 'verified'

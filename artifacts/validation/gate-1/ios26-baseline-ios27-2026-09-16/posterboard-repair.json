@@ -1,0 +1,38 @@
+{
+  "device": "6EA9B511-6F76-4AC0-BBDC-CFF819D78A9B",
+  "state_before": "Shutdown",
+  "runtime_build": "24A434",
+  "malformed_configurations": [
+    "61/Extensions/com.apple.ClockPoster.ClockPosterExtension/configurations/A3043A77-D9C2-4AC9-B107-EDBC6AE58E84",
+    "61/Extensions/com.apple.ClockPoster.ClockPosterExtension/configurations/6726670B-62EA-45ED-933A-1FF9D97FB41A",
+    "61/Extensions/com.apple.ClockPoster.ClockPosterExtension/configurations/F2DC5E4B-36F4-4B90-86A8-0FA2B708BBE4",
+    "61/Extensions/com.apple.ClockPoster.ClockPosterExtension/configurations/4932087A-9740-45C7-8FCB-A6A02A704428",
+    "61/Extensions/com.apple.ClockPoster.ClockPosterExtension/configurations/F7D87150-7FE7-42BC-A148-45BE1616850B"
+  ],
+  "moves": [
+    {
+      "original": "/Users/colemiller/Library/Developer/CoreSimulator/Devices/6EA9B511-6F76-4AC0-BBDC-CFF819D78A9B/data/Library/Application Support/PRBPosterExtensionDataStore",
+      "backup": "/Users/colemiller/Library/Developer/CoreSimulator/RepairBackups/posterboard-20260916-103931/6EA9B511-6F76-4AC0-BBDC-CFF819D78A9B/Library/Application Support/PRBPosterExtensionDataStore",
+      "file_count": 1806
+    },
+    {
+      "original": "/Users/colemiller/Library/Developer/CoreSimulator/Devices/6EA9B511-6F76-4AC0-BBDC-CFF819D78A9B/data/Library/Preferences/com.apple.PosterBoard.plist",
+      "backup": "/Users/colemiller/Library/Developer/CoreSimulator/RepairBackups/posterboard-20260916-103931/6EA9B511-6F76-4AC0-BBDC-CFF819D78A9B/Library/Preferences/com.apple.PosterBoard.plist",
+      "file_count": 1
+    },
+    {
+      "original": "/Users/colemiller/Library/Developer/CoreSimulator/Devices/6EA9B511-6F76-4AC0-BBDC-CFF819D78A9B/data/Library/Preferences/com.apple.PosterBoard.unprotectedUserDefaults.plist",
+      "backup": "/Users/colemiller/Library/Developer/CoreSimulator/RepairBackups/posterboard-20260916-103931/6EA9B511-6F76-4AC0-BBDC-CFF819D78A9B/Library/Preferences/com.apple.PosterBoard.unprotectedUserDefaults.plist",
+      "file_count": 1
+    }
+  ],
+  "verification": {
+    "status": "verified",
+    "evidence": "artifacts/test-runs/posterboard-recovery-20260916/result.json",
+    "configurations": 8,
+    "clock_configurations": 5,
+    "missing_identifiers": [],
+    "stable_seconds": 60,
+    "new_crashes": 0
+  }
+}

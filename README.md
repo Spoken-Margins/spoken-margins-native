@@ -8,7 +8,7 @@ Ship a dependable personal listening environment: import an article or podcast, 
 
 The active recovery boundary is:
 
-- iPhone/iPad on iOS 18+
+- iPhone/iPad on iOS/iPadOS 26+
 - article, podcast, Safari/share-sheet, plain-text/Markdown, Obsidian, and text-based PDF intake
 - installed system voices through `AVSpeechSynthesizer`, plus the bundled James and Lily on-device voices after terms acceptance
 - native lock-screen transport through Now Playing for podcasts, prepared audio, and immediate live speech
@@ -19,7 +19,7 @@ The active recovery boundary is:
 
 OpenAI and other third-party AI providers, API-key settings, remote Discuss, AI-generated Listening Maps, new Watch playback/sync work, standalone Home Screen widgets, bundled Piper, and dedicated car behavior are not part of the active release. Supertonic is the supported local neural TTS runtime; legacy Kokoro/MLX runtime code is no longer shipped. The WidgetKit extension remains only because ActivityKit requires it to host the listening Live Activity.
 
-The former iOS 16.7 compatibility app was retired by product-owner decision on 2026-08-10. The repository now has one supported iOS app and one release boundary: iOS 18+. See [the legacy retirement record](docs/legacy-ios16-target.md).
+The former iOS 16.7 compatibility app was retired by product-owner decision on 2026-08-10. The repository now has one supported iOS app and one release boundary: iOS/iPadOS 26+. The current verification matrix covers iOS/iPadOS 26 and 27 using Xcode 27; device-dependent local intelligence remains optional. See [the legacy retirement record](docs/legacy-ios16-target.md).
 
 ## Repository Map
 
