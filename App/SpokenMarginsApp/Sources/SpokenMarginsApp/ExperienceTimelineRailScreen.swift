@@ -23,6 +23,9 @@ struct ExperienceTimelineRailScreen: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.bottom, 12)
 
+                        ConversationNavigationOptions()
+                            .padding(.bottom, 12)
+
                         if entries.isEmpty {
                             SMExperienceEmptyState(
                                 systemImage: "list.bullet.rectangle",
@@ -68,6 +71,8 @@ struct ExperienceTimelineRailScreen: View {
                 .onReceive(model.$selectedItem) { item in
                     refreshEntries(from: item)
                 }
+                .onChange(of: model.conversationScope) { _, _ in refreshEntries(from: model.selectedItem) }
+                .onChange(of: model.heardConversationMargins) { _, _ in refreshEntries(from: model.selectedItem) }
                 .onChange(of: responseEditorFocused) { _, isFocused in
                     guard isFocused else { return }
                     Task { @MainActor in
@@ -242,6 +247,8 @@ struct ExperienceTimelineRailScreen: View {
                 let row = SharedMarginRow(interjection: margin, layer: layer, itemTitle: item.title)
                 let position = margin.resolution.localMediaTimeMs.map {
                     max(0, min(100, Int((Double($0) / Double(duration) * 100).rounded())))
+                } ?? margin.resolution.localStartChar.map {
+                    min(100, max(0, $0 * 100 / max(1, item.text.count)))
                 } ?? margin.anchorEvidence.roughPercent ?? 100
                 result.append(TimelineRailEntry(
                     id: "shared.\(row.id)", position: position, rank: 1,
@@ -337,14 +344,25 @@ struct ExperienceTimelineRailScreen: View {
     }
 
     private func refreshEntries(from item: ItemDetailState) {
-        entries = Self.makeEntries(from: item, sessionID: model.snapshot.sessionId, playbackDurationMs: model.snapshot.currentPlaybackDurationMs)
+        entries = Self.makeEntries(from: item, sessionID: model.snapshot.sessionId, playbackDurationMs: model.snapshot.currentPlaybackDurationMs).filter { entry in
+            guard model.conversationScope != .all else { return true }
+            let id: String
+            switch entry.action {
+            case .margin(let row): id = "local:\(row.interjection.sessionId):\(row.interjection.id)"
+            case .sharedMargin(let row): id = "shared:\(row.layer.id):\(row.interjection.id)"
+            default: return false
+            }
+            return model.conversationScope != .newMargins || !model.heardConversationMargins.contains(id)
+        }
     }
 
     private static func currentSessionMargins(in item: ItemDetailState, sessionID: String?) -> [MarginRow] {
-        let sessionDate = item.sessions.first(where: { $0.id == sessionID })?.updatedAt
-        return item.interjections
-            .filter { $0.status == "active" && (sessionID == nil || $0.sessionId == sessionID) }
-            .map { MarginRow(interjection: $0, itemTitle: item.title, sessionDate: sessionDate) }
+        var seen: Set<String> = []
+        return (item.itemInterjections + item.interjections)
+            .filter { $0.status == "active" && ($0.targetType == .item || sessionID == nil || $0.sessionId == sessionID) }
+            .filter { seen.insert("\($0.sessionId):\($0.id)").inserted }
+            .map { note in MarginRow(interjection: note, itemTitle: item.title,
+                sessionDate: item.sessions.first(where: { $0.id == note.sessionId })?.updatedAt) }
     }
 
     private static func turnPosition(_ turn: ConversationTurn, in item: ItemDetailState, visited: Set<String>) -> Int {

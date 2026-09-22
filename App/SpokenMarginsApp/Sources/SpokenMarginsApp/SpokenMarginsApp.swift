@@ -55,6 +55,11 @@ struct SpokenMarginsApp: App {
 
     init() {
         let model = Gate1AppModel.makeApplicationModel()
+        // UI fixtures must be installed before scene/startup tasks open the store.
+        // Otherwise a previous route can win the lazy-bootstrap race.
+        if CommandLine.arguments.contains("--ui-testing") {
+            model.bootstrapLibraryIfNeeded()
+        }
         _model = StateObject(wrappedValue: model)
         _sharingCoordinator = StateObject(
             wrappedValue: Build23SharingCoordinator(model: model)

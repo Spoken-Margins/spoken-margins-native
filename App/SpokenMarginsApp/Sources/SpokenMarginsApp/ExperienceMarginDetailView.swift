@@ -8,7 +8,7 @@ struct ExperienceMarginDetailView: View {
     @State private var actionFeedback: UserFeedbackEvent?
     let row: MarginRow
 
-    private enum NavigationIntent { case moment, item }
+    private enum NavigationIntent { case moment, item, context, conversation }
     private var current: MarginRow { model.marginRows.first { $0.id == row.id } ?? row }
 
     var body: some View {
@@ -57,6 +57,16 @@ struct ExperienceMarginDetailView: View {
                             model.retryAnchorContext(current.interjection)
                         }
                         .disabled(model.isRetryingAnchorContext(current.interjection))
+                    }
+                    if current.interjection.targetType == .item {
+                        Button("Play Margin", systemImage: "play.fill") {
+                            pendingNavigation = .conversation
+                            dismiss()
+                        }
+                        Button("Play with context", systemImage: "backward.end.alt") {
+                            pendingNavigation = .context
+                            dismiss()
+                        }
                     }
                     Button("Open Item", systemImage: "doc.text.magnifyingglass") {
                         pendingNavigation = .item
@@ -110,6 +120,8 @@ struct ExperienceMarginDetailView: View {
                 if model.isPlayingInterjectionAudio(current.interjection) { model.stopInterjectionAudioPlayback() }
                 switch pendingNavigation {
                 case .moment: model.playMarginMoment(current)
+                case .context: model.playConversationMargin(current.interjection, withContext: true)
+                case .conversation: model.playConversationMargin(current.interjection, withContext: false)
                 case .item: model.openItem(id: current.interjection.itemId)
                 case nil: break
                 }

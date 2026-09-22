@@ -51,10 +51,10 @@ final class ImportedMarginRemoteControls {
         })
     }
 
-    func publish(sender: String, elapsed: Double, duration: Double, rate: Double) {
+    func publish(sender: String, elapsed: Double, duration: Double, rate: Double, title: String = "Shared Margin") {
         Self.metadataOwner = registrations.id
         var info: [String: Any] = [
-            MPMediaItemPropertyTitle: "Shared Margin",
+            MPMediaItemPropertyTitle: title,
             MPMediaItemPropertyArtist: sender,
             MPNowPlayingInfoPropertyPlaybackRate: rate,
             MPNowPlayingInfoPropertyIsLiveStream: false

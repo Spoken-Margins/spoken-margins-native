@@ -6,12 +6,17 @@ final class EmojiArticlePlaybackUITests: XCTestCase {
     func testExactEmojiArticleCompletesAfterPauseAndResumeNearCrashPoint() throws {
         let article = try Self.fixtureText()
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-testing"]
+        app.launchArguments = ["--ui-testing",
+            "-libraryContentTypeFilter", "all", "-libraryListeningStateFilter", "unfinished",
+            "-libraryOfflineStateFilter", "all", "-librarySort", "recently_added",
+            "-libraryUnfinishedDefaultApplied", "YES"]
         app.launchEnvironment["SPOKEN_MARGINS_UI_TESTING"] = "1"
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TITLE"] = title
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_TEXT"] = article
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SOURCE_URL"] = Self.sourceURL
         app.launchEnvironment["SPOKEN_MARGINS_UI_TEST_SPEECH_RATE"] = "0.55"
+        // An app-hosted adapter run can leave this bundle running.
+        app.terminate()
         app.launch()
 
         XCTAssertTrue(app.descendants(matching: .any)["home.screen"].waitForExistence(timeout: 10))

@@ -86,7 +86,7 @@ final class ExperiencePresentationTests: XCTestCase {
         item.interjections.append(unrelated)
         let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: "session")
         let ids = entries.map(\.id)
-        XCTAssertEqual(ids, ["source.beginning", "session::source-note", "turn.first", "session::first-0", "session::first-25", "session::first-50", "session::first-99", "turn.second", "session::second-0", "session::second-25", "session::second-50", "session::second-99"])
+        XCTAssertEqual(ids, ["source.beginning", "other-session::source-note", "session::source-note", "turn.first", "session::first-0", "session::first-25", "session::first-50", "session::first-99", "turn.second", "session::second-0", "session::second-25", "session::second-50", "session::second-99"])
         XCTAssertEqual(entries.first { $0.id == "turn.first" }?.position, 70)
         XCTAssertEqual(entries.first { $0.id == "session::first-25" }?.detail, "Within assistant response · 25%")
         item.turns.removeLast()

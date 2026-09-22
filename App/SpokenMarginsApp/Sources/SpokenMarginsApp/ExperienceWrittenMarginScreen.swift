@@ -82,9 +82,11 @@ struct ExperienceWrittenMarginScreen: View {
                         Button("Cancel", action: requestCancel)
                             .accessibilityIdentifier("writtenMargin.cancel.button")
                     }
-                    ToolbarItemGroup(placement: .keyboard) {
-                        Spacer()
-                        Button("Done") { isEditing = false }
+                    ToolbarItem(placement: .confirmationAction) {
+                        if isEditing {
+                            Button("Done") { isEditing = false }
+                                .accessibilityIdentifier("writtenMargin.keyboard.done")
+                        }
                     }
                 }
                 .alert("Discard this Margin?", isPresented: $confirmsDiscard) {

@@ -231,6 +231,7 @@ struct ItemDetailState {
     var sessions: [Session] = []
     var sessionRows: [SessionPresentation] = []
     var interjections: [Interjection] = []
+    var itemInterjections: [Interjection] = []
     var importedCommentaryLayers: [ImportedCommentaryLayer] = []
     var importedCommentaryInterjections: [String: [ImportedCommentaryInterjection]] = [:]
     var turns: [ConversationTurn] = []
@@ -591,6 +592,12 @@ final class Gate1AppModel: ObservableObject {
     }
     @Published var snapshot = SessionSnapshot() {
         didSet {
+            if oldValue.itemId != snapshot.itemId || oldValue.sessionId != snapshot.sessionId || oldValue.targetId != snapshot.targetId {
+                clearConversationNavigation()
+            }
+            if conversationCurrentMargin != nil && snapshot.status.isPlaybackActive {
+                clearConversationNavigation()
+            }
             recordPlaybackEventState(previous: oldValue)
             if playingImportedCommentary != nil,
                oldValue.sessionId != snapshot.sessionId || oldValue.itemId != snapshot.itemId
@@ -765,6 +772,7 @@ final class Gate1AppModel: ObservableObject {
             else if oldValue.id == snapshot.itemId { activePlaybackDetail = oldValue }
             if oldValue.id != selectedItem.id { selectedListeningEdition = try? ListeningEditionStore.application().load(itemID: selectedItem.id) }
             skimResourceContext = nil
+            updateSkimAvailability(refreshResources: false)
             if oldValue.id != selectedItem.id || oldValue.externalReference != selectedItem.externalReference {
                 storedSourceFollowSuggestionCandidates = []
                 sourceFollowSuggestionItemId = nil
@@ -799,6 +807,7 @@ final class Gate1AppModel: ObservableObject {
     private let importedMarginRemoteControls = ImportedMarginRemoteControls()
 
     var activePlaybackIsPlaying: Bool {
+        if conversationCurrentMargin != nil, playingInterjectionAudioId != nil { return !conversationLocalPaused }
         if playingImportedCommentary != nil { return !importedCommentaryIsPaused }
         return snapshot.skimBridgeState?.status == .playing || snapshot.status.isPlaybackActive
     }
@@ -1718,9 +1727,12 @@ final class Gate1AppModel: ObservableObject {
                            let store = self.store {
                             self.offerFollowSuggestionIfEligible(itemId: itemId, store: store)
                         }
-                        self.reconcileImportedCommentary(previous: previousSnapshot, current: updated)
+                        let handledConversation = self.reconcileConversationLeadIn(current: updated)
+                        if !handledConversation {
+                            self.reconcileImportedCommentary(previous: previousSnapshot, current: updated)
+                        }
                         let playedPendingTurn = self.playPendingTurnIfReady(completedCurrentAudio: completedCurrentAudio)
-                        if completedCurrentAudio && !playedPendingTurn {
+                        if completedCurrentAudio && !playedPendingTurn && !handledConversation {
                             self.closeCompletedSessionIfReady()
                         }
                     } catch {
@@ -1754,8 +1766,9 @@ final class Gate1AppModel: ObservableObject {
             if updated != snapshot {
                 snapshot = updated
             }
+            let handledConversation = reconcileConversationLeadIn(current: updated)
             let playedPendingTurn = playPendingTurnIfReady(completedCurrentAudio: completedCurrentAudio)
-            if completedCurrentAudio && !playedPendingTurn {
+            if completedCurrentAudio && !playedPendingTurn && !handledConversation {
                 closeCompletedSessionIfReady()
             }
             refreshSelectedItem()
@@ -3687,6 +3700,14 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func playPause() {
+        if conversationCurrentMargin != nil, playingInterjectionAudioId != nil {
+            setConversationRecordingPaused(!conversationLocalPaused)
+            return
+        }
+        if conversationCurrentMargin != nil, playingImportedCommentary == nil {
+            returnFromConversation()
+            return
+        }
         if playingImportedCommentary != nil {
             setImportedCommentaryPaused(!importedCommentaryIsPaused)
             return
@@ -3709,6 +3730,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func pause() {
+        if conversationCurrentMargin != nil, playingInterjectionAudioId != nil { setConversationRecordingPaused(true); return }
         if playingImportedCommentary != nil {
             setImportedCommentaryPaused(true)
             return
@@ -3883,6 +3905,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func resumePlayback() {
+        if conversationCurrentMargin != nil, playingInterjectionAudioId != nil { setConversationRecordingPaused(false); return }
         if playingImportedCommentary != nil {
             setImportedCommentaryPaused(false)
             return
@@ -4540,10 +4563,300 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    @Published var conversationScope: ConversationScope = .all {
+        didSet { updateSkimAvailability(refreshResources: false) }
+    }
+    @Published var conversationContextSeconds = 120
+    @Published private(set) var conversationLeadIn: ConversationLeadIn?
+    @Published private(set) var conversationCurrentMargin: ConversationDestination?
+    @Published private(set) var heardConversationMargins: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "heardConversationMargins") ?? [])
+    private var conversationReturnPoint: ConversationLeadIn?
+    private var conversationCursor: ConversationDestination?
+    private var conversationLocalPaused = false
+    private var conversationOwnsRemoteControls = false
+
+    private var conversationUsesMedia: Bool { selectedItem.isNativeAudio }
+    private var conversationIsSourcePlayback: Bool {
+        snapshot.targetType == TargetType.itemTextTTS.rawValue || isMediaPlaybackSnapshot
+    }
+    private var conversationPosition: Int {
+        conversationUsesMedia ? (snapshot.currentMediaTimeMs ?? 0) : (snapshot.currentTextStart ?? 0)
+    }
+
+    var conversationDestinations: [ConversationDestination] {
+        guard selectedItem.id == snapshot.itemId, conversationIsSourcePlayback,
+              !snapshot.isRecording else { return [] }
+        let item = selectedItem
+        var destinations: [ConversationDestination] = []
+        if conversationScope == .all {
+            if conversationUsesMedia {
+                destinations += (item.mediaChapters + item.listeningMapScenes).map {
+                    ConversationDestination(id: "chapter:\($0.id)", position: $0.startMs, title: $0.title, content: .chapter)
+                }
+            } else {
+                destinations += item.chapters.map {
+                    ConversationDestination(id: "chapter:\($0.id)", position: $0.startChar, title: $0.title, content: .chapter)
+                }
+            }
+        }
+        var seen: Set<String> = []
+        for note in item.itemInterjections + item.interjections where note.status == "active" && note.targetType == .item && note.itemId == item.id {
+            let id = "local:\(note.sessionId):\(note.id)"
+            guard seen.insert(id).inserted else { continue }
+            let position: Int
+            if conversationUsesMedia {
+                guard let time = note.anchor.mediaTimeMs else { continue }
+                position = time
+            } else {
+                // Existing text anchors address the canonical source, not TTS output.
+                guard note.anchor.startChar >= 0, note.anchor.startChar <= item.text.count else { continue }
+                position = note.anchor.startChar
+            }
+            destinations.append(ConversationDestination(id: id, position: position, title: "My Margin", content: .local(note)))
+        }
+        for layer in item.importedCommentaryLayers where layer.deletedAt == nil && layer.isEnabled && !layer.isMuted && layer.sourceResolutionStatus != .wrongSource {
+            for note in item.importedCommentaryInterjections[layer.id, default: []] {
+                guard Self.isPlayableImportedCommentaryResolution(note.resolution) else { continue }
+                let position = conversationUsesMedia ? note.resolution.localMediaTimeMs : note.resolution.localStartChar
+                guard let position else { continue }
+                let row = SharedMarginRow(interjection: note, layer: layer, itemTitle: item.title)
+                destinations.append(ConversationDestination(id: "shared:\(layer.id):\(note.id)", position: position,
+                    title: "\(row.collectionLabel)’s Margin", content: .shared(layer, note)))
+            }
+        }
+        return destinations.filter { conversationScope != .newMargins || !heardConversationMargins.contains($0.id) }
+    }
+
+    private func conversationDestination(backward: Bool) -> ConversationDestination? {
+        var destinations = conversationDestinations
+        // Keep the cursor in the ordering even after hearing it removes it from New.
+        if let cursor = conversationCursor, !destinations.contains(where: { $0.id == cursor.id }) {
+            destinations.append(cursor)
+        }
+        let currentID = conversationCursor.flatMap { cursor in
+            conversationCurrentMargin != nil || conversationLeadIn != nil || cursor.position == conversationPosition ? cursor.id : nil
+        }
+        return ConversationNavigation.next(in: destinations, position: conversationPosition,
+            currentID: currentID, backward: backward)
+    }
+
+    func playConversationMargin(_ note: Interjection, withContext: Bool) {
+        guard !rejectNavigationOrSessionMutationWhileRecording("play_conversation_margin") else { return }
+        if selectedItem.id != note.itemId { openItem(id: note.itemId) }
+        if snapshot.itemId != note.itemId || !hasActiveSession || snapshot.phase == .finished {
+            openItem(id: note.itemId)
+            startItem(id: note.itemId)
+        }
+        guard !conversationUsesMedia || note.anchor.mediaTimeMs != nil else {
+            if !withContext { toggleInterjectionAudioPlayback(note) }
+            else { reportWarning("This Margin has no saved source position.") }
+            return
+        }
+        let destination = ConversationDestination(id: "local:\(note.sessionId):\(note.id)",
+            position: conversationUsesMedia ? (note.anchor.mediaTimeMs ?? 0) : note.anchor.startChar,
+            title: "My Margin", content: .local(note))
+        beginConversationDestination(destination, withContext: withContext)
+    }
+
+    func playConversationMargin(_ row: SharedMarginRow, withContext: Bool) {
+        guard !rejectNavigationOrSessionMutationWhileRecording("play_conversation_margin"), let itemID = row.layer.itemId else { return }
+        if selectedItem.id != itemID { openItem(id: itemID) }
+        if snapshot.itemId != itemID || !hasActiveSession || snapshot.phase == .finished {
+            openItem(id: itemID)
+            startItem(id: itemID)
+        }
+        guard row.layer.sourceResolutionStatus != .wrongSource,
+              Self.isPlayableImportedCommentaryResolution(row.interjection.resolution),
+              let position = conversationUsesMedia ? row.interjection.resolution.localMediaTimeMs : row.interjection.resolution.localStartChar else {
+            if !withContext { listenToImportedCommentary(layerID: row.layer.id, interjectionID: row.interjection.id) }
+            else { reportWarning("This Margin does not yet have a verified source position.") }
+            return
+        }
+        let destination = ConversationDestination(id: "shared:\(row.layer.id):\(row.interjection.id)", position: position,
+            title: "\(row.collectionLabel)’s Margin", content: .shared(row.layer, row.interjection))
+        beginConversationDestination(destination, withContext: withContext)
+    }
+
+    private func beginConversationDestination(_ destination: ConversationDestination, withContext: Bool) {
+        guard let engine, conversationIsSourcePlayback else { return }
+        let previousReturnPoint = conversationReturnPoint
+        let origin = conversationPosition
+        let wasPlaying = snapshot.status.isPlaybackActive
+        cancelSkimBridge(restoringOrigin: false, resumeSource: false)
+        clearConversationNavigation()
+        stopInterjectionAudioPlayback()
+        pendingImportedCommentary = nil
+        importedCommentaryAutoPlayTask?.cancel()
+        let lead = ConversationLeadIn(destination: destination, origin: origin, wasPlaying: wasPlaying, isMedia: conversationUsesMedia)
+        conversationReturnPoint = previousReturnPoint ?? lead
+        conversationCursor = destination
+        if destination.isMargin && withContext && conversationContextSeconds > 0 {
+            if conversationUsesMedia,
+               let summary = resolvedSkimPlaybackPlan(direction: .forward, at: origin),
+               summary.destinationMediaTimeMs == destination.position {
+                conversationLeadIn = lead
+                startSkimBridge(summary)
+                screen = .playback
+                return
+            }
+            let start = conversationUsesMedia
+                ? max(0, destination.position - conversationContextSeconds * 1_000)
+                : ConversationNavigation.contextStart(text: selectedItem.text, destination: destination.position, seconds: conversationContextSeconds)
+            // Forward navigation never rewinds context that is already behind us.
+            let landing = origin <= destination.position ? max(origin, start) : start
+            if landing < destination.position {
+                conversationLeadIn = lead
+                do {
+                    snapshot = try engine.pause()
+                    try seekConversationSource(to: landing, isMedia: lead.isMedia)
+                    snapshot = try engine.resumePlayback()
+                    screen = .playback
+                    updateSkimAvailability(refreshResources: false)
+                } catch {
+                    clearConversationNavigation()
+                    reportFailure(error, context: "Margin context could not be played")
+                }
+                return
+            }
+        }
+        arriveAtConversationDestination(lead)
+    }
+
+    private func seekConversationSource(to position: Int, isMedia: Bool) throws {
+        guard let engine else { return }
+        snapshot = isMedia ? try engine.seekMedia(toMediaTimeMs: position) : try engine.seekText(toCharOffset: position)
+        streamingSpeechQueue.relinquishToCanonicalPlayback()
+    }
+
+    private func completeConversationLeadIn() {
+        guard let lead = conversationLeadIn else { return }
+        conversationLeadIn = nil
+        arriveAtConversationDestination(lead)
+    }
+
+    @discardableResult
+    func reconcileConversationLeadIn(current: SessionSnapshot) -> Bool {
+        guard let lead = conversationLeadIn else { return false }
+        let position = lead.isMedia ? current.currentMediaTimeMs : current.currentTextStart
+        if let position, position >= lead.destination.position { completeConversationLeadIn() }
+        return true
+    }
+
+    private func arriveAtConversationDestination(_ lead: ConversationLeadIn) {
+        guard let engine else { return }
+        do {
+            snapshot = try engine.pause()
+            try seekConversationSource(to: lead.destination.position, isMedia: lead.isMedia)
+            conversationCursor = lead.destination
+            conversationLeadIn = nil
+            switch lead.destination.content {
+            case .chapter:
+                conversationReturnPoint = nil
+                if lead.wasPlaying { snapshot = try engine.resumePlayback() }
+            case .local(let note):
+                conversationCurrentMargin = lead.destination
+                conversationLocalPaused = false
+                if note.captureKind != .written && note.audioPath != nil {
+                    toggleInterjectionAudioPlayback(note)
+                    if playingInterjectionAudioId != nil && !mixesWithOtherAudio {
+                        conversationOwnsRemoteControls = true
+                        (sessionAudioPlaybackClient ?? audioPlaybackClientOverride)?.setRemoteCommandHandlingEnabled(false)
+                        gate2CompactControls.setNowPlayingEnabled(false)
+                        gate2CompactControls.endLiveActivities()
+                        importedMarginRemoteControls.install { [weak self] command in
+                            guard let self, self.conversationOwnsRemoteControls else { return }
+                            switch command {
+                            case .play: self.setConversationRecordingPaused(false)
+                            case .pause: self.setConversationRecordingPaused(true)
+                            case .togglePlayPause: self.setConversationRecordingPaused(!self.conversationLocalPaused)
+                            default: break
+                            }
+                        }
+                        publishConversationRecording()
+                    }
+                }
+                else {
+                    reportConfirmation("\(lead.destination.title). Read the Margin below.")
+                    markConversationMarginHeard(lead.destination.id)
+                }
+            case .shared(let layer, let note):
+                conversationCurrentMargin = lead.destination
+                announcedImportedInterjectionIDs.insert(note.id)
+                if note.audioPath != nil { listenToImportedCommentary(layerID: layer.id, interjectionID: note.id) }
+                else {
+                    reportConfirmation("This shared Margin contains text. Read it below.")
+                    markConversationMarginHeard(lead.destination.id)
+                }
+            }
+            screen = .playback
+            updateSkimAvailability(refreshResources: false)
+        } catch {
+            clearConversationNavigation()
+            reportFailure(error, context: "Could not reach the Margin")
+        }
+    }
+
+    private func setConversationRecordingPaused(_ paused: Bool) {
+        guard playingInterjectionAudioId != nil else { return }
+        conversationLocalPaused = paused
+        if paused { interjectionAudioPlayer?.pause() }
+        else { interjectionAudioPlayer?.playImmediately(atRate: Float(playingInterjectionAudioRate)) }
+        // AVPlayer state itself is not observed by SwiftUI.
+        objectWillChange.send()
+        publishConversationRecording()
+    }
+
+    private func publishConversationRecording() {
+        guard conversationOwnsRemoteControls, let player = interjectionAudioPlayer else { return }
+        importedMarginRemoteControls.publish(sender: "You", elapsed: player.currentTime().seconds,
+            duration: player.currentItem?.duration.seconds ?? .nan,
+            rate: conversationLocalPaused ? 0 : Double(player.rate), title: "My Margin")
+    }
+
+    private func markConversationMarginHeard(_ id: String) {
+        heardConversationMargins.insert(id)
+        if !Self.isRunningUnitTests { UserDefaults.standard.set(Array(heardConversationMargins).sorted(), forKey: "heardConversationMargins") }
+    }
+
+    func returnFromConversation() {
+        guard let origin = conversationReturnPoint ?? conversationLeadIn else { return }
+        clearConversationNavigation()
+        cancelSkimBridge(restoringOrigin: false, resumeSource: false)
+        stopInterjectionAudioPlayback()
+        do {
+            try seekConversationSource(to: origin.origin, isMedia: origin.isMedia)
+            if origin.wasPlaying, let engine { snapshot = try engine.resumePlayback() }
+        } catch { reportFailure(error, context: "Return to source failed") }
+    }
+
+    private func clearConversationNavigation() {
+        if conversationCurrentMargin != nil && (playingInterjectionAudioId != nil || playingImportedCommentary != nil) {
+            stopInterjectionAudioPlayback()
+        }
+        conversationLeadIn = nil
+        conversationCurrentMargin = nil
+        conversationReturnPoint = nil
+        conversationCursor = nil
+    }
+
     @Published private(set) var skimForwardDestinationMs: Int?
     @Published private(set) var skimBackwardDestinationMs: Int?
-    var skimForwardTitle: String { PlaybackQualityPresentation.skimTitle(destinationMs: skimForwardDestinationMs, backward: false) }
-    var skimBackwardTitle: String { PlaybackQualityPresentation.skimTitle(destinationMs: skimBackwardDestinationMs, backward: true) }
+    var skimForwardTitle: String {
+        if let lead = conversationLeadIn { return "Skip context · \(lead.destination.title)" }
+        if let next = conversationDestination(backward: false) {
+            if !next.isMargin && conversationUsesMedia { return PlaybackQualityPresentation.skimTitle(destinationMs: next.position, backward: false) }
+            return "Skim · \(next.title)"
+        }
+        return PlaybackQualityPresentation.skimTitle(destinationMs: skimForwardDestinationMs, backward: false)
+    }
+    var skimBackwardTitle: String {
+        if conversationLeadIn != nil { return "Skip context" }
+        if let next = conversationDestination(backward: true) {
+            if !next.isMargin && conversationUsesMedia { return PlaybackQualityPresentation.skimTitle(destinationMs: next.position, backward: true) }
+            return "Back · \(next.title)"
+        }
+        return PlaybackQualityPresentation.skimTitle(destinationMs: skimBackwardDestinationMs, backward: true)
+    }
     private var skimResourceContext: SkimResourceContext?
     #if DEBUG
     private(set) var skimResourceLoadCount = 0
@@ -4551,17 +4864,23 @@ final class Gate1AppModel: ObservableObject {
     #endif
 
     private func updateSkimAvailability(refreshResources: Bool = true) {
+        // Browsing a different item must not change the active player's controls.
+        if let itemID = snapshot.itemId, selectedItem.id != itemID { return }
         if refreshResources { skimResourceContext = nil }
         guard !isUpdatingSkimAvailability else { return }
         let effectiveTime = snapshot.skimBridgeState?.destinationMediaTimeMs ?? snapshot.currentMediaTimeMs
         let forward = effectiveTime.flatMap { resolvedSkimPlaybackPlan(direction: .forward, at: $0) }
         let backward = effectiveTime.flatMap { resolvedSkimPlaybackPlan(direction: .backward, at: $0) }
-        let forwardTime = snapshot.skimBridgeState?.destinationMediaTimeMs ?? forward?.destinationMediaTimeMs
-        let backwardTime = snapshot.skimBridgeState?.destinationMediaTimeMs ?? backward?.destinationMediaTimeMs
+        let forwardTime = snapshot.skimBridgeState?.destinationMediaTimeMs
+            ?? (conversationUsesMedia ? (conversationLeadIn?.destination.position ?? conversationDestination(backward: false)?.position) : nil)
+            ?? forward?.destinationMediaTimeMs
+        let backwardTime = snapshot.skimBridgeState?.destinationMediaTimeMs
+            ?? (conversationUsesMedia ? (conversationLeadIn?.destination.position ?? conversationDestination(backward: true)?.position) : nil)
+            ?? backward?.destinationMediaTimeMs
         if skimForwardDestinationMs != forwardTime { skimForwardDestinationMs = forwardTime }
         if skimBackwardDestinationMs != backwardTime { skimBackwardDestinationMs = backwardTime }
-        let canForward = forwardTime != nil
-        let canBackward = backwardTime != nil
+        let canForward = conversationLeadIn != nil || conversationDestination(backward: false) != nil || (conversationScope == .all && forwardTime != nil)
+        let canBackward = conversationLeadIn != nil || conversationDestination(backward: true) != nil || (conversationScope == .all && backwardTime != nil)
         guard snapshot.canSkimForward != canForward || snapshot.canSkimBackward != canBackward else { return }
         isUpdatingSkimAvailability = true
         snapshot.canSkimForward = canForward
@@ -4670,12 +4989,31 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func performSkim(direction: SkimDirection) {
+        guard !rejectNavigationOrSessionMutationWhileRecording("skim") else { return }
+        if conversationLeadIn != nil {
+            cancelSkimBridge(restoringOrigin: false, resumeSource: false)
+            completeConversationLeadIn()
+            return
+        }
         if snapshot.skimBridgeState != nil {
             // A second tap exits the current bridge at its destination. Do not
             // resolve another summary against the asynchronous source seek.
             completeSkimBridge()
             return
         }
+        if let destination = conversationDestination(backward: direction == .backward) {
+            // Preserve existing summary semantics when its destination is the
+            // selected chapter; a summary must not skip an intervening Margin.
+            if !destination.isMargin, conversationUsesMedia,
+               let plan = resolvedSkimPlaybackPlan(direction: direction, at: snapshot.currentMediaTimeMs ?? 0),
+               plan.destinationMediaTimeMs == destination.position {
+                startSkimBridge(plan)
+            } else {
+                beginConversationDestination(destination, withContext: true)
+            }
+            return
+        }
+        guard conversationScope == .all else { return }
         let effectiveTime = snapshot.currentMediaTimeMs ?? 0
         guard let plan = resolvedSkimPlaybackPlan(direction: direction, at: effectiveTime) else {
             reportWarning("Skim is unavailable until a verified scene summary is ready.")
@@ -4715,6 +5053,7 @@ final class Gate1AppModel: ObservableObject {
                     guard let self, let player, let item = player.currentItem else { return }
                     if item.status == .failed {
                         self.cancelSkimBridge(restoringOrigin: true, resumeSource: false)
+                        self.clearConversationNavigation()
                         self.reportWarning("The scene summary could not be played. Your original position was restored.")
                         return
                     }
@@ -4738,6 +5077,11 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func completeSkimBridge() {
+        if conversationLeadIn != nil {
+            cancelSkimBridge(restoringOrigin: false, resumeSource: false)
+            completeConversationLeadIn()
+            return
+        }
         guard var bridge = snapshot.skimBridgeState, let engine else { return }
         bridge.status = .completing
         snapshot.skimBridgeState = bridge
@@ -4779,6 +5123,10 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func returnFromSkim() {
+        if conversationLeadIn != nil || conversationReturnPoint != nil {
+            returnFromConversation()
+            return
+        }
         cancelSkimBridge(restoringOrigin: true, resumeSource: true)
     }
 
@@ -4801,6 +5149,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func restoreSkimOriginBeforeCanonicalTransport() {
+        clearConversationNavigation()
         if playingImportedCommentary != nil { stopImportedCommentaryPlayback(resumeSource: false) }
         guard let bridge = snapshot.skimBridgeState else { return }
         cancelSkimBridge(restoringOrigin: true, resumeSource: bridge.wasSourcePlaying)
@@ -5383,6 +5732,7 @@ final class Gate1AppModel: ObservableObject {
 
     func startNewSession(id: String) {
         guard !rejectNavigationOrSessionMutationWhileRecording("start_new_session") else { return }
+        clearConversationNavigation()
         resetMixWithOtherAudioForNewSession()
         cancelSkimBridge(restoringOrigin: true, resumeSource: false)
         cancelSleepTimer()
@@ -5938,6 +6288,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func seekText(toCharOffset charOffset: Int) {
+        clearConversationNavigation()
         if playingImportedCommentary != nil { stopImportedCommentaryPlayback(resumeSource: false) }
         recordDeveloperDiagnostic("seek.text.request", ["offset": String(charOffset)])
         synchronizeStreamingSpeechAnchorIfNeeded()
@@ -6088,6 +6439,8 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func beginInterjection() {
+        if conversationCurrentMargin != nil { reportWarning("Return to the source before adding a Margin."); return }
+        if conversationLeadIn != nil && snapshot.skimBridgeState == nil { clearConversationNavigation() }
         guard !isFinishingInterjection, !isMarginCaptureCoolingDown else { return }
         guard playingImportedCommentary == nil else {
             reportWarning("Return to Source before recording a Margin.")
@@ -6246,6 +6599,8 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func beginWrittenMargin() {
+        if conversationCurrentMargin != nil { reportWarning("Return to the source before adding a Margin."); return }
+        if conversationLeadIn != nil && snapshot.skimBridgeState == nil { clearConversationNavigation() }
         guard !recordingNavigationIsLocked else { return }
         guard snapshot.skimBridgeState == nil, playingImportedCommentary == nil else {
             reportFailure("Return to the source before writing a Margin.")
@@ -6888,9 +7243,11 @@ final class Gate1AppModel: ObservableObject {
                         self?.reportFailure("The saved recording could not be played.")
                         return
                     }
+                    self?.publishConversationRecording()
                     let duration = item.duration.seconds
                     let current = item.currentTime().seconds
                     if duration.isFinite, duration > 0, current.isFinite, current >= duration - 0.05 {
+                        if let self, let margin = self.conversationCurrentMargin { self.markConversationMarginHeard(margin.id) }
                         self?.stopInterjectionAudioPlayback()
                         return
                     }
@@ -6908,7 +7265,8 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func stopInterjectionAudioPlayback() {
-        let hadImportedMargin = playingImportedCommentary != nil
+        let hadImportedMargin = playingImportedCommentary != nil || conversationOwnsRemoteControls
+        conversationOwnsRemoteControls = false
         playingImportedCommentary = nil
         importedCommentaryIsPaused = false
         sourceShouldResumeAfterImportedCommentary = false
@@ -6959,6 +7317,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func returnToSourceFromImportedCommentary() {
+        if conversationReturnPoint != nil { returnFromConversation(); return }
         stopImportedCommentaryPlayback(resumeSource: true)
     }
 
@@ -7013,6 +7372,7 @@ final class Gate1AppModel: ObservableObject {
                     let duration = item.duration.seconds
                     let current = item.currentTime().seconds
                     if duration.isFinite, duration > 0, current.isFinite, current >= duration - 0.05 {
+                        if let self, let margin = self.conversationCurrentMargin { self.markConversationMarginHeard(margin.id) }
                         self?.stopImportedCommentaryPlayback(resumeSource: true)
                         return
                     }
@@ -7073,7 +7433,8 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func reconcileImportedCommentary(previous: SessionSnapshot, current: SessionSnapshot) {
-        guard pendingImportedCommentary == nil,
+        guard conversationLeadIn == nil, conversationCurrentMargin == nil,
+              pendingImportedCommentary == nil,
               playingImportedCommentary == nil,
               current.itemId == selectedItem.id else { return }
         let prompts = importedCommentaryPrompts(includeAnnounced: false)
@@ -9262,7 +9623,7 @@ final class Gate1AppModel: ObservableObject {
             "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1),
             "requestedMediaTimeMs": String(mediaTimeMs ?? -1)
         ])
-        if playingImportedCommentary != nil {
+        if playingImportedCommentary != nil || (conversationCurrentMargin != nil && playingInterjectionAudioId != nil) {
             switch command {
             case .play: resumePlayback()
             case .pause: pause()
@@ -14492,6 +14853,8 @@ final class Gate1AppModel: ObservableObject {
             sessions: sessions,
             sessionRows: sessionRows,
             interjections: interjections,
+            itemInterjections: try sessions.flatMap { try store.loadInterjections(sessionId: $0.id) }
+                .filter { $0.status == "active" && $0.targetType == .item && $0.itemId == id },
             importedCommentaryLayers: importedLayers,
             importedCommentaryInterjections: importedInterjections,
             turns: turns

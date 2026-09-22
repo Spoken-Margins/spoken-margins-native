@@ -222,6 +222,7 @@ struct SharedMarginDetailView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var shouldOpenItem = false
+    @State private var playWithContext: Bool?
     let row: SharedMarginRow
 
     var body: some View {
@@ -239,6 +240,11 @@ struct SharedMarginDetailView: View {
                     Text(row.itemTitle)
                     Text(row.positionDescription)
                     if row.layer.itemId != nil {
+                        Button("Play Margin", systemImage: "play.fill") { playWithContext = false; dismiss() }
+                            .accessibilityIdentifier("sharedMargin.play.button")
+                        Button("Play with context", systemImage: "backward.end.alt") { playWithContext = true; dismiss() }
+                            .disabled(!Gate1AppModel.isPlayableImportedCommentaryResolution(row.interjection.resolution))
+                            .accessibilityIdentifier("sharedMargin.context.button")
                         Button("Open item and shared controls", systemImage: "doc.text") {
                             shouldOpenItem = true
                             dismiss()
@@ -260,7 +266,8 @@ struct SharedMarginDetailView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { Button("Done") { dismiss() } }
             .onDisappear {
-                if shouldOpenItem, let itemID = row.layer.itemId { model.openItem(id: itemID) }
+                if let playWithContext { model.playConversationMargin(row, withContext: playWithContext) }
+                else if shouldOpenItem, let itemID = row.layer.itemId { model.openItem(id: itemID) }
             }
         }
     }

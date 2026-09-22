@@ -15,6 +15,41 @@ final class Gate1FlowUITests: XCTestCase {
         app.launch()
     }
 
+    func testConversationSkimUsesExistingControlsAndSecondTapReachesMargin() throws {
+        app.buttons["queue.start.item-pill"].tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
+        pausePlaybackIfNeeded()
+        element("playback.nextChapter.button").tap()
+        pausePlaybackIfNeeded()
+        element("playback.write.button").tap()
+        let editor = app.textViews["writtenMargin.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 4))
+        editor.tap()
+        editor.typeText("A conversation worth returning to.")
+        element("writtenMargin.save.button").tap()
+        XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 4))
+        openTimelineExperience()
+        scrollToElement("timeline.chapter.jump.ch-opening").tap()
+        pausePlaybackIfNeeded()
+        openTimelineExperience()
+        let scope = element("conversation.scope")
+        XCTAssertTrue(scope.waitForExistence(timeout: 4))
+        scope.tap()
+        try XCTUnwrap(app.buttons.matching(identifier: "Margins").allElementsBoundByIndex.last).tap()
+        captureScreen(named: "coop-margin-timeline")
+        returnToNowPlayingFromTimelineIfNeeded()
+        let skim = element("playback.skim.forward.button")
+        XCTAssertTrue(skim.waitForExistence(timeout: 4))
+        skim.tap()
+        XCTAssertTrue(element("playback.margin.context").waitForExistence(timeout: 3))
+        skim.tap()
+        XCTAssertTrue(element("playback.conversation.margin").waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["A conversation worth returning to."].firstMatch.exists)
+        captureScreen(named: "coop-margin-after-second-skim")
+        app.buttons["Return to original position"].tap()
+        XCTAssertFalse(element("playback.conversation.margin").exists)
+    }
+
     func testMarginsItemShareOpensItemExportAndChapterJumpUpdatesTimeline() throws {
         app.buttons["queue.start.item-pill"].tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
@@ -142,6 +177,8 @@ final class Gate1FlowUITests: XCTestCase {
         seededStart.tap()
 
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
+        // Avoid racing narration while the navigation controls are exercised.
+        pausePlaybackIfNeeded()
         XCTAssertTrue(scrollToElement("playback.timeline.button").exists)
         openTimelineExperience()
         XCTAssertTrue(element("timeline.rail").exists)
@@ -163,6 +200,9 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(element("miniPlayer.close.button").exists)
         XCTAssertTrue(element("miniPlayer.interject.button").exists)
         XCTAssertTrue(element("miniPlayer.playPause.button").exists)
+        // Forward transport can finish this tiny fixture. Include completed
+        // items before checking the row/miniplayer layout.
+        app.buttons["Show completed"].tap()
         let hero = element("library.row.item-pill")
         XCTAssertTrue(hero.waitForExistence(timeout: 4), app.debugDescription)
         app.swipeUp()

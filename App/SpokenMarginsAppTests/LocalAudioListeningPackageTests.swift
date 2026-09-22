@@ -63,6 +63,9 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         // Supplied bridges must be ready without any system or inference synthesis.
         for _ in 0..<750 where model.diagnostics["localAudioSkim:\(item.id)"] != "ready" { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(model.diagnostics["localAudioSkim:\(item.id)"], "ready")
+        // This route exercises scene summaries; Margin navigation has separate
+        // coverage and must not be allowed to hide an intervening contribution.
+        model.setImportedCommentaryLayerEnabled(layer.id, enabled: false)
         model.startItem(id: item.id)
         // Exercise the real source adapter: nativeMediaId is an asset ID, not a URL.
         for _ in 0..<150 where (sourcePlayer.currentMediaTimeMs() ?? 0) < 200 {

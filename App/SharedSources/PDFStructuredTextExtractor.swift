@@ -82,6 +82,14 @@ enum PDFStructuredTextExtractor {
                 }
             }
         }
+        // Explicit download stamps in page margins are acquisition metadata.
+        // Do not remove dates from prose, headings, or the middle of a page.
+        for index in pages.indices {
+            guard let page = document.page(at: index) else { continue }
+            pages[index].removeAll { line in
+                marginKey(line, page: page) != nil && isDownloadStamp(line.text)
+            }
+        }
         let allLines = pages.flatMap { $0 }
         guard allLines.contains(where: { !$0.text.isEmpty }) else {
             throw ExtractionError.noExtractableText
@@ -359,6 +367,11 @@ enum PDFStructuredTextExtractor {
 
     private static func appendParagraph(_ text: String, to output: inout [String]) {
         output.append(text)
+    }
+
+    static func isDownloadStamp(_ text: String) -> Bool {
+        text.range(of: #"^\s*(?:Downloaded|Retrieved|Accessed)\s+(?:on\s+|from\s+.{1,160}?\s+on\s+)(?:\d{1,4}[./-]\d{1,2}[./-]\d{1,4}|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})(?:\s+(?:at\s+)?\d{1,2}:\d{2}(?::\d{2})?(?:\s*(?:AM|PM|UTC|GMT))?)?\s*\.?\s*$"#,
+            options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     private static func cleaned(_ value: String) -> String {

@@ -2057,6 +2057,7 @@ private struct PlaybackScreen: View {
                             playbackHeader
                             capturePermissionRecovery
                             importedCommentaryControl
+                            conversationMarginCard
                             recentMarginPreview
                             if model.shouldShowGuidedOnboardingCoach {
                                 GuidedOnboardingPlaybackCard {
@@ -2149,6 +2150,7 @@ private struct PlaybackScreen: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 18) {
                             playbackRateControl
+                            ConversationNavigationOptions()
                             mixedAudioControl
                             onDeviceSpeechGenerationControl
                             Button("Write a Margin", systemImage: "square.and.pencil") {
@@ -2180,6 +2182,20 @@ private struct PlaybackScreen: View {
             || ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TESTING"] == "1"
     }
 
+    @ViewBuilder
+    private var conversationMarginCard: some View {
+            if let margin = model.conversationCurrentMargin {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(margin.title).font(.headline)
+                    if let transcript = margin.transcript { Text(transcript).font(.body).textSelection(.enabled) }
+                    Button("Return to original position", action: model.returnFromConversation)
+                        .buttonStyle(.bordered)
+                }
+                .foregroundStyle(.white)
+                .accessibilityIdentifier("playback.conversation.margin")
+            }
+    }
+
     private var playbackControls: some View {
         VStack(spacing: 10) {
             playbackPosition
@@ -2191,6 +2207,12 @@ private struct PlaybackScreen: View {
                     .accessibilityIdentifier("playback.nextChapter.button")
             }
             playbackTransport
+            if let lead = model.conversationLeadIn {
+                Text("Context for \(lead.destination.title) · tap Skim to skip context")
+                    .font(.subheadline)
+                    .foregroundStyle(.white)
+                    .accessibilityIdentifier("playback.margin.context")
+            }
             if !dynamicTypeSize.isAccessibilitySize {
                 HStack(spacing: 24) {
                     Button(model.compactPlaybackRateDescription, action: model.cyclePlaybackRate)
@@ -2216,7 +2238,7 @@ private struct PlaybackScreen: View {
                 Button("Return to Source", action: model.returnToSourceFromImportedCommentary)
                     .buttonStyle(InterjectButtonStyle())
                     .accessibilityIdentifier("importedCommentary.returnToSource")
-            } else if model.snapshot.skimBridgeState != nil {
+            } else if model.snapshot.skimBridgeState != nil || model.conversationLeadIn != nil {
                 Button("Return to Source") {
                     model.returnFromSkim()
                 }
@@ -2736,21 +2758,20 @@ private struct PlaybackScreen: View {
                 .accessibilityIdentifier("playback.forward.button")
             }
 
-            if model.isMediaPlaybackSnapshot,
-               model.snapshot.canSkimBackward || model.snapshot.canSkimForward || model.snapshot.skimBridgeState != nil {
+            if model.snapshot.canSkimBackward || model.snapshot.canSkimForward || model.snapshot.skimBridgeState != nil {
                 HStack(spacing: 14) {
                     Button(action: model.skimBackward) {
                         Label(model.skimBackwardTitle, systemImage: "backward.end.alt.fill")
                     }
                     .disabled(!model.snapshot.canSkimBackward)
-                    .accessibilityLabel(model.skimBackwardTitle + " by scene summary")
+                    .accessibilityLabel(model.skimBackwardTitle)
                     .accessibilityIdentifier("playback.skim.backward.button")
 
                     Button(action: model.skimForward) {
                         Label(model.skimForwardTitle, systemImage: "forward.end.alt.fill")
                     }
                     .disabled(!model.snapshot.canSkimForward)
-                    .accessibilityLabel(model.skimForwardTitle + " by scene summary")
+                    .accessibilityLabel(model.skimForwardTitle)
                     .accessibilityIdentifier("playback.skim.forward.button")
                 }
                 .buttonStyle(.bordered)

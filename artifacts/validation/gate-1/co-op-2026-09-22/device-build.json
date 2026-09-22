@@ -1,0 +1,8 @@
+{
+  "command": "xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -destination 'generic/platform=iOS' -derivedDataPath /tmp/coop-device-build build",
+  "exit_code": 0,
+  "input_sha256": "f5dbb7ef2889ca64cf0819e2b8aac838c1959444f5006643165db7e2a4c320dc",
+  "head": "82e61bcec35e309dd9ad38eb64f824ae5e45766b",
+  "branch": "codex/co-op",
+  "note": "Build only; no physical device installation or product validation. Subsequent change only updates the UI-test Library filter assertion; application source is identical."
+}
