@@ -11,6 +11,106 @@ import SessionKitPersistence
 
 @MainActor
 final class ConversationNavigationTests: XCTestCase {
+    func testRecursiveWrittenRepliesKeepCaptureCoordinatesAndPlayExactParentChain() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: root.appending(path: "library.sqlite"))
+        model.ttsVoiceSelection = .system
+        model.resetAndSeed(); model.startItem(id: "item-pill")
+        model.seekText(toCharOffset: 80)
+        model.beginWrittenMargin(); model.saveWrittenMargin(text: "Original")
+        let a = try XCTUnwrap(model.selectedItem.interjections.first)
+        let aSnapshot = try model.ensureConversationSnapshot(a)
+        model.seekText(toCharOffset: 170)
+        model.beginReply(to: a, written: true)
+        XCTAssertEqual(model.replyCaptureParent?.id, aSnapshot.id)
+        model.saveWrittenMargin(text: "Reply")
+        let b = try XCTUnwrap(model.selectedItem.interjections.first { $0.transcript == "Reply" })
+        XCTAssertEqual(b.anchor.startChar, 170, "The reply link must not rewrite capture coordinates")
+        XCTAssertEqual(b.conversation?.parent, aSnapshot.conversation.reference)
+        let bSnapshot = try model.ensureConversationSnapshot(b)
+        model.beginReply(to: b, written: true); model.saveWrittenMargin(text: "Reply to reply")
+        let c = try XCTUnwrap(model.selectedItem.interjections.first { $0.transcript == "Reply to reply" })
+        XCTAssertEqual(c.conversation?.parent, bSnapshot.conversation.reference)
+        model.conversationContextSeconds = 0
+        model.playConversationMargin(c, withContext: true)
+        XCTAssertEqual(model.conversationCurrentMargin?.transcript, "Original")
+        XCTAssertEqual(model.conversationThreadQueue.map(\.transcript), ["Reply", "Reply to reply"])
+        model.skimForward()
+        XCTAssertEqual(model.conversationCurrentMargin?.transcript, "Reply")
+        model.skimForward()
+        XCTAssertEqual(model.conversationCurrentMargin?.transcript, "Reply to reply")
+        XCTAssertTrue(model.conversationThreadQueue.isEmpty)
+        model.returnFromConversation()
+        XCTAssertEqual(model.snapshot.currentTextStart, 170)
+        model.beginReply(to: a, written: true); model.cancelWrittenMargin()
+        XCTAssertNil(model.replyCaptureParent)
+    }
+
+    func testContextEditsPreserveAnchorRejectCyclesAndKeepPreviousRevision() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: root.appending(path: "library.sqlite"))
+        model.ttsVoiceSelection = .system
+        model.resetAndSeed(); model.startItem(id: "item-pill"); model.seekText(toCharOffset: 100)
+        model.beginWrittenMargin(); model.saveWrittenMargin(text: "Root")
+        let note = try XCTUnwrap(model.selectedItem.interjections.first)
+        let original = try model.ensureConversationSnapshot(note)
+        let quote = String(model.selectedItem.text.prefix(30))
+        XCTAssertTrue(model.saveConversationContext(note: note, parent: nil,
+            context: .init(kind: .sourceText, start: 0, end: 30, quote: quote)))
+        let updated = model.conversationUpdatedNote(note)
+        XCTAssertEqual(updated.anchor, note.anchor)
+        XCTAssertNotEqual(updated.conversation?.reference, original.conversation.reference)
+        XCTAssertEqual(model.conversationSnapshots.first { $0.id == original.id }, original)
+        XCTAssertFalse(model.saveConversationContext(note: updated, parent: nil,
+            context: .init(kind: .sourceText, start: 0, end: 30, quote: "Wrong passage")))
+        model.beginReply(to: updated, written: true); model.saveWrittenMargin(text: "Child")
+        let child = try XCTUnwrap(model.selectedItem.interjections.first { $0.transcript == "Child" })
+        let childNode = try model.ensureConversationSnapshot(child)
+        XCTAssertFalse(model.saveConversationContext(note: updated, parent: childNode.conversation.reference, context: nil))
+        model.seekText(toCharOffset: 0)
+        model.conversationContextSeconds = 0
+        model.playConversationMargin(updated, withContext: true)
+        XCTAssertEqual(model.conversationLeadIn?.contextEnd, 30, "An explicit selection applies even when the default context is off")
+        model.skimForward()
+        XCTAssertEqual(model.conversationCurrentMargin?.transcript, "Root")
+    }
+
+    func testReplyExportRequiresExplicitParentForwardingAndKeepsRevisionStable() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: root.appending(path: "library.sqlite"))
+        model.ttsVoiceSelection = .system
+        model.resetAndSeed(); model.startItem(id: "item-pill"); model.seekText(toCharOffset: 100)
+        model.beginWrittenMargin(); model.saveWrittenMargin(text: "Private parent")
+        let parent = try XCTUnwrap(model.selectedItem.interjections.first)
+        model.beginReply(to: parent, written: true); model.saveWrittenMargin(text: "Reviewed reply")
+        let reply = try XCTUnwrap(model.selectedItem.interjections.first { $0.transcript == "Reviewed reply" })
+        XCTAssertTrue(model.conversationSnapshots.contains { $0.conversation.reference == reply.conversation?.reference })
+        model.prepareShareInterjections()
+        for draft in model.sharingState.drafts { model.setShareDraftIncluded(draft.id, included: draft.id == reply.id) }
+        model.exportSharedInterjections(presentsReadySheet: false)
+        XCTAssertNil(model.sharingState.errorMessage)
+        let firstURL = try XCTUnwrap(model.sharedSpokenMarginsPackageURL)
+        let first = try SpokenMarginsPackageArchive.read(from: firstURL, extractingAssetsTo: root.appending(path: "first"))
+        let sent = try XCTUnwrap(first.commentaryLayers.first?.interjections.first)
+        XCTAssertEqual(first.commentaryLayers.first?.interjections.count, 1)
+        XCTAssertNotNil(sent.conversation?.parent)
+        model.sharingState.includesReplyContext = true
+        model.exportSharedInterjections(presentsReadySheet: false)
+        XCTAssertNil(model.sharingState.errorMessage)
+        let secondURL = try XCTUnwrap(model.sharedSpokenMarginsPackageURL)
+        defer { try? FileManager.default.removeItem(at: firstURL); try? FileManager.default.removeItem(at: secondURL) }
+        let second = try SpokenMarginsPackageArchive.read(from: secondURL, extractingAssetsTo: root.appending(path: "second"))
+        XCTAssertEqual(second.commentaryLayers.first?.interjections.count, 2)
+        XCTAssertTrue(second.commentaryLayers.first?.interjections.contains { $0.conversation?.reference == sent.conversation?.reference } == true)
+        XCTAssertTrue(second.commentaryLayers.first?.interjections.contains { $0.conversation?.reference == sent.conversation?.parent } == true)
+    }
+
     func testNewSessionKeepsEarlierMarginsInTimelineAndSkimWithoutChangingTheirSession() throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.ttsVoiceSelection = .system

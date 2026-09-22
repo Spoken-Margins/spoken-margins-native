@@ -25,11 +25,13 @@ public enum InterjectionPackagePreparationError: Error, Equatable, LocalizedErro
 
 public enum ReviewedRepresentationSelection: Sendable {
     case textOnly
+    case forwardedAudio(sourceURL: URL, durationMs: Int)
     case originalAudio(sourceURL: URL, durationMs: Int)
     case cleanedAudio(sourceURL: URL)
 }
 
 public struct ReviewedInterjectionSelection: Sendable {
+    public var conversation: MarginConversation? = nil
     public let packageScopedId: String
     public let revision: InterjectionShareRevision
     public let anchor: PortableAnchorEvidence
@@ -120,7 +122,9 @@ public enum SpokenMarginsPackageBuilder {
                     approvedTranscript: approvedTranscript,
                     provenance: .senderApprovedTextOnly
                 )
-            case .originalAudio(let sourceURL, let durationMs):
+            case .originalAudio(let sourceURL, let durationMs), .forwardedAudio(let sourceURL, let durationMs):
+                let forwarding: Bool
+                if case .forwardedAudio = selection.representation { forwarding = true } else { forwarding = false }
                 guard durationMs > 0, durationMs <= 600_000 else {
                     throw InterjectionPackagePreparationError.cleanedAudioUnavailable(revision.id)
                 }
@@ -133,14 +137,14 @@ public enum SpokenMarginsPackageBuilder {
                     path: archivePath,
                     mimeType: "audio/mp4",
                     durationMs: durationMs,
-                    provenance: SharedInterjectionProvenance.senderApprovedOriginal.rawValue
+                    provenance: (forwarding ? SharedInterjectionProvenance.forwardedApprovedCopy : .senderApprovedOriginal).rawValue
                 ))
                 representation = SharedInterjectionRepresentation(
                     id: String(format: "representation-%04d-original", index + 1),
-                    kind: .originalAudioAndText,
+                    kind: forwarding ? .forwardedAudioAndText : .originalAudioAndText,
                     approvedTranscript: approvedTranscript,
                     assetId: assetID,
-                    provenance: .senderApprovedOriginal
+                    provenance: forwarding ? .forwardedApprovedCopy : .senderApprovedOriginal
                 )
             case .cleanedAudio(let sourceURL):
                 guard let cleanedAudioPath = revision.cleanedAudioPath,
@@ -170,16 +174,16 @@ public enum SpokenMarginsPackageBuilder {
                     provenance: .deterministicCleanupV1SenderApproved
                 )
             }
-            records.append(SharedInterjectionPackageRecord(
+            var record = SharedInterjectionPackageRecord(
                 packageScopedId: selection.packageScopedId,
                 createdAt: revision.createdAt,
-                anchor: selection.anchor.bounded(
-                    prefix: revision.anchorBefore,
-                    suffix: revision.anchorAfter
-                ),
+                anchor: selection.conversation != nil ? selection.anchor : selection.anchor.bounded(
+                    prefix: revision.anchorBefore, suffix: revision.anchorAfter),
                 defaultRepresentationId: representation.id,
                 representations: [representation]
-            ))
+            )
+            record.conversation = selection.conversation
+            records.append(record)
         }
 
         for evidence in machineEvidence {
@@ -274,6 +278,7 @@ public enum SpokenMarginsPackageBuilder {
         }
 
         var requiredCapabilities = [SharedCommentaryLayerArtifact.schemaVersion]
+        if records.contains(where: { $0.conversation != nil }) { requiredCapabilities.append(MarginConversation.capability) }
         if itemTransport.kind == .embeddedText {
             requiredCapabilities.append(EmbeddedTextItemArtifact.schemaVersion)
         }
@@ -363,7 +368,7 @@ public enum SpokenMarginsPackageImporter {
                     provenance: descriptor.provenance
                 )
             }
-            importedInterjections.append(ImportedCommentaryInterjection(
+            var imported = ImportedCommentaryInterjection(
                 id: localID,
                 layerId: layerID,
                 packageScopedId: record.packageScopedId,
@@ -375,7 +380,10 @@ public enum SpokenMarginsPackageImporter {
                 podcastAnchorEvidence: podcastEvidence,
                 resolution: itemResolution.anchorsByPackageScopedId[record.packageScopedId]
                     ?? ImportedAnchorResolution(evidenceClass: .unresolved)
-            ))
+            )
+            imported.conversation = record.conversation
+            imported.conversationAudioSHA256 = asset?.sha256
+            importedInterjections.append(imported)
         }
         let layer = ImportedCommentaryLayer(
             id: layerID,

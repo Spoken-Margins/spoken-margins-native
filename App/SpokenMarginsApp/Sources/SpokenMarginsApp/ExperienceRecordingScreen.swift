@@ -16,6 +16,10 @@ struct ExperienceRecordingView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     status
                     recordingTime
+                    if let parent = model.replyCaptureParent {
+                        Text("Replying to \(model.conversationTitle(parent))").font(.headline).foregroundStyle(.white)
+                        Text(parent.transcript).font(.caption).lineLimit(3).foregroundStyle(.white)
+                    }
                     anchor
                     feedback
                 }

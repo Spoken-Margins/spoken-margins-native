@@ -29,6 +29,10 @@ struct ExperienceWrittenMarginScreen: View {
                     .accessibilityLabel("Saved position for \(draft.itemTitle), \(draft.targetDescription), \(draft.progressPercent) percent")
                     .accessibilityIdentifier("writtenMargin.anchor")
 
+                    if let parent = model.replyCaptureParent {
+                        Label("Replying to \(model.conversationTitle(parent))", systemImage: "arrowshape.turn.up.left")
+                        Text(parent.transcript).font(.caption).lineLimit(3)
+                    }
                     TextEditor(text: text)
                         .font(.body)
                         .foregroundStyle(AppColors.text)

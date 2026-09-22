@@ -1,8 +1,8 @@
-# Co-op listening — first slice
+# Co-op listening and recursive replies
 
 Owner direction: September 22, 2026. Implementation lane: `codex/co-op` from
-`82e61bcec35e309dd9ad38eb64f824ae5e45766b`. This is conversation navigation,
-not recursive replies or hosted delivery. No distribution or merge is included.
+`82e61bcec35e309dd9ad38eb64f824ae5e45766b`. The September 22 follow-up adds recursive replies and optional context editing.
+Hosted delivery remains deferred. No distribution or merge is included.
 
 ## Product behavior
 
@@ -33,8 +33,10 @@ it is not promised to last an exact number of seconds with every voice/rate.
 A Margin exposes its transcript and available voice. Text-only contributions are
 readable without inventing a synthetic voice. Return to original position restores
 the starting source position; selecting another event is explicit. This slice does
-not automatically assemble/advance an entire reel. Recording replies while a
-Margin plays remains deferred; return to source to attach a new source Margin.
+not automatically assemble/advance an entire reel. A playing Margin offers explicit voice and written replies. The capture retains
+its source position and separately references the exact parent revision. Voice
+ancestors advance in order; text ancestors expose Next reply. This is a selected
+conversation path, not an automatically assembled whole-item reel.
 
 ## PDF identity
 
@@ -64,11 +66,51 @@ and return to the starting source position. Repeat with native text/PDF and
 confirm older local Margins remain accessible. Only owner acceptance establishes
 `human_validated`; handoff evidence belongs under `artifacts/validation/gate-1/`.
 
+## Recursive conversation contract
+
+Each contribution has an installation-scoped author ID, stable contribution ID,
+and immutable revision ID. Author labels remain unverified; packet integrity is
+not authentication. Replies reference an exact revision. Edits create a new
+revision, keeping the prior transcript/audio available to existing replies. Local
+recordings used by snapshots are retained in ConversationAudio by digest.
+
+Import unions exact revisions, retains sibling replies, rejects conflicting bodies
+for the same revision, and permits missing ancestors to arrive later. No last-write
+wins or automatic conflict resolution is used. Import validation and writes are
+atomic in SQLite. Re-importing overlapping packets adds only new revisions.
+Packages with this metadata require `spoken-margins.conversation.v1`; older clients
+must reject that required capability. Old packages still import, and acquire a
+stable legacy reference when first used as a reply target.
+
+The optional Response & Context sheet is available from a source Margin and item
+sharing. It can redirect a response to another Margin, or choose source context.
+Text selection uses source characters and a quoted passage; podcasts use a range
+within the preceding five minutes. These are listening hints, separate from the
+portable matching anchor. A recipient uses its resolved anchor and verifies the
+selected text before using the range; uncertain selections fall back to normal
+context. A second Skim tap bypasses the lead-up as before. Parent context plays
+the complete exact parent revision; trimming parent audio/text is deferred.
+
+The item Share path remains unchanged. The optional disclosure lists exact parent
+versions and requires an explicit Include referenced Margins choice before adding
+those bodies. Without it, links are sent and the recipient uses versions already
+present locally. Missing versions stay visible as missing. Forwarded audio is
+labeled as a forwarded copy, not as newly recorded or newly cleaned audio.
+
+A recent completed Margin can suggest attaching a newly captured source Margin
+as a reply for 30 seconds. This never changes the parent without a tap. Seeks and
+item changes clear the suggestion. Explicit Reply starts with the parent visibly
+identified; cancellation or microphone failure clears that pending target.
+
+Verification must include real archive round trips, overlapping three-person
+packets, reverse arrival order, conflict rollback, store reconstruction, retained
+capture anchors, corrected parents, and exact parent-chain playback. App test
+compilation is not test execution. Current simulator-incident restrictions apply;
+see the second-slice handoff for the checks actually performed.
+
 ## Deferred architecture
 
-Recursive replies need stable contribution and parent identities, deterministic
-union on import, missing-parent handling, and explicit forwarding consent. A
-server may later deliver packets and membership updates; device playback and
+A server may later deliver packets and membership updates; device playback and
 source matching remain separate. No VPS or bucket resources are required by this
 slice. AI context selection should be compared against the fixed-context baseline
 only after the basic listening loop is accepted.

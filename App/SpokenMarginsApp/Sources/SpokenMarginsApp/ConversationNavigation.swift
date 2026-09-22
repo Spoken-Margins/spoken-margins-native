@@ -11,6 +11,7 @@ enum ConversationScope: String, CaseIterable, Identifiable {
 
 struct ConversationDestination: Identifiable, Equatable {
     enum Content: Equatable {
+        case archived(MarginConversationSnapshot)
         case chapter
         case local(Interjection)
         case shared(ImportedCommentaryLayer, ImportedCommentaryInterjection)
@@ -20,8 +21,17 @@ struct ConversationDestination: Identifiable, Equatable {
     let title: String
     let content: Content
     var isMargin: Bool { if case .chapter = content { return false }; return true }
+    var conversation: MarginConversation? {
+        switch content {
+        case .chapter: nil
+        case .local(let note): note.conversation
+        case .shared(_, let note): note.conversation
+        case .archived(let node): node.conversation
+        }
+    }
     var transcript: String? {
         switch content {
+        case .archived(let node): node.transcript
         case .chapter: nil
         case .local(let note): note.cleanedTranscript ?? note.transcript ?? note.displayText
         case .shared(_, let note): note.approvedTranscript
@@ -34,6 +44,7 @@ struct ConversationLeadIn: Equatable {
     let origin: Int
     let wasPlaying: Bool
     let isMedia: Bool
+    var contextEnd: Int? = nil
 }
 
 enum ConversationNavigation {

@@ -78,6 +78,7 @@ struct InterjectionSharingState {
     var drafts: [ShareInterjectionDraft] = []
     var senderDisplayLabel = UserDefaults.standard.string(forKey: "sharingSenderDisplayLabel") ?? ""
     var includesAcousticEvidence = true
+    var includesReplyContext = false
     var itemReferenceURL: String?
     var canEmbedLinklessItem = false
     var isAppAuthoredItem = false

@@ -47,6 +47,7 @@ enum SharingRightsPresentation {
             }
             for representation in record.representations {
                 switch representation.kind {
+                case .forwardedAudioAndText: lines.append("Margin \(index + 1): forwarded approved voice and text; original author attribution retained.")
                 case .originalAudioAndText: lines.append("Margin \(index + 1): sender-approved original voice and text.")
                 case .cleanedAudioAndText: lines.append("Margin \(index + 1): sender-approved edited voice and text; the private original is unchanged.")
                 case .textOnly: lines.append("Margin \(index + 1): sender-approved text only; no recording.")

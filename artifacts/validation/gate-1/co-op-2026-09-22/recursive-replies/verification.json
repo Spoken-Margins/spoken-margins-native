@@ -1,0 +1,32 @@
+{
+  "branch": "codex/co-op",
+  "base_commit": "564a16ddb5614f40380480e02460be3f55896689",
+  "input_sha256": "488da11498d3fd7cddd4c59284e27d38f3ec4e162a913e449fedd8c50a9804e2",
+  "fast": {
+    "status": "verified",
+    "manifest": "artifacts/test-runs/20260922-133208-084143-fast/manifest.json",
+    "package_counts": {
+      "passed": 311,
+      "failed": 0,
+      "skipped": 1
+    }
+  },
+  "simulator_test_build": {
+    "status": "compiled",
+    "log": "simulator-test-build.log",
+    "test_execution": false
+  },
+  "device_build": {
+    "status": "compiled",
+    "log": "device-build.log",
+    "installed": false
+  },
+  "runtime": {
+    "app": "not_executed",
+    "adapters": "not_executed",
+    "speech_canary": "not_executed",
+    "ui": "not_executed",
+    "reason": "Unresolved SpringBoard/XCTest teardown incident; no simulator boot or alternative-device bypass attempted."
+  },
+  "human_validation": "not_requested_or_claimed"
+}

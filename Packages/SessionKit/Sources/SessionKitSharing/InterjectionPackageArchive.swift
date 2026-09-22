@@ -89,6 +89,7 @@ public enum SpokenMarginsPackageArchive {
     private static let maximumCompressionRatio: UInt64 = 100
     private static let fixedArchiveDate = Date(timeIntervalSince1970: 315_532_800)
     private static let supportedRequiredCapabilities: Set<String> = [
+        MarginConversation.capability,
         SharedCommentaryLayerArtifact.schemaVersion,
         EmbeddedTextItemArtifact.schemaVersion
     ]
@@ -607,6 +608,21 @@ public enum SpokenMarginsPackageArchive {
         guard Set(scopedIDs).count == scopedIDs.count else {
             throw SpokenMarginsPackageArchiveError.invalidManifest("package-scoped Margin IDs are not unique")
         }
+        if layer.interjections.contains(where: { $0.conversation != nil }),
+           !manifest.requiredCapabilities.contains(MarginConversation.capability) {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("conversation capability is required")
+        }
+        let conversationNodes = layer.interjections.compactMap { record -> MarginConversationSnapshot? in
+            guard let conversation = record.conversation, let representation = record.defaultRepresentation else { return nil }
+            let asset = representation.assetId.flatMap { assetsByID[$0] }
+            return MarginConversationSnapshot(itemID: "", conversation: conversation, anchor: record.anchor,
+                transcript: representation.approvedTranscript, audioSHA256: asset?.sha256,
+                audioDurationMs: asset?.durationMs, createdAt: record.createdAt)
+        }
+        guard Set(conversationNodes.map(\.id)).count == conversationNodes.count else {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("duplicate conversation revision")
+        }
+        _ = try MarginConversationGraph.merge([], conversationNodes)
         for record in layer.interjections { try validate(record, assetsByID: assetsByID) }
         for proposal in proposals { try validate(proposal, assetsByID: assetsByID) }
         for spine in fingerprintSpines { try validate(spine, assetsByID: assetsByID, item: manifest.item) }
@@ -696,6 +712,7 @@ public enum SpokenMarginsPackageArchive {
         _ record: SharedInterjectionPackageRecord,
         assetsByID: [String: SpokenMarginsAssetDescriptor]
     ) throws {
+        if let conversation = record.conversation { try MarginConversationGraph.validate(conversation) }
         let anchor = record.anchor
         guard (1...200).contains(record.packageScopedId.count), !record.representations.isEmpty,
               Set(record.representations.map(\.id)).count == record.representations.count,
@@ -725,7 +742,7 @@ public enum SpokenMarginsPackageArchive {
                 guard representation.assetId == nil else {
                     throw SpokenMarginsPackageArchiveError.invalidManifest("text representation references audio")
                 }
-            case .originalAudioAndText, .cleanedAudioAndText, .summaryAudioAndText, .ttsAudioAndText:
+            case .forwardedAudioAndText, .originalAudioAndText, .cleanedAudioAndText, .summaryAudioAndText, .ttsAudioAndText:
                 guard let assetID = representation.assetId,
                       let asset = assetsByID[assetID], asset.path.hasPrefix("assets/audio/") else {
                     throw SpokenMarginsPackageArchiveError.invalidManifest("audio representation asset is absent")

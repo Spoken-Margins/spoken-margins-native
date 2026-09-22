@@ -1,6 +1,7 @@
 import Foundation
 
 public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
+    public var conversationSnapshots: [String: MarginConversationSnapshot] = [:]
     public var items: [String: Item]
     public var mapsByItemId: [String: ListeningMap]
     public var sessions: [String: Session]
@@ -132,6 +133,15 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
         interjections.values.filter { $0.sessionId == sessionId }.sorted { $0.createdAt < $1.createdAt }
     }
 
+    public func loadConversationSnapshots() throws -> [MarginConversationSnapshot] {
+        conversationSnapshots.values.sorted { $0.id < $1.id }
+    }
+
+    public func saveConversationSnapshot(_ snapshot: MarginConversationSnapshot) throws {
+        _ = try MarginConversationGraph.merge(Array(conversationSnapshots.values), [snapshot])
+        if conversationSnapshots[snapshot.id] == nil { conversationSnapshots[snapshot.id] = snapshot }
+    }
+
     public func saveInterjectionShareRevision(_ revision: InterjectionShareRevision) throws {
         if let existing = interjectionShareRevisions[revision.id] {
             guard existing == revision else {
@@ -161,11 +171,15 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
               newInterjections.allSatisfy({ importedCommentaryInterjections[$0.id] == nil }) else {
             throw SessionKitError.persistenceFailed("imported_commentary_local_id_conflict")
         }
+        let incoming = newInterjections.compactMap { $0.conversationSnapshot(itemID: layer.itemId ?? "") }
+        let merged = try MarginConversationGraph.merge(Array(conversationSnapshots.values), incoming)
+        let additions = newInterjections.filter { $0.conversation.map { conversationSnapshots[$0.reference.id] == nil } ?? true }
+        conversationSnapshots = Dictionary(uniqueKeysWithValues: merged.map { ($0.id, $0) })
         importedCommentaryLayers[layer.id] = layer
-        for interjection in newInterjections {
+        for interjection in additions {
             importedCommentaryInterjections[interjection.id] = interjection
         }
-        return .imported(layerId: layer.id, interjectionIds: newInterjections.map(\.id))
+        return .imported(layerId: layer.id, interjectionIds: additions.map(\.id))
     }
 
     public func loadImportedCommentaryLayer(id: String) throws -> ImportedCommentaryLayer? {

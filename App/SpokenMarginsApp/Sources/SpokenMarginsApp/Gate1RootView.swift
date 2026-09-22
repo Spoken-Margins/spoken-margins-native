@@ -126,6 +126,9 @@ private struct Build23SenderSharingHost: View {
 
     var body: some View {
         Build23SenderSharingExperience(coordinator: coordinator)
+            .sheet(item: $model.conversationEditorNote) { note in
+                ConversationContextEditor(note: note).environmentObject(model)
+            }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if coordinator.verifiedShareFileURL != nil {
                     VStack(spacing: 10) {
@@ -2188,6 +2191,17 @@ private struct PlaybackScreen: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(margin.title).font(.headline)
                     if let transcript = margin.transcript { Text(transcript).font(.body).textSelection(.enabled) }
+                    HStack {
+                        Button("Voice reply") { model.replyToPlayingMargin(written: false) }
+                        Button("Written reply") { model.replyToPlayingMargin(written: true) }
+                    }.buttonStyle(.bordered)
+                    if !model.conversationThreadQueue.isEmpty {
+                        Button("Next reply", action: model.nextConversationReply).buttonStyle(.bordered)
+                    }
+                    if let parent = margin.conversation?.parent,
+                       !model.conversationSnapshots.contains(where: { $0.id == parent.id }) {
+                        Text("The referenced Margin has not been received yet.").font(.caption)
+                    }
                     Button("Return to original position", action: model.returnFromConversation)
                         .buttonStyle(.bordered)
                 }
@@ -2199,6 +2213,10 @@ private struct PlaybackScreen: View {
     private var playbackControls: some View {
         VStack(spacing: 10) {
             playbackPosition
+            if let recent = model.suggestedRecentReply, let captured = model.lastConversationCapture, captured.conversation?.parent == nil {
+                Button("Make your last Margin a reply to \(model.conversationTitle(recent))") { model.attachLastMarginToRecentReply() }
+                    .font(.caption).foregroundStyle(.white)
+            }
             if model.canJumpToNextChapter {
                 Button("Next chapter", systemImage: "forward.end") { model.jumpToNextChapter() }
                     .font(.subheadline.weight(.medium))

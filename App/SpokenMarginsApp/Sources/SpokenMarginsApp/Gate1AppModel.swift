@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import Security
 import SessionKit
 import SessionKitAI
@@ -4563,6 +4564,308 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    @Published var conversationEditorNote: Interjection?
+    @Published private(set) var replyCaptureParent: MarginConversationSnapshot?
+    @Published private(set) var conversationSnapshots: [MarginConversationSnapshot] = []
+    @Published private(set) var recentConversationMargin: MarginConversationSnapshot?
+    @Published private(set) var lastConversationCapture: Interjection?
+    private var recentConversationMarginAt: Date?
+    private var replyCaptureExistingIDs: Set<String> = []
+    @Published private(set) var conversationThreadQueue: [ConversationDestination] = []
+
+    private var conversationAuthorID: String {
+        let key = "conversationAuthorID"
+        if let saved = UserDefaults.standard.string(forKey: key) { return saved }
+        let id = UUID().uuidString.lowercased()
+        UserDefaults.standard.set(id, forKey: key)
+        return id
+    }
+
+    private func conversationMetadata(for note: Interjection) -> MarginConversation {
+        note.conversation ?? MarginConversation(reference: .init(contributionID: UUID().uuidString.lowercased(),
+            revisionID: UUID().uuidString.lowercased()), authorID: conversationAuthorID,
+            authorLabel: UserDefaults.standard.string(forKey: "sharingSenderDisplayLabel")?.nilIfEmpty ?? "Contributor")
+    }
+
+    private func reloadConversationSnapshots() {
+        conversationSnapshots = (try? store?.loadConversationSnapshots()) ?? []
+    }
+
+    func conversationUpdatedNote(_ note: Interjection) -> Interjection {
+        (try? store?.loadInterjections(sessionId: note.sessionId))?.first { $0.id == note.id } ?? note
+    }
+
+    private func conversationSourcePosition(_ note: Interjection) -> Int {
+        guard let parent = note.conversation?.parent else {
+            return conversationUsesMedia ? (note.anchor.mediaTimeMs ?? 0) : note.anchor.startChar
+        }
+        // Prefer the recipient's resolved source position over the sender's coordinates.
+        for notes in selectedItem.importedCommentaryInterjections.values {
+            if let imported = notes.first(where: { $0.conversation?.reference == parent }),
+               Self.isPlayableImportedCommentaryResolution(imported.resolution),
+               let position = conversationUsesMedia ? imported.resolution.localMediaTimeMs : imported.resolution.localStartChar { return position }
+        }
+        if let local = selectedItem.itemInterjections.first(where: { $0.conversation?.reference == parent }) { return conversationSourcePosition(local) }
+        if let node = conversationSnapshots.first(where: { $0.id == parent.id }), node.conversation.authorID == conversationAuthorID {
+            return conversationUsesMedia ? (node.anchor.mediaTimeMs ?? note.anchor.mediaTimeMs ?? 0) : (node.anchor.startChar ?? note.anchor.startChar)
+        }
+        return conversationUsesMedia ? (note.anchor.mediaTimeMs ?? 0) : note.anchor.startChar
+    }
+
+    func playConversationSnapshot(_ node: MarginConversationSnapshot) {
+        guard !node.itemID.isEmpty, !recordingNavigationIsLocked else { return }
+        if selectedItem.id != node.itemID { openItem(id: node.itemID) }
+        if snapshot.itemId != node.itemID || !hasActiveSession || snapshot.phase == .finished { startItem(id: node.itemID) }
+        let resolved = selectedItem.importedCommentaryInterjections.values.flatMap { $0 }.first {
+            $0.conversation?.reference == node.conversation.reference && Self.isPlayableImportedCommentaryResolution($0.resolution)
+        }
+        let local = selectedItem.itemInterjections.first { $0.conversation?.reference == node.conversation.reference }
+        let position = resolved.flatMap { conversationUsesMedia ? $0.resolution.localMediaTimeMs : $0.resolution.localStartChar }
+            ?? local.map(conversationSourcePosition)
+            ?? (node.conversation.authorID == conversationAuthorID ? (conversationUsesMedia ? node.anchor.mediaTimeMs : node.anchor.startChar) : nil)
+        guard let position else { reportWarning("Match this Margin to the source before playing its context."); return }
+        beginConversationDestination(.init(id: "revision:\(node.id)", position: position,
+            title: conversationTitle(node), content: .archived(node)), withContext: true)
+    }
+
+    func conversationTitle(_ node: MarginConversationSnapshot) -> String {
+        node.conversation.authorID == conversationAuthorID ? "Your Margin" : "\(node.conversation.authorLabel)’s Margin"
+    }
+
+    private func sourceAnchorForConversation(_ note: Interjection, item: Item) -> PortableAnchorEvidence {
+        if let parent = note.conversation?.parent,
+           let node = (try? store?.loadConversationSnapshots())?.first(where: { $0.id == parent.id }) { return node.anchor }
+        return portableAnchor(for: note, item: item, machineEvidenceAssetIds: [])
+            .bounded(prefix: note.anchor.anchorBefore, suffix: note.anchor.anchorAfter)
+    }
+
+    private func retainedConversationAudio(_ url: URL?, digest: String?) throws -> URL? {
+        guard let url, let digest else { return nil }
+        let directory = try applicationSupportDirectory().appending(path: "SpokenMargins/ConversationAudio", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let destination = directory.appending(path: digest + "." + url.pathExtension)
+        if !FileManager.default.fileExists(atPath: destination.path) { try FileManager.default.copyItem(at: url, to: destination) }
+        return destination
+    }
+
+    @discardableResult
+    func ensureConversationSnapshot(_ original: Interjection) throws -> MarginConversationSnapshot {
+        let store = try requireStore()
+        var note = try store.loadInterjections(sessionId: original.sessionId).first(where: { $0.id == original.id }) ?? original
+        if let metadata = note.conversation,
+           let existing = try store.loadConversationSnapshots().first(where: { $0.id == metadata.reference.id }) {
+            return existing
+        }
+        let metadata = conversationMetadata(for: note)
+        let item = try store.loadItem(id: note.itemId)
+        let audio = note.audioPath.flatMap(resolvedInterjectionAudioURL(for:))
+        let digest = try audio.map { SHA256.hash(data: try Data(contentsOf: $0)).map { String(format: "%02x", $0) }.joined() }
+        let node = MarginConversationSnapshot(itemID: note.itemId, conversation: metadata,
+            anchor: sourceAnchorForConversation(note, item: item),
+            transcript: note.cleanedTranscript ?? note.transcript ?? note.displayText ?? "Transcript not available.",
+            audioPath: try retainedConversationAudio(audio, digest: digest)?.path, audioSHA256: digest, audioDurationMs: audio.map { audioDurationMs(at: $0) ?? 1 }, createdAt: note.createdAt)
+        try store.saveConversationSnapshot(node)
+        note.conversation = metadata
+        try store.saveInterjection(note)
+        reloadConversationSnapshots()
+        return node
+    }
+
+    @discardableResult
+    func ensureConversationSnapshot(_ row: SharedMarginRow) throws -> MarginConversationSnapshot {
+        let store = try requireStore()
+        if let node = row.interjection.conversationSnapshot(itemID: row.layer.itemId ?? "") {
+            try store.saveConversationSnapshot(node); reloadConversationSnapshots(); return node
+        }
+        // A legacy package has no portable contribution identity. Its verified
+        // digest and package-scoped ID give a stable identity for future replies.
+        let stable = SHA256.hash(data: Data("\(row.layer.packageDigest):\(row.interjection.packageScopedId)".utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        let audio = row.interjection.audioPath.map { URL(fileURLWithPath: $0) }
+        let digest = try audio.map { SHA256.hash(data: try Data(contentsOf: $0)).map { String(format: "%02x", $0) }.joined() }
+        var note = row.interjection
+        note.conversation = .init(reference: .init(contributionID: "legacy-\(stable)", revisionID: "legacy-v1"),
+            authorID: "legacy-\(row.layer.packageDigest)", authorLabel: row.collectionLabel)
+        note.conversationAudioSHA256 = digest
+        let node = note.conversationSnapshot(itemID: row.layer.itemId ?? "")!
+        try store.saveConversationSnapshot(node)
+        try store.saveImportedCommentaryInterjection(note)
+        reloadConversationSnapshots()
+        return node
+    }
+
+    func editConversationContext(_ note: Interjection) {
+        guard note.targetType == .item else { reportWarning("Response context is available for source Margins."); return }
+        do {
+            if selectedItem.id != note.itemId { openItem(id: note.itemId) }
+            _ = try ensureConversationSnapshot(note)
+            for candidate in selectedItem.itemInterjections where candidate.id != note.id && candidate.targetType == .item {
+                _ = try? ensureConversationSnapshot(candidate)
+            }
+            for layer in selectedItem.importedCommentaryLayers where layer.deletedAt == nil {
+                for imported in selectedItem.importedCommentaryInterjections[layer.id, default: []] {
+                    _ = try? ensureConversationSnapshot(SharedMarginRow(interjection: imported, layer: layer, itemTitle: selectedItem.title))
+                }
+            }
+            let stored = try requireStore().loadInterjections(sessionId: note.sessionId).first { $0.id == note.id } ?? note
+            conversationEditorNote = stored
+        } catch { reportFailure(error, context: "Could not open response context") }
+    }
+
+    func responseTargetTitle(_ note: Interjection) -> String {
+        guard let parent = note.conversation?.parent else { return "Source passage" }
+        if let node = conversationSnapshots.first(where: { $0.id == parent.id }) { return conversationTitle(node) }
+        return "Referenced Margin · not received yet"
+    }
+
+    func replyTargetOptions(for note: Interjection) -> [MarginConversationSnapshot] {
+        let importedIDs = Set(selectedItem.importedCommentaryInterjections.values.flatMap { $0 }.compactMap { $0.conversation?.reference.id })
+        let derivativeIDs = Set(selectedItem.itemInterjections.filter { $0.targetType != .item }.compactMap { $0.conversation?.reference.contributionID })
+        return conversationSnapshots.filter { !derivativeIDs.contains($0.conversation.reference.contributionID) &&
+            ($0.itemID == note.itemId || importedIDs.contains($0.id)) && $0.conversation.reference.contributionID != note.conversation?.reference.contributionID
+        }.sorted { $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt < $1.createdAt }
+    }
+
+    @discardableResult
+    func saveConversationContext(note original: Interjection, parent: MarginReference?, context: MarginListeningContext?) -> Bool {
+        do {
+            let store = try requireStore()
+            var note = try store.loadInterjections(sessionId: original.sessionId).first { $0.id == original.id } ?? original
+            var metadata = conversationMetadata(for: note)
+            metadata.reference.revisionID = UUID().uuidString.lowercased()
+            metadata.parent = parent; metadata.context = context
+            try MarginConversationGraph.validate(metadata)
+            if let context, parent == nil {
+                if context.kind == .sourceText {
+                    let text = try store.loadItem(id: note.itemId).text ?? ""
+                    guard context.end <= text.count, context.end <= note.anchor.startChar,
+                          context.quote == String(text.dropFirst(context.start).prefix(context.end - context.start)) else {
+                        throw SessionKitError.persistenceFailed("invalid_source_context_selection")
+                    }
+                } else if context.kind == .sourceMedia {
+                    guard context.end <= (note.anchor.mediaTimeMs ?? -1), context.end - context.start <= 300_000 else {
+                        throw SessionKitError.persistenceFailed("invalid_media_context_selection")
+                    }
+                }
+            }
+            if let parent {
+                let nodes = try store.loadConversationSnapshots()
+                guard nodes.contains(where: { $0.id == parent.id }),
+                      !MarginConversationGraph.ancestors(of: parent, in: nodes).contains(where: {
+                          $0.conversation.reference.contributionID == metadata.reference.contributionID
+                      }) else { throw SessionKitError.persistenceFailed("invalid_reply_target") }
+            }
+            note.conversation = metadata
+            // Capture coordinates are deliberately untouched.
+            try store.saveInterjection(note)
+            _ = try ensureConversationSnapshot(note)
+            if let index = sharingState.drafts.firstIndex(where: { $0.id == note.id }) { sharingState.drafts[index].interjection = note }
+            refreshSelectedItem(); refreshMarginRows(); reloadConversationSnapshots()
+            conversationEditorNote = nil
+            reportConfirmation("Response target and listening context saved.")
+            return true
+        } catch { reportFailure(error, context: "Could not save response context"); return false }
+    }
+
+    func beginReply(to note: Interjection, written: Bool) {
+        guard note.targetType == .item else { reportWarning("Co-op replies are available for source Margins."); return }
+        do { try beginReply(to: ensureConversationSnapshot(note), written: written) }
+        catch { reportFailure(error, context: "Reply could not start") }
+    }
+
+    func beginReply(to row: SharedMarginRow, written: Bool) {
+        do { try beginReply(to: ensureConversationSnapshot(row), written: written) }
+        catch { reportFailure(error, context: "Reply could not start") }
+    }
+
+    func beginArchivedReply(to node: MarginConversationSnapshot, written: Bool) {
+        do { try beginReply(to: node, written: written) }
+        catch { reportFailure(error, context: "Reply could not start") }
+    }
+
+    func beginReply(to node: MarginConversationSnapshot, written: Bool) throws {
+        guard !recordingNavigationIsLocked else { return }
+        guard !node.itemID.isEmpty else { throw SessionKitError.persistenceFailed("match_source_before_replying") }
+        if selectedItem.id != node.itemID { openItem(id: node.itemID) }
+        if snapshot.itemId != node.itemID || !hasActiveSession || snapshot.phase == .finished { startItem(id: node.itemID) }
+        guard snapshot.itemId == node.itemID, hasActiveSession else { return }
+        clearConversationNavigation()
+        cancelSkimBridge(restoringOrigin: false, resumeSource: false)
+        stopInterjectionAudioPlayback()
+        pause()
+        replyCaptureParent = node
+        replyCaptureExistingIDs = Set((try? requireStore().loadInterjections(sessionId: snapshot.sessionId ?? ""))?.map(\.id) ?? [])
+        screen = .playback
+        if written { beginWrittenMargin() } else { beginInterjection() }
+        if (written && writtenMarginDraft == nil) || (!written && !recordingNavigationIsLocked) { replyCaptureParent = nil }
+    }
+
+    func replyToPlayingMargin(written: Bool) {
+        guard let destination = conversationCurrentMargin else { return }
+        switch destination.content {
+        case .local(let note): beginReply(to: note, written: written)
+        case .shared(let layer, let note): beginReply(to: SharedMarginRow(interjection: note, layer: layer, itemTitle: selectedItem.title), written: written)
+        case .archived(let node): do { try beginReply(to: node, written: written) } catch { reportFailure(error, context: "Reply could not start") }
+        case .chapter: break
+        }
+    }
+
+    private func attachPendingReplyToLatestCapture() {
+        guard let sessionID = snapshot.sessionId, let store,
+              var note = try? store.loadInterjections(sessionId: sessionID).max(by: { $0.createdAt < $1.createdAt }) else { return }
+        lastConversationCapture = note
+        guard let parent = replyCaptureParent, !replyCaptureExistingIDs.contains(note.id) else { return }
+        do {
+            var metadata = conversationMetadata(for: note)
+            metadata.parent = parent.conversation.reference
+            metadata.context = .init(kind: .parent, start: 0, end: parent.audioDurationMs ?? parent.transcript.count)
+            note.conversation = metadata
+            try store.saveInterjection(note)
+            _ = try ensureConversationSnapshot(note)
+            lastConversationCapture = note
+            replyCaptureParent = nil; replyCaptureExistingIDs = []
+            refreshSelectedItem(); refreshMarginRows()
+        } catch { reportFailure(error, context: "Margin saved, but its reply target could not be saved") }
+    }
+
+    var suggestedRecentReply: MarginConversationSnapshot? {
+        guard let recent = recentConversationMargin, recent.itemID == selectedItem.id,
+              let at = recentConversationMarginAt, Date().timeIntervalSince(at) <= 30 else { return nil }
+        return recent
+    }
+
+    func attachLastMarginToRecentReply() {
+        guard let parent = suggestedRecentReply, let note = lastConversationCapture, note.itemId == parent.itemID else { return }
+        _ = saveConversationContext(note: note, parent: parent.conversation.reference,
+            context: .init(kind: .parent, start: 0, end: parent.audioDurationMs ?? parent.transcript.count))
+        recentConversationMargin = nil
+    }
+
+    private func rememberHeardConversationMargin() {
+        guard let destination = conversationCurrentMargin else { return }
+        do {
+            let node: MarginConversationSnapshot
+            switch destination.content {
+            case .local(let note): node = try ensureConversationSnapshot(note)
+            case .shared(let layer, let note): node = try ensureConversationSnapshot(SharedMarginRow(interjection: note, layer: layer, itemTitle: selectedItem.title))
+            case .archived(let saved): node = saved
+            case .chapter: return
+            }
+            recentConversationMargin = node; recentConversationMarginAt = Date(); lastConversationCapture = nil
+        } catch { diagnostics["recentReplySuggestion"] = String(describing: error) }
+    }
+
+    var forwardedReplyContext: [MarginConversationSnapshot] {
+        let nodes = (try? store?.loadConversationSnapshots()) ?? []
+        var selected: [String: MarginConversationSnapshot] = [:]
+        for draft in sharingState.drafts where draft.isIncluded {
+            if let parent = draft.interjection.conversation?.parent {
+                for node in MarginConversationGraph.ancestors(of: parent, in: nodes) { selected[node.id] = node }
+            }
+        }
+        return selected.values.sorted { $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt < $1.createdAt }
+    }
+
     @Published var conversationScope: ConversationScope = .all {
         didSet { updateSkimAvailability(refreshResources: false) }
     }
@@ -4601,7 +4904,7 @@ final class Gate1AppModel: ObservableObject {
         }
         var seen: Set<String> = []
         for note in item.itemInterjections + item.interjections where note.status == "active" && note.targetType == .item && note.itemId == item.id {
-            let id = "local:\(note.sessionId):\(note.id)"
+            let id = note.conversation.map { "revision:\($0.reference.id)" } ?? "local:\(note.sessionId):\(note.id)"
             guard seen.insert(id).inserted else { continue }
             let position: Int
             if conversationUsesMedia {
@@ -4612,7 +4915,7 @@ final class Gate1AppModel: ObservableObject {
                 guard note.anchor.startChar >= 0, note.anchor.startChar <= item.text.count else { continue }
                 position = note.anchor.startChar
             }
-            destinations.append(ConversationDestination(id: id, position: position, title: "My Margin", content: .local(note)))
+            destinations.append(ConversationDestination(id: id, position: note.conversation?.parent == nil ? position : conversationSourcePosition(note), title: "My Margin", content: .local(note)))
         }
         for layer in item.importedCommentaryLayers where layer.deletedAt == nil && layer.isEnabled && !layer.isMuted && layer.sourceResolutionStatus != .wrongSource {
             for note in item.importedCommentaryInterjections[layer.id, default: []] {
@@ -4620,7 +4923,9 @@ final class Gate1AppModel: ObservableObject {
                 let position = conversationUsesMedia ? note.resolution.localMediaTimeMs : note.resolution.localStartChar
                 guard let position else { continue }
                 let row = SharedMarginRow(interjection: note, layer: layer, itemTitle: item.title)
-                destinations.append(ConversationDestination(id: "shared:\(layer.id):\(note.id)", position: position,
+                let id = note.conversation.map { "revision:\($0.reference.id)" } ?? "shared:\(layer.id):\(note.id)"
+                guard seen.insert(id).inserted else { continue }
+                destinations.append(ConversationDestination(id: id, position: position,
                     title: "\(row.collectionLabel)’s Margin", content: .shared(layer, note)))
             }
         }
@@ -4652,8 +4957,9 @@ final class Gate1AppModel: ObservableObject {
             else { reportWarning("This Margin has no saved source position.") }
             return
         }
-        let destination = ConversationDestination(id: "local:\(note.sessionId):\(note.id)",
-            position: conversationUsesMedia ? (note.anchor.mediaTimeMs ?? 0) : note.anchor.startChar,
+        let note = conversationUpdatedNote(note)
+        let destination = ConversationDestination(id: note.conversation.map { "revision:\($0.reference.id)" } ?? "local:\(note.sessionId):\(note.id)",
+            position: conversationSourcePosition(note),
             title: "My Margin", content: .local(note))
         beginConversationDestination(destination, withContext: withContext)
     }
@@ -4672,13 +4978,108 @@ final class Gate1AppModel: ObservableObject {
             else { reportWarning("This Margin does not yet have a verified source position.") }
             return
         }
-        let destination = ConversationDestination(id: "shared:\(row.layer.id):\(row.interjection.id)", position: position,
+        let destination = ConversationDestination(id: row.interjection.conversation.map { "revision:\($0.reference.id)" } ?? "shared:\(row.layer.id):\(row.interjection.id)", position: position,
             title: "\(row.collectionLabel)’s Margin", content: .shared(row.layer, row.interjection))
         beginConversationDestination(destination, withContext: withContext)
     }
 
-    private func beginConversationDestination(_ destination: ConversationDestination, withContext: Bool) {
+    private func parentPlaybackDestinations(for destination: ConversationDestination) -> [ConversationDestination] {
+        guard let parent = destination.conversation?.parent else { return [] }
+        let nodes = (try? store?.loadConversationSnapshots()) ?? []
+        return MarginConversationGraph.ancestors(of: parent, in: nodes).map {
+            ConversationDestination(id: "revision:\($0.id)", position: destination.position,
+                title: conversationTitle($0), content: .archived($0))
+        }
+    }
+
+    func nextConversationReply() {
+        guard !conversationThreadQueue.isEmpty else { return }
+        let next = conversationThreadQueue.removeFirst()
+        if playingImportedCommentary != nil { stopImportedCommentaryPlayback(resumeSource: false) }
+        stopInterjectionAudioPlayback()
+        arriveAtConversationDestination(.init(destination: next, origin: conversationReturnPoint?.origin ?? conversationPosition,
+            wasPlaying: false, isMedia: conversationUsesMedia))
+    }
+
+    private func archivedRecording(_ node: MarginConversationSnapshot) -> Interjection {
+        .init(id: "revision-\(node.id)", itemId: selectedItem.id, sessionId: snapshot.sessionId ?? "conversation",
+            targetType: .item, targetId: selectedItem.id, createdAt: node.createdAt, roughPercent: node.anchor.roughPercent ?? 0,
+            anchor: .init(anchorType: node.anchor.anchorType, startChar: node.anchor.startChar ?? 0,
+                endChar: node.anchor.endChar ?? 0, anchorBefore: node.anchor.prefix ?? "", anchorAfter: node.anchor.suffix ?? "",
+                mediaTimeMs: node.anchor.mediaTimeMs), audioPath: node.audioPath, audioStatus: "ready",
+            transcriptionStatus: "completed", transcript: node.transcript, cleanedTranscript: nil,
+            displayText: node.transcript, status: "active", captureKind: node.audioPath == nil ? .written : .audio)
+    }
+
+    private func playConversationRecording(_ note: Interjection, destination: ConversationDestination) {
+        conversationCurrentMargin = destination
+        conversationLocalPaused = false
+        if note.captureKind != .written && note.audioPath != nil {
+            toggleInterjectionAudioPlayback(note)
+            if playingInterjectionAudioId != nil && !mixesWithOtherAudio {
+                conversationOwnsRemoteControls = true
+                (sessionAudioPlaybackClient ?? audioPlaybackClientOverride)?.setRemoteCommandHandlingEnabled(false)
+                gate2CompactControls.setNowPlayingEnabled(false)
+                gate2CompactControls.endLiveActivities()
+                importedMarginRemoteControls.install { [weak self] command in
+                    guard let self, self.conversationOwnsRemoteControls else { return }
+                    switch command {
+                    case .play: self.setConversationRecordingPaused(false)
+                    case .pause: self.setConversationRecordingPaused(true)
+                    case .togglePlayPause: self.setConversationRecordingPaused(!self.conversationLocalPaused)
+                    default: break
+                    }
+                }
+                publishConversationRecording()
+            }
+        } else {
+            markConversationMarginHeard(destination.id)
+        }
+    }
+
+    private func selectedContextRange(_ destination: ConversationDestination) -> (start: Int, end: Int)? {
+        guard let context = destination.conversation?.context else { return nil }
+        switch context.kind {
+        case .parent: return nil // Entire exact parent revision in the first reply slice.
+        case .sourceText:
+            guard !conversationUsesMedia, let quote = context.quote, !quote.isEmpty else { return nil }
+            let senderAnchor: Int?
+            switch destination.content {
+            case .local(let note): senderAnchor = note.anchor.startChar
+            case .shared(_, let note): senderAnchor = note.anchorEvidence.startChar
+            case .archived(let node): senderAnchor = node.anchor.startChar
+            case .chapter: senderAnchor = nil
+            }
+            if let senderAnchor {
+                let start = context.start + destination.position - senderAnchor
+                let end = context.end + destination.position - senderAnchor
+                if start >= 0, end >= start, end <= selectedItem.text.count,
+                   String(selectedItem.text.dropFirst(start).prefix(end - start)) == quote { return (start, end) }
+            }
+            guard let range = selectedItem.text.range(of: quote),
+                  selectedItem.text[range.upperBound...].range(of: quote) == nil else { return nil }
+            return (selectedItem.text.distance(from: selectedItem.text.startIndex, to: range.lowerBound),
+                    selectedItem.text.distance(from: selectedItem.text.startIndex, to: range.upperBound))
+        case .sourceMedia:
+            guard conversationUsesMedia else { return nil }
+            let sourceAnchor: Int?
+            switch destination.content {
+            case .local(let note): sourceAnchor = note.anchor.mediaTimeMs
+            case .shared(_, let note): sourceAnchor = note.anchorEvidence.mediaTimeMs
+            case .archived(let node): sourceAnchor = node.anchor.mediaTimeMs
+            case .chapter: sourceAnchor = nil
+            }
+            guard let sourceAnchor else { return nil }
+            let shift = destination.position - sourceAnchor
+            return (max(0, context.start + shift), max(0, context.end + shift))
+        }
+    }
+
+    private func beginConversationDestination(_ requestedDestination: ConversationDestination, withContext: Bool, respectForwardPosition: Bool = false) {
         guard let engine, conversationIsSourcePlayback else { return }
+        let parents = withContext ? parentPlaybackDestinations(for: requestedDestination) : []
+        let destination = parents.first ?? requestedDestination
+        let customRange = withContext ? selectedContextRange(parents.first ?? requestedDestination) : nil
         let previousReturnPoint = conversationReturnPoint
         let origin = conversationPosition
         let wasPlaying = snapshot.status.isPlaybackActive
@@ -4687,11 +5088,13 @@ final class Gate1AppModel: ObservableObject {
         stopInterjectionAudioPlayback()
         pendingImportedCommentary = nil
         importedCommentaryAutoPlayTask?.cancel()
-        let lead = ConversationLeadIn(destination: destination, origin: origin, wasPlaying: wasPlaying, isMedia: conversationUsesMedia)
+        var lead = ConversationLeadIn(destination: destination, origin: origin, wasPlaying: wasPlaying, isMedia: conversationUsesMedia)
+        lead.contextEnd = customRange.map { min(destination.position, $0.end) }
+        conversationThreadQueue = parents.isEmpty ? [] : Array(parents.dropFirst()) + [requestedDestination]
         conversationReturnPoint = previousReturnPoint ?? lead
         conversationCursor = destination
-        if destination.isMargin && withContext && conversationContextSeconds > 0 {
-            if conversationUsesMedia,
+        if destination.isMargin && withContext && (conversationContextSeconds > 0 || customRange != nil) {
+            if customRange == nil, conversationUsesMedia,
                let summary = resolvedSkimPlaybackPlan(direction: .forward, at: origin),
                summary.destinationMediaTimeMs == destination.position {
                 conversationLeadIn = lead
@@ -4699,12 +5102,12 @@ final class Gate1AppModel: ObservableObject {
                 screen = .playback
                 return
             }
-            let start = conversationUsesMedia
+            let start = customRange?.start ?? (conversationUsesMedia
                 ? max(0, destination.position - conversationContextSeconds * 1_000)
-                : ConversationNavigation.contextStart(text: selectedItem.text, destination: destination.position, seconds: conversationContextSeconds)
+                : ConversationNavigation.contextStart(text: selectedItem.text, destination: destination.position, seconds: conversationContextSeconds))
             // Forward navigation never rewinds context that is already behind us.
-            let landing = origin <= destination.position ? max(origin, start) : start
-            if landing < destination.position {
+            let landing = respectForwardPosition && origin <= destination.position ? max(origin, start) : start
+            if landing < (lead.contextEnd ?? destination.position) {
                 conversationLeadIn = lead
                 do {
                     snapshot = try engine.pause()
@@ -4738,7 +5141,7 @@ final class Gate1AppModel: ObservableObject {
     func reconcileConversationLeadIn(current: SessionSnapshot) -> Bool {
         guard let lead = conversationLeadIn else { return false }
         let position = lead.isMedia ? current.currentMediaTimeMs : current.currentTextStart
-        if let position, position >= lead.destination.position { completeConversationLeadIn() }
+        if let position, position >= (lead.contextEnd ?? lead.destination.position) { completeConversationLeadIn() }
         return true
     }
 
@@ -4754,31 +5157,9 @@ final class Gate1AppModel: ObservableObject {
                 conversationReturnPoint = nil
                 if lead.wasPlaying { snapshot = try engine.resumePlayback() }
             case .local(let note):
-                conversationCurrentMargin = lead.destination
-                conversationLocalPaused = false
-                if note.captureKind != .written && note.audioPath != nil {
-                    toggleInterjectionAudioPlayback(note)
-                    if playingInterjectionAudioId != nil && !mixesWithOtherAudio {
-                        conversationOwnsRemoteControls = true
-                        (sessionAudioPlaybackClient ?? audioPlaybackClientOverride)?.setRemoteCommandHandlingEnabled(false)
-                        gate2CompactControls.setNowPlayingEnabled(false)
-                        gate2CompactControls.endLiveActivities()
-                        importedMarginRemoteControls.install { [weak self] command in
-                            guard let self, self.conversationOwnsRemoteControls else { return }
-                            switch command {
-                            case .play: self.setConversationRecordingPaused(false)
-                            case .pause: self.setConversationRecordingPaused(true)
-                            case .togglePlayPause: self.setConversationRecordingPaused(!self.conversationLocalPaused)
-                            default: break
-                            }
-                        }
-                        publishConversationRecording()
-                    }
-                }
-                else {
-                    reportConfirmation("\(lead.destination.title). Read the Margin below.")
-                    markConversationMarginHeard(lead.destination.id)
-                }
+                playConversationRecording(note, destination: lead.destination)
+            case .archived(let node):
+                playConversationRecording(archivedRecording(node), destination: lead.destination)
             case .shared(let layer, let note):
                 conversationCurrentMargin = lead.destination
                 announcedImportedInterjectionIDs.insert(note.id)
@@ -4808,13 +5189,15 @@ final class Gate1AppModel: ObservableObject {
 
     private func publishConversationRecording() {
         guard conversationOwnsRemoteControls, let player = interjectionAudioPlayer else { return }
-        importedMarginRemoteControls.publish(sender: "You", elapsed: player.currentTime().seconds,
+        importedMarginRemoteControls.publish(sender: conversationCurrentMargin?.conversation?.authorLabel ?? "You", elapsed: player.currentTime().seconds,
             duration: player.currentItem?.duration.seconds ?? .nan,
-            rate: conversationLocalPaused ? 0 : Double(player.rate), title: "My Margin")
+            rate: conversationLocalPaused ? 0 : Double(player.rate), title: conversationCurrentMargin?.title ?? "My Margin")
     }
 
     private func markConversationMarginHeard(_ id: String) {
+        rememberHeardConversationMargin()
         heardConversationMargins.insert(id)
+        if let recentConversationMargin { heardConversationMargins.insert("revision:\(recentConversationMargin.id)") }
         if !Self.isRunningUnitTests { UserDefaults.standard.set(Array(heardConversationMargins).sorted(), forKey: "heardConversationMargins") }
     }
 
@@ -4837,6 +5220,7 @@ final class Gate1AppModel: ObservableObject {
         conversationCurrentMargin = nil
         conversationReturnPoint = nil
         conversationCursor = nil
+        conversationThreadQueue = []
     }
 
     @Published private(set) var skimForwardDestinationMs: Int?
@@ -4990,6 +5374,10 @@ final class Gate1AppModel: ObservableObject {
 
     private func performSkim(direction: SkimDirection) {
         guard !rejectNavigationOrSessionMutationWhileRecording("skim") else { return }
+        if direction == .forward && !conversationThreadQueue.isEmpty && conversationCurrentMargin != nil {
+            nextConversationReply()
+            return
+        }
         if conversationLeadIn != nil {
             cancelSkimBridge(restoringOrigin: false, resumeSource: false)
             completeConversationLeadIn()
@@ -5009,7 +5397,7 @@ final class Gate1AppModel: ObservableObject {
                plan.destinationMediaTimeMs == destination.position {
                 startSkimBridge(plan)
             } else {
-                beginConversationDestination(destination, withContext: true)
+                beginConversationDestination(destination, withContext: true, respectForwardPosition: true)
             }
             return
         }
@@ -5691,6 +6079,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func openItem(id: String) {
+        if selectedItem.id != id { recentConversationMargin = nil; lastConversationCapture = nil }
         let diagnosticStart = ProcessInfo.processInfo.systemUptime
         recordDeveloperDiagnostic("item.open.begin", ["item": DeveloperDiagnosticRecording.token(id)])
         defer { recordDeveloperDiagnostic("item.open.end", ["durationMs": String(Int((ProcessInfo.processInfo.systemUptime - diagnosticStart) * 1000))]) }
@@ -6149,6 +6538,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func seekMedia(toMediaTimeMs mediaTimeMs: Int) {
+        recentConversationMargin = nil; lastConversationCapture = nil
         recordDeveloperDiagnostic("seek.media.request", ["timeMs": String(mediaTimeMs)])
         restoreSkimOriginBeforeCanonicalTransport()
         run { engine in
@@ -6288,6 +6678,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func seekText(toCharOffset charOffset: Int) {
+        recentConversationMargin = nil
         clearConversationNavigation()
         if playingImportedCommentary != nil { stopImportedCommentaryPlayback(resumeSource: false) }
         recordDeveloperDiagnostic("seek.text.request", ["offset": String(charOffset)])
@@ -6487,6 +6878,7 @@ final class Gate1AppModel: ObservableObject {
                 isRequestingRecordingPermission = false
                 recordingPresentationContext = nil
                 pendingVoiceCaptureRequestID = nil
+                replyCaptureParent = nil; replyCaptureExistingIDs = []
                 recordingPermissionDenied = true
                 reportFailure("Microphone access is required to record interjections. Enable microphone access in Settings and try again.")
                 return
@@ -6518,6 +6910,7 @@ final class Gate1AppModel: ObservableObject {
             }
         }
         if !snapshot.isRecording {
+            replyCaptureParent = nil; replyCaptureExistingIDs = []
             recordingPresentationContext = nil
         }
     }
@@ -6574,6 +6967,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func recordSavedInterjectionForOnboarding() {
+        attachPendingReplyToLatestCapture()
         markOnboardingSteps([.firstInterjection])
         if guidedOnboardingStage == .practiceInterjection {
             setGuidedOnboardingStage(.reviewTimeline)
@@ -6581,6 +6975,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func cancelInterjection() {
+        replyCaptureParent = nil; replyCaptureExistingIDs = []
         if isRequestingRecordingPermission && !snapshot.isRecording {
             pendingVoiceCaptureRequestID = nil
             isRequestingRecordingPermission = false
@@ -6647,6 +7042,7 @@ final class Gate1AppModel: ObservableObject {
         guard let draft = writtenMarginDraft, let engine else { return }
         do {
             snapshot = try engine.saveWrittenInterjection(captureId: draft.capture.id, text: text)
+            attachPendingReplyToLatestCapture()
             writtenMarginDraft = nil
             if draft.priorWasPlaying { streamingSpeechQueue.resumeAfterInterjection() }
             refreshSelectedItem()
@@ -6663,6 +7059,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func cancelWrittenMargin() {
+        replyCaptureParent = nil; replyCaptureExistingIDs = []
         guard let draft = writtenMarginDraft, let engine else { return }
         do {
             snapshot = try engine.cancelWrittenInterjection(captureId: draft.capture.id)
@@ -7249,6 +7646,7 @@ final class Gate1AppModel: ObservableObject {
                     if duration.isFinite, duration > 0, current.isFinite, current >= duration - 0.05 {
                         if let self, let margin = self.conversationCurrentMargin { self.markConversationMarginHeard(margin.id) }
                         self?.stopInterjectionAudioPlayback()
+                        self?.nextConversationReply()
                         return
                     }
                 }
@@ -7373,7 +7771,8 @@ final class Gate1AppModel: ObservableObject {
                     let current = item.currentTime().seconds
                     if duration.isFinite, duration > 0, current.isFinite, current >= duration - 0.05 {
                         if let self, let margin = self.conversationCurrentMargin { self.markConversationMarginHeard(margin.id) }
-                        self?.stopImportedCommentaryPlayback(resumeSource: true)
+                        self?.stopImportedCommentaryPlayback(resumeSource: self?.conversationCurrentMargin == nil)
+                        self?.nextConversationReply()
                         return
                     }
                     self?.publishImportedCommentaryNowPlaying()
@@ -13615,6 +14014,54 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    private func conversationExportSnapshot(note original: Interjection, transcript: String,
+        anchor: PortableAnchorEvidence, audioURL: URL?, durationMs: Int?) throws -> MarginConversationSnapshot {
+        let store = try requireStore()
+        var note = try store.loadInterjections(sessionId: original.sessionId).first { $0.id == original.id } ?? original
+        var metadata = conversationMetadata(for: note)
+        metadata.authorLabel = sharingState.senderDisplayLabel.nilIfEmpty ?? metadata.authorLabel
+        let digest = try audioURL.map { SHA256.hash(data: try Data(contentsOf: $0)).map { String(format: "%02x", $0) }.joined() }
+        let retainedAudio = try retainedConversationAudio(audioURL, digest: digest)
+        func makeNode() -> MarginConversationSnapshot {
+            .init(itemID: note.itemId, conversation: metadata, anchor: anchor, transcript: transcript,
+                audioPath: retainedAudio?.path, audioSHA256: digest, audioDurationMs: durationMs, createdAt: note.createdAt)
+        }
+        var node = makeNode()
+        if let existing = try store.loadConversationSnapshots().first(where: { $0.id == node.id }), !existing.hasSameContent(as: node) {
+            metadata.reference.revisionID = UUID().uuidString.lowercased()
+            node = makeNode()
+        }
+        try store.saveConversationSnapshot(node)
+        note.conversation = metadata
+        try store.saveInterjection(note)
+        // Keep the next export stable, including exports through a verified preview.
+        if let index = sharingState.drafts.firstIndex(where: { $0.id == note.id }) { sharingState.drafts[index].interjection = note }
+        reloadConversationSnapshots()
+        return node
+    }
+
+    private func forwardedSelections(excluding references: Set<String>) throws -> [ReviewedInterjectionSelection] {
+        guard sharingState.includesReplyContext else { return [] }
+        return try forwardedReplyContext.filter { !references.contains($0.id) }.enumerated().map { index, node in
+            let revision = InterjectionShareRevision(id: "forward-\(UUID().uuidString)", interjectionId: node.id,
+                itemId: selectedItem.id, sessionId: "forwarded", createdAt: node.createdAt,
+                approvedTranscript: node.transcript, anchorBefore: node.anchor.prefix ?? "", anchorAfter: node.anchor.suffix ?? "", status: .senderApproved)
+            let representation: ReviewedRepresentationSelection
+            if let path = node.audioPath {
+                let url = URL(fileURLWithPath: path)
+                guard FileManager.default.fileExists(atPath: path),
+                      SHA256.hash(data: try Data(contentsOf: url)).map({ String(format: "%02x", $0) }).joined() == node.audioSHA256 else {
+                    throw SessionKitError.persistenceFailed("referenced_margin_audio_missing_or_changed")
+                }
+                representation = .forwardedAudio(sourceURL: url, durationMs: node.audioDurationMs ?? 1)
+            } else { representation = .textOnly }
+            var selection = ReviewedInterjectionSelection(packageScopedId: "parent-\(index)", revision: revision,
+                anchor: node.anchor.withoutMachineEvidence, representation: representation)
+            selection.conversation = node.conversation
+            return selection
+        }
+    }
+
     func exportSharedInterjections(presentsReadySheet: Bool = true) {
         guard !sharingState.isBulkPreparing else {
             sharingState.errorMessage = "Finish or cancel bulk preparation before sharing."
@@ -13669,11 +14116,9 @@ final class Gate1AppModel: ObservableObject {
                         provenance: ($0.provenance ?? .exactLocalPlaybackEdition).rawValue
                     )
                 })
-                let anchor = portableAnchor(
-                    for: draft.interjection,
-                    item: item,
-                    machineEvidenceAssetIds: evidence.map(\.id)
-                )
+                let anchor = draft.interjection.conversation?.parent != nil
+                    ? sourceAnchorForConversation(draft.interjection, item: item)
+                    : portableAnchor(for: draft.interjection, item: item, machineEvidenceAssetIds: evidence.map(\.id))
                 let representation: ReviewedRepresentationSelection
                 switch draft.representationChoice {
                 case .original:
@@ -13690,13 +14135,24 @@ final class Gate1AppModel: ObservableObject {
                 case .textOnly:
                     representation = .textOnly
                 }
-                selections.append(ReviewedInterjectionSelection(
-                    packageScopedId: String(format: "margin-%04d", index + 1),
-                    revision: revision,
-                    anchor: anchor,
-                    representation: representation
-                ))
+                let audioURL: URL?
+                let duration: Int?
+                switch representation {
+                case .textOnly: audioURL = nil; duration = nil
+                case .originalAudio(let url, let ms), .forwardedAudio(let url, let ms): audioURL = url; duration = ms
+                case .cleanedAudio(let url): audioURL = url; duration = draft.cleanedAudioDurationMs
+                }
+                let node = try conversationExportSnapshot(note: draft.interjection, transcript: revision.approvedTranscript,
+                    anchor: anchor.bounded(prefix: draft.interjection.conversation?.parent == nil ? revision.anchorBefore : anchor.prefix,
+                                           suffix: draft.interjection.conversation?.parent == nil ? revision.anchorAfter : anchor.suffix),
+                    audioURL: audioURL, durationMs: duration)
+                var selection = ReviewedInterjectionSelection(packageScopedId: String(format: "margin-%04d", index + 1),
+                    revision: revision, anchor: node.anchor, representation: representation)
+                selection.conversation = node.conversation
+                selections.append(selection)
             }
+
+            selections += try forwardedSelections(excluding: Set(selections.compactMap { $0.conversation?.reference.id }))
 
             let mapProposals = Self.mapProposalsForMarginExport(try store.loadPortableListeningMapProposals(itemId: item.id))
             let fingerprintSpines = sharingState.includesAcousticEvidence
@@ -14666,6 +15122,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func refreshSelectedItem() {
+        reloadConversationSnapshots()
         guard let store, !activeItemId.isEmpty else { return }
         if let detail = try? loadItemDetail(id: activeItemId, store: store) {
             selectedItem = detail

@@ -1,14 +1,16 @@
 import SwiftUI
+import SessionKit
 
 struct ExperienceMarginDetailView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var pendingNavigation: NavigationIntent?
+    @State private var replyNode: MarginConversationSnapshot?
     @State private var showsManagement = false
     @State private var actionFeedback: UserFeedbackEvent?
     let row: MarginRow
 
-    private enum NavigationIntent { case moment, item, context, conversation }
+    private enum NavigationIntent { case moment, item, context, conversation, replyVoice, replyWritten, archivedConversation }
     private var current: MarginRow { model.marginRows.first { $0.id == row.id } ?? row }
 
     var body: some View {
@@ -28,6 +30,19 @@ struct ExperienceMarginDetailView: View {
                         Label(current.attentionDescription, systemImage: "exclamationmark.triangle")
                             .foregroundStyle(AppColors.coral)
                     }
+                }
+                Section("Conversation") {
+                    LabeledContent("Responding to", value: model.responseTargetTitle(current.interjection))
+                    Button("Response & listening context", systemImage: "text.quote") {
+                        model.editConversationContext(current.interjection)
+                    }
+                    Button("Voice reply", systemImage: "mic") { pendingNavigation = .replyVoice; dismiss() }
+                    Button("Written reply", systemImage: "square.and.pencil") { pendingNavigation = .replyWritten; dismiss() }
+                }.disabled(current.interjection.targetType != .item)
+                ConversationRepliesSection(reference: current.interjection.conversation?.reference) { node, written in
+                    replyNode = node; pendingNavigation = written ? .replyWritten : .replyVoice; dismiss()
+                } listen: { node in
+                    replyNode = node; pendingNavigation = .archivedConversation; dismiss()
                 }
                 Section {
                     if let context = model.marginSourceContext(current) {
@@ -113,12 +128,19 @@ struct ExperienceMarginDetailView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
             }
+            .sheet(item: $model.conversationEditorNote) { note in
+                ConversationContextEditor(note: note).environmentObject(model)
+            }
             .sheet(isPresented: $showsManagement) {
                 InterjectionDetailView(interjection: current.interjection).environmentObject(model)
             }
             .onDisappear {
                 if model.isPlayingInterjectionAudio(current.interjection) { model.stopInterjectionAudioPlayback() }
                 switch pendingNavigation {
+                case .archivedConversation: if let replyNode { model.playConversationSnapshot(replyNode) }
+                case .replyVoice, .replyWritten:
+                    if let replyNode { model.beginArchivedReply(to: replyNode, written: pendingNavigation == .replyWritten) }
+                    else { model.beginReply(to: current.interjection, written: pendingNavigation == .replyWritten) }
                 case .moment: model.playMarginMoment(current)
                 case .context: model.playConversationMargin(current.interjection, withContext: true)
                 case .conversation: model.playConversationMargin(current.interjection, withContext: false)

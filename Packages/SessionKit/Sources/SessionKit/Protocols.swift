@@ -37,6 +37,8 @@ public protocol ListeningSessionRepository {
     func loadSession(id: String) throws -> Session?
     func saveInterjection(_ interjection: Interjection) throws
     func loadInterjections(sessionId: String) throws -> [Interjection]
+    func saveConversationSnapshot(_ snapshot: MarginConversationSnapshot) throws
+    func loadConversationSnapshots() throws -> [MarginConversationSnapshot]
     func saveInterjectionShareRevision(_ revision: InterjectionShareRevision) throws
     func loadInterjectionShareRevisions(interjectionId: String) throws -> [InterjectionShareRevision]
     func importCommentaryLayer(

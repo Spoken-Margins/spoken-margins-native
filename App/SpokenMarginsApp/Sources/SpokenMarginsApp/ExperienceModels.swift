@@ -361,7 +361,7 @@ struct SharedMarginRow: Identifiable, Equatable, Sendable {
     let itemTitle: String
 
     var id: String { "shared::\(layer.id)::\(interjection.id)" }
-    var collectionLabel: String { layer.displayLabel.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 } ?? "Imported collection" }
+    var collectionLabel: String { interjection.conversation?.authorLabel ?? layer.displayLabel.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 } ?? "Imported collection" }
     var positionDescription: String {
         if interjection.resolution.isAmbiguous { return "Position needs review" }
         switch interjection.resolution.evidenceClass {

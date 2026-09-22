@@ -4,68 +4,319 @@
   "title": "Spoken Margins shared commentary layer",
   "type": "object",
   "additionalProperties": false,
-  "required": ["id", "schemaVersion", "interjections"],
+  "required": [
+    "id",
+    "schemaVersion",
+    "interjections"
+  ],
   "properties": {
-    "id": { "type": "string", "minLength": 1, "maxLength": 200 },
-    "schemaVersion": { "const": "spoken-margins.commentary-layer.v1" },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "schemaVersion": {
+      "const": "spoken-margins.commentary-layer.v1"
+    },
     "interjections": {
-      "type": "array", "minItems": 1, "maxItems": 50,
-      "items": { "$ref": "#/$defs/interjection" }
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "items": {
+        "$ref": "#/$defs/interjection"
+      }
     }
   },
   "$defs": {
     "anchor": {
-      "type": "object", "additionalProperties": false,
-      "required": ["anchorType", "machineEvidenceAssetIds"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "anchorType",
+        "machineEvidenceAssetIds"
+      ],
       "properties": {
-        "anchorType": { "enum": ["text", "transcript", "media", "turn"] },
-        "startChar": { "type": ["integer", "null"], "minimum": 0 },
-        "endChar": { "type": ["integer", "null"], "minimum": 0 },
-        "exactText": { "type": ["string", "null"], "maxLength": 1000 },
-        "prefix": { "type": ["string", "null"], "maxLength": 500 },
-        "suffix": { "type": ["string", "null"], "maxLength": 500 },
-        "mediaTimeMs": { "type": ["integer", "null"], "minimum": 0 },
-        "roughPercent": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 },
-        "transcriptSegmentId": { "type": ["string", "null"], "maxLength": 300 },
-        "chapterTitle": { "type": ["string", "null"], "maxLength": 500 },
+        "anchorType": {
+          "enum": [
+            "text",
+            "transcript",
+            "media",
+            "turn"
+          ]
+        },
+        "startChar": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "endChar": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "exactText": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1000
+        },
+        "prefix": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 500
+        },
+        "suffix": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 500
+        },
+        "mediaTimeMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "roughPercent": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "transcriptSegmentId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 300
+        },
+        "chapterTitle": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 500
+        },
         "machineEvidenceAssetIds": {
-          "type": "array", "uniqueItems": true, "maxItems": 8,
-          "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
         }
       }
     },
     "representation": {
-      "type": "object", "additionalProperties": false,
-      "required": ["id", "kind", "approvedTranscript", "provenance"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "approvedTranscript",
+        "provenance"
+      ],
       "properties": {
-        "id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
         "kind": {
           "enum": [
-            "original_audio_and_text", "cleaned_audio_and_text", "text_only",
-            "summary_text", "summary_audio_and_text", "tts_audio_and_text"
+            "original_audio_and_text",
+            "cleaned_audio_and_text",
+            "text_only",
+            "summary_text",
+            "summary_audio_and_text",
+            "tts_audio_and_text",
+            "forwarded_audio_and_text"
           ]
         },
-        "approvedTranscript": { "type": "string", "minLength": 1, "maxLength": 50000 },
-        "assetId": { "type": ["string", "null"], "minLength": 1, "maxLength": 200 },
+        "approvedTranscript": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 50000
+        },
+        "assetId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 200
+        },
         "provenance": {
           "enum": [
-            "sender_approved_original", "deterministic_cleanup_v1_sender_approved",
-            "sender_approved_text_only", "sender_approved_summary", "sender_approved_tts"
+            "sender_approved_original",
+            "deterministic_cleanup_v1_sender_approved",
+            "sender_approved_text_only",
+            "sender_approved_summary",
+            "sender_approved_tts",
+            "forwarded_approved_copy"
           ]
         }
       }
     },
     "interjection": {
-      "type": "object", "additionalProperties": false,
-      "required": ["packageScopedId", "createdAt", "anchor", "defaultRepresentationId", "representations"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "packageScopedId",
+        "createdAt",
+        "anchor",
+        "defaultRepresentationId",
+        "representations"
+      ],
       "properties": {
-        "packageScopedId": { "type": "string", "minLength": 1, "maxLength": 200 },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "anchor": { "$ref": "#/$defs/anchor" },
-        "defaultRepresentationId": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "packageScopedId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "anchor": {
+          "$ref": "#/$defs/anchor"
+        },
+        "defaultRepresentationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
         "representations": {
-          "type": "array", "minItems": 1, "maxItems": 8,
-          "items": { "$ref": "#/$defs/representation" }
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/representation"
+          }
+        },
+        "conversation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/conversation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "marginReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contributionID",
+        "revisionID"
+      ],
+      "properties": {
+        "contributionID": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "revisionID": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        }
+      }
+    },
+    "listeningContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "start",
+        "end"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "sourceText",
+            "sourceMedia",
+            "parent"
+          ]
+        },
+        "start": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "quote": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 20000
+        }
+      }
+    },
+    "conversation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reference",
+        "authorID",
+        "authorLabel"
+      ],
+      "properties": {
+        "reference": {
+          "$ref": "#/$defs/marginReference"
+        },
+        "authorID": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        },
+        "authorLabel": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/marginReference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "context": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/listeningContext"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     }

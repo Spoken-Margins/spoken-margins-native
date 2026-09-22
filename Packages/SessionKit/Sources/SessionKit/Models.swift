@@ -1249,6 +1249,7 @@ public struct Interjection: Codable, Equatable, Sendable {
     public var privateSharingNote: String? = nil
     /// Missing values predate written Margins and retain audio-recording semantics.
     public var captureKind: InterjectionCaptureKind? = nil
+    public var conversation: MarginConversation? = nil
 
     public init(
         id: String,

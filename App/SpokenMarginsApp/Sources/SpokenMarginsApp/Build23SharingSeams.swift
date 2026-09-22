@@ -162,6 +162,8 @@ enum Build23SenderAction: Equatable {
     case begin
     case setFilter(ShareMarginDraftFilter)
     case setSenderDisplayLabel(String)
+    case editConversation(id: String)
+    case setIncludesReplyContext(Bool)
     case setIncludesAcousticEvidence(Bool)
     case setPrivateSharingRightsConfirmed(Bool)
     case setIncluded(id: String, included: Bool)
@@ -390,6 +392,12 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             model.sharingState.draftFilter = filter
         case .setSenderDisplayLabel(let label):
             mutatePackage { model.sharingState.senderDisplayLabel = label }
+        case .editConversation(let id):
+            if let note = model.sharingState.drafts.first(where: { $0.id == id })?.interjection {
+                mutatePackage { model.editConversationContext(note) }
+            }
+        case .setIncludesReplyContext(let includes):
+            mutatePackage { model.sharingState.includesReplyContext = includes }
         case .setIncludesAcousticEvidence(let includes):
             mutatePackage { model.sharingState.includesAcousticEvidence = includes }
         case .setPrivateSharingRightsConfirmed(let confirmed):
@@ -522,7 +530,6 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
               snapshot.canAdvance else { return }
         previewGeneration += 1
         let generation = previewGeneration
-        let fingerprint = currentDraftFingerprint()
         previewTask?.cancel()
         verifiedPreview = nil
         previewFingerprint = nil
@@ -535,6 +542,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             stage = .review
             return
         }
+        let fingerprint = currentDraftFingerprint()
         previewTask = Task { [weak self] in
             do {
                 let preview = try await Task.detached(priority: .userInitiated) {
@@ -570,11 +578,17 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         objectWillChange.send()
     }
 
+    var conversationDrafts: [ShareInterjectionDraft] { model.sharingState.drafts.filter(\.isIncluded) }
+    var replyContext: [MarginConversationSnapshot] { model.forwardedReplyContext }
+    var includesReplyContext: Bool { model.sharingState.includesReplyContext }
+
     private func currentDraftFingerprint() -> String {
         let state = model.sharingState
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         var fields = [
             state.senderDisplayLabel,
             String(state.includesAcousticEvidence),
+            String(state.includesReplyContext),
             state.itemReferenceURL ?? "",
             String(state.isAppAuthoredItem),
             String(state.confirmsPrivateSharingRights)
@@ -582,6 +596,7 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         for draft in state.drafts.sorted(by: { $0.id < $1.id }) {
             fields.append(contentsOf: [
                 draft.id,
+                String(data: (try? encoder.encode(draft.interjection.conversation)) ?? Data(), encoding: .utf8) ?? "",
                 String(draft.isIncluded),
                 draft.approvedTranscript,
                 draft.representationChoice.rawValue,

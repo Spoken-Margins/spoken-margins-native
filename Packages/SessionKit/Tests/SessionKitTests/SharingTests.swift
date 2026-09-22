@@ -1371,6 +1371,73 @@ final class SharingTests: XCTestCase {
         XCTAssertThrowsError(try sqlite.saveInterjectionShareRevision(conflicting)) { XCTAssertEqual($0 as? SessionKitError, expected) }
     }
 
+    func testConversationForksRoundTripAndDeduplicateAcrossDifferentPacketsAndRestart() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let a = MarginConversation(reference: .init(contributionID: "a", revisionID: "v1"), authorID: "alice", authorLabel: "Alice",
+            context: .init(kind: .sourceText, start: 0, end: 4, quote: "Lead"))
+        let b = MarginConversation(reference: .init(contributionID: "b", revisionID: "v1"), authorID: "bob", authorLabel: "Bob", parent: a.reference)
+        let c = MarginConversation(reference: .init(contributionID: "c", revisionID: "v1"), authorID: "carol", authorLabel: "Carol", parent: a.reference)
+        let d = MarginConversation(reference: .init(contributionID: "d", revisionID: "v1"), authorID: "alice", authorLabel: "Alice", parent: b.reference)
+        func packet(_ name: String, _ nodes: [MarginConversation], changedText: Bool = false) throws -> VerifiedSpokenMarginsPackage {
+            let selections = nodes.enumerated().map { index, node in
+                var selection = ReviewedInterjectionSelection(packageScopedId: "note-\(index)",
+                    revision: InterjectionShareRevision(id: "review-\(index)", interjectionId: "local-\(index)", itemId: "source", sessionId: "session", createdAt: fixedDate,
+                        approvedTranscript: changedText ? "Conflicting text" : "Thought \(node.reference.contributionID)", anchorBefore: "", anchorAfter: "", status: .senderApproved),
+                    anchor: .init(anchorType: .text, startChar: 4, endChar: 8, exactText: "idea"), representation: .textOnly)
+                selection.conversation = node
+                return selection
+            }
+            let prepared = try SpokenMarginsPackageBuilder.prepare(packageId: name, createdAt: fixedDate,
+                item: articleItem, itemTransportSelection: .reference, selections: selections)
+            XCTAssertTrue(prepared.manifest.requiredCapabilities.contains(MarginConversation.capability))
+            let url = root.appendingPathComponent("\(name).spokenmargins")
+            _ = try SpokenMarginsPackageArchive.write(prepared, to: url)
+            return try SpokenMarginsPackageArchive.read(from: url, extractingAssetsTo: root.appendingPathComponent(name))
+        }
+        let memory = InMemorySessionRepository()
+        let path = root.appendingPathComponent("conversation.sqlite").path
+        let sqlite = try SQLiteSessionStore(path: path)
+        for repository: any SessionRepository in [memory, sqlite] {
+            // Reply arrives before its parent, then two friends send overlapping packets.
+            for (id, nodes) in [("early", [d]), ("bob", [a,b]), ("carol", [c,a]), ("again", [b,a,d])] {
+                _ = try SpokenMarginsPackageImporter.importPackage(packet(id, nodes), itemId: "recipient-source", importedAt: fixedDate, repository: repository)
+            }
+            let snapshots = try repository.loadConversationSnapshots()
+            XCTAssertEqual(snapshots.count, 4)
+            XCTAssertEqual(snapshots.first { $0.id == a.reference.id }?.conversation.context, a.context)
+            XCTAssertEqual(MarginConversationGraph.ancestors(of: d.reference, in: snapshots).map(\.id), [a.reference.id,b.reference.id,d.reference.id])
+            let layers = try repository.loadImportedCommentaryLayers(itemId: "recipient-source")
+            XCTAssertEqual(try layers.flatMap { try repository.loadImportedCommentaryInterjections(layerId: $0.id) }.count, 4)
+            XCTAssertThrowsError(try SpokenMarginsPackageImporter.importPackage(packet("conflict", [a], changedText: true), itemId: "recipient-source", importedAt: fixedDate, repository: repository))
+            XCTAssertEqual(try repository.loadConversationSnapshots().count, 4)
+            XCTAssertEqual(try repository.loadImportedCommentaryLayers(itemId: "recipient-source").count, 4, "Conflicting import must be atomic")
+        }
+        XCTAssertEqual(try SQLiteSessionStore(path: path).loadConversationSnapshots().count, 4)
+    }
+
+    func testForwardedAudioRetainsExactRevisionAndDigest() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let audio = root.appendingPathComponent("voice.m4a")
+        try writeSilentM4A(to: audio)
+        let metadata = MarginConversation(reference: .init(contributionID: "voice", revisionID: "v1"), authorID: "friend", authorLabel: "Friend")
+        var selection = ReviewedInterjectionSelection(packageScopedId: "parent", revision: approvedRevision(),
+            anchor: .init(anchorType: .media, mediaTimeMs: 1_000), representation: .forwardedAudio(sourceURL: audio, durationMs: 100))
+        selection.conversation = metadata
+        let prepared = try SpokenMarginsPackageBuilder.prepare(packageId: "forwarded", createdAt: fixedDate,
+            item: podcastItem, itemTransportSelection: .reference, selections: [selection])
+        let url = root.appendingPathComponent("forwarded.spokenmargins")
+        _ = try SpokenMarginsPackageArchive.write(prepared, to: url)
+        let contents = try SpokenMarginsPackageArchive.read(from: url, extractingAssetsTo: root.appendingPathComponent("assets"))
+        let repository = InMemorySessionRepository()
+        _ = try SpokenMarginsPackageImporter.importPackage(contents, itemId: "podcast", importedAt: fixedDate, repository: repository)
+        let node = try XCTUnwrap(repository.loadConversationSnapshots().first)
+        XCTAssertEqual(node.conversation, metadata)
+        XCTAssertEqual(node.audioSHA256, SHA256.hash(data: try Data(contentsOf: audio)).map { String(format: "%02x", $0) }.joined())
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(node.audioPath)))
+    }
+
     private var fixedDate: Date { Date(timeIntervalSince1970: 1_777_000_000) }
     private var articleItem: SharedItemIdentity {
         SharedItemIdentity(itemType: .text, canonicalURL: "https://example.com/article", title: "A Useful Article")

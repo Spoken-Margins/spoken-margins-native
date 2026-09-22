@@ -569,6 +569,8 @@ private struct LegacySharedItemIdentity: Decodable {
 public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Identifiable {
     public let id: String
     public let layerId: String
+    public var conversation: MarginConversation? = nil
+    public var conversationAudioSHA256: String? = nil
     public let packageScopedId: String
     public let createdAt: Date
     public let anchorEvidence: PortableAnchorEvidence
@@ -628,6 +630,7 @@ public enum ImportedCommentaryImportDisposition: Equatable, Sendable {
 }
 
 public enum SharedInterjectionRepresentationKind: String, Codable, Equatable, Sendable {
+    case forwardedAudioAndText = "forwarded_audio_and_text"
     case originalAudioAndText = "original_audio_and_text"
     case cleanedAudioAndText = "cleaned_audio_and_text"
     case textOnly = "text_only"
@@ -637,6 +640,7 @@ public enum SharedInterjectionRepresentationKind: String, Codable, Equatable, Se
 }
 
 public enum SharedInterjectionProvenance: String, Codable, Equatable, Sendable {
+    case forwardedApprovedCopy = "forwarded_approved_copy"
     case senderApprovedOriginal = "sender_approved_original"
     case deterministicCleanupV1SenderApproved = "deterministic_cleanup_v1_sender_approved"
     case senderApprovedTextOnly = "sender_approved_text_only"
@@ -667,6 +671,7 @@ public struct SharedInterjectionRepresentation: Codable, Equatable, Sendable, Id
 }
 
 public struct SharedInterjectionPackageRecord: Codable, Equatable, Sendable {
+    public var conversation: MarginConversation? = nil
     public let packageScopedId: String
     public let createdAt: Date
     public let anchor: PortableAnchorEvidence

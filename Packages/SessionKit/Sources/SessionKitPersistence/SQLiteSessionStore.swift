@@ -152,6 +152,20 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         try loadBySession(kind: "interjection", sessionId: sessionId)
     }
 
+    public func loadConversationSnapshots() throws -> [MarginConversationSnapshot] {
+        try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY id;", ["conversation_snapshot"])
+    }
+
+    public func saveConversationSnapshot(_ snapshot: MarginConversationSnapshot) throws {
+        try withTransaction {
+            _ = try MarginConversationGraph.merge(loadConversationSnapshots(), [snapshot])
+            let existing: MarginConversationSnapshot? = try loadOptional(kind: "conversation_snapshot", id: snapshot.id)
+            if existing == nil {
+                try save(kind: "conversation_snapshot", id: snapshot.id, sessionId: nil, itemId: snapshot.itemID, value: snapshot)
+            }
+        }
+    }
+
     public func saveInterjectionShareRevision(_ revision: InterjectionShareRevision) throws {
         try withTransaction {
             let existing: InterjectionShareRevision? = try loadOptional(
@@ -193,6 +207,11 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
                 disposition = .duplicate(existingLayerId: existing.id)
                 return
             }
+            let priorNodes = try loadConversationSnapshots()
+            let incomingNodes = interjections.compactMap { $0.conversationSnapshot(itemID: layer.itemId ?? "") }
+            _ = try MarginConversationGraph.merge(priorNodes, incomingNodes)
+            let known = Set(priorNodes.map(\.id))
+            let additions = interjections.filter { $0.conversation.map { !known.contains($0.reference.id) } ?? true }
             let conflictingLayer: ImportedCommentaryLayer? = try loadOptional(
                 kind: "imported_commentary_layer",
                 id: layer.id
@@ -200,7 +219,7 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
             guard conflictingLayer == nil else {
                 throw SessionKitError.persistenceFailed("imported_commentary_local_id_conflict")
             }
-            for interjection in interjections {
+            for interjection in additions {
                 let conflict: ImportedCommentaryInterjection? = try loadOptional(
                     kind: "imported_commentary_interjection",
                     id: interjection.id
@@ -216,7 +235,7 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
                 itemId: layer.itemId,
                 value: layer
             )
-            for interjection in interjections {
+            for interjection in additions {
                 try save(
                     kind: "imported_commentary_interjection",
                     id: interjection.id,
@@ -225,7 +244,10 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
                     value: interjection
                 )
             }
-            disposition = .imported(layerId: layer.id, interjectionIds: interjections.map(\.id))
+            for node in incomingNodes where !known.contains(node.id) {
+                try save(kind: "conversation_snapshot", id: node.id, sessionId: nil, itemId: layer.itemId, value: node)
+            }
+            disposition = .imported(layerId: layer.id, interjectionIds: additions.map(\.id))
         }
         guard let disposition else {
             throw SessionKitError.persistenceFailed("imported_commentary_disposition_missing")

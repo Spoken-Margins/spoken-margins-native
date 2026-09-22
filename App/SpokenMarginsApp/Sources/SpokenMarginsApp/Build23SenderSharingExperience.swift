@@ -39,6 +39,30 @@ struct Build23SenderSharingExperience: View {
                         .accessibilityIdentifier("build23.sender.share.error")
                 }
                 stageContent(snapshot)
+                if snapshot.stage == .select || snapshot.stage == .review {
+                    DisclosureGroup("Response & listening context (optional)") {
+                        ForEach(coordinator.conversationDrafts) { draft in
+                            Button { coordinator.send(.editConversation(id: draft.id)) } label: {
+                                Label(String(draft.approvedTranscript.prefix(90)), systemImage: "text.quote")
+                            }.padding(.vertical, 6)
+                                .disabled(draft.interjection.targetType != .item)
+                        }
+                        if !coordinator.replyContext.isEmpty {
+                            Toggle("Include the referenced Margins", isOn: Binding(
+                                get: { coordinator.includesReplyContext },
+                                set: { coordinator.send(.setIncludesReplyContext($0)) }
+                            ))
+                            Text("Review these exact versions before forwarding. Leaving them out still sends the reply links; recipients who already have them can follow the conversation.")
+                                .font(.caption).foregroundStyle(.secondary)
+                            ForEach(coordinator.replyContext) { node in
+                                DisclosureGroup("\(node.conversation.authorLabel): \(node.transcript.prefix(60))") {
+                                    Text(node.transcript).textSelection(.enabled)
+                                    Text(node.audioPath == nil ? "Text only" : "Includes the saved voice recording").font(.caption)
+                                }
+                            }
+                        }
+                    }
+                }
             }
             .frame(maxWidth: 960, alignment: .leading)
             .padding(.horizontal, 20)

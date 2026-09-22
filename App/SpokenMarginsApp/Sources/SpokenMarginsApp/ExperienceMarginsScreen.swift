@@ -1,4 +1,5 @@
 import SwiftUI
+import SessionKit
 
 struct ExperienceMarginsScreen: View {
     private struct MarginGroup: Identifiable {
@@ -223,6 +224,8 @@ struct SharedMarginDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var shouldOpenItem = false
     @State private var playWithContext: Bool?
+    @State private var replyWritten: Bool?
+    @State private var replyNode: MarginConversationSnapshot?
     let row: SharedMarginRow
 
     var body: some View {
@@ -236,10 +239,17 @@ struct SharedMarginDetailView: View {
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                ConversationRepliesSection(reference: row.interjection.conversation?.reference) { node, written in
+                    replyNode = node; replyWritten = written; dismiss()
+                } listen: { node in
+                    replyNode = node; dismiss()
+                }
                 Section("Source & position") {
                     Text(row.itemTitle)
                     Text(row.positionDescription)
                     if row.layer.itemId != nil {
+                        Button("Voice reply", systemImage: "mic") { replyWritten = false; dismiss() }
+                        Button("Written reply", systemImage: "square.and.pencil") { replyWritten = true; dismiss() }
                         Button("Play Margin", systemImage: "play.fill") { playWithContext = false; dismiss() }
                             .accessibilityIdentifier("sharedMargin.play.button")
                         Button("Play with context", systemImage: "backward.end.alt") { playWithContext = true; dismiss() }
@@ -266,7 +276,12 @@ struct SharedMarginDetailView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { Button("Done") { dismiss() } }
             .onDisappear {
-                if let playWithContext { model.playConversationMargin(row, withContext: playWithContext) }
+                if let replyWritten {
+                    if let replyNode { model.beginArchivedReply(to: replyNode, written: replyWritten) }
+                    else { model.beginReply(to: row, written: replyWritten) }
+                }
+                else if let replyNode { model.playConversationSnapshot(replyNode) }
+                else if let playWithContext { model.playConversationMargin(row, withContext: playWithContext) }
                 else if shouldOpenItem, let itemID = row.layer.itemId { model.openItem(id: itemID) }
             }
         }
