@@ -66,7 +66,7 @@ private final class BundledModelHashCache: @unchecked Sendable {
 enum SupertonicRenderIdentity {
     private static let bundledHashes = BundledModelHashCache()
     static let modelRevision = "supertonic-3-int8"
-    static let normalizationVersion = "speech-normalizer.v2"
+    static let normalizationVersion = "speech-normalizer.v3"
     static let chunkingVersion = "rendered-speech-chunker.v1"
 
     static func make(

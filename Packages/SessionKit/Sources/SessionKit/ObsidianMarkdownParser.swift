@@ -303,7 +303,7 @@ public enum ObsidianMarkdownParser {
         var headings: [(level: Int, title: String, outputIndex: Int)] = []
         var skippingTimestampBlock = false
 
-        for rawLine in lines {
+        for (lineIndex, rawLine) in lines.enumerated() {
             var line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
             if line.isEmpty {
                 if output.last?.isEmpty == false {
@@ -324,6 +324,16 @@ public enum ObsidianMarkdownParser {
                 continue
             }
 
+            // Preserve explicit Setext and standalone bold headings from pasted text.
+            if lineIndex + 1 < lines.count,
+               lines[lineIndex + 1].trimmingCharacters(in: .whitespaces).range(of: #"^(?:={3,}|-{3,})$"#, options: .regularExpression) != nil,
+               !line.isEmpty {
+                line = (lines[lineIndex + 1].contains("=") ? "# " : "## ") + line
+            } else if line.range(of: #"^(?:={3,}|-{3,})$"#, options: .regularExpression) != nil {
+                continue
+            } else if line.range(of: #"^\*\*[^*\n]{1,160}\*\*:?$"#, options: .regularExpression) != nil {
+                line = "## " + line
+            }
             if let heading = markdownHeading(in: line) {
                 headings.append((heading.level, heading.title, output.count))
             }
@@ -335,7 +345,7 @@ public enum ObsidianMarkdownParser {
             line = line.replacingOccurrences(of: #"(?<!\*)\*([^*]+)\*(?!\*)"#, with: "$1", options: .regularExpression)
             line = line.replacingOccurrences(of: #"`([^`]+)`"#, with: "$1", options: .regularExpression)
             line = line.replacingOccurrences(of: #"\\([\\`*{}\[\]()#+\-.!_>])"#, with: "$1", options: .regularExpression)
-            line = SpeechTextNormalizer.normalize(line)
+            line = SpeechTextNormalizer.normalizeImportedText(line)
             if !line.isEmpty {
                 output.append(line)
             }

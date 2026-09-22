@@ -1,0 +1,93 @@
+{
+  "run": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/test-runs/20260921-190625-514869-release",
+  "events": [
+    {
+      "test": "testBatchExportOffersPersistentJumpToDestination",
+      "event": "started",
+      "time": 1790032386.8858612,
+      "file": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/validation/gate-1/qol-2026-09-21/recordings/testBatchExportOffersPersistentJumpToDestination.mp4"
+    },
+    {
+      "test": "testBatchExportOffersPersistentJumpToDestination",
+      "event": "passed",
+      "time": 1790032410.118849
+    },
+    {
+      "test": "testBuild23LayoutRegressionsRemainOperableAtAccessibilityType",
+      "event": "started",
+      "time": 1790032410.122337,
+      "file": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/validation/gate-1/qol-2026-09-21/recordings/testBuild23LayoutRegressionsRemainOperableAtAccessibilityType.mp4"
+    },
+    {
+      "test": "testBuild23LayoutRegressionsRemainOperableAtAccessibilityType",
+      "event": "failed",
+      "time": 1790032502.3629482
+    },
+    {
+      "test": "testBuild23RecipientMissingSourceReturnsWithoutAutoplayAndShowsProvenance",
+      "event": "started",
+      "time": 1790032502.3664708,
+      "file": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/validation/gate-1/qol-2026-09-21/recordings/testBuild23RecipientMissingSourceReturnsWithoutAutoplayAndShowsProvenance.mp4"
+    },
+    {
+      "test": "testBuild23RecipientMissingSourceReturnsWithoutAutoplayAndShowsProvenance",
+      "event": "passed",
+      "time": 1790032564.243095
+    },
+    {
+      "test": "testExperienceOverhaulVisualEvidence",
+      "event": "started",
+      "time": 1790032733.6516669,
+      "file": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/validation/gate-1/qol-2026-09-21/recordings/testExperienceOverhaulVisualEvidence.mp4"
+    },
+    {
+      "test": "testExperienceOverhaulVisualEvidence",
+      "event": "passed",
+      "time": 1790032767.53024
+    },
+    {
+      "test": "testLibraryUnfinishedCompletionUndoAndSearchDiscovery",
+      "event": "started",
+      "time": 1790032869.457719,
+      "file": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/validation/gate-1/qol-2026-09-21/recordings/testLibraryUnfinishedCompletionUndoAndSearchDiscovery.mp4"
+    },
+    {
+      "test": "testLibraryUnfinishedCompletionUndoAndSearchDiscovery",
+      "event": "passed",
+      "time": 1790032901.906393
+    },
+    {
+      "test": "testMarginsItemShareOpensItemExportAndChapterJumpUpdatesTimeline",
+      "event": "started",
+      "time": 1790032982.5728152,
+      "file": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/validation/gate-1/qol-2026-09-21/recordings/testMarginsItemShareOpensItemExportAndChapterJumpUpdatesTimeline.mp4"
+    },
+    {
+      "test": "testMarginsItemShareOpensItemExportAndChapterJumpUpdatesTimeline",
+      "event": "passed",
+      "time": 1790033012.927109
+    },
+    {
+      "test": "testPrivateExperienceRootsPreserveNowPlayingAndStateConsentBoundaries",
+      "event": "started",
+      "time": 1790033351.7356212,
+      "file": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/validation/gate-1/qol-2026-09-21/recordings/testPrivateExperienceRootsPreserveNowPlayingAndStateConsentBoundaries.mp4"
+    },
+    {
+      "test": "testPrivateExperienceRootsPreserveNowPlayingAndStateConsentBoundaries",
+      "event": "passed",
+      "time": 1790033384.43212
+    },
+    {
+      "test": "testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource",
+      "event": "started",
+      "time": 1790033497.346892,
+      "file": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/validation/gate-1/qol-2026-09-21/recordings/testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource.mp4"
+    },
+    {
+      "test": "testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource",
+      "event": "passed",
+      "time": 1790033548.3047822
+    }
+  ]
+}

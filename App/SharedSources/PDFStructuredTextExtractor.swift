@@ -156,6 +156,25 @@ enum PDFStructuredTextExtractor {
             .replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !markdown.isEmpty else { throw ExtractionError.noExtractableText }
+        return listeningMarkdown(markdown)
+    }
+
+    /// A standalone references heading plus multiple bibliographic records is
+    /// required. A prose mention or an early contents entry is not a boundary.
+    static func listeningMarkdown(_ markdown: String) -> String {
+        let lines = markdown.components(separatedBy: "\n")
+        for (index, line) in lines.enumerated() where index > 0 {
+            let heading = line.trimmingCharacters(in: .whitespaces)
+            guard heading.range(of: #"(?i)^(?:#{1,6}\s*)?(?:[0-9]+[. ]+)?(?:references|bibliography|works cited)\s*$"#, options: .regularExpression) != nil else { continue }
+            let tail = lines.dropFirst(index + 1).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.prefix(40)
+            let records = tail.filter {
+                $0.range(of: #"^\s*(?:\[\^?[0-9]+\]:?|[0-9]+[.)])\s+\S"#, options: .regularExpression) != nil
+                    || $0.range(of: #"(?i)\b(?:19|20)[0-9]{2}\b.*(?:doi|journal|press|https?://)"#, options: .regularExpression) != nil
+            }
+            guard records.count >= 3,
+                  tail.filter({ $0.range(of: #"\b(?:19|20)[0-9]{2}\b"#, options: .regularExpression) != nil }).count >= 3 else { continue }
+            return lines.prefix(index).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         return markdown
     }
 

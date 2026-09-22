@@ -1,0 +1,27 @@
+{
+  "run": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/test-runs/20260921-190625-514869-release",
+  "events": [
+    {
+      "test": "testNativeTextPublishesVisibleSimulatorSystemPlaybackState",
+      "event": "started",
+      "time": 1790033013.315695,
+      "file": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/validation/gate-1/qol-2026-09-21/recordings/testNativeTextPublishesVisibleSimulatorSystemPlaybackState.mp4"
+    },
+    {
+      "test": "testNativeTextPublishesVisibleSimulatorSystemPlaybackState",
+      "event": "passed",
+      "time": 1790033058.868027
+    },
+    {
+      "test": "testPlaybackScrubberAcceptsPhysicalDrag",
+      "event": "started",
+      "time": 1790033269.68111,
+      "file": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/validation/gate-1/qol-2026-09-21/recordings/testPlaybackScrubberAcceptsPhysicalDrag.mp4"
+    },
+    {
+      "test": "testPlaybackScrubberAcceptsPhysicalDrag",
+      "event": "passed",
+      "time": 1790033351.500585
+    }
+  ]
+}

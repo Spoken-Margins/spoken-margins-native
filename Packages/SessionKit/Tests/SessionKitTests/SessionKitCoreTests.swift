@@ -296,6 +296,30 @@ final class SessionKitCoreTests: XCTestCase {
     #endif
     #endif
 
+    func testDefangedDomainsSpeakSeparatorsWithoutLosingSourceIdentity() throws {
+        let source = "Indicators: meridian-protocol[.]org\nmeridiangroup-corp[.]com. End."
+        let speech = SpeechTextNormalizer.normalizeWithSourceOffsets(source)
+        XCTAssertTrue(speech.text.contains("domain meridian hyphen protocol dot org"))
+        XCTAssertTrue(speech.text.contains("domain meridiangroup hyphen corp dot com"))
+        XCTAssertEqual(speech.sourceOffsets, speech.sourceOffsets.sorted())
+        XCTAssertEqual(speech.sourceLength, source.count)
+        XCTAssertEqual(SpeechTextNormalizer.projectForSystemSpeech(source).text, speech.text)
+        let imported = try ObsidianMarkdownParser.parse(fileName: "Indicators.md", contents: source)
+        XCTAssertTrue(imported.text.contains("meridian-protocol[.]org"))
+    }
+
+    func testReferenceSpeechKeepsOrdinaryParentheticalNumbers() {
+        XCTAssertEqual(SpeechTextNormalizer.normalize("Evidence [17] and note [^3]. Cost (17), year (2026), range (2–4)."),
+                       "Evidence citation 17 and note footnote 3. Cost (17), year (2026), range (2–4).")
+    }
+
+    func testPastedSetextAndBoldHeadingsRetainCanonicalBoundaries() throws {
+        let parsed = try ObsidianMarkdownParser.parse(fileName: "Notes.md", contents: "First heading\n===\nFirst paragraph.\n\n**Second heading**\n\nSecond paragraph.")
+        let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "notes", policy: .canonicalHeadings))
+        XCTAssertEqual(map.chapters.map(\.title), ["First heading", "Second heading"])
+        XCTAssertEqual(map.chapters.last?.endChar, parsed.text.count)
+    }
+
     func testSpeechNormalizationPreservesSource() {
         let source = "A [reference](https://example.com/x) and https://example.org/raw plus example.net/path."
         let spoken = SpeechTextNormalizer.normalize(source)
@@ -611,7 +635,7 @@ final class SessionKitCoreTests: XCTestCase {
         }
         let source = "meridian-protocol[.]org\nmeridiangroup-corp[.]com\nprojectnightcrawler[.]dev"
         let projected = SpeechTextNormalizer.projectForSystemSpeech(source)
-        XCTAssertEqual(projected.text, source.replacingOccurrences(of: "\n", with: " "))
+        XCTAssertEqual(projected.text, "domain meridian hyphen protocol dot org. domain meridiangroup hyphen corp dot com. domain projectnightcrawler dot dev.")
         XCTAssertTrue(zip(projected.sourceOffsets, projected.sourceOffsets.dropFirst()).allSatisfy { $0.0 <= $0.1 })
     }
 

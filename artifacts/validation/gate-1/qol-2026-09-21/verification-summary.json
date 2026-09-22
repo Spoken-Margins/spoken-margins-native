@@ -1,0 +1,58 @@
+{
+  "checks": [
+    {
+      "plan": "fast-final",
+      "status": "verified",
+      "input_sha256": "281738ae17445dec30c0a2c47773d335b2fcd9b0784b1195bbdfc4c02e6c3f6c",
+      "counts": [
+        {
+          "passed": 306,
+          "failed": 0,
+          "skipped": 1
+        }
+      ],
+      "manifest": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/test-runs/qol-20260921-fast-final/manifest.json"
+    },
+    {
+      "plan": "app-recovery",
+      "status": "verified",
+      "input_sha256": "281738ae17445dec30c0a2c47773d335b2fcd9b0784b1195bbdfc4c02e6c3f6c",
+      "counts": [
+        {
+          "passed": 455,
+          "failed": 0,
+          "skipped": 0
+        }
+      ],
+      "manifest": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/test-runs/qol-20260921-app-recovery/manifest.json"
+    },
+    {
+      "plan": "phone-ui-final",
+      "status": "verified",
+      "input_sha256": "281738ae17445dec30c0a2c47773d335b2fcd9b0784b1195bbdfc4c02e6c3f6c",
+      "counts": [
+        {
+          "passed": 15,
+          "failed": 0,
+          "skipped": 0
+        }
+      ],
+      "manifest": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/test-runs/qol-20260921-phone-ui-final/manifest.json"
+    },
+    {
+      "plan": "ipad-ui-final",
+      "status": "verified",
+      "input_sha256": "281738ae17445dec30c0a2c47773d335b2fcd9b0784b1195bbdfc4c02e6c3f6c",
+      "counts": [
+        {
+          "passed": 15,
+          "failed": 0,
+          "skipped": 0
+        }
+      ],
+      "manifest": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/test-runs/qol-20260921-ipad-ui-final/manifest.json"
+    }
+  ],
+  "final_controller": "RUNNING app-recovery\nPASSED app-recovery\nRUNNING phone-ui-final\nPASSED phone-ui-final\nRUNNING ipad-ui-final\nPASSED ipad-ui-final\nRUNNING device-build\nDevice build exit 0\nCOMPLETE\n",
+  "usage_at_handoff_preparation": "91% remaining; no optional work authorized by completion condition was taken"
+}

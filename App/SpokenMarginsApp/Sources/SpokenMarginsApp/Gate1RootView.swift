@@ -456,7 +456,7 @@ private struct HelpScreen: View {
                 }
                 Section("Share and Export") {
                     Text("Choose the listening session, format, and included material. Share Session opens the iOS share sheet; Copy puts the generated Markdown or JSON on the clipboard.")
-                    Text("From Home, tap Export Sessions to select multiple listening sessions and save one Markdown file per session. Spoken Margins remembers the export folder you choose.")
+                    Text("From Margins, tap Export Sessions to select multiple listening sessions and save one Markdown file per session. Spoken Margins remembers the export folder you choose.")
                 }
             }
             .navigationTitle("Help")
@@ -2183,6 +2183,13 @@ private struct PlaybackScreen: View {
     private var playbackControls: some View {
         VStack(spacing: 10) {
             playbackPosition
+            if model.canJumpToNextChapter {
+                Button("Next chapter", systemImage: "forward.end") { model.jumpToNextChapter() }
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.white)
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("playback.nextChapter.button")
+            }
             playbackTransport
             if !dynamicTypeSize.isAccessibilitySize {
                 HStack(spacing: 24) {
@@ -2216,10 +2223,14 @@ private struct PlaybackScreen: View {
                 .buttonStyle(InterjectButtonStyle())
                 .accessibilityIdentifier("playback.skim.return.button")
             } else if model.snapshot.phase == .finished {
-                Button("Review Margins", systemImage: "quote.bubble", action: model.openMargins)
+                Button("Add a Margin", systemImage: "square.and.pencil", action: model.beginWrittenMargin)
                     .frame(maxWidth: .infinity)
                     .buttonStyle(InterjectButtonStyle())
-                    .accessibilityIdentifier("playback.reviewMargins.button")
+                    .accessibilityIdentifier("playback.write.button")
+                Button("Share", systemImage: "square.and.arrow.up", action: model.openExport)
+                    .frame(maxWidth: .infinity)
+                    .buttonStyle(InterjectButtonStyle())
+                    .accessibilityIdentifier("playback.finished.share.button")
             } else {
                 HStack(spacing: 8) {
                     Button(action: model.beginInterjection) {
@@ -4187,8 +4198,8 @@ private struct BatchExportScreen: View {
                 .accessibilityIdentifier("batchExport.screen")
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
-                        Button(action: model.openHome) {
-                            Label("Home", systemImage: "arrow.left")
+                        Button(action: model.openMargins) {
+                            Label("Margins", systemImage: "arrow.left")
                         }
                         .accessibilityIdentifier("batchExport.home.button")
                     }
@@ -4397,6 +4408,9 @@ private struct ExportScreen: View {
                 VStack(alignment: .leading, spacing: 16) {
                     Text("Share")
                         .font(.largeTitle.bold())
+                    Text(model.selectedItem.title)
+                        .font(.headline)
+                        .fixedSize(horizontal: false, vertical: true)
                     Text("Share reviewed Margins with their voice, or export a session handoff as Markdown or JSON.")
                         .foregroundStyle(AppColors.secondaryText)
                     ProductPanel {

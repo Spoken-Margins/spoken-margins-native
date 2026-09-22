@@ -12,7 +12,7 @@ struct ExperienceSourcesScreen: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var filter: Filter = .all
-    @State private var showsManagement = false
+    @State private var pendingUnfollowID: String?
     @FocusState private var feedURLIsFocused: Bool
 
     var body: some View {
@@ -26,9 +26,9 @@ struct ExperienceSourcesScreen: View {
                     NavigationLink("Read Later Services") { ReadLaterScreen() }
                     NavigationLink("Import Listening Edition") { ListeningEditionImportScreen() }
                 }
-                inbox
                 sourceSetup
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
+                inbox
             }
             .background(AppColors.bone)
             .scrollContentBackground(.hidden)
@@ -53,6 +53,17 @@ struct ExperienceSourcesScreen: View {
                     .accessibilityLabel("Refresh Sources")
                     .accessibilityIdentifier("quickAdd.refresh.button")
                 }
+            }
+            .confirmationDialog("Unfollow this feed?", isPresented: Binding(
+                get: { pendingUnfollowID != nil },
+                set: { if !$0 { pendingUnfollowID = nil } }
+            ), titleVisibility: .visible) {
+                Button("Unfollow", role: .destructive) {
+                    if let id = pendingUnfollowID { model.unfollowSource(id: id) }
+                    pendingUnfollowID = nil
+                }
+            } message: {
+                Text("Items already in your Library will be kept.")
             }
             .task { model.refreshQuickAddFeed(force: false) }
         }
@@ -177,7 +188,8 @@ struct ExperienceSourcesScreen: View {
     @ViewBuilder
     private var sourceSetup: some View {
         if !model.feedSubscriptions.isEmpty {
-            DisclosureGroup("Manage followed feeds", isExpanded: $showsManagement) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Followed feeds").font(.headline)
                 VStack(spacing: 0) {
                     ForEach(model.feedSubscriptions) { subscription in
                         HStack {
@@ -192,10 +204,12 @@ struct ExperienceSourcesScreen: View {
                                 Button(subscription.state == .muted ? "Unmute" : "Mute") {
                                     model.toggleMuteSource(id: subscription.id)
                                 }
-                                Button("Unfollow", role: .destructive) { model.unfollowSource(id: subscription.id) }
+                                Button("Unfollow", role: .destructive) { pendingUnfollowID = subscription.id }
                             } label: {
-                                Image(systemName: "ellipsis").frame(width: 44, height: 44)
+                                Label("Manage", systemImage: "ellipsis")
+                                    .frame(minHeight: 44)
                             }
+                            .accessibilityLabel("Manage \(subscription.source.title ?? subscription.source.host)")
                         }
                         .padding(.top, 12)
                     }

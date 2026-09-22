@@ -117,6 +117,7 @@ struct ExperienceTimelineRailScreen: View {
             ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                 TimelineRailRow(
                     entry: entry,
+                    isCurrent: isCurrent(entry.action),
                     isFirst: index == 0,
                     isLast: index == entries.count - 1,
                     action: { perform(entry.action) }
@@ -361,6 +362,17 @@ struct ExperienceTimelineRailScreen: View {
             }.max() ?? 100
     }
 
+    private func isCurrent(_ action: TimelineRailEntry.Action) -> Bool {
+        guard model.snapshot.itemId == model.selectedItem.id else { return false }
+        switch action {
+        case .chapter(let chapter): return model.isCurrentTimelineChapter(chapter)
+        case .mediaChapter(let chapter): return model.isCurrentTimelineMediaChapter(chapter)
+        case .listeningMapScene(let scene): return model.isCurrentTimelineListeningMapScene(scene)
+        case .turnChapter(let turn, let chapter): return model.isCurrentTimelineChapter(chapter, turnId: turn.id)
+        default: return false
+        }
+    }
+
     private func perform(_ action: TimelineRailEntry.Action) {
         switch action {
         case .beginning:
@@ -455,12 +467,13 @@ struct TimelineRailEntry: Identifiable, Equatable {
 private struct TimelineRailRow: View, Equatable {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let entry: TimelineRailEntry
+    let isCurrent: Bool
     let isFirst: Bool
     let isLast: Bool
     let action: () -> Void
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.entry == rhs.entry && lhs.isFirst == rhs.isFirst && lhs.isLast == rhs.isLast
+        lhs.entry == rhs.entry && lhs.isCurrent == rhs.isCurrent && lhs.isFirst == rhs.isFirst && lhs.isLast == rhs.isLast
     }
 
     var body: some View {
@@ -493,6 +506,11 @@ private struct TimelineRailRow: View, Equatable {
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(AppColors.secondaryText)
                     }
+                    if isCurrent {
+                        Label("Current chapter", systemImage: "speaker.wave.2.fill")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(AppColors.evergreen)
+                    }
                     Text(entry.title)
                         .font(.headline)
                         .foregroundStyle(AppColors.text)
@@ -506,7 +524,7 @@ private struct TimelineRailRow: View, Equatable {
                 }
                 .padding(15)
                 .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
-                .background(surfaceColor)
+                .background(isCurrent ? AppColors.evergreen.opacity(0.14) : surfaceColor)
                 .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 17, style: .continuous)
@@ -517,7 +535,7 @@ private struct TimelineRailRow: View, Equatable {
             .padding(.bottom, 12)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(entry.provenance.label), \(entry.position) percent. \(entry.title). \(entry.detail)")
+        .accessibilityLabel("\(isCurrent ? "Current chapter. " : "")\(entry.provenance.label), \(entry.position) percent. \(entry.title). \(entry.detail)")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { action() }
     }

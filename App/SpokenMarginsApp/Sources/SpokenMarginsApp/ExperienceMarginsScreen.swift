@@ -2,17 +2,13 @@ import SwiftUI
 
 struct ExperienceMarginsScreen: View {
     private struct MarginGroup: Identifiable {
-        let sessionID: String
+        let itemID: String
         let itemTitle: String
-        let sessionDate: Date?
         let rows: [MarginRow]
 
-        var id: String { sessionID }
+        var id: String { itemID }
 
-        var sessionDescription: String {
-            guard let sessionDate else { return "Listening session" }
-            return sessionDate.formatted(date: .abbreviated, time: .shortened)
-        }
+
     }
 
     @EnvironmentObject private var model: Gate1AppModel
@@ -106,14 +102,24 @@ struct ExperienceMarginsScreen: View {
         } else {
             ForEach(groupedRows) { group in
                 VStack(alignment: .leading, spacing: 0) {
+                    HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(group.itemTitle)
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(AppColors.text)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text(group.sessionDescription)
+                        Text("\(group.rows.count) Margins")
                             .font(.caption)
                             .foregroundStyle(AppColors.secondaryText)
+                    }
+                    Spacer(minLength: 8)
+                    Button { model.openMarginItemExport(itemID: group.itemID) } label: {
+                        Label("Share", systemImage: "square.and.arrow.up")
+                            .frame(minHeight: 44)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Share Margins from \(group.itemTitle)")
+                    .accessibilityIdentifier("margins.shareItem.\(group.itemID)")
                     }
                     .padding(.top, 16)
                     .padding(.bottom, 6)
@@ -144,7 +150,7 @@ struct ExperienceMarginsScreen: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("My Margin. \(row.preview). \(group.itemTitle). \(group.sessionDescription)")
+                        .accessibilityLabel("My Margin. \(row.preview). \(group.itemTitle). \(row.sessionDate?.formatted(date: .abbreviated, time: .shortened) ?? "Listening session")")
                         .accessibilityIdentifier("margins.row.\(row.id)")
                         .contextMenu {
                             Button("Play this moment", systemImage: "play.fill") { _ = model.playMarginMoment(row) }
@@ -200,22 +206,16 @@ struct ExperienceMarginsScreen: View {
     private var filteredRows: [MarginRow] { model.visiblePrivateMarginRows }
 
     private var groupedRows: [MarginGroup] {
-        let orderedSessionIDs = filteredRows.reduce(into: [String]()) { result, row in
-            if !result.contains(row.interjection.sessionId) {
-                result.append(row.interjection.sessionId)
-            }
+        let orderedItemIDs = filteredRows.reduce(into: [String]()) { result, row in
+            if !result.contains(row.interjection.itemId) { result.append(row.interjection.itemId) }
         }
-        let rowsBySession = Dictionary(grouping: filteredRows, by: \.interjection.sessionId)
-        return orderedSessionIDs.compactMap { sessionID in
-            guard let rows = rowsBySession[sessionID], let first = rows.first else { return nil }
-            return MarginGroup(
-                sessionID: sessionID,
-                itemTitle: first.itemTitle,
-                sessionDate: first.sessionDate,
-                rows: rows
-            )
+        let rowsByItem = Dictionary(grouping: filteredRows, by: \.interjection.itemId)
+        return orderedItemIDs.compactMap { itemID in
+            guard let rows = rowsByItem[itemID], let first = rows.first else { return nil }
+            return MarginGroup(itemID: itemID, itemTitle: first.itemTitle, rows: rows)
         }
     }
+
 }
 
 struct SharedMarginDetailView: View {

@@ -1,3 +1,5 @@
+> September 21 QoL follow-up: the current owner-directed repair pass is recorded in `release-lanes.md` and `../artifacts/validation/gate-1/qol-2026-09-21/handoff.md`. Margins sharing is item-level: one action per item opens that item’s existing export screen with session selection; do not add individual-note sharing. This follow-up preserves the accepted redesign and does not authorize distribution.
+
 # Approved product-owner decision: second-edition native experience
 
 Approved by the product owner on September 10, 2026. The owner reports the MVP has shipped to beta testing, authorizes the broader redesign and named agents/file ownership, and sets a 20% weekly-usage floor. AGENTS.md and docs/release-lanes.md record this decision before implementation.

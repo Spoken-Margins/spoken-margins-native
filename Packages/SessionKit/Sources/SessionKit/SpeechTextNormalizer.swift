@@ -71,7 +71,12 @@ public enum SpeechTextNormalizer {
         }
     }
 
-    private static func projectAudibleContent(_ input: [MappedCharacter]) -> [MappedCharacter] {
+    public static func normalizeImportedText(_ source: String) -> String {
+        let mapped = source.enumerated().map { MappedCharacter(character: $0.element, sourceOffset: $0.offset) }
+        return finish(projectAudibleContent(mapped, speakIdentifiers: false), sourceLength: source.count).text
+    }
+
+    private static func projectAudibleContent(_ input: [MappedCharacter], speakIdentifiers: Bool = true) -> [MappedCharacter] {
         var rendered = reduceSocialCards(in: input)
         rendered = removeSocialInterfaceLines(in: rendered)
 
@@ -87,7 +92,47 @@ public enum SpeechTextNormalizer {
         let markdownImagePattern = #"!\[[^\]]*\]\([^)]*\)"#
         rendered = replace(pattern: markdownImagePattern, in: rendered, replacement: spaceReplacement)
 
+        if speakIdentifiers {
+            rendered = speakReferenceMarkers(in: rendered)
+            rendered = speakDefangedDomains(in: rendered)
+        }
         return removeLinks(in: rendered)
+    }
+
+    private static func speakReferenceMarkers(in input: [MappedCharacter]) -> [MappedCharacter] {
+        replace(pattern: #"\[(\^?)([0-9]{1,3}(?:\s*[,–-]\s*[0-9]{1,3})*)\]"#, in: input) { match, text, characters in
+            guard let range = Range(match.range, in: text),
+                  let numberRange = Range(match.range(at: 2), in: text) else { return [] }
+            let lower = text.distance(from: text.startIndex, to: range.lowerBound)
+            let label = match.range(at: 1).length > 0 ? " footnote " : " citation "
+            let value = String(text[numberRange]).replacingOccurrences(of: "–", with: " to ").replacingOccurrences(of: "-", with: " to ")
+            return (label + value + " ").map { MappedCharacter(character: $0, sourceOffset: characters[lower].sourceOffset) }
+        }
+    }
+
+    private static func speakDefangedDomains(in input: [MappedCharacter]) -> [MappedCharacter] {
+        replace(pattern: #"(?i)\b[a-z0-9][a-z0-9-]*(?:\[\.\][a-z0-9-]+)+\b"#, in: input) { match, text, characters in
+            guard let range = Range(match.range, in: text) else { return [] }
+            let lower = text.distance(from: text.startIndex, to: range.lowerBound)
+            let upper = text.distance(from: text.startIndex, to: range.upperBound)
+            var result: [MappedCharacter] = []
+            let matched = Array(characters[lower..<upper])
+            var index = 0
+            for character in "domain " { result.append(MappedCharacter(character: character, sourceOffset: matched[0].sourceOffset)) }
+            while index < matched.count {
+                if index + 2 < matched.count, matched[index].character == "[", matched[index + 1].character == ".", matched[index + 2].character == "]" {
+                    result += " dot ".map { MappedCharacter(character: $0, sourceOffset: matched[index].sourceOffset) }
+                    index += 3
+                } else {
+                    if matched[index].character == "-" {
+                        result += " hyphen ".map { MappedCharacter(character: $0, sourceOffset: matched[index].sourceOffset) }
+                    } else { result.append(matched[index]) }
+                    index += 1
+                }
+            }
+            result.append(MappedCharacter(character: ".", sourceOffset: matched.last!.sourceOffset))
+            return result
+        }
     }
 
     private static func removeSocialInterfaceLines(in input: [MappedCharacter]) -> [MappedCharacter] {

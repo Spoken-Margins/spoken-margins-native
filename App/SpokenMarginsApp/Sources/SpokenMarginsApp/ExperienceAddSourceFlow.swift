@@ -27,10 +27,12 @@ struct ExperienceAddSourceFlow: View {
         NavigationStack {
             Group {
                 if showsPinnedTextAction {
-                    pastedTextSource
-                        .padding(20)
-                        .frame(maxWidth: 720)
-                        .frame(maxWidth: .infinity)
+                    ScrollView {
+                        pastedTextSource
+                            .padding(20)
+                            .frame(maxWidth: 720)
+                            .frame(maxWidth: .infinity)
+                    }
                 } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
@@ -290,20 +292,34 @@ struct ExperienceAddSourceFlow: View {
                     .textFieldStyle(.roundedBorder)
                     .focused($focusedField, equals: .title)
                     .accessibilityIdentifier("create.title.field")
-                Button(action: model.pasteImportTextFromClipboard) {
-                    Image(systemName: "doc.on.clipboard")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 24, height: 24)
-                        .frame(width: 44, height: 44)
-                }
-                .accessibilityLabel("Paste source text")
             }
+            Button {
+                model.pasteImportTextFromClipboard()
+                textImportError = model.lastError
+                guard textImportError == nil else { return }
+                model.importTextItem(startListening: false)
+                textImportError = model.lastError
+                if textImportError == nil { dismiss() }
+            } label: {
+                Label("Paste & Add", systemImage: "doc.on.clipboard")
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(minHeight: 44)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("create.pasteAndAdd.button")
+            Text("Text")
+                .font(.headline)
+            Text("Paste or type your text below. You can edit it before adding.")
+                .font(.caption)
+                .foregroundStyle(AppColors.secondaryText)
             TextEditor(text: $model.importText)
                 .font(.body)
                 .scrollContentBackground(.hidden)
-                .frame(minHeight: 80, maxHeight: .infinity)
+                .frame(height: dynamicTypeSize.isAccessibilitySize ? 220 : 180)
                 .focused($focusedField, equals: .text)
+                .padding(8)
+                .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 12))
+                .overlay { RoundedRectangle(cornerRadius: 12).stroke(AppColors.border) }
                 .accessibilityLabel("Source text")
                 .accessibilityIdentifier("create.text.editor")
             if let textImportError {

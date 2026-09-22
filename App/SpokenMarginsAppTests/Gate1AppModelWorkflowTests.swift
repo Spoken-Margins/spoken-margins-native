@@ -11,6 +11,75 @@ import PDFKit
 
 @MainActor
 final class Gate1AppModelWorkflowTests: XCTestCase {
+    func testRichClipboardRestoresOnlyExplicitHTMLHeadings() {
+        let plain = "Article & notes\nA paragraph.\nNext section\nMore prose."
+        let html = "<h1>Article &amp; notes</h1><p>A paragraph.</p><h2><em>Next section</em></h2><p>More prose.</p>"
+        XCTAssertEqual(Gate1AppModel.pastedSourceText(plainText: plain, html: html),
+                       "# Article & notes\nA paragraph.\n## Next section\nMore prose.")
+        XCTAssertEqual(Gate1AppModel.pastedSourceText(plainText: plain, html: nil), plain)
+    }
+
+    func testItemMarginsOpenExportWithAllSessionMarginsWithoutChangingPlayback() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "First private thought")
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "Second selected thought")
+        model.refreshMarginRows()
+        let row = try XCTUnwrap(model.marginRows.first { $0.preview.contains("Second selected") })
+        let session = model.snapshot.sessionId
+        model.openMarginItemExport(itemID: row.interjection.itemId)
+        XCTAssertEqual(model.screen, .export)
+        XCTAssertEqual(model.exportShareCandidates.count, 2)
+        model.prepareExportShareInterjections()
+        XCTAssertTrue(model.isSharingInterjectionsPresented)
+        XCTAssertEqual(model.sharingState.drafts.count, 2)
+        XCTAssertEqual(model.snapshot.sessionId, session)
+    }
+
+    func testNextChapterUnavailableForFinalChapterAndDerivativePlayback() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        let first = Chapter(id: "a", title: "Opening", startChar: 0, endChar: 50, percent: 0)
+        let last = Chapter(id: "b", title: "Ending", startChar: 50, endChar: 100, percent: 50)
+        model.selectedItem = ItemDetailState(id: "item", title: "Article", chapters: [first, last])
+        model.snapshot.itemId = "item"
+        model.snapshot.targetType = TargetType.itemTextTTS.rawValue
+        model.snapshot.chapterTitle = first.title
+        XCTAssertEqual(model.nextPlaybackChapter?.id, "b")
+        model.snapshot.chapterTitle = last.title
+        XCTAssertFalse(model.canJumpToNextChapter)
+        model.snapshot.targetType = TargetType.assistantTurnTTS.rawValue
+        model.snapshot.chapterTitle = first.title
+        XCTAssertFalse(model.canJumpToNextChapter)
+    }
+
+    func testUntitledManualImportUsesOpeningWordsAndPreservesHeadings() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.importTitle = ""
+        model.importText = "A useful opening sentence for my notes today."
+        model.importTextItem(startListening: false)
+        XCTAssertTrue(model.libraryItems.contains { $0.title == "A useful opening sentence for my notes today." })
+        model.importTitle = "Formatted notes"
+        model.importText = "**First heading**\n\nFirst paragraph.\n\n**Second heading**\n\nSecond paragraph."
+        model.importTextItem()
+        XCTAssertEqual(model.selectedItem.chapters.map(\.title), ["First heading", "Second heading"])
+    }
+
+    func testPDFBibliographyTailNeedsExplicitHeadingAndMultipleRecords() throws {
+        let body = "# Article\n\nIntroduction.\n\n## Discussion\n\nKeep this discussion.\n\n"
+        let references = "## References\n" + (1...50).map { "[\($0)] Author. Journal 2024." }.joined(separator: "\n")
+        let result = PDFStructuredTextExtractor.listeningMarkdown(body + references)
+        XCTAssertEqual(result, body.trimmingCharacters(in: .whitespacesAndNewlines))
+        let parsed = try ObsidianMarkdownParser.parse(fileName: "Article.md", contents: result)
+        let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "pdf", policy: .canonicalHeadings))
+        XCTAssertFalse(map.chapters.contains { $0.title.contains("part") || $0.title.contains("References") })
+        let prose = body + "References\nWe discuss references in ordinary prose."
+        XCTAssertEqual(PDFStructuredTextExtractor.listeningMarkdown(prose), prose)
+    }
+
     func testDiagnosticUpdatesDoNotInvalidateNavigationModel() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         var modelNotifications = 0

@@ -2475,11 +2475,11 @@ final class Gate1AppModel: ObservableObject {
             let itemId = "item-import-\(UUID().uuidString.lowercased())"
             let enteredTitle = importTitle.trimmingCharacters(in: .whitespacesAndNewlines)
             let parsed = try ObsidianMarkdownParser.parse(
-                fileName: enteredTitle.isEmpty ? "Imported Text.md" : "\(enteredTitle).md",
+                fileName: enteredTitle.isEmpty ? "\(importText.split(whereSeparator: \.isWhitespace).prefix(8).joined(separator: " ")).md" : "\(enteredTitle).md",
                 contents: importText,
                 titleOverride: enteredTitle.isEmpty ? nil : enteredTitle
             )
-            let deterministicMap = parsed.deterministicListeningMap(itemId: itemId)
+            let deterministicMap = parsed.deterministicListeningMap(itemId: itemId, policy: .canonicalHeadings)
             let item = Item(
                 id: itemId,
                 title: enteredTitle.isEmpty ? parsed.title : enteredTitle,
@@ -2518,6 +2518,25 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    nonisolated static func pastedSourceText(plainText: String, html: String?) -> String {
+        guard let html, let regex = try? NSRegularExpression(pattern: #"(?is)<h([1-6])\b[^>]*>(.*?)</h\1\s*>"#) else { return plainText }
+        var headings: [String: Int] = [:]
+        for match in regex.matches(in: html, range: NSRange(html.startIndex..., in: html)) {
+            guard let levelRange = Range(match.range(at: 1), in: html),
+                  let titleRange = Range(match.range(at: 2), in: html),
+                  let level = Int(html[levelRange]) else { continue }
+            var title = String(html[titleRange]).replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
+            for (entity, value) in [("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&nbsp;", " ")] {
+                title = title.replacingOccurrences(of: entity, with: value)
+            }
+            headings[title.trimmingCharacters(in: .whitespacesAndNewlines)] = level
+        }
+        return plainText.components(separatedBy: .newlines).map { line in
+            guard let level = headings[line.trimmingCharacters(in: .whitespaces)] else { return line }
+            return String(repeating: "#", count: level) + " " + line
+        }.joined(separator: "\n")
+    }
+
     func pasteImportTextFromClipboard() {
         #if canImport(UIKit)
         guard let clipboardText = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -2525,7 +2544,9 @@ final class Gate1AppModel: ObservableObject {
             reportFailure("Clipboard does not contain text.")
             return
         }
-        importText = clipboardText
+        let html = UIPasteboard.general.data(forPasteboardType: "public.html")
+            .flatMap { $0.count <= 2_000_000 ? String(data: $0, encoding: .utf8) : nil }
+        importText = Self.pastedSourceText(plainText: clipboardText, html: html)
         reportSuccess("Pasted text from Clipboard.")
         #else
         reportFailure("Clipboard paste is unavailable on this platform.")
@@ -4879,6 +4900,37 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    var nextPlaybackChapter: Chapter? {
+        guard snapshot.itemId == selectedItem.id,
+              snapshot.targetType == TargetType.itemTextTTS.rawValue,
+              let index = selectedItem.chapters.firstIndex(where: { isCurrentTimelineChapter($0) }),
+              selectedItem.chapters.indices.contains(index + 1) else { return nil }
+        return selectedItem.chapters[index + 1]
+    }
+
+    var nextPlaybackMediaChapter: MediaTimelineChapter? {
+        guard snapshot.itemId == selectedItem.id,
+              snapshot.targetType == TargetType.transcriptBackedMedia.rawValue
+                || snapshot.targetType == TargetType.browserOwnedMedia.rawValue,
+              let position = snapshot.currentMediaTimeMs else { return nil }
+        let chapters = selectedItem.mediaChapters.isEmpty ? selectedItem.listeningMapScenes : selectedItem.mediaChapters
+        return chapters.sorted { $0.startMs < $1.startMs }.first { $0.startMs > position }
+    }
+
+    var canJumpToNextChapter: Bool {
+        !recordingNavigationIsLocked && snapshot.skimBridgeState == nil && playingImportedCommentary == nil
+            && (nextPlaybackChapter != nil || nextPlaybackMediaChapter != nil)
+    }
+
+    func jumpToNextChapter() {
+        guard canJumpToNextChapter else { return }
+        if let chapter = nextPlaybackChapter { jumpToChapter(chapter) }
+        else if let chapter = nextPlaybackMediaChapter {
+            if selectedItem.mediaChapters.isEmpty { jumpToListeningMapScene(chapter) }
+            else { jumpToMediaChapter(chapter) }
+        }
+    }
+
     func jumpToChapter(_ chapter: Chapter, fromTimeline: Bool = false) {
         guard !requireTermsDecisionBeforePlayback(.jumpToChapter(chapter.id, fromTimeline: fromTimeline)) else { return }
         stopSpeechPreviews()
@@ -5441,6 +5493,13 @@ final class Gate1AppModel: ObservableObject {
                 selectedItem = try loadItemDetail(id: id, store: store)
             }
             completionUndo = (id, item.title, try store.loadItem(id: id).sourceCompletedAt ?? markedAt)
+            let completion = completionUndo
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(10))
+                guard let self, self.completionUndo?.itemID == completion?.itemID,
+                      self.completionUndo?.markedAt == completion?.markedAt else { return }
+                self.completionUndo = nil
+            }
         } catch {
             reportFailure(error, context: "Mark complete failed")
         }
@@ -12605,6 +12664,15 @@ final class Gate1AppModel: ObservableObject {
             selectedItem = try loadItemDetail(id: session.itemId, store: store)
             prepareShareInterjections(candidates: candidates)
         } catch { reportFailure(error, context: "Prepare session sharing failed") }
+    }
+
+    func openMarginItemExport(itemID: String) {
+        guard !rejectNavigationOrSessionMutationWhileRecording("open_export") else { return }
+        do {
+            selectedItem = try loadItemDetail(id: itemID, store: requireStore())
+            let sessionID = selectedItem.sessionRows.first { $0.interjectionCount > 0 }?.id
+            openExport(sessionId: sessionID)
+        } catch { reportFailure(error, context: "Open item export failed") }
     }
 
     func prepareShareInterjections() {

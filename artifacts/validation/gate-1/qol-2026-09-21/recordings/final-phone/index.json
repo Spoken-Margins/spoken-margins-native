@@ -1,0 +1,71 @@
+{
+  "run": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/test-runs/qol-20260921-phone-ui-final",
+  "events": [
+    {
+      "test": "testBatchExportOffersPersistentJumpToDestination",
+      "event": "started",
+      "time": 1790034113.683475,
+      "file": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/validation/gate-1/qol-2026-09-21/recordings/final-phone/testBatchExportOffersPersistentJumpToDestination.mp4"
+    },
+    {
+      "test": "testBatchExportOffersPersistentJumpToDestination",
+      "event": "passed",
+      "time": 1790034137.187331
+    },
+    {
+      "test": "testBuild23LayoutRegressionsRemainOperableAtAccessibilityType",
+      "event": "started",
+      "time": 1790034137.189776,
+      "file": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/validation/gate-1/qol-2026-09-21/recordings/final-phone/testBuild23LayoutRegressionsRemainOperableAtAccessibilityType.mp4"
+    },
+    {
+      "test": "testBuild23LayoutRegressionsRemainOperableAtAccessibilityType",
+      "event": "passed",
+      "time": 1790034256.547062
+    },
+    {
+      "test": "testBuild23RecipientMissingSourceReturnsWithoutAutoplayAndShowsProvenance",
+      "event": "started",
+      "time": 1790034256.5528262,
+      "file": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/validation/gate-1/qol-2026-09-21/recordings/final-phone/testBuild23RecipientMissingSourceReturnsWithoutAutoplayAndShowsProvenance.mp4"
+    },
+    {
+      "test": "testBuild23RecipientMissingSourceReturnsWithoutAutoplayAndShowsProvenance",
+      "event": "passed",
+      "time": 1790034318.4957812
+    },
+    {
+      "test": "testLibraryUnfinishedCompletionUndoAndSearchDiscovery",
+      "event": "started",
+      "time": 1790034358.865948,
+      "file": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/validation/gate-1/qol-2026-09-21/recordings/final-phone/testLibraryUnfinishedCompletionUndoAndSearchDiscovery.mp4"
+    },
+    {
+      "test": "testLibraryUnfinishedCompletionUndoAndSearchDiscovery",
+      "event": "passed",
+      "time": 1790034390.472589
+    },
+    {
+      "test": "testMarginsItemShareOpensItemExportAndChapterJumpUpdatesTimeline",
+      "event": "started",
+      "time": 1790034470.209719,
+      "file": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/validation/gate-1/qol-2026-09-21/recordings/final-phone/testMarginsItemShareOpensItemExportAndChapterJumpUpdatesTimeline.mp4"
+    },
+    {
+      "test": "testMarginsItemShareOpensItemExportAndChapterJumpUpdatesTimeline",
+      "event": "passed",
+      "time": 1790034500.763365
+    },
+    {
+      "test": "testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource",
+      "event": "started",
+      "time": 1790034709.503594,
+      "file": "/Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/validation/gate-1/qol-2026-09-21/recordings/final-phone/testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource.mp4"
+    },
+    {
+      "test": "testWrittenMarginSaveSearchStarAndDiscardPreserveTheSource",
+      "event": "passed",
+      "time": 1790034759.434775
+    }
+  ]
+}
