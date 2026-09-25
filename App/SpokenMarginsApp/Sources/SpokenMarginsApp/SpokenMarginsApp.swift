@@ -55,6 +55,9 @@ struct SpokenMarginsApp: App {
 
     init() {
         let model = Gate1AppModel.makeApplicationModel()
+        #if !SPOKEN_MARGINS_LEGACY
+        ListeningEditionShortcutBridge.model = model
+        #endif
         _model = StateObject(wrappedValue: model)
         _sharingCoordinator = StateObject(
             wrappedValue: Build23SharingCoordinator(model: model)

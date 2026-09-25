@@ -11,6 +11,19 @@ final class ListeningEditionTests: XCTestCase {
         XCTAssertEqual(edition.listeningMap().chapters.count, 2)
     }
 
+    func testShortcutJSONAcceptsFencesAndExplainsMapOnlyOutput() throws {
+        let map = #"{"overview":"Brief","scenes":[{"title":"One","description":"Orientation","summary":"Summary","startBlock":1,"endBlock":1}]}"#
+        let edition = try ListeningEdition.assemble(title: "Article", sourceURL: "https://example.com/a", text: "Source.", generator: "Ask ChatGPT", mapJSON: "```json\n\(map)\n```")
+        let fencedEdition = "```json\n\(String(decoding: try edition.encoded(), as: UTF8.self))\n```"
+        XCTAssertEqual(try ListeningEdition.decode(Data(fencedEdition.utf8)), edition)
+        XCTAssertThrowsError(try ListeningEdition.decode(Data(map.utf8))) { error in
+            XCTAssertTrue(error.localizedDescription.contains("Assemble Listening Edition"))
+        }
+        XCTAssertThrowsError(try ListeningEdition.assemble(title: "Article", sourceURL: nil, text: "Source.", generator: "Ask ChatGPT", mapJSON: "Here is the JSON: \(map)")) { error in
+            XCTAssertTrue(error.localizedDescription.contains("one JSON object"))
+        }
+    }
+
     func testAssemblyPreservesOriginalUnicodeAndRejectsInvalidCoverage() throws {
         let original = "  First 👩🏽‍💻 passage.\n\nSecond e\u{301} passage.  "
         let json = #"{"overview":"A map","scenes":[{"title":"One","description":"Orientation","summary":"A summary","startBlock":1,"endBlock":1},{"title":"Two","description":"More","summary":"Another summary","startBlock":2,"endBlock":2}]}"#
