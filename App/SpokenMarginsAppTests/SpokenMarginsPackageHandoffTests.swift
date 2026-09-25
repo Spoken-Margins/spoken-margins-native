@@ -234,6 +234,18 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
             ),
             relocated
         )
+        XCTAssertEqual(
+            Gate1AppModel.resolvedInterjectionAudioURL(
+                for: stalePath,
+                applicationSupportDirectory: support
+            ),
+            relocated,
+            "The Margin voice player must use the relocated file, not the stale container path."
+        )
+        XCTAssertNil(Gate1AppModel.resolvedInterjectionAudioURL(
+            for: "/old/container/Library/Application Support/SpokenMargins/IncomingPackages/package/assets/missing.m4a",
+            applicationSupportDirectory: support
+        ))
     }
 
     func testWeakerPodcastEvidenceRetainsPositionOnlyForSameKnownAudioEdition() throws {

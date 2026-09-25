@@ -13598,24 +13598,31 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func resolvedInterjectionAudioURL(for path: String) -> URL? {
-        let fileManager = FileManager.default
-        let directURL = URL(fileURLWithPath: path)
-        if directURL.isFileURL, fileManager.fileExists(atPath: directURL.path) {
-            return directURL
+        Self.resolvedInterjectionAudioURL(
+            for: path,
+            applicationSupportDirectory: try? FileManager.default.url(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask,
+                appropriateFor: nil,
+                create: false
+            )
+        )
+    }
+
+    /// Stored Margin audio paths may be absolute paths from an earlier app container
+    /// (container UUIDs change on reinstall, restore, and some updates). Rebase them onto
+    /// the current Application Support directory instead of failing.
+    nonisolated static func resolvedInterjectionAudioURL(
+        for path: String,
+        applicationSupportDirectory: URL?
+    ) -> URL? {
+        if path.hasPrefix("interjections/"), let applicationSupportDirectory {
+            let legacyURL = applicationSupportDirectory.appending(path: "SpokenMargins").appending(path: path)
+            if FileManager.default.fileExists(atPath: legacyURL.path) { return legacyURL }
         }
-        guard let support = try? fileManager.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: false
-        ) else { return nil }
-        if path.hasPrefix("SpokenMargins/") {
-            return support.appending(path: path)
-        }
-        if path.hasPrefix("interjections/") {
-            return support.appending(path: "SpokenMargins").appending(path: path)
-        }
-        return support.appending(path: path)
+        return resolvedApplicationSupportAssetURL(
+            for: path, applicationSupportDirectory: applicationSupportDirectory
+        )
     }
 
     private func resolvedApplicationSupportAssetURL(for path: String) -> URL? {
