@@ -2610,7 +2610,7 @@ final class SessionKitCoreTests: XCTestCase {
         let request = try XCTUnwrap(audio.postResumeSampleRequests.first)
         XCTAssertEqual(request.itemId, item.id)
         XCTAssertEqual(request.anchorMediaTimeMs, 321_000)
-        XCTAssertEqual(request.targetDurationMs, 12_000)
+        XCTAssertEqual(request.targetDurationMs, SparseFingerprintSchedule.targetDurationMs)
         XCTAssertEqual(audio.eventLog, ["arm_post_resume_sample", "play_media"])
         let interjection = try XCTUnwrap(
             try repository.loadInterjections(sessionId: request.sessionId).first

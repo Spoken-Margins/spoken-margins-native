@@ -491,7 +491,9 @@ public enum EpisodeFingerprintAlignment {
 public struct SparseFingerprintSchedule: Codable, Equatable, Sendable {
     public static let initialMediaTimeMs = 60_000
     public static let periodicIntervalMs = 300_000
-    public static let targetDurationMs = 12_000
+    /// ShazamKit custom catalogs reject query signatures longer than 12.0 s, and decoder frame rounding adds up to
+    /// ~25 ms (12,000 ms from a 48 kHz MP3 became 12.011 s). 11 s leaves room for any codec.
+    public static let targetDurationMs = 11_000
     public static let seekDebounceMs = 5_000
 
     public private(set) var continuityEpoch: Int

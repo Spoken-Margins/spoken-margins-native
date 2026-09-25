@@ -89,7 +89,8 @@ public enum PodcastAnchorEvidenceError: Error, Equatable, LocalizedError {
 /// podcast edition heard by the sender. The podcast audio itself never enters
 /// the package.
 public enum PodcastAnchorEvidenceGenerator {
-    public static let flankDurationMs = 12_000
+    /// Must stay under ShazamKit's 12 s query limit after frame rounding; see SparseFingerprintSchedule.
+    public static let flankDurationMs = SparseFingerprintSchedule.targetDurationMs
     public static let anchorGapMs = 500
     public static let minimumEvidenceDurationMs = 3_000
 

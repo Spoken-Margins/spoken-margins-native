@@ -1546,7 +1546,7 @@ public final class SessionEngine {
                 sessionId: session.id,
                 itemId: session.itemId,
                 anchorMediaTimeMs: anchorMediaTimeMs,
-                targetDurationMs: 12_000,
+                targetDurationMs: SparseFingerprintSchedule.targetDurationMs,
                 captureDelayMs: SparseFingerprintSchedule.seekDebounceMs
             )
             let capturedPreWindow = audio.captureBufferedPreInterjectionAudioSample(evidenceRequest)
