@@ -22,8 +22,8 @@ Issue: #27. Branch: `anchor-reliability`.
 | Slice | What | State |
 | --- | --- | --- |
 | 1 | Router forwards capture calls to the media player | **implemented, verified (host test)**. In every shipped build through 28, capture silently never ran, so no shared podcast Margin carried fingerprints. |
-| 2 | Prove capture on a device | next |
-| 3 | Make capture durable | planned |
+| 2 | Prove capture on a device | **ran on Build 29 before these fixes: no evidence on a streamed episode.** Cause found on the host: the continuous tap never installed (#154). Rerun on the next build. |
+| 3 | Make capture durable | **in progress.** Implemented, verified on the host: tap installs once the audio track loads (#154); failure reasons kept as a history, session-qualified diagnostic keys, stored outcomes in the export (#155). Not yet on a device. Remaining: stream source context (#156), signature work off the audio callback. |
 | 4 | Export and compatibility | planned |
 | 5 | Recipient matching, benchmark-gated | planned |
 | 6 | Recipient experience for uncertain Margins | planned |
