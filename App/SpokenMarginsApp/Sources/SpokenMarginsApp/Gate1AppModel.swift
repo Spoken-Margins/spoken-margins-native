@@ -7941,7 +7941,8 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func acquirePodcastForImportedPackage(_ item: SharedItemIdentity) async throws -> String {
-        guard let canonicalURL = item.canonicalURL else {
+        guard let canonicalURL = item.canonicalURL,
+              normalizedSharingURL(canonicalURL) != nil else {
             throw SessionKitError.persistenceFailed("shared_podcast_item_has_no_reference")
         }
         let request = LinkResolutionRequest(
@@ -7951,10 +7952,22 @@ final class Gate1AppModel: ObservableObject {
             createdAt: Date()
         )
         var result: LinkResolutionResult
-        if let sourceLinkResolver {
-            result = try sourceLinkResolver.resolve(request)
-        } else {
-            result = try await PublicPodcastLinkResolver().resolveAsync(request)
+        do {
+            if let sourceLinkResolver {
+                result = try sourceLinkResolver.resolve(request)
+            } else {
+                result = try await PublicPodcastLinkResolver().resolveAsync(request)
+            }
+        } catch {
+            // Keep the existing resolver path first. Some publisher pages reject
+            // automated requests even when the packet has the exact enclosure.
+            // In that case, use its reference through the same source persistence
+            // path; anchor placement still needs recipient evidence.
+            guard let packageResult = packagePodcastLinkResolution(item: item, request: request) else {
+                throw error
+            }
+            diagnostics["lastSharedPodcastAcquisition"] = "package_reference_after_resolution_failure"
+            result = packageResult
         }
         if result.status == .needsReview {
             let exactEnclosureMatches = result.candidates.filter {
@@ -7978,6 +7991,38 @@ final class Gate1AppModel: ObservableObject {
             throw SessionKitError.persistenceFailed("shared_podcast_item_not_created")
         }
         return importedItem.id
+    }
+
+    private func packagePodcastLinkResolution(
+        item: SharedItemIdentity,
+        request: LinkResolutionRequest
+    ) -> LinkResolutionResult? {
+        guard item.itemType == .podcast,
+              let canonicalURL = item.canonicalURL,
+              normalizedSharingURL(canonicalURL) != nil,
+              let enclosureURL = item.enclosureURL,
+              normalizedSharingURL(enclosureURL) != nil,
+              !item.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let sourceLink = SourceLink(
+            url: canonicalURL, provider: "shared_package", title: item.title,
+            role: "package_reference"
+        )
+        let candidate = LinkResolutionCandidate(
+            sourceLink: sourceLink,
+            title: item.title,
+            showTitle: item.showTitle,
+            durationMs: item.durationMs,
+            publishedAt: item.publishedAt,
+            audioURL: enclosureURL,
+            confidence: 1
+        )
+        return LinkResolutionResult(
+            requestId: request.id,
+            status: .playable,
+            originalLink: sourceLink,
+            selectedCandidate: candidate,
+            candidates: [candidate]
+        )
     }
 
     private func importedLayerHasValidItemAssociation(

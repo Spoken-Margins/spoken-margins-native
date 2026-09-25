@@ -168,6 +168,36 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
     }
 
     @MainActor
+    func testPodcastPackageCreatesReferencedEpisodeWithoutPublisherPageFetch() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-offline-publisher-page")
+        let databaseURL = root.appendingPathComponent("recipient.sqlite")
+        let packageURL = root.appendingPathComponent("referenced-episode.spokenmargins")
+        let manifest = try writePodcastPackage(to: packageURL, packageID: "package-reference-with-enclosure")
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        let model = Gate1AppModel(
+            sourceLinkResolver: FailingPackagePodcastLinkResolver(),
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: databaseURL
+        )
+        model.resetAndSeed()
+
+        model.handleIncomingURL(packageURL)
+        XCTAssertNil(model.spokenMarginsPackageImportReview?.matchingItemId)
+        model.confirmSpokenMarginsPackageImport()
+        try await waitForImportToFinish(model)
+
+        let imported = try XCTUnwrap(model.libraryItems.first(where: { $0.title == Self.podcastTitle }))
+        let item = try store.loadItem(id: imported.id)
+        let layer = try XCTUnwrap(store.loadImportedCommentaryLayer(packageDigest: try XCTUnwrap(manifest.contentDigest)))
+        XCTAssertEqual(item.externalReference, Self.podcastURL)
+        XCTAssertEqual(item.media?.url, Self.podcastAudioURL)
+        XCTAssertEqual(layer.itemId, item.id)
+        XCTAssertNotEqual(layer.sourceResolutionStatus, .wrongSource)
+        XCTAssertNil(model.spokenMarginsPackageImportError)
+        XCTAssertEqual(model.diagnostics["lastSharedPodcastAcquisition"], "package_reference_after_resolution_failure")
+    }
+
+    @MainActor
     func testReopeningCorruptedWrongSourcePackageRepairsItsItemAssociation() async throws {
         let root = try temporaryDirectory(named: "spoken-margins-package-repair")
         // Background model work can retain SQLite; let the process close it before cleanup.
@@ -531,5 +561,11 @@ private final class PackagePodcastLinkResolver: LinkResolutionClient {
             candidates: result.candidates,
             failureReason: result.failureReason
         )
+    }
+}
+
+private final class FailingPackagePodcastLinkResolver: LinkResolutionClient {
+    func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult {
+        throw URLError(.badServerResponse)
     }
 }
