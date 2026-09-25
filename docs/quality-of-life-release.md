@@ -55,7 +55,7 @@ Repository scans after implementation must produce no matches in app/package run
 
 - `docs/staged-github-issues.md`: historical issue specification;
 - Gate 1 and Gate 4 closeout/inventory documents: explicitly labeled historical evidence;
-- `docs/release-lanes.md` and this document: removal scope and audit result;
+- `docs/archive/release-lanes.md` and this document: removal scope and audit result;
 - `README.md` and current verification guidance: explicit statements that the runtime is retired.
 
 No legacy model assets, package dependency, compilation flag, scheme, setting, test, or selectable voice remains.

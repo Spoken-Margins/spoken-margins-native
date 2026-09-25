@@ -75,23 +75,23 @@
     },
     "watch-offline-prerendered-session": {
       "status": "archived",
-      "reason": "Not part of the active release surface; see docs/release-lanes.md."
+      "reason": "Not part of the active release surface; see docs/archive/release-lanes.md."
     },
     "watch-chapter-navigation": {
       "status": "archived",
-      "reason": "Not part of the active release surface; see docs/release-lanes.md."
+      "reason": "Not part of the active release surface; see docs/archive/release-lanes.md."
     },
     "car-basic-controls": {
       "status": "deferred",
-      "reason": "Not part of the active release surface; see docs/release-lanes.md."
+      "reason": "Not part of the active release surface; see docs/archive/release-lanes.md."
     },
     "browser-video-1_75x-session": {
       "status": "deferred",
-      "reason": "Not part of the active release surface; see docs/release-lanes.md."
+      "reason": "Not part of the active release surface; see docs/archive/release-lanes.md."
     },
     "watch-sync-interjections-after-reconnect": {
       "status": "archived",
-      "reason": "Not part of the active release surface; see docs/release-lanes.md."
+      "reason": "Not part of the active release surface; see docs/archive/release-lanes.md."
     }
   },
   "emptySchemaSelections": {

@@ -13,7 +13,7 @@ Gate 4 proves that the Watch can be a prepared local playback and recording runt
 - `docs/gate4-watch-untethered-closeout.md`
 - `validation/agent-cards/gate4-watch-untethered.md`
 
-Gate 4 work must also follow `docs/parallel-track-coordination.md`, `docs/surface-contract-governance.md`, and the steward packet for the active branch.
+Gate 4 work must also follow `docs/archive/parallel-track-coordination.md`, `docs/surface-contract-governance.md`, and the steward packet for the active branch.
 
 ## Steward-Only Files
 

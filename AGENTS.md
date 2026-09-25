@@ -1,112 +1,79 @@
-# Agent Rules
+# Agent guide
 
-## Default Workflow
+Spoken Margins is a native iPhone/iPad listening app (iOS/iPadOS 26+). Listeners play articles, PDFs and podcasts, record spoken or written **Margins** anchored to the source, and share Margins as `.spokenmargins` packets that another listener can import and hear at the right place in their own copy. The product owner is a systems engineer, not an iOS developer: explain trade-offs plainly and bring decisions, not options lists.
 
-This repository uses a single-agent workflow by default. An agent should work end to end on the requested task unless the product owner explicitly asks for parallel agents.
+## Current focus
 
-Parallel-agent rules are archived in `docs/parallel-agent-workflow-archive.md`. Do not use that workflow unless the product owner explicitly names a steward, gate agents, allowed files, forbidden files, and merge order.
+Replace this section when the focus changes; do not append to it.
 
-## Working agreements
+- **Baseline:** Build 28, tag `testflight/0.1-build-28` (`47f9d2f`), is the last shipped build. `main` should point at the last shipped build.
+- **Working branch:** `anchor-reliability`. It is Build 28 plus the Sep 22 QoL commit, the salvaged fixes, and the first podcast-anchor fix.
+- **Goal:** shared podcast Margins land at the right place for the recipient. Plan and status: [docs/podcast-anchor-plan.md](docs/podcast-anchor-plan.md).
+- **Parked, reference only:**
+  - `park/co-op-2026-09-24`: failed co-op attempt plus in-progress anchor work. Do not merge it; port pieces by hand.
+  - `codex/desktop`: macOS companion prototype.
+- **Background:** why the repo was reset is in [docs/repo-review-2026-09-24.md](docs/repo-review-2026-09-24.md).
 
-- Treat a request for action as authorization to complete the work within its stated scope. Make reasonable assumptions for routine, reversible decisions and continue independent work while resolving material questions.
-- Follow explicit user direction over skill guidelines and historical task notes, within system/tool constraints. Preserve product and release boundaries unless the user changes them. Do not ask again for authorization already given.
-- Before requesting a decision, prepare the authorized work needed to make it concrete and reviewable. If a skill blocks progress, identify the file and exact rule, explain its application, and distinguish that rule from your interpretation.
-- Keep updates and handoffs concise: outcome, evidence, and any remaining blocker. State assumptions and do not equate a passing build with product validation.
-- Preserve unrelated working-tree changes. Stop broadening verification once required checks pass; rerun only for a changed input, a failure diagnosis, or an unresolved concern. If an unchanged failure persists after diagnosis and a justified retry, report the blocker and continue independent authorized work instead of repeating the same check.
-- Treat model usage and user attention as limited resources, separate from machine execution time. Long-running checks can require substantial execution without requiring repeated agent analysis. Before inspecting progress again, identify what new evidence could change the next action; if none is expected, prefer tool-managed waiting and compact status reporting within platform constraints. Repeated unchanged results are a signal to simplify supervision. Preserve required verification and investigate failures; optimize the overhead around the work.
+## Repository map
 
-### Simulator crash incidents
+- `App/SpokenMarginsApp/`: the iOS app. `Gate1AppModel.swift` (~16k lines) is the app's central model and `Gate1RootView.swift` its main view.
+- `App/SharedSources/`, `App/*Extension*/`: code shared with the Safari, share and widget extensions.
+- `Packages/SessionKit/`: Swift package holding the domain logic. It is testable on macOS without a simulator.
+  - `SessionKit`: sessions, Margins, models.
+  - `SessionKitAudio`: playback adapters, podcast anchor evidence.
+  - `SessionKitPersistence`: SQLite store.
+  - `SessionKitSharing`: packets, import/export.
+- `Contracts/`: JSON schemas, fixtures and product docs bundled with the app. `Contracts/docs/recovery-mvp.md` is the product boundary.
+- `docs/`: durable product and architecture notes. `docs/archive/` holds historical process documents; don't treat them as instructions.
+- `project.yml`: XcodeGen spec. The `.xcodeproj` is generated from it with `xcodegen generate`, and both are committed.
 
-If simulator system processes start producing crash dialogs, stop the active test and shut down the affected simulator. Do not repeat unchanged tests, reboot repeatedly, or switch devices to bypass the incident. Preserve crash evidence, diagnose the failing system state, and apply an evidence-backed repair before a bounded recovery check. A successful recovery check is distinct from app verification. Honor an explicit owner stop before any further simulator boot.
+## How to work
 
-### Second-edition status
+- **One agent, one change at a time.** Don't spawn manager, implementer and auditor chains. Use sub-agents only for read-only research.
+- **Small, verified commits.** Each commit is one logical change with a message that says what was wrong and why the change fixes it. The commit message and PR description are the record, so don't write separate handoff, audit or status files for routine work.
+- **Branches.** Work on a feature branch off the baseline. Merging to `main`, pushing `main`, archiving, uploading and distributing are the owner's decisions; ask first.
+- **Don't grow `Gate1AppModel`.** Put new logic in a focused type, in SessionKit when it can be host-tested, and call it from the model. In particular, don't add another "should the source resume" flag or another playback state machine.
+- **Keep packets compatible.** Packets exported by a new build must import into the last shipped build unless the owner explicitly accepts a break. Only require a new manifest capability when the packet actually uses the feature.
+- **Protect owner data.** Never reset, reseed or delete the owner's Library or recordings. Storage changes must let the previous build still open the database.
+- **Keep evidence local.** `artifacts/` is git-ignored. Test output, logs, screenshots and recordings stay there or on the external drive. Summarize results in the commit or PR.
+- **Don't record instructions as documents.** Owner direction lives in the conversation, issues and this file's Current focus. Don't append directive logs to docs.
+- **Use GitHub issues** for bugs and feature requests: one issue per problem, with steps, expected and actual behavior, and the build number.
 
-The September 10 redesign implementation and verification are complete; all delegated leases are returned. The single-agent default applies to subsequent tasks. The task-specific agent names, Terra assignments, and usage budget in `docs/second-edition-release-decision.md` and `docs/second-edition-work-packets.md` are historical authorization, not standing assignments for new work.
+## Verification
 
-See `artifacts/validation/gate-1/second-edition/handoff.md` for the exact candidate and pending owner validation. This closeout does not reverse the approved redesign or authorize distribution, a commit, merge, or baseline advancement. Follow the current release lane for subsequent work.
+Tests that pass while the app is broken usually fake the exact boundary that broke: audio sessions, players, file paths across app containers, network responses. Verify in three layers, and don't let a lower layer stand in for a higher one.
 
-## Release Lane Routing
+1. **Component tests (host, fast).** This is the default loop for every change: `.venv/bin/python scripts/verify-tests.py --plan fast`. It runs the SessionKit suite, contract validators and browser suites.
+   - Write tests that can fail for the bug they name. Run a new regression test once without the fix and confirm it fails.
+   - Prefer real temporary files, real SQLite and real AVFoundation decoding on macOS over hand-written fakes at the boundary being tested.
+2. **App compile and app-hosted unit tests.**
+   - Every app change: build for the simulator and device:
+     - `xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -destination 'generic/platform=iOS Simulator' build-for-testing`
+     - `xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -destination 'generic/platform=iOS' build`
+   - After switching branches, use a fresh `-derivedDataPath`. Stale SessionKit modules in the shared DerivedData produce false "does not conform" errors.
+   - App orchestration changes: run `--plan app` (app-hosted XCTest in one simulator). If it stalls before XCTest connects, stop and report it; don't retry in a loop.
+3. **Journey checks.** Before calling anything ready, run the affected journeys in [docs/journeys.md](docs/journeys.md) against the built app.
+   - The agent drives the simulator with computer use (real taps and screenshots) and reports what was observed at each step, including clocks advancing and which item or Margin is playing.
+   - An agent cannot hear audio. Audible content, Bluetooth, the Lock Screen and background behavior belong to the owner's pass on a physical device.
 
-Before creating a branch or changing implementation code, read `docs/release-lanes.md`. It is the authoritative source for active branch purposes, authorized issue scope, merge direction, and queued work.
+The scripted UI route plans (`--plan ui`, `speech-canary`, `release`) are retired from routine use. They were slow, prone to crashing the simulator, and missed the failures the owner found. Use journeys instead.
 
-- Work only on an issue authorized for the current release lane.
-- Do not create an issue-specific or dependency-specific branch when the work belongs to an existing release lane.
-- Treat branches not listed as active in `docs/release-lanes.md` as historical and read-only unless the product owner explicitly reactivates one.
-- If a request conflicts with the recorded lane, issue scope, or merge direction, state the conflict and ask whether the product owner intends to change the release plan. Do not silently reinterpret the request or invent another branch.
-- An explicit product-owner change to the release plan is authoritative. Update `docs/release-lanes.md` before implementation so later human and agent work sees the same decision.
+If simulator system processes start crashing, stop, shut that simulator down, and report. Don't reboot in a loop or switch devices to get around it.
 
-## Human Validation Rule
+Status words:
 
-Only the product owner validates product flows.
+- `implemented`: code exists.
+- `verified`: tests and builds pass and the agent ran the journeys.
+- `human_validated`: the owner used it on a device and accepted it.
 
-Agents verify implementation claims with tests, builds, traces, static checks, and checklists. Agents must not call a flow validated because automated checks passed. Once the product owner validates a flow, agents may add focused regression coverage to preserve that behavior.
+Only the owner sets `human_validated`.
 
-Use these states consistently:
+## Releasing a build
 
-- `implemented`: the app has a user path or runtime path.
-- `verified`: automated checks or developer evidence support the implementation.
-- `human_validated`: the product owner used the flow and accepted it.
+The owner decides when to archive and upload. When asked to prepare a build:
 
-## Test And Build Policy
+1. Bump `CURRENT_PROJECT_VERSION` in `project.yml` (every target), run `xcodegen generate`, and commit.
+2. Verify through layer 3 and list anything not verified.
+3. After the owner uploads, tag the exact commit `testflight/0.1-build-N` and push the tag.
 
-For documentation-only changes, check instruction consistency, referenced paths and commands, and the diff; run code checks only when the documentation change affects an executable contract or required gate. Do not add tests that merely restate documentation or mirror a low-impact implementation. For behavior changes, add meaningful regression coverage at the affected boundary.
-
-For code changes, routine development should prefer fast checks:
-
-```bash
-./scripts/bootstrap-python-tools.sh
-.venv/bin/python scripts/verify-tests.py --plan fast
-```
-
-The fast plan executes the complete package and browser suites, validators, and
-test-inventory checks. Compilation alone is not test execution. For app changes,
-also run `--plan app`; for OS audio/inference changes run `--plan adapters` and,
-when speech input or playback changes, `--plan speech-canary`. Use `--plan ui`
-for the scoped UI seams and `--plan release` before release handoff. See
-`docs/testing.md` for exact selections, build reuse, device selection, timeout
-behavior and machine-readable evidence. Missing tests or unexpected skips fail
-the gate; never count an interrupted run as passed.
-
-Use app builds when app, Watch, widget, extension, project, signing, or package integration changes need verification:
-
-```bash
-xcodegen generate
-xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -destination 'generic/platform=iOS Simulator' build | xcbeautify
-xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -destination 'generic/platform=iOS' build | xcbeautify
-xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsWatch -destination 'generic/platform=watchOS' build | xcbeautify
-```
-
-`SpokenMarginsAppDevice` is the optional Kokoro/MLX device scheme. Run it only when validating Kokoro-specific work and only after Xcode's Metal Toolchain component is installed:
-
-```bash
-xcodebuild -downloadComponent MetalToolchain
-xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsAppDevice -destination 'generic/platform=iOS' build | xcbeautify
-```
-
-Broad UI route automation is late-gate evidence. Run it before asking the product owner to close a gate, or after a human-validated flow needs regression protection. Do not require broad UI routes for every development iteration.
-
-## Product Validation Handoff
-
-Before asking for human validation, provide:
-
-- build number and commit SHA
-- supported devices and OS versions
-- exact in-scope and out-of-scope flows
-- known issues
-- reset instructions
-- seeded sample items
-- diagnostics location or export
-- verification summary
-- product-owner checklist with pass/fail notes
-
-Record human validation evidence under `artifacts/validation/gate-N/`.
-
-## Specification Discipline
-
-Contrast implementation work against the product/spec docs. If the product direction changes, update the relevant docs instead of preserving stale gate language.
-
-Do not introduce new command ids, snapshot field ids, delegation modes, fixture families, or trace language unless the matching schema, validator, runtime, and tests are updated in the same intentional change.
-
-## Working Tree Safety
-
-The worktree may contain user or agent changes. Do not revert files you did not intentionally change. If unrelated dirty files exist, leave them alone. If existing changes affect the task, work with them and call out any residual risk in the handoff.
+Give the owner a short test checklist: the journeys to try, what changed, and known issues.

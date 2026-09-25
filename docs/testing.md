@@ -1,6 +1,14 @@
 # Verification workflow
 
-Tests verify implementation claims. Only the product owner establishes `human_validated` behavior. The release lane in `docs/release-lanes.md` remains authoritative; no test plan authorizes distribution.
+Tests verify implementation claims. Only the product owner establishes `human_validated` behavior. No test plan authorizes distribution.
+
+**Strategy (September 24, 2026).** Verification has three layers, described in `AGENTS.md`:
+
+1. host component tests (`--plan fast`)
+2. app compile and app-hosted unit tests (`--plan app`)
+3. journey checks in `docs/journeys.md`, driven by an agent with computer use and then by the owner on a device
+
+The scripted UI route plans below (`ui`, `speech-canary`, `release`, `smoke`) are retired from routine use and kept only as a reference. They were slow, crashed simulators, and passed while real journeys failed. This file remains the reference for the runner's options.
 
 ## Commands
 

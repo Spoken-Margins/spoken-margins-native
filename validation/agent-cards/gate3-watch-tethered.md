@@ -10,7 +10,7 @@ Advance the Gate 3 Watch Tethered surface contract without changing shared Sessi
 - `validation/agent-cards/gate3-watch-tethered.md`
 - Gate 3-specific notes under `docs/` if needed
 
-Gate 3 must also follow `docs/parallel-track-coordination.md`, `docs/surface-contract-governance.md`, and the steward packet for the active branch.
+Gate 3 must also follow `docs/archive/parallel-track-coordination.md`, `docs/surface-contract-governance.md`, and the steward packet for the active branch.
 
 ## Forbidden Files
 

@@ -10,7 +10,7 @@ Advance the Gate 5 Browser Text contract and handoff shape without changing shar
 - `validation/agent-cards/gate5-browser-text.md`
 - Gate 5-specific notes under `docs/` if needed
 
-Gate 5 must also follow `docs/parallel-track-coordination.md`, `docs/surface-contract-governance.md`, and the steward packet for the active branch.
+Gate 5 must also follow `docs/archive/parallel-track-coordination.md`, `docs/surface-contract-governance.md`, and the steward packet for the active branch.
 
 ## Forbidden Files
 

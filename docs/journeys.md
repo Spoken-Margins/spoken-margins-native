@@ -1,0 +1,80 @@
+# Core journeys
+
+These are the checks that decide whether a build works. Unit tests protect the pieces; journeys show that the pieces add up to something a listener can use.
+
+**How to run them**
+
+- **Agent in the simulator.**
+  - Build the current commit and install it on one simulator. Drive it with computer use: real taps and screenshots, with no injected state or test-only launch arguments.
+  - For each step, record what you observed: the screen, which item or Margin is playing, and whether its clock advanced.
+  - Stop at the first failure, then report the step, expected and observed behavior, and a screenshot.
+  - You cannot hear audio. A clock that advances shows the app believes it is playing, not that the right words are audible, so mark audible content "owner to confirm".
+- **Owner on the phone.** Run the same journeys, listening. This is the only way a journey becomes `human_validated`.
+
+Use a Library that already has content, not only a fresh install. Many of the worst bugs appeared only with real history: old containers, earlier builds' data, long episodes.
+
+Steps are written in terms of what the listener wants, not exact button labels, so they stay valid as the UI changes.
+
+## J1 — Listen to an article
+
+1. Add a web article, by pasting a URL or sharing from Safari.
+2. Start listening.
+   - Pass: speech starts within a few seconds and the position advances.
+3. Pause, lock the phone, then resume from the Lock Screen (owner step).
+   - Pass: it resumes from the same sentence.
+
+## J2 — Podcast playback survives relaunch
+
+1. Add a podcast episode and let it download.
+2. Play it, then scrub to about 20:00.
+   - Pass: audio continues from 20:00.
+3. Pause, force-quit the app, and reopen it.
+4. Scrub to a different point, or jump to a chapter, before pressing play. Then press play.
+   - Pass: playback starts at the new point. There is no "seek failed" error and it does not jump back.
+
+## J3 — Record a Margin and rejoin it
+
+1. While a podcast plays, record a spoken Margin of about 10 seconds, then finish it.
+   - Pass: the podcast resumes where it paused, and the Margin appears on the item's timeline.
+2. Keep listening for a minute, then open the Margin from the timeline and play it.
+   - Pass: the Margin's own voice plays to the end.
+3. Return to the source.
+   - Pass: the podcast continues at a sensible place: where you were, or the Margin's position if you chose to go there. It must not stay silent or stuck.
+4. Force-quit, reopen the app, and play the same Margin again.
+   - Pass: it still plays. It must not say the recording is unavailable.
+
+## J4 — Old Margins still play after an update
+
+1. Install the previous shipped build and record a Margin on a podcast and on an article.
+2. Install the new build over it. Don't delete the app.
+3. Play both Margins, and use "play this moment" / context on the podcast Margin.
+   - Pass: both voices play and the source context opens.
+
+## J5 — Share podcast Margins with someone else
+
+This journey needs two installs: the sender's phone and a second device or simulator as the recipient.
+
+1. The sender shares an item that has several podcast Margins.
+   - Pass: the packet is created without an error. A Margin with incomplete positioning evidence is flagged, not silently dropped.
+2. The recipient opens the packet. They have not added the podcast beforehand.
+   - Pass: the episode appears in their Library automatically, and the shared Margins are listed with a placement status (placed, or needs confirming).
+3. The recipient plays a placed Margin.
+   - Pass: the sender's voice plays, labeled with the sender's name, and the recipient's episode is at the Margin's moment. The owner checks by ear that the podcast audio matches what the Margin is about.
+4. The recipient plays an unplaced Margin.
+   - Pass: the voice still plays, and the app does not pretend to know the position.
+5. Import the same packet again.
+   - Pass: no duplicate Margins and no duplicate episode.
+
+## J6 — Import a Listening Edition from Shortcuts
+
+1. Run the webpage → Ask ChatGPT → Assemble → Import Shortcut described in `docs/pkm-workflows.md`.
+   - Pass: the app opens on the imported item with its chapters, and playback has not started.
+2. Pass malformed output, for example ChatGPT prose around the JSON.
+   - Pass: a readable error names the problem.
+
+## J7 — PDF
+
+1. Import a text-based PDF and listen.
+   - Pass: headers, footers and "Downloaded on …" stamps are not read aloud, and body text is.
+2. Record a written Margin, then reopen it later.
+   - Pass: it opens at the right passage.
