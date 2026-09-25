@@ -282,16 +282,10 @@ public enum PodcastAcousticAnchorResolver {
         if evidenceQueries.isEmpty {
             session = nil
         } else {
-            let reference: SHSignature
-            do {
-                reference = try await SHSignatureGenerator.signature(from: AVURLAsset(url: recipientAudioURL))
-            } catch {
-                throw PodcastAnchorEvidenceError.referenceGenerationFailed
-            }
-            let catalog = SHCustomCatalog()
-            let item = SHMediaItem(properties: [.title: "Spoken Margins recipient edition"])
-            try catalog.addReferenceSignature(reference, representing: [item])
-            session = SHSession(catalog: catalog)
+            session = SHSession(catalog: try await chunkedReferenceCatalog(
+                recipientAudioURL: recipientAudioURL,
+                durationMs: recipientDurationMs
+            ))
         }
 
         var resolutions: [String: ImportedAnchorResolution] = [:]
@@ -309,7 +303,8 @@ public enum PodcastAcousticAnchorResolver {
                 switch await session.result(from: signature) {
                 case .match(let match):
                     guard let item = match.mediaItems.first else { continue }
-                    let matchedStartMs = Int((item.matchOffset * 1_000).rounded())
+                    let chunkStartMs = (item[referenceChunkStartKey] as? NSNumber)?.intValue ?? 0
+                    let matchedStartMs = chunkStartMs + Int((item.matchOffset * 1_000).rounded())
                     let confidence: Double
                     if #available(iOS 18.4, macOS 15.4, *) {
                         confidence = Double(item.confidence)
@@ -345,6 +340,60 @@ public enum PodcastAcousticAnchorResolver {
         })
         #endif
     }
+
+    #if canImport(AVFoundation) && canImport(ShazamKit)
+    /// One reference signature for a whole episode stops matching partway in: on a 63-minute episode, queries at
+    /// 5:00 and 18:30 matched but 36:44 and 55:00 never did, although the reference covered the full file. The
+    /// recipient edition is signed in overlapping chunks instead; each match adds its chunk's start time.
+    static let referenceChunkMs = 900_000
+    static let referenceChunkOverlapMs = 60_000
+    static let referenceChunkStartKey = SHMediaItemProperty("spokenMarginsReferenceChunkStartMs")
+
+    static func chunkedReferenceCatalog(recipientAudioURL: URL, durationMs: Int?) async throws -> SHCustomCatalog {
+        let asset = AVURLAsset(url: recipientAudioURL)
+        let catalog = SHCustomCatalog()
+        guard let durationMs, durationMs > 0,
+              let sourceTrack = try? await asset.loadTracks(withMediaType: .audio).first else {
+            // Unknown length: fall back to a single reference for the whole file.
+            do {
+                let reference = try await SHSignatureGenerator.signature(from: asset)
+                try catalog.addReferenceSignature(reference, representing: [SHMediaItem(properties: [
+                    .title: "Spoken Margins recipient edition", referenceChunkStartKey: NSNumber(value: 0)
+                ])])
+                return catalog
+            } catch {
+                throw PodcastAnchorEvidenceError.referenceGenerationFailed
+            }
+        }
+        var startMs = 0
+        while startMs < durationMs {
+            let lengthMs = min(referenceChunkMs, durationMs - startMs)
+            let composition = AVMutableComposition()
+            guard let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+                throw PodcastAnchorEvidenceError.referenceGenerationFailed
+            }
+            do {
+                try track.insertTimeRange(
+                    CMTimeRange(
+                        start: CMTime(value: CMTimeValue(startMs), timescale: 1_000),
+                        duration: CMTime(value: CMTimeValue(lengthMs), timescale: 1_000)
+                    ),
+                    of: sourceTrack,
+                    at: .zero
+                )
+                let reference = try await SHSignatureGenerator.signature(from: composition)
+                try catalog.addReferenceSignature(reference, representing: [SHMediaItem(properties: [
+                    .title: "Spoken Margins recipient edition", referenceChunkStartKey: NSNumber(value: startMs)
+                ])])
+            } catch {
+                throw PodcastAnchorEvidenceError.referenceGenerationFailed
+            }
+            if startMs + lengthMs >= durationMs { break }
+            startMs += referenceChunkMs - referenceChunkOverlapMs
+        }
+        return catalog
+    }
+    #endif
 
     static func resolveCandidates(
         _ candidates: [(timeMs: Int, confidence: Double)],
