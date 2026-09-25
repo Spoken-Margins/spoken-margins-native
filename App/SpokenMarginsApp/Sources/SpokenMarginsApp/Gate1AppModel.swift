@@ -2939,6 +2939,18 @@ final class Gate1AppModel: ObservableObject {
         #endif
     }
 
+    /// Fills the Following feed field from the clipboard (#153). Returns false when the clipboard has no link.
+    @discardableResult
+    func pasteFollowedSourceFromClipboard() -> Bool {
+        #if canImport(UIKit)
+        guard let text = UIPasteboard.general.string, let url = Self.firstURL(in: text) else { return false }
+        followedSourceURL = url.absoluteString
+        return true
+        #else
+        return false
+        #endif
+    }
+
     func resetSourceLinkImportState() {
         guard !isResolvingSourceLink else { return }
         sourceLinkImportState = "idle"

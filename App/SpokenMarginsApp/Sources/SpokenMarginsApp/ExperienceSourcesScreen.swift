@@ -157,7 +157,10 @@ struct ExperienceSourcesScreen: View {
                     title: "You’re caught up",
                     detail: emptyDetail,
                     actionTitle: "Paste a feed link"
-                ) { feedURLIsFocused = true }
+                ) {
+                    // Paste when the clipboard holds a link; otherwise leave the field ready for typing.
+                    if !model.pasteFollowedSourceFromClipboard() { feedURLIsFocused = true }
+                }
                 .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
             } else {
                 ForEach(filteredCandidates) { candidate in

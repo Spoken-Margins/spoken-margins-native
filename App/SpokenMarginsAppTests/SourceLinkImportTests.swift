@@ -24,6 +24,21 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(Gate1AppModel.userFacingMessage(for: URLError(.notConnectedToInternet)), "You appear to be offline. Check your connection and try again.")
     }
 
+    #if canImport(UIKit)
+    func testPasteAFeedLinkFillsTheFollowingFieldFromTheClipboard() {
+        // #153: the empty Following screen's "Paste a feed link" only focused the field.
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        let saved = UIPasteboard.general.string
+        defer { UIPasteboard.general.string = saved }
+        UIPasteboard.general.string = "Try this show: https://feeds.example.com/show.rss"
+        XCTAssertTrue(model.pasteFollowedSourceFromClipboard())
+        XCTAssertEqual(model.followedSourceURL, "https://feeds.example.com/show.rss")
+        UIPasteboard.general.string = "no link here"
+        XCTAssertFalse(model.pasteFollowedSourceFromClipboard())
+        XCTAssertEqual(model.followedSourceURL, "https://feeds.example.com/show.rss")
+    }
+    #endif
+
     private var temporaryDirectories: [URL] = []
 
     func testDescriptionChaptersAcceptLinkedParenthesesAndPreserveTitleColons() throws {
