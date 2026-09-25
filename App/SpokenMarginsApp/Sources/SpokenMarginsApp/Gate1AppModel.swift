@@ -9731,7 +9731,7 @@ final class Gate1AppModel: ObservableObject {
             while !Task.isCancelled {
                 guard let self else { return }
                 await self.deliverAutomaticMargins()
-                do { try await Task.sleep(for: .seconds(15)) } catch { break }
+                do { try await Task.sleep(for: .seconds(60)) } catch { break }
             }
         }
     }
@@ -9760,8 +9760,9 @@ final class Gate1AppModel: ObservableObject {
 
     private func recordAutomaticMarginGather(ms: Int, sessions: Int, notes: Int) {
         automaticMarginGatherMaxMs = max(automaticMarginGatherMaxMs, ms)
-        diagnostics["automaticMarginGather"] = "lastMs=\(ms);maxMs=\(automaticMarginGatherMaxMs);sessions=\(sessions);notes=\(notes)"
-        // The always-on log keeps 300 events; only slow passes are worth one.
+        diagnostics["automaticMarginGather"] = "background;lastMs=\(ms);maxMs=\(automaticMarginGatherMaxMs);sessions=\(sessions);notes=\(notes)"
+        // The always-on log keeps 300 events; only slow passes are worth one. The work is off the main actor now,
+        // so a slow pass no longer freezes the UI; the event stays to show the cost.
         if ms >= 500 {
             recordDeveloperDiagnostic("marginOutput.gather", ["ms": String(ms), "sessions": String(sessions), "notes": String(notes)])
         }
@@ -9773,30 +9774,10 @@ final class Gate1AppModel: ObservableObject {
         defer { isDeliveringMargins = false }
         do {
             guard let folder = resolvedBatchExportFolderURL() else { throw EditionError.invalid("Choose or reselect an output folder. Your Margins remain safely in the Library.") }
-            if engine == nil { installEngine(try makeEngine(store: store)) }
-            guard let engine else { return }
-            var notes: [AutomaticMarginWriter.Note] = []
-            // #161: the owner's phone froze 1.6–2.7 s about every 17 s with this setting on. Time the main-actor
-            // gathering so an exported log can confirm or rule out this loop before it is moved off main.
-            let gatherStarted = ProcessInfo.processInfo.systemUptime
-            let sessions = try store.loadSessions()
-            for session in sessions {
-                guard let item = try? store.loadItem(id: session.itemId), item.deletedAt == nil else { continue }
-                for margin in try store.loadInterjections(sessionId: session.id) where margin.status == "active" {
-                    guard !(margin.cleanedTranscript ?? margin.transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
-                    let export = try engine.buildExport(options: ExportOptions(sessionId: session.id,
-                        includeFullText: false, includeReference: true, includeListeningMap: false,
-                        includeInterjections: true, includeTurns: false, scope: "selected_interjections", interjectionIds: [margin.id]))
-                    let markdown = SessionExportMarkdownRenderer.renderMargin(export, createdAt: margin.createdAt)
-                    guard !markdown.isEmpty else { continue }
-                    notes.append(.init(id: session.id + ":" + margin.id, markdown: markdown))
-                }
-            }
-            recordAutomaticMarginGather(
-                ms: Int((ProcessInfo.processInfo.systemUptime - gatherStarted) * 1000),
-                sessions: sessions.count,
-                notes: notes.count
-            )
+            // Built on a background task (#161); the main actor only waits.
+            let gathered = try await AutomaticMarginNoteGatherer.gather(store: store)
+            let notes = gathered.notes
+            recordAutomaticMarginGather(ms: gathered.elapsedMs, sessions: gathered.sessionCount, notes: notes.count)
             let count = try await marginWriter().deliver(notes, to: folder, destinationID: marginOutputDestinationID)
             marginOutputStatus = "\(count) Margins saved to \(folder.lastPathComponent). Last checked \(Date().formatted(date: .omitted, time: .shortened))."
         } catch { marginOutputStatus = "Delivery needs attention: \(error.localizedDescription)" }
