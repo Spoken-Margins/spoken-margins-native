@@ -6,11 +6,12 @@ Spoken Margins is a native iPhone/iPad listening app (iOS/iPadOS 26+). Listeners
 
 Replace this section when the focus changes; do not append to it.
 
-- **Baseline:** Build 28, tag `testflight/0.1-build-28` (`47f9d2f`), is the last shipped build. `main` should point at the last shipped build.
-- **Working branch:** `anchor-reliability`. It is Build 28 plus the Sep 22 QoL commit, the salvaged fixes, and the first podcast-anchor fix.
-- **Goal:** shared podcast Margins land at the right place for the recipient. Plan and status: [docs/podcast-anchor-plan.md](docs/podcast-anchor-plan.md).
+- **Baseline:** Build 29, tag `testflight/0.1-build-29` (`fcc4974`), is the last shipped build (internal TestFlight, 2026-09-25). `main` points at it plus docs-only commits.
+- **Working branch:** start a feature branch off `main` for Build 30 work. `anchor-reliability` is merged into `main`.
+- **Goal:** shared podcast Margins land at the right place for the recipient. Device capture and placement are owner-validated on Build 29; remaining work and status: [docs/podcast-anchor-plan.md](docs/podcast-anchor-plan.md).
+- **Build 30 candidates:** stream source context (#156), "Play this moment" (#159), jump to an unplaced shared Margin (#158), the one-handed reach pass (#141, #145-#149, #151).
 - **Parked, reference only:**
-  - `park/co-op-2026-09-24`: failed co-op attempt plus in-progress anchor work. Do not merge it; port pieces by hand.
+  - `park/co-op-2026-09-24`: failed co-op attempt plus in-progress anchor work. Do not merge it; port pieces by hand. Its packets use a Margin kind this build can't read.
   - `codex/desktop`: macOS companion prototype.
 - **Background:** why the repo was reset is in [docs/repo-review-2026-09-24.md](docs/repo-review-2026-09-24.md).
 
@@ -75,10 +76,17 @@ Only the owner sets `human_validated`.
 
 ## Releasing a build
 
-The owner decides when to archive and upload. When asked to prepare a build:
+The owner decides when a build goes to testers. Once they say to upload, the agent may archive and upload to internal TestFlight testing:
 
 1. Bump `CURRENT_PROJECT_VERSION` in `project.yml` (every target), run `xcodegen generate`, and commit.
 2. Verify through layer 3 and list anything not verified.
-3. After the owner uploads, tag the exact commit `testflight/0.1-build-N` and push the tag.
+3. Archive (`artifacts/` is git-ignored):
+   `xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -configuration Release -destination generic/platform=iOS -archivePath artifacts/SpokenMargins-<build>.xcarchive -allowProvisioningUpdates archive`
+   Check the archive's `CFBundleVersion` is the new build number.
+4. Upload to internal testing only:
+   `PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH" xcodebuild -exportArchive -archivePath artifacts/SpokenMargins-<build>.xcarchive -exportOptionsPlist scripts/TestFlightUploadOptions.plist -exportPath artifacts/export-<build> -allowProvisioningUpdates`
+   The PATH prefix matters: Homebrew's rsync breaks Xcode's packaging step. A warning that onnxruntime.framework has no dSYM is expected and harmless.
+5. Tag the archived commit `testflight/0.1-build-N`, push the tag, and fast-forward `main` to the release (ask before merging if it isn't a fast-forward).
+6. Delete the archive and export folders unless the owner wants them kept.
 
 Give the owner a short test checklist: the journeys to try, what changed, and known issues.
