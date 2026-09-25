@@ -369,8 +369,10 @@ enum PDFStructuredTextExtractor {
         output.append(text)
     }
 
+    /// PDFKit merges a footer stamp and the page number on the same baseline into one line
+    /// ("Downloaded on 25 September 2026 3"), so a page marker may lead or trail the stamp.
     static func isDownloadStamp(_ text: String) -> Bool {
-        text.range(of: #"^\s*(?:Downloaded|Retrieved|Accessed)\s+(?:on\s+|from\s+.{1,160}?\s+on\s+)(?:\d{1,4}[./-]\d{1,2}[./-]\d{1,4}|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})(?:\s+(?:at\s+)?\d{1,2}:\d{2}(?::\d{2})?(?:\s*(?:AM|PM|UTC|GMT))?)?\s*\.?\s*$"#,
+        text.range(of: #"^\s*(?:(?:page\s+)?(?:\d{1,4}|[ivxlcdm]{1,7})\s+)?(?:Downloaded|Retrieved|Accessed)\s+(?:on\s+|from\s+.{1,160}?\s+on\s+)(?:\d{1,4}[./-]\d{1,2}[./-]\d{1,4}|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})(?:\s+(?:at\s+)?\d{1,2}:\d{2}(?::\d{2})?(?:\s*(?:AM|PM|UTC|GMT))?)?\s*\.?(?:\s+(?:page\s+)?(?:\d{1,4}|[ivxlcdm]{1,7})(?:\s+of\s+\d{1,4})?)?\s*$"#,
             options: [.regularExpression, .caseInsensitive]) != nil
     }
 

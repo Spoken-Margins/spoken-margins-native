@@ -31,4 +31,28 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         XCTAssertNotNil(resolution.localStartChar)
         XCTAssertFalse(PDFStructuredTextExtractor.isDownloadStamp("The dataset was downloaded on 2026-09-22 for our experiment."))
     }
+
+    func testDownloadStampSharingAFooterLineWithThePageNumberIsNotRead() throws {
+        // #162: PDFKit merges "Downloaded on …" and the page number on one baseline.
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let footer: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 9)]
+        let data = renderer.pdfData { context in
+            for page in 1...3 {
+                context.beginPage()
+                ("Part \(page): Why listen with a pencil" as NSString).draw(
+                    in: CGRect(x: 72, y: 100, width: 468, height: 400),
+                    withAttributes: [.font: UIFont.systemFont(ofSize: 14)])
+                ("Downloaded on 25 September 2026" as NSString).draw(at: CGPoint(x: 72, y: 740), withAttributes: footer)
+                ("\(page)" as NSString).draw(at: CGPoint(x: 530, y: 740), withAttributes: footer)
+            }
+        }
+        let markdown = try PDFStructuredTextExtractor.markdown(from: XCTUnwrap(PDFDocument(data: data)))
+        XCTAssertFalse(markdown.contains("Downloaded"), markdown)
+        XCTAssertTrue(markdown.contains("Why listen with a pencil"))
+
+        XCTAssertTrue(PDFStructuredTextExtractor.isDownloadStamp("Downloaded on 25 September 2026 3"))
+        XCTAssertTrue(PDFStructuredTextExtractor.isDownloadStamp("Downloaded on 2026-09-21 Page 3 of 12"))
+        XCTAssertTrue(PDFStructuredTextExtractor.isDownloadStamp("iv Downloaded on 25 September 2026"))
+        XCTAssertFalse(PDFStructuredTextExtractor.isDownloadStamp("Downloaded on 25 September 2026 3 times by readers"))
+    }
 }
