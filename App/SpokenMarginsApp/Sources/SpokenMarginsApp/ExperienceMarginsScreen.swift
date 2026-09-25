@@ -1,4 +1,3 @@
-import SessionKit
 import SwiftUI
 
 struct ExperienceMarginsScreen: View {
@@ -223,12 +222,7 @@ struct SharedMarginDetailView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var shouldOpenItem = false
-    @State private var shouldListenAround = false
     let row: SharedMarginRow
-
-    private var placement: SharedMarginPlacement? {
-        row.layer.itemId == nil ? nil : SharedMarginPlacement(interjection: row.interjection)
-    }
 
     var body: some View {
         NavigationStack {
@@ -244,18 +238,6 @@ struct SharedMarginDetailView: View {
                 Section("Source & position") {
                     Text(row.itemTitle)
                     Text(row.positionDescription)
-                    if let placement {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Button("Listen around the suggested spot", systemImage: "ear") {
-                                shouldListenAround = true
-                                dismiss()
-                            }
-                            .accessibilityIdentifier("sharedMargin.listenAround")
-                            Text(Self.suggestionCaption(placement))
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
                     if row.layer.itemId != nil {
                         Button("Open item and shared controls", systemImage: "doc.text") {
                             shouldOpenItem = true
@@ -278,21 +260,8 @@ struct SharedMarginDetailView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { Button("Done") { dismiss() } }
             .onDisappear {
-                if shouldListenAround {
-                    model.listenAroundSuggestedSpot(row)
-                } else if shouldOpenItem, let itemID = row.layer.itemId {
-                    model.openItem(id: itemID)
-                }
+                if shouldOpenItem, let itemID = row.layer.itemId { model.openItem(id: itemID) }
             }
-        }
-    }
-
-    static func suggestionCaption(_ placement: SharedMarginPlacement) -> String {
-        let time = Duration.milliseconds(placement.suggestedMediaTimeMs)
-            .formatted(.time(pattern: placement.suggestedMediaTimeMs >= 3_600_000 ? .hourMinuteSecond : .minuteSecond))
-        switch placement.suggestionSource {
-        case .senderTimestamp: return "Around \(time) in the sender's copy. Ads can shift it in yours."
-        case .approximateMatch: return "Around \(time), an approximate match."
         }
     }
 }

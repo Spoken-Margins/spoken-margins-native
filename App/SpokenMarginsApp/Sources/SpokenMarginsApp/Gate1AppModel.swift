@@ -801,8 +801,6 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var marginMoment: MarginMomentSequence?
     @Published private(set) var marginMomentVoiceIsPaused = false
     private var marginMomentConductor: MarginMomentConductor?
-    /// Placing an unplaced shared Margin by ear (#158): the spot being listened around, until confirmed or cancelled.
-    @Published private(set) var sharedMarginPlacement: SharedMarginPlacement?
 
     var activePlaybackIsPlaying: Bool {
         if playingImportedCommentary != nil { return !importedCommentaryIsPaused }
@@ -7328,64 +7326,6 @@ final class Gate1AppModel: ObservableObject {
         screen = .playback
         diagnostics["lastSharedMarginNavigation"] = "opened:\(interjectionID)"
         return true
-    }
-
-    /// "Listen around the suggested spot": play the item from a little before where the sender (or an approximate
-    /// match) puts this shared Margin, so the listener can confirm the moment by ear.
-    func listenAroundSuggestedSpot(_ row: SharedMarginRow) {
-        guard !rejectNavigationOrSessionMutationWhileRecording("listen_around_shared_margin") else { return }
-        guard let itemID = row.layer.itemId,
-              let placement = SharedMarginPlacement(
-                  interjection: row.interjection,
-                  recipientDurationMs: snapshot.itemId == itemID ? snapshot.currentPlaybackDurationMs : nil
-              ) else {
-            reportFailure("This shared Margin has no suggested spot to listen around.")
-            return
-        }
-        endMarginMoment()
-        if snapshot.itemId != itemID || !hasActiveSession { startItem(id: itemID) }
-        guard snapshot.itemId == itemID else { return }
-        announcedImportedInterjectionIDs.insert(row.interjection.id)
-        sharedMarginPlacement = placement
-        seekMedia(toMediaTimeMs: placement.listenStartMediaTimeMs)
-        if !snapshot.status.isPlaybackActive { resumePlayback() }
-        screen = .playback
-        diagnostics["sharedMarginPlacement"] = "listening:\(placement.suggestionSource.rawValue)"
-    }
-
-    /// "This is the spot": store the current position as recipient-confirmed. The Margin then plays inline here.
-    func confirmSharedMarginPlacement() {
-        guard let placement = sharedMarginPlacement else { return }
-        guard let position = snapshot.currentMediaTimeMs else {
-            reportFailure("Start playback, then confirm the spot.")
-            return
-        }
-        do {
-            let store = try requireStore()
-            guard var record = try store.loadImportedCommentaryInterjections(layerId: placement.layerId)
-                .first(where: { $0.id == placement.interjectionId }) else {
-                throw SessionKitError.persistenceFailed("shared_margin_missing")
-            }
-            record.resolution = placement.confirmedResolution(atMediaTimeMs: position)
-            try store.saveImportedCommentaryInterjection(record)
-            announcedImportedInterjectionIDs.insert(record.id)
-            sharedMarginPlacement = nil
-            refreshSelectedItem()
-            diagnostics["sharedMarginPlacement"] = "confirmed:\(position - placement.suggestedMediaTimeMs)ms_from_suggestion"
-            reportConfirmation("Saved. This shared Margin will play here from now on.")
-        } catch {
-            reportFailure(error, context: "Could not save this spot")
-        }
-    }
-
-    /// Plays the shared Margin's voice as a reminder of what to listen for; the item resumes afterwards.
-    func playSharedMarginBeingPlaced() {
-        guard let placement = sharedMarginPlacement else { return }
-        listenToImportedCommentary(layerID: placement.layerId, interjectionID: placement.interjectionId)
-    }
-
-    func cancelSharedMarginPlacement() {
-        sharedMarginPlacement = nil
     }
 
     private nonisolated static func importedCommentaryPosition(
