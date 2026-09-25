@@ -74,14 +74,25 @@ actor OfflineStorageLedger {
         guard let reservation = try repository.loadOfflineStorageReservations().first(where: { $0.id == reservationId }) else {
             throw OfflineStorageLedgerError.missingReservation
         }
-        guard asset.byteCount <= reservation.byteCount else {
-            throw OfflineStorageLedgerError.reservationExceeded(
-                reservedBytes: reservation.byteCount,
-                actualBytes: asset.byteCount
-            )
+        var overflowReservationId: String?
+        if asset.byteCount > reservation.byteCount {
+            // Ad-inserting podcast hosts can serve a longer file than the HEAD request reported. Reserve the
+            // difference under the same budget and eviction rules; only an overrun that doesn't fit is an error.
+            do {
+                overflowReservationId = try reserve(
+                    ownerId: reservation.ownerId + ":overflow",
+                    byteCount: asset.byteCount - reservation.byteCount
+                ).id
+            } catch OfflineStorageLedgerError.insufficientSpace {
+                throw OfflineStorageLedgerError.reservationExceeded(
+                    reservedBytes: reservation.byteCount,
+                    actualBytes: asset.byteCount
+                )
+            }
         }
         try repository.saveOwnedOfflineAsset(asset)
         try repository.deleteOfflineStorageReservation(id: reservationId)
+        if let overflowReservationId { try repository.deleteOfflineStorageReservation(id: overflowReservationId) }
     }
 
     func release(reservationId: String) throws {

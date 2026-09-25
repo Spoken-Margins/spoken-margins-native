@@ -449,6 +449,8 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
     func testHTTPAndOversizedFileFailuresReleaseReservationWithoutAvailability() async throws {
         for httpOK in [false, true] {
             let fixture = try makeFixture()
+            // The oversized case must not fit the budget either; an overrun that fits is accepted (see below).
+            try fixture.store.saveOfflineStorageBudget(OfflineStorageBudget(limitBytes: 2))
             let ledger = OfflineStorageLedger(repository: fixture.store, rootDirectory: fixture.support)
             let reservation = try await ledger.reserve(ownerId: "podcast-download-episode:failure", byteCount: 1)
             let attempt = PodcastDownloadAttempt(itemId: "episode", generation: "failure",
@@ -466,6 +468,26 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
             XCTAssertNil(coordinator.validatedLocalURL(for: "episode"))
             coordinator.shutdown()
         }
+    }
+
+    func testAdInsertedDownloadLargerThanItsHeadLengthIsKeptWhenItFits() async throws {
+        // Omny/Triton served 37,159,200 bytes after HEAD reported 30,886,420, and the download was discarded.
+        let fixture = try makeFixture()
+        let ledger = OfflineStorageLedger(repository: fixture.store, rootDirectory: fixture.support)
+        let reservation = try await ledger.reserve(ownerId: "podcast-download-episode:ads", byteCount: 1)
+        let attempt = PodcastDownloadAttempt(itemId: "episode", generation: "ads",
+            reservationId: reservation.id, userInitiated: true)
+        try fixture.store.savePodcastDownload(PodcastDownloadRecord(id: "download", itemId: "episode",
+            remoteURL: "https://example.com/audio", state: .downloading))
+        let coordinator = try PodcastDownloadCoordinator(store: fixture.store, ledger: ledger,
+            applicationSupportDirectory: fixture.support, cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false)
+        let staged = fixture.root.appending(path: "ads.mp3")
+        try Data([1, 2, 3]).write(to: staged)
+        await coordinator.finishDownload(attempt, stagedURL: staged, responseOK: true)
+        XCTAssertEqual(coordinator.status(itemId: "episode"), .availableOffline)
+        XCTAssertNotNil(coordinator.validatedLocalURL(for: "episode"))
+        XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty)
+        coordinator.shutdown()
     }
 
     private func waitForStarts(_ count: Int, starts: () -> Int) async throws {

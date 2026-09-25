@@ -16,9 +16,24 @@ final class OfflineStorageLedgerTests: XCTestCase {
         }
     }
 
-    func testCommitRejectsOutputLargerThanReservation() async throws {
+    func testCommitAcceptsALargerFileWhenTheBudgetHasRoom() async throws {
+        // An ad-inserted episode came back 37 MB after HEAD reported 31 MB, and the download was discarded.
         let fixture = try makeFixture(limit: 100)
         defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let reservation = try await fixture.ledger.reserve(ownerId: "writer", byteCount: 4)
+        try await fixture.ledger.commit(
+            reservationId: reservation.id,
+            asset: OwnedOfflineAsset(id: "asset", category: .podcast, relativePath: "file", byteCount: 6, isReproducible: true)
+        )
+        let inventoryBytes = try await fixture.ledger.inventoryBytes()
+        XCTAssertEqual(inventoryBytes, 6)
+        XCTAssertTrue(try fixture.repository.loadOfflineStorageReservations().isEmpty, "no reservation is left behind")
+    }
+
+    func testCommitRejectsOutputLargerThanReservationWhenTheBudgetIsFull() async throws {
+        let fixture = try makeFixture(limit: 10)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        _ = try await fixture.ledger.reserve(ownerId: "other", byteCount: 6)
         let reservation = try await fixture.ledger.reserve(ownerId: "writer", byteCount: 4)
         do {
             try await fixture.ledger.commit(
