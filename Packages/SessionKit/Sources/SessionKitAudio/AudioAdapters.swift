@@ -1621,7 +1621,12 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private var timeObserverToken: Any?
     private var playerStateObservation: NSKeyValueObservation?
     private var audioSessionObservers: [NSObjectProtocol] = []
+    /// Timing of the latest play() until the player reports playing (#160).
+    private var pendingStartTrace: (startedAt: TimeInterval, accessLogEvents: Int, fields: [String: String])?
     #endif
+    /// Receives one timing record per media start: how long audio session activation, the start seek and the
+    /// wait for "playing" took, and whether the stream was fetched again. Field values are numbers or flags.
+    public var playbackStartTraceHandler: (@Sendable ([String: String]) -> Void)?
     #if canImport(AVFoundation) && canImport(MediaToolbox) && canImport(ShazamKit) && !os(watchOS)
     private var postResumeEvidenceTap: MTAudioProcessingTap?
     private var postResumeEvidenceTapContext: PostResumePodcastEvidenceTapContext?
@@ -1769,6 +1774,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             && mediaSeekLifecycle.pending?.purpose == .navigation
             && mediaSeekLifecycle.pending?.targetId == targetId
             && mediaSeekLifecycle.pending?.mediaTimeMs == max(0, mediaTimeMs)
+        let traceStartedAt = ProcessInfo.processInfo.systemUptime
+        let rebuildsItem = activeTargetId != targetId || activePlaybackURL != url || player == nil
         if activeTargetId != targetId || activePlaybackURL != url || player == nil {
             cancelPostResumeEvidenceCapture(reason: "playback_item_changed")
             removePlayerStateObserver()
@@ -1785,10 +1792,25 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             installTimeObserver()
             installContinuousPodcastEvidenceTapWhenTracksLoad(on: item)
         }
+        let sessionStartedAt = ProcessInfo.processInfo.systemUptime
         #if os(iOS) || os(watchOS)
         try configureStreamAudioSession()
         try AVAudioSession.sharedInstance().setActive(true)
         #endif
+        let sessionMs = Int((ProcessInfo.processInfo.systemUptime - sessionStartedAt) * 1000)
+        let playerTimeMs = player.map { Int(($0.currentTime().seconds.isFinite ? $0.currentTime().seconds : -1) * 1000) } ?? -1
+        pendingStartTrace = (
+            startedAt: traceStartedAt,
+            accessLogEvents: player?.currentItem?.accessLog()?.events.count ?? 0,
+            fields: [
+                "newItem": rebuildsItem ? "1" : "0",
+                "stream": url.isFileURL ? "0" : "1",
+                "sessionMs": String(sessionMs),
+                "seek": continuesNavigationSeek ? "reused" : "issued",
+                "seekDistanceMs": String(playerTimeMs < 0 ? -1 : abs(playerTimeMs - max(0, mediaTimeMs))),
+                "tap": hasPodcastEvidenceTap ? "1" : "0"
+            ]
+        )
         let seconds = max(0, Double(mediaTimeMs) / 1000)
         lastRequestedMediaTimeMs = max(0, mediaTimeMs)
         playbackComplete = false
@@ -1802,8 +1824,12 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             )
             let time = CMTime(seconds: seconds, preferredTimescale: 600)
             let tolerance = CMTime(seconds: 0.25, preferredTimescale: 600)
+            let seekStartedAt = ProcessInfo.processInfo.systemUptime
             player?.seek(to: time, toleranceBefore: tolerance, toleranceAfter: tolerance) { [weak self] finished in
                 DispatchQueue.main.async { [weak self] in
+                    if self?.pendingStartTrace?.startedAt == traceStartedAt {
+                        self?.pendingStartTrace?.fields["seekMs"] = String(Int((ProcessInfo.processInfo.systemUptime - seekStartedAt) * 1000))
+                    }
                     self?.finishMediaSeek(generation: seekGeneration, targetId: targetId, finished: finished)
                 }
             }
@@ -2407,6 +2433,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
                 guard let self else { return }
                 switch status {
                 case .playing:
+                    self.finishPlaybackStartTrace(player: player)
                     self.publishNowPlaying(isPlaying: !self.paused)
                 case .paused:
                     // `paused` tracks user intent. A transient AVPlayer pause must
@@ -2426,6 +2453,25 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private func removePlayerStateObserver() {
         playerStateObservation?.invalidate()
         playerStateObservation = nil
+    }
+
+    private var hasPodcastEvidenceTap: Bool {
+        #if canImport(MediaToolbox) && canImport(ShazamKit) && !os(watchOS)
+        postResumeEvidenceTapContext != nil
+        #else
+        false
+        #endif
+    }
+
+    private func finishPlaybackStartTrace(player: AVPlayer) {
+        guard var trace = pendingStartTrace else { return }
+        pendingStartTrace = nil
+        trace.fields["toPlayingMs"] = String(Int((ProcessInfo.processInfo.systemUptime - trace.startedAt) * 1000))
+        trace.fields["seekMs"] = trace.fields["seekMs"] ?? "pending"
+        // A new access-log entry after the start means the stream was requested again (for example after a seek).
+        let events = player.currentItem?.accessLog()?.events.count ?? 0
+        trace.fields["accessLogAdded"] = String(max(0, events - trace.accessLogEvents))
+        playbackStartTraceHandler?(trace.fields)
     }
 
     private func removeTimeObserver() {

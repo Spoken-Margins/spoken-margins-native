@@ -10787,6 +10787,12 @@ final class Gate1AppModel: ObservableObject {
                 )
             }
         }
+        client.playbackStartTraceHandler = { [weak self] fields in
+            Task { @MainActor [weak self] in
+                // #160: resume after a spoken Margin on a stream took 2.6-9.3 s; this shows where the time goes.
+                self?.recordDeveloperDiagnostic("media.start", fields)
+            }
+        }
         #if canImport(AVFoundation) && canImport(ShazamKit)
         client.postResumePodcastEvidenceHandler = { [weak self] result in
             Task { @MainActor [weak self] in

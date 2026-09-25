@@ -9,6 +9,13 @@ import XCTest
 /// Plays a real local file through the real `AVPlayer` client (muted), so the tap is exercised at the boundary
 /// that broke on device instead of being fed buffers directly (#154).
 final class RealPlayerPodcastEvidenceTests: XCTestCase {
+    private final class Traces: @unchecked Sendable {
+        private let lock = NSLock()
+        private var values: [[String: String]] = []
+        func append(_ value: [String: String]) { lock.withLock { values.append(value) } }
+        var all: [[String: String]] { lock.withLock { values } }
+    }
+
     private final class Results: @unchecked Sendable {
         private let lock = NSLock()
         private var values: [PostResumePodcastEvidenceCaptureResult] = []
@@ -43,6 +50,8 @@ final class RealPlayerPodcastEvidenceTests: XCTestCase {
         try client.setPlaybackVolume(0)
         let results = Results()
         client.postResumePodcastEvidenceHandler = { results.append($0) }
+        let traces = Traces()
+        client.playbackStartTraceHandler = { traces.append($0) }
         try client.configureMediaContext(PlaybackMediaContext(
             itemId: "episode",
             targetType: .transcriptBackedMedia,
@@ -58,6 +67,10 @@ final class RealPlayerPodcastEvidenceTests: XCTestCase {
         XCTAssertTrue(spin(until: 5) { client.hasPodcastEvidenceTapOnCurrentItem },
                       "the continuous tap must install once the item's audio track loads")
         XCTAssertTrue(spin(until: 15) { (client.currentMediaTimeMs() ?? 0) >= 9_000 }, "playback did not advance")
+        let trace = try XCTUnwrap(traces.all.first, "each media start records one timing trace (#160)")
+        XCTAssertEqual(trace["stream"], sourceType == .remoteStream ? "1" : "0")
+        XCTAssertEqual(trace["newItem"], "1")
+        XCTAssertNotNil(trace["toPlayingMs"].flatMap(Int.init))
 
         let anchor = try XCTUnwrap(client.currentMediaTimeMs())
         let request = PostResumeAudioSampleRequest(
