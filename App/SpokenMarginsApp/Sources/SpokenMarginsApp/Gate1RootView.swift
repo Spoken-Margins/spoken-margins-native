@@ -2557,7 +2557,7 @@ private struct PlaybackScreen: View {
         if let moment = model.marginMoment {
             VStack(alignment: .leading, spacing: 10) {
                 if moment.isPlayingMargin {
-                    Label(model.marginMomentVoiceIsPaused ? "Your Margin is paused" : "Playing your Margin",
+                    Label(model.marginMomentVoiceIsPaused ? "\(model.marginMomentTitle) is paused" : "Playing \(model.marginMomentTitle)",
                           systemImage: "waveform")
                         .font(.headline)
                         .foregroundStyle(.white)
@@ -2565,10 +2565,15 @@ private struct PlaybackScreen: View {
                         .buttonStyle(SecondaryButtonStyle())
                         .accessibilityIdentifier("marginMoment.skip")
                 } else if let remaining = moment.msUntilTarget(currentMediaTimeMs: model.snapshot.currentMediaTimeMs) {
-                    Label("Your Margin in \(Self.marginMomentCountdown(remaining))", systemImage: "text.bubble")
+                    Label("\(model.marginMomentTitle) in \(Self.marginMomentCountdown(remaining))", systemImage: "text.bubble")
                         .font(.headline)
                         .foregroundStyle(.white)
                         .contentTransition(.numericText())
+                    if model.marginMomentPositionIsApproximate {
+                        Text("Approximate position: ads can differ between copies.")
+                            .font(.footnote)
+                            .foregroundStyle(.white.opacity(0.75))
+                    }
                     Button("Play it now", systemImage: "play.fill", action: model.playMarginMomentNow)
                         .buttonStyle(PrimaryButtonStyle())
                         .accessibilityIdentifier("marginMoment.playNow")
@@ -2578,7 +2583,7 @@ private struct PlaybackScreen: View {
                         .foregroundStyle(.white.opacity(0.85))
                 }
                 if !moment.isPlayingMargin {
-                    Button("Stop playing my Margins", action: model.endMarginMoment)
+                    Button(moment.phase == .leadIn ? "Cancel" : "Stop playing my Margins", action: model.endMarginMoment)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.white.opacity(0.85))
                         .frame(minHeight: 44)

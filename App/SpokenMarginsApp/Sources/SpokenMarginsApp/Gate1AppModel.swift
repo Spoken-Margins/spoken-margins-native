@@ -800,6 +800,9 @@ final class Gate1AppModel: ObservableObject {
     /// "Play this moment" (#159). The sequence is published for the playback screen; the conductor runs it.
     @Published private(set) var marginMoment: MarginMomentSequence?
     @Published private(set) var marginMomentVoiceIsPaused = false
+    /// Whose Margin the moment is for ("Your Margin", "Cole's Margin"), and whether its position is only a guess.
+    @Published private(set) var marginMomentTitle = "Your Margin"
+    @Published private(set) var marginMomentPositionIsApproximate = false
     private var marginMomentConductor: MarginMomentConductor?
 
     var activePlaybackIsPlaying: Bool {
@@ -2209,13 +2212,61 @@ final class Gate1AppModel: ObservableObject {
         for margin in spoken + [interjection] {
             if let path = margin.audioPath { voiceURLs[Self.marginIdentity(margin)] = resolvedInterjectionAudioURL(for: path) }
         }
-        let sequence = MarginMomentSequence(
+        startMarginMoment(
             itemId: interjection.itemId,
             target: MarginMomentAnchor(marginId: Self.marginIdentity(interjection), mediaTimeMs: anchorMs),
             otherMargins: spoken.map {
                 MarginMomentAnchor(marginId: Self.marginIdentity($0), mediaTimeMs: $0.anchor.mediaTimeMs ?? 0)
-            }
+            },
+            voiceURLs: voiceURLs,
+            title: "Your Margin",
+            isApproximate: false
         )
+    }
+
+    /// Tapping a shared Margin in the Timeline plays its moment (#158): a lead-in, their voice, then the item.
+    /// Position is the best the app has: a verified or interpolated match, else the sender's own time.
+    func playSharedMarginMoment(_ row: SharedMarginRow) {
+        guard !rejectNavigationOrSessionMutationWhileRecording("play_shared_margin_moment") else { return }
+        guard let itemID = row.layer.itemId else {
+            reportFailure("The source for this shared Margin isn't in your Library.")
+            return
+        }
+        guard let position = SharedMarginPlaybackPosition(row.interjection) else {
+            reportFailure("This shared Margin has no position in the episode.")
+            return
+        }
+        guard let voiceURL = row.interjection.audioPath.flatMap(resolvedApplicationSupportAssetURL(for:)) else {
+            reportFailure("This shared Margin contains reviewed text but no playable voice recording.")
+            return
+        }
+        endMarginMoment()
+        if snapshot.itemId != itemID || !hasActiveSession { startItem(id: itemID) }
+        guard snapshot.itemId == itemID else { return }
+        // The moment plays this voice; the automatic shared-Margin prompt mustn't play it again.
+        announcedImportedInterjectionIDs.insert(row.interjection.id)
+        let targetID = "shared::\(row.layer.id)::\(row.interjection.id)"
+        startMarginMoment(
+            itemId: itemID,
+            target: MarginMomentAnchor(marginId: targetID, mediaTimeMs: position.mediaTimeMs),
+            otherMargins: [],
+            voiceURLs: [targetID: voiceURL],
+            title: "\(row.collectionLabel)'s Margin",
+            isApproximate: position.isApproximate
+        )
+        if !snapshot.status.isPlaybackActive { resumePlayback() }
+        screen = .playback
+    }
+
+    private func startMarginMoment(
+        itemId: String,
+        target: MarginMomentAnchor,
+        otherMargins: [MarginMomentAnchor],
+        voiceURLs: [String: URL],
+        title: String,
+        isApproximate: Bool
+    ) {
+        let sequence = MarginMomentSequence(itemId: itemId, target: target, otherMargins: otherMargins)
         let conductor = MarginMomentConductor(
             sequence: sequence,
             source: .init(
@@ -2240,10 +2291,14 @@ final class Gate1AppModel: ObservableObject {
             guard let self, let conductor, self.marginMomentConductor === conductor else { return }
             self.marginMoment = conductor.sequence
             self.marginMomentVoiceIsPaused = conductor.isVoicePaused
+            // Nothing left to play inline: the card goes away and the item simply continues.
+            if conductor.sequence.phase == .listening, conductor.sequence.unplayed.isEmpty { self.endMarginMoment() }
         }
         marginMomentConductor = conductor
+        marginMomentTitle = title
+        marginMomentPositionIsApproximate = isApproximate
         conductor.start()
-        diagnostics["marginMoment"] = "started:lead_in_ms=\(anchorMs - sequence.startMediaTimeMs);others=\(sequence.unplayed.count - 1)"
+        diagnostics["marginMoment"] = "started:lead_in_ms=\(target.mediaTimeMs - sequence.startMediaTimeMs);others=\(sequence.unplayed.count - 1);approximate=\(isApproximate)"
     }
 
     private nonisolated static func isInlineSpokenMargin(_ margin: Interjection) -> Bool {
