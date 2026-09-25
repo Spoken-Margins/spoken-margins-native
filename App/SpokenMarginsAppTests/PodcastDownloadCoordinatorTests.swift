@@ -229,6 +229,63 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         XCTAssertEqual(try fixture.store.loadPodcastDownloads().first { $0.itemId == "valid" }?.state, .failed)
     }
 
+    func testFailedReplacementRetainsPreviouslyDownloadedEpisodeAcrossRelaunch() async throws {
+        let fixture = try makeFixture()
+        let directory = fixture.support.appending(path: "PodcastAudio")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let saved = directory.appending(path: "saved.mp3")
+        try Data([1, 2, 3, 4]).write(to: saved)
+        try fixture.store.savePodcastDownload(PodcastDownloadRecord(
+            id: "download-episode", itemId: "episode", remoteURL: "https://example.com/audio",
+            localRelativePath: saved.lastPathComponent, state: .availableOffline,
+            bytesWritten: 4, expectedBytes: 4
+        ))
+        let coordinator = try PodcastDownloadCoordinator(
+            store: fixture.store, applicationSupportDirectory: fixture.support,
+            cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false,
+            contentLength: { _, _ in throw URLError(.timedOut) }
+        )
+
+        coordinator.redownload(itemId: "episode")
+        XCTAssertEqual(coordinator.validatedLocalURL(for: "episode"), saved)
+        await coordinator.preparationTasks["episode"]?.value
+        XCTAssertEqual(coordinator.status(itemId: "episode"), .availableOffline)
+        XCTAssertEqual(coordinator.validatedLocalURL(for: "episode"), saved)
+        XCTAssertEqual(try Data(contentsOf: saved), Data([1, 2, 3, 4]))
+        XCTAssertNotNil(coordinator.recordsByItemId["episode"]?.failureReason)
+        coordinator.shutdown()
+
+        let restored = try PodcastDownloadCoordinator(
+            store: fixture.store, applicationSupportDirectory: fixture.support,
+            cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false
+        )
+        XCTAssertEqual(restored.validatedLocalURL(for: "episode"), saved)
+        restored.shutdown()
+    }
+
+    func testLegacyFailedReplacementWithSavedFileRecoversOnLaunch() throws {
+        let fixture = try makeFixture()
+        let directory = fixture.support.appending(path: "PodcastAudio")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let saved = directory.appending(path: "saved.mp3")
+        try Data([1, 2, 3]).write(to: saved)
+        try fixture.store.savePodcastDownload(PodcastDownloadRecord(
+            id: "download-episode", itemId: "episode", remoteURL: "https://example.com/audio",
+            localRelativePath: saved.lastPathComponent, state: .failed,
+            bytesWritten: 0, expectedBytes: 100,
+            failureReason: "unknown error"
+        ))
+
+        let coordinator = try PodcastDownloadCoordinator(
+            store: fixture.store, applicationSupportDirectory: fixture.support,
+            cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false
+        )
+        XCTAssertEqual(coordinator.status(itemId: "episode"), .availableOffline)
+        XCTAssertEqual(coordinator.validatedLocalURL(for: "episode"), saved)
+        XCTAssertEqual(try fixture.store.loadPodcastDownload(itemId: "episode")?.bytesWritten, 3)
+        coordinator.shutdown()
+    }
+
     func testSharedStorageReservationCannotEvictActivePodcastIncludingAdoptedFiles() async throws {
         let fixture = try makeFixture()
         let directory = fixture.support.appending(path: "PodcastAudio")

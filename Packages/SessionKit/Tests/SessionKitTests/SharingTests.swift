@@ -12,6 +12,98 @@ import AudioToolbox
 #endif
 
 final class SharingTests: XCTestCase {
+    func testLegacySourceWindowAcquisitionCarriesItsTranscriptWithoutSecondFetch() async throws {
+        let timeline = TranscriptTimeline(segments: [
+            MediaTimelineSegment(id: "legacy", startMs: 34_000, endMs: 36_000, text: "Same edition")
+        ], chapters: [], durationMs: 300_000)
+        let client = LegacySourceWindowClient(timeline: timeline)
+        let acquisition = try await client.acquireSourceAudioWindow(
+            url: URL(string: "https://example.com/episode.mp3")!, itemId: "episode",
+            anchorMediaTimeMs: 123_000, durationMs: 300_000,
+            windowBeforeMs: 90_000, windowAfterMs: 120_000
+        )
+        let result = try await client.transcribeAcquiredSourceAudioWindow(
+            acquisition, itemId: "episode", durationMs: 300_000
+        )
+        XCTAssertEqual(result, timeline)
+        XCTAssertEqual(acquisition.sourceStartMs, 33_000)
+        let calls = await client.acquisitionCalls
+        XCTAssertEqual(calls, 1)
+    }
+
+    #if canImport(AVFoundation)
+    func testRealRecipientWindowExportKeepsMeasuredSourceBoundsAtMiddleAndEpisodeEnd() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("recipient.m4a")
+        try writeContinuousNoiseM4A(to: source, durationSeconds: 12)
+        let itemID = "real-window-\(UUID().uuidString)"
+        let caches = try FileManager.default.url(
+            for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let windowRoot = caches.appending(path: "SourceAudioTranscriptionWindows/\(itemID)")
+        defer { try? FileManager.default.removeItem(at: windowRoot) }
+        let client = SystemSourceTranscriptionClient()
+
+        for (anchor, before, after, expectedStart, expectedEnd) in [
+            (6_000, 2_000, 2_000, 4_000, 8_000),
+            (11_000, 2_000, 3_000, 9_000, 12_000)
+        ] {
+            let window = try await client.acquireSourceAudioWindow(
+                url: source, itemId: itemID, anchorMediaTimeMs: anchor,
+                durationMs: 12_000, windowBeforeMs: before, windowAfterMs: after)
+            XCTAssertFalse(try Data(contentsOf: window.localAudioURL).isEmpty)
+            XCTAssertEqual(window.provenance, .downloadedSourceReference)
+            XCTAssertGreaterThanOrEqual(window.sourceStartMs, expectedStart)
+            XCTAssertLessThanOrEqual(window.sourceStartMs, expectedStart + 100)
+            XCTAssertGreaterThanOrEqual(window.sourceEndMs, expectedEnd - 100)
+            XCTAssertLessThanOrEqual(window.sourceEndMs, expectedEnd)
+        }
+    }
+
+    func testAcquiredWindowLongFormProjectionAppliesSourceOffsetExactlyOnce() throws {
+        if #available(iOS 26.0, macOS 26.0, *) {
+            let passages = [LongFormSpeechPassage(
+                text: "", startMs: 1_000, endMs: 2_000,
+                timedText: [.init(text: "Window speech", startMs: 1_000, endMs: 2_000)]
+            )]
+            let timeline = try SystemSourceTranscriptionClient.projectLongFormPassages(
+                passages, itemId: "episode", timelineDurationMs: 300_000,
+                timelineOffsetMs: 33_000
+            )
+            XCTAssertEqual(timeline.segments.map(\.startMs), [34_000])
+            XCTAssertEqual(timeline.segments.map(\.endMs), [35_000])
+            XCTAssertEqual(timeline.durationMs, 300_000)
+        }
+    }
+    #endif
+
+    func testPodcastEvidenceOutcomeRoundTripsAndLegacyRecordRemainsUnknown() throws {
+        let record = SharedInterjectionPackageRecord(
+            packageScopedId: "margin-1", createdAt: Date(timeIntervalSince1970: 1),
+            anchor: PortableAnchorEvidence(anchorType: .media),
+            defaultRepresentationId: "text",
+            representations: [.init(
+                id: "text", kind: .textOnly, approvedTranscript: "Reviewed",
+                provenance: .senderApprovedTextOnly
+            )],
+            podcastEvidenceOutcome: PodcastEvidenceOutcomeSummary(
+                disposition: .partial,
+                includedRoles: [.preInterjection],
+                includedProvenance: [.observedDecodedPlayback],
+                reasonCategory: "capture_unavailable"
+            )
+        )
+        let encoded = try JSONEncoder().encode(record)
+        XCTAssertEqual(try JSONDecoder().decode(SharedInterjectionPackageRecord.self, from: encoded), record)
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        legacy.removeValue(forKey: "podcastEvidenceOutcome")
+        let legacyRecord = try JSONDecoder().decode(
+            SharedInterjectionPackageRecord.self,
+            from: JSONSerialization.data(withJSONObject: legacy)
+        )
+        XCTAssertNil(legacyRecord.podcastEvidenceOutcome, "Older packets have unknown evidence state")
+    }
+
     func testCleanupIsDeterministicAndDoesNotMutatePrivateCapture() {
         let transcript = AlignedInterjectionTranscript(
             text: "Um umbrella matters.",
@@ -536,11 +628,47 @@ final class SharingTests: XCTestCase {
             XCTAssertGreaterThanOrEqual(capture.durationMs, 2_900)
             XCTAssertFalse(capture.signatureData.isEmpty)
             XCTAssertLessThan(capture.signatureData.count, 1_048_576)
-        case .failed(_, let reason):
+        case .failed(_, _, let reason):
             XCTFail("Post-resume signature failed: \(reason)")
         case .landmark:
             XCTFail("Expected a per-Margin capture, not a sparse landmark")
         }
+        continuation.finish()
+        #else
+        throw XCTSkip("AVFoundation, MediaToolbox, and ShazamKit are required")
+        #endif
+    }
+
+    func testPostResumeWatchdogSeparatesRepeatedMarginIDsBySessionAndUsesSourceProgress() async throws {
+        #if canImport(AVFoundation) && canImport(ShazamKit) && canImport(MediaToolbox)
+        let (results, continuation) = AsyncStream<PostResumePodcastEvidenceCaptureResult>.makeStream()
+        let context = PostResumePodcastEvidenceTapContext(
+            resultHandler: { continuation.yield($0) }, becameIdle: {}
+        )
+        let first = PostResumeAudioSampleRequest(
+            interjectionId: "ij-001", sessionId: "one", itemId: "episode",
+            anchorMediaTimeMs: 20_000, targetDurationMs: 3_000
+        )
+        let second = PostResumeAudioSampleRequest(
+            interjectionId: "ij-001", sessionId: "two", itemId: "episode",
+            anchorMediaTimeMs: 20_000, targetDurationMs: 3_000
+        )
+        XCTAssertTrue(context.arm(first))
+        XCTAssertTrue(context.arm(second))
+        context.notePlaybackProgress(mediaTimeMs: 20_000)
+        context.notePlaybackProgress(mediaTimeMs: 24_999)
+        context.notePlaybackProgress(mediaTimeMs: 25_000)
+        var iterator = results.makeAsyncIterator()
+        var failedSessions = Set<String>()
+        for _ in 0..<2 {
+            guard case .failed(let request, let role, let reason) = await iterator.next() else {
+                return XCTFail("Expected independent no-buffer failure")
+            }
+            XCTAssertEqual(role, .postResume)
+            XCTAssertEqual(reason, "decoded_playback_no_buffer_while_advancing")
+            failedSessions.insert(request.sessionId)
+        }
+        XCTAssertEqual(failedSessions, ["one", "two"])
         continuation.finish()
         #else
         throw XCTSkip("AVFoundation, MediaToolbox, and ShazamKit are required")
@@ -579,6 +707,7 @@ final class SharingTests: XCTestCase {
                     duration: CMTime(value: 1_000, timescale: 1_000)
                 )
             )
+            context.flushPendingBuffersForTesting()
         }
         let request = PostResumeAudioSampleRequest(
             interjectionId: "ij-pre",
@@ -595,7 +724,7 @@ final class SharingTests: XCTestCase {
         if case .captured(let capture) = result {
             XCTAssertEqual(capture.windowRole, .preInterjection)
             XCTAssertEqual(capture.provenance, .observedDecodedPlayback)
-            XCTAssertEqual(capture.anchorOffsetMs, 17_000)
+            XCTAssertEqual(capture.anchorOffsetMs, 12_000)
             XCTAssertGreaterThanOrEqual(capture.durationMs, 11_500)
         }
 
@@ -607,6 +736,192 @@ final class SharingTests: XCTestCase {
             anchorMediaTimeMs: 40_000,
             targetDurationMs: 12_000
         )))
+        continuation.finish()
+        #else
+        throw XCTSkip("AVFoundation, MediaToolbox, and ShazamKit are required")
+        #endif
+    }
+
+    func testBufferedPreWindowTrimsOversizedChunkAndEpisodeEdge() async throws {
+        #if canImport(AVFoundation) && canImport(ShazamKit) && canImport(MediaToolbox)
+        let (results, continuation) = AsyncStream<PostResumePodcastEvidenceCaptureResult>.makeStream()
+        let context = PostResumePodcastEvidenceTapContext(
+            resultHandler: { continuation.yield($0) }, becameIdle: {},
+            continuousCollection: true, itemId: "episode-trim"
+        )
+        let rate = 8_000.0
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: rate, channels: 1))
+        context.prepare(maxFrames: 160_000, processingFormat: format.streamDescription)
+        func feed(startMs: Int, durationMs: Int) throws {
+            let frames = AVAudioFrameCount(Double(durationMs) * rate / 1_000)
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames))
+            buffer.frameLength = frames
+            let samples = try XCTUnwrap(buffer.floatChannelData?[0])
+            for frame in 0..<Int(frames) {
+                samples[frame] = Float(0.2 * sin(2 * .pi * 220 * Double(frame) / rate))
+            }
+            context.process(
+                bufferList: buffer.mutableAudioBufferList, frameCount: CMItemCount(frames),
+                timeRange: CMTimeRange(
+                    start: CMTime(value: CMTimeValue(startMs), timescale: 1_000),
+                    duration: CMTime(value: CMTimeValue(durationMs), timescale: 1_000)
+                )
+            )
+            context.flushPendingBuffersForTesting()
+        }
+        try feed(startMs: 20_000, durationMs: 20_000)
+        let middle = PostResumeAudioSampleRequest(
+            interjectionId: "middle", sessionId: "session", itemId: "episode-trim",
+            anchorMediaTimeMs: 40_000, targetDurationMs: 12_000
+        )
+        XCTAssertTrue(context.captureBufferedPreInterjection(middle))
+        let middleResult = await results.first {
+            if case .captured(let capture) = $0 { return capture.request.interjectionId == middle.interjectionId }
+            return false
+        }
+        guard case .captured(let middleCapture) = middleResult else { return XCTFail("Missing middle capture") }
+        XCTAssertEqual(middleCapture.anchorOffsetMs, 12_000)
+        XCTAssertGreaterThanOrEqual(middleCapture.durationMs, 11_500)
+        XCTAssertLessThanOrEqual(middleCapture.durationMs, 12_500)
+
+        context.noteSeek()
+        try feed(startMs: 0, durationMs: 20_000)
+        let edge = PostResumeAudioSampleRequest(
+            interjectionId: "edge", sessionId: "session", itemId: "episode-trim",
+            anchorMediaTimeMs: 5_000, targetDurationMs: 12_000
+        )
+        XCTAssertTrue(context.captureBufferedPreInterjection(edge))
+        let edgeResult = await results.first {
+            if case .captured(let capture) = $0 { return capture.request.interjectionId == edge.interjectionId }
+            return false
+        }
+        guard case .captured(let edgeCapture) = edgeResult else { return XCTFail("Missing edge capture") }
+        XCTAssertEqual(edgeCapture.anchorOffsetMs, 5_000)
+        XCTAssertGreaterThanOrEqual(edgeCapture.durationMs, 4_500)
+        XCTAssertLessThanOrEqual(edgeCapture.durationMs, 5_500)
+        continuation.finish()
+        #else
+        throw XCTSkip("AVFoundation, MediaToolbox, and ShazamKit are required")
+        #endif
+    }
+
+    func testQueuedOldPlaybackGapCannotClearRearmedCaptureAfterSeek() throws {
+        #if canImport(AVFoundation) && canImport(ShazamKit) && canImport(MediaToolbox)
+        let context = PostResumePodcastEvidenceTapContext(resultHandler: { _ in }, becameIdle: {})
+        let request = PostResumeAudioSampleRequest(
+            interjectionId: "same-margin", sessionId: "session", itemId: "episode",
+            anchorMediaTimeMs: 10_000, targetDurationMs: 12_000
+        )
+        XCTAssertTrue(context.arm(request))
+        context.queueGapForTesting {
+            context.noteSeek()
+            XCTAssertTrue(context.arm(request))
+        }
+        XCTAssertEqual(context.pendingCaptureCountForTesting, 1)
+        #else
+        throw XCTSkip("AVFoundation, MediaToolbox, and ShazamKit are required")
+        #endif
+    }
+
+    func testNewerAttemptReplacesPendingSameSessionMarginWithoutCrossingSessions() throws {
+        #if canImport(AVFoundation) && canImport(ShazamKit) && canImport(MediaToolbox)
+        let context = PostResumePodcastEvidenceTapContext(resultHandler: { _ in }, becameIdle: {})
+        func request(session: String, attempt: Int) -> PostResumeAudioSampleRequest {
+            .init(interjectionId: "same-id", sessionId: session, itemId: "episode",
+                  anchorMediaTimeMs: 10_000, targetDurationMs: 12_000,
+                  attemptGeneration: attempt)
+        }
+        XCTAssertTrue(context.arm(request(session: "one", attempt: 1)))
+        XCTAssertTrue(context.arm(request(session: "two", attempt: 1)))
+        XCTAssertFalse(context.arm(request(session: "one", attempt: 1)))
+        XCTAssertTrue(context.arm(request(session: "one", attempt: 2)))
+        XCTAssertFalse(context.arm(request(session: "one", attempt: 1)))
+        XCTAssertEqual(context.pendingCaptureCountForTesting, 2)
+        #else
+        throw XCTSkip("AVFoundation, MediaToolbox, and ShazamKit are required")
+        #endif
+    }
+
+    func testPostCaptureConvertsInterleavedInt16PlaybackOffCallback() async throws {
+        #if canImport(AVFoundation) && canImport(ShazamKit) && canImport(MediaToolbox)
+        let (results, continuation) = AsyncStream<PostResumePodcastEvidenceCaptureResult>.makeStream()
+        let context = PostResumePodcastEvidenceTapContext(
+            resultHandler: { continuation.yield($0) }, becameIdle: {}
+        )
+        let format = try XCTUnwrap(AVAudioFormat(
+            commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 2, interleaved: true
+        ))
+        let frames = AVAudioFrameCount(192_000)
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames))
+        buffer.frameLength = frames
+        let samples = try XCTUnwrap(buffer.int16ChannelData?[0])
+        for frame in 0..<Int(frames) {
+            let value = Int16(8_000 * sin(2 * .pi * 220 * Double(frame) / 16_000))
+            samples[frame * 2] = value
+            samples[frame * 2 + 1] = value
+        }
+        let request = PostResumeAudioSampleRequest(
+            interjectionId: "int16", sessionId: "session", itemId: "episode",
+            anchorMediaTimeMs: 0, targetDurationMs: 12_000
+        )
+        XCTAssertTrue(context.arm(request))
+        context.prepare(maxFrames: CMItemCount(frames), processingFormat: format.streamDescription)
+        context.process(
+            bufferList: buffer.mutableAudioBufferList, frameCount: CMItemCount(frames),
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 12, timescale: 1)),
+            endOfStream: true
+        )
+        guard let result = await results.first(where: {
+            switch $0 {
+            case .captured(let capture): capture.request.interjectionId == request.interjectionId
+            case .failed(let failed, _, _): failed.interjectionId == request.interjectionId
+            case .landmark: false
+            }
+        }) else { return XCTFail("Missing converted result") }
+        if case .captured(let capture) = result {
+            XCTAssertGreaterThanOrEqual(capture.durationMs, 11_000)
+            XCTAssertLessThanOrEqual(capture.durationMs, 12_500)
+        } else {
+            XCTFail("Int16 playback should yield a signature: \(result)")
+        }
+        continuation.finish()
+        #else
+        throw XCTSkip("AVFoundation, MediaToolbox, and ShazamKit are required")
+        #endif
+    }
+
+    func testPostCaptureRejectsPlaybackSixMinutesAfterOriginalAnchor() async throws {
+        #if canImport(AVFoundation) && canImport(ShazamKit) && canImport(MediaToolbox)
+        let (results, continuation) = AsyncStream<PostResumePodcastEvidenceCaptureResult>.makeStream()
+        let context = PostResumePodcastEvidenceTapContext(
+            resultHandler: { continuation.yield($0) }, becameIdle: {}
+        )
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 8_000, channels: 1))
+        let request = PostResumeAudioSampleRequest(
+            interjectionId: "old-margin", sessionId: "session", itemId: "episode",
+            anchorMediaTimeMs: 600_000, targetDurationMs: 12_000,
+            attemptGeneration: 2
+        )
+        XCTAssertTrue(context.arm(request))
+        context.prepare(maxFrames: 8_000, processingFormat: format.streamDescription)
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8_000))
+        buffer.frameLength = 8_000
+        context.process(
+            bufferList: buffer.mutableAudioBufferList, frameCount: 8_000,
+            timeRange: CMTimeRange(
+                start: CMTime(value: 960_000, timescale: 1_000),
+                duration: CMTime(value: 1_000, timescale: 1_000)
+            )
+        )
+        guard let result = await results.first(where: {
+            if case .failed(let failed, _, _) = $0 { return failed.interjectionId == request.interjectionId }
+            return false
+        }) else { return XCTFail("Expected original-interval rejection") }
+        if case .failed(_, let role, let reason) = result {
+            XCTAssertEqual(role, .postResume)
+            XCTAssertEqual(reason, "post_resume_original_interval_unavailable")
+        }
+        XCTAssertEqual(context.pendingCaptureCountForTesting, 0)
         continuation.finish()
         #else
         throw XCTSkip("AVFoundation, MediaToolbox, and ShazamKit are required")
@@ -877,6 +1192,123 @@ final class SharingTests: XCTestCase {
         XCTAssertEqual(noExtrapolation["start"]?.evidenceClass, .unresolved)
     }
 
+    func testRecipientTranscriptSweepRequiresEpisodeCoverageAndCountsDistantRepeat() {
+        let prefix = "the durable prefix has exactly enough unique words here"
+        let suffix = "the following suffix is also uniquely present right now"
+        let anchor = PortableAnchorEvidence(
+            anchorType: .transcript, prefix: prefix, suffix: suffix, mediaTimeMs: 11_500
+        )
+        let first = TranscriptTimeline(segments: [
+            .init(id: "first-pre", startMs: 10_000, endMs: 11_000, text: prefix),
+            .init(id: "first-post", startMs: 12_000, endMs: 13_000, text: suffix)
+        ], chapters: [])
+        let repeatElsewhere = TranscriptTimeline(segments: [
+            .init(id: "later-pre", startMs: 250_000, endMs: 251_000, text: prefix),
+            .init(id: "later-post", startMs: 252_000, endMs: 253_000, text: suffix)
+        ], chapters: [])
+        let duration = 300_000
+        let windows = try! XCTUnwrap(PodcastRecipientTranscriptSweep.windows(
+            durationMs: duration, hintsMs: [11_500]
+        ))
+        XCTAssertTrue(PodcastRecipientTranscriptSweep.coversEpisode(windows, durationMs: duration))
+        XCTAssertEqual(PodcastRecipientTranscriptSweep.resolve(
+            anchor: anchor, timelines: [first], durationMs: duration,
+            completedWindows: Array(windows.dropLast()), plannedWindows: windows
+        ).evidenceClass, .unresolved)
+        XCTAssertEqual(PodcastRecipientTranscriptSweep.resolve(
+            anchor: anchor, timelines: [first, repeatElsewhere], durationMs: duration,
+            completedWindows: windows, plannedWindows: windows
+        ).evidenceClass, .ambiguous)
+
+        let repeatedOverlap = TranscriptTimeline(segments: [
+            .init(id: "overlap-pre", startMs: 10_400, endMs: 11_400, text: prefix),
+            .init(id: "overlap-post", startMs: 12_400, endMs: 13_400, text: suffix)
+        ], chapters: [])
+        let single = PodcastRecipientTranscriptSweep.resolve(
+            anchor: anchor, timelines: [first, repeatedOverlap], durationMs: duration,
+            completedWindows: windows, plannedWindows: windows
+        )
+        XCTAssertEqual(single.evidenceClass, .transcriptVerified)
+        XCTAssertEqual(single.localMediaTimeMs, 11_500)
+
+        let longDuration = PodcastRecipientTranscriptSweep.maximumSweepWindows
+            * PodcastRecipientTranscriptSweep.sweepStepMs + PodcastRecipientTranscriptSweep.sweepWindowMs
+        let budgeted = try! XCTUnwrap(PodcastRecipientTranscriptSweep.windows(
+            durationMs: longDuration, hintsMs: [11_500]
+        ))
+        XCTAssertFalse(PodcastRecipientTranscriptSweep.coversEpisode(budgeted, durationMs: longDuration))
+        XCTAssertEqual(PodcastRecipientTranscriptSweep.resolve(
+            anchor: anchor, timelines: [first], durationMs: longDuration,
+            completedWindows: budgeted, plannedWindows: budgeted
+        ).evidenceClass, .unresolved)
+    }
+
+    func testCompleteRecipientSweepRejectsDistinctNearbyTranscriptRepetitions() throws {
+        let prefix = "the durable prefix has exactly enough unique words here"
+        let suffix = "the following suffix is also uniquely present right now"
+        let duration = 300_000
+        let windows = try XCTUnwrap(PodcastRecipientTranscriptSweep.windows(
+            durationMs: duration, hintsMs: [11_500]
+        ))
+        XCTAssertTrue(PodcastRecipientTranscriptSweep.coversEpisode(windows, durationMs: duration))
+        let timeline = TranscriptTimeline(segments: [
+            .init(id: "first-pre", startMs: 10_000, endMs: 11_000, text: prefix),
+            .init(id: "first-post", startMs: 12_000, endMs: 13_000, text: suffix),
+            .init(id: "second-pre", startMs: 15_000, endMs: 16_000, text: prefix),
+            .init(id: "second-post", startMs: 17_000, endMs: 18_000, text: suffix)
+        ], chapters: [])
+        let twoSided = PortableAnchorEvidence(
+            anchorType: .transcript, prefix: prefix, suffix: suffix, mediaTimeMs: 11_500
+        )
+        XCTAssertEqual(PodcastRecipientTranscriptSweep.resolve(
+            anchor: twoSided, timelines: [timeline], durationMs: duration,
+            completedWindows: windows, plannedWindows: windows
+        ).evidenceClass, .ambiguous)
+        let oneSided = PortableAnchorEvidence(
+            anchorType: .transcript, prefix: prefix, mediaTimeMs: 11_500
+        )
+        XCTAssertEqual(PodcastRecipientTranscriptSweep.resolve(
+            anchor: oneSided, timelines: [timeline], durationMs: duration,
+            completedWindows: windows, plannedWindows: windows
+        ).evidenceClass, .ambiguous)
+    }
+
+    func testRecipientWindowMeasuredBoundsCannotClaimShortExportCoverage() throws {
+        let exact = try SystemSourceTranscriptionClient.measuredSourceWindowBounds(
+            requestedStartMs: 190_000, requestedEndMs: 300_000,
+            playableStartOffsetMs: 0, playableEndOffsetMs: 110_000
+        )
+        XCTAssertEqual(exact.startMs, 190_000)
+        XCTAssertEqual(exact.endMs, 300_000)
+        let slightRounding = try SystemSourceTranscriptionClient.measuredSourceWindowBounds(
+            requestedStartMs: 190_000, requestedEndMs: 300_000,
+            playableStartOffsetMs: 0, playableEndOffsetMs: 109_900
+        )
+        XCTAssertEqual(slightRounding.endMs, 299_900)
+        XCTAssertFalse(PodcastRecipientTranscriptSweep.coversEpisode([
+            .init(startMs: 0, endMs: 210_000),
+            .init(startMs: slightRounding.startMs, endMs: slightRounding.endMs)
+        ], durationMs: 300_000))
+        XCTAssertThrowsError(try SystemSourceTranscriptionClient.measuredSourceWindowBounds(
+            requestedStartMs: 190_000, requestedEndMs: 300_000,
+            playableStartOffsetMs: 0, playableEndOffsetMs: 108_000
+        ))
+        let lateStart = try SystemSourceTranscriptionClient.measuredSourceWindowBounds(
+            requestedStartMs: 190_000, requestedEndMs: 300_000,
+            playableStartOffsetMs: 100, playableEndOffsetMs: 110_000
+        )
+        XCTAssertEqual(lateStart.startMs, 190_100)
+    }
+
+    func testRecipientSweepCoalescesNearbyHintsWithinTotalRequestBudget() throws {
+        let duration = 1_000_000
+        let hints = [10_000, 20_000, 30_000, 240_000, 250_000, 500_000, 750_000, 980_000]
+        let windows = try XCTUnwrap(PodcastRecipientTranscriptSweep.windows(durationMs: duration, hintsMs: hints))
+        XCTAssertLessThanOrEqual(windows.count, PodcastRecipientTranscriptSweep.maximumTotalWindows)
+        XCTAssertEqual(Set(windows.map { "\($0.startMs)-\($0.endMs)" }).count, windows.count)
+        XCTAssertTrue(PodcastRecipientTranscriptSweep.coversEpisode(windows, durationMs: duration))
+    }
+
     func testPodcastResolverMathBenchmarkHasNoFalseConfidentPlacements() {
         var confidentErrors: [Int] = []
         var falseConfidentCount = 0
@@ -963,6 +1395,44 @@ final class SharingTests: XCTestCase {
         #else
         throw XCTSkip("AVFoundation is required")
         #endif
+    }
+
+    func testWindowedAcousticMatchesRequireUniqueAgreementAcrossFlanks() throws {
+        let windows = PodcastAcousticAnchorResolver.referenceWindows(durationMs: 3_810_000)
+        XCTAssertGreaterThan(windows.count, 1)
+        XCTAssertTrue(windows.contains { $0.startMs <= 2_205_000 && $0.startMs + $0.lengthMs >= 2_217_000 })
+        XCTAssertTrue(windows.contains { $0.startMs <= 3_696_000 && $0.startMs + $0.lengthMs >= 3_708_000 })
+        let query = PodcastPortableAnchorQuery(
+            packageScopedId: "margin", senderMediaTimeMs: 1_602_300,
+            evidence: [
+                PodcastAcousticEvidenceQuery(id: "pre", signatureData: Data(), anchorOffsetMs: 12_500),
+                PodcastAcousticEvidenceQuery(id: "post", signatureData: Data(), anchorOffsetMs: -500)
+            ]
+        )
+        let confirmed = PodcastAcousticAnchorResolver.resolveWindowedMatches(
+            [
+                .init(evidenceIndex: 0, timeMs: 1_602_332, confidence: 1),
+                .init(evidenceIndex: 1, timeMs: 1_602_333, confidence: 1),
+                .init(evidenceIndex: 0, timeMs: 3_059_248, confidence: 1),
+                .init(evidenceIndex: 0, timeMs: 3_720_038, confidence: 1)
+            ], query: query, senderDurationMs: 3_810_000,
+            recipientDurationMs: 3_810_000, strongSourceIdentity: true,
+            exactDigestContradiction: false
+        )
+        XCTAssertEqual(confirmed.evidenceClass, .fused)
+        XCTAssertEqual(confirmed.localMediaTimeMs, 1_602_333)
+        let repeated = PodcastAcousticAnchorResolver.resolveWindowedMatches(
+            [
+                .init(evidenceIndex: 0, timeMs: 1_602_332, confidence: 1),
+                .init(evidenceIndex: 1, timeMs: 1_602_333, confidence: 1),
+                .init(evidenceIndex: 0, timeMs: 3_059_248, confidence: 1),
+                .init(evidenceIndex: 1, timeMs: 3_059_250, confidence: 1)
+            ], query: query, senderDurationMs: 3_810_000,
+            recipientDurationMs: 3_810_000, strongSourceIdentity: true,
+            exactDigestContradiction: false
+        )
+        XCTAssertEqual(repeated.evidenceClass, .ambiguous)
+        XCTAssertNil(repeated.localMediaTimeMs)
     }
 
     func testHeldOutPublicDomainPodcastAnchorCorpus() async throws {
@@ -1378,7 +1848,7 @@ final class SharingTests: XCTestCase {
             context: .init(kind: .sourceText, start: 0, end: 4, quote: "Lead"))
         let b = MarginConversation(reference: .init(contributionID: "b", revisionID: "v1"), authorID: "bob", authorLabel: "Bob", parent: a.reference)
         let c = MarginConversation(reference: .init(contributionID: "c", revisionID: "v1"), authorID: "carol", authorLabel: "Carol", parent: a.reference)
-        let d = MarginConversation(reference: .init(contributionID: "d", revisionID: "v1"), authorID: "alice", authorLabel: "Alice", parent: b.reference)
+        let d = MarginConversation(reference: .init(contributionID: "d", revisionID: "v1"), authorID: "alice", authorLabel: "Alice", parents: [b.reference, c.reference])
         func packet(_ name: String, _ nodes: [MarginConversation], changedText: Bool = false) throws -> VerifiedSpokenMarginsPackage {
             let selections = nodes.enumerated().map { index, node in
                 var selection = ReviewedInterjectionSelection(packageScopedId: "note-\(index)",
@@ -1391,6 +1861,9 @@ final class SharingTests: XCTestCase {
             let prepared = try SpokenMarginsPackageBuilder.prepare(packageId: name, createdAt: fixedDate,
                 item: articleItem, itemTransportSelection: .reference, selections: selections)
             XCTAssertTrue(prepared.manifest.requiredCapabilities.contains(MarginConversation.capability))
+            if nodes.contains(where: { $0.parents.count > 1 }) {
+                XCTAssertTrue(prepared.manifest.requiredCapabilities.contains(MarginConversation.multipleTargetsCapability))
+            }
             let url = root.appendingPathComponent("\(name).spokenmargins")
             _ = try SpokenMarginsPackageArchive.write(prepared, to: url)
             return try SpokenMarginsPackageArchive.read(from: url, extractingAssetsTo: root.appendingPathComponent(name))
@@ -1406,7 +1879,7 @@ final class SharingTests: XCTestCase {
             let snapshots = try repository.loadConversationSnapshots()
             XCTAssertEqual(snapshots.count, 4)
             XCTAssertEqual(snapshots.first { $0.id == a.reference.id }?.conversation.context, a.context)
-            XCTAssertEqual(MarginConversationGraph.ancestors(of: d.reference, in: snapshots).map(\.id), [a.reference.id,b.reference.id,d.reference.id])
+            XCTAssertEqual(MarginConversationGraph.ancestors(of: d.reference, in: snapshots).map(\.id), [a.reference.id,b.reference.id,c.reference.id,d.reference.id])
             let layers = try repository.loadImportedCommentaryLayers(itemId: "recipient-source")
             XCTAssertEqual(try layers.flatMap { try repository.loadImportedCommentaryInterjections(layerId: $0.id) }.count, 4)
             XCTAssertThrowsError(try SpokenMarginsPackageImporter.importPackage(packet("conflict", [a], changedText: true), itemId: "recipient-source", importedAt: fixedDate, repository: repository))
@@ -1414,6 +1887,38 @@ final class SharingTests: XCTestCase {
             XCTAssertEqual(try repository.loadImportedCommentaryLayers(itemId: "recipient-source").count, 4, "Conflicting import must be atomic")
         }
         XCTAssertEqual(try SQLiteSessionStore(path: path).loadConversationSnapshots().count, 4)
+    }
+
+    func testMultipleReplyTargetsRejectInvalidGraphsAndPreserveLegacyCoding() throws {
+        let a = MarginReference(contributionID: "a", revisionID: "v1")
+        let b = MarginReference(contributionID: "b", revisionID: "v1")
+        let d = MarginReference(contributionID: "d", revisionID: "v1")
+        let legacy = MarginConversation(reference: a, authorID: "a", authorLabel: "A", parent: b)
+        let oldData = try JSONEncoder().encode(legacy)
+        XCTAssertNotNil(String(data: oldData, encoding: .utf8)?.range(of: "\"parent\""))
+        XCTAssertEqual(try JSONDecoder().decode(MarginConversation.self, from: oldData).parents, [b])
+
+        let multi = MarginConversation(reference: d, authorID: "d", authorLabel: "D", parents: [a, b])
+        let encoded = try JSONEncoder().encode(multi)
+        XCTAssertNotNil(String(data: encoded, encoding: .utf8)?.range(of: "\"parents\""))
+        XCTAssertEqual(try JSONDecoder().decode(MarginConversation.self, from: encoded).parents, [a, b])
+        XCTAssertThrowsError(try MarginConversationGraph.validate(
+            .init(reference: d, authorID: "d", authorLabel: "D", parents: [a, a])))
+        XCTAssertThrowsError(try JSONDecoder().decode(MarginConversation.self,
+            from: Data("{\"reference\":{\"contributionID\":\"d\",\"revisionID\":\"v1\"},\"authorID\":\"d\",\"authorLabel\":\"D\",\"parent\":null,\"parents\":[{\"contributionID\":\"a\",\"revisionID\":\"v1\"},{\"contributionID\":\"b\",\"revisionID\":\"v1\"}]}".utf8)))
+
+        func snapshot(_ item: String, _ conversation: MarginConversation) -> MarginConversationSnapshot {
+            MarginConversationSnapshot(itemID: item, conversation: conversation,
+                anchor: .init(anchorType: .text, startChar: 0, endChar: 1, exactText: "x"),
+                transcript: "x", createdAt: fixedDate)
+        }
+        let rootA = MarginConversation(reference: a, authorID: "a", authorLabel: "A")
+        let rootB = MarginConversation(reference: b, authorID: "b", authorLabel: "B")
+        XCTAssertThrowsError(try MarginConversationGraph.merge([], [snapshot("one", multi), snapshot("two", rootA)]))
+        let cycles = [snapshot("one", multi), snapshot("one", rootA),
+            snapshot("one", .init(reference: b, authorID: "b", authorLabel: "B", parent: d))]
+        XCTAssertThrowsError(try MarginConversationGraph.merge([], cycles))
+        XCTAssertEqual(try MarginConversationGraph.merge([], [snapshot("one", multi), snapshot("one", rootA), snapshot("one", rootB)]).count, 3)
     }
 
     func testForwardedAudioRetainsExactRevisionAndDigest() throws {
@@ -1768,6 +2273,29 @@ private struct AnchorBenchmarkMetrics {
             "placementsOver1500Ms": placementsOver1500Ms,
             "evidenceClasses": evidenceClasses
         ]
+    }
+}
+
+private actor LegacySourceWindowClient: SourceTranscriptionClient {
+    let timeline: TranscriptTimeline
+    private(set) var acquisitionCalls = 0
+
+    init(timeline: TranscriptTimeline) { self.timeline = timeline }
+
+    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+        throw SessionKitError.persistenceFailed("full_source_transcription_unavailable")
+    }
+
+    func transcribeSourceAudioWindowWithEvidence(
+        url: URL, itemId: String, anchorMediaTimeMs: Int, durationMs: Int?,
+        windowBeforeMs: Int, windowAfterMs: Int
+    ) async throws -> SourceAudioWindowTranscription {
+        acquisitionCalls += 1
+        return SourceAudioWindowTranscription(
+            timeline: timeline, localAudioURL: URL(fileURLWithPath: "/tmp/legacy-same-edition-window.m4a"),
+            sourceStartMs: 33_000, sourceEndMs: 243_000,
+            provenance: .sourceWindowReference
+        )
     }
 }
 

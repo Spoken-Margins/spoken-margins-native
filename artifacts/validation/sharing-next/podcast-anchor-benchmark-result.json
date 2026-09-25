@@ -8,11 +8,11 @@
       "fused" : 215,
       "unresolved" : 4
     },
-    "evidenceGenerationSeconds" : 8.5156999826431274,
+    "evidenceGenerationSeconds" : 9.5847508907318115,
     "falseConfident" : 0,
     "p95ErrorMs" : 4,
     "placementsOver1500Ms" : 0,
-    "resolutionSeconds" : 1.1420069932937622
+    "resolutionSeconds" : 1.2383409738540649
   },
   "anchors" : {
     "absent" : 6,
@@ -44,7 +44,7 @@
     "p95ErrorMs" : 4,
     "placementsOver1500Ms" : 0
   },
-  "generatedAt" : "2026-09-02T16:57:24Z",
+  "generatedAt" : "2026-09-24T14:12:17Z",
   "schemaVersion" : "spoken-margins.anchor-benchmark-result.v1",
   "timestampOnly" : {
     "confident" : 226,

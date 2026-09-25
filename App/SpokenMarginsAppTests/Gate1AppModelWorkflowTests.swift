@@ -11,6 +11,27 @@ import PDFKit
 
 @MainActor
 final class Gate1AppModelWorkflowTests: XCTestCase {
+    func testCompactMarginWithoutProvenLocalPlaybackKeepsProducingEditionUnknown() throws {
+        XCTAssertTrue(Gate1AppModel.compactCaptureOriginCanBindProducingEdition("app_ui"))
+        XCTAssertTrue(Gate1AppModel.compactCaptureOriginCanBindProducingEdition("compact_url"))
+        XCTAssertTrue(Gate1AppModel.compactCaptureOriginCanBindProducingEdition("now_playing"))
+        XCTAssertFalse(Gate1AppModel.compactCaptureOriginCanBindProducingEdition("imported_margin_remote"))
+        XCTAssertFalse(Gate1AppModel.compactCaptureOriginCanBindProducingEdition("unrecognized_origin"))
+
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: NoopRecordingClient()
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.dispatchGate2CompactCommand(.beginInterjection, origin: "compact_url")
+        XCTAssertTrue(model.snapshot.isRecording)
+        model.dispatchGate2CompactCommand(.finishInterjection, origin: "compact_url")
+        let saved = try XCTUnwrap(model.selectedItem.interjections.last)
+        XCTAssertEqual(saved.sessionId, model.snapshot.sessionId)
+        XCTAssertNil(saved.sourceExactEditionSHA256)
+    }
+
     func testRichClipboardRestoresOnlyExplicitHTMLHeadings() {
         let plain = "Article & notes\nA paragraph.\nNext section\nMore prose."
         let html = "<h1>Article &amp; notes</h1><p>A paragraph.</p><h2><em>Next section</em></h2><p>More prose.</p>"

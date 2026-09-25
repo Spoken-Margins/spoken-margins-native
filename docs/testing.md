@@ -2,7 +2,15 @@
 
 Tests verify implementation claims. Only the product owner establishes `human_validated` behavior. The release lane in `docs/release-lanes.md` remains authoritative; no test plan authorizes distribution.
 
-## Commands
+## Active owner override — September 24, 2026
+
+All scripted simulator testing is stopped, including simulator-hosted XCTest, XCUITest routes, and the app/adapters/ui/speech-canary/smoke plans or release composites that invoke them. The command catalog below is retained for historical reference and does not authorize execution while this override is active. The host-only fast plan, static checks and compilation may support engineering claims; they cannot establish user-flow success. Only an explicit owner instruction can resume scripted simulator testing.
+
+The owner requests observation-driven agent computer use and screen recordings for simulator flow evidence. Existing incident restrictions still apply. A recording must identify the candidate and show the actual input, action and result; audio behavior requires captured system audio and content verification, not merely a moving progress bar. Missing capture, inaccessible UI or an unavailable safe simulator is a blocked check, never a pass. Product acceptance remains with the owner, after engineering flow evidence is complete.
+
+Before another co-op owner handoff, use the claim-by-claim recovery scorecard in [the September 24 testing audit](../artifacts/validation/testing-audit-2026-09-24/audit.md). Record the installed candidate identity, distinct contributor voices, complete playback transitions, source-position recovery and remaining device-only checks. A queued list of names, a playing flag, or an archive integrity pass cannot close an audible-flow claim. The current owner gate remains failed until the corresponding repair has direct evidence; only the owner establishes acceptance.
+
+## Historical command catalog (subject to override)
 
 Bootstrap once after checkout, then use the named runner:
 

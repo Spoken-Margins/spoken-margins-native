@@ -13,6 +13,9 @@ import UIKit
 #if canImport(AVFoundation)
 import AVFoundation
 #endif
+#if canImport(ShazamKit)
+import ShazamKit
+#endif
 #if canImport(PDFKit)
 import PDFKit
 #endif
@@ -595,6 +598,7 @@ final class Gate1AppModel: ObservableObject {
         didSet {
             if oldValue.itemId != snapshot.itemId || oldValue.sessionId != snapshot.sessionId || oldValue.targetId != snapshot.targetId {
                 clearConversationNavigation()
+                offeredUnmatchedMarginIDs.removeAll()
             }
             if conversationCurrentMargin != nil && snapshot.status.isPlaybackActive {
                 clearConversationNavigation()
@@ -800,6 +804,7 @@ final class Gate1AppModel: ObservableObject {
         didSet {
             if oldValue?.id != pendingImportedCommentary?.id {
                 updateGate2CompactState()
+                updateSkimAvailability(refreshResources: false)
             }
         }
     }
@@ -808,7 +813,7 @@ final class Gate1AppModel: ObservableObject {
     private let importedMarginRemoteControls = ImportedMarginRemoteControls()
 
     var activePlaybackIsPlaying: Bool {
-        if conversationCurrentMargin != nil, playingInterjectionAudioId != nil { return !conversationLocalPaused }
+        if playingInterjectionAudioId != nil { return !conversationLocalPaused }
         if playingImportedCommentary != nil { return !importedCommentaryIsPaused }
         return snapshot.skimBridgeState?.status == .playing || snapshot.status.isPlaybackActive
     }
@@ -992,6 +997,12 @@ final class Gate1AppModel: ObservableObject {
     private let browserTextHandoffStore: Gate5BrowserTextHandoffStore?
     private let audioPlaybackClientOverride: AudioPlaybackClient?
     private var mediaPlaybackClient: AVPlayerStreamPlaybackClient?
+    private var recordingProducingEditionBinding: LocalPlaybackFileBinding?
+    private var recordingProducingEditionSessionID: String?
+    private var recordingProducingEditionAnchorMs: Int?
+    #if DEBUG
+    private var recipientPlaybackURLProbeForTests: ((URL, String) -> Bool)?
+    #endif
     private var podcastDownloadCoordinator: PodcastDownloadCoordinator?
     private var requestedPodcastTransportReplacements: Set<String> = []
     private var offlineStorageLedger: OfflineStorageLedger?
@@ -1060,11 +1071,24 @@ final class Gate1AppModel: ObservableObject {
     private var completedStreamingTurnIds: Set<String> = []
     @Published private var pendingSourceContextInterjectionIds: Set<String> = []
     private var pendingFullSourceTranscriptionItemIds: Set<String> = []
+    private var pendingRecipientTranscriptItemIds: Set<String> = []
     private var importedPodcastResolutionGenerations: [String: Int] = [:]
     private var importedPodcastResolutionURLs: [String: URL] = [:]
     private var importedTranscriptRetryDates: [String: Date] = [:]
-    private var transcriptAssistedResolutionItems: Set<String> = []
+    private var recipientTranscriptSuspendedItemIDs: Set<String> = []
+    private var recipientTranscriptJobGenerations: [String: Int] = [:]
+    private var recipientTranscriptAttemptedDigests: [String: String] = [:]
+    private var recipientTranscriptQueuedReadyURLs: [String: URL] = [:]
     private var importedPodcastRecipientLocalURLs: [String: URL] = [:]
+    private struct RecipientPositionReview {
+        let layerID: String
+        let marginID: String
+        let itemID: String
+        let localURL: URL
+        let editionSHA256: String
+    }
+    private var recipientPositionReview: RecipientPositionReview?
+    private var recipientPositionReviewGeneration = 0
     private var pendingMapGenerationItemId: String?
     private var pendingProviderJobForConsent: PendingProviderJob?
     private var pendingMapGenerationAfterConsent = false
@@ -1585,6 +1609,7 @@ final class Gate1AppModel: ObservableObject {
         }
         switch record.state {
         case .availableOffline:
+            if let reason = record.failureReason { return reason }
             return "Downloaded for offline playback"
         case .waitingForWiFi:
             return "Waiting for Wi-Fi · Download Now can force it"
@@ -1694,6 +1719,7 @@ final class Gate1AppModel: ObservableObject {
 
     private func startPlaybackProgressTicker() {
         guard playbackProgressTask == nil else { return }
+        if let store { retryActivePodcastCaptureIfPossible(store: store) }
         playbackProgressTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 500_000_000)
@@ -1721,6 +1747,10 @@ final class Gate1AppModel: ObservableObject {
                             updated.currentPlaybackProgressPercent >= 100
                         if updated != self.snapshot {
                             self.snapshot = updated
+                        }
+                        if previousStatus != .playing, updated.status == .playing,
+                           let store = self.store {
+                            self.retryActivePodcastCaptureIfPossible(store: store)
                         }
                         if previousEngagementProgress < 25,
                            updated.currentPlaybackProgressPercent >= 25,
@@ -1872,6 +1902,8 @@ final class Gate1AppModel: ObservableObject {
             // manifest from an obsolete voice or model identity.
             rows = try loadLibraryRows(store: store)
             try reconcileOnboardingEvidence(store: store)
+            try reconcilePodcastAnchorEvidence(store: store, interruptedJobs: true)
+            resumePersistedRecipientTranscriptRecovery(store: store)
             try recoverInterruptedAIJobs(store: store, rows: rows)
             libraryItems = rows
             recentlyDeletedItems = try loadDeletedLibraryRows(store: store)
@@ -2006,8 +2038,11 @@ final class Gate1AppModel: ObservableObject {
         gate2CompactControls.reconcileLiveActivities()
         importPendingSourceLinkHandoffs()
         if let store {
+            try? reconcilePodcastAnchorEvidence(store: store, interruptedJobs: false)
+            resumePersistedRecipientTranscriptRecovery(store: store)
             try? refreshLibraryRows(store: store)
             try? refreshAudioPreparationPresentation(store: store, announceNewCompletions: true)
+            retryActivePodcastCaptureIfPossible(store: store)
         }
         scheduleAutomaticAudioPreparationIfNeeded()
         submitAutomaticEpisodeMapPreparationIfNeeded()
@@ -3701,12 +3736,12 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func playPause() {
-        if conversationCurrentMargin != nil, playingInterjectionAudioId != nil {
+        if playingInterjectionAudioId != nil {
             setConversationRecordingPaused(!conversationLocalPaused)
             return
         }
         if conversationCurrentMargin != nil, playingImportedCommentary == nil {
-            returnFromConversation()
+            resumeSourceFromConversation()
             return
         }
         if playingImportedCommentary != nil {
@@ -3731,7 +3766,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func pause() {
-        if conversationCurrentMargin != nil, playingInterjectionAudioId != nil { setConversationRecordingPaused(true); return }
+        if playingInterjectionAudioId != nil { setConversationRecordingPaused(true); return }
         if playingImportedCommentary != nil {
             setImportedCommentaryPaused(true)
             return
@@ -3906,7 +3941,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func resumePlayback() {
-        if conversationCurrentMargin != nil, playingInterjectionAudioId != nil { setConversationRecordingPaused(false); return }
+        if playingInterjectionAudioId != nil { setConversationRecordingPaused(false); return }
         if playingImportedCommentary != nil {
             setImportedCommentaryPaused(false)
             return
@@ -4566,6 +4601,7 @@ final class Gate1AppModel: ObservableObject {
 
     @Published var conversationEditorNote: Interjection?
     @Published private(set) var replyCaptureParent: MarginConversationSnapshot?
+    @Published private(set) var replyCaptureParents: [MarginConversationSnapshot] = []
     @Published private(set) var conversationSnapshots: [MarginConversationSnapshot] = []
     @Published private(set) var recentConversationMargin: MarginConversationSnapshot?
     @Published private(set) var lastConversationCapture: Interjection?
@@ -4596,6 +4632,9 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func conversationSourcePosition(_ note: Interjection) -> Int {
+        if (note.conversation?.parents.count ?? 0) > 1 {
+            return conversationUsesMedia ? (note.anchor.mediaTimeMs ?? 0) : note.anchor.startChar
+        }
         guard let parent = note.conversation?.parent else {
             return conversationUsesMedia ? (note.anchor.mediaTimeMs ?? 0) : note.anchor.startChar
         }
@@ -4623,9 +4662,9 @@ final class Gate1AppModel: ObservableObject {
         let position = resolved.flatMap { conversationUsesMedia ? $0.resolution.localMediaTimeMs : $0.resolution.localStartChar }
             ?? local.map(conversationSourcePosition)
             ?? (node.conversation.authorID == conversationAuthorID ? (conversationUsesMedia ? node.anchor.mediaTimeMs : node.anchor.startChar) : nil)
-        guard let position else { reportWarning("Match this Margin to the source before playing its context."); return }
-        beginConversationDestination(.init(id: "revision:\(node.id)", position: position,
-            title: conversationTitle(node), content: .archived(node)), withContext: true)
+        if position == nil { reportWarning("Source context is unresolved; playing the Margin directly.") }
+        beginConversationDestination(.init(id: "revision:\(node.id)", position: position ?? conversationPosition,
+            title: conversationTitle(node), content: .archived(node)), withContext: position != nil)
     }
 
     func conversationTitle(_ node: MarginConversationSnapshot) -> String {
@@ -4633,8 +4672,8 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func sourceAnchorForConversation(_ note: Interjection, item: Item) -> PortableAnchorEvidence {
-        if let parent = note.conversation?.parent,
-           let node = (try? store?.loadConversationSnapshots())?.first(where: { $0.id == parent.id }) { return node.anchor }
+        // A reply's capture anchor belongs to the reply. Parent references are
+        // conversation links, not evidence that its source position was measured.
         return portableAnchor(for: note, item: item, machineEvidenceAssetIds: [])
             .bounded(prefix: note.anchor.anchorBefore, suffix: note.anchor.anchorAfter)
     }
@@ -4713,9 +4752,11 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func responseTargetTitle(_ note: Interjection) -> String {
-        guard let parent = note.conversation?.parent else { return "Source passage" }
-        if let node = conversationSnapshots.first(where: { $0.id == parent.id }) { return conversationTitle(node) }
-        return "Referenced Margin · not received yet"
+        guard let parents = note.conversation?.parents, !parents.isEmpty else { return "Source passage" }
+        return parents.map { parent in
+            conversationSnapshots.first(where: { $0.id == parent.id }).map(conversationTitle)
+                ?? "Referenced Margin · not received yet"
+        }.joined(separator: " and ")
     }
 
     func replyTargetOptions(for note: Interjection) -> [MarginConversationSnapshot] {
@@ -4728,14 +4769,19 @@ final class Gate1AppModel: ObservableObject {
 
     @discardableResult
     func saveConversationContext(note original: Interjection, parent: MarginReference?, context: MarginListeningContext?) -> Bool {
+        saveConversationContext(note: original, parents: parent.map { [$0] } ?? [], context: context)
+    }
+
+    @discardableResult
+    func saveConversationContext(note original: Interjection, parents: [MarginReference], context: MarginListeningContext?) -> Bool {
         do {
             let store = try requireStore()
             var note = try store.loadInterjections(sessionId: original.sessionId).first { $0.id == original.id } ?? original
             var metadata = conversationMetadata(for: note)
             metadata.reference.revisionID = UUID().uuidString.lowercased()
-            metadata.parent = parent; metadata.context = context
+            metadata.parents = parents; metadata.context = context
             try MarginConversationGraph.validate(metadata)
-            if let context, parent == nil {
+            if let context, parents.isEmpty {
                 if context.kind == .sourceText {
                     let text = try store.loadItem(id: note.itemId).text ?? ""
                     guard context.end <= text.count, context.end <= note.anchor.startChar,
@@ -4748,12 +4794,14 @@ final class Gate1AppModel: ObservableObject {
                     }
                 }
             }
-            if let parent {
+            if !parents.isEmpty {
                 let nodes = try store.loadConversationSnapshots()
-                guard nodes.contains(where: { $0.id == parent.id }),
-                      !MarginConversationGraph.ancestors(of: parent, in: nodes).contains(where: {
-                          $0.conversation.reference.contributionID == metadata.reference.contributionID
-                      }) else { throw SessionKitError.persistenceFailed("invalid_reply_target") }
+                for parent in parents {
+                    guard let node = nodes.first(where: { $0.id == parent.id }), node.itemID == note.itemId,
+                          !MarginConversationGraph.ancestors(of: parent, in: nodes).contains(where: {
+                              $0.conversation.reference.contributionID == metadata.reference.contributionID
+                          }) else { throw SessionKitError.persistenceFailed("invalid_reply_target") }
+                }
             }
             note.conversation = metadata
             // Capture coordinates are deliberately untouched.
@@ -4783,21 +4831,42 @@ final class Gate1AppModel: ObservableObject {
         catch { reportFailure(error, context: "Reply could not start") }
     }
 
+    func beginArchivedReply(to nodes: [MarginConversationSnapshot], written: Bool) {
+        do { try beginReply(to: nodes, written: written) }
+        catch { reportFailure(error, context: "Reply could not start") }
+    }
+
     func beginReply(to node: MarginConversationSnapshot, written: Bool) throws {
+        try beginReply(to: [node], written: written)
+    }
+
+    func beginReply(to nodes: [MarginConversationSnapshot], written: Bool) throws {
+        guard let node = nodes.first, nodes.count <= 4,
+              Set(nodes.map(\.id)).count == nodes.count,
+              nodes.allSatisfy({ $0.itemID == node.itemID }) else {
+            throw SessionKitError.persistenceFailed("invalid_reply_target")
+        }
         guard !recordingNavigationIsLocked else { return }
         guard !node.itemID.isEmpty else { throw SessionKitError.persistenceFailed("match_source_before_replying") }
         if selectedItem.id != node.itemID { openItem(id: node.itemID) }
         if snapshot.itemId != node.itemID || !hasActiveSession || snapshot.phase == .finished { startItem(id: node.itemID) }
         guard snapshot.itemId == node.itemID, hasActiveSession else { return }
+        importedCommentaryAutoPlayTask?.cancel()
+        importedCommentaryAutoPlayTask = nil
+        pendingImportedCommentary = nil
+        sourcePausedForImportedCommentaryPrompt = false
         clearConversationNavigation()
         cancelSkimBridge(restoringOrigin: false, resumeSource: false)
         stopInterjectionAudioPlayback()
         pause()
         replyCaptureParent = node
+        replyCaptureParents = nodes
         replyCaptureExistingIDs = Set((try? requireStore().loadInterjections(sessionId: snapshot.sessionId ?? ""))?.map(\.id) ?? [])
         screen = .playback
         if written { beginWrittenMargin() } else { beginInterjection() }
-        if (written && writtenMarginDraft == nil) || (!written && !recordingNavigationIsLocked) { replyCaptureParent = nil }
+        if (written && writtenMarginDraft == nil) || (!written && !recordingNavigationIsLocked) {
+            replyCaptureParent = nil; replyCaptureParents = []
+        }
     }
 
     func replyToPlayingMargin(written: Bool) {
@@ -4810,20 +4879,36 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func attachPendingReplyToLatestCapture() {
+    var isRespondingToMargin: Bool {
+        conversationCurrentMargin != nil || playingImportedCommentary != nil || pendingImportedCommentary != nil
+    }
+
+    func captureMarginFromPlayback(written: Bool) {
+        if conversationCurrentMargin != nil { replyToPlayingMargin(written: written); return }
+        if let prompt = playingImportedCommentary ?? pendingImportedCommentary {
+            beginReply(to: SharedMarginRow(interjection: prompt.interjection, layer: prompt.layer, itemTitle: selectedItem.title), written: written)
+            return
+        }
+        if written { beginWrittenMargin() } else { beginInterjection() }
+    }
+
+    private func attachPendingReplyToLatestCapture(expectedID: String? = nil) {
         guard let sessionID = snapshot.sessionId, let store,
-              var note = try? store.loadInterjections(sessionId: sessionID).max(by: { $0.createdAt < $1.createdAt }) else { return }
+              let notes = try? store.loadInterjections(sessionId: sessionID),
+              var note = expectedID.flatMap({ id in notes.first { $0.id == id } })
+                ?? notes.filter({ !replyCaptureExistingIDs.contains($0.id) })
+                    .max(by: { $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt < $1.createdAt }) else { return }
         lastConversationCapture = note
         guard let parent = replyCaptureParent, !replyCaptureExistingIDs.contains(note.id) else { return }
         do {
             var metadata = conversationMetadata(for: note)
-            metadata.parent = parent.conversation.reference
+            metadata.parents = replyCaptureParents.map { $0.conversation.reference }
             metadata.context = .init(kind: .parent, start: 0, end: parent.audioDurationMs ?? parent.transcript.count)
             note.conversation = metadata
             try store.saveInterjection(note)
             _ = try ensureConversationSnapshot(note)
             lastConversationCapture = note
-            replyCaptureParent = nil; replyCaptureExistingIDs = []
+            replyCaptureParent = nil; replyCaptureParents = []; replyCaptureExistingIDs = []
             refreshSelectedItem(); refreshMarginRows()
         } catch { reportFailure(error, context: "Margin saved, but its reply target could not be saved") }
     }
@@ -4859,7 +4944,7 @@ final class Gate1AppModel: ObservableObject {
         let nodes = (try? store?.loadConversationSnapshots()) ?? []
         var selected: [String: MarginConversationSnapshot] = [:]
         for draft in sharingState.drafts where draft.isIncluded {
-            if let parent = draft.interjection.conversation?.parent {
+            for parent in draft.interjection.conversation?.parents ?? [] {
                 for node in MarginConversationGraph.ancestors(of: parent, in: nodes) { selected[node.id] = node }
             }
         }
@@ -4871,12 +4956,20 @@ final class Gate1AppModel: ObservableObject {
     }
     @Published var conversationContextSeconds = 120
     @Published private(set) var conversationLeadIn: ConversationLeadIn?
+    private var conversationLeadInLastProgressAt: TimeInterval?
+    private var conversationLeadInLastPosition: Int?
     @Published private(set) var conversationCurrentMargin: ConversationDestination?
     @Published private(set) var heardConversationMargins: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "heardConversationMargins") ?? [])
+    @Published private(set) var marginPlaybackElapsedSeconds = 0.0
+    @Published private(set) var marginPlaybackDurationSeconds = 0.0
     private var conversationReturnPoint: ConversationLeadIn?
     private var conversationCursor: ConversationDestination?
+    /// Unmatched imports can be heard in packet order, but cannot be used as
+    /// source seek targets. Keep this queue local to the current session.
+    private var offeredUnmatchedMarginIDs: Set<String> = []
     private var conversationLocalPaused = false
     private var conversationOwnsRemoteControls = false
+    var isMarginVoicePlaying: Bool { playingInterjectionAudioId != nil || playingImportedCommentary != nil }
 
     private var conversationUsesMedia: Bool { selectedItem.isNativeAudio }
     private var conversationIsSourcePlayback: Bool {
@@ -4929,13 +5022,46 @@ final class Gate1AppModel: ObservableObject {
                     title: "\(row.collectionLabel)’s Margin", content: .shared(layer, note)))
             }
         }
-        return destinations.filter { conversationScope != .newMargins || !heardConversationMargins.contains($0.id) }
+        let referencedParentIDs = Set(destinations.flatMap { $0.conversation?.parents.map(\.id) ?? [] })
+        return destinations.filter {
+            conversationScope != .newMargins || isNewConversationDestination($0, referencedParentIDs: referencedParentIDs)
+        }
+    }
+
+    private func isNewConversationDestination(
+        _ destination: ConversationDestination,
+        referencedParentIDs: Set<String>
+    ) -> Bool {
+        guard !heardConversationMargins.contains(destination.id) else { return false }
+        switch destination.content {
+        case .local:
+            return false // The originating installation already knows its own capture.
+        case .shared, .archived:
+            return destination.conversation?.authorID != conversationAuthorID
+                && !referencedParentIDs.contains(destination.conversation?.reference.id ?? "")
+        case .chapter:
+            return false
+        }
+    }
+
+    func isNewSharedMargin(_ row: SharedMarginRow) -> Bool {
+        let note = row.interjection
+        let id = note.conversation.map { "revision:\($0.reference.id)" }
+            ?? "shared:\(row.layer.id):\(note.id)"
+        let parentIDs = Set(selectedItem.importedCommentaryInterjections.values
+            .flatMap { $0 }
+            .flatMap { $0.conversation?.parents.map(\.id) ?? [] })
+        return !heardConversationMargins.contains(id)
+            && note.conversation?.authorID != conversationAuthorID
+            && !parentIDs.contains(note.conversation?.reference.id ?? "")
     }
 
     private func conversationDestination(backward: Bool) -> ConversationDestination? {
         var destinations = conversationDestinations
         // Keep the cursor in the ordering even after hearing it removes it from New.
-        if let cursor = conversationCursor, !destinations.contains(where: { $0.id == cursor.id }) {
+        if let cursor = conversationCursor,
+           conversationCurrentMargin != nil || conversationLeadIn != nil || cursor.position == conversationPosition,
+           !destinations.contains(where: { $0.id == cursor.id }) {
             destinations.append(cursor)
         }
         let currentID = conversationCursor.flatMap { cursor in
@@ -4974,8 +5100,16 @@ final class Gate1AppModel: ObservableObject {
         guard row.layer.sourceResolutionStatus != .wrongSource,
               Self.isPlayableImportedCommentaryResolution(row.interjection.resolution),
               let position = conversationUsesMedia ? row.interjection.resolution.localMediaTimeMs : row.interjection.resolution.localStartChar else {
-            if !withContext { listenToImportedCommentary(layerID: row.layer.id, interjectionID: row.interjection.id) }
-            else { reportWarning("This Margin does not yet have a verified source position.") }
+            if withContext {
+                reportWarning("Source position is unverified. Playing available Margin replies without a source seek.")
+                let destination = ConversationDestination(
+                    id: row.interjection.conversation.map { "revision:\($0.reference.id)" } ?? "shared:\(row.layer.id):\(row.interjection.id)",
+                    position: conversationPosition,
+                    title: "\(row.collectionLabel)’s Margin", content: .shared(row.layer, row.interjection))
+                beginConversationDestination(destination, withContext: true, sourceContextAvailable: false)
+            } else {
+                listenToImportedCommentary(layerID: row.layer.id, interjectionID: row.interjection.id)
+            }
             return
         }
         let destination = ConversationDestination(id: row.interjection.conversation.map { "revision:\($0.reference.id)" } ?? "shared:\(row.layer.id):\(row.interjection.id)", position: position,
@@ -4984,9 +5118,15 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func parentPlaybackDestinations(for destination: ConversationDestination) -> [ConversationDestination] {
-        guard let parent = destination.conversation?.parent else { return [] }
+        guard let parents = destination.conversation?.parents, !parents.isEmpty else { return [] }
         let nodes = (try? store?.loadConversationSnapshots()) ?? []
-        return MarginConversationGraph.ancestors(of: parent, in: nodes).map {
+        var ordered: [MarginConversationSnapshot] = [], seen: Set<String> = []
+        for parent in parents {
+            for node in MarginConversationGraph.ancestors(of: parent, in: nodes) where seen.insert(node.id).inserted {
+                ordered.append(node)
+            }
+        }
+        return ordered.map {
             ConversationDestination(id: "revision:\($0.id)", position: destination.position,
                 title: conversationTitle($0), content: .archived($0))
         }
@@ -4998,7 +5138,7 @@ final class Gate1AppModel: ObservableObject {
         if playingImportedCommentary != nil { stopImportedCommentaryPlayback(resumeSource: false) }
         stopInterjectionAudioPlayback()
         arriveAtConversationDestination(.init(destination: next, origin: conversationReturnPoint?.origin ?? conversationPosition,
-            wasPlaying: false, isMedia: conversationUsesMedia))
+            wasPlaying: false, isMedia: conversationUsesMedia), seekSource: !conversationUsesMedia)
     }
 
     private func archivedRecording(_ node: MarginConversationSnapshot) -> Interjection {
@@ -5016,6 +5156,10 @@ final class Gate1AppModel: ObservableObject {
         conversationLocalPaused = false
         if note.captureKind != .written && note.audioPath != nil {
             toggleInterjectionAudioPlayback(note)
+            guard playingInterjectionAudioId == note.id else {
+                clearConversationNavigation()
+                return
+            }
             if playingInterjectionAudioId != nil && !mixesWithOtherAudio {
                 conversationOwnsRemoteControls = true
                 (sessionAudioPlaybackClient ?? audioPlaybackClientOverride)?.setRemoteCommandHandlingEnabled(false)
@@ -5075,7 +5219,13 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func beginConversationDestination(_ requestedDestination: ConversationDestination, withContext: Bool, respectForwardPosition: Bool = false) {
+    private func beginConversationDestination(
+        _ requestedDestination: ConversationDestination,
+        withContext: Bool,
+        respectForwardPosition: Bool = false,
+        sourceContextAvailable: Bool = true,
+        playSourceLeadIn: Bool = true
+    ) {
         guard let engine, conversationIsSourcePlayback else { return }
         let parents = withContext ? parentPlaybackDestinations(for: requestedDestination) : []
         let destination = parents.first ?? requestedDestination
@@ -5093,15 +5243,8 @@ final class Gate1AppModel: ObservableObject {
         conversationThreadQueue = parents.isEmpty ? [] : Array(parents.dropFirst()) + [requestedDestination]
         conversationReturnPoint = previousReturnPoint ?? lead
         conversationCursor = destination
-        if destination.isMargin && withContext && (conversationContextSeconds > 0 || customRange != nil) {
-            if customRange == nil, conversationUsesMedia,
-               let summary = resolvedSkimPlaybackPlan(direction: .forward, at: origin),
-               summary.destinationMediaTimeMs == destination.position {
-                conversationLeadIn = lead
-                startSkimBridge(summary)
-                screen = .playback
-                return
-            }
+        if destination.isMargin && withContext && sourceContextAvailable && playSourceLeadIn
+            && (conversationContextSeconds > 0 || customRange != nil) {
             let start = customRange?.start ?? (conversationUsesMedia
                 ? max(0, destination.position - conversationContextSeconds * 1_000)
                 : ConversationNavigation.contextStart(text: selectedItem.text, destination: destination.position, seconds: conversationContextSeconds))
@@ -5109,6 +5252,8 @@ final class Gate1AppModel: ObservableObject {
             let landing = respectForwardPosition && origin <= destination.position ? max(origin, start) : start
             if landing < (lead.contextEnd ?? destination.position) {
                 conversationLeadIn = lead
+                conversationLeadInLastPosition = landing
+                conversationLeadInLastProgressAt = ProcessInfo.processInfo.systemUptime
                 do {
                     snapshot = try engine.pause()
                     try seekConversationSource(to: landing, isMedia: lead.isMedia)
@@ -5122,34 +5267,61 @@ final class Gate1AppModel: ObservableObject {
                 return
             }
         }
-        arriveAtConversationDestination(lead)
+        arriveAtConversationDestination(lead, seekSource: sourceContextAvailable)
     }
 
     private func seekConversationSource(to position: Int, isMedia: Bool) throws {
         guard let engine else { return }
-        snapshot = isMedia ? try engine.seekMedia(toMediaTimeMs: position) : try engine.seekText(toCharOffset: position)
+        if isMedia {
+            do {
+                snapshot = try engine.seekMedia(toMediaTimeMs: position)
+            } catch SessionKitError.invalidCommandForState(let reason) where reason == "media_seek_player_unavailable" {
+                snapshot = try engine.stagePausedMediaPosition(toMediaTimeMs: position)
+            }
+        } else {
+            snapshot = try engine.seekText(toCharOffset: position)
+        }
         streamingSpeechQueue.relinquishToCanonicalPlayback()
     }
 
     private func completeConversationLeadIn() {
         guard let lead = conversationLeadIn else { return }
         conversationLeadIn = nil
-        arriveAtConversationDestination(lead)
+        conversationLeadInLastPosition = nil
+        conversationLeadInLastProgressAt = nil
+        arriveAtConversationDestination(lead, seekSource: true)
+    }
+
+    func skipConversationContext() {
+        guard conversationLeadIn != nil else { return }
+        cancelSkimBridge(restoringOrigin: false, resumeSource: false)
+        completeConversationLeadIn()
     }
 
     @discardableResult
-    func reconcileConversationLeadIn(current: SessionSnapshot) -> Bool {
+    func reconcileConversationLeadIn(current: SessionSnapshot, now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
         guard let lead = conversationLeadIn else { return false }
         let position = lead.isMedia ? current.currentMediaTimeMs : current.currentTextStart
-        if let position, position >= (lead.contextEnd ?? lead.destination.position) { completeConversationLeadIn() }
+        if let position, position >= (lead.contextEnd ?? lead.destination.position) {
+            completeConversationLeadIn()
+        } else if lead.isMedia, current.status.isPlaybackActive {
+            if let position, position > (conversationLeadInLastPosition ?? position) + 250 {
+                conversationLeadInLastPosition = position
+                conversationLeadInLastProgressAt = now
+            } else if let lastProgress = conversationLeadInLastProgressAt, now - lastProgress >= 8 {
+                recordDeveloperDiagnostic("margin.context.no_progress", ["mediaTimeMs": String(position ?? -1)])
+                reportWarning("Source context stopped advancing. Playing the Margin directly.")
+                completeConversationLeadIn()
+            }
+        }
         return true
     }
 
-    private func arriveAtConversationDestination(_ lead: ConversationLeadIn) {
+    private func arriveAtConversationDestination(_ lead: ConversationLeadIn, seekSource: Bool = true) {
         guard let engine else { return }
         do {
             snapshot = try engine.pause()
-            try seekConversationSource(to: lead.destination.position, isMedia: lead.isMedia)
+            if seekSource { try seekConversationSource(to: lead.destination.position, isMedia: lead.isMedia) }
             conversationCursor = lead.destination
             conversationLeadIn = nil
             switch lead.destination.content {
@@ -5163,7 +5335,16 @@ final class Gate1AppModel: ObservableObject {
             case .shared(let layer, let note):
                 conversationCurrentMargin = lead.destination
                 announcedImportedInterjectionIDs.insert(note.id)
-                if note.audioPath != nil { listenToImportedCommentary(layerID: layer.id, interjectionID: note.id) }
+                if note.audioPath != nil {
+                    let records = (selectedItem.importedCommentaryInterjections[layer.id] ?? [])
+                        .sorted { Self.importedCommentaryOrder($0, $1) }
+                    let index = records.firstIndex(where: { $0.id == note.id }) ?? 0
+                    sourcePausedForImportedCommentaryPrompt = lead.wasPlaying
+                    listenToImportedCommentary(ImportedCommentaryPrompt(
+                        layer: layer, interjection: note, index: index + 1, count: records.count
+                    ))
+                    if playingImportedCommentary?.id != note.id { clearConversationNavigation() }
+                }
                 else {
                     reportConfirmation("This shared Margin contains text. Read it below.")
                     markConversationMarginHeard(lead.destination.id)
@@ -5194,6 +5375,31 @@ final class Gate1AppModel: ObservableObject {
             rate: conversationLocalPaused ? 0 : Double(player.rate), title: conversationCurrentMargin?.title ?? "My Margin")
     }
 
+    private func updateMarginPlaybackProgress(item: AVPlayerItem) {
+        let elapsed = item.currentTime().seconds
+        let duration = item.duration.seconds
+        marginPlaybackElapsedSeconds = elapsed.isFinite ? max(0, elapsed) : 0
+        marginPlaybackDurationSeconds = duration.isFinite ? max(0, duration) : 0
+    }
+
+    func restartCurrentMargin() {
+        guard isMarginVoicePlaying, let player = interjectionAudioPlayer else { return }
+        player.seek(to: .zero)
+        marginPlaybackElapsedSeconds = 0
+    }
+
+    func skipCurrentMarginToEnd() {
+        guard isMarginVoicePlaying else { return }
+        if conversationCurrentMargin != nil {
+            completeConversationMarginPlayback(markHeard: false)
+        } else if playingImportedCommentary != nil {
+            stopImportedCommentaryPlayback(resumeSource: true)
+            updateSkimAvailability(refreshResources: false)
+        } else {
+            stopInterjectionAudioPlayback()
+        }
+    }
+
     private func markConversationMarginHeard(_ id: String) {
         rememberHeardConversationMargin()
         heardConversationMargins.insert(id)
@@ -5212,11 +5418,43 @@ final class Gate1AppModel: ObservableObject {
         } catch { reportFailure(error, context: "Return to source failed") }
     }
 
+    /// Leave a heard Margin at its source position. The separate "Return to
+    /// original position" action still restores the point before navigation.
+    func resumeSourceFromConversation() {
+        if conversationLeadIn != nil { returnFromConversation(); return }
+        if snapshot.skimBridgeState != nil { returnFromSkim(); return }
+        guard conversationCurrentMargin != nil else { return }
+        let shouldResume = conversationReturnPoint?.wasPlaying == true || sourceShouldResumeAfterImportedCommentary
+        importedCommentaryAutoPlayTask?.cancel()
+        importedCommentaryAutoPlayTask = nil
+        pendingImportedCommentary = nil
+        sourcePausedForImportedCommentaryPrompt = false
+        stopInterjectionAudioPlayback()
+        conversationCurrentMargin = nil
+        conversationReturnPoint = nil
+        conversationThreadQueue = []
+        // Keep the cursor so Skim can reach another Margin at this exact position.
+        if shouldResume, snapshot.status == .paused, let engine {
+            do { snapshot = try engine.resumePlayback() }
+            catch { reportFailure(error, context: "Source playback could not resume") }
+        }
+        updateSkimAvailability(refreshResources: false)
+    }
+
+    private func completeConversationMarginPlayback(markHeard: Bool = true) {
+        guard let margin = conversationCurrentMargin else { return }
+        if markHeard { markConversationMarginHeard(margin.id) }
+        if conversationThreadQueue.isEmpty { resumeSourceFromConversation() }
+        else { nextConversationReply() }
+    }
+
     private func clearConversationNavigation() {
         if conversationCurrentMargin != nil && (playingInterjectionAudioId != nil || playingImportedCommentary != nil) {
             stopInterjectionAudioPlayback()
         }
         conversationLeadIn = nil
+        conversationLeadInLastProgressAt = nil
+        conversationLeadInLastPosition = nil
         conversationCurrentMargin = nil
         conversationReturnPoint = nil
         conversationCursor = nil
@@ -5230,6 +5468,9 @@ final class Gate1AppModel: ObservableObject {
         if let next = conversationDestination(backward: false) {
             if !next.isMargin && conversationUsesMedia { return PlaybackQualityPresentation.skimTitle(destinationMs: next.position, backward: false) }
             return "Skim · \(next.title)"
+        }
+        if let unmatched = nextUnmatchedImportedCommentaryPrompt {
+            return "\(unmatched.interjection.audioPath == nil ? "Review" : "Listen") next unmatched · \(unmatched.senderLabel)"
         }
         return PlaybackQualityPresentation.skimTitle(destinationMs: skimForwardDestinationMs, backward: false)
     }
@@ -5263,7 +5504,8 @@ final class Gate1AppModel: ObservableObject {
             ?? backward?.destinationMediaTimeMs
         if skimForwardDestinationMs != forwardTime { skimForwardDestinationMs = forwardTime }
         if skimBackwardDestinationMs != backwardTime { skimBackwardDestinationMs = backwardTime }
-        let canForward = conversationLeadIn != nil || conversationDestination(backward: false) != nil || (conversationScope == .all && forwardTime != nil)
+        let canForward = conversationLeadIn != nil || conversationDestination(backward: false) != nil
+            || nextUnmatchedImportedCommentaryPrompt != nil || (conversationScope == .all && forwardTime != nil)
         let canBackward = conversationLeadIn != nil || conversationDestination(backward: true) != nil || (conversationScope == .all && backwardTime != nil)
         guard snapshot.canSkimForward != canForward || snapshot.canSkimBackward != canBackward else { return }
         isUpdatingSkimAvailability = true
@@ -5397,8 +5639,33 @@ final class Gate1AppModel: ObservableObject {
                plan.destinationMediaTimeMs == destination.position {
                 startSkimBridge(plan)
             } else {
-                beginConversationDestination(destination, withContext: true, respectForwardPosition: true)
+                let includeParents = destination.isMargin && conversationScope == .newMargins
+                    && destination.conversation?.parents.isEmpty == false
+                beginConversationDestination(destination, withContext: !destination.isMargin || includeParents,
+                    respectForwardPosition: true, playSourceLeadIn: !includeParents)
             }
+            return
+        }
+        if direction == .forward, let unmatched = nextUnmatchedImportedCommentaryPrompt {
+            let wasPlaying = snapshot.status.isPlaybackActive || sourcePausedForImportedCommentaryPrompt
+                || sourceShouldResumeAfterImportedCommentary
+            importedCommentaryAutoPlayTask?.cancel()
+            importedCommentaryAutoPlayTask = nil
+            if playingImportedCommentary != nil { stopImportedCommentaryPlayback(resumeSource: false) }
+            pendingImportedCommentary = nil
+            offeredUnmatchedMarginIDs.insert(Self.sharedMarginID(unmatched))
+            sourcePausedForImportedCommentaryPrompt = wasPlaying
+            if conversationScope == .newMargins, unmatched.interjection.conversation?.parents.isEmpty == false {
+                let destination = ConversationDestination(id: Self.sharedMarginID(unmatched),
+                    position: conversationPosition, title: "\(unmatched.senderLabel)’s Margin",
+                    content: .shared(unmatched.layer, unmatched.interjection))
+                beginConversationDestination(destination, withContext: true,
+                    sourceContextAvailable: false, playSourceLeadIn: false)
+            } else {
+                listenToImportedCommentary(unmatched)
+            }
+            screen = .playback
+            updateSkimAvailability(refreshResources: false)
             return
         }
         guard conversationScope == .all else { return }
@@ -6779,6 +7046,7 @@ final class Gate1AppModel: ObservableObject {
 
     func redownloadSelectedPodcast() {
         guard let coordinator = podcastDownloadCoordinator else { return }
+        retryRecipientRecoveryAfterExplicitDownload(itemId: selectedItem.id)
         requestedPodcastTransportReplacements.insert(selectedItem.id)
         if coordinator.recordsByItemId[selectedItem.id] == nil {
             prioritizeOfflinePreparation(id: selectedItem.id)
@@ -6791,6 +7059,7 @@ final class Gate1AppModel: ObservableObject {
             reportFailure("Podcast download retry is unavailable.")
             return
         }
+        retryRecipientRecoveryAfterExplicitDownload(itemId: selectedItem.id)
         podcastDownloadCoordinator?.retry(itemId: selectedItem.id)
         reportSuccess("Retrying podcast download.")
     }
@@ -6878,7 +7147,7 @@ final class Gate1AppModel: ObservableObject {
                 isRequestingRecordingPermission = false
                 recordingPresentationContext = nil
                 pendingVoiceCaptureRequestID = nil
-                replyCaptureParent = nil; replyCaptureExistingIDs = []
+                replyCaptureParent = nil; replyCaptureParents = []; replyCaptureExistingIDs = []
                 recordingPermissionDenied = true
                 reportFailure("Microphone access is required to record interjections. Enable microphone access in Settings and try again.")
                 return
@@ -6895,9 +7164,21 @@ final class Gate1AppModel: ObservableObject {
         }
         synchronizeStreamingSpeechAnchorIfNeeded()
         streamingSpeechQueue.pauseForInterjection()
+        recordingProducingEditionBinding = nil
+        recordingProducingEditionSessionID = nil
+        recordingProducingEditionAnchorMs = nil
+        let producingBinding = activePodcastPlaybackFileBinding()
         run { engine in
             snapshot = try engine.beginInterjection()
             if snapshot.isRecording {
+                if let producingBinding,
+                   mediaPlaybackClient?.stillUsesLocalFileBinding(producingBinding) == true,
+                   snapshot.itemId == producingBinding.itemId,
+                   snapshot.targetType == TargetType.transcriptBackedMedia.rawValue {
+                    recordingProducingEditionBinding = producingBinding
+                    recordingProducingEditionSessionID = snapshot.sessionId
+                    recordingProducingEditionAnchorMs = snapshot.currentMediaTimeMs
+                }
                 recordingPresentationContext = RecordingPresentationContext(
                     itemTitle: selectedItem.title,
                     locationTitle: snapshot.chapterTitle ?? "Current listening position",
@@ -6910,7 +7191,7 @@ final class Gate1AppModel: ObservableObject {
             }
         }
         if !snapshot.isRecording {
-            replyCaptureParent = nil; replyCaptureExistingIDs = []
+            replyCaptureParent = nil; replyCaptureParents = []; replyCaptureExistingIDs = []
             recordingPresentationContext = nil
         }
     }
@@ -6950,11 +7231,29 @@ final class Gate1AppModel: ObservableObject {
 
     func finishInterjection() {
         guard snapshot.isRecording else { return }
+        let producingBinding = recordingProducingEditionBinding
+        let producingSessionID = recordingProducingEditionSessionID
+        let producingAnchorMs = recordingProducingEditionAnchorMs
+        recordingProducingEditionBinding = nil
+        recordingProducingEditionSessionID = nil
+        recordingProducingEditionAnchorMs = nil
+        let bindingWasCurrent = producingBinding.map {
+            mediaPlaybackClient?.stillUsesLocalFileBinding($0) == true
+        } ?? false
         run { engine in
             snapshot = try engine.finishInterjection(audioRef: nil)
             refreshSelectedItem()
             recordSavedInterjectionForOnboarding()
             if let interjection = latestInterjectionNeedingTranscription() {
+                if bindingWasCurrent, let producingBinding,
+                   engine.lastScheduledTranscriptionInterjectionId == interjection.id,
+                   producingSessionID == interjection.sessionId,
+                   producingAnchorMs == interjection.anchor.mediaTimeMs,
+                   producingBinding.itemId == interjection.itemId,
+                   interjection.targetType == .item,
+                   interjection.anchor.mediaTimeMs != nil {
+                    captureProducingEditionDigest(for: interjection, binding: producingBinding)
+                }
                 scheduleTranscription(for: interjection)
             }
             reportConfirmation("Interjection saved. Transcription is continuing in the background.")
@@ -6966,6 +7265,45 @@ final class Gate1AppModel: ObservableObject {
         streamingSpeechQueue.resumeAfterInterjection()
     }
 
+    private func activePodcastPlaybackFileBinding() -> LocalPlaybackFileBinding? {
+        guard snapshot.targetType == TargetType.transcriptBackedMedia.rawValue,
+              let itemId = snapshot.itemId,
+              let url = podcastDownloadCoordinator?.validatedLocalURL(for: itemId) else { return nil }
+        return mediaPlaybackClient?.activeLocalFileBinding(url: url, itemId: itemId)
+    }
+
+    private func captureProducingEditionDigest(
+        for interjection: Interjection, binding: LocalPlaybackFileBinding
+    ) {
+        Task.detached { [weak self] in
+            guard binding.stillIdentifiesFile(),
+                  let digest = try? PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: binding.url),
+                  binding.stillIdentifiesFile() else { return }
+            await MainActor.run {
+                guard let self,
+                      self.mediaPlaybackClient?.stillUsesLocalFileBinding(binding) == true,
+                      self.podcastDownloadCoordinator?.validatedLocalURL(for: binding.itemId)?.standardizedFileURL
+                        == binding.url,
+                      let store = self.store,
+                      var current = (try? store.loadInterjections(sessionId: interjection.sessionId))?.first(where: {
+                          $0.id == interjection.id && $0.itemId == binding.itemId
+                      }),
+                      current.anchor == interjection.anchor,
+                      current.sourceExactEditionSHA256 == nil else { return }
+                current.sourceExactEditionSHA256 = digest
+                do {
+                    try store.saveInterjection(current)
+                    self.diagnostics["podcastProducingEdition:\(current.id)"] = "bound_local_playback"
+                    if current.podcastAnchorEvidenceCaptureStatus == .unavailable {
+                        self.schedulePodcastAnchorEvidenceCapture(for: current)
+                    }
+                } catch {
+                    self.diagnostics["podcastProducingEdition:\(current.id)"] = "persistence_failed"
+                }
+            }
+        }
+    }
+
     private func recordSavedInterjectionForOnboarding() {
         attachPendingReplyToLatestCapture()
         markOnboardingSteps([.firstInterjection])
@@ -6975,7 +7313,10 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func cancelInterjection() {
-        replyCaptureParent = nil; replyCaptureExistingIDs = []
+        recordingProducingEditionBinding = nil
+        recordingProducingEditionSessionID = nil
+        recordingProducingEditionAnchorMs = nil
+        replyCaptureParent = nil; replyCaptureParents = []; replyCaptureExistingIDs = []
         if isRequestingRecordingPermission && !snapshot.isRecording {
             pendingVoiceCaptureRequestID = nil
             isRequestingRecordingPermission = false
@@ -7042,7 +7383,7 @@ final class Gate1AppModel: ObservableObject {
         guard let draft = writtenMarginDraft, let engine else { return }
         do {
             snapshot = try engine.saveWrittenInterjection(captureId: draft.capture.id, text: text)
-            attachPendingReplyToLatestCapture()
+            attachPendingReplyToLatestCapture(expectedID: "ij-written-\(draft.capture.id)")
             writtenMarginDraft = nil
             if draft.priorWasPlaying { streamingSpeechQueue.resumeAfterInterjection() }
             refreshSelectedItem()
@@ -7059,7 +7400,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func cancelWrittenMargin() {
-        replyCaptureParent = nil; replyCaptureExistingIDs = []
+        replyCaptureParent = nil; replyCaptureParents = []; replyCaptureExistingIDs = []
         guard let draft = writtenMarginDraft, let engine else { return }
         do {
             snapshot = try engine.cancelWrittenInterjection(captureId: draft.capture.id)
@@ -7632,21 +7973,34 @@ final class Gate1AppModel: ObservableObject {
             playingInterjectionAudioSessionID = interjection.sessionId
             playingInterjectionAudioRate = rate
             interjectionAudioCompletionTask = Task { @MainActor [weak self, weak item] in
+                var lastProgressAt = ProcessInfo.processInfo.systemUptime
+                var lastPosition = 0.0
                 while !Task.isCancelled, let item {
                     try? await Task.sleep(for: .milliseconds(250))
                     guard !Task.isCancelled else { return }
                     if item.status == .failed {
                         self?.stopInterjectionAudioPlayback()
+                        self?.clearConversationNavigation()
                         self?.reportFailure("The saved recording could not be played.")
                         return
                     }
                     self?.publishConversationRecording()
                     let duration = item.duration.seconds
                     let current = item.currentTime().seconds
-                    if duration.isFinite, duration > 0, current.isFinite, current >= duration - 0.05 {
-                        if let self, let margin = self.conversationCurrentMargin { self.markConversationMarginHeard(margin.id) }
+                    self?.updateMarginPlaybackProgress(item: item)
+                    if current.isFinite, current > lastPosition + 0.05 {
+                        lastPosition = current
+                        lastProgressAt = ProcessInfo.processInfo.systemUptime
+                    } else if self?.conversationLocalPaused != true,
+                              ProcessInfo.processInfo.systemUptime - lastProgressAt >= 10 {
                         self?.stopInterjectionAudioPlayback()
-                        self?.nextConversationReply()
+                        self?.clearConversationNavigation()
+                        self?.reportFailure("The saved recording did not start. Try playing this Margin again.")
+                        return
+                    }
+                    if duration.isFinite, duration > 0, current.isFinite, current >= duration - 0.05 {
+                        if self?.conversationCurrentMargin != nil { self?.completeConversationMarginPlayback() }
+                        else { self?.stopInterjectionAudioPlayback() }
                         return
                     }
                 }
@@ -7665,6 +8019,7 @@ final class Gate1AppModel: ObservableObject {
     func stopInterjectionAudioPlayback() {
         let hadImportedMargin = playingImportedCommentary != nil || conversationOwnsRemoteControls
         conversationOwnsRemoteControls = false
+        conversationLocalPaused = false
         playingImportedCommentary = nil
         importedCommentaryIsPaused = false
         sourceShouldResumeAfterImportedCommentary = false
@@ -7683,6 +8038,8 @@ final class Gate1AppModel: ObservableObject {
         playingInterjectionAudioId = nil
         playingInterjectionAudioSessionID = nil
         playingInterjectionAudioRate = 1
+        marginPlaybackElapsedSeconds = 0
+        marginPlaybackDurationSeconds = 0
     }
 
     func listenToPendingImportedCommentary() {
@@ -7692,6 +8049,10 @@ final class Gate1AppModel: ObservableObject {
 
     func dismissPendingImportedCommentary() {
         guard pendingImportedCommentary != nil else { return }
+        if conversationCurrentMargin != nil {
+            resumeSourceFromConversation()
+            return
+        }
         importedCommentaryAutoPlayTask?.cancel()
         importedCommentaryAutoPlayTask = nil
         pendingImportedCommentary = nil
@@ -7714,8 +8075,211 @@ final class Gate1AppModel: ObservableObject {
         ))
     }
 
+    func isReviewingImportedPodcastPosition(layerID: String, interjectionID: String) -> Bool {
+        guard let review = recipientPositionReview else { return false }
+        return review.layerID == layerID && review.marginID == interjectionID
+            && review.itemID == selectedItem.id && snapshot.itemId == review.itemID
+    }
+
+    private func currentRecipientPodcastURL(itemID: String) -> URL? {
+        let url = podcastDownloadCoordinator?.validatedLocalURL(for: itemID)
+            ?? importedPodcastRecipientLocalURLs[itemID]
+        guard let url, url.isFileURL, FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return url
+    }
+
+    #if DEBUG
+    func useRecipientPodcastFileForTests(itemID: String, url: URL) {
+        importedPodcastRecipientLocalURLs[itemID] = url
+    }
+
+    func useRecipientPlaybackURLProbeForTests(_ probe: @escaping (URL, String) -> Bool) {
+        recipientPlaybackURLProbeForTests = probe
+    }
+    #endif
+
+    @discardableResult
+    func listenAroundImportedPodcastPosition(layerID: String, interjectionID: String) -> Bool {
+        recipientPositionReviewGeneration += 1
+        let reviewGeneration = recipientPositionReviewGeneration
+        recipientPositionReview = nil
+        do {
+            let store = try requireStore()
+            guard let layer = try store.loadImportedCommentaryLayer(id: layerID),
+                  layer.deletedAt == nil, let itemID = layer.itemId,
+                  itemID == selectedItem.id,
+                  layer.itemIdentity.itemType == .podcast,
+                  let note = try store.loadImportedCommentaryInterjections(layerId: layerID)
+                    .first(where: { $0.id == interjectionID }),
+                  [.unresolved, .ambiguous].contains(note.resolution.evidenceClass),
+                  let localURL = currentRecipientPodcastURL(itemID: itemID) else {
+                reportFailure("Download this podcast episode before reviewing a shared Margin position.")
+                return false
+            }
+            let digest = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: localURL)
+            if layer.resolvedRecipientEditionSHA256 != nil,
+               layer.resolvedRecipientEditionSHA256 != digest {
+                try Self.invalidatePodcastEdition(itemId: itemID, digest: digest, store: store)
+                refreshSelectedItem()
+            }
+            if snapshot.itemId != itemID { startItem(id: itemID) }
+            guard snapshot.itemId == itemID, let engine else { return false }
+            let proposed = note.resolution.localMediaTimeMs ?? note.anchorEvidence.mediaTimeMs
+                ?? snapshot.currentMediaTimeMs ?? 0
+            let duration = try store.loadItem(id: itemID).media?.durationMs
+            let position = min(max(0, proposed), max(0, duration ?? proposed))
+            restoreSkimOriginBeforeCanonicalTransport()
+            snapshot = try engine.playOnPlaybackTransportAndSeek(
+                itemId: itemID, playbackURL: localURL.absoluteString, mediaTimeMs: position
+            )
+            recordMediaSeekEvidence(from: engine)
+            snapshot = try engine.syncPlaybackProgress()
+            guard let seekID = engine.lastMediaSeekRequest?.id else {
+                reportFailure("The episode did not accept that position. Try listening around it again.")
+                return false
+            }
+            let review = RecipientPositionReview(
+                layerID: layerID, marginID: interjectionID, itemID: itemID,
+                localURL: localURL, editionSHA256: digest
+            )
+            let readiness = recipientPositionSeekReadiness(engine: engine, seekID: seekID, localURL: localURL)
+            if readiness == .ready {
+                recipientPositionReview = review
+                refreshSelectedItem()
+                reportConfirmation("Listen around this suggested position, then confirm the position you hear.")
+            } else if readiness == .waiting {
+                diagnostics["recipientPositionReview:\(interjectionID)"] = "waiting_for_source_seek"
+                Task { @MainActor [weak self] in
+                    for _ in 0..<30 {
+                        try? await Task.sleep(for: .milliseconds(100))
+                        guard let self, self.recipientPositionReviewGeneration == reviewGeneration,
+                              self.snapshot.itemId == itemID, let currentEngine = self.engine,
+                              currentEngine.lastMediaSeekRequest?.id == seekID else { return }
+                        self.snapshot = (try? currentEngine.syncPlaybackProgress()) ?? self.snapshot
+                        let readiness = self.recipientPositionSeekReadiness(
+                            engine: currentEngine, seekID: seekID, localURL: localURL
+                        )
+                        if readiness == .ready {
+                            self.recipientPositionReview = review
+                            self.refreshSelectedItem()
+                            self.reportConfirmation("Listen around this suggested position, then confirm the position you hear.")
+                            return
+                        }
+                        if readiness == .rejected {
+                            self.reportFailure("The episode's position changed. Try listening around it again.")
+                            return
+                        }
+                    }
+                    self?.reportFailure("The episode did not reach that position. Try again.")
+                }
+            } else {
+                reportFailure("The episode could not seek to that position. Try again.")
+                return false
+            }
+            return true
+        } catch {
+            recipientPositionReview = nil
+            reportFailure(error, context: "Shared Margin position review could not start")
+            return false
+        }
+    }
+
+    private func recipientPositionSeekReadiness(
+        engine: SessionEngine, seekID: Int, localURL: URL
+    ) -> MediaSeekReadiness {
+        var localTransportActive = mediaPlaybackClient?.isUsingPlaybackURL(
+            localURL, itemId: snapshot.itemId ?? ""
+        ) == true
+        #if DEBUG
+        if let recipientPlaybackURLProbeForTests {
+            localTransportActive = recipientPlaybackURLProbeForTests(
+                localURL, snapshot.itemId ?? ""
+            )
+        }
+        #endif
+        return MediaSeekReadiness.evaluate(
+            requestID: seekID, observedRequest: engine.lastMediaSeekRequest,
+            resolution: engine.lastMediaSeekResolution, playbackStatus: snapshot.status,
+            hasMediaPosition: snapshot.currentMediaTimeMs != nil,
+            requestedTransportActive: localTransportActive
+        )
+    }
+
+    @discardableResult
+    func confirmImportedPodcastPosition(layerID: String, interjectionID: String) -> Bool {
+        guard let review = recipientPositionReview,
+              review.layerID == layerID, review.marginID == interjectionID,
+              review.itemID == selectedItem.id, snapshot.itemId == review.itemID else {
+            reportFailure("Listen around the position before confirming this shared Margin.")
+            return false
+        }
+        do {
+            let store = try requireStore()
+            if let engine {
+                snapshot = try engine.syncPlaybackProgress()
+                guard case .some(.accepted) = engine.lastMediaSeekResolution else {
+                    reportFailure("Wait for the episode to reach your chosen position before confirming.")
+                    return false
+                }
+            }
+            guard let position = snapshot.currentMediaTimeMs, position >= 0 else {
+                reportFailure("Choose a position in the episode before confirming.")
+                return false
+            }
+            guard let currentURL = currentRecipientPodcastURL(itemID: review.itemID) else {
+                recipientPositionReview = nil
+                reportFailure("The local podcast file is unavailable. Review its position again.")
+                return false
+            }
+            let currentDigest = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: currentURL)
+            guard currentDigest == review.editionSHA256,
+                  currentURL.standardizedFileURL == review.localURL.standardizedFileURL else {
+                try Self.invalidatePodcastEdition(itemId: review.itemID, digest: currentDigest, store: store)
+                recipientPositionReview = nil
+                refreshSelectedItem()
+                reportFailure("The podcast file changed. Review this Margin against the new edition.")
+                return false
+            }
+            guard var layer = try store.loadImportedCommentaryLayer(id: layerID),
+                  layer.itemId == review.itemID, layer.itemIdentity.itemType == .podcast,
+                  layer.deletedAt == nil,
+                  var note = try store.loadImportedCommentaryInterjections(layerId: layerID)
+                    .first(where: { $0.id == interjectionID }),
+                  [.unresolved, .ambiguous].contains(note.resolution.evidenceClass) else { return false }
+            note.resolution = ImportedAnchorResolution(
+                evidenceClass: .recipientConfirmed, localMediaTimeMs: position,
+                algorithmVersion: "recipient-confirmation.v1"
+            )
+            layer.resolvedRecipientEditionSHA256 = currentDigest
+            let records = try store.loadImportedCommentaryInterjections(layerId: layerID).map {
+                $0.id == note.id ? note : $0
+            }
+            layer.sourceResolutionStatus = records.allSatisfy { Self.isInlinePodcastResolution($0.resolution) }
+                ? .resolved : (records.contains { $0.resolution.evidenceClass == .ambiguous } ? .ambiguous : .contextOnly)
+            let commitDigest = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: currentURL)
+            guard commitDigest == currentDigest else {
+                try Self.invalidatePodcastEdition(itemId: review.itemID, digest: commitDigest, store: store)
+                recipientPositionReview = nil
+                refreshSelectedItem()
+                reportFailure("The podcast file changed. Review this Margin against the new edition.")
+                return false
+            }
+            try store.saveImportedCommentaryPositionConfirmation(layer: layer, interjection: note)
+            recipientPositionReviewGeneration += 1
+            importedPodcastResolutionGenerations[review.itemID, default: 0] += 1
+            recipientPositionReview = nil
+            refreshSelectedItem()
+            reportConfirmation("Position confirmed by you for this podcast edition.")
+            return true
+        } catch {
+            recipientPositionReview = nil
+            reportFailure(error, context: "Shared Margin position could not be confirmed")
+            return false
+        }
+    }
+
     func returnToSourceFromImportedCommentary() {
-        if conversationReturnPoint != nil { returnFromConversation(); return }
+        if conversationReturnPoint != nil { resumeSourceFromConversation(); return }
         stopImportedCommentaryPlayback(resumeSource: true)
     }
 
@@ -7764,15 +8328,37 @@ final class Gate1AppModel: ObservableObject {
                 }
             }
             interjectionAudioCompletionTask = Task { @MainActor [weak self, weak item] in
+                var lastProgressAt = ProcessInfo.processInfo.systemUptime
+                var lastPosition = 0.0
                 while !Task.isCancelled, let item {
                     try? await Task.sleep(for: .milliseconds(200))
                     guard !Task.isCancelled else { return }
+                    if item.status == .failed {
+                        self?.stopImportedCommentaryPlayback(resumeSource: false)
+                        self?.clearConversationNavigation()
+                        self?.reportFailure("This shared recording could not be played.")
+                        return
+                    }
                     let duration = item.duration.seconds
                     let current = item.currentTime().seconds
+                    self?.updateMarginPlaybackProgress(item: item)
+                    if current.isFinite, current > lastPosition + 0.05 {
+                        lastPosition = current
+                        lastProgressAt = ProcessInfo.processInfo.systemUptime
+                    } else if self?.importedCommentaryIsPaused != true,
+                              ProcessInfo.processInfo.systemUptime - lastProgressAt >= 10 {
+                        self?.stopImportedCommentaryPlayback(resumeSource: false)
+                        self?.clearConversationNavigation()
+                        self?.reportFailure("This shared recording did not start. Try playing this Margin again.")
+                        return
+                    }
                     if duration.isFinite, duration > 0, current.isFinite, current >= duration - 0.05 {
-                        if let self, let margin = self.conversationCurrentMargin { self.markConversationMarginHeard(margin.id) }
-                        self?.stopImportedCommentaryPlayback(resumeSource: self?.conversationCurrentMargin == nil)
-                        self?.nextConversationReply()
+                        if self?.conversationCurrentMargin != nil { self?.completeConversationMarginPlayback() }
+                        else {
+                            self?.markConversationMarginHeard(Self.sharedMarginID(prompt))
+                            self?.stopImportedCommentaryPlayback(resumeSource: true)
+                            self?.updateSkimAvailability(refreshResources: false)
+                        }
                         return
                     }
                     self?.publishImportedCommentaryNowPlaying()
@@ -7854,7 +8440,7 @@ final class Gate1AppModel: ObservableObject {
                 < Self.importedCommentaryPosition($1.interjection)
         }
         guard let prompt = crossed.first else { return }
-        crossed.forEach { announcedImportedInterjectionIDs.insert($0.id) }
+        announcedImportedInterjectionIDs.insert(prompt.id)
         guard prompt.layer.revealMode != .fresh else { return }
         presentImportedCommentaryPrompt(prompt, sourceWasPlaying: current.status.isPlaybackActive)
     }
@@ -7871,7 +8457,7 @@ final class Gate1AppModel: ObservableObject {
                 let records = (selectedItem.importedCommentaryInterjections[layer.id] ?? [])
                     .filter { Self.isPlayableImportedCommentaryResolution($0.resolution) }
                     .sorted { lhs, rhs in
-                        Self.importedCommentaryPosition(lhs) < Self.importedCommentaryPosition(rhs)
+                        Self.importedCommentaryOrder(lhs, rhs)
                     }
                 return records.enumerated().compactMap { pair -> ImportedCommentaryPrompt? in
                     let (offset, record) = pair
@@ -7888,6 +8474,56 @@ final class Gate1AppModel: ObservableObject {
             }
     }
 
+    private var nextUnmatchedImportedCommentaryPrompt: ImportedCommentaryPrompt? {
+        guard selectedItem.id == snapshot.itemId, conversationIsSourcePlayback,
+              !snapshot.isRecording else { return nil }
+        let referencedParentIDs = Set(selectedItem.importedCommentaryInterjections.values
+            .flatMap { $0 }
+            .flatMap { $0.conversation?.parents.map(\.id) ?? [] })
+        let prompts = selectedItem.importedCommentaryLayers
+            .filter { $0.deletedAt == nil && $0.isEnabled && !$0.isMuted && $0.sourceResolutionStatus != .wrongSource }
+            .flatMap { layer -> [ImportedCommentaryPrompt] in
+                let records = (selectedItem.importedCommentaryInterjections[layer.id] ?? [])
+                    .sorted { Self.importedCommentaryOrder($0, $1) }
+                return records.enumerated().compactMap { offset, record in
+                    guard !Self.isPlayableImportedCommentaryResolution(record.resolution) else { return nil }
+                    let prompt = ImportedCommentaryPrompt(layer: layer, interjection: record,
+                        index: offset + 1, count: records.count)
+                    let id = Self.sharedMarginID(prompt)
+                    guard !offeredUnmatchedMarginIDs.contains(id),
+                          conversationScope != .newMargins || (!heardConversationMargins.contains(id)
+                              && record.conversation?.authorID != conversationAuthorID
+                              && !referencedParentIDs.contains(record.conversation?.reference.id ?? "")) else { return nil }
+                    return prompt
+                }
+            }
+        return prompts.sorted { lhs, rhs in
+            let left = lhs.interjection.anchorEvidence.roughPercent ?? Int.max
+            let right = rhs.interjection.anchorEvidence.roughPercent ?? Int.max
+            if left != right { return left < right }
+            let leftTime = lhs.interjection.anchorEvidence.mediaTimeMs ?? Int.max
+            let rightTime = rhs.interjection.anchorEvidence.mediaTimeMs ?? Int.max
+            if leftTime != rightTime { return leftTime < rightTime }
+            return Self.sharedMarginID(lhs) < Self.sharedMarginID(rhs)
+        }.first
+    }
+
+    private nonisolated static func sharedMarginID(_ prompt: ImportedCommentaryPrompt) -> String {
+        prompt.interjection.conversation.map { "revision:\($0.reference.id)" }
+            ?? "shared:\(prompt.layer.id):\(prompt.interjection.id)"
+    }
+
+    private nonisolated static func importedCommentaryOrder(
+        _ lhs: ImportedCommentaryInterjection, _ rhs: ImportedCommentaryInterjection
+    ) -> Bool {
+        let left = lhs.anchorEvidence.roughPercent ?? Int.max
+        let right = rhs.anchorEvidence.roughPercent ?? Int.max
+        if left != right { return left < right }
+        let leftTime = lhs.anchorEvidence.mediaTimeMs ?? Self.importedCommentaryPosition(lhs)
+        let rightTime = rhs.anchorEvidence.mediaTimeMs ?? Self.importedCommentaryPosition(rhs)
+        return leftTime == rightTime ? lhs.id < rhs.id : leftTime < rightTime
+    }
+
     private func presentImportedCommentaryPrompt(
         _ prompt: ImportedCommentaryPrompt,
         sourceWasPlaying: Bool
@@ -7896,7 +8532,7 @@ final class Gate1AppModel: ObservableObject {
         if sourceWasPlaying, snapshot.status.isPlaybackActive { pause() }
         if !prompt.layer.isMuted { playImportedCommentaryCue() }
         pendingImportedCommentary = prompt
-        if prompt.layer.revealMode == .guided {
+        if importedCommentaryAutoPlayEnabled {
             importedCommentaryAutoPlayTask?.cancel()
             importedCommentaryAutoPlayTask = Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .milliseconds(420))
@@ -8690,7 +9326,8 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func acquirePodcastForImportedPackage(_ item: SharedItemIdentity) async throws -> String {
-        guard let canonicalURL = item.canonicalURL else {
+        guard let canonicalURL = item.canonicalURL,
+              normalizedSharingURL(canonicalURL) != nil else {
             throw SessionKitError.persistenceFailed("shared_podcast_item_has_no_reference")
         }
         let request = LinkResolutionRequest(
@@ -8700,10 +9337,22 @@ final class Gate1AppModel: ObservableObject {
             createdAt: Date()
         )
         var result: LinkResolutionResult
-        if let sourceLinkResolver {
-            result = try sourceLinkResolver.resolve(request)
-        } else {
-            result = try await PublicPodcastLinkResolver().resolveAsync(request)
+        do {
+            if let sourceLinkResolver {
+                result = try sourceLinkResolver.resolve(request)
+            } else {
+                result = try await PublicPodcastLinkResolver().resolveAsync(request)
+            }
+        } catch {
+            // Keep the existing resolver path first. Some publisher pages reject
+            // automated requests even when the packet has the exact enclosure.
+            // In that case, use its reference through the same source persistence
+            // path; anchor placement still needs recipient evidence.
+            guard let packageResult = packagePodcastLinkResolution(item: item, request: request) else {
+                throw error
+            }
+            diagnostics["lastSharedPodcastAcquisition"] = "package_reference_after_resolution_failure"
+            result = packageResult
         }
         if result.status == .needsReview {
             let exactEnclosureMatches = result.candidates.filter {
@@ -8727,6 +9376,38 @@ final class Gate1AppModel: ObservableObject {
             throw SessionKitError.persistenceFailed("shared_podcast_item_not_created")
         }
         return importedItem.id
+    }
+
+    private func packagePodcastLinkResolution(
+        item: SharedItemIdentity,
+        request: LinkResolutionRequest
+    ) -> LinkResolutionResult? {
+        guard item.itemType == .podcast,
+              let canonicalURL = item.canonicalURL,
+              normalizedSharingURL(canonicalURL) != nil,
+              let enclosureURL = item.enclosureURL,
+              normalizedSharingURL(enclosureURL) != nil,
+              !item.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let sourceLink = SourceLink(
+            url: canonicalURL, provider: "shared_package", title: item.title,
+            role: "package_reference"
+        )
+        let candidate = LinkResolutionCandidate(
+            sourceLink: sourceLink,
+            title: item.title,
+            showTitle: item.showTitle,
+            durationMs: item.durationMs,
+            publishedAt: item.publishedAt,
+            audioURL: enclosureURL,
+            confidence: 1
+        )
+        return LinkResolutionResult(
+            requestId: request.id,
+            status: .playable,
+            originalLink: sourceLink,
+            selectedCandidate: candidate,
+            candidates: [candidate]
+        )
     }
 
     private func importedLayerHasValidItemAssociation(
@@ -10027,6 +10708,8 @@ final class Gate1AppModel: ObservableObject {
             case .play: resumePlayback()
             case .pause: pause()
             case .togglePlayPause: playPause()
+            case .skipBack: restartCurrentMargin()
+            case .skipForward: skipCurrentMarginToEnd()
             default:
                 reportWarning("Return to Source before using source controls.")
             }
@@ -10083,6 +10766,27 @@ final class Gate1AppModel: ObservableObject {
         if command == .beginInterjection {
             streamingSpeechQueue.pauseForInterjection()
         }
+        let producingBinding: LocalPlaybackFileBinding?
+        if command == .beginInterjection {
+            recordingProducingEditionBinding = nil
+            recordingProducingEditionSessionID = nil
+            recordingProducingEditionAnchorMs = nil
+            producingBinding = Self.compactCaptureOriginCanBindProducingEdition(origin)
+                ? activePodcastPlaybackFileBinding() : nil
+        } else {
+            producingBinding = nil
+        }
+        let finishingBinding = command == .finishInterjection ? recordingProducingEditionBinding : nil
+        let finishingSessionID = command == .finishInterjection ? recordingProducingEditionSessionID : nil
+        let finishingAnchorMs = command == .finishInterjection ? recordingProducingEditionAnchorMs : nil
+        if command == .finishInterjection || command == .cancelInterjection {
+            recordingProducingEditionBinding = nil
+            recordingProducingEditionSessionID = nil
+            recordingProducingEditionAnchorMs = nil
+        }
+        let finishingBindingWasCurrent = finishingBinding.map {
+            mediaPlaybackClient?.stillUsesLocalFileBinding($0) == true
+        } ?? false
         do {
             let result = try gate2CompactControls.dispatch(
                 command,
@@ -10098,6 +10802,14 @@ final class Gate1AppModel: ObservableObject {
                 updateGate2CompactState()
             }
             if command == .beginInterjection, snapshot.isRecording {
+                if result.delegatedToCanonicalRuntime, let producingBinding,
+                   mediaPlaybackClient?.stillUsesLocalFileBinding(producingBinding) == true,
+                   snapshot.itemId == producingBinding.itemId,
+                   snapshot.targetType == TargetType.transcriptBackedMedia.rawValue {
+                    recordingProducingEditionBinding = producingBinding
+                    recordingProducingEditionSessionID = snapshot.sessionId
+                    recordingProducingEditionAnchorMs = snapshot.currentMediaTimeMs
+                }
                 recordingPresentationContext = RecordingPresentationContext(
                     itemTitle: selectedItem.title,
                     locationTitle: snapshot.chapterTitle ?? "Current listening position",
@@ -10121,6 +10833,18 @@ final class Gate1AppModel: ObservableObject {
                 recordSavedInterjectionForOnboarding()
             }
             if command == .finishInterjection, let interjection = latestInterjectionNeedingTranscription() {
+                if result.delegatedToCanonicalRuntime,
+                   Self.compactCaptureOriginCanBindProducingEdition(origin),
+                   finishingBindingWasCurrent,
+                   let finishingBinding, let engine,
+                   engine.lastScheduledTranscriptionInterjectionId == interjection.id,
+                   finishingSessionID == interjection.sessionId,
+                   finishingAnchorMs == interjection.anchor.mediaTimeMs,
+                   finishingBinding.itemId == interjection.itemId,
+                   interjection.targetType == .item,
+                   interjection.anchor.mediaTimeMs != nil {
+                    captureProducingEditionDigest(for: interjection, binding: finishingBinding)
+                }
                 scheduleTranscription(for: interjection)
             }
             if command == .finishInterjection || command == .cancelInterjection {
@@ -10140,6 +10864,10 @@ final class Gate1AppModel: ObservableObject {
             }
             reportFailure(error, context: "Compact control failed")
         }
+    }
+
+    nonisolated static func compactCaptureOriginCanBindProducingEdition(_ origin: String) -> Bool {
+        ["app_ui", "compact_url", "now_playing"].contains(origin)
     }
 
     private func compactSkipUnit(for command: CompactControlCommand) -> String? {
@@ -10266,34 +10994,42 @@ final class Gate1AppModel: ObservableObject {
     // MARK: Portable listening editions and personal knowledge output
     func importListeningEditionData(_ data: Data, replaceMap: Bool = false) {
         do {
-            guard !snapshot.isRecording else { throw EditionError.invalid("Finish recording before importing a listening edition.") }
-            let edition = try ListeningEdition.decode(data)
-            let editions = try ListeningEditionStore.application()
-            if let previous = try editions.load(itemID: edition.itemID), previous != edition, !replaceMap {
-                throw EditionError.invalid("This source already has a different Listening Map. Use Import Listening Edition in Settings to preview and explicitly replace it.")
-            }
-            let store = try requireStore()
-            // Stable source identity preserves every existing session and Margin on retry.
-            if (try? store.loadItem(id: edition.itemID)) == nil {
-                try store.saveItem(Item(id: edition.itemID, title: edition.title, mediaType: "text", text: edition.text,
-                                       externalReference: edition.sourceURL, status: "ready", externalReferenceType: "url", createdAt: Date()))
-            }
-            if snapshot.itemId == edition.itemID, snapshot.status.isPlaybackActive {
-                throw EditionError.invalid("Pause playback before importing a map for the current item.")
-            }
-            try editions.save(edition)
-            if let engine { snapshot = try engine.attachListeningMap(edition.listeningMap()) }
-            else { try store.saveListeningMap(edition.listeningMap()) }
-            if let timeline = try store.loadTranscriptTimeline(itemId: edition.itemID)?.timeline {
-                activateListeningEditionAudio(itemId: edition.itemID, timeline: timeline)
-            }
-            activeItemId = edition.itemID
-            libraryItems = try loadLibraryRows(store: store)
-            refreshSelectedItem()
-            screen = .item
-            scheduleTextAudioPrewarmIfNeeded(itemId: edition.itemID)
-            reportConfirmation("Imported item and Listening Map. Audio prepares separately; playback has not started.")
+            try performListeningEditionImport(data, replaceMap: replaceMap)
         } catch { reportFailure(error, context: "Listening edition import failed") }
+    }
+
+    func importListeningEditionDataForShortcut(_ data: Data) throws {
+        try performListeningEditionImport(data, replaceMap: false)
+    }
+
+    private func performListeningEditionImport(_ data: Data, replaceMap: Bool) throws {
+        guard !snapshot.isRecording else { throw EditionError.invalid("Finish recording before importing a listening edition.") }
+        let edition = try ListeningEdition.decode(data)
+        let editions = try ListeningEditionStore.application()
+        if let previous = try editions.load(itemID: edition.itemID), previous != edition, !replaceMap {
+            throw EditionError.invalid("This source already has a different Listening Map. Use Import Listening Edition in Settings to preview and explicitly replace it.")
+        }
+        let store = try requireStore()
+        // Stable source identity preserves every existing session and Margin on retry.
+        if (try? store.loadItem(id: edition.itemID)) == nil {
+            try store.saveItem(Item(id: edition.itemID, title: edition.title, mediaType: "text", text: edition.text,
+                                   externalReference: edition.sourceURL, status: "ready", externalReferenceType: "url", createdAt: Date()))
+        }
+        if snapshot.itemId == edition.itemID, snapshot.status.isPlaybackActive {
+            throw EditionError.invalid("Pause playback before importing a map for the current item.")
+        }
+        try editions.save(edition)
+        if let engine { snapshot = try engine.attachListeningMap(edition.listeningMap()) }
+        else { try store.saveListeningMap(edition.listeningMap()) }
+        if let timeline = try store.loadTranscriptTimeline(itemId: edition.itemID)?.timeline {
+            activateListeningEditionAudio(itemId: edition.itemID, timeline: timeline)
+        }
+        activeItemId = edition.itemID
+        libraryItems = try loadLibraryRows(store: store)
+        refreshSelectedItem()
+        screen = .item
+        scheduleTextAudioPrewarmIfNeeded(itemId: edition.itemID)
+        reportConfirmation("Imported item and Listening Map. Audio prepares separately; playback has not started.")
     }
 
 
@@ -12886,13 +13622,15 @@ final class Gate1AppModel: ObservableObject {
         default:
             return false
         }
-        if let storedTimeline = try? store.loadTranscriptTimeline(itemId: item.id)?.timeline,
-           let window = Self.sourceContextWindow(
-               from: storedTimeline,
+        let storedWindow = (try? store.loadTranscriptTimeline(itemId: item.id)?.timeline).flatMap {
+            Self.sourceContextWindow(
+               from: $0,
                anchorMediaTimeMs: anchorMediaTimeMs,
                windowBeforeMs: sourceWindowContextBeforeMs,
                windowAfterMs: sourceWindowContextAfterMs
-           ) {
+           )
+        }
+        if let window = storedWindow {
             run { engine in
                 snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjection.id, sessionId: interjection.sessionId, timeline: window)
                 refreshSelectedItem()
@@ -12901,7 +13639,6 @@ final class Gate1AppModel: ObservableObject {
                 diagnostics["sourceWindowTranscription:\(interjection.id)"] = "complete:stored_transcript"
                 diagnostics["sourceWindowContextProvenance:\(interjection.id)"] = "stored_transcript"
             }
-            return true
         }
         if reportsResult { reportConfirmation("Recovering source context…") }
         diagnostics["sourceWindowTranscription:\(interjection.id)"] = "scheduled"
@@ -12912,14 +13649,16 @@ final class Gate1AppModel: ObservableObject {
         let provenance = transcriptionURL.isFileURL ? "downloaded_local_audio" : "bounded_remote_window"
         diagnostics["sourceWindowContextProvenance:\(interjection.id)"] = provenance
         pendingSourceContextInterjectionIds.insert(Self.marginIdentity(interjection))
-        run { engine in
-            snapshot = try engine.sourceWindowContextPending(interjectionId: interjection.id, sessionId: interjection.sessionId)
-            refreshSelectedItem()
+        if storedWindow == nil {
+            run { engine in
+                snapshot = try engine.sourceWindowContextPending(interjectionId: interjection.id, sessionId: interjection.sessionId)
+                refreshSelectedItem()
+            }
         }
         Task { [weak self, interjectionId = interjection.id, itemId = item.id, durationMs = item.media?.durationMs, windowBeforeMs = sourceWindowContextBeforeMs, windowAfterMs = sourceWindowContextAfterMs] in
             guard let self else { return }
             do {
-                let analysis = try await self.sourceTranscriptionClient.transcribeSourceAudioWindowWithEvidence(
+                let acquisition = try? await self.sourceTranscriptionClient.acquireSourceAudioWindow(
                     url: transcriptionURL,
                     itemId: itemId,
                     anchorMediaTimeMs: anchorMediaTimeMs,
@@ -12929,7 +13668,8 @@ final class Gate1AppModel: ObservableObject {
                 )
                 var referenceEvidence: [CapturedPodcastAnchorEvidence] = []
                 var referenceEvidenceFailure: String?
-                if let localAudioURL = analysis.localAudioURL {
+                if let acquisition {
+                    let localAudioURL = acquisition.localAudioURL
                     do {
                         let request = PostResumeAudioSampleRequest(
                             interjectionId: interjectionId,
@@ -12939,7 +13679,7 @@ final class Gate1AppModel: ObservableObject {
                             targetDurationMs: PodcastAnchorEvidenceGenerator.flankDurationMs
                         )
                         let outputDirectory = try self.podcastAnchorEvidenceDirectory(for: request)
-                        let localAnchorMs = max(0, anchorMediaTimeMs - analysis.sourceStartMs)
+                        let localAnchorMs = max(0, anchorMediaTimeMs - acquisition.sourceStartMs)
                         let generated = try await PodcastAnchorEvidenceGenerator.generate(
                             sourceURL: localAudioURL,
                             anchorMediaTimeMs: localAnchorMs,
@@ -12952,7 +13692,7 @@ final class Gate1AppModel: ObservableObject {
                                 localPath: generated.fileURL.path,
                                 durationMs: generated.durationMs,
                                 anchorOffsetMs: generated.anchorOffsetMs,
-                                provenance: analysis.provenance == .downloadedSourceReference
+                                provenance: acquisition.provenance == .downloadedSourceReference
                                     ? .downloadedSourceReference
                                     : .sourceWindowReference,
                                 windowRole: generated.id.hasSuffix("-pre")
@@ -12963,11 +13703,33 @@ final class Gate1AppModel: ObservableObject {
                     } catch {
                         referenceEvidenceFailure = error.localizedDescription
                     }
-                    try? FileManager.default.removeItem(at: localAudioURL.deletingLastPathComponent())
+                } else {
+                    referenceEvidenceFailure = "source_audio_window_acquisition_unavailable"
+                }
+                let timeline: TranscriptTimeline?
+                if let storedWindow {
+                    timeline = storedWindow
+                } else if let acquisition {
+                    timeline = try? await self.sourceTranscriptionClient.transcribeAcquiredSourceAudioWindow(
+                        acquisition, itemId: itemId, durationMs: durationMs
+                    )
+                } else {
+                    timeline = try? await self.sourceTranscriptionClient.transcribeSourceAudioWindow(
+                        url: transcriptionURL, itemId: itemId, anchorMediaTimeMs: anchorMediaTimeMs,
+                        durationMs: durationMs, windowBeforeMs: windowBeforeMs, windowAfterMs: windowAfterMs
+                    )
+                }
+                if let acquisition, let directory = acquisition.cleanupDirectoryURL,
+                   directory.standardizedFileURL == acquisition.localAudioURL.deletingLastPathComponent().standardizedFileURL {
+                    try? FileManager.default.removeItem(at: directory)
                 }
                 await MainActor.run {
                     self.run { engine in
-                        self.snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjectionId, sessionId: interjection.sessionId, timeline: analysis.timeline)
+                        if let timeline {
+                            self.snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjectionId, sessionId: interjection.sessionId, timeline: timeline)
+                        } else {
+                            self.snapshot = try engine.sourceWindowContextUnavailable(interjectionId: interjectionId, sessionId: interjection.sessionId)
+                        }
                         if !referenceEvidence.isEmpty {
                             try self.persistPodcastAnchorEvidence(
                                 request: PostResumeAudioSampleRequest(
@@ -12983,7 +13745,7 @@ final class Gate1AppModel: ObservableObject {
                         }
                         self.refreshSelectedItem()
                         self.refreshMarginRows()
-                        self.diagnostics["sourceWindowTranscription:\(interjectionId)"] = "complete:speech_window"
+                        self.diagnostics["sourceWindowTranscription:\(interjectionId)"] = timeline == nil ? "unavailable" : (storedWindow == nil ? "complete:speech_window" : "complete:stored_transcript")
                         self.diagnostics["sourceWindowContextProvenance:\(interjectionId)"] = provenance
                         self.diagnostics["sourceWindowSignature:\(interjectionId)"] = referenceEvidence.isEmpty
                             ? "unavailable:\(referenceEvidenceFailure ?? "temporary_audio_unavailable")"
@@ -12997,10 +13759,12 @@ final class Gate1AppModel: ObservableObject {
                     self.diagnostics["sourceWindowTranscription:\(interjectionId)"] = "failed:\(error.localizedDescription)"
                     self.diagnostics["sourceWindowContextProvenance:\(interjectionId)"] = "unavailable"
                     self.pendingSourceContextInterjectionIds.remove(Self.marginIdentity(interjection))
-                    self.run { engine in
-                        self.snapshot = try engine.sourceWindowContextUnavailable(interjectionId: interjectionId, sessionId: interjection.sessionId)
-                        self.refreshSelectedItem()
-                        self.refreshMarginRows()
+                    if storedWindow == nil {
+                        self.run { engine in
+                            self.snapshot = try engine.sourceWindowContextUnavailable(interjectionId: interjectionId, sessionId: interjection.sessionId)
+                            self.refreshSelectedItem()
+                            self.refreshMarginRows()
+                        }
                     }
                     if reportsResult {
                         self.reportWarning("Source context could not be recovered: \(error.localizedDescription)")
@@ -13120,7 +13884,18 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    nonisolated static func canRecoverOriginalPodcastEdition(
+        storedProducingDigest: String?, candidateDigest: String
+    ) -> Bool {
+        guard let storedProducingDigest else { return false }
+        return storedProducingDigest == candidateDigest
+    }
+
     private func schedulePodcastAnchorEvidenceCapture(for interjection: Interjection) {
+        guard let expectedEdition = interjection.sourceExactEditionSHA256 else {
+            diagnostics["podcastAnchorEvidence:\(interjection.id)"] = "exact_local_recovery_requires_original_edition_identity"
+            return
+        }
         guard interjection.targetType == .item,
               let mediaTimeMs = interjection.anchor.mediaTimeMs,
               let sourceURL = podcastDownloadCoordinator?.validatedLocalURL(for: interjection.itemId),
@@ -13138,22 +13913,36 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         diagnostics["podcastAnchorEvidence:\(interjection.id)"] = "scheduled"
-        let request = PostResumeAudioSampleRequest(
+        let initialRequest = PostResumeAudioSampleRequest(
             interjectionId: interjection.id,
             sessionId: interjection.sessionId,
             itemId: interjection.itemId,
             anchorMediaTimeMs: mediaTimeMs,
             targetDurationMs: PodcastAnchorEvidenceGenerator.flankDurationMs
         )
-        guard let root = try? podcastAnchorEvidenceDirectory(for: request) else {
-            markPodcastAnchorEvidenceUnavailable(request: request, reason: "storage_unavailable")
+        guard let root = try? podcastAnchorEvidenceDirectory(for: initialRequest) else {
+            markPodcastAnchorEvidenceUnavailable(request: initialRequest, reason: "storage_unavailable")
             return
         }
-        markPodcastAnchorEvidencePendingLocal(request: request)
+        guard let attempts = markPodcastAnchorEvidencePendingLocal(request: initialRequest) else { return }
+        let request = PostResumeAudioSampleRequest(
+            interjectionId: initialRequest.interjectionId,
+            sessionId: initialRequest.sessionId,
+            itemId: initialRequest.itemId,
+            anchorMediaTimeMs: initialRequest.anchorMediaTimeMs,
+            targetDurationMs: initialRequest.targetDurationMs,
+            preAttemptGeneration: attempts.pre,
+            postAttemptGeneration: attempts.post
+        )
         let evidenceIDPrefix = podcastAnchorEvidenceID(request: request, suffix: "local")
         Task.detached { [weak self] in
             do {
                 let digestBeforeCapture = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: sourceURL)
+                guard Self.canRecoverOriginalPodcastEdition(
+                    storedProducingDigest: expectedEdition, candidateDigest: digestBeforeCapture
+                ) else {
+                    throw SessionKitError.persistenceFailed("podcast_anchor_producing_edition_mismatch")
+                }
                 let generated = try await PodcastAnchorEvidenceGenerator.generate(
                     sourceURL: sourceURL,
                     anchorMediaTimeMs: mediaTimeMs,
@@ -13161,7 +13950,7 @@ final class Gate1AppModel: ObservableObject {
                     idPrefix: evidenceIDPrefix
                 )
                 let digestAfterCapture = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: sourceURL)
-                guard digestBeforeCapture == digestAfterCapture else {
+                guard digestAfterCapture == expectedEdition else {
                     throw SessionKitError.persistenceFailed("podcast_anchor_source_changed_during_capture")
                 }
                 let captured = generated.map {
@@ -13200,11 +13989,39 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    private func retryActivePodcastCaptureIfPossible(store: SQLiteSessionStore) {
+        guard snapshot.status == .playing,
+              let sessionId = snapshot.sessionId,
+              let mediaPlaybackClient,
+              let margins = try? store.loadInterjections(sessionId: sessionId) else { return }
+        for margin in margins where margin.itemId == activeItemId {
+            let eligible = (margin.podcastAnchorCaptureWindows ?? []).filter {
+                $0.state == .retryableFailure && $0.attempt < 3
+            }
+            guard !eligible.isEmpty, let anchor = margin.anchor.mediaTimeMs else { continue }
+            if margin.sourceExactEditionSHA256 != nil,
+               let localURL = podcastDownloadCoordinator?.validatedLocalURL(for: margin.itemId),
+               mediaPlaybackClient.isUsingPlaybackURL(localURL, itemId: margin.itemId) {
+                schedulePodcastAnchorEvidenceCapture(for: margin)
+                continue
+            }
+            // A stream resumed after a process loss cannot prove it is the
+            // producing edition or adjacent to the original Margin interval.
+            // Keep the job retryable for a matching exact-edition source.
+            diagnostics["podcastAnchorEvidence:\(margin.sessionId):\(margin.id)"] =
+                "retry_waiting_for_original_exact_edition:anchor=\(anchor)"
+        }
+    }
+
     #if canImport(AVFoundation) && canImport(ShazamKit)
     private func handlePostResumePodcastEvidence(_ result: PostResumePodcastEvidenceCaptureResult) {
         switch result {
         case .captured(let capture):
             do {
+                let role: PodcastAnchorEvidenceWindowRole = capture.windowRole == .preInterjection
+                    ? .preInterjection : .postResume
+                guard let current = storedInterjection(request: capture.request),
+                      isCurrentPodcastCaptureAttempt(capture.request, role: role, interjection: current) else { return }
                 let root = try podcastAnchorEvidenceDirectory(for: capture.request)
                 try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
                 let evidenceID = podcastAnchorEvidenceID(
@@ -13242,9 +14059,13 @@ final class Gate1AppModel: ObservableObject {
                 diagnostics["episodeFingerprintSpine:\(landmark.itemId)"] =
                     "persistence_failed:\(error.localizedDescription)"
             }
-        case .failed(let request, let reason):
+        case .failed(let request, let windowRole, let reason):
             if let interjection = storedInterjection(request: request) {
-                diagnostics["podcastAnchorEvidence:\(request.interjectionId)"] = "stream_failed:\(reason)"
+                let role: PodcastAnchorEvidenceWindowRole = windowRole == .preInterjection
+                    ? .preInterjection : .postResume
+                guard isCurrentPodcastCaptureAttempt(request, role: role, interjection: interjection) else { return }
+                markPodcastAnchorEvidenceUnavailable(request: request, reason: reason, windowRole: role)
+                diagnostics["podcastAnchorEvidence:\(request.sessionId):\(request.interjectionId)"] = "stream_failed:\(reason)"
                 schedulePodcastAnchorEvidenceCapture(for: interjection)
             } else {
                 markPodcastAnchorEvidenceUnavailable(request: request, reason: reason)
@@ -13325,6 +14146,49 @@ final class Gate1AppModel: ObservableObject {
             .appending(path: safePodcastEvidenceComponent(request.interjectionId), directoryHint: .isDirectory)
     }
 
+    /// A process restart cannot resume an in-flight tap. Keep independently
+    /// committed flanks, but make interrupted or damaged flanks retryable.
+    func reconcilePodcastAnchorEvidence(store: SQLiteSessionStore, interruptedJobs: Bool) throws {
+        var changedCount = 0
+        var indeterminateReadCount = 0
+        for session in try store.loadSessions() {
+            for original in try store.loadInterjections(sessionId: session.id) {
+                guard original.podcastAnchorCaptureWindows != nil else { continue }
+                #if canImport(ShazamKit)
+                let result = PodcastAnchorEvidenceIntegrityReconciler.reconcile(
+                    original, interruptedJobs: interruptedJobs,
+                    signatureIsValid: { (try? SHSignature(dataRepresentation: $0)) != nil }
+                )
+                #else
+                let result = PodcastAnchorEvidenceIntegrityReconciler.reconcile(
+                    original, interruptedJobs: interruptedJobs,
+                    signatureIsValid: { !$0.isEmpty }
+                )
+                #endif
+                let margin = result.interjection
+                indeterminateReadCount += result.indeterminateReadCount
+                if margin != original {
+                    try store.saveInterjection(margin)
+                    changedCount += 1
+                }
+                let states = (margin.podcastAnchorCaptureWindows ?? []).map {
+                    "\($0.role.rawValue):\($0.state.rawValue):attempt=\($0.attempt):reason=\($0.firstFailureReason ?? "none")"
+                }.joined(separator: ",")
+                diagnostics["podcastAnchorEvidence:\(margin.sessionId):\(margin.id)"] = states
+            }
+        }
+        let orphanCount: Int
+        if interruptedJobs {
+            let root = try applicationSupportDirectory()
+                .appending(path: "SpokenMargins/AnchorEvidence", directoryHint: .isDirectory)
+            orphanCount = try PodcastAnchorEvidenceOrphanReconciler.reclaim(in: root, store: store)
+        } else {
+            orphanCount = 0
+        }
+        diagnostics["podcastAnchorReconciliation"] =
+            "checked:changed=\(changedCount);indeterminate=\(indeterminateReadCount);orphans=\(orphanCount)"
+    }
+
     private func podcastAnchorEvidenceID(
         request: PostResumeAudioSampleRequest,
         suffix: String
@@ -13333,18 +14197,30 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func safePodcastEvidenceComponent(_ value: String) -> String {
-        let safe = value.replacingOccurrences(
-            of: #"[^A-Za-z0-9._-]"#,
-            with: "-",
-            options: .regularExpression
-        )
-        return safe.isEmpty ? "unknown" : String(safe.prefix(96))
+        PodcastAnchorEvidenceOrphanReconciler.safeComponent(value)
     }
 
     private func storedInterjection(request: PostResumeAudioSampleRequest) -> Interjection? {
         guard let store,
               let records = try? store.loadInterjections(sessionId: request.sessionId) else { return nil }
-        return records.first { $0.id == request.interjectionId && $0.itemId == request.itemId }
+        return records.first {
+            $0.id == request.interjectionId && $0.itemId == request.itemId
+                && ($0.podcastAnchorCaptureWindows?.first?.anchorMediaTimeMs ?? $0.anchor.mediaTimeMs)
+                    == request.anchorMediaTimeMs
+        }
+    }
+
+    private func isCurrentPodcastCaptureAttempt(
+        _ request: PostResumeAudioSampleRequest,
+        role: PodcastAnchorEvidenceWindowRole,
+        interjection: Interjection
+    ) -> Bool {
+        guard let captureRole = PodcastAnchorCaptureWindow.Role(rawValue: role.rawValue) else { return true }
+        guard let window = interjection.podcastAnchorCaptureWindows?.first(where: { $0.role == captureRole }) else {
+            return request.attemptGeneration(for: role) == nil
+        }
+        return request.attemptGeneration(for: role) == window.attempt
+            && (window.state == .collecting || window.state == .deriving)
     }
 
     private func persistPodcastAnchorEvidence(
@@ -13358,21 +14234,63 @@ final class Gate1AppModel: ObservableObject {
             throw SessionKitError.persistenceFailed("podcast_anchor_interjection_missing")
         }
         var merged = interjection.podcastAnchorEvidence ?? []
+        var ownedAssets: [OwnedOfflineAsset] = []
+        let supportRoot = try applicationSupportDirectory().standardizedFileURL.path + "/"
+        if let sourceExactEditionSHA256,
+           let currentEdition = interjection.sourceExactEditionSHA256,
+           currentEdition != sourceExactEditionSHA256 {
+            throw SessionKitError.persistenceFailed("stale_podcast_capture_edition")
+        }
         for newEvidence in evidence {
+            if let role = newEvidence.windowRole,
+               let captureRole = PodcastAnchorCaptureWindow.Role(rawValue: role.rawValue),
+               interjection.podcastAnchorCaptureWindows?.first(where: { $0.role == captureRole })?.state == .committed {
+                continue
+            }
+            if let role = newEvidence.windowRole,
+               !isCurrentPodcastCaptureAttempt(request, role: role, interjection: interjection) {
+                throw SessionKitError.persistenceFailed("stale_podcast_capture_attempt")
+            }
+            let url = URL(fileURLWithPath: newEvidence.localPath).standardizedFileURL
+            guard url.path.hasPrefix(supportRoot),
+                  let bytes = try? Data(contentsOf: url), !bytes.isEmpty else {
+                throw SessionKitError.persistenceFailed("podcast_anchor_signature_unreadable")
+            }
+            let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+            let verified = CapturedPodcastAnchorEvidence(
+                id: newEvidence.id, localPath: url.path,
+                durationMs: newEvidence.durationMs, anchorOffsetMs: newEvidence.anchorOffsetMs,
+                provenance: newEvidence.provenance, windowRole: newEvidence.windowRole,
+                byteCount: bytes.count, checksumSHA256: digest
+            )
+            ownedAssets.append(OwnedOfflineAsset(
+                id: "anchor-evidence-\(request.sessionId)-\(request.interjectionId)-\(newEvidence.id)",
+                itemId: request.itemId, category: .fingerprintMap,
+                relativePath: String(url.path.dropFirst(supportRoot.count)),
+                byteCount: Int64(bytes.count), checksumSHA256: digest,
+                isReproducible: false, protections: [.interjection]
+            ))
             merged.removeAll {
                 $0.id == newEvidence.id
                     || ($0.windowRole == newEvidence.windowRole && $0.provenance == newEvidence.provenance)
             }
-            merged.append(newEvidence)
+            merged.append(verified)
+            if newEvidence.provenance == .observedDecodedPlayback || newEvidence.provenance == .exactLocalPlaybackEdition,
+               let role = newEvidence.windowRole {
+                interjection.updatePodcastAnchorWindow(role) { $0.committed() }
+            }
         }
         interjection.podcastAnchorEvidence = merged.sorted { $0.id < $1.id }
-        interjection.sourceExactEditionSHA256 = sourceExactEditionSHA256
-        interjection.podcastAnchorEvidenceCaptureStatus = .ready
-        interjection.podcastAnchorEvidenceFailureReason = nil
+        if let sourceExactEditionSHA256 {
+            interjection.sourceExactEditionSHA256 = sourceExactEditionSHA256
+        }
+        if interjection.podcastAnchorCaptureWindows == nil {
+            interjection.podcastAnchorEvidenceCaptureStatus = .ready
+        }
         if interjection.anchorContextStatus == .pending {
             interjection.anchorContextStatus = .unavailable
         }
-        try store.saveInterjection(interjection)
+        try store.commitPodcastAnchorEvidence(interjection, ownedAssets: ownedAssets)
         if activeItemId == request.itemId {
             refreshSelectedItem()
         }
@@ -13380,7 +14298,8 @@ final class Gate1AppModel: ObservableObject {
 
     private func markPodcastAnchorEvidenceUnavailable(
         request: PostResumeAudioSampleRequest,
-        reason: String
+        reason: String,
+        windowRole: PodcastAnchorEvidenceWindowRole? = nil
     ) {
         guard let store,
               let records = try? store.loadInterjections(sessionId: request.sessionId),
@@ -13390,8 +14309,26 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["podcastAnchorEvidence:\(request.interjectionId)"] = "unavailable:\(reason)"
             return
         }
-        interjection.podcastAnchorEvidenceCaptureStatus = .unavailable
-        interjection.podcastAnchorEvidenceFailureReason = reason
+        let rolesToFail: [PodcastAnchorEvidenceWindowRole] = (windowRole.map { [$0] }
+            ?? [.preInterjection, .postResume]).filter { role in
+                guard let captureRole = PodcastAnchorCaptureWindow.Role(rawValue: role.rawValue) else { return true }
+                return interjection.podcastAnchorCaptureWindows?.first(where: { $0.role == captureRole })?.state != .committed
+            }
+        if rolesToFail.isEmpty { return }
+        if rolesToFail.contains(where: {
+            request.attemptGeneration(for: $0) != nil
+                && !isCurrentPodcastCaptureAttempt(request, role: $0, interjection: interjection)
+        }) { return }
+        if let windowRole {
+            interjection.updatePodcastAnchorWindow(windowRole) { $0.failed(reason, retryable: true) }
+        } else if interjection.podcastAnchorCaptureWindows != nil {
+            for role in [PodcastAnchorEvidenceWindowRole.preInterjection, .postResume] {
+                interjection.updatePodcastAnchorWindow(role) { $0.failed(reason, retryable: true) }
+            }
+        } else {
+            interjection.podcastAnchorEvidenceCaptureStatus = .unavailable
+            interjection.podcastAnchorEvidenceFailureReason = reason
+        }
         try? store.saveInterjection(interjection)
         if activeItemId == request.itemId {
             refreshSelectedItem()
@@ -13400,18 +14337,31 @@ final class Gate1AppModel: ObservableObject {
         scheduleSourceWindowContextIfNeeded(for: interjection)
     }
 
-    private func markPodcastAnchorEvidencePendingLocal(request: PostResumeAudioSampleRequest) {
+    private func markPodcastAnchorEvidencePendingLocal(
+        request: PostResumeAudioSampleRequest
+    ) -> (pre: Int, post: Int)? {
         guard let store,
               let records = try? store.loadInterjections(sessionId: request.sessionId),
               var interjection = records.first(where: {
                   $0.id == request.interjectionId && $0.itemId == request.itemId
-              }) else { return }
+              }) else { return nil }
+        var started = false
+        for role in [PodcastAnchorEvidenceWindowRole.preInterjection, .postResume] {
+            guard let captureRole = PodcastAnchorCaptureWindow.Role(rawValue: role.rawValue),
+                  let window = interjection.podcastAnchorCaptureWindows?.first(where: { $0.role == captureRole }),
+                  window.state != .committed, window.state != .unavailable, window.attempt < 3 else { continue }
+            interjection.updatePodcastAnchorWindow(role) { $0.accepted() }
+            started = true
+        }
+        guard started else { return nil }
         interjection.podcastAnchorEvidenceCaptureStatus = .pendingExactLocalCapture
-        interjection.podcastAnchorEvidenceFailureReason = nil
-        try? store.saveInterjection(interjection)
+        guard (try? store.saveInterjection(interjection)) != nil else { return nil }
         if activeItemId == request.itemId {
             refreshSelectedItem()
         }
+        guard let pre = interjection.podcastAnchorCaptureWindows?.first(where: { $0.role == .preInterjection })?.attempt,
+              let post = interjection.podcastAnchorCaptureWindows?.first(where: { $0.role == .postResume })?.attempt else { return nil }
+        return (pre, post)
     }
 
     func prepareExportShareInterjections() {
@@ -14062,15 +15012,161 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    struct PodcastEvidenceExportDisposition {
+        let fingerprint: String
+        let omittedAssetKeys: Set<String>
+        let assetDigestsByPath: [String: String]
+        let isDegraded: Bool
+    }
+
+    static func podcastEvidenceAssetKey(_ evidence: CapturedPodcastAnchorEvidence, sessionId: String, interjectionId: String) -> String {
+        "\(sessionId)::\(interjectionId)::\(evidence.id)"
+    }
+
+    static func podcastEvidenceExportDisposition(_ drafts: [ShareInterjectionDraft]) -> PodcastEvidenceExportDisposition {
+        var fields: [String] = []
+        var omitted: Set<String> = []
+        var digests: [String: String] = [:]
+        var degraded = false
+        for draft in drafts.sorted(by: { "\($0.interjection.sessionId)::\($0.id)" < "\($1.interjection.sessionId)::\($1.id)" }) {
+            let note = draft.interjection
+            fields.append("\(note.sessionId)::\(note.id)::\(note.itemId)::\(note.anchor.mediaTimeMs ?? -1)::\(note.sourceExactEditionSHA256 ?? "unknown")::\(draft.approvedTranscript)::\(draft.representationChoice.rawValue)")
+            let windows = note.podcastAnchorCaptureWindows ?? []
+            if windows.contains(where: { $0.state != .committed }) { degraded = true }
+            fields.append(windows.sorted(by: { $0.role.rawValue < $1.role.rawValue }).map {
+                "\($0.role.rawValue):\($0.state.rawValue):\($0.attempt)"
+            }.joined(separator: ","))
+            let evidence = note.podcastAnchorEvidence ?? []
+            if evidence.isEmpty { degraded = true }
+            for asset in evidence.sorted(by: { $0.id < $1.id }) {
+                let key = podcastEvidenceAssetKey(asset, sessionId: note.sessionId, interjectionId: note.id)
+                guard let bytes = try? Data(contentsOf: URL(fileURLWithPath: asset.localPath)),
+                      !bytes.isEmpty,
+                      asset.byteCount == nil || asset.byteCount == bytes.count else {
+                    degraded = true
+                    omitted.insert(key)
+                    fields.append("\(key):unreadable")
+                    continue
+                }
+                let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+                guard asset.checksumSHA256 == nil || asset.checksumSHA256 == digest else {
+                    degraded = true
+                    omitted.insert(key)
+                    fields.append("\(key):corrupt")
+                    continue
+                }
+                digests[asset.localPath] = digest
+                fields.append("\(key):\(digest)")
+            }
+        }
+        let fingerprint = SHA256.hash(data: Data(fields.joined(separator: "\u{1F}").utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        return PodcastEvidenceExportDisposition(
+            fingerprint: fingerprint, omittedAssetKeys: omitted,
+            assetDigestsByPath: digests, isDegraded: degraded
+        )
+    }
+
+    static func podcastEvidenceOutcome(
+        for interjection: Interjection,
+        includedEvidence: [CapturedPodcastAnchorEvidence],
+        omittedAssetKeys: Set<String>,
+        optedOut: Bool
+    ) -> PodcastEvidenceOutcomeSummary {
+        if optedOut {
+            return PodcastEvidenceOutcomeSummary(disposition: .intentionalOptOut, reasonCategory: "user_opt_out")
+        }
+        let windows = interjection.podcastAnchorCaptureWindows ?? []
+        let omitted = (interjection.podcastAnchorEvidence ?? []).contains {
+            omittedAssetKeys.contains(podcastEvidenceAssetKey(
+                $0, sessionId: interjection.sessionId, interjectionId: interjection.id
+            ))
+        }
+        let pending = windows.contains { [.waiting, .collecting, .deriving, .retryableFailure].contains($0.state) }
+        let incomplete = windows.contains { $0.state != .committed }
+        let disposition: PodcastEvidenceOutcomeSummary.Disposition
+        if !includedEvidence.isEmpty && !omitted && !incomplete { disposition = .included }
+        else if !includedEvidence.isEmpty { disposition = .partial }
+        else if pending { disposition = .pending }
+        else { disposition = .unavailable }
+        return PodcastEvidenceOutcomeSummary(
+            disposition: disposition,
+            includedRoles: Array(Set(includedEvidence.compactMap(\.windowRole))).sorted { $0.rawValue < $1.rawValue },
+            includedProvenance: Array(Set(includedEvidence.compactMap(\.provenance))).sorted { $0.rawValue < $1.rawValue },
+            reasonCategory: omitted ? "asset_unreadable" : (pending ? "capture_pending" : (incomplete ? "capture_unavailable" : nil))
+        )
+    }
+
+    private func pinMachineEvidenceForExport(
+        _ evidence: [ReviewedMachineEvidenceAsset],
+        expectedDigestsByPath: [String: String],
+        directory: URL
+    ) throws -> [ReviewedMachineEvidenceAsset] {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return try evidence.enumerated().map { index, asset in
+            let bytes = try Data(contentsOf: asset.sourceURL)
+            guard !bytes.isEmpty else { throw SessionKitError.persistenceFailed("selected_machine_evidence_unreadable") }
+            let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+            if let expected = expectedDigestsByPath[asset.sourceURL.path], expected != digest {
+                throw SessionKitError.persistenceFailed("selected_machine_evidence_changed_during_export")
+            }
+            let pinned = directory.appending(path: "evidence-\(index).shazamsignature")
+            try bytes.write(to: pinned, options: .atomic)
+            return ReviewedMachineEvidenceAsset(
+                id: asset.id, path: asset.path, sourceURL: pinned,
+                durationMs: asset.durationMs, anchorOffsetMs: asset.anchorOffsetMs,
+                provenance: asset.provenance
+            )
+        }
+    }
+
+    func authorizeDegradedPodcastEvidenceForCurrentSelection() -> Bool {
+        do {
+            let store = try requireStore()
+            let drafts = try refreshedIncludedShareDrafts(store: store)
+            guard !drafts.isEmpty else { return false }
+            let disposition = Self.podcastEvidenceExportDisposition(drafts)
+            sharingState.degradedPodcastEvidenceConsentFingerprint = disposition.fingerprint
+            sharingState.allowsDegradedPodcastEvidence = true
+            return true
+        } catch {
+            sharingState.errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    private func refreshedIncludedShareDrafts(store: SQLiteSessionStore) throws -> [ShareInterjectionDraft] {
+        var drafts = sharingState.drafts.filter {
+            $0.isIncluded && !$0.approvedTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        for index in drafts.indices {
+            let original = drafts[index].interjection
+            guard let current = try store.loadInterjections(sessionId: original.sessionId).first(where: {
+                $0.id == original.id && $0.itemId == original.itemId && $0.status == "active"
+            }) else {
+                throw SessionKitError.persistenceFailed("selected_margin_changed_before_export")
+            }
+            drafts[index].interjection = current
+        }
+        return drafts
+    }
+
+    #if DEBUG
+    func persistSelectedInterjectionsForSharingTests() throws {
+        let store = try requireStore()
+        for interjection in selectedItem.interjections { try store.saveInterjection(interjection) }
+    }
+    #endif
+
     func exportSharedInterjections(presentsReadySheet: Bool = true) {
         guard !sharingState.isBulkPreparing else {
             sharingState.errorMessage = "Finish or cancel bulk preparation before sharing."
             return
         }
-        let drafts = sharingState.drafts.filter {
+        let selectedDrafts = sharingState.drafts.filter {
             $0.isIncluded && !$0.approvedTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
-        guard !drafts.isEmpty else {
+        guard !selectedDrafts.isEmpty else {
             sharingState.errorMessage = "Select at least one Margin with reviewed text."
             return
         }
@@ -14079,6 +15175,18 @@ final class Gate1AppModel: ObservableObject {
         do {
             let store = try requireStore()
             let item = try store.loadItem(id: selectedItem.id)
+            let drafts = try refreshedIncludedShareDrafts(store: store)
+            let isPodcast = sharedItemType(for: item) == .podcast
+            let disposition = Self.podcastEvidenceExportDisposition(drafts)
+            if isPodcast && sharingState.includesAcousticEvidence && disposition.isDegraded {
+                guard sharingState.allowsDegradedPodcastEvidence,
+                      sharingState.degradedPodcastEvidenceConsentFingerprint == disposition.fingerprint else {
+                    throw SessionKitError.persistenceFailed("podcast_positioning_evidence_pending")
+                }
+            }
+            if sharingState.includesAcousticEvidence && !isPodcast && !disposition.omittedAssetKeys.isEmpty {
+                throw SessionKitError.persistenceFailed("selected_machine_evidence_unreadable")
+            }
             let itemIdentity = sharedItemIdentity(for: item, drafts: drafts)
             let itemTransport = reviewedItemTransport(for: item, identity: itemIdentity)
             var machineEvidence: [ReviewedMachineEvidenceAsset] = []
@@ -14104,7 +15212,11 @@ final class Gate1AppModel: ObservableObject {
                 try store.saveInterjectionShareRevision(revision)
 
                 let evidence = sharingState.includesAcousticEvidence
-                    ? (draft.interjection.podcastAnchorEvidence ?? []).filter { FileManager.default.fileExists(atPath: $0.localPath) }
+                    ? (draft.interjection.podcastAnchorEvidence ?? []).filter {
+                        disposition.omittedAssetKeys.contains(Self.podcastEvidenceAssetKey(
+                            $0, sessionId: draft.interjection.sessionId, interjectionId: draft.interjection.id
+                        )) == false
+                    }
                     : []
                 machineEvidence.append(contentsOf: evidence.map {
                     ReviewedMachineEvidenceAsset(
@@ -14139,7 +15251,7 @@ final class Gate1AppModel: ObservableObject {
                 let duration: Int?
                 switch representation {
                 case .textOnly: audioURL = nil; duration = nil
-                case .originalAudio(let url, let ms), .forwardedAudio(let url, let ms): audioURL = url; duration = ms
+                case .originalAudio(let url, let ms), .forwardedAudio(let url, let ms), .syntheticTTS(let url, let ms): audioURL = url; duration = ms
                 case .cleanedAudio(let url): audioURL = url; duration = draft.cleanedAudioDurationMs
                 }
                 let node = try conversationExportSnapshot(note: draft.interjection, transcript: revision.approvedTranscript,
@@ -14149,6 +15261,13 @@ final class Gate1AppModel: ObservableObject {
                 var selection = ReviewedInterjectionSelection(packageScopedId: String(format: "margin-%04d", index + 1),
                     revision: revision, anchor: node.anchor, representation: representation)
                 selection.conversation = node.conversation
+                if isPodcast {
+                    selection.podcastEvidenceOutcome = Self.podcastEvidenceOutcome(
+                        for: draft.interjection, includedEvidence: evidence,
+                        omittedAssetKeys: disposition.omittedAssetKeys,
+                        optedOut: !sharingState.includesAcousticEvidence
+                    )
+                }
                 selections.append(selection)
             }
 
@@ -14164,7 +15283,9 @@ final class Gate1AppModel: ObservableObject {
                 let existingEvidenceIDs = Set(machineEvidence.map(\.id))
                 for landmark in spine.landmarks where !existingEvidenceIDs.contains(landmark.signatureAssetId) {
                     let url = directory.appending(path: "\(landmark.signatureAssetId).shazamsignature")
-                    guard FileManager.default.fileExists(atPath: url.path) else { continue }
+                    guard FileManager.default.fileExists(atPath: url.path) else {
+                        throw SessionKitError.persistenceFailed("fingerprint_spine_asset_missing")
+                    }
                     machineEvidence.append(ReviewedMachineEvidenceAsset(
                         id: landmark.signatureAssetId,
                         path: "assets/evidence/\(landmark.signatureAssetId).shazamsignature",
@@ -14177,6 +15298,13 @@ final class Gate1AppModel: ObservableObject {
             }
 
             let packageID = "package-\(UUID().uuidString.lowercased())"
+            let pinDirectory = FileManager.default.temporaryDirectory
+                .appending(path: "spoken-margins-export-\(UUID().uuidString)", directoryHint: .isDirectory)
+            defer { try? FileManager.default.removeItem(at: pinDirectory) }
+            machineEvidence = try pinMachineEvidenceForExport(
+                machineEvidence, expectedDigestsByPath: disposition.assetDigestsByPath,
+                directory: pinDirectory
+            )
             let prepared = try SpokenMarginsPackageBuilder.prepare(
                 packageId: packageID,
                 createdAt: Date(),
@@ -14331,19 +15459,15 @@ final class Gate1AppModel: ObservableObject {
 
     var hasEnabledImportedCommentary: Bool {
         selectedItem.importedCommentaryLayers.contains { layer in
-            Self.isImportedCommentaryLayerPlaybackEligible(
-                layer,
-                records: selectedItem.importedCommentaryInterjections[layer.id] ?? []
-            )
+            layer.deletedAt == nil && layer.isEnabled && layer.sourceResolutionStatus != .wrongSource
+                && !(selectedItem.importedCommentaryInterjections[layer.id] ?? []).isEmpty
         }
     }
 
     var importedCommentaryAutoPlayEnabled: Bool {
         let enabledLayers = selectedItem.importedCommentaryLayers.filter { layer in
-            Self.isImportedCommentaryLayerPlaybackEligible(
-                layer,
-                records: selectedItem.importedCommentaryInterjections[layer.id] ?? []
-            )
+            layer.deletedAt == nil && layer.isEnabled && layer.sourceResolutionStatus != .wrongSource
+                && !(selectedItem.importedCommentaryInterjections[layer.id] ?? []).isEmpty
         }
         return !enabledLayers.isEmpty && enabledLayers.allSatisfy { $0.revealMode == .guided }
     }
@@ -14415,24 +15539,28 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func resolvedInterjectionAudioURL(for path: String) -> URL? {
-        let fileManager = FileManager.default
-        let directURL = URL(fileURLWithPath: path)
-        if directURL.isFileURL, fileManager.fileExists(atPath: directURL.path) {
-            return directURL
-        }
-        guard let support = try? fileManager.url(
+        Self.resolvedInterjectionAudioURL(
+            for: path,
+            applicationSupportDirectory: try? FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
             appropriateFor: nil,
             create: false
-        ) else { return nil }
-        if path.hasPrefix("SpokenMargins/") {
-            return support.appending(path: path)
+            )
+        )
+    }
+
+    nonisolated static func resolvedInterjectionAudioURL(
+        for path: String,
+        applicationSupportDirectory: URL?
+    ) -> URL? {
+        if path.hasPrefix("interjections/"), let applicationSupportDirectory {
+            let legacyURL = applicationSupportDirectory.appending(path: "SpokenMargins").appending(path: path)
+            if FileManager.default.fileExists(atPath: legacyURL.path) { return legacyURL }
         }
-        if path.hasPrefix("interjections/") {
-            return support.appending(path: "SpokenMargins").appending(path: path)
-        }
-        return support.appending(path: path)
+        return resolvedApplicationSupportAssetURL(
+            for: path, applicationSupportDirectory: applicationSupportDirectory
+        )
     }
 
     private func resolvedApplicationSupportAssetURL(for path: String) -> URL? {
@@ -16386,6 +17514,14 @@ final class Gate1AppModel: ObservableObject {
     func podcastLocalAssetDidBecomeReady(itemId: String, url: URL) {
         guard let engine, let store else { return }
         importedPodcastRecipientLocalURLs[itemId] = url
+        if pendingRecipientTranscriptItemIds.contains(itemId) {
+            recipientTranscriptQueuedReadyURLs[itemId] = url
+        }
+        recipientTranscriptSuspendedItemIDs.remove(itemId)
+        if recipientPositionReview?.itemID == itemId {
+            recipientPositionReviewGeneration += 1
+            recipientPositionReview = nil
+        }
         let requestedReplacement = requestedPodcastTransportReplacements.remove(itemId) != nil
         run { _ in
             // Automatic completion keeps the current session's audio edition.
@@ -16401,6 +17537,9 @@ final class Gate1AppModel: ObservableObject {
         scheduleEmbeddedPublisherChapterImport(itemId: itemId, localURL: url)
         retrySourceWindowContexts(itemId: itemId)
         resolveImportedPodcastCommentary(itemId: itemId, localURL: url)
+        Task { [weak self] in
+            await self?.scheduleRecipientTranscriptForNewReadyEditionIfNeeded(itemId: itemId, url: url)
+        }
         if importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store),
            let item = try? store.loadItem(id: itemId) {
             diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "requested_for_imported_commentary"
@@ -16418,34 +17557,245 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func scheduleTransientRecipientAlignmentTranscript(for item: Item, localSourceURL: URL) {
-        guard importedTranscriptRetryDates[item.id].map({ Date().timeIntervalSince($0) >= 60 }) ?? true,
-              pendingFullSourceTranscriptionItemIds.insert(item.id).inserted else { return }
+        guard !recipientTranscriptSuspendedItemIDs.contains(item.id),
+              importedTranscriptRetryDates[item.id].map({ Date().timeIntervalSince($0) >= 60 }) ?? true,
+              pendingRecipientTranscriptItemIds.insert(item.id).inserted else { return }
         importedTranscriptRetryDates[item.id] = Date()
-        diagnostics["recipientAlignmentTranscript:\(item.id)"] = "transcribing_transiently"
+        let jobGeneration = (recipientTranscriptJobGenerations[item.id] ?? 0) + 1
+        recipientTranscriptJobGenerations[item.id] = jobGeneration
+        diagnostics["recipientAlignmentTranscript:\(item.id)"] = "bounded_sweep_started"
         Task { [weak self] in
             guard let self else { return }
+            var windowCacheIDs: [String] = []
+            var recoveryJob: RecipientTranscriptRecoveryJob?
+            defer {
+                self.pendingRecipientTranscriptItemIds.remove(item.id)
+                Task { [weak self] in await self?.resumeQueuedRecipientTranscriptIfEditionChanged(itemId: item.id) }
+            }
             do {
-                let timeline = try await self.sourceTranscriptionClient.transcribeSourceAudio(
-                    url: localSourceURL,
-                    itemId: item.id,
-                    durationMs: item.media?.durationMs
-                )
-                self.pendingFullSourceTranscriptionItemIds.remove(item.id)
-                if self.importedPodcastResolutionURLs[item.id] == localSourceURL {
-                    self.resolveImportedPodcastCommentary(
-                        itemId: item.id, localURL: localSourceURL, recipientTranscriptOverride: timeline)
+                let sourceDigest = try await Task.detached(priority: .utility) {
+                    try Self.verifiedRecipientEditionDigest(at: localSourceURL, expected: nil)
+                }.value
+                self.recipientTranscriptAttemptedDigests[item.id] = sourceDigest
+                // Include the byte identity and algorithm version in the cache
+                // namespace. The interval remains part of the window cache key.
+                let cacheNamespace = "recipient-\(sourceDigest)-sweep-v1-\(UUID().uuidString)"
+                let durationMs = try await Self.recipientSourceDurationMs(at: localSourceURL)
+                let hints = (try? self.store?.loadImportedCommentaryLayers(itemId: item.id))?
+                    .filter { $0.deletedAt == nil && $0.itemIdentity.itemType == .podcast }
+                    .flatMap { layer in
+                        (try? self.store?.loadImportedCommentaryInterjections(layerId: layer.id))?
+                            .filter { !Self.isInlinePodcastResolution($0.resolution) }
+                            .compactMap { $0.anchorEvidence.mediaTimeMs } ?? []
+                    } ?? []
+                guard let windows = PodcastRecipientTranscriptSweep.windows(
+                    durationMs: durationMs, hintsMs: hints
+                ) else {
+                    throw SessionKitError.persistenceFailed("recipient_transcript_sweep_budget_exhausted")
                 }
-                try? self.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
-                self.diagnostics["recipientAlignmentTranscript:\(item.id)"] = "consumed_and_deleted"
+                let store = try self.requireStore()
+                let saved = try store.loadRecipientTranscriptRecoveryJob(itemId: item.id)
+                var job: RecipientTranscriptRecoveryJob
+                if let saved, saved.matches(editionSHA256: sourceDigest, durationMs: durationMs) {
+                    job = saved
+                } else {
+                    job = RecipientTranscriptRecoveryJob(
+                        itemId: item.id, editionSHA256: sourceDigest, durationMs: durationMs,
+                        localSourcePath: localSourceURL.path,
+                        windows: windows.map { .init(startMs: $0.startMs, endMs: $0.endMs) })
+                    try store.saveRecipientTranscriptRecoveryJob(job, replacingExisting: true)
+                }
+                recoveryJob = job
+                // A service failure or exhausted resource budget is durable;
+                // relaunching must not retry the same unsuccessful job forever.
+                guard job.status != .suspended, job.status != .budgetExhausted else {
+                    self.diagnostics["recipientAlignmentTranscript:\(item.id)"] = job.status.rawValue
+                    return
+                }
+                for index in job.windows.indices where job.windows[index].timeline == nil {
+                    let window = PodcastRecipientTranscriptSweep.Window(
+                        startMs: job.windows[index].startMs, endMs: job.windows[index].endMs)
+                    guard self.recipientTranscriptJobGenerations[item.id] == jobGeneration else {
+                        throw SessionKitError.persistenceFailed("recipient_transcript_job_superseded")
+                    }
+                    _ = try await Task.detached(priority: .utility) {
+                        try Self.verifiedRecipientEditionDigest(at: localSourceURL, expected: sourceDigest)
+                    }.value
+                    let windowCacheID = "\(cacheNamespace)-\(window.startMs)-\(window.endMs)"
+                    windowCacheIDs.append(windowCacheID)
+                    let result = try await self.sourceTranscriptionClient.transcribeSourceAudioWindowWithEvidence(
+                        url: localSourceURL, itemId: windowCacheID,
+                        anchorMediaTimeMs: window.anchorMs, durationMs: durationMs,
+                        windowBeforeMs: window.beforeMs, windowAfterMs: window.afterMs
+                    )
+                    _ = try await Task.detached(priority: .utility) {
+                        try Self.verifiedRecipientEditionDigest(at: localSourceURL, expected: sourceDigest)
+                    }.value
+                    guard result.sourceStartMs <= window.startMs,
+                          result.sourceEndMs >= window.endMs else {
+                        throw SessionKitError.persistenceFailed("recipient_transcript_window_incomplete")
+                    }
+                    guard self.recipientTranscriptJobGenerations[item.id] == jobGeneration else {
+                        throw SessionKitError.persistenceFailed("recipient_transcript_job_superseded")
+                    }
+                    job.windows[index].timeline = result.timeline
+                    try store.saveRecipientTranscriptRecoveryJob(job)
+                    recoveryJob = job
+                    // Keep only resumable text and measured completion, never
+                    // the temporary source audio, between windows/restarts.
+                    try? self.purgeSourceTranscriptionAudioCaches(itemId: windowCacheID)
+                }
+                let completed = job.windows.filter { $0.timeline != nil }.map {
+                    PodcastRecipientTranscriptSweep.Window(startMs: $0.startMs, endMs: $0.endMs)
+                }
+                let planned = job.windows.map {
+                    PodcastRecipientTranscriptSweep.Window(startMs: $0.startMs, endMs: $0.endMs)
+                }
+                guard completed == planned else {
+                    throw SessionKitError.persistenceFailed("recipient_transcript_sweep_incomplete")
+                }
+                guard PodcastRecipientTranscriptSweep.coversEpisode(completed, durationMs: durationMs) else {
+                    for cacheID in windowCacheIDs { try? self.purgeSourceTranscriptionAudioCaches(itemId: cacheID) }
+                    job.status = .budgetExhausted
+                    try store.saveRecipientTranscriptRecoveryJob(job)
+                    self.diagnostics["recipientAlignmentTranscript:\(item.id)"] = "sweep_budget_exhausted_unresolved"
+                    return
+                }
+                let timeline = PodcastRecipientTranscriptSweep.mergedTimeline(
+                    job.windows.compactMap(\.timeline), durationMs: durationMs)
+                _ = try await Task.detached(priority: .utility) {
+                    try Self.verifiedRecipientEditionDigest(at: localSourceURL, expected: sourceDigest)
+                }.value
+                for cacheID in windowCacheIDs { try? self.purgeSourceTranscriptionAudioCaches(itemId: cacheID) }
+                job.status = .complete
+                try store.saveRecipientTranscriptRecoveryJob(job)
+                recoveryJob = job
+                if self.recipientTranscriptJobGenerations[item.id] == jobGeneration,
+                   self.importedPodcastResolutionURLs[item.id] == localSourceURL {
+                    self.resolveImportedPodcastCommentary(
+                        itemId: item.id, localURL: localSourceURL,
+                        recipientTranscriptOverride: timeline,
+                        recipientTranscriptEditionSHA256: sourceDigest)
+                }
+                self.diagnostics["recipientAlignmentTranscript:\(item.id)"] = "complete_audio_deleted"
             } catch {
-                self.pendingFullSourceTranscriptionItemIds.remove(item.id)
-                try? self.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
-                self.diagnostics["recipientAlignmentTranscript:\(item.id)"] = "failed_and_deleted:\(error.localizedDescription)"
+                for cacheID in windowCacheIDs { try? self.purgeSourceTranscriptionAudioCaches(itemId: cacheID) }
+                let category = String(describing: error).lowercased()
+                let speechFailure = error as? SourceSpeechRecognitionFailure
+                if speechFailure == .serviceUnavailable || speechFailure == .emptyWindow
+                    || category.contains("speech_recognizer") || category.contains("speech_recognition")
+                    || category.contains("speech_transcription") {
+                    self.recipientTranscriptSuspendedItemIDs.insert(item.id)
+                    if var job = recoveryJob {
+                        job.status = .suspended
+                        job.failureReason = speechFailure?.rawValue ?? "speech_service_unavailable"
+                        try? self.store?.saveRecipientTranscriptRecoveryJob(job)
+                    }
+                }
+                self.diagnostics["recipientAlignmentTranscript:\(item.id)"] = "checkpoint_retained:\(error.localizedDescription)"
             }
         }
     }
 
-    nonisolated static func invalidatePodcastEdition(itemId: String, digest: String, store: SQLiteSessionStore) throws {
+    private func retryRecipientRecoveryAfterExplicitDownload(itemId: String) {
+        Task { [weak self] in
+            do {
+                // Explicit Retry / Download Again is a meaningful retry event;
+                // ordinary readiness notifications and foregrounding are not.
+                try await SpeechRecognitionQueue.shared.resetSourceRecognitionAfterExplicitRetry()
+                guard let self, let store = self.store else { return }
+                if var job = try store.loadRecipientTranscriptRecoveryJob(itemId: itemId),
+                   job.status == .suspended {
+                    job.status = .pending
+                    job.failureReason = nil
+                    try store.saveRecipientTranscriptRecoveryJob(job)
+                }
+                self.recipientTranscriptSuspendedItemIDs.remove(itemId)
+                self.importedTranscriptRetryDates[itemId] = nil
+                if let url = self.podcastDownloadCoordinator?.validatedLocalURL(for: itemId),
+                   let item = try? store.loadItem(id: itemId),
+                   self.importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store) {
+                    self.importedPodcastResolutionURLs[itemId] = url
+                    self.scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: url)
+                }
+            } catch {
+                self?.diagnostics["recipientTranscriptRecovery"] = "explicit_retry_failed"
+            }
+        }
+    }
+
+    private func resumePersistedRecipientTranscriptRecovery(store: SQLiteSessionStore) {
+        do {
+            for job in try store.loadRecipientTranscriptRecoveryJobs() {
+                // A failed read is not proof of deletion. Hard item deletion
+                // already removes its recovery record in the same item graph.
+                guard let item = try? store.loadItem(id: job.itemId), item.deletedAt == nil else { continue }
+                guard importedPodcastCommentaryNeedsTranscript(itemId: item.id, store: store),
+                      let url = podcastDownloadCoordinator?.validatedLocalURL(for: item.id)
+                        ?? resolvedApplicationSupportAssetURL(for: job.localSourcePath) else { continue }
+                importedPodcastRecipientLocalURLs[item.id] = url
+                importedPodcastResolutionURLs[item.id] = url
+                scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: url)
+            }
+        } catch {
+            diagnostics["recipientTranscriptRecovery"] = "reconciliation_failed"
+        }
+    }
+
+    private func resumeQueuedRecipientTranscriptIfEditionChanged(itemId: String) async {
+        guard let queuedURL = recipientTranscriptQueuedReadyURLs.removeValue(forKey: itemId),
+              let store,
+              let item = try? store.loadItem(id: itemId),
+              importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store) else { return }
+        let digest = try? await Task.detached(priority: .utility) {
+            try Self.verifiedRecipientEditionDigest(at: queuedURL, expected: nil)
+        }.value
+        guard let digest, digest != recipientTranscriptAttemptedDigests[itemId] else { return }
+        importedTranscriptRetryDates[itemId] = nil
+        recipientTranscriptSuspendedItemIDs.remove(itemId)
+        scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: queuedURL)
+    }
+
+    private func scheduleRecipientTranscriptForNewReadyEditionIfNeeded(itemId: String, url: URL) async {
+        guard let store,
+              importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store),
+              let item = try? store.loadItem(id: itemId) else { return }
+        let digest = try? await Task.detached(priority: .utility) {
+            try Self.verifiedRecipientEditionDigest(at: url, expected: nil)
+        }.value
+        guard let digest, digest != recipientTranscriptAttemptedDigests[itemId],
+              importedPodcastRecipientLocalURLs[itemId] == url else { return }
+        if pendingRecipientTranscriptItemIds.contains(itemId) {
+            recipientTranscriptQueuedReadyURLs[itemId] = url
+            return
+        }
+        importedTranscriptRetryDates[itemId] = nil
+        recipientTranscriptSuspendedItemIDs.remove(itemId)
+        scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: url)
+    }
+
+    nonisolated static func verifiedRecipientEditionDigest(at url: URL, expected: String?) throws -> String {
+        let digest = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: url)
+        if let expected, digest != expected {
+            throw SessionKitError.persistenceFailed("recipient_transcript_edition_changed")
+        }
+        return digest
+    }
+
+    nonisolated static func recipientSourceDurationMs(at url: URL) async throws -> Int {
+        #if canImport(AVFoundation)
+        let duration = try await AVURLAsset(url: url).load(.duration)
+        let seconds = CMTimeGetSeconds(duration)
+        guard seconds.isFinite, seconds > 0 else {
+            throw SessionKitError.persistenceFailed("recipient_transcript_duration_unknown")
+        }
+        return Int((seconds * 1_000).rounded())
+        #else
+        throw SessionKitError.persistenceFailed("recipient_transcript_duration_unknown")
+        #endif
+    }
+
+    nonisolated static func invalidatePodcastEdition(itemId: String, digest: String?, store: SQLiteSessionStore) throws {
         for var layer in try store.loadImportedCommentaryLayers(itemId: itemId)
         where layer.deletedAt == nil && layer.itemIdentity.itemType == .podcast
             && layer.resolvedRecipientEditionSHA256 != digest {
@@ -16481,16 +17831,13 @@ final class Gate1AppModel: ObservableObject {
     private func resolveImportedPodcastCommentary(
         itemId: String,
         localURL: URL,
-        recipientTranscriptOverride: TranscriptTimeline? = nil
+        recipientTranscriptOverride: TranscriptTimeline? = nil,
+        recipientTranscriptEditionSHA256: String? = nil
     ) {
         guard let store,
               let item = try? store.loadItem(id: itemId),
               let layers = try? store.loadImportedCommentaryLayers(itemId: itemId),
               !layers.isEmpty else { return }
-        // Playback refreshes must not cancel a stronger transient-transcript pass.
-        guard recipientTranscriptOverride != nil || !transcriptAssistedResolutionItems.contains(itemId)
-            || importedPodcastResolutionURLs[itemId] != localURL else { return }
-        if importedPodcastResolutionURLs[itemId] != localURL { transcriptAssistedResolutionItems.remove(itemId) }
         importedPodcastResolutionURLs[itemId] = localURL
         let localItem = localSharedItemIdentity(for: item)
         // Persisted transcripts have no byte-edition binding. Only this pass's
@@ -16507,14 +17854,17 @@ final class Gate1AppModel: ObservableObject {
         if recipientTranscript == nil, importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store) {
             scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: localURL)
         }
-        if recipientTranscriptOverride != nil { transcriptAssistedResolutionItems.insert(itemId) }
         let generation = (importedPodcastResolutionGenerations[itemId] ?? 0) + 1
         importedPodcastResolutionGenerations[itemId] = generation
         let applicationSupportDirectory = try? applicationSupportDirectory()
         diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "scheduled:\(work.count)"
         Task.detached { [weak self] in
             do {
-                let recipientDigest = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: localURL)
+                let recipientDigest = try Self.verifiedRecipientEditionDigest(
+                    at: localURL, expected: recipientTranscriptOverride == nil ? nil : recipientTranscriptEditionSHA256)
+                if recipientTranscriptOverride != nil && recipientTranscriptEditionSHA256 == nil {
+                    throw SessionKitError.persistenceFailed("recipient_transcript_edition_unbound")
+                }
                 let isCurrent = try await MainActor.run { [weak self] in
                     guard let self, self.importedPodcastResolutionGenerations[itemId] == generation else { return false }
                     try Self.invalidatePodcastEdition(itemId: itemId, digest: recipientDigest, store: store)
@@ -16681,11 +18031,11 @@ final class Gate1AppModel: ObservableObject {
                     }
                     resolvedWork.append((layer, updated, mapProjection))
                 }
+                _ = try Self.verifiedRecipientEditionDigest(at: localURL, expected: recipientDigest)
                 await MainActor.run {
                     guard let self,
                           self.importedPodcastResolutionGenerations[itemId] == generation,
                           let store = self.store else { return }
-                    self.transcriptAssistedResolutionItems.remove(itemId)
                     do {
                         for (layer, records, projection) in resolvedWork {
                             try store.saveImportedCommentaryLayer(layer)
@@ -16709,7 +18059,11 @@ final class Gate1AppModel: ObservableObject {
                         }
                         if self.selectedItem.id == itemId { self.refreshSelectedItem() }
                         let resolvedCount = resolvedWork.filter { $0.0.sourceResolutionStatus == .resolved }.count
-                        self.diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "complete:\(resolvedCount)/\(resolvedWork.count)"
+                        let positionedCount = resolvedWork.flatMap { $0.1 }
+                            .filter { Self.isInlinePodcastResolution($0.resolution) }.count
+                        let totalCount = resolvedWork.reduce(0) { $0 + $1.1.count }
+                        self.diagnostics["importedPodcastAnchorResolution:\(itemId)"] =
+                            "complete:layers=\(resolvedCount)/\(resolvedWork.count);positions=\(positionedCount)/\(totalCount)"
                         if recipientTranscript == nil, self.importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store) {
                             self.scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: localURL)
                         }
@@ -16717,10 +18071,26 @@ final class Gate1AppModel: ObservableObject {
                         self.diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "persistence_failed:\(error.localizedDescription)"
                     }
                 }
+                // A file can be replaced during the MainActor persistence
+                // turn. Recheck afterward off-actor and invalidate all newly
+                // written positions if their byte identity no longer holds.
+                let postWriteDigest = try Self.verifiedRecipientEditionDigest(at: localURL, expected: nil)
+                if postWriteDigest != recipientDigest {
+                    await MainActor.run {
+                        guard let self, self.importedPodcastResolutionGenerations[itemId] == generation,
+                              let store = self.store else { return }
+                        try? Self.invalidatePodcastEdition(itemId: itemId, digest: postWriteDigest, store: store)
+                        if self.selectedItem.id == itemId { self.refreshSelectedItem() }
+                        self.diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "edition_changed_after_write"
+                    }
+                }
             } catch {
+                let currentDigest = try? Self.verifiedRecipientEditionDigest(at: localURL, expected: nil)
                 await MainActor.run {
                     guard self?.importedPodcastResolutionGenerations[itemId] == generation else { return }
-                    self?.transcriptAssistedResolutionItems.remove(itemId)
+                    if let store = self?.store {
+                        try? Self.invalidatePodcastEdition(itemId: itemId, digest: currentDigest, store: store)
+                    }
                     self?.diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "failed:\(error.localizedDescription)"
                 }
             }

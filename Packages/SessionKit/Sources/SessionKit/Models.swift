@@ -84,6 +84,31 @@ public enum MediaSeekResolution: Equatable, Sendable {
     case failed(actualMediaTimeMs: Int?, reason: String)
 }
 
+public enum MediaSeekReadiness: Equatable, Sendable {
+    case waiting
+    case ready
+    case rejected
+
+    public static func evaluate(
+        requestID: Int,
+        observedRequest: MediaSeekRequest?,
+        resolution: MediaSeekResolution?,
+        playbackStatus: PlaybackStatus,
+        hasMediaPosition: Bool,
+        requestedTransportActive: Bool
+    ) -> Self {
+        guard observedRequest?.id == requestID,
+              playbackStatus != .failed, playbackStatus != .paused else { return .rejected }
+        switch resolution {
+        case .some(.pending): return .waiting
+        case .some(.accepted):
+            return playbackStatus == .playing && hasMediaPosition && requestedTransportActive
+                ? .ready : .waiting
+        case .some(.failed), .none: return .rejected
+        }
+    }
+}
+
 public enum TargetType: String, Codable, Equatable, Sendable {
     case itemTextTTS = "item_text_tts"
     case transcriptBackedMedia = "transcript_backed_media"
@@ -1176,7 +1201,7 @@ public enum PodcastAnchorEvidenceCaptureStatus: String, Codable, Equatable, Send
     case unavailable
 }
 
-public enum PodcastAnchorEvidenceProvenance: String, Codable, Equatable, Sendable {
+public enum PodcastAnchorEvidenceProvenance: String, Codable, Equatable, Hashable, Sendable {
     case decodedPlaybackStream = "decoded_playback_stream"
     case exactLocalPlaybackEdition = "exact_local_playback_edition"
     case observedDecodedPlayback = "observed_decoded_playback"
@@ -1184,11 +1209,71 @@ public enum PodcastAnchorEvidenceProvenance: String, Codable, Equatable, Sendabl
     case downloadedSourceReference = "downloaded_source_reference"
 }
 
-public enum PodcastAnchorEvidenceWindowRole: String, Codable, Equatable, Sendable {
+public enum PodcastAnchorEvidenceWindowRole: String, Codable, Equatable, Hashable, Sendable {
     case preInterjection = "pre_interjection"
     case postResume = "post_resume"
     case sourceWindowBefore = "source_window_before"
     case sourceWindowAfter = "source_window_after"
+}
+
+/// Durable acquisition state for one flank of an original Margin anchor. A
+/// legacy record with no outcomes means unknown, not failed capture.
+public struct PodcastAnchorCaptureWindow: Codable, Equatable, Sendable {
+    public enum Role: String, Codable, Sendable {
+        case preInterjection = "pre_interjection"
+        case postResume = "post_resume"
+    }
+
+    public enum State: String, Codable, Sendable {
+        case waiting, collecting, deriving, committed, retryableFailure, unavailable
+    }
+
+    public var role: Role
+    public var state: State
+    public var attempt: Int
+    public var anchorMediaTimeMs: Int
+    public var firstFailureReason: String?
+    public var latestFailureReason: String?
+
+    public init(
+        role: Role,
+        state: State = .waiting,
+        attempt: Int = 0,
+        anchorMediaTimeMs: Int,
+        firstFailureReason: String? = nil,
+        latestFailureReason: String? = nil
+    ) {
+        self.role = role
+        self.state = state
+        self.attempt = attempt
+        self.anchorMediaTimeMs = anchorMediaTimeMs
+        self.firstFailureReason = firstFailureReason
+        self.latestFailureReason = latestFailureReason
+    }
+
+    public mutating func accepted() {
+        guard state != .committed, attempt < 3 else { return }
+        attempt += 1
+        state = .collecting
+    }
+
+    public mutating func failed(_ reason: String, retryable: Bool) {
+        guard state != .committed else { return }
+        firstFailureReason = firstFailureReason ?? reason
+        latestFailureReason = reason
+        state = retryable && attempt < 3 ? .retryableFailure : .unavailable
+    }
+
+    public mutating func committed() {
+        state = .committed
+    }
+
+    public mutating func invalidateCommitted(_ reason: String) {
+        guard state == .committed else { return }
+        firstFailureReason = firstFailureReason ?? reason
+        latestFailureReason = reason
+        state = attempt < 3 ? .retryableFailure : .unavailable
+    }
 }
 
 public struct CapturedPodcastAnchorEvidence: Codable, Equatable, Sendable, Identifiable {
@@ -1198,6 +1283,8 @@ public struct CapturedPodcastAnchorEvidence: Codable, Equatable, Sendable, Ident
     public let anchorOffsetMs: Int
     public let provenance: PodcastAnchorEvidenceProvenance?
     public let windowRole: PodcastAnchorEvidenceWindowRole?
+    public let byteCount: Int?
+    public let checksumSHA256: String?
 
     public init(
         id: String,
@@ -1205,7 +1292,9 @@ public struct CapturedPodcastAnchorEvidence: Codable, Equatable, Sendable, Ident
         durationMs: Int,
         anchorOffsetMs: Int,
         provenance: PodcastAnchorEvidenceProvenance? = nil,
-        windowRole: PodcastAnchorEvidenceWindowRole? = nil
+        windowRole: PodcastAnchorEvidenceWindowRole? = nil,
+        byteCount: Int? = nil,
+        checksumSHA256: String? = nil
     ) {
         self.id = id
         self.localPath = localPath
@@ -1213,6 +1302,8 @@ public struct CapturedPodcastAnchorEvidence: Codable, Equatable, Sendable, Ident
         self.anchorOffsetMs = anchorOffsetMs
         self.provenance = provenance
         self.windowRole = windowRole
+        self.byteCount = byteCount
+        self.checksumSHA256 = checksumSHA256
     }
 }
 
@@ -1242,6 +1333,9 @@ public struct Interjection: Codable, Equatable, Sendable {
     public var sourceExactEditionSHA256: String? = nil
     public var podcastAnchorEvidenceCaptureStatus: PodcastAnchorEvidenceCaptureStatus? = nil
     public var podcastAnchorEvidenceFailureReason: String? = nil
+    /// Session-qualified by the owning Interjection; each flank survives
+    /// independent completion and failure across process restarts.
+    public var podcastAnchorCaptureWindows: [PodcastAnchorCaptureWindow]? = nil
     /// Local, private curation metadata. These fields help the owner shortlist
     /// Margins for sender review and are never copied into reviewed revisions
     /// or `.spokenmargins` packages.
@@ -1273,6 +1367,7 @@ public struct Interjection: Codable, Equatable, Sendable {
         sourceExactEditionSHA256: String? = nil,
         podcastAnchorEvidenceCaptureStatus: PodcastAnchorEvidenceCaptureStatus? = nil,
         podcastAnchorEvidenceFailureReason: String? = nil,
+        podcastAnchorCaptureWindows: [PodcastAnchorCaptureWindow]? = nil,
         isStarredForSharing: Bool? = nil,
         privateSharingNote: String? = nil,
         captureKind: InterjectionCaptureKind? = nil
@@ -1298,9 +1393,37 @@ public struct Interjection: Codable, Equatable, Sendable {
         self.sourceExactEditionSHA256 = sourceExactEditionSHA256
         self.podcastAnchorEvidenceCaptureStatus = podcastAnchorEvidenceCaptureStatus
         self.podcastAnchorEvidenceFailureReason = podcastAnchorEvidenceFailureReason
+        self.podcastAnchorCaptureWindows = podcastAnchorCaptureWindows
         self.isStarredForSharing = isStarredForSharing
         self.privateSharingNote = privateSharingNote
         self.captureKind = captureKind
+    }
+}
+
+public extension Interjection {
+    mutating func updatePodcastAnchorWindow(
+        _ role: PodcastAnchorEvidenceWindowRole,
+        _ update: (inout PodcastAnchorCaptureWindow) -> Void
+    ) {
+        guard let anchorMediaTimeMs = anchor.mediaTimeMs,
+              let captureRole = PodcastAnchorCaptureWindow.Role(rawValue: role.rawValue) else { return }
+        var windows = podcastAnchorCaptureWindows ?? []
+        if let index = windows.firstIndex(where: { $0.role == captureRole }) {
+            update(&windows[index])
+        } else {
+            var window = PodcastAnchorCaptureWindow(role: captureRole, anchorMediaTimeMs: anchorMediaTimeMs)
+            update(&window)
+            windows.append(window)
+        }
+        podcastAnchorCaptureWindows = windows
+        if windows.contains(where: { $0.state == .waiting || $0.state == .collecting || $0.state == .deriving || $0.state == .retryableFailure }) {
+            podcastAnchorEvidenceCaptureStatus = .pendingPostResumeSample
+        } else if windows.allSatisfy({ $0.state == .committed }) {
+            podcastAnchorEvidenceCaptureStatus = .ready
+        } else {
+            podcastAnchorEvidenceCaptureStatus = .unavailable
+        }
+        podcastAnchorEvidenceFailureReason = windows.compactMap(\.firstFailureReason).first
     }
 }
 

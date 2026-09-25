@@ -187,6 +187,7 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
             interjections.append(interjection)
         }
         model.selectedItem.interjections = interjections
+        XCTAssertNoThrow(try model.persistSelectedInterjectionsForSharingTests())
         return Build23SharingCoordinator(model: model)
     }
 

@@ -78,6 +78,8 @@ struct InterjectionSharingState {
     var drafts: [ShareInterjectionDraft] = []
     var senderDisplayLabel = UserDefaults.standard.string(forKey: "sharingSenderDisplayLabel") ?? ""
     var includesAcousticEvidence = true
+    var allowsDegradedPodcastEvidence = false
+    var degradedPodcastEvidenceConsentFingerprint: String?
     var includesReplyContext = false
     var itemReferenceURL: String?
     var canEmbedLinklessItem = false
@@ -127,7 +129,11 @@ struct ImportedCommentaryPrompt: Identifiable {
     let index: Int
     let count: Int
 
-    var senderLabel: String { layer.displayLabel?.nilIfEmpty ?? "Unsigned sender" }
+    var senderLabel: String {
+        interjection.conversation?.authorLabel.nilIfEmpty
+            ?? layer.displayLabel?.nilIfEmpty
+            ?? "Unsigned sender"
+    }
 }
 
 private enum MarginReviewToken: Identifiable {

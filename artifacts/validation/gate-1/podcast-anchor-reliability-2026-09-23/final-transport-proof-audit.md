@@ -1,0 +1,7 @@
+# Final transport proof audit
+
+**Verdict: pass at source/host-evidence level; app runtime remains blocked.** No new correctness defect found in the transport-proof correction.
+
+- The readiness gate now requires a positive `mediaPlaybackClient.isUsingPlaybackURL(localURL, itemId:)` result; a missing client evaluates false (`Gate1AppModel.swift:7931-7944`). The DEBUG test override is explicitly scoped to tests. Production `makeAudioPlaybackClient()` constructs the routed client with `makeMediaPlaybackClient()`, which stores the real `AVPlayerStreamPlaybackClient` in `mediaPlaybackClient` (`Gate1AppModel.swift:11495-11502, 11748-11775`).
+- The app regression source exercises all requested cases: no probe cannot arm; a false/remote-only probe remains unarmed; a positive probe must match both standardized local URL and item ID before confirmation, persistence/reopen, and changed-edition invalidation (`Build23SharingSeamsTests.swift:47-125`). These are source assertions only; the test body has not run.
+- Fast plan evidence is verified: 330 passed, 0 failed, 1 expected skip (`artifacts/test-runs/20260923-145048-859797-fast/manifest.json`). The generic simulator app build reports `BUILD SUCCEEDED`; `swiftc -frontend -parse` and diff check passed per handoff. None executes the app test. The app manifest remains blocked at 0/477 tests with exit 65 before suite startup (`artifacts/test-runs/20260923-141405-747326-app/manifest.json`).

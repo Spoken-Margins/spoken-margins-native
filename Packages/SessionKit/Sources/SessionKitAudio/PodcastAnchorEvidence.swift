@@ -231,18 +231,30 @@ public enum PodcastAnchorEvidenceGenerator {
     }
 }
 
-/// Resolves every Margin against one locally downloaded recipient edition. The
-/// full reference signature is generated once and remains on the recipient.
+/// Resolves every Margin against one locally downloaded recipient edition.
+/// Short overlapping reference signatures remain on the recipient.
 public enum PodcastAcousticAnchorResolver {
     public static let maximumFusionSpreadMs = 1_500
     public static let minimumPartialFlankConfidence = 0.9
+    // A single long SHCustomCatalog reference stops matching well before its
+    // reported duration. Keep every reference below that observed limit and
+    // overlap windows so a 12-second sender flank can cross a boundary.
+    static let referenceWindowDurationMs = 1_200_000
+    static let referenceWindowOverlapMs = 30_000
+
+    struct WindowedMatch {
+        let evidenceIndex: Int
+        let timeMs: Int
+        let confidence: Double
+    }
 
     public static func resolve(
         queries: [PodcastPortableAnchorQuery],
         recipientAudioURL: URL,
         senderExactEditionSHA256: String?,
         senderDurationMs: Int?,
-        strongSourceIdentity: Bool
+        strongSourceIdentity: Bool,
+        referenceWindowDurationMs: Int = 1_200_000
     ) async throws -> [String: ImportedAnchorResolution] {
         let recipientDigest = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: recipientAudioURL)
         if let senderExactEditionSHA256, senderExactEditionSHA256 == recipientDigest {
@@ -275,60 +287,78 @@ public enum PodcastAcousticAnchorResolver {
         }
 
         #if canImport(AVFoundation) && canImport(ShazamKit)
+        let recipientAsset = AVURLAsset(url: recipientAudioURL)
         let recipientDurationMs = try await durationMs(of: recipientAudioURL)
-        let evidenceQueries = queries.flatMap(\.evidence)
-        let session: SHSession?
-        if evidenceQueries.isEmpty {
-            session = nil
-        } else {
-            let reference: SHSignature
-            do {
-                reference = try await SHSignatureGenerator.signature(from: AVURLAsset(url: recipientAudioURL))
-            } catch {
-                throw PodcastAnchorEvidenceError.referenceGenerationFailed
+        let prepared = queries.map { query in
+            (
+                query: query,
+                signatures: query.evidence.enumerated().compactMap { index, evidence -> (Int, SHSignature)? in
+                    guard let signature = try? SHSignature(dataRepresentation: evidence.signatureData) else { return nil }
+                    return (index, signature)
+                }
+            )
+        }
+        var matchesByQuery: [String: [WindowedMatch]] = [:]
+        if prepared.contains(where: { !$0.signatures.isEmpty }) {
+            guard let sourceTrack = try await recipientAsset.loadTracks(withMediaType: .audio).first else {
+                throw PodcastAnchorEvidenceError.audioTrackMissing
             }
-            let catalog = SHCustomCatalog()
-            let item = SHMediaItem(properties: [.title: "Spoken Margins recipient edition"])
-            try catalog.addReferenceSignature(reference, representing: [item])
-            session = SHSession(catalog: catalog)
+            for window in referenceWindows(durationMs: recipientDurationMs,
+                                            maximumWindowMs: referenceWindowDurationMs) {
+                try Task.checkCancellation()
+                let composition = AVMutableComposition()
+                guard let track = composition.addMutableTrack(
+                    withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid
+                ) else { throw PodcastAnchorEvidenceError.referenceGenerationFailed }
+                try track.insertTimeRange(
+                    CMTimeRange(
+                        start: CMTime(value: CMTimeValue(window.startMs), timescale: 1_000),
+                        duration: CMTime(value: CMTimeValue(window.lengthMs), timescale: 1_000)
+                    ), of: sourceTrack, at: .zero
+                )
+                let reference: SHSignature
+                do { reference = try await SHSignatureGenerator.signature(from: composition) }
+                catch { throw PodcastAnchorEvidenceError.referenceGenerationFailed }
+                let catalog = SHCustomCatalog()
+                let item = SHMediaItem(properties: [.title: "Spoken Margins recipient window"])
+                try catalog.addReferenceSignature(reference, representing: [item])
+                let session = SHSession(catalog: catalog)
+                for entry in prepared {
+                    for (evidenceIndex, signature) in entry.signatures {
+                        try Task.checkCancellation()
+                        switch await session.result(from: signature) {
+                        case .match(let match):
+                            for item in match.mediaItems {
+                                let matchedStartMs = window.startMs + Int((item.matchOffset * 1_000).rounded())
+                                let confidence: Double
+                                if #available(iOS 18.4, macOS 15.4, *) {
+                                    confidence = Double(item.confidence)
+                                } else {
+                                    confidence = 0.9
+                                }
+                                matchesByQuery[entry.query.packageScopedId, default: []].append(WindowedMatch(
+                                    evidenceIndex: evidenceIndex,
+                                    timeMs: matchedStartMs + entry.query.evidence[evidenceIndex].anchorOffsetMs,
+                                    confidence: confidence
+                                ))
+                            }
+                        case .noMatch, .error:
+                            continue
+                        }
+                    }
+                }
+            }
         }
 
         var resolutions: [String: ImportedAnchorResolution] = [:]
         for query in queries {
-            var candidates: [(timeMs: Int, confidence: Double)] = []
-            var matchedAnchorOffsets: [Int] = []
-            for evidence in query.evidence {
-                let signature: SHSignature
-                do {
-                    signature = try SHSignature(dataRepresentation: evidence.signatureData)
-                } catch {
-                    continue // One unreadable variant must not discard the other flanks.
-                }
-                guard let session else { continue }
-                switch await session.result(from: signature) {
-                case .match(let match):
-                    guard let item = match.mediaItems.first else { continue }
-                    let matchedStartMs = Int((item.matchOffset * 1_000).rounded())
-                    let confidence: Double
-                    if #available(iOS 18.4, macOS 15.4, *) {
-                        confidence = Double(item.confidence)
-                    } else {
-                        confidence = 0.9
-                    }
-                    candidates.append((matchedStartMs + evidence.anchorOffsetMs, confidence))
-                    matchedAnchorOffsets.append(evidence.anchorOffsetMs)
-                case .noMatch, .error:
-                    continue
-                }
-            }
-            resolutions[query.packageScopedId] = resolveCandidates(
-                candidates,
+            resolutions[query.packageScopedId] = resolveWindowedMatches(
+                matchesByQuery[query.packageScopedId] ?? [],
                 query: query,
                 senderDurationMs: senderDurationMs,
                 recipientDurationMs: recipientDurationMs,
                 strongSourceIdentity: strongSourceIdentity,
-                exactDigestContradiction: senderExactEditionSHA256 != nil,
-                matchedAnchorOffsets: matchedAnchorOffsets
+                exactDigestContradiction: senderExactEditionSHA256 != nil
             )
         }
         return corroboratePartialFlanks(queries: queries, resolutions: resolutions)
@@ -343,6 +373,77 @@ public enum PodcastAcousticAnchorResolver {
             ))
         })
         #endif
+    }
+
+    static func referenceWindows(
+        durationMs: Int,
+        maximumWindowMs: Int = referenceWindowDurationMs
+    ) -> [(startMs: Int, lengthMs: Int)] {
+        guard durationMs > 0 else { return [] }
+        let maximum = max(PodcastAnchorEvidenceGenerator.flankDurationMs, maximumWindowMs)
+        let overlap = min(referenceWindowOverlapMs, maximum / 2)
+        var windows: [(startMs: Int, lengthMs: Int)] = []
+        var start = 0
+        while start < durationMs {
+            let length = min(maximum, durationMs - start)
+            guard length >= PodcastAnchorEvidenceGenerator.minimumEvidenceDurationMs else { break }
+            windows.append((start, length))
+            guard start + length < durationMs else { break }
+            start += maximum - overlap
+        }
+        return windows
+    }
+
+    static func resolveWindowedMatches(
+        _ matches: [WindowedMatch],
+        query: PodcastPortableAnchorQuery,
+        senderDurationMs: Int?,
+        recipientDurationMs: Int?,
+        strongSourceIdentity: Bool,
+        exactDigestContradiction: Bool
+    ) -> ImportedAnchorResolution {
+        let ordered = matches.sorted { $0.timeMs < $1.timeMs }
+        var clusters: [[WindowedMatch]] = []
+        for match in ordered {
+            if let last = clusters.indices.last,
+               let firstTime = clusters[last].first?.timeMs,
+               match.timeMs - firstTime <= maximumFusionSpreadMs {
+                clusters[last].append(match)
+            } else {
+                clusters.append([match])
+            }
+        }
+        let corroborated = clusters.filter { Set($0.map(\.evidenceIndex)).count >= 2 }
+        if corroborated.count > 1 { return ambiguousWindowedMatch() }
+        let chosen: [WindowedMatch]
+        if let corroborated = corroborated.first {
+            chosen = corroborated
+        } else if clusters.count == 1 {
+            chosen = clusters[0]
+        } else if clusters.isEmpty {
+            chosen = []
+        } else {
+            return ambiguousWindowedMatch()
+        }
+        let distinct = Dictionary(grouping: chosen, by: \.evidenceIndex)
+            .values.compactMap { $0.max { $0.confidence < $1.confidence } }
+        if distinct.count > 1 && corroborated.isEmpty {
+            return ambiguousWindowedMatch()
+        }
+        return resolveCandidates(
+            distinct.map { (timeMs: $0.timeMs, confidence: $0.confidence) },
+            query: query,
+            senderDurationMs: senderDurationMs,
+            recipientDurationMs: recipientDurationMs,
+            strongSourceIdentity: strongSourceIdentity,
+            exactDigestContradiction: exactDigestContradiction,
+            matchedAnchorOffsets: distinct.map { query.evidence[$0.evidenceIndex].anchorOffsetMs }
+        )
+    }
+
+    private static func ambiguousWindowedMatch() -> ImportedAnchorResolution {
+        ImportedAnchorResolution(evidenceClass: .ambiguous, isAmbiguous: true,
+                                 algorithmVersion: "podcast-anchor-windowed.v2")
     }
 
     static func resolveCandidates(
@@ -508,6 +609,108 @@ public enum PodcastAcousticAnchorResolver {
 
 /// Resolves bounded, human-inspectable sender transcript context against a
 /// recipient-local timed transcript. No full transcript enters the package.
+public enum PodcastRecipientTranscriptSweep {
+    public struct Window: Equatable, Sendable {
+        public let startMs: Int
+        public let endMs: Int
+
+        public init(startMs: Int, endMs: Int) {
+            self.startMs = startMs
+            self.endMs = endMs
+        }
+
+        public var anchorMs: Int { startMs + (endMs - startMs) / 2 }
+        public var beforeMs: Int { anchorMs - startMs }
+        public var afterMs: Int { endMs - anchorMs }
+    }
+
+    // A local hit is useful for finding a proposal, but cannot establish
+    // episode-wide uniqueness. The sweep is capped so long episodes remain
+    // unresolved instead of being falsely verified after partial coverage.
+    public static let maximumSweepWindows = 36
+    public static let maximumHintCenters = 4
+    public static let maximumTotalWindows = maximumSweepWindows + 2 * maximumHintCenters
+    public static let sweepWindowMs = 210_000
+    public static let sweepStepMs = 190_000
+
+    public static func windows(durationMs: Int, hintsMs: [Int]) -> [Window]? {
+        guard durationMs > 0 else { return nil }
+        var result: [Window] = []
+        var selectedHints: [Int] = []
+        for hint in hintsMs {
+            let bounded = min(max(0, hint), durationMs)
+            // Nearby Margins share local/widened work. The episode sweep still
+            // considers every Margin, including hints omitted by this cap.
+            guard !selectedHints.contains(where: { abs($0 - bounded) < sweepWindowMs }) else { continue }
+            if selectedHints.count == maximumHintCenters { break }
+            selectedHints.append(bounded)
+            let local = Window(startMs: max(0, bounded - 90_000),
+                               endMs: min(durationMs, bounded + 120_000))
+            let wide = Window(startMs: max(0, bounded - 150_000),
+                              endMs: min(durationMs, bounded + 150_000))
+            if local.endMs > local.startMs && !result.contains(local) { result.append(local) }
+            if wide.endMs > wide.startMs && !result.contains(wide) { result.append(wide) }
+        }
+        var start = 0
+        var sweepCount = 0
+        while start < durationMs {
+            sweepCount += 1
+            if sweepCount > maximumSweepWindows { break }
+            let window = Window(startMs: start, endMs: min(durationMs, start + sweepWindowMs))
+            if !result.contains(window) { result.append(window) }
+            start += sweepStepMs
+        }
+        assert(result.count <= maximumTotalWindows)
+        return result
+    }
+
+    public static func coversEpisode(_ windows: [Window], durationMs: Int) -> Bool {
+        guard durationMs > 0 else { return false }
+        var coveredUntil = 0
+        for window in windows.sorted(by: { $0.startMs < $1.startMs }) {
+            if window.startMs > coveredUntil { return false }
+            coveredUntil = max(coveredUntil, window.endMs)
+            if coveredUntil >= durationMs { return true }
+        }
+        return false
+    }
+
+    public static func mergedTimeline(_ timelines: [TranscriptTimeline], durationMs: Int) -> TranscriptTimeline {
+        var segments: [MediaTimelineSegment] = []
+        for segment in timelines.flatMap(\.segments).sorted(by: { $0.startMs < $1.startMs }) {
+            // Overlapping windows often return the same words with slightly
+            // different segment boundaries. Count them once for uniqueness.
+            let repeated = segments.contains {
+                abs($0.startMs - segment.startMs) <= 1_500
+                    && abs($0.endMs - segment.endMs) <= 1_500
+                    && $0.text.caseInsensitiveCompare(segment.text) == .orderedSame
+            }
+            if !repeated { segments.append(segment) }
+        }
+        return TranscriptTimeline(segments: segments, chapters: [], durationMs: durationMs)
+    }
+
+    public static func resolve(
+        anchor: PortableAnchorEvidence,
+        timelines: [TranscriptTimeline],
+        durationMs: Int,
+        completedWindows: [Window],
+        plannedWindows: [Window]?
+    ) -> ImportedAnchorResolution {
+        guard let plannedWindows, completedWindows == plannedWindows,
+              coversEpisode(completedWindows, durationMs: durationMs) else {
+            return ImportedAnchorResolution(
+                evidenceClass: .unresolved,
+                algorithmVersion: "podcast-transcript-sweep.incomplete.v1"
+            )
+        }
+        return PodcastTranscriptAnchorResolver.resolve(
+            anchor: anchor,
+            recipientTimeline: mergedTimeline(timelines, durationMs: durationMs)
+        )
+    }
+}
+
 public enum PodcastTranscriptAnchorResolver {
     public static let contextTokenCount = 12
     public static let minimumContextTokenCount = 6
@@ -577,9 +780,11 @@ public enum PodcastTranscriptAnchorResolver {
                 }
             }.sorted { lhs, rhs in lhs.score > rhs.score }
             if let best = pairs.first {
-                if let runnerUp = pairs.dropFirst().first,
-                   runnerUp.score >= best.score - minimumUniquenessGap,
-                   abs(runnerUp.timeMs - best.timeMs) > maximumBoundarySpreadMs {
+                if pairs.dropFirst().contains(where: { candidate in
+                    candidate.score >= best.score - minimumUniquenessGap
+                        && (!candidate.prefix.range.overlaps(best.prefix.range)
+                            || !candidate.suffix.range.overlaps(best.suffix.range))
+                }) {
                     return ambiguousTranscriptResolution()
                 }
                 return ImportedAnchorResolution(
@@ -599,7 +804,7 @@ public enum PodcastTranscriptAnchorResolver {
         }
 
         let matches = hasPrefix ? prefixMatches : suffixMatches
-        switch selectUniqueMatch(matches, tokenCount: hasPrefix ? prefix.count : suffix.count) {
+        switch selectUniqueMatch(matches) {
         case .none:
             return ImportedAnchorResolution(
                 evidenceClass: .unresolved,
@@ -654,11 +859,8 @@ public enum PodcastTranscriptAnchorResolver {
         }
         var clustered: [FuzzyMatch] = []
         for candidate in candidates.sorted(by: { $0.similarity > $1.similarity }) {
-            let midpoint = (candidate.range.lowerBound + candidate.range.upperBound) / 2
             let overlapsExisting = clustered.contains { existing in
-                let existingMidpoint = (existing.range.lowerBound + existing.range.upperBound) / 2
                 return candidate.range.overlaps(existing.range)
-                    || abs(midpoint - existingMidpoint) <= max(2, needle.count / 2)
             }
             if !overlapsExisting { clustered.append(candidate) }
         }
@@ -669,14 +871,12 @@ public enum PodcastTranscriptAnchorResolver {
         }
     }
 
-    private static func selectUniqueMatch(
-        _ matches: [FuzzyMatch],
-        tokenCount: Int
-    ) -> MatchSelection {
+    private static func selectUniqueMatch(_ matches: [FuzzyMatch]) -> MatchSelection {
         guard let best = matches.first else { return .none }
-        if let runnerUp = matches.dropFirst().first,
-           runnerUp.similarity >= best.similarity - minimumUniquenessGap,
-           abs(runnerUp.range.lowerBound - best.range.lowerBound) > tokenCount {
+        if matches.dropFirst().contains(where: {
+            $0.similarity >= best.similarity - minimumUniquenessGap
+                && !$0.range.overlaps(best.range)
+        }) {
             return .ambiguous
         }
         return .unique(best)

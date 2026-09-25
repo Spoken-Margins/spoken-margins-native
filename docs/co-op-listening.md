@@ -6,6 +6,23 @@ Hosted delivery remains deferred. No distribution or merge is included.
 
 ## Product behavior
 
+September 24 owner correction (target, not yet verified): Margin playback remains
+part of navigation through the episode. A Skim to a verified Margin moves the
+canonical source bookmark to that Margin's verified position, plays the Margin
+without a blocking source lead-in, and resumes from that destination after the
+Margin finishes or is skipped. Unresolved imported positions cannot authorize a
+podcast seek; their voices remain directly playable with a clear unavailable
+source-position state. Keep the podcast scrubber visible, show distinct Margin
+progress and a skip-to-end action during its voice, and use a compact way to
+return to the episode rather than a large “Continue Source” button. The
+cue-triggered shared-Margin auto-play preference must not be confused with
+explicit user-invoked Skim or Listen. Locally authored Margins are familiar on
+their originating installation without a user marking step; exact parents may
+still play as context for a new reply. These requirements supersede the older
+return-to-origin owner exercise below. The exported 22-Margin packet contains
+cleaned-audio representations, but the owner heard retained pauses and fillers;
+cleanup quality remains under investigation.
+
 A listening session owns its captures and history. The item timeline additionally
 shows active source-attached local Margins from every session, alongside imported
 contributions. Reading an earlier Margin does not move it into the new session.
@@ -17,13 +34,27 @@ this installation; it does not imply group read receipts. Disabled or muted
 imported layers do not become automatic Skim targets. Unresolved imported Margins
 remain visible and directly listenable; they cannot supply a guessed source seek.
 
-The existing second tap during a summary lands at its fixed destination. The same
-interaction skips original-source context to a fixed Margin destination. Ordinary
+Importing a shared podcast packet matches an existing Library episode or adds the
+referenced episode automatically from the packet. The recipient does not have to
+add the podcast separately. The existing publisher-link resolver remains the
+first path; when that lookup fails and the validated packet contains a canonical
+HTTPS page and HTTPS audio enclosure, the same source-persistence path uses the
+packet's exact episode reference. This creates the Library association and starts
+the normal podcast download; it does not verify a Margin's source position or
+promise that the remote audio is available. Packet voice stays directly playable
+when placement is unresolved.
+
+The existing second tap during a chapter summary lands at its fixed destination.
+An explicit Skim tap targeting a Margin starts its available recording directly;
+it does not wait for a source-context seek or a separate Listen prompt. A second
+tap advances to the next Margin. Ordinary
 chapter navigation without a prepared summary seeks directly. A prepared summary
 is reused only when its destination matches the selected event, never to skip an
-intervening contribution. Context is selectable: none, 30 seconds, one, two, or
-five minutes. Two minutes is the default. Forward context does not rewind already
-passed source. Explicit backward navigation may replay it.
+intervening contribution. "Play with context" remains a separate optional action.
+Context is selectable: none, 30 seconds, one, two, or five minutes. Two minutes
+is the default for that action. Forward context does not rewind already passed
+source. Explicit backward navigation may replay it. If media context fails to
+advance, the app plays the Margin directly after a bounded wait.
 
 Native audio uses recipient source milliseconds. Native text, including extracted
 PDFs and prepared narration, uses source character positions. Text context is an
@@ -61,8 +92,8 @@ summary-bridge tests protect accepted behavior. App/fast, relevant playback, and
 phone/iPad UI checks provide implementation evidence only.
 
 The owner exercise is to finish an item, import another person's Margins, begin a
-new session, select Margins, Skim to context, tap again to hear the contribution,
-and return to the starting source position. Repeat with native text/PDF and
+new session, select Margins, tap Skim once to hear the contribution,
+and continue from that verified Margin's source position. Repeat with native text/PDF and
 confirm older local Margins remain accessible. Only owner acceptance establishes
 `human_validated`; handoff evidence belongs under `artifacts/validation/gate-1/`.
 
@@ -82,13 +113,24 @@ Packages with this metadata require `spoken-margins.conversation.v1`; older clie
 must reject that required capability. Old packages still import, and acquire a
 stable legacy reference when first used as a reply target.
 
+September 24 extension: a reply may target an ordered list of two to four exact
+revisions. Such packets additionally require `spoken-margins.conversation.v2`;
+the `parents` array replaces the singular `parent` field for that reply. A packet
+must not carry both fields on the same contribution. Existing zero- and
+one-parent records retain their v1 encoding and stable identity. All referenced
+parents must belong to the same item when known; duplicate links, self-links,
+cycles and conflicting immutable revisions are rejected. Missing parents remain
+visible and may arrive later. Listening visits shared ancestors once, in target
+order, before the reply. Source anchors remain the author's capture evidence,
+separate from the reply links.
+
 The optional Response & Context sheet is available from a source Margin and item
 sharing. It can redirect a response to another Margin, or choose source context.
 Text selection uses source characters and a quoted passage; podcasts use a range
 within the preceding five minutes. These are listening hints, separate from the
 portable matching anchor. A recipient uses its resolved anchor and verifies the
 selected text before using the range; uncertain selections fall back to normal
-context. A second Skim tap bypasses the lead-up as before. Parent context plays
+context. The Play Margin now action bypasses an optional lead-up. Parent context plays
 the complete exact parent revision; trimming parent audio/text is deferred.
 
 The item Share path remains unchanged. The optional disclosure lists exact parent

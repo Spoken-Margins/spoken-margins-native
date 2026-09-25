@@ -49,6 +49,8 @@ Use these states consistently:
 
 ## Test And Build Policy
 
+**Owner override (September 24, 2026): scripted simulator testing is stopped.** Do not execute simulator XCTest, UI routes, app/adapters/speech-canary/smoke plans, or composite release plans that launch them. Earlier commands below are historical while this override is active. Use observation-driven agent computer use with screen recordings for flow evidence, preserving simulator incident restrictions. Host-only tests and builds remain available as supporting evidence. See `docs/testing.md`. Only the owner can resume scripted simulator testing.
+
 For documentation-only changes, check instruction consistency, referenced paths and commands, and the diff; run code checks only when the documentation change affects an executable contract or required gate. Do not add tests that merely restate documentation or mirror a low-impact implementation. For behavior changes, add meaningful regression coverage at the affected boundary.
 
 For code changes, routine development should prefer fast checks:
@@ -110,3 +112,7 @@ Do not introduce new command ids, snapshot field ids, delegation modes, fixture 
 ## Working Tree Safety
 
 The worktree may contain user or agent changes. Do not revert files you did not intentionally change. If unrelated dirty files exist, leave them alone. If existing changes affect the task, work with them and call out any residual risk in the handoff.
+
+## Stored Test Results
+
+Historical `artifacts/test-runs` results were offloaded on September 24, 2026. The exact archived set and both external-drive locations are recorded in `artifacts/test-runs/ARCHIVED-RESULTS.md` and in `/Volumes/SlawBulk/Codex-Offload/2026-09-24-space-recovery/test-runs-top-level-manifest.txt`. New test runs continue to be written locally; do not treat the archive as evidence that a current test run passed.

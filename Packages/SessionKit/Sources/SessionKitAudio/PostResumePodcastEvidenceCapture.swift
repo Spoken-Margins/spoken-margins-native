@@ -51,7 +51,7 @@ public struct CapturedEpisodeFingerprintLandmark: Sendable {
 public enum PostResumePodcastEvidenceCaptureResult: Sendable {
     case captured(CapturedPostResumePodcastEvidence)
     case landmark(CapturedEpisodeFingerprintLandmark)
-    case failed(request: PostResumeAudioSampleRequest, reason: String)
+    case failed(request: PostResumeAudioSampleRequest, windowRole: CapturedPostResumePodcastEvidence.WindowRole, reason: String)
 }
 
 /// Owns the short-lived state behind one AVPlayer audio tap. It is armed only
@@ -79,7 +79,16 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
         let endMediaTimeMs: Int
     }
 
+    private struct CallbackChunk: @unchecked Sendable {
+        let buffer: AVAudioPCMBuffer
+        let timeRange: CMTimeRange
+        let endOfStream: Bool
+        let generation: Int
+        let continuityGeneration: Int
+    }
+
     private let lock = NSLock()
+    private let callbackBufferLock = NSLock()
     private let completionQueue = DispatchQueue(
         label: "com.spokenmargins.podcast-post-resume-evidence",
         qos: .utility
@@ -89,6 +98,10 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
     private let continuousCollection: Bool
     private let itemId: String?
     private var format: AVAudioFormat?
+    private var availableCallbackBuffers: [AVAudioPCMBuffer] = []
+    private var callbackGeneration = 0
+    private var continuityGeneration = 0
+    private var lastProcessedEndMediaTimeMs: Int?
     private var accumulators: [String: Accumulator] = [:]
     private var ring: [RingChunk] = []
     private var sparseSchedule = SparseFingerprintSchedule()
@@ -96,6 +109,10 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
     private var generatingLandmarkKeys: Set<String> = []
 
     var retainsContinuousCollection: Bool { continuousCollection }
+
+    private static func key(for request: PostResumeAudioSampleRequest) -> String {
+        "\(request.sessionId)::\(request.interjectionId)"
+    }
 
     init(
         resultHandler: @escaping ResultHandler,
@@ -114,28 +131,39 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
             return false
         }
         let armed = lock.withLock {
-            guard accumulators[request.interjectionId] == nil else { return false }
-            accumulators[request.interjectionId] = Accumulator(request: request)
-            return true
-        }
-        if armed {
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 60) { [weak self] in
-                self?.failIfPending(
-                    interjectionId: request.interjectionId,
-                    reason: "decoded_playback_sample_timed_out"
-                )
+            let key = Self.key(for: request)
+            if let existing = accumulators[key] {
+                guard let newer = request.attemptGeneration(for: .postResume),
+                      let older = existing.request.attemptGeneration(for: .postResume),
+                      newer > older else { return false }
             }
+            accumulators[key] = Accumulator(request: request)
+            return true
         }
         return armed
     }
 
+    func notePlaybackProgress(mediaTimeMs: Int) {
+        let stalled = lock.withLock { () -> [Accumulator] in
+            let baseline = lastProcessedEndMediaTimeMs
+            let failed = accumulators.filter { _, accumulator in
+                mediaTimeMs - max(accumulator.request.anchorMediaTimeMs, baseline ?? accumulator.request.anchorMediaTimeMs) >= 5_000
+            }
+            for key in failed.keys { accumulators.removeValue(forKey: key) }
+            return Array(failed.values)
+        }
+        for accumulator in stalled {
+            resultHandler(.failed(request: accumulator.request, windowRole: .postResume, reason: "decoded_playback_no_buffer_while_advancing"))
+        }
+    }
+
     func captureBufferedPreInterjection(_ request: PostResumeAudioSampleRequest) -> Bool {
-        let endMs = request.anchorMediaTimeMs - 5_000
-        let startMs = endMs - request.targetDurationMs
-        guard startMs >= 0 else { return false }
-        guard let chunks = bufferedChunks(startMs: startMs, endMs: endMs),
+        let endMs = request.anchorMediaTimeMs
+        let startMs = max(0, endMs - request.targetDurationMs)
+        guard let selected = bufferedChunks(startMs: startMs, endMs: endMs),
+              let chunks = Self.trimmedChunks(selected, startMs: startMs, endMs: endMs),
               let first = chunks.first, let last = chunks.last,
-              last.endMediaTimeMs - first.startMediaTimeMs >= request.targetDurationMs - 250 else {
+              last.endMediaTimeMs - first.startMediaTimeMs >= PodcastAnchorEvidenceGenerator.minimumEvidenceDurationMs else {
             return false
         }
         completionQueue.async { [resultHandler] in
@@ -149,35 +177,44 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
                     windowRole: .preInterjection
                 )))
             } catch {
-                resultHandler(.failed(request: request, reason: "buffered_pre_interjection_signature_failed:\(error.localizedDescription)"))
+                resultHandler(.failed(request: request, windowRole: .preInterjection, reason: "buffered_pre_interjection_signature_failed:\(error.localizedDescription)"))
             }
         }
         return true
     }
 
     func noteSeek(at date: Date = Date()) {
-        lock.withLock {
+        callbackBufferLock.withLock { continuityGeneration += 1 }
+        let invalidated = lock.withLock { () -> [Accumulator] in
             sparseSchedule.noteSeek(at: date)
             pendingStablePostSeekStartMs = nil
             ring.removeAll(keepingCapacity: true)
-            for accumulator in accumulators.values {
-                accumulator.generator = SHSignatureGenerator()
-                accumulator.appendedFrames = 0
-                accumulator.skippedFrames = 0
-                accumulator.firstMediaTimeMs = nil
+            lastProcessedEndMediaTimeMs = nil
+            let pending = Array(accumulators.values)
+            accumulators.removeAll()
+            return pending
+        }
+        for accumulator in invalidated {
+            resultHandler(.failed(request: accumulator.request, windowRole: .postResume, reason: "playback_seeked_during_capture"))
+        }
+    }
+
+    func prepare(maxFrames: CMItemCount = 192_000, processingFormat: UnsafePointer<AudioStreamBasicDescription>) {
+        callbackBufferLock.withLock {
+            callbackGeneration += 1
+            format = AVAudioFormat(streamDescription: processingFormat)
+            availableCallbackBuffers = (0..<8).compactMap { _ in
+                guard let format else { return nil }
+                return AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(maxFrames))
             }
         }
     }
 
-    func prepare(processingFormat: UnsafePointer<AudioStreamBasicDescription>) {
-        lock.withLock {
-            format = AVAudioFormat(streamDescription: processingFormat)
-        }
-    }
-
     func unprepare() {
-        lock.withLock {
+        callbackBufferLock.withLock {
+            callbackGeneration += 1
             format = nil
+            availableCallbackBuffers.removeAll()
         }
     }
 
@@ -188,21 +225,82 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
         endOfStream: Bool = false
     ) {
         guard frameCount > 0 else { return }
-        var completed: [Accumulator] = []
-        var failed: [(Accumulator, String)] = []
-        let becameEmpty = lock.withLock { () -> Bool in
+        let (copied, callbackEpoch, continuityEpoch): (CallbackChunk?, Int, Int) = callbackBufferLock.withLock {
+            let callbackEpoch = callbackGeneration
+            let continuityEpoch = continuityGeneration
             guard let format,
-                  let buffer = AVAudioPCMBuffer(
+                  let destination = availableCallbackBuffers.popLast() else { return (nil, callbackEpoch, continuityEpoch) }
+            guard frameCount <= destination.frameCapacity,
+                  let source = AVAudioPCMBuffer(
                     pcmFormat: format,
                     bufferListNoCopy: bufferList,
                     deallocator: nil
                   ) else {
-                failed = accumulators.values.map { ($0, "decoded_playback_buffer_invalid") }
-                accumulators.removeAll()
-                return !failed.isEmpty
+                availableCallbackBuffers.append(destination)
+                return (nil, callbackEpoch, continuityEpoch)
             }
-            buffer.frameLength = AVAudioFrameCount(frameCount)
+            source.frameLength = AVAudioFrameCount(frameCount)
+            guard Self.copy(source, into: destination) else {
+                availableCallbackBuffers.append(destination)
+                return (nil, callbackEpoch, continuityEpoch)
+            }
+            return (CallbackChunk(
+                buffer: destination,
+                timeRange: timeRange,
+                endOfStream: endOfStream,
+                generation: callbackGeneration,
+                continuityGeneration: continuityEpoch
+            ), callbackEpoch, continuityEpoch)
+        }
+        guard let copied else {
+            completionQueue.async { [weak self] in
+                self?.invalidatePending(
+                    reason: "decoded_playback_queue_or_format_gap",
+                    callbackGeneration: callbackEpoch,
+                    continuityGeneration: continuityEpoch
+                )
+            }
+            return
+        }
+        completionQueue.async { [weak self] in
+            guard let self else { return }
+            let isCurrent = self.callbackBufferLock.withLock {
+                self.callbackGeneration == copied.generation
+                    && self.continuityGeneration == copied.continuityGeneration
+            }
+            if isCurrent {
+                self.processCopied(copied.buffer, timeRange: copied.timeRange, endOfStream: copied.endOfStream)
+            }
+            self.callbackBufferLock.withLock {
+                if self.callbackGeneration == copied.generation {
+                    self.availableCallbackBuffers.append(copied.buffer)
+                }
+            }
+        }
+    }
+
+    private func processCopied(
+        _ buffer: AVAudioPCMBuffer,
+        timeRange: CMTimeRange,
+        endOfStream: Bool
+    ) {
+        let frameCount = CMItemCount(buffer.frameLength)
+        var completed: [Accumulator] = []
+        var failed: [(Accumulator, String)] = []
+        var convertedForSignature: AVAudioPCMBuffer?
+        let becameEmpty = lock.withLock { () -> Bool in
+            let format = buffer.format
             let mediaTimeMs = Self.mediaTimeMs(timeRange.start)
+            if let mediaTimeMs, let lastProcessedEndMediaTimeMs,
+               abs(mediaTimeMs - lastProcessedEndMediaTimeMs) > 250 {
+                ring.removeAll(keepingCapacity: true)
+                failed.append(contentsOf: accumulators.values.map { ($0, "decoded_playback_continuity_gap") })
+                accumulators.removeAll()
+            }
+            if let mediaTimeMs {
+                lastProcessedEndMediaTimeMs = mediaTimeMs
+                    + max(1, Int((Double(frameCount) / format.sampleRate * 1_000).rounded()))
+            }
             if continuousCollection,
                let mediaTimeMs,
                let copy = Self.copy(buffer) {
@@ -217,6 +315,18 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
             }
             for (id, accumulator) in accumulators {
                 do {
+                    guard let mediaTimeMs,
+                          mediaTimeMs >= accumulator.request.anchorMediaTimeMs - 250,
+                          mediaTimeMs <= accumulator.request.anchorMediaTimeMs
+                            + accumulator.request.captureDelayMs
+                            + accumulator.request.targetDurationMs + 1_000,
+                          accumulator.firstMediaTimeMs != nil
+                            || mediaTimeMs <= accumulator.request.anchorMediaTimeMs
+                                + accumulator.request.captureDelayMs + 2_000 else {
+                        failed.append((accumulator, "post_resume_original_interval_unavailable"))
+                        accumulators[id] = nil
+                        continue
+                    }
                     let delayFrames = Int64(
                         (Double(accumulator.request.captureDelayMs) * format.sampleRate / 1_000).rounded(.up)
                     )
@@ -227,7 +337,10 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
                     if accumulator.firstMediaTimeMs == nil {
                         accumulator.firstMediaTimeMs = mediaTimeMs
                     }
-                    try accumulator.generator.append(buffer, at: nil)
+                    if convertedForSignature == nil {
+                        convertedForSignature = try Self.signatureBuffer(from: buffer)
+                    }
+                    try accumulator.generator.append(convertedForSignature!, at: nil)
                     accumulator.appendedFrames += Int64(frameCount)
                     let targetFrames = Int64(
                         (Double(accumulator.request.targetDurationMs) * format.sampleRate / 1_000).rounded(.up)
@@ -256,12 +369,55 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
             finish(accumulator)
         }
         for (accumulator, reason) in failed {
-            resultHandler(.failed(request: accumulator.request, reason: reason))
+            resultHandler(.failed(request: accumulator.request, windowRole: .postResume, reason: reason))
         }
         if becameEmpty {
             if !continuousCollection { becameIdle() }
         }
         scheduleSparseLandmarkIfReady(now: Date())
+    }
+
+    /// Test seam for deterministic synthetic buffers; production capture does
+    /// not block the playback thread waiting for worker completion.
+    func flushPendingBuffersForTesting() {
+        completionQueue.sync {}
+    }
+
+    var pendingCaptureCountForTesting: Int { lock.withLock { accumulators.count } }
+
+    private func invalidatePending(reason: String, callbackGeneration: Int, continuityGeneration: Int) {
+        let failed = callbackBufferLock.withLock { () -> [Accumulator] in
+            guard self.callbackGeneration == callbackGeneration,
+                  self.continuityGeneration == continuityGeneration else { return [] }
+            return lock.withLock {
+                let pending = Array(accumulators.values)
+                accumulators.removeAll()
+                ring.removeAll(keepingCapacity: true)
+                lastProcessedEndMediaTimeMs = nil
+                return pending
+            }
+        }
+        for accumulator in failed {
+            resultHandler(.failed(request: accumulator.request, windowRole: .postResume, reason: reason))
+        }
+    }
+
+    /// Reproduces an exhausted callback pool whose queued invalidation drains
+    /// only after the caller has changed playback continuity and rearmed.
+    func queueGapForTesting(beforeDrain: () -> Void) {
+        let gate = DispatchSemaphore(value: 0)
+        completionQueue.async { gate.wait() }
+        let epochs = callbackBufferLock.withLock { (callbackGeneration, continuityGeneration) }
+        completionQueue.async { [weak self] in
+            self?.invalidatePending(
+                reason: "decoded_playback_queue_or_format_gap",
+                callbackGeneration: epochs.0,
+                continuityGeneration: epochs.1
+            )
+        }
+        beforeDrain()
+        gate.signal()
+        flushPendingBuffersForTesting()
     }
 
     func cancelAll(reason: String) {
@@ -271,20 +427,11 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
             return values
         }
         for accumulator in cancelled {
-            resultHandler(.failed(request: accumulator.request, reason: reason))
+            resultHandler(.failed(request: accumulator.request, windowRole: .postResume, reason: reason))
         }
         lock.withLock {
             ring.removeAll()
             generatingLandmarkKeys.removeAll()
-        }
-    }
-
-    private func failIfPending(interjectionId: String, reason: String) {
-        let failed = lock.withLock { accumulators.removeValue(forKey: interjectionId) }
-        guard let failed else { return }
-        resultHandler(.failed(request: failed.request, reason: reason))
-        if lock.withLock({ accumulators.isEmpty }) {
-            becameIdle()
         }
     }
 
@@ -295,6 +442,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
             guard !data.isEmpty else {
                 resultHandler(.failed(
                     request: accumulator.request,
+                    windowRole: .postResume,
                     reason: "signature_generation_failed"
                 ))
                 return
@@ -302,6 +450,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
             guard let firstMediaTimeMs = accumulator.firstMediaTimeMs else {
                 resultHandler(.failed(
                     request: accumulator.request,
+                    windowRole: .postResume,
                     reason: "decoded_playback_time_unavailable"
                 ))
                 return
@@ -324,6 +473,42 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
                   last.endMediaTimeMs >= endMs - 250 else { return nil }
             return selected
         }
+    }
+
+    private static func trimmedChunks(_ chunks: [RingChunk], startMs: Int, endMs: Int) -> [RingChunk]? {
+        var trimmed: [RingChunk] = []
+        for chunk in chunks {
+            let rate = chunk.buffer.format.sampleRate
+            guard rate > 0 else { return nil }
+            let frameCount = Int(chunk.buffer.frameLength)
+            let firstFrame = min(frameCount, max(0, Int(ceil(Double(startMs - chunk.startMediaTimeMs) * rate / 1_000))))
+            let lastFrame = min(frameCount, max(0, Int(floor(Double(endMs - chunk.startMediaTimeMs) * rate / 1_000))))
+            guard lastFrame > firstFrame else { continue }
+            guard let buffer = AVAudioPCMBuffer(
+                pcmFormat: chunk.buffer.format,
+                frameCapacity: AVAudioFrameCount(lastFrame - firstFrame)
+            ) else { return nil }
+            buffer.frameLength = AVAudioFrameCount(lastFrame - firstFrame)
+            let source = UnsafeMutableAudioBufferListPointer(chunk.buffer.mutableAudioBufferList)
+            let destination = UnsafeMutableAudioBufferListPointer(buffer.mutableAudioBufferList)
+            guard source.count == destination.count else { return nil }
+            let bytesPerFrame = Int(chunk.buffer.format.streamDescription.pointee.mBytesPerFrame)
+            guard bytesPerFrame > 0 else { return nil }
+            for index in source.indices {
+                let byteOffset = firstFrame * bytesPerFrame
+                let byteCount = (lastFrame - firstFrame) * bytesPerFrame
+                guard let sourceData = source[index].mData,
+                      let destinationData = destination[index].mData,
+                      byteOffset + byteCount <= Int(source[index].mDataByteSize),
+                      byteCount <= Int(destination[index].mDataByteSize) else { return nil }
+                memcpy(destinationData, sourceData.advanced(by: byteOffset), byteCount)
+                destination[index].mDataByteSize = UInt32(byteCount)
+            }
+            let actualStartMs = chunk.startMediaTimeMs + Int((Double(firstFrame) * 1_000 / rate).rounded())
+            let actualEndMs = chunk.startMediaTimeMs + Int((Double(lastFrame) * 1_000 / rate).rounded())
+            trimmed.append(RingChunk(buffer: buffer, startMediaTimeMs: actualStartMs, endMediaTimeMs: actualEndMs))
+        }
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private func scheduleSparseLandmarkIfReady(now: Date) {
@@ -391,7 +576,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
 
     private static func signature(from buffers: [AVAudioPCMBuffer]) throws -> SHSignature {
         let generator = SHSignatureGenerator()
-        for buffer in buffers { try generator.append(buffer, at: nil) }
+        for buffer in buffers { try generator.append(signatureBuffer(from: buffer), at: nil) }
         let signature = generator.signature()
         guard !signature.dataRepresentation.isEmpty else {
             throw PodcastAnchorEvidenceError.signatureGenerationFailed
@@ -399,23 +584,60 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
         return signature
     }
 
+    /// Converts decoded playback to a supported mono Float32 format on the
+    /// worker queue; the audio-tap callback only copies its source buffer.
+    private static func signatureBuffer(from source: AVAudioPCMBuffer) throws -> AVAudioPCMBuffer {
+        if source.format.commonFormat == .pcmFormatFloat32,
+           !source.format.isInterleaved,
+           source.format.channelCount == 1,
+           (8_000...48_000).contains(source.format.sampleRate) { return source }
+        guard let target = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1),
+              let converter = AVAudioConverter(from: source.format, to: target),
+              let output = AVAudioPCMBuffer(
+                pcmFormat: target,
+                frameCapacity: AVAudioFrameCount(
+                    max(1, Int(ceil(Double(source.frameLength) * 44_100 / source.format.sampleRate)) + 1_024)
+                )
+              ) else {
+            throw PodcastAnchorEvidenceError.signatureGenerationFailed
+        }
+        var supplied = false
+        var error: NSError?
+        let status = converter.convert(to: output, error: &error) { _, inputStatus in
+            guard !supplied else { inputStatus.pointee = .noDataNow; return nil }
+            supplied = true
+            inputStatus.pointee = .haveData
+            return source
+        }
+        guard status != .error, error == nil, output.frameLength > 0 else {
+            throw error ?? PodcastAnchorEvidenceError.signatureGenerationFailed
+        }
+        return output
+    }
+
     private static func copy(_ source: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
         guard let destination = AVAudioPCMBuffer(
             pcmFormat: source.format,
             frameCapacity: source.frameLength
         ) else { return nil }
+        guard copy(source, into: destination) else { return nil }
+        return destination
+    }
+
+    private static func copy(_ source: AVAudioPCMBuffer, into destination: AVAudioPCMBuffer) -> Bool {
+        guard destination.frameCapacity >= source.frameLength else { return false }
         destination.frameLength = source.frameLength
         let sourceBuffers = UnsafeMutableAudioBufferListPointer(source.mutableAudioBufferList)
         let destinationBuffers = UnsafeMutableAudioBufferListPointer(destination.mutableAudioBufferList)
-        guard sourceBuffers.count == destinationBuffers.count else { return nil }
+        guard sourceBuffers.count == destinationBuffers.count else { return false }
         for index in sourceBuffers.indices {
             guard let sourceData = sourceBuffers[index].mData,
-                  let destinationData = destinationBuffers[index].mData else { return nil }
+                  let destinationData = destinationBuffers[index].mData else { return false }
             let count = min(Int(sourceBuffers[index].mDataByteSize), Int(destinationBuffers[index].mDataByteSize))
             memcpy(destinationData, sourceData, count)
             destinationBuffers[index].mDataByteSize = UInt32(count)
         }
-        return destination
+        return true
     }
 
     private static func mediaTimeMs(_ time: CMTime) -> Int? {
@@ -438,9 +660,9 @@ enum PostResumePodcastEvidenceTapFactory {
                 let storage = MTAudioProcessingTapGetStorage(tap)
                 Unmanaged<PostResumePodcastEvidenceTapContext>.fromOpaque(storage).release()
             },
-            prepare: { tap, _, processingFormat in
+            prepare: { tap, maxFrames, processingFormat in
                 PostResumePodcastEvidenceTapFactory.storedContext(for: tap)
-                    .prepare(processingFormat: processingFormat)
+                    .prepare(maxFrames: maxFrames, processingFormat: processingFormat)
             },
             unprepare: { tap in
                 PostResumePodcastEvidenceTapFactory.storedContext(for: tap).unprepare()

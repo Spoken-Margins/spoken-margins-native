@@ -7,7 +7,7 @@ struct ConversationContextEditor: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dismiss) private var dismiss
     let note: Interjection
-    @State private var targetID = "source"
+    @State private var targetIDs: [String] = []
     @State private var customContext = false
     @State private var selection = NSRange(location: 0, length: 0)
     @State private var mediaStart = 0.0
@@ -15,7 +15,7 @@ struct ConversationContextEditor: View {
     @State private var initialized = false
 
     private var options: [MarginConversationSnapshot] { model.replyTargetOptions(for: note) }
-    private var parent: MarginConversationSnapshot? { options.first { $0.id == targetID } }
+    private var parents: [MarginConversationSnapshot] { targetIDs.compactMap { id in options.first { $0.id == id } } }
     private var sourceEnd: Int { min(max(0, note.anchor.startChar), model.selectedItem.text.count) }
     private var sourceStart: Int { max(0, sourceEnd - 5_000) }
     private var passage: String { String(model.selectedItem.text.dropFirst(sourceStart).prefix(sourceEnd - sourceStart)) }
@@ -25,24 +25,28 @@ struct ConversationContextEditor: View {
         NavigationStack {
             Form {
                 Section("Responding to") {
-                    Picker("Response target", selection: $targetID) {
-                        Text("Source passage").tag("source")
-                        if targetID != "source", parent == nil {
-                            Text("Referenced Margin · not received yet").tag(targetID)
-                        }
-                        ForEach(options) { node in
-                            Text("\(model.conversationTitle(node)): \(node.transcript.prefix(70))").tag(node.id)
+                    Button("Source passage") { targetIDs = [] }
+                    ForEach(options) { node in
+                        Button {
+                            if let index = targetIDs.firstIndex(of: node.id) { targetIDs.remove(at: index) }
+                            else if targetIDs.count < 4 { targetIDs.append(node.id) }
+                        } label: {
+                            Label("\(model.conversationTitle(node)): \(node.transcript.prefix(70))",
+                                  systemImage: targetIDs.contains(node.id) ? "checkmark.circle.fill" : "circle")
                         }
                     }
-                    if let parent {
+                    ForEach(parents) { parent in
                         Text(parent.transcript).textSelection(.enabled)
-                        Text("The complete referenced Margin plays before your reply. Its source context is played once for the conversation.")
+                    }
+                    if !targetIDs.isEmpty {
+                        Text("The selected Margins play in this order before your reply. Shared ancestors play once.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
+                    if targetIDs.count != parents.count { Text("A referenced Margin has not arrived yet.").foregroundStyle(.secondary) }
                     Text("Changing the response target keeps your original capture position.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                if targetID == "source" {
+                if targetIDs.isEmpty {
                     Section("Listening lead-up") {
                         Toggle("Choose a specific passage", isOn: $customContext)
                         if customContext {
@@ -91,11 +95,11 @@ struct ConversationContextEditor: View {
     }
 
     private var canSave: Bool {
-        targetID == "source" ? (!customContext || model.selectedItem.isNativeAudio || selection.length > 0) : parent != nil
+        targetIDs.isEmpty ? (!customContext || model.selectedItem.isNativeAudio || selection.length > 0) : targetIDs.count == parents.count
     }
     private func initialize() {
         guard !initialized else { return }; initialized = true
-        targetID = note.conversation?.parent?.id ?? "source"
+        targetIDs = note.conversation?.parents.map(\.id) ?? []
         mediaStart = max(0, mediaAnchor - 120); mediaEnd = mediaAnchor
         selection = NSRange(location: 0, length: (passage as NSString).length)
         if let context = note.conversation?.context, context.kind != .parent {
@@ -109,7 +113,7 @@ struct ConversationContextEditor: View {
     }
     private func save() -> Bool {
         var context: MarginListeningContext?
-        if let parent {
+        if let parent = parents.first {
             context = .init(kind: .parent, start: 0, end: parent.audioDurationMs ?? parent.transcript.count)
         } else if customContext {
             if model.selectedItem.isNativeAudio {
@@ -120,7 +124,7 @@ struct ConversationContextEditor: View {
                     end: start + passage[range].count, quote: String(passage[range]))
             }
         }
-        return model.saveConversationContext(note: note, parent: parent?.conversation.reference, context: context)
+        return model.saveConversationContext(note: note, parents: parents.map { $0.conversation.reference }, context: context)
     }
 }
 
@@ -155,8 +159,11 @@ private struct ConversationPassageSelection: UIViewRepresentable {
 struct ConversationRepliesSection: View {
     @EnvironmentObject private var model: Gate1AppModel
     let reference: MarginReference?
-    let reply: (MarginConversationSnapshot, Bool) -> Void
+    let reply: ([MarginConversationSnapshot], Bool) -> Void
     var listen: (MarginConversationSnapshot) -> Void = { _ in }
+    @State private var selectingTargets = false
+    @State private var selectedTargetIDs: [String] = []
+    @State private var pendingMultiReply: ([MarginConversationSnapshot], Bool)?
     var body: some View {
         if let reference {
             let children = descendants(of: reference)
@@ -165,33 +172,75 @@ struct ConversationRepliesSection: View {
                     ForEach(children) { child in
                         VStack(alignment: .leading, spacing: 8) {
                             Text(model.conversationTitle(child)).font(.headline)
-                            if let parent = child.conversation.parent,
-                               let target = model.conversationSnapshots.first(where: { $0.id == parent.id }) {
-                                Text("In reply to \(model.conversationTitle(target)): \(target.transcript.prefix(70))")
-                                    .font(.caption).foregroundStyle(.secondary)
+                            ForEach(child.conversation.parents) { parent in
+                                if let target = model.conversationSnapshots.first(where: { $0.id == parent.id }) {
+                                    Text("In reply to \(model.conversationTitle(target)): \(target.transcript.prefix(70))")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                } else {
+                                    Text("Referenced Margin not received yet").font(.caption).foregroundStyle(.secondary)
+                                }
                             }
                             Text(child.transcript).textSelection(.enabled)
                             Button("Listen to conversation") { listen(child) }
                             HStack {
-                                Button("Voice reply") { reply(child, false) }
-                                Button("Written reply") { reply(child, true) }
+                                Button("Voice reply") { reply([child], false) }
+                                Button("Written reply") { reply([child], true) }
                             }
+                        }
+                    }
+                    Button("Reply to several") {
+                        selectedTargetIDs = []
+                        selectingTargets = true
+                    }
+                    .sheet(isPresented: $selectingTargets, onDismiss: {
+                        if let pendingMultiReply {
+                            self.pendingMultiReply = nil
+                            reply(pendingMultiReply.0, pendingMultiReply.1)
+                        }
+                    }) {
+                        NavigationStack {
+                            List {
+                                Section("Replying to") {
+                                    ForEach(children) { child in
+                                        Button {
+                                            if let index = selectedTargetIDs.firstIndex(of: child.id) { selectedTargetIDs.remove(at: index) }
+                                            else if selectedTargetIDs.count < 4 { selectedTargetIDs.append(child.id) }
+                                        } label: {
+                                            Label("\(model.conversationTitle(child)): \(child.transcript.prefix(70))",
+                                                  systemImage: selectedTargetIDs.contains(child.id) ? "checkmark.circle.fill" : "circle")
+                                        }
+                                    }
+                                }
+                                Section {
+                                    Button("Voice reply") { finishMultiReply(children, written: false) }
+                                    Button("Written reply") { finishMultiReply(children, written: true) }
+                                }.disabled(selectedTargetIDs.count < 2)
+                            }
+                            .navigationTitle("Reply to several")
+                            .toolbar { Button("Cancel") { selectingTargets = false } }
                         }
                     }
                 }
             }
         }
     }
+    private func finishMultiReply(_ children: [MarginConversationSnapshot], written: Bool) {
+        let selected = selectedTargetIDs.compactMap { id in children.first { $0.id == id } }
+        guard selected.count >= 2 else { return }
+        pendingMultiReply = (selected, written)
+        selectingTargets = false
+    }
     private func descendants(of reference: MarginReference) -> [MarginConversationSnapshot] {
         var result: [MarginConversationSnapshot] = []
         var pending = [reference.contributionID]
         var seen: Set<String> = [reference.contributionID]
+        var seenRevisions: Set<String> = []
         while !pending.isEmpty {
             let parentID = pending.removeFirst()
-            let children = model.conversationSnapshots.filter { $0.conversation.parent?.contributionID == parentID }
+            let children = model.conversationSnapshots.filter { $0.conversation.parents.contains(where: { $0.contributionID == parentID }) }
                 .sorted { $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt < $1.createdAt }
             for child in children {
-                result.append(child)
+                if seenRevisions.insert(child.id).inserted { result.append(child) }
                 if seen.insert(child.conversation.reference.contributionID).inserted { pending.append(child.conversation.reference.contributionID) }
             }
         }

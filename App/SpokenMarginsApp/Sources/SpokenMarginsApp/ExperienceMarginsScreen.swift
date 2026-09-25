@@ -226,6 +226,7 @@ struct SharedMarginDetailView: View {
     @State private var playWithContext: Bool?
     @State private var replyWritten: Bool?
     @State private var replyNode: MarginConversationSnapshot?
+    @State private var replyNodes: [MarginConversationSnapshot] = []
     let row: SharedMarginRow
 
     var body: some View {
@@ -239,8 +240,8 @@ struct SharedMarginDetailView: View {
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                ConversationRepliesSection(reference: row.interjection.conversation?.reference) { node, written in
-                    replyNode = node; replyWritten = written; dismiss()
+                ConversationRepliesSection(reference: row.interjection.conversation?.reference) { nodes, written in
+                    replyNodes = nodes; replyWritten = written; dismiss()
                 } listen: { node in
                     replyNode = node; dismiss()
                 }
@@ -277,7 +278,9 @@ struct SharedMarginDetailView: View {
             .toolbar { Button("Done") { dismiss() } }
             .onDisappear {
                 if let replyWritten {
-                    if let replyNode { model.beginArchivedReply(to: replyNode, written: replyWritten) }
+                    if !replyNodes.isEmpty {
+                        model.beginArchivedReply(to: replyNodes, written: replyWritten)
+                    }
                     else { model.beginReply(to: row, written: replyWritten) }
                 }
                 else if let replyNode { model.playConversationSnapshot(replyNode) }

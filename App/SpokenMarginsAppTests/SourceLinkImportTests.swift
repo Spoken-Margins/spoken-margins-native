@@ -1,6 +1,7 @@
 import XCTest
 import SessionKit
 import SessionKitPersistence
+import AVFoundation
 @testable import SpokenMarginsApp
 #if canImport(UIKit)
 import UIKit
@@ -730,6 +731,55 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorAfter, "Minute after. Later context.")
         XCTAssertEqual(model.selectedItem.interjections.first?.anchorContextStatus, .ready)
         XCTAssertEqual(model.diagnostics["sourceWindowContextProvenance:ij-001"], "bounded_remote_window")
+    }
+
+    func testAcquiredWindowFeedsASRWithAbsoluteSourceTimesWithoutRefetch() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        temporaryDirectories.append(root)
+        let windowURL = root.appending(path: "shared-window.caf")
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 24_000 * 24))
+        buffer.frameLength = buffer.frameCapacity
+        let samples = try XCTUnwrap(buffer.floatChannelData?[0])
+        for index in 0..<Int(buffer.frameLength) {
+            let time = Double(index) / 24_000
+            samples[index] = Float(0.2 * sin(2 * .pi * (250 * time + 20 * time * time)))
+        }
+        try AVAudioFile(forWriting: windowURL, settings: format.settings).write(from: buffer)
+        let transcriber = AcquiredWindowTranscriptionClient(windowURL: windowURL)
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored", status: .playable,
+            originalLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "audio_file"),
+                title: "Shared Window", durationMs: 300_000,
+                audioURL: "https://cdn.example.com/window.mp3", confidence: 1
+            )
+        ))
+        let audio = WindowContextAudioClient()
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver, audioPlaybackClient: audio,
+            recordingClient: NoopRecordingClient(), sourceTranscriptionClient: transcriber,
+            interjectionTranscriptionHandler: { _ in "My note." }
+        )
+        model.resetAndSeed()
+        XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/episode", sourceSurface: "paste"))
+        audio.currentMediaTimeValue = 123_000
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        model.dispatchGate2CompactCommand(.finishInterjection)
+        try await waitFor("acquired context") {
+            model.diagnostics["sourceWindowTranscription:ij-001"] == "complete:speech_window"
+        }
+        let calls = await transcriber.calls()
+        XCTAssertEqual(calls.acquisitions, 1)
+        XCTAssertEqual(calls.acquiredTranscriptions, 1)
+        XCTAssertEqual(calls.originalURLTranscriptions, 0)
+        XCTAssertEqual(calls.acquiredURL, windowURL)
+        XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorBefore, "Before the note. At the note.")
+        XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorAfter, "After the note.")
+        XCTAssertEqual(model.selectedItem.interjections.first?.anchorContextStatus, .ready)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: windowURL.path), "A client-owned acquired file must remain available")
     }
 
     func testInterjectionTranscriptionFinishesBeforeSourceWindowTranscriptionStarts() async throws {
@@ -2486,6 +2536,64 @@ private actor RecordingSourceWindowTranscriptionClient: SourceTranscriptionClien
 
     func windowRequestCount() -> Int {
         windowRequest == nil ? 0 : 1
+    }
+}
+
+private actor AcquiredWindowTranscriptionClient: SourceTranscriptionClient {
+    private let windowURL: URL
+    private var acquisitionCount = 0
+    private var acquiredCount = 0
+    private var originalCount = 0
+    private var receivedURL: URL?
+
+    init(windowURL: URL) { self.windowURL = windowURL }
+
+    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+        throw SessionKitError.persistenceFailed("unexpected_full_source_transcription")
+    }
+
+    func acquireSourceAudioWindow(
+        url: URL, itemId: String, anchorMediaTimeMs: Int, durationMs: Int?,
+        windowBeforeMs: Int, windowAfterMs: Int
+    ) async throws -> SourceAudioWindowAcquisition {
+        acquisitionCount += 1
+        guard anchorMediaTimeMs == 123_000, windowBeforeMs == 90_000, windowAfterMs == 120_000 else {
+            throw SessionKitError.persistenceFailed("wrong_acquisition_bounds")
+        }
+        return SourceAudioWindowAcquisition(
+            localAudioURL: windowURL, sourceStartMs: 110_000, sourceEndMs: 134_000,
+            provenance: .sourceWindowReference
+        )
+    }
+
+    func transcribeAcquiredSourceAudioWindow(
+        _ acquisition: SourceAudioWindowAcquisition, itemId: String, durationMs: Int?
+    ) async throws -> TranscriptTimeline {
+        acquiredCount += 1
+        receivedURL = acquisition.localAudioURL
+        guard acquisition.localAudioURL == windowURL,
+              acquisition.sourceStartMs == 110_000,
+              acquisition.sourceEndMs == 134_000,
+              FileManager.default.fileExists(atPath: windowURL.path) else {
+            throw SessionKitError.persistenceFailed("acquired_window_changed_before_asr")
+        }
+        return TranscriptTimeline(segments: [
+            .init(id: "before", startMs: 118_000, endMs: 122_000, text: "Before the note."),
+            .init(id: "at", startMs: 122_000, endMs: 124_000, text: "At the note."),
+            .init(id: "after", startMs: 124_000, endMs: 128_000, text: "After the note.")
+        ], chapters: [], durationMs: durationMs)
+    }
+
+    func transcribeSourceAudioWindow(
+        url: URL, itemId: String, anchorMediaTimeMs: Int, durationMs: Int?,
+        windowBeforeMs: Int, windowAfterMs: Int
+    ) async throws -> TranscriptTimeline {
+        originalCount += 1
+        throw SessionKitError.persistenceFailed("unexpected_second_source_fetch")
+    }
+
+    func calls() -> (acquisitions: Int, acquiredTranscriptions: Int, originalURLTranscriptions: Int, acquiredURL: URL?) {
+        (acquisitionCount, acquiredCount, originalCount, receivedURL)
     }
 }
 

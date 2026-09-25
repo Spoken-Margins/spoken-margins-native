@@ -12,6 +12,7 @@ struct Build23SenderSharingExperience: View {
     @State private var isAutoCleanChoicePresented = false
     @State private var shareAfterVerification = false
     @State private var showsSharingOptions = false
+    @State private var isDegradedChoicePresented = false
 
     var body: some View {
         let snapshot = coordinator.snapshot
@@ -103,6 +104,15 @@ struct Build23SenderSharingExperience: View {
             if let packageURL = verifiedShareURLForPresentation {
                 SharedSpokenMarginsPackageActivityView(packageURL: packageURL)
             }
+        }
+        .alert("Podcast positioning is still preparing", isPresented: $isDegradedChoicePresented) {
+            Button("Keep preparing", role: .cancel) {}
+            Button("Share now without automatic positioning assurance") {
+                shareAfterVerification = true
+                coordinator.send(.shareWithoutPositioningAssurance)
+            }
+        } message: {
+            Text("Some selected Margins have pending or unavailable listening evidence. Their voices and reviewed text can still be shared, but the recipient may need to place them manually.")
         }
     }
 
@@ -716,11 +726,20 @@ struct Build23SenderSharingExperience: View {
         shareAfterVerification = true
         coordinator.send(.buildRecipientPreview)
         // Export can fail synchronously, before SwiftUI observes .building.
-        if case .failed = coordinator.previewState { shareAfterVerification = false }
+        if case .failed(let message) = coordinator.previewState {
+            shareAfterVerification = false
+            if message.contains("podcast_positioning_evidence_pending") {
+                isDegradedChoicePresented = true
+            }
+        }
     }
 
     private func shareError(_ snapshot: Build23SharingSnapshot) -> String? {
-        if case .failed(let message) = snapshot.previewState { return message }
+        if case .failed(let message) = snapshot.previewState {
+            return message.contains("podcast_positioning_evidence_pending")
+                ? "Some podcast positioning evidence is still preparing."
+                : message
+        }
         if snapshot.previewState == .stale { return "Your selection changed. Review it and share again." }
         return snapshot.errorMessage
     }

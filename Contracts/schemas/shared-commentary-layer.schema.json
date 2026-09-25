@@ -216,6 +216,33 @@
               "type": "null"
             }
           ]
+        },
+        "podcastEvidenceOutcome": {
+          "anyOf": [
+            { "$ref": "#/$defs/podcastEvidenceOutcome" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "podcastEvidenceOutcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "disposition", "includedRoles", "includedProvenance"],
+      "properties": {
+        "schemaVersion": { "const": "podcast-evidence-outcome.v1" },
+        "disposition": { "enum": ["included", "partial", "pending", "unavailable", "intentional_opt_out"] },
+        "includedRoles": {
+          "type": "array", "uniqueItems": true, "maxItems": 4,
+          "items": { "enum": ["pre_interjection", "post_resume", "source_window_before", "source_window_after"] }
+        },
+        "includedProvenance": {
+          "type": "array", "uniqueItems": true, "maxItems": 5,
+          "items": { "enum": ["decoded_playback_stream", "exact_local_playback_edition", "observed_decoded_playback", "source_window_reference", "downloaded_source_reference"] }
+        },
+        "reasonCategory": {
+          "type": ["string", "null"],
+          "enum": ["capture_pending", "capture_unavailable", "asset_unreadable", "user_opt_out", null]
         }
       }
     },
@@ -279,6 +306,7 @@
     "conversation": {
       "type": "object",
       "additionalProperties": false,
+      "not": { "required": ["parent", "parents"] },
       "required": [
         "reference",
         "authorID",
@@ -307,6 +335,13 @@
               "type": "null"
             }
           ]
+        },
+        "parents": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/marginReference" }
         },
         "context": {
           "anyOf": [

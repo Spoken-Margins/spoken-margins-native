@@ -2,11 +2,354 @@ import Foundation
 import SQLite3
 import XCTest
 @testable import SessionKit
-import SessionKitPersistence
+@testable import SessionKitPersistence
 
 private let testSQLiteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
 final class SQLiteSessionStoreSafetyTests: XCTestCase {
+    func testRecipientRecoveryCheckpointSurvivesReopenAndRejectsSupersededWriter() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appending(path: "store.sqlite").path
+        let store = try SQLiteSessionStore(path: path)
+        try store.saveItem(Item(id: "episode", title: "Episode", mediaType: "podcast", text: "",
+                                externalReference: "test", status: "ready"))
+        var job = RecipientTranscriptRecoveryJob(
+            itemId: "episode", editionSHA256: String(repeating: "a", count: 64),
+            durationMs: 400_000, localSourcePath: "/private/episode.m4a",
+            windows: [.init(startMs: 0, endMs: 210_000), .init(startMs: 190_000, endMs: 400_000)])
+        job.windows[0].timeline = TranscriptTimeline(
+            segments: [MediaTimelineSegment(id: "first", startMs: 2_000, endMs: 3_000, text: "Earlier words")],
+            chapters: [], durationMs: 400_000)
+        try store.saveRecipientTranscriptRecoveryJob(job)
+        let reopened = try SQLiteSessionStore(path: path)
+        let restored = try XCTUnwrap(reopened.loadRecipientTranscriptRecoveryJob(itemId: "episode"))
+        XCTAssertEqual(restored, job)
+        XCTAssertNotNil(restored.windows[0].timeline)
+        XCTAssertNil(restored.windows[1].timeline)
+        XCTAssertFalse(restored.matches(editionSHA256: String(repeating: "b", count: 64), durationMs: 400_000))
+        let replacement = RecipientTranscriptRecoveryJob(
+            itemId: "episode", editionSHA256: String(repeating: "b", count: 64),
+            durationMs: 400_000, localSourcePath: job.localSourcePath, windows: job.windows.map {
+                .init(startMs: $0.startMs, endMs: $0.endMs)
+            })
+        try reopened.saveRecipientTranscriptRecoveryJob(replacement, replacingExisting: true)
+        XCTAssertThrowsError(try store.saveRecipientTranscriptRecoveryJob(job))
+        XCTAssertEqual(try reopened.loadRecipientTranscriptRecoveryJob(itemId: "episode"), replacement)
+        try reopened.deleteItem(id: "episode")
+        XCTAssertTrue(try reopened.loadRecipientTranscriptRecoveryJobs().isEmpty)
+        XCTAssertThrowsError(try store.saveRecipientTranscriptRecoveryJob(job))
+    }
+
+    func testRecipientRecoveryRejectsInvalidBoundsAndPersistsServiceSuspension() throws {
+        let store = try SQLiteSessionStore(path: ":memory:")
+        try store.saveItem(Item(id: "episode", title: "Episode", mediaType: "podcast", text: "",
+                                externalReference: "test", status: "ready"))
+        var job = RecipientTranscriptRecoveryJob(
+            itemId: "episode", editionSHA256: String(repeating: "a", count: 64),
+            durationMs: 10_000, localSourcePath: "/private/episode.m4a",
+            windows: [.init(startMs: 0, endMs: 20_000)])
+        XCTAssertThrowsError(try store.saveRecipientTranscriptRecoveryJob(job))
+        job.windows = [.init(startMs: 0, endMs: 10_000)]
+        job.status = .suspended
+        job.failureReason = "speech_service_unavailable"
+        try store.saveRecipientTranscriptRecoveryJob(job)
+        XCTAssertEqual(try store.loadRecipientTranscriptRecoveryJob(itemId: "episode")?.status, .suspended)
+    }
+
+    func testPodcastEvidenceAndOwnedAssetRollbackTogetherAfterInjectedFailure() throws {
+        let path = temporaryDatabasePath()
+        let store = try SQLiteSessionStore(path: path)
+        let base = Interjection(
+            id: "capture", itemId: "episode", sessionId: "session",
+            targetType: .item, targetId: "episode", createdAt: Date(timeIntervalSince1970: 1),
+            roughPercent: 20,
+            anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0,
+                           anchorBefore: "before", anchorAfter: "after", mediaTimeMs: 20_000),
+            audioPath: "voice.m4a", audioStatus: "saved", transcriptionStatus: "pending",
+            transcript: nil, cleanedTranscript: nil, displayText: nil, status: "active"
+        )
+        try store.saveInterjection(base)
+        let relativePath = "SpokenMargins/AnchorEvidence/session/capture/anchor-session-capture-stream-pre.shazamsignature"
+        let digest = String(repeating: "a", count: 64)
+        var committed = base
+        committed.podcastAnchorEvidence = [CapturedPodcastAnchorEvidence(
+            id: "anchor-session-capture-stream-pre",
+            localPath: "/private/app-support/" + relativePath,
+            durationMs: 12_000, anchorOffsetMs: 12_000,
+            provenance: .observedDecodedPlayback, windowRole: .preInterjection,
+            byteCount: 42, checksumSHA256: digest
+        )]
+        let asset = OwnedOfflineAsset(
+            id: "anchor-evidence-session-capture-anchor-session-capture-stream-pre",
+            itemId: "episode", category: .fingerprintMap,
+            relativePath: relativePath, byteCount: 42,
+            checksumSHA256: digest, isReproducible: false,
+            protections: [.interjection],
+            lastAccessedAt: Date(timeIntervalSince1970: 1),
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        XCTAssertThrowsError(try store.commitPodcastAnchorEvidence(committed, ownedAssets: []))
+        var mismatchedAsset = asset
+        mismatchedAsset.relativePath = "SpokenMargins/AnchorEvidence/elsewhere.shazamsignature"
+        XCTAssertThrowsError(try store.commitPodcastAnchorEvidence(committed, ownedAssets: [mismatchedAsset]))
+        XCTAssertEqual(try store.loadInterjections(sessionId: "session"), [base])
+        XCTAssertTrue(try store.loadOwnedOfflineAssets().isEmpty)
+        XCTAssertThrowsError(try store.commitPodcastAnchorEvidence(
+            committed, ownedAssets: [asset],
+            afterLedgerWrites: { throw SessionKitError.persistenceFailed("injected_capture_commit_failure") }
+        ))
+        let reopened = try SQLiteSessionStore(path: path)
+        XCTAssertEqual(try reopened.loadInterjections(sessionId: "session"), [base])
+        XCTAssertTrue(try reopened.loadOwnedOfflineAssets().isEmpty)
+
+        try reopened.commitPodcastAnchorEvidence(committed, ownedAssets: [asset])
+        XCTAssertEqual(try reopened.loadInterjections(sessionId: "session"), [committed])
+        XCTAssertEqual(try reopened.loadOwnedOfflineAssets(), [asset])
+        try reopened.commitPodcastAnchorEvidence(committed, ownedAssets: [asset])
+        XCTAssertEqual(try reopened.loadOwnedOfflineAssets(), [asset])
+        try reopened.commitPodcastAnchorEvidence(committed, ownedAssets: [])
+        XCTAssertEqual(try reopened.loadOwnedOfflineAssets(), [asset])
+
+        var legacy = base
+        legacy.id = "legacy"
+        legacy.podcastAnchorEvidence = committed.podcastAnchorEvidence
+        try reopened.saveInterjection(legacy)
+        XCTAssertNoThrow(try reopened.commitPodcastAnchorEvidence(legacy, ownedAssets: []))
+        XCTAssertEqual(try reopened.loadInterjections(sessionId: "session").count, 2)
+    }
+
+    func testIndeterminateEvidenceReadPreservesCommittedReferenceAcrossReopen() throws {
+        let path = temporaryDatabasePath()
+        let store = try SQLiteSessionStore(path: path)
+        let evidence = CapturedPodcastAnchorEvidence(
+            id: "capture-pre", localPath: "/private/app-support/capture-pre.shazamsignature",
+            durationMs: 11_700, anchorOffsetMs: 12_000,
+            provenance: .observedDecodedPlayback, windowRole: .preInterjection,
+            byteCount: 42, checksumSHA256: String(repeating: "a", count: 64)
+        )
+        let margin = Interjection(
+            id: "capture", itemId: "episode", sessionId: "session",
+            targetType: .item, targetId: "episode", createdAt: Date(timeIntervalSince1970: 1),
+            roughPercent: 20,
+            anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0,
+                           anchorBefore: "before", anchorAfter: "after", mediaTimeMs: 20_000),
+            audioPath: "voice.m4a", audioStatus: "saved", transcriptionStatus: "pending",
+            transcript: nil, cleanedTranscript: nil, displayText: nil, status: "active",
+            podcastAnchorEvidence: [evidence],
+            podcastAnchorCaptureWindows: [
+                .init(role: .preInterjection, state: .committed, attempt: 1, anchorMediaTimeMs: 20_000)
+            ]
+        )
+        try store.saveInterjection(margin)
+        let reopened = try SQLiteSessionStore(path: path)
+        let stored = try XCTUnwrap(reopened.loadInterjections(sessionId: "session").first)
+        let indeterminate = PodcastAnchorEvidenceIntegrityReconciler.reconcile(
+            stored, interruptedJobs: true,
+            readFile: { _ in throw NSError(domain: NSPOSIXErrorDomain, code: 13) },
+            signatureIsValid: { !$0.isEmpty }
+        )
+        XCTAssertEqual(indeterminate.indeterminateReadCount, 1)
+        XCTAssertEqual(indeterminate.interjection, stored)
+        try reopened.saveInterjection(indeterminate.interjection)
+        let reopenedAgain = try SQLiteSessionStore(path: path)
+        let retained = try XCTUnwrap(reopenedAgain.loadInterjections(sessionId: "session").first)
+        XCTAssertEqual(retained.podcastAnchorEvidence, [evidence])
+        XCTAssertEqual(retained.podcastAnchorEvidence?.first?.anchorOffsetMs, 12_000)
+        XCTAssertEqual(retained.podcastAnchorEvidence?.first?.provenance, .observedDecodedPlayback)
+        XCTAssertEqual(retained.podcastAnchorCaptureWindows?.first?.state, .committed)
+
+        let missing = PodcastAnchorEvidenceIntegrityReconciler.reconcile(
+            retained, interruptedJobs: false,
+            readFile: { _ in throw NSError(domain: NSPOSIXErrorDomain, code: 2) },
+            signatureIsValid: { _ in true }
+        )
+        XCTAssertTrue(missing.interjection.podcastAnchorEvidence?.isEmpty == true)
+        XCTAssertEqual(missing.interjection.podcastAnchorCaptureWindows?.first?.state, .retryableFailure)
+        let corrupt = PodcastAnchorEvidenceIntegrityReconciler.reconcile(
+            retained, interruptedJobs: false,
+            readFile: { _ in Data() }, signatureIsValid: { _ in false }
+        )
+        XCTAssertTrue(corrupt.interjection.podcastAnchorEvidence?.isEmpty == true)
+    }
+
+    func testAgedPodcastEvidenceOrphanCleanupIsIdempotentAndPreservesOtherFiles() throws {
+        let support = FileManager.default.temporaryDirectory
+            .appending(path: "podcast-evidence-orphans-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: support) }
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        let store = try SQLiteSessionStore(path: support.appending(path: "store.sqlite").path)
+        let session = Session(
+            id: "session", itemId: "episode", status: "finished", phase: .finished,
+            currentTargetType: .transcriptBackedMedia, currentTargetId: "episode",
+            position: Position(mediaTimeMs: 20_000), completionPercent: 20, playbackRate: 1
+        )
+        try store.saveSession(session)
+        let root = support.appending(path: "SpokenMargins/AnchorEvidence", directoryHint: .isDirectory)
+        let marginDirectory = root.appending(path: "session/capture", directoryHint: .isDirectory)
+        let unrelatedDirectory = root.appending(path: "unknown/capture", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: marginDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: unrelatedDirectory, withIntermediateDirectories: true)
+        func file(_ name: String, in directory: URL) throws -> URL {
+            let url = directory.appending(path: name)
+            try Data("signature".utf8).write(to: url)
+            return url
+        }
+        let prefix = "anchor-session-capture-"
+        let orphan = try file(prefix + "local-pre.shazamsignature", in: marginDirectory)
+        let referenced = try file(prefix + "stream-pre.shazamsignature", in: marginDirectory)
+        let ledgerOwned = try file(prefix + "stream-post.shazamsignature", in: marginDirectory)
+        let young = try file(prefix + "source-window-pre.shazamsignature", in: marginDirectory)
+        let unrelated = try file("personal-notes.txt", in: marginDirectory)
+        let unknownMargin = try file(prefix + "local-post.shazamsignature", in: unrelatedDirectory)
+        let old = Date(timeIntervalSinceNow: -2 * PodcastAnchorEvidenceOrphanReconciler.minimumOrphanAge)
+        for url in [orphan, referenced, ledgerOwned, unrelated, unknownMargin] {
+            try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: url.path)
+        }
+        var margin = Interjection(
+            id: "capture", itemId: "episode", sessionId: session.id,
+            targetType: .item, targetId: "episode", createdAt: Date(timeIntervalSince1970: 1),
+            roughPercent: 20,
+            anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0,
+                           anchorBefore: "", anchorAfter: "", mediaTimeMs: 20_000),
+            audioPath: "voice.m4a", audioStatus: "saved", transcriptionStatus: "pending",
+            transcript: nil, cleanedTranscript: nil, displayText: nil, status: "active"
+        )
+        margin.podcastAnchorEvidence = [CapturedPodcastAnchorEvidence(
+            id: "pre", localPath: referenced.path, durationMs: 12_000,
+            anchorOffsetMs: 12_000, provenance: .observedDecodedPlayback,
+            windowRole: .preInterjection
+        )]
+        try store.saveInterjection(margin)
+        try store.saveOwnedOfflineAsset(OwnedOfflineAsset(
+            id: "ledger-only", itemId: "episode", category: .fingerprintMap,
+            relativePath: "SpokenMargins/AnchorEvidence/session/capture/\(ledgerOwned.lastPathComponent)",
+            byteCount: 9, isReproducible: false, protections: [.interjection]
+        ))
+        XCTAssertEqual(try PodcastAnchorEvidenceOrphanReconciler.reclaim(in: root, store: store), 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: orphan.path))
+        for url in [referenced, ledgerOwned, young, unrelated, unknownMargin] {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), url.lastPathComponent)
+        }
+        XCTAssertEqual(try PodcastAnchorEvidenceOrphanReconciler.reclaim(in: root, store: store), 0)
+    }
+
+    func testPodcastCaptureRejectsStaleAttemptAndEditionWithoutOverwritingCommittedFlank() throws {
+        let store = try SQLiteSessionStore(path: temporaryDatabasePath())
+        let session = Session(
+            id: "capture-session", itemId: "episode", status: "finished", phase: .finished,
+            currentTargetType: .transcriptBackedMedia, currentTargetId: "episode", position: Position(mediaTimeMs: 20_000),
+            completionPercent: 20, playbackRate: 1
+        )
+        try store.saveSession(session)
+        var margin = Interjection(
+            id: "ij-001", itemId: "episode", sessionId: session.id,
+            targetType: .item, targetId: "episode", createdAt: Date(timeIntervalSince1970: 1),
+            roughPercent: 20,
+            anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 20_000),
+            audioPath: "voice.m4a", audioStatus: "saved", transcriptionStatus: "pending",
+            transcript: nil, cleanedTranscript: nil, displayText: nil, status: "active",
+            sourceExactEditionSHA256: "edition-a",
+            podcastAnchorCaptureWindows: [.init(role: .preInterjection, anchorMediaTimeMs: 20_000),
+                                          .init(role: .postResume, anchorMediaTimeMs: 20_000)]
+        )
+        margin.updatePodcastAnchorWindow(.preInterjection) { $0.accepted() }
+        margin.updatePodcastAnchorWindow(.preInterjection) { $0.accepted() }
+        margin.updatePodcastAnchorWindow(.postResume) { $0.accepted() }
+        try store.saveInterjection(margin)
+        let engine = SessionEngine(
+            profile: RuntimeCapabilityProfile(id: "capture", displayName: "Capture", capabilities: [:]),
+            repository: store
+        )
+        let newer = CapturedPodcastAnchorEvidence(
+            id: "pre-new", localPath: "pre-new.shazamsignature", durationMs: 12_000,
+            anchorOffsetMs: 12_000, provenance: .observedDecodedPlayback, windowRole: .preInterjection
+        )
+        XCTAssertThrowsError(try engine.podcastAnchorEvidenceCompleted(
+            interjectionId: margin.id, sessionId: session.id, evidence: [newer],
+            sourceExactEditionSHA256: nil, expectedAttemptGeneration: 1
+        ))
+        XCTAssertThrowsError(try engine.podcastAnchorEvidenceCompleted(
+            interjectionId: margin.id, sessionId: session.id, evidence: [newer],
+            sourceExactEditionSHA256: "edition-b", expectedAttemptGeneration: 2
+        ))
+        try engine.podcastAnchorEvidenceCompleted(
+            interjectionId: margin.id, sessionId: session.id, evidence: [newer],
+            sourceExactEditionSHA256: "edition-a", expectedAttemptGeneration: 2
+        )
+        XCTAssertThrowsError(try engine.podcastAnchorEvidenceFailed(
+            interjectionId: margin.id, sessionId: session.id, reason: "late failure",
+            windowRole: .preInterjection, expectedAttemptGeneration: 1
+        ))
+        let restored = try XCTUnwrap(store.loadInterjections(sessionId: session.id).first)
+        XCTAssertEqual(restored.podcastAnchorEvidence?.map(\.id), ["pre-new"])
+        XCTAssertEqual(restored.podcastAnchorCaptureWindows?.first?.state, .committed)
+        XCTAssertEqual(restored.podcastAnchorCaptureWindows?.last?.state, .collecting)
+        XCTAssertEqual(restored.sourceExactEditionSHA256, "edition-a")
+        var missingRole = restored
+        missingRole.podcastAnchorCaptureWindows = nil
+        try store.saveInterjection(missingRole)
+        XCTAssertThrowsError(try engine.podcastAnchorEvidenceCompleted(
+            interjectionId: margin.id, sessionId: session.id, evidence: [newer],
+            sourceExactEditionSHA256: "edition-a", expectedAttemptGeneration: 2
+        ), "Generation-bearing callbacks must fail closed when their durable role row is missing")
+    }
+
+    func testSourceReferenceEvidenceCannotAddCaptureJobRole() throws {
+        var margin = Interjection(
+            id: "ij-source", itemId: "episode", sessionId: "session", targetType: .item,
+            targetId: "episode", createdAt: Date(), roughPercent: 20,
+            anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 20_000),
+            audioPath: "voice.m4a", audioStatus: "saved", transcriptionStatus: "pending",
+            transcript: nil, cleanedTranscript: nil, displayText: nil, status: "active"
+        )
+        margin.updatePodcastAnchorWindow(.sourceWindowBefore) { $0.accepted() }
+        margin.updatePodcastAnchorWindow(.sourceWindowAfter) { $0.accepted() }
+        XCTAssertNil(margin.podcastAnchorCaptureWindows)
+        margin.updatePodcastAnchorWindow(.preInterjection) { $0.accepted() }
+        XCTAssertEqual(margin.podcastAnchorCaptureWindows?.map(\.role), [.preInterjection])
+    }
+
+    func testPodcastCaptureWindowsSurviveRestartAndOutOfOrderCompletionAcrossSessions() throws {
+        let path = temporaryDatabasePath()
+        let store = try SQLiteSessionStore(path: path)
+        func makeMargin(session: String) -> Interjection {
+            Interjection(
+                id: "ij-001", itemId: "episode", sessionId: session,
+                targetType: .item, targetId: "episode", createdAt: Date(timeIntervalSince1970: 1),
+                roughPercent: 25,
+                anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 20_000),
+                audioPath: "voice.m4a", audioStatus: "saved", transcriptionStatus: "pending",
+                transcript: nil, cleanedTranscript: nil, displayText: nil, status: "active",
+                podcastAnchorCaptureWindows: [
+                    .init(role: .preInterjection, anchorMediaTimeMs: 20_000),
+                    .init(role: .postResume, anchorMediaTimeMs: 20_000)
+                ]
+            )
+        }
+        var first = makeMargin(session: "one")
+        var second = makeMargin(session: "two")
+        first.updatePodcastAnchorWindow(.postResume) { $0.accepted() }
+        first.updatePodcastAnchorWindow(.preInterjection) { $0.failed("track_waiting", retryable: true) }
+        second.updatePodcastAnchorWindow(.preInterjection) { $0.accepted() }
+        try store.saveInterjection(first)
+        try store.saveInterjection(second)
+
+        let reopened = try SQLiteSessionStore(path: path)
+        var restored = try XCTUnwrap(reopened.loadInterjections(sessionId: "one").first)
+        XCTAssertEqual(restored.podcastAnchorCaptureWindows?.count, 2)
+        XCTAssertEqual(restored.podcastAnchorCaptureWindows?.first?.firstFailureReason, "track_waiting")
+        restored.updatePodcastAnchorWindow(.postResume) { $0.committed() }
+        restored.updatePodcastAnchorWindow(.preInterjection) { $0.failed("track_still_waiting", retryable: false) }
+        XCTAssertEqual(restored.podcastAnchorEvidenceCaptureStatus, .unavailable)
+        XCTAssertEqual(restored.podcastAnchorCaptureWindows?.first?.firstFailureReason, "track_waiting")
+        XCTAssertEqual(restored.podcastAnchorCaptureWindows?.first?.latestFailureReason, "track_still_waiting")
+        try reopened.saveInterjection(restored)
+        XCTAssertEqual(try reopened.loadInterjections(sessionId: "two").first?.podcastAnchorCaptureWindows?.first?.state, .collecting)
+        XCTAssertEqual(try reopened.loadInterjections(sessionId: "one").first?.podcastAnchorCaptureWindows?.last?.state, .committed)
+    }
+
     func testBriefIndependentWriterContentionDoesNotDropTheNextSave() throws {
         let path = temporaryDatabasePath()
         let store = try SQLiteSessionStore(path: path)

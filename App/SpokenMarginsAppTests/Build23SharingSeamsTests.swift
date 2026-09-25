@@ -2,11 +2,131 @@ import XCTest
 import Combine
 import SessionKitSharing
 import SessionKitPersistence
+import SessionKitAudio
 @testable import SessionKit
 @testable import SpokenMarginsApp
 
 @MainActor
 final class Build23SharingSeamsTests: XCTestCase {
+    func testRecipientPositionReviewDoesNotArmAfterRejectedSeek() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let db = root.appending(path: "library.sqlite")
+        let localURL = root.appending(path: "episode.caf")
+        try Data("episode bytes".utf8).write(to: localURL)
+        let model = Gate1AppModel(audioPlaybackClient: RejectingRecipientSeekAudioClient(), databaseURLOverride: db)
+        model.resetAndSeed()
+        let store = try model.libraryStoreForTesting()
+        let item = Item(id: "reject-seek-podcast", title: "Episode", mediaType: "podcast", text: nil,
+            externalReference: "https://example.com/episode", status: "ready",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://example.com/episode.mp3", durationMs: 60_000))
+        try store.saveItem(item)
+        let layer = ImportedCommentaryLayer(id: "reject-seek-layer", itemId: item.id,
+            packageDigest: "reject-seek-packet", packageId: "packet",
+            itemIdentity: SharedItemIdentity(itemType: .podcast, title: item.title),
+            importedAt: Date(), sourceResolutionStatus: .ambiguous)
+        try store.saveImportedCommentaryLayer(layer)
+        try store.saveImportedCommentaryInterjection(ImportedCommentaryInterjection(
+            id: "reject-seek-margin", layerId: layer.id, packageScopedId: "margin", createdAt: Date(),
+            anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 20_000),
+            approvedTranscript: "Shared words", resolution: ImportedAnchorResolution(evidenceClass: .ambiguous)
+        ))
+        model.openItem(id: item.id)
+        model.startItem(id: item.id)
+        model.useRecipientPodcastFileForTests(itemID: item.id, url: localURL)
+        let coordinator = Build23SharingCoordinator(model: model)
+        coordinator.send(.listenAroundPosition(layerID: layer.id, marginID: "reject-seek-margin"))
+        XCTAssertFalse(coordinator.importedLayers.first?.margins.first?.canConfirmPosition ?? true)
+        coordinator.send(.confirmPosition(layerID: layer.id, marginID: "reject-seek-margin"))
+        XCTAssertEqual(try store.loadImportedCommentaryInterjections(layerId: layer.id).first?.resolution.evidenceClass,
+                       .ambiguous)
+        XCTAssertNil(try store.loadImportedCommentaryLayer(id: layer.id)?.resolvedRecipientEditionSHA256)
+    }
+
+    func testRecipientPositionConfirmationPersistsAndChangedEditionInvalidatesIt() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let db = root.appending(path: "library.sqlite")
+        let localURL = root.appending(path: "recipient-episode.caf")
+        try Data("recipient edition A".utf8).write(to: localURL)
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: db)
+        model.resetAndSeed()
+        let store = try model.libraryStoreForTesting()
+        let item = Item(id: "recipient-confirmation-podcast", title: "Recipient episode", mediaType: "podcast",
+            text: nil, externalReference: "https://example.com/episode", status: "ready",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://example.com/episode.mp3", durationMs: 60_000))
+        try store.saveItem(item)
+        let layer = ImportedCommentaryLayer(
+            id: "recipient-layer", itemId: item.id, packageDigest: "recipient-packet", packageId: "packet",
+            itemIdentity: SharedItemIdentity(itemType: .podcast, title: item.title), displayLabel: "Friend",
+            importedAt: Date(), sourceResolutionStatus: .ambiguous, isEnabled: true
+        )
+        try store.saveImportedCommentaryLayer(layer)
+        for id in ["first", "second"] {
+            try store.saveImportedCommentaryInterjection(ImportedCommentaryInterjection(
+                id: id, layerId: layer.id, packageScopedId: id, createdAt: Date(),
+                anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 20_000),
+                approvedTranscript: "Shared voice \(id)", audioPath: "SpokenMargins/shared-voice.m4a",
+                resolution: ImportedAnchorResolution(evidenceClass: .ambiguous)
+            ))
+        }
+        model.openItem(id: item.id)
+        model.startItem(id: item.id)
+        model.useRecipientPodcastFileForTests(itemID: item.id, url: localURL)
+        let coordinator = Build23SharingCoordinator(model: model)
+        let first = try XCTUnwrap(coordinator.importedLayers.first?.margins.first { $0.id == "first" })
+        XCTAssertTrue(first.hasVoice, "Unresolved shared voice must retain its direct Listen action")
+        XCTAssertTrue(first.canReviewPosition)
+        XCTAssertFalse(first.canConfirmPosition)
+        XCTAssertEqual(first.listenAroundLabel, "Listen around suggested position")
+
+        model.pause()
+        XCTAssertEqual(model.snapshot.status, .paused)
+        coordinator.send(.listenAroundPosition(layerID: layer.id, marginID: "first"))
+        XCTAssertEqual(model.snapshot.status, .playing, "Review must resume a paused source before enabling confirmation")
+        XCTAssertFalse(coordinator.importedLayers.first?.margins.first { $0.id == "first" }?.canConfirmPosition ?? true,
+                       "A missing local-transport probe cannot prove recipient playback")
+        model.useRecipientPlaybackURLProbeForTests { _, _ in false }
+        coordinator.send(.listenAroundPosition(layerID: layer.id, marginID: "first"))
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertFalse(coordinator.importedLayers.first?.margins.first { $0.id == "first" }?.canConfirmPosition ?? true,
+                       "A probe observing only the remote transport cannot arm confirmation")
+        model.useRecipientPlaybackURLProbeForTests { url, itemID in
+            url.standardizedFileURL == localURL.standardizedFileURL && itemID == item.id
+        }
+        coordinator.send(.listenAroundPosition(layerID: layer.id, marginID: "first"))
+        for _ in 0..<150 where coordinator.importedLayers.first?.margins.first(where: { $0.id == "first" })?.canConfirmPosition != true {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertTrue(coordinator.importedLayers.first?.margins.first { $0.id == "first" }?.canConfirmPosition == true)
+        model.seekMedia(toMediaTimeMs: 23_000)
+        coordinator.send(.confirmPosition(layerID: layer.id, marginID: "first"))
+        let confirmed = try XCTUnwrap(store.loadImportedCommentaryInterjections(layerId: layer.id).first { $0.id == "first" })
+        XCTAssertEqual(confirmed.resolution.evidenceClass, .recipientConfirmed)
+        XCTAssertEqual(confirmed.resolution.localMediaTimeMs, 23_000)
+        XCTAssertEqual(confirmed.resolution.algorithmVersion, "recipient-confirmation.v1")
+        let digestA = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: localURL)
+        XCTAssertEqual(try store.loadImportedCommentaryLayer(id: layer.id)?.resolvedRecipientEditionSHA256, digestA)
+        XCTAssertFalse(coordinator.importedLayers.first?.margins.first { $0.id == "first" }?.canReviewPosition ?? true)
+
+        let reopened = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: db)
+        reopened.bootstrapLibraryIfNeeded()
+        reopened.openItem(id: item.id)
+        XCTAssertEqual(reopened.selectedItem.importedCommentaryInterjections[layer.id]?
+            .first(where: { $0.id == "first" })?.resolution.evidenceClass, .recipientConfirmed)
+
+        coordinator.send(.listenAroundPosition(layerID: layer.id, marginID: "second"))
+        XCTAssertTrue(coordinator.importedLayers.first?.margins.first { $0.id == "second" }?.canConfirmPosition == true)
+        try Data("recipient edition B".utf8).write(to: localURL, options: .atomic)
+        coordinator.send(.confirmPosition(layerID: layer.id, marginID: "second"))
+        let afterChange = try store.loadImportedCommentaryInterjections(layerId: layer.id)
+        XCTAssertTrue(afterChange.allSatisfy { $0.resolution.evidenceClass == .unresolved })
+        XCTAssertNil(try store.loadImportedCommentaryLayer(id: layer.id)?.resolvedRecipientEditionSHA256)
+        XCTAssertFalse(coordinator.importedLayers.first?.margins.first { $0.id == "second" }?.canConfirmPosition ?? true)
+    }
+
     func testSharingCoordinatorIgnoresPlaybackAndDiagnosticTicks() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         let coordinator = Build23SharingCoordinator(model: model)
@@ -50,6 +170,7 @@ final class Build23SharingSeamsTests: XCTestCase {
                 audioPath: nil, audioStatus: "none", transcriptionStatus: "transcribed",
                 transcript: "Reviewed Margin \(index)", cleanedTranscript: nil, displayText: nil, status: "active")
         }
+        try model.persistSelectedInterjectionsForSharingTests()
         let coordinator = Build23SharingCoordinator(model: model)
         coordinator.send(.begin)
         coordinator.send(.advanceToReview)
@@ -101,6 +222,7 @@ final class Build23SharingSeamsTests: XCTestCase {
             displayText: nil,
             status: "active"
         )]
+        try model.persistSelectedInterjectionsForSharingTests()
         let coordinator = Build23SharingCoordinator(model: model)
 
         coordinator.send(.begin)
@@ -169,6 +291,7 @@ final class Build23SharingSeamsTests: XCTestCase {
             displayText: nil,
             status: "active"
         )]
+        try model.persistSelectedInterjectionsForSharingTests()
         let coordinator = Build23SharingCoordinator(model: model)
 
         coordinator.send(.begin)
@@ -207,5 +330,14 @@ final class Build23SharingSeamsTests: XCTestCase {
         XCTAssertNil(coordinator.snapshot.verifiedPreview)
         XCTAssertNil(coordinator.verifiedShareFileURL)
         try? FileManager.default.removeItem(at: preview.fileURL)
+    }
+}
+
+private struct RejectingRecipientSeekAudioClient: AudioPlaybackClient {
+    func prepareSpeechText(_ text: String) throws -> String { text }
+    func play(targetId: String) throws {}
+    func pause() throws {}
+    func requestMediaSeek(toMediaTimeMs mediaTimeMs: Int) throws -> MediaSeekRequest {
+        throw SessionKitError.persistenceFailed("injected_recipient_seek_failure")
     }
 }

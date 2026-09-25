@@ -242,7 +242,7 @@ struct ExperienceTimelineRailScreen: View {
             ))
         }
 
-        for layer in item.importedCommentaryLayers where layer.deletedAt == nil {
+        for (layerIndex, layer) in item.importedCommentaryLayers.enumerated() where layer.deletedAt == nil {
             for margin in item.importedCommentaryInterjections[layer.id, default: []] {
                 let row = SharedMarginRow(interjection: margin, layer: layer, itemTitle: item.title)
                 let position = margin.resolution.localMediaTimeMs.map {
@@ -255,7 +255,7 @@ struct ExperienceTimelineRailScreen: View {
                     provenance: .sharedMargin,
                     title: TimelineTextPresentation.excerpt(margin.approvedTranscript, characterLimit: TimelineTextPresentation.marginCharacterLimit),
                     detail: "Shared by \(row.collectionLabel) · \(row.positionDescription)",
-                    action: .sharedMargin(row)
+                    action: .sharedMargin(row), sharedLayerTintIndex: layerIndex
                 ))
             }
         }
@@ -346,13 +346,13 @@ struct ExperienceTimelineRailScreen: View {
     private func refreshEntries(from item: ItemDetailState) {
         entries = Self.makeEntries(from: item, sessionID: model.snapshot.sessionId, playbackDurationMs: model.snapshot.currentPlaybackDurationMs).filter { entry in
             guard model.conversationScope != .all else { return true }
-            let id: String
             switch entry.action {
-            case .margin(let row): id = "local:\(row.interjection.sessionId):\(row.interjection.id)"
-            case .sharedMargin(let row): id = "shared:\(row.layer.id):\(row.interjection.id)"
+            case .margin:
+                return model.conversationScope != .newMargins
+            case .sharedMargin(let row):
+                return model.conversationScope != .newMargins || model.isNewSharedMargin(row)
             default: return false
             }
-            return model.conversationScope != .newMargins || !model.heardConversationMargins.contains(id)
         }
     }
 
@@ -463,6 +463,7 @@ struct TimelineRailEntry: Identifiable, Equatable {
     let title: String
     let detail: String
     let action: Action
+    var sharedLayerTintIndex: Int? = nil
 
     var sortKey: TimelineRailSortKey {
         TimelineRailSortKey(position: position, rank: rank, id: id)
@@ -514,7 +515,7 @@ private struct TimelineRailRow: View, Equatable {
                     (dynamicTypeSize.isAccessibilitySize
                         ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
                         : AnyLayout(HStackLayout(alignment: .firstTextBaseline))) {
-                        Label(dynamicTypeSize.isAccessibilitySize ? entry.provenance.label : entry.provenance.label.uppercased(), systemImage: entry.provenance.systemImage)
+                        Label(provenanceTitle, systemImage: entry.provenance.systemImage)
                             .font(.caption2.weight(.bold))
                             .tracking(dynamicTypeSize.isAccessibilitySize ? 0 : 0.8)
                             .foregroundStyle(provenanceColor)
@@ -577,7 +578,8 @@ private struct TimelineRailRow: View, Equatable {
     }
 
     private var provenanceColor: Color {
-        switch entry.provenance {
+        if let index = entry.sharedLayerTintIndex { return SharedMarginLayerTint.color(at: index) }
+        return switch entry.provenance {
         case .source, .listeningMap: AppColors.evergreen
         case .myMargin: AppColors.coral
         case .userResponse: AppColors.ochre
@@ -586,12 +588,20 @@ private struct TimelineRailRow: View, Equatable {
     }
 
     private var surfaceColor: Color {
-        switch entry.provenance {
+        if let index = entry.sharedLayerTintIndex { return SharedMarginLayerTint.color(at: index).opacity(0.10) }
+        return switch entry.provenance {
         case .source: AppColors.panel
         case .listeningMap: AppColors.evergreen.opacity(0.07)
         case .myMargin: AppColors.coral.opacity(0.08)
         case .userResponse: AppColors.ochre.opacity(0.08)
         case .sharedMargin, .assistantResponse: AppColors.plum.opacity(0.07)
         }
+    }
+
+    private var provenanceTitle: String {
+        if case .sharedMargin(let row) = entry.action {
+            return dynamicTypeSize.isAccessibilitySize ? "Shared by \(row.collectionLabel)" : "SHARED BY \(row.collectionLabel.uppercased())"
+        }
+        return dynamicTypeSize.isAccessibilitySize ? entry.provenance.label : entry.provenance.label.uppercased()
     }
 }

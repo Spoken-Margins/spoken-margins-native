@@ -90,6 +90,7 @@ public enum SpokenMarginsPackageArchive {
     private static let fixedArchiveDate = Date(timeIntervalSince1970: 315_532_800)
     private static let supportedRequiredCapabilities: Set<String> = [
         MarginConversation.capability,
+        MarginConversation.multipleTargetsCapability,
         SharedCommentaryLayerArtifact.schemaVersion,
         EmbeddedTextItemArtifact.schemaVersion
     ]
@@ -611,6 +612,10 @@ public enum SpokenMarginsPackageArchive {
         if layer.interjections.contains(where: { $0.conversation != nil }),
            !manifest.requiredCapabilities.contains(MarginConversation.capability) {
             throw SpokenMarginsPackageArchiveError.invalidManifest("conversation capability is required")
+        }
+        if layer.interjections.contains(where: { ($0.conversation?.parents.count ?? 0) > 1 }),
+           !manifest.requiredCapabilities.contains(MarginConversation.multipleTargetsCapability) {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("multiple-target conversation capability is required")
         }
         let conversationNodes = layer.interjections.compactMap { record -> MarginConversationSnapshot? in
             guard let conversation = record.conversation, let representation = record.defaultRepresentation else { return nil }

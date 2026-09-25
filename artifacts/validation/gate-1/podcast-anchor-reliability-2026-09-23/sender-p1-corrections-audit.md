@@ -1,0 +1,9 @@
+# Sender P1 correction audit
+
+**Verdict: both P1s are closed in the frozen correction snapshot** (`5498964b2bd5c878250cc6ba1401b9c8e6439e6f2c464203920c510f1a107fb5`). No code or tests were changed or run.
+
+- **Later streamed audio cannot become the original post flank.** `PostResumePodcastEvidenceTapContext.processCopied` now rejects callback source times outside the original anchor interval before appending; the 10-minute-anchor/16-minute-source host test asserts `post_resume_original_interval_unavailable` and zero pending accumulators. This tests the original false-accept case through the tap. Foreground retry no longer arms remote streams; only exact-local recovery is considered.
+- **Foreground no longer invalidates in-process attempts.** `handleAppBecameActive` reconciles with `interruptedJobs: false`; cold bootstrap retains `true`. The app regression checks repeated non-interrupting reconciliation preserves `.collecting` and its attempt, and startup-style reconciliation changes it to retryable. This is adequate state-transition coverage for the fix, though it does not deliver an actual tap callback after foregrounding; the generic app test build compiled but app tests have not run.
+- **Local retry does not infer an edition from the current file.** Recovery returns unless the Margin already has a producing SHA-256, requires candidate digest equality before and after generation, and only then commits `.exactLocalPlaybackEdition`. The policy test covers absent, changed, and matching digests. Initial local playback still does not record the producing digest, so later exact-local recovery may remain unavailable; this is a conservative coverage loss acknowledged in the handoff, not a false-proof regression.
+
+The fast plan passed 326 package tests with one expected corpus skip, and the app test target compiled. The owner’s same-device app-plan run remains the runtime gate; no implementation blocker remains for that run.

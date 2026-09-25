@@ -55,6 +55,9 @@ struct SpokenMarginsApp: App {
 
     init() {
         let model = Gate1AppModel.makeApplicationModel()
+        #if !SPOKEN_MARGINS_LEGACY
+        ListeningEditionShortcutBridge.model = model
+        #endif
         // UI fixtures must be installed before scene/startup tasks open the store.
         // Otherwise a previous route can win the lazy-bootstrap race.
         if CommandLine.arguments.contains("--ui-testing") {

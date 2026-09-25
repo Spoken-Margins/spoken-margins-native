@@ -25,6 +25,7 @@ public enum InterjectionPackagePreparationError: Error, Equatable, LocalizedErro
 
 public enum ReviewedRepresentationSelection: Sendable {
     case textOnly
+    case syntheticTTS(sourceURL: URL, durationMs: Int)
     case forwardedAudio(sourceURL: URL, durationMs: Int)
     case originalAudio(sourceURL: URL, durationMs: Int)
     case cleanedAudio(sourceURL: URL)
@@ -32,6 +33,7 @@ public enum ReviewedRepresentationSelection: Sendable {
 
 public struct ReviewedInterjectionSelection: Sendable {
     public var conversation: MarginConversation? = nil
+    public var podcastEvidenceOutcome: PodcastEvidenceOutcomeSummary? = nil
     public let packageScopedId: String
     public let revision: InterjectionShareRevision
     public let anchor: PortableAnchorEvidence
@@ -122,6 +124,19 @@ public enum SpokenMarginsPackageBuilder {
                     approvedTranscript: approvedTranscript,
                     provenance: .senderApprovedTextOnly
                 )
+            case .syntheticTTS(let sourceURL, let durationMs):
+                guard durationMs > 0, durationMs <= 600_000 else {
+                    throw InterjectionPackagePreparationError.cleanedAudioUnavailable(revision.id)
+                }
+                let assetID = String(format: "asset-%04d-tts", index + 1)
+                let archivePath = String(format: "assets/audio/margin-%04d-tts.m4a", index + 1)
+                assetFiles[archivePath] = sourceURL
+                assets.append(SpokenMarginsAssetDescriptor(id: assetID, role: SpokenMarginsAssetRole.ttsVoice,
+                    path: archivePath, mimeType: "audio/mp4", durationMs: durationMs,
+                    provenance: SharedInterjectionProvenance.senderApprovedTTS.rawValue))
+                representation = SharedInterjectionRepresentation(id: String(format: "representation-%04d-tts", index + 1),
+                    kind: .ttsAudioAndText, approvedTranscript: approvedTranscript,
+                    assetId: assetID, provenance: .senderApprovedTTS)
             case .originalAudio(let sourceURL, let durationMs), .forwardedAudio(let sourceURL, let durationMs):
                 let forwarding: Bool
                 if case .forwardedAudio = selection.representation { forwarding = true } else { forwarding = false }
@@ -183,6 +198,7 @@ public enum SpokenMarginsPackageBuilder {
                 representations: [representation]
             )
             record.conversation = selection.conversation
+            record.podcastEvidenceOutcome = selection.podcastEvidenceOutcome
             records.append(record)
         }
 
@@ -279,6 +295,9 @@ public enum SpokenMarginsPackageBuilder {
 
         var requiredCapabilities = [SharedCommentaryLayerArtifact.schemaVersion]
         if records.contains(where: { $0.conversation != nil }) { requiredCapabilities.append(MarginConversation.capability) }
+        if records.contains(where: { ($0.conversation?.parents.count ?? 0) > 1 }) {
+            requiredCapabilities.append(MarginConversation.multipleTargetsCapability)
+        }
         if itemTransport.kind == .embeddedText {
             requiredCapabilities.append(EmbeddedTextItemArtifact.schemaVersion)
         }

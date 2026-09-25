@@ -141,6 +141,9 @@ struct Build23ImportedMarginSnapshot: Identifiable, Equatable {
     let positionDescription: String
     let isPlayable: Bool
     let hasVoice: Bool
+    let canReviewPosition: Bool
+    let canConfirmPosition: Bool
+    let listenAroundLabel: String
 }
 
 struct Build23ImportedLayerSnapshot: Identifiable, Equatable {
@@ -184,6 +187,7 @@ enum Build23SenderAction: Equatable {
     case returnToSelect
     case advanceToReview
     case buildRecipientPreview
+    case shareWithoutPositioningAssurance
     case presentSystemShare
     case returnFromSystemShare
     case cancel
@@ -199,6 +203,8 @@ enum Build23RecipientAction: Equatable {
     case setLayerMuted(id: String, muted: Bool)
     case setLayerRevealMode(id: String, mode: ImportedCommentaryRevealMode)
     case listenToMargin(layerID: String, marginID: String)
+    case listenAroundPosition(layerID: String, marginID: String)
+    case confirmPosition(layerID: String, marginID: String)
 }
 
 @MainActor
@@ -363,7 +369,16 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
                             resolution: margin.resolution.evidenceClass,
                             positionDescription: Self.positionDescription(for: margin.resolution),
                             isPlayable: Gate1AppModel.isPlayableImportedCommentaryResolution(margin.resolution),
-                            hasVoice: margin.audioPath != nil
+                            hasVoice: margin.audioPath != nil,
+                            canReviewPosition: layer.itemIdentity.itemType == .podcast
+                                && [.unresolved, .ambiguous].contains(margin.resolution.evidenceClass),
+                            canConfirmPosition: model.isReviewingImportedPodcastPosition(
+                                layerID: layer.id, interjectionID: margin.id
+                            ),
+                            listenAroundLabel: margin.resolution.localMediaTimeMs != nil
+                                || margin.anchorEvidence.mediaTimeMs != nil
+                                ? "Listen around suggested position"
+                                : "Listen around current source position"
                         )
                     }
                 return Build23ImportedLayerSnapshot(
@@ -450,6 +465,10 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             }
         case .buildRecipientPreview:
             buildRecipientPreview()
+        case .shareWithoutPositioningAssurance:
+            if model.authorizeDegradedPodcastEvidenceForCurrentSelection() {
+                buildRecipientPreview()
+            }
         case .presentSystemShare:
             guard verifiedShareFileURL != nil else { return }
             stage = .share
@@ -496,7 +515,13 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             model.setImportedCommentaryRevealMode(id, mode: mode)
         case .listenToMargin(let layerID, let marginID):
             model.listenToImportedCommentary(layerID: layerID, interjectionID: marginID)
+        case .listenAroundPosition(let layerID, let marginID):
+            model.listenAroundImportedPodcastPosition(layerID: layerID, interjectionID: marginID)
+        case .confirmPosition(let layerID, let marginID):
+            model.confirmImportedPodcastPosition(layerID: layerID, interjectionID: marginID)
         }
+        let layers = makeImportedLayers(from: model.selectedItem)
+        if importedLayers != layers { importedLayers = layers }
         objectWillChange.send()
     }
 
@@ -512,6 +537,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
 
     private func mutatePackage(_ mutation: () -> Void) {
         discardPreview(resetTo: stage == .select ? .select : .review)
+        model.sharingState.allowsDegradedPodcastEvidence = false
+        model.sharingState.degradedPodcastEvidenceConsentFingerprint = nil
         mutation()
     }
 

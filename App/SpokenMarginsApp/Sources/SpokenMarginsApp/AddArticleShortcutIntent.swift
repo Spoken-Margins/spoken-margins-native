@@ -171,11 +171,19 @@ struct AssembleListeningEditionIntent: AppIntent {
 struct ImportListeningEditionIntent: AppIntent {
     static let title: LocalizedStringResource = "Import Listening Edition"
     static let description = IntentDescription("Opens Spoken Margins to import an item and its supplied map. Does not regenerate the map or start playback.")
-    static let openAppWhenRun = false
+    static let supportedModes: IntentModes = .foreground(.immediate)
     @Parameter(title: "Listening Edition JSON") var file: IntentFile
-    func perform() async throws -> some IntentResult & OpensIntent {
-        let edition = try ListeningEdition.decode(file.data)
-        return .result(opensIntent: OpenURLIntent(try ListeningEditionStore.stage(edition)))
+    @MainActor func perform() async throws -> some IntentResult {
+        guard let model = ListeningEditionShortcutBridge.model else {
+            throw EditionError.invalid("Spoken Margins could not open its Library. Try the import again.")
+        }
+        try model.importListeningEditionDataForShortcut(file.data)
+        return .result()
     }
+}
+
+@MainActor
+enum ListeningEditionShortcutBridge {
+    static weak var model: Gate1AppModel?
 }
 #endif

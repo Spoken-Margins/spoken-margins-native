@@ -821,6 +821,15 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Play Recording"].exists)
         let copy = app.buttons["Copy with Context"]
         XCTAssertTrue(copy.waitForExistence(timeout: 3))
+        let playMoment = element("marginDetail.playMoment.button")
+        let detail = element("marginDetail.screen")
+        for _ in 0..<12 {
+            if copy.isHittable && copy.frame.maxY < playMoment.frame.minY - 8 { break }
+            detail.swipeUp()
+        }
+        XCTAssertTrue(copy.isHittable, "Copy with Context must be reachable in the Margin sheet")
+        XCTAssertLessThan(copy.frame.maxY, playMoment.frame.minY - 8,
+                          "The fixed Play this moment action overlaps Copy with Context")
         captureScreen(named: "margin-detail-before-quick-tap")
         // Exercise a short touch; video evidence checks the transient button
         // highlight separately from the completion banner assertion below.

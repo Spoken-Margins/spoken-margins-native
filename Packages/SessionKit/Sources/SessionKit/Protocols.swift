@@ -7,6 +7,9 @@ public struct PostResumeAudioSampleRequest: Equatable, Sendable {
     public let anchorMediaTimeMs: Int
     public let targetDurationMs: Int
     public let captureDelayMs: Int
+    public let attemptGeneration: Int?
+    public let preAttemptGeneration: Int?
+    public let postAttemptGeneration: Int?
 
     public init(
         interjectionId: String,
@@ -14,7 +17,10 @@ public struct PostResumeAudioSampleRequest: Equatable, Sendable {
         itemId: String,
         anchorMediaTimeMs: Int,
         targetDurationMs: Int,
-        captureDelayMs: Int = 0
+        captureDelayMs: Int = 0,
+        attemptGeneration: Int? = nil,
+        preAttemptGeneration: Int? = nil,
+        postAttemptGeneration: Int? = nil
     ) {
         self.interjectionId = interjectionId
         self.sessionId = sessionId
@@ -22,6 +28,17 @@ public struct PostResumeAudioSampleRequest: Equatable, Sendable {
         self.anchorMediaTimeMs = anchorMediaTimeMs
         self.targetDurationMs = targetDurationMs
         self.captureDelayMs = max(0, captureDelayMs)
+        self.attemptGeneration = attemptGeneration
+        self.preAttemptGeneration = preAttemptGeneration
+        self.postAttemptGeneration = postAttemptGeneration
+    }
+
+    public func attemptGeneration(for role: PodcastAnchorEvidenceWindowRole) -> Int? {
+        switch role {
+        case .preInterjection: preAttemptGeneration ?? attemptGeneration
+        case .postResume: postAttemptGeneration ?? attemptGeneration
+        case .sourceWindowBefore, .sourceWindowAfter: nil
+        }
     }
 }
 
@@ -191,6 +208,10 @@ public protocol LinkResolutionClient {
 
 public protocol SourceTranscriptionClient: Sendable {
     func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline
+    func acquireSourceAudioWindow(
+        url: URL, itemId: String, anchorMediaTimeMs: Int, durationMs: Int?,
+        windowBeforeMs: Int, windowAfterMs: Int
+    ) async throws -> SourceAudioWindowAcquisition
     func transcribeSourceAudioWindow(
         url: URL,
         itemId: String,
@@ -198,6 +219,9 @@ public protocol SourceTranscriptionClient: Sendable {
         durationMs: Int?,
         windowBeforeMs: Int,
         windowAfterMs: Int
+    ) async throws -> TranscriptTimeline
+    func transcribeAcquiredSourceAudioWindow(
+        _ acquisition: SourceAudioWindowAcquisition, itemId: String, durationMs: Int?
     ) async throws -> TranscriptTimeline
     func transcribeSourceAudioWindowWithEvidence(
         url: URL,
@@ -207,6 +231,28 @@ public protocol SourceTranscriptionClient: Sendable {
         windowBeforeMs: Int,
         windowAfterMs: Int
     ) async throws -> SourceAudioWindowTranscription
+}
+
+public struct SourceAudioWindowAcquisition: Sendable {
+    public let localAudioURL: URL
+    public let sourceStartMs: Int
+    public let sourceEndMs: Int
+    public let provenance: EpisodeFingerprintProvenance
+    public let cleanupDirectoryURL: URL?
+    public let pretranscribedTimeline: TranscriptTimeline?
+
+    public init(
+        localAudioURL: URL, sourceStartMs: Int, sourceEndMs: Int,
+        provenance: EpisodeFingerprintProvenance, cleanupDirectoryURL: URL? = nil,
+        pretranscribedTimeline: TranscriptTimeline? = nil
+    ) {
+        self.localAudioURL = localAudioURL
+        self.sourceStartMs = sourceStartMs
+        self.sourceEndMs = sourceEndMs
+        self.provenance = provenance
+        self.cleanupDirectoryURL = cleanupDirectoryURL
+        self.pretranscribedTimeline = pretranscribedTimeline
+    }
 }
 
 public struct SourceAudioWindowTranscription: Sendable {
@@ -232,6 +278,33 @@ public struct SourceAudioWindowTranscription: Sendable {
 }
 
 public extension SourceTranscriptionClient {
+    func transcribeAcquiredSourceAudioWindow(
+        _ acquisition: SourceAudioWindowAcquisition, itemId: String, durationMs: Int?
+    ) async throws -> TranscriptTimeline {
+        guard let timeline = acquisition.pretranscribedTimeline else {
+            throw SessionKitError.persistenceFailed("acquired_source_window_transcription_unavailable")
+        }
+        return timeline
+    }
+
+    func acquireSourceAudioWindow(
+        url: URL, itemId: String, anchorMediaTimeMs: Int, durationMs: Int?,
+        windowBeforeMs: Int, windowAfterMs: Int
+    ) async throws -> SourceAudioWindowAcquisition {
+        let legacy = try await transcribeSourceAudioWindowWithEvidence(
+            url: url, itemId: itemId, anchorMediaTimeMs: anchorMediaTimeMs,
+            durationMs: durationMs, windowBeforeMs: windowBeforeMs, windowAfterMs: windowAfterMs
+        )
+        guard let localAudioURL = legacy.localAudioURL else {
+            throw SessionKitError.persistenceFailed("source_audio_window_acquisition_unavailable")
+        }
+        return SourceAudioWindowAcquisition(
+            localAudioURL: localAudioURL, sourceStartMs: legacy.sourceStartMs,
+            sourceEndMs: legacy.sourceEndMs, provenance: legacy.provenance,
+            pretranscribedTimeline: legacy.timeline
+        )
+    }
+
     func transcribeSourceAudioWindow(
         url: URL,
         itemId: String,

@@ -101,6 +101,32 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(routed.mediaSeekResolution(for: request), .accepted(mediaTimeMs: 120_000))
     }
 
+    func testRoutedPodcastCaptureForwardsOnlyOnActiveMediaRouteAndPreservesSessionIdentity() throws {
+        let speech = RecordingAudioClient()
+        let media = RecordingAudioClient()
+        media.acceptsPostResumeSamples = true
+        let routed: any AudioPlaybackClient = RoutedAudioPlaybackClient(speech: speech, media: media)
+        let first = PostResumeAudioSampleRequest(interjectionId: "ij-001", sessionId: "first", itemId: "episode", anchorMediaTimeMs: 20_000, targetDurationMs: 12_000)
+        let second = PostResumeAudioSampleRequest(interjectionId: "ij-001", sessionId: "second", itemId: "episode", anchorMediaTimeMs: 40_000, targetDurationMs: 12_000)
+
+        XCTAssertFalse(routed.captureBufferedPreInterjectionAudioSample(first))
+        XCTAssertFalse(routed.armPostResumeAudioSample(first))
+        XCTAssertTrue(media.postResumeSampleRequests.isEmpty)
+        try routed.play(targetId: "episode", fromMediaTimeMs: 20_000)
+        XCTAssertTrue(routed.captureBufferedPreInterjectionAudioSample(first))
+        XCTAssertTrue(routed.armPostResumeAudioSample(first))
+        XCTAssertTrue(routed.armPostResumeAudioSample(second))
+        XCTAssertEqual(media.preInterjectionSampleRequests, [first])
+        XCTAssertEqual(media.postResumeSampleRequests, [first, second])
+        XCTAssertTrue(speech.postResumeSampleRequests.isEmpty)
+        try routed.play(targetId: "speech", from: 0)
+        XCTAssertFalse(routed.armPostResumeAudioSample(first))
+        XCTAssertEqual(media.postResumeSampleRequests, [first, second])
+        media.acceptsPostResumeSamples = false
+        try routed.play(targetId: "episode", fromMediaTimeMs: 40_000)
+        XCTAssertFalse(routed.armPostResumeAudioSample(second))
+    }
+
     #if canImport(AVFoundation)
     func testRetiredSpeechSynthesizerCannotConfirmOrCancelCurrentPlayback() throws {
         let client = SystemSpeechPlaybackClient(voiceIdentifier: nil, speechRate: AVSpeechUtteranceDefaultSpeechRate)
@@ -204,6 +230,38 @@ final class SessionKitCoreTests: XCTestCase {
     }
 
     #if canImport(Speech)
+    func testLegacySpeechRunsWhenLongFormRecognizerCannotInitialize() async throws {
+        struct InitializationFailure: Error {}
+        var legacyCalls = 0
+        let result: String = try await withLegacySpeechFallback(
+            preferred: { throw InitializationFailure() },
+            legacy: {
+                legacyCalls += 1
+                return "on-device legacy transcript"
+            }
+        )
+        XCTAssertEqual(result, "on-device legacy transcript")
+        XCTAssertEqual(legacyCalls, 1)
+    }
+
+    func testSpeechCancellationDoesNotStartLegacyWork() async {
+        var legacyCalls = 0
+        do {
+            let _: String = try await withLegacySpeechFallback(
+                preferred: { throw CancellationError() },
+                legacy: {
+                    legacyCalls += 1
+                    return "should not run"
+                }
+            )
+            XCTFail("Expected cancellation")
+        } catch is CancellationError {
+            XCTAssertEqual(legacyCalls, 0)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     func testSpeechRecognitionRequestsAreAlwaysOnDeviceOnly() {
         let request = makeOnDeviceSpeechRecognitionRequest(url: URL(fileURLWithPath: "/tmp/context.m4a"))
         XCTAssertTrue(request.requiresOnDeviceRecognition)
@@ -3502,6 +3560,35 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(postFailureTick.currentMediaTimeMs, 602_500)
     }
 
+    func testPausedMediaDestinationCanBeStagedWithoutPlayerSeekAndResumedThere() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media"]]
+        )
+        let item = Item(
+            id: "item-paused-margin-seek", title: "Paused Margin Seek",
+            mediaType: TargetType.transcriptBackedMedia.rawValue, text: nil,
+            externalReference: "https://example.com/episode", status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://example.com/episode.mp3", durationMs: 600_000)
+        )
+        let audio = DelayedPositionAudioClient()
+        let repository = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repository, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        _ = try engine.pause()
+        let staged = try engine.stagePausedMediaPosition(toMediaTimeMs: 240_000)
+        XCTAssertEqual(staged.status, .paused)
+        XCTAssertEqual(staged.currentMediaTimeMs, 240_000)
+        XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 240_000)
+        XCTAssertTrue(audio.navigationSeekPositions.isEmpty, "No player seek should be requested for a deferred source start")
+        _ = try engine.resumePlayback()
+        XCTAssertEqual(audio.mediaPlayPositions.last, 240_000)
+        XCTAssertThrowsError(try engine.stagePausedMediaPosition(toMediaTimeMs: 300_000))
+    }
+
     func testLiveTextSeekKeepsRequestedOffsetWhileSpeechReportsOldOffset() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
@@ -6185,6 +6272,61 @@ final class SessionKitCoreTests: XCTestCase {
         _ = try engine.startSession(itemId: item.id)
         XCTAssertEqual(audio.mediaContexts.last??.playbackURL, local)
     }
+
+    func testPausedLocalTransportReviewActivatesLocalPlayerBeforeNavigationSeek() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "paused-recipient-review", displayName: "Paused recipient review",
+            capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media"]]
+        )
+        let remote = "https://example.com/remote-episode.mp3"
+        let local = URL(fileURLWithPath: "/tmp/recipient-edition.mp3").absoluteString
+        let item = Item(
+            id: "recipient-review", title: "Recipient review", mediaType: "audio", text: nil,
+            externalReference: remote, status: "ready",
+            media: ItemMedia(sourceType: .remoteStream, url: remote, durationMs: 120_000)
+        )
+        let audio = RecordingAudioClient()
+        let engine = SessionEngine(
+            profile: profile, repository: InMemorySessionRepository(items: [item.id: item]), audio: audio
+        )
+        _ = try engine.startSession(itemId: item.id)
+        _ = try engine.pause()
+        XCTAssertEqual(audio.activeMediaURL, remote)
+
+        _ = try engine.playOnPlaybackTransportAndSeek(
+            itemId: item.id, playbackURL: local, mediaTimeMs: 23_000
+        )
+
+        XCTAssertEqual(audio.mediaURLAtSeek.last, local,
+                       "A paused remote player must be replaced before the local navigation seek")
+        XCTAssertEqual(audio.seekRequests.last, 23_000)
+        XCTAssertEqual(engine.lastMediaSeekRequest?.requestedMediaTimeMs, 23_000)
+    }
+
+    func testMediaSeekReadinessWaitsForPlaybackAndLocalTransportAndRejectsSupersession() {
+        let request = MediaSeekRequest(id: 7, targetId: "episode", requestedMediaTimeMs: 23_000)
+        func readiness(
+            _ resolution: MediaSeekResolution?,
+            _ status: PlaybackStatus,
+            _ localActive: Bool,
+            observedRequest: MediaSeekRequest? = request
+        ) -> MediaSeekReadiness {
+            .evaluate(
+                requestID: 7, observedRequest: observedRequest, resolution: resolution,
+                playbackStatus: status, hasMediaPosition: true,
+                requestedTransportActive: localActive
+            )
+        }
+        XCTAssertEqual(readiness(.pending, .starting, false), .waiting)
+        XCTAssertEqual(readiness(.accepted(mediaTimeMs: 23_000), .starting, false), .waiting)
+        XCTAssertEqual(readiness(.accepted(mediaTimeMs: 23_000), .playing, false), .waiting)
+        XCTAssertEqual(readiness(.accepted(mediaTimeMs: 23_000), .playing, true), .ready)
+        XCTAssertEqual(readiness(.failed(actualMediaTimeMs: nil, reason: "superseded"), .playing, true), .rejected)
+        XCTAssertEqual(readiness(.accepted(mediaTimeMs: 23_000), .playing, true,
+                                 observedRequest: MediaSeekRequest(id: 8, targetId: "episode", requestedMediaTimeMs: 0)),
+                       .rejected)
+        XCTAssertEqual(readiness(.accepted(mediaTimeMs: 23_000), .failed, true), .rejected)
+    }
 }
 
 private final class DelayedPositionAudioClient: AudioPlaybackClient {
@@ -6362,6 +6504,8 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     var playbackRates: [Double] = []
     var playbackRate = 1.0
     var mediaContexts: [PlaybackMediaContext?] = []
+    var activeMediaURL: String?
+    var mediaURLAtSeek: [String?] = []
     var startStatus: PlaybackStartStatus = .confirmed
     var transportState: PlaybackTransportState?
     var configuredSpeechSettings: [(String?, Float)] = []
@@ -6371,6 +6515,7 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     var playbackVolumes: [Float] = []
     var acceptsPostResumeSamples = false
     var postResumeSampleRequests: [PostResumeAudioSampleRequest] = []
+    var preInterjectionSampleRequests: [PostResumeAudioSampleRequest] = []
     var eventLog: [String] = []
     var failNextPlay = false
 
@@ -6406,6 +6551,7 @@ private final class RecordingAudioClient: AudioPlaybackClient {
 
     func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {
         activeTargetId = targetId
+        activeMediaURL = mediaContexts.last??.playbackURL ?? mediaContexts.last??.sourceURL
         currentOffset = nil
         currentMediaTimeValue = mediaTimeMs
         playedTargets.append(targetId)
@@ -6416,6 +6562,7 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     func seek(toMediaTimeMs mediaTimeMs: Int) throws {
         currentMediaTimeValue = mediaTimeMs
         seekRequests.append(mediaTimeMs)
+        mediaURLAtSeek.append(activeMediaURL)
     }
 
     func setPlaybackRate(_ rate: Double) throws {
@@ -6507,6 +6654,11 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     func armPostResumeAudioSample(_ request: PostResumeAudioSampleRequest) -> Bool {
         postResumeSampleRequests.append(request)
         eventLog.append("arm_post_resume_sample")
+        return acceptsPostResumeSamples
+    }
+
+    func captureBufferedPreInterjectionAudioSample(_ request: PostResumeAudioSampleRequest) -> Bool {
+        preInterjectionSampleRequests.append(request)
         return acceptsPostResumeSamples
     }
 }

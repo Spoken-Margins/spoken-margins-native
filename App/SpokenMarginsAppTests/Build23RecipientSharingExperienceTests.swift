@@ -113,7 +113,10 @@ final class Build23RecipientSharingExperienceTests: XCTestCase {
                     resolution: .transcriptVerified,
                     positionDescription: "Chapter 2 · 08:14",
                     isPlayable: true,
-                    hasVoice: true
+                    hasVoice: true,
+                    canReviewPosition: false,
+                    canConfirmPosition: false,
+                    listenAroundLabel: "Listen around current source position"
                 )
             ]
         )

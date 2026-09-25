@@ -335,6 +335,24 @@ public final class SessionEngine {
         return snapshot
     }
 
+    /// Switches to the requested transport before seeking its player. A paused
+    /// session only updates media context in `updatePlaybackTransport`, so it
+    /// must resume to activate that transport before navigation is requested.
+    @discardableResult
+    public func playOnPlaybackTransportAndSeek(
+        itemId: String,
+        playbackURL: String,
+        mediaTimeMs: Int
+    ) throws -> SessionSnapshot {
+        _ = try updatePlaybackTransport(
+            itemId: itemId, playbackURL: playbackURL, replaceActivePlayback: true
+        )
+        if snapshot.status == .paused {
+            _ = try resumePlayback()
+        }
+        return try seekMedia(toMediaTimeMs: mediaTimeMs)
+    }
+
     @discardableResult
     public func stopPlayback() throws -> SessionSnapshot {
         try requireNavigationAllowed("stopPlayback")
@@ -592,6 +610,28 @@ public final class SessionEngine {
         // start. Preserve the current transport status while the matching seek
         // transaction is acknowledged by the audio client.
         publish(status: snapshot.status, phase: updated.phase)
+        return snapshot
+    }
+
+    /// Records a media destination while paused when no player exists yet (for example,
+    /// after restoring a session). The next playback start opens the source at this position.
+    /// Active playback must use seekMedia so a real player seek is acknowledged.
+    @discardableResult
+    public func stagePausedMediaPosition(toMediaTimeMs mediaTimeMs: Int) throws -> SessionSnapshot {
+        try requireNavigationAllowed("stagePausedMediaPosition")
+        try requirePlayback("stagePausedMediaPosition")
+        guard snapshot.status == .paused,
+              let session = currentSession,
+              session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia else {
+            throw SessionKitError.invalidCommandForState("stagePausedMediaPosition")
+        }
+        let updated = mediaSession(session, movedTo: mediaTimeMs)
+        currentSession = updated
+        try persistSession(updated)
+        protectPlaybackPosition(for: updated)
+        lastMediaSeekRequest = nil
+        lastMediaSeekResolution = nil
+        publish(status: .paused, phase: updated.phase)
         return snapshot
     }
 
@@ -1513,6 +1553,10 @@ public final class SessionEngine {
             anchorContextStatus: anchor.mediaTimeMs == nil || !anchor.anchorBefore.isEmpty || !anchor.anchorAfter.isEmpty ? .ready : .pending,
             podcastAnchorEvidenceCaptureStatus: shouldCapturePostResumePodcastEvidence
                 ? .pendingPostResumeSample
+                : nil,
+            podcastAnchorCaptureWindows: shouldCapturePostResumePodcastEvidence
+                ? [.init(role: .preInterjection, anchorMediaTimeMs: anchor.mediaTimeMs ?? 0),
+                   .init(role: .postResume, anchorMediaTimeMs: anchor.mediaTimeMs ?? 0)]
                 : nil
         )
         try repository.saveInterjection(interjection)
@@ -1525,16 +1569,21 @@ public final class SessionEngine {
                 itemId: session.itemId,
                 anchorMediaTimeMs: anchorMediaTimeMs,
                 targetDurationMs: 12_000,
-                captureDelayMs: SparseFingerprintSchedule.seekDebounceMs
+                captureDelayMs: SparseFingerprintSchedule.seekDebounceMs,
+                attemptGeneration: 1
             )
             let capturedPreWindow = audio.captureBufferedPreInterjectionAudioSample(evidenceRequest)
             let armedPostWindow = audio.armPostResumeAudioSample(evidenceRequest)
-            if !capturedPreWindow && !armedPostWindow {
-                interjection.podcastAnchorEvidenceCaptureStatus = .unavailable
-                interjection.podcastAnchorEvidenceFailureReason = "decoded_playback_sample_unavailable"
-                try repository.saveInterjection(interjection)
-                lastMediaPercentageRepair = nil
+            interjection.updatePodcastAnchorWindow(.preInterjection) { window in
+                if capturedPreWindow { window.accepted() }
+                else { window.failed("buffered_pre_interjection_unavailable", retryable: false) }
             }
+            interjection.updatePodcastAnchorWindow(.postResume) { window in
+                if armedPostWindow { window.accepted() }
+                else { window.failed("decoded_playback_sample_unavailable", retryable: true) }
+            }
+            try repository.saveInterjection(interjection)
+            lastMediaPercentageRepair = nil
         }
         try transcriber.scheduleTranscription(interjection: interjection)
         lastScheduledTranscriptionInterjectionId = interjection.id
@@ -2063,13 +2112,31 @@ public final class SessionEngine {
         interjectionId: String,
         sessionId: String? = nil,
         evidence: [CapturedPodcastAnchorEvidence],
-        sourceExactEditionSHA256: String?
+        sourceExactEditionSHA256: String?,
+        expectedAttemptGeneration: Int? = nil
     ) throws -> SessionSnapshot {
         try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
-            interjection.podcastAnchorEvidence = evidence
-            interjection.sourceExactEditionSHA256 = sourceExactEditionSHA256
-            interjection.podcastAnchorEvidenceCaptureStatus = .ready
-            interjection.podcastAnchorEvidenceFailureReason = nil
+            try validatePodcastCaptureCallback(
+                interjection: interjection,
+                roles: evidence.compactMap { $0.windowRole.flatMap { PodcastAnchorCaptureWindow.Role(rawValue: $0.rawValue) } },
+                expectedAttemptGeneration: expectedAttemptGeneration,
+                producingExactEditionSHA256: sourceExactEditionSHA256
+            )
+            var merged = interjection.podcastAnchorEvidence ?? []
+            for candidate in evidence {
+                merged.removeAll { $0.id == candidate.id || ($0.windowRole == candidate.windowRole && $0.provenance == candidate.provenance) }
+                merged.append(candidate)
+                if let role = candidate.windowRole {
+                    interjection.updatePodcastAnchorWindow(role) { $0.committed() }
+                }
+            }
+            interjection.podcastAnchorEvidence = merged.sorted { $0.id < $1.id }
+            if let sourceExactEditionSHA256 {
+                interjection.sourceExactEditionSHA256 = sourceExactEditionSHA256
+            }
+            if interjection.podcastAnchorCaptureWindows == nil {
+                interjection.podcastAnchorEvidenceCaptureStatus = .ready
+            }
         }
         return snapshot
     }
@@ -2078,13 +2145,57 @@ public final class SessionEngine {
     public func podcastAnchorEvidenceFailed(
         interjectionId: String,
         sessionId: String? = nil,
-        reason: String
+        reason: String,
+        windowRole: PodcastAnchorEvidenceWindowRole? = nil,
+        expectedAttemptGeneration: Int? = nil
     ) throws -> SessionSnapshot {
+        let roles = windowRole.flatMap { PodcastAnchorCaptureWindow.Role(rawValue: $0.rawValue) }.map { [$0] }
+            ?? (windowRole == nil ? [PodcastAnchorCaptureWindow.Role.preInterjection, .postResume] : [])
         try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
-            interjection.podcastAnchorEvidenceCaptureStatus = .unavailable
-            interjection.podcastAnchorEvidenceFailureReason = reason
+            try validatePodcastCaptureCallback(
+                interjection: interjection, roles: roles,
+                expectedAttemptGeneration: expectedAttemptGeneration,
+                producingExactEditionSHA256: nil
+            )
+            if let windowRole {
+                interjection.updatePodcastAnchorWindow(windowRole) { $0.failed(reason, retryable: false) }
+            } else if interjection.podcastAnchorCaptureWindows == nil {
+                interjection.podcastAnchorEvidenceCaptureStatus = .unavailable
+                interjection.podcastAnchorEvidenceFailureReason = reason
+            } else {
+                for role in [PodcastAnchorEvidenceWindowRole.preInterjection, .postResume] {
+                    interjection.updatePodcastAnchorWindow(role) { $0.failed(reason, retryable: false) }
+                }
+            }
         }
         return snapshot
+    }
+
+    private func validatePodcastCaptureCallback(
+        interjection: Interjection,
+        roles: [PodcastAnchorCaptureWindow.Role],
+        expectedAttemptGeneration: Int?,
+        producingExactEditionSHA256: String?
+    ) throws {
+        if let producingExactEditionSHA256,
+           let currentEdition = interjection.sourceExactEditionSHA256,
+           currentEdition != producingExactEditionSHA256 {
+            throw SessionKitError.invalidCommandForState("stale_podcast_capture_edition")
+        }
+        for role in Set(roles) {
+            guard let window = interjection.podcastAnchorCaptureWindows?.first(where: { $0.role == role }) else {
+                if expectedAttemptGeneration != nil {
+                    throw SessionKitError.invalidCommandForState("missing_podcast_capture_window")
+                }
+                continue
+            }
+            guard let expectedAttemptGeneration,
+                  expectedAttemptGeneration == window.attempt,
+                  (window.state == .collecting || window.state == .deriving),
+                  window.anchorMediaTimeMs == interjection.anchor.mediaTimeMs else {
+                throw SessionKitError.invalidCommandForState("stale_podcast_capture_attempt")
+            }
+        }
     }
 
     @discardableResult
@@ -3599,7 +3710,7 @@ public final class SessionEngine {
     private func updateInterjection(
         _ id: String,
         sessionId: String? = nil,
-        mutate: (inout Interjection) -> Void
+        mutate: (inout Interjection) throws -> Void
     ) throws {
         if let sessionId {
             guard (try repository.loadSession(id: sessionId)) != nil,
@@ -3608,13 +3719,13 @@ public final class SessionEngine {
                   }) else {
                 throw SessionKitError.invalidCommandForState("updateInterjection")
             }
-            mutate(&interjection)
+            try mutate(&interjection)
             try repository.saveInterjection(interjection)
             lastMediaPercentageRepair = nil
             return
         }
         if let memory = repository as? InMemorySessionRepository, var interjection = memory.interjections[id] {
-            mutate(&interjection)
+            try mutate(&interjection)
             try repository.saveInterjection(interjection)
             lastMediaPercentageRepair = nil
             return
@@ -3625,12 +3736,12 @@ public final class SessionEngine {
             // Fixtures may use a mapless session while the current runtime session differs; preserve trace intent.
             all = try repository.loadInterjections(sessionId: "session-pill-mapless")
             guard var fallback = all.first(where: { $0.id == id }) else { throw SessionKitError.invalidCommandForState("updateInterjection") }
-            mutate(&fallback)
+            try mutate(&fallback)
             try repository.saveInterjection(fallback)
             lastMediaPercentageRepair = nil
             return
         }
-        mutate(&interjection)
+        try mutate(&interjection)
         try repository.saveInterjection(interjection)
         lastMediaPercentageRepair = nil
     }

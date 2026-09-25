@@ -2190,6 +2190,13 @@ private struct PlaybackScreen: View {
             if let margin = model.conversationCurrentMargin {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(margin.title).font(.headline)
+                    if let parents = margin.conversation?.parents, !parents.isEmpty {
+                        Text("Replying to " + parents.map { reference in
+                            model.conversationSnapshots.first(where: { $0.id == reference.id })?.conversation.authorLabel
+                                ?? "a missing Margin"
+                        }.joined(separator: " and "))
+                            .font(.caption)
+                    }
                     if let transcript = margin.transcript { Text(transcript).font(.body).textSelection(.enabled) }
                     HStack {
                         Button("Voice reply") { model.replyToPlayingMargin(written: false) }
@@ -2198,12 +2205,14 @@ private struct PlaybackScreen: View {
                     if !model.conversationThreadQueue.isEmpty {
                         Button("Next reply", action: model.nextConversationReply).buttonStyle(.bordered)
                     }
-                    if let parent = margin.conversation?.parent,
-                       !model.conversationSnapshots.contains(where: { $0.id == parent.id }) {
+                    if margin.conversation?.parents.contains(where: { parent in
+                        !model.conversationSnapshots.contains(where: { $0.id == parent.id })
+                    }) == true {
                         Text("The referenced Margin has not been received yet.").font(.caption)
                     }
-                    Button("Return to original position", action: model.returnFromConversation)
+                    Button("Back to podcast", systemImage: "arrow.uturn.backward", action: model.resumeSourceFromConversation)
                         .buttonStyle(.bordered)
+                        .accessibilityIdentifier("playback.margin.backToPodcast")
                 }
                 .foregroundStyle(.white)
                 .accessibilityIdentifier("playback.conversation.margin")
@@ -2226,7 +2235,7 @@ private struct PlaybackScreen: View {
             }
             playbackTransport
             if let lead = model.conversationLeadIn {
-                Text("Context for \(lead.destination.title) · tap Skim to skip context")
+                Text("Playing source context before \(lead.destination.title)")
                     .font(.subheadline)
                     .foregroundStyle(.white)
                     .accessibilityIdentifier("playback.margin.context")
@@ -2252,17 +2261,7 @@ private struct PlaybackScreen: View {
                 .buttonStyle(.plain)
                 .frame(minHeight: 44)
             }
-            if model.playingImportedCommentary != nil {
-                Button("Return to Source", action: model.returnToSourceFromImportedCommentary)
-                    .buttonStyle(InterjectButtonStyle())
-                    .accessibilityIdentifier("importedCommentary.returnToSource")
-            } else if model.snapshot.skimBridgeState != nil || model.conversationLeadIn != nil {
-                Button("Return to Source") {
-                    model.returnFromSkim()
-                }
-                .buttonStyle(InterjectButtonStyle())
-                .accessibilityIdentifier("playback.skim.return.button")
-            } else if model.snapshot.phase == .finished {
+            if model.snapshot.phase == .finished {
                 Button("Add a Margin", systemImage: "square.and.pencil", action: model.beginWrittenMargin)
                     .frame(maxWidth: .infinity)
                     .buttonStyle(InterjectButtonStyle())
@@ -2273,14 +2272,14 @@ private struct PlaybackScreen: View {
                     .accessibilityIdentifier("playback.finished.share.button")
             } else {
                 HStack(spacing: 8) {
-                    Button(action: model.beginInterjection) {
-                        Label(dynamicTypeSize.isAccessibilitySize ? "Record" : "Add a Margin", systemImage: "mic.fill")
+                    Button { model.captureMarginFromPlayback(written: false) } label: {
+                        Label(model.isRespondingToMargin ? "Voice reply" : (dynamicTypeSize.isAccessibilitySize ? "Record" : "Add a Margin"), systemImage: "mic.fill")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(InterjectButtonStyle())
-                    .accessibilityLabel("Record a Margin")
+                    .accessibilityLabel(model.isRespondingToMargin ? "Voice reply" : "Record a Margin")
                     .accessibilityIdentifier("playback.interject.button")
-                    Button(action: model.beginWrittenMargin) {
+                    Button { model.captureMarginFromPlayback(written: true) } label: {
                         Image(systemName: "square.and.pencil")
                             .resizable()
                             .scaledToFit()
@@ -2288,10 +2287,15 @@ private struct PlaybackScreen: View {
                             .frame(width: 52, height: 52)
                     }
                     .buttonStyle(InterjectButtonStyle())
-                    .accessibilityLabel("Write a Margin")
+                    .accessibilityLabel(model.isRespondingToMargin ? "Written reply" : "Write a Margin")
                     .accessibilityIdentifier("playback.write.button")
                 }
-                .disabled(!model.hasActiveSession)
+                .disabled(!model.hasActiveSession || model.snapshot.skimBridgeState != nil)
+            }
+            if model.conversationLeadIn != nil {
+                Button("Play Margin now", action: model.skipConversationContext)
+                    .buttonStyle(InterjectButtonStyle())
+                    .accessibilityIdentifier("playback.margin.skipContext.button")
             }
             HStack(spacing: 18) {
                 Button(action: openTimeline) {
@@ -2524,13 +2528,16 @@ private struct PlaybackScreen: View {
                 Text("Shared Margin \(playing.index) of \(playing.count)")
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.72))
-                Text(model.importedCommentaryIsPaused ? "Paused" : "Playing at \(model.playingInterjectionAudioRate.formatted(.number.precision(.fractionLength(0...2))))× to match the item")
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.72))
                 Text(playing.interjection.approvedTranscript)
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.85))
                     .lineLimit(3)
+                if model.conversationCurrentMargin == nil {
+                    Button("Back to podcast", systemImage: "arrow.uturn.backward",
+                           action: model.returnToSourceFromImportedCommentary)
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("importedCommentary.returnToSource")
+                }
 
             }
             .padding(12)
@@ -2544,14 +2551,21 @@ private struct PlaybackScreen: View {
                 Text("Shared Margin \(pending.index) of \(pending.count)")
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.72))
+                if !Gate1AppModel.isPlayableImportedCommentaryResolution(pending.interjection.resolution) {
+                    Text("Position not matched · source remains here")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.72))
+                }
                 Text(pending.interjection.approvedTranscript)
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.85))
                     .lineLimit(3)
                 VStack(spacing: 10) {
-                    Button("Listen", action: model.listenToPendingImportedCommentary)
-                        .buttonStyle(PrimaryButtonStyle())
-                        .accessibilityIdentifier("importedCommentary.listen")
+                    if pending.interjection.audioPath != nil {
+                        Button("Listen", action: model.listenToPendingImportedCommentary)
+                            .buttonStyle(PrimaryButtonStyle())
+                            .accessibilityIdentifier("importedCommentary.listen")
+                    }
                     Button("Dismiss", action: model.dismissPendingImportedCommentary)
                         .buttonStyle(SecondaryButtonStyle())
                         .accessibilityIdentifier("importedCommentary.dismiss")
@@ -2561,9 +2575,9 @@ private struct PlaybackScreen: View {
             .frame(maxWidth: .infinity)
             .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
         }
-        if model.hasEnabledImportedCommentary {
+        if model.hasEnabledImportedCommentary && !model.isMarginVoicePlaying {
             Toggle(
-                "Auto-play shared Margins",
+                "Auto-play shared Margins at podcast cues",
                 isOn: Binding(
                     get: { model.importedCommentaryAutoPlayEnabled },
                     set: { enabled in
@@ -2726,23 +2740,40 @@ private struct PlaybackScreen: View {
             .font(.caption.monospacedDigit())
             .foregroundStyle(AppColors.watchSecondary)
         }
+        if model.isMarginVoicePlaying {
+            HStack(spacing: 8) {
+                Text("Margin")
+                ProgressView(value: model.marginPlaybackElapsedSeconds,
+                             total: max(1, model.marginPlaybackDurationSeconds))
+                    .tint(AppColors.accent)
+                    .accessibilityIdentifier("playback.margin.progress")
+                Text(formatPlaybackTime(Int(model.marginPlaybackElapsedSeconds * 1_000)))
+                    .monospacedDigit()
+            }
+            .font(.caption)
+            .foregroundStyle(AppColors.watchSecondary)
+        }
     }
 
     private var playbackTransport: some View {
         VStack(spacing: 12) {
             HStack(spacing: 22) {
                 Button {
-                    if model.isMediaPlaybackSnapshot {
+                    if model.isMarginVoicePlaying {
+                        model.restartCurrentMargin()
+                    } else if model.isMediaPlaybackSnapshot {
                         model.skipBackMedia()
                     } else {
                         model.skipBack()
                     }
                 } label: {
-                    Image(systemName: model.isMediaPlaybackSnapshot ? "gobackward.\(model.mediaSkipBackSeconds)" : "backward.end.fill")
+                    Image(systemName: model.isMarginVoicePlaying ? "backward.end.fill" :
+                        (model.isMediaPlaybackSnapshot ? "gobackward.\(model.mediaSkipBackSeconds)" : "backward.end.fill"))
                 }
                 .buttonStyle(RoundPlaybackButtonStyle())
                 .disabled(!model.hasActiveSession)
-                .accessibilityLabel(model.isMediaPlaybackSnapshot ? "Back \(model.mediaSkipBackSeconds) seconds" : "Previous \(model.skipUnit)")
+                .accessibilityLabel(model.isMarginVoicePlaying ? "Restart Margin" :
+                    (model.isMediaPlaybackSnapshot ? "Back \(model.mediaSkipBackSeconds) seconds" : "Previous \(model.skipUnit)"))
                 .accessibilityIdentifier("playback.back.button")
 
                 Button(action: model.playPause) {
@@ -2751,28 +2782,32 @@ private struct PlaybackScreen: View {
                             ProgressView()
                                 .tint(.white)
                         } else {
-                            Image(systemName: model.snapshot.phase == .finished && model.playingImportedCommentary == nil ? "arrow.counterclockwise" : (model.snapshot.skimBridgeState?.status == .playing
+                            Image(systemName: model.snapshot.phase == .finished && !model.isMarginVoicePlaying ? "arrow.counterclockwise" : (model.snapshot.skimBridgeState?.status == .playing
                                 || model.activePlaybackIsPlaying ? "pause.fill" : "play.fill"))
                         }
                     }
                 }
                 .buttonStyle(MainPlaybackButtonStyle())
-                .accessibilityLabel(model.snapshot.phase == .finished && model.playingImportedCommentary == nil ? "Replay in a new session" : (model.snapshot.skimBridgeState?.status == .playing
+                .accessibilityLabel(model.snapshot.phase == .finished && !model.isMarginVoicePlaying ? "Replay in a new session" : (model.snapshot.skimBridgeState?.status == .playing
                     || model.activePlaybackIsPlaying ? "Pause" : "Play"))
                 .accessibilityIdentifier("playback.play.button")
 
                 Button {
-                    if model.isMediaPlaybackSnapshot {
+                    if model.isMarginVoicePlaying {
+                        model.skipCurrentMarginToEnd()
+                    } else if model.isMediaPlaybackSnapshot {
                         model.skipForwardMedia()
                     } else {
                         model.skipForward()
                     }
                 } label: {
-                    Image(systemName: model.isMediaPlaybackSnapshot ? "goforward.\(model.mediaSkipForwardSeconds)" : "forward.end.fill")
+                    Image(systemName: model.isMarginVoicePlaying ? "forward.end.fill" :
+                        (model.isMediaPlaybackSnapshot ? "goforward.\(model.mediaSkipForwardSeconds)" : "forward.end.fill"))
                 }
                 .buttonStyle(RoundPlaybackButtonStyle())
                 .disabled(!model.hasActiveSession)
-                .accessibilityLabel(model.isMediaPlaybackSnapshot ? "Forward \(model.mediaSkipForwardSeconds) seconds" : "Next \(model.skipUnit)")
+                .accessibilityLabel(model.isMarginVoicePlaying ? "Skip to end of Margin" :
+                    (model.isMediaPlaybackSnapshot ? "Forward \(model.mediaSkipForwardSeconds) seconds" : "Next \(model.skipUnit)"))
                 .accessibilityIdentifier("playback.forward.button")
             }
 

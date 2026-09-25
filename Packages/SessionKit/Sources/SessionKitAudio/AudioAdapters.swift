@@ -36,6 +36,20 @@ public func systemSpeechTranscriptionEngineDescription() -> String {
 }
 
 #if canImport(Speech)
+func withLegacySpeechFallback<Value>(
+    preferred: () async throws -> Value,
+    legacy: () async throws -> Value
+) async throws -> Value {
+    do {
+        return try await preferred()
+    } catch is CancellationError {
+        throw CancellationError()
+    } catch {
+        try Task.checkCancellation()
+        return try await legacy()
+    }
+}
+
 /// Collects the ordered, finalized passages emitted by SpeechAnalyzer.
 ///
 /// SpeechTranscriber final results are additive passages. They are not competing
@@ -1614,6 +1628,39 @@ struct MediaPlaybackCompletionPolicy {
     }
 }
 
+/// Identifies the file installed in one player item. File metadata is checked
+/// again before and after hashing; a URL alone does not identify played bytes.
+public struct LocalPlaybackFileBinding: Equatable, Sendable {
+    public let url: URL
+    public let itemId: String
+    public let generation: UInt64
+    private let volume: UInt64
+    private let inode: UInt64
+    private let size: UInt64
+    private let modifiedAt: Date
+
+    public init?(url: URL, itemId: String, generation: UInt64) {
+        guard url.isFileURL,
+              let values = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let volume = values[.systemNumber] as? NSNumber,
+              let inode = values[.systemFileNumber] as? NSNumber,
+              let size = values[.size] as? NSNumber,
+              let modifiedAt = values[.modificationDate] as? Date,
+              size.uint64Value > 0 else { return nil }
+        self.url = url.standardizedFileURL
+        self.itemId = itemId
+        self.generation = generation
+        self.volume = volume.uint64Value
+        self.inode = inode.uint64Value
+        self.size = size.uint64Value
+        self.modifiedAt = modifiedAt
+    }
+
+    public func stillIdentifiesFile() -> Bool {
+        Self(url: url, itemId: itemId, generation: generation) == self
+    }
+}
+
 public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked Sendable {
     #if canImport(AVFoundation)
     private var player: AVPlayer?
@@ -1627,6 +1674,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private var postResumeEvidenceTapContext: PostResumePodcastEvidenceTapContext?
     private weak var postResumeEvidenceItem: AVPlayerItem?
     private var postResumeEvidenceAudioMix: AVAudioMix?
+    private var podcastEvidenceTrackObservation: NSKeyValueObservation?
+    private var pendingPodcastEvidenceRequests: [String: PostResumeAudioSampleRequest] = [:]
     public var postResumePodcastEvidenceHandler: (@Sendable (PostResumePodcastEvidenceCaptureResult) -> Void)?
     #endif
     private let remoteCommandHandler: (@Sendable (CompactControlCommand, Int?, Double?) -> Void)?
@@ -1635,6 +1684,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private var mediaContext: PlaybackMediaContext?
     private var activeTargetId: String?
     private var activePlaybackURL: URL?
+    private var playbackGeneration: UInt64 = 0
+    private var installedLocalFileBinding: LocalPlaybackFileBinding?
     private var completedTargetId: String?
     private var playbackComplete = false
     private var lastRequestedMediaTimeMs = 0
@@ -1769,7 +1820,12 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             && mediaSeekLifecycle.pending?.targetId == targetId
             && mediaSeekLifecycle.pending?.mediaTimeMs == max(0, mediaTimeMs)
         if activeTargetId != targetId || activePlaybackURL != url || player == nil {
+            playbackGeneration &+= 1
+            installedLocalFileBinding = (mediaContext?.itemId).flatMap {
+                LocalPlaybackFileBinding(url: url, itemId: $0, generation: playbackGeneration)
+            }
             cancelPostResumeEvidenceCapture(reason: "playback_item_changed")
+            podcastEvidenceTrackObservation = nil
             removePlayerStateObserver()
             removeCompletionObserver()
             removeTimeObserver()
@@ -1784,7 +1840,10 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             installTimeObserver()
             if Thread.isMainThread {
                 MainActor.assumeIsolated {
+                    #if canImport(MediaToolbox) && canImport(ShazamKit) && !os(watchOS)
+                    observePodcastEvidenceTrackReadiness(on: item)
                     installContinuousPodcastEvidenceTapIfPossible(on: item)
+                    #endif
                 }
             }
         }
@@ -1897,6 +1956,11 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             guard let assetTrack = item.tracks
                 .compactMap({ $0.assetTrack })
                 .first(where: { $0.mediaType == .audio }) else {
+                if item.status == .unknown {
+                    pendingPodcastEvidenceRequests["\(request.sessionId)::\(request.interjectionId)"] = request
+                    observePodcastEvidenceTrackReadiness(on: item)
+                    return true
+                }
                 return false
             }
             let context = PostResumePodcastEvidenceTapContext(
@@ -1953,6 +2017,18 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     public func isUsingPlaybackURL(_ url: URL, itemId: String) -> Bool {
         mediaContext?.itemId == itemId && activePlaybackURL?.standardizedFileURL == url.standardizedFileURL
+    }
+
+    public func activeLocalFileBinding(url: URL, itemId: String) -> LocalPlaybackFileBinding? {
+        guard isUsingPlaybackURL(url, itemId: itemId),
+              let binding = installedLocalFileBinding,
+              binding.itemId == itemId,
+              binding.stillIdentifiesFile() else { return nil }
+        return binding
+    }
+
+    public func stillUsesLocalFileBinding(_ binding: LocalPlaybackFileBinding) -> Bool {
+        activeLocalFileBinding(url: binding.url, itemId: binding.itemId) == binding
     }
 
     public func currentPlaybackPosition() -> PlaybackPosition? {
@@ -2098,6 +2174,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         player = nil
         activeTargetId = nil
         activePlaybackURL = nil
+        playbackGeneration &+= 1
+        installedLocalFileBinding = nil
         completedTargetId = nil
         playbackComplete = false
         mediaSeekFailure = nil
@@ -2228,6 +2306,11 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private func cancelPostResumeEvidenceCapture(reason: String) {
         #if canImport(AVFoundation) && canImport(MediaToolbox) && canImport(ShazamKit) && !os(watchOS)
         postResumeEvidenceTapContext?.cancelAll(reason: reason)
+        let pending = Array(pendingPodcastEvidenceRequests.values)
+        pendingPodcastEvidenceRequests.removeAll()
+        for request in pending {
+            postResumePodcastEvidenceHandler?(.failed(request: request, windowRole: .postResume, reason: reason))
+        }
         removePostResumeEvidenceTap()
         #else
         _ = reason
@@ -2235,6 +2318,30 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     }
 
     #if canImport(AVFoundation) && canImport(MediaToolbox) && canImport(ShazamKit) && !os(watchOS)
+    @MainActor
+    private func observePodcastEvidenceTrackReadiness(on item: AVPlayerItem) {
+        guard podcastEvidenceTrackObservation == nil else { return }
+        podcastEvidenceTrackObservation = item.observe(\.status, options: [.new]) { [weak self, weak item] _, _ in
+            DispatchQueue.main.async { [weak self, weak item] in
+                guard let self, let item, self.player?.currentItem === item,
+                      item.status != .unknown else { return }
+                self.podcastEvidenceTrackObservation = nil
+                self.installContinuousPodcastEvidenceTapIfPossible(on: item)
+                let pending = Array(self.pendingPodcastEvidenceRequests.values)
+                self.pendingPodcastEvidenceRequests.removeAll()
+                for request in pending {
+                    if item.status != .readyToPlay || !self.armPostResumeAudioSample(request) {
+                        self.postResumePodcastEvidenceHandler?(.failed(
+                            request: request,
+                            windowRole: .postResume,
+                            reason: item.status == .failed ? "decoded_playback_track_failed" : "decoded_playback_audio_track_unavailable"
+                        ))
+                    }
+                }
+            }
+        }
+    }
+
     @MainActor
     private func installContinuousPodcastEvidenceTapIfPossible(on item: AVPlayerItem) {
         guard let mediaContext,
@@ -2362,6 +2469,11 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         let interval = CMTime(seconds: 1, preferredTimescale: 2)
         timeObserverToken = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] _ in
             guard let self else { return }
+            #if canImport(MediaToolbox) && canImport(ShazamKit) && !os(watchOS)
+            if let mediaTimeMs = self.currentMediaTimeMs() {
+                self.postResumeEvidenceTapContext?.notePlaybackProgress(mediaTimeMs: mediaTimeMs)
+            }
+            #endif
             self.publishNowPlaying(isPlaying: !self.paused)
         }
     }
@@ -2703,6 +2815,18 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
         activeRoute == .media ? media.currentPlaybackDurationMs() : nil
     }
 
+    @discardableResult
+    public func captureBufferedPreInterjectionAudioSample(_ request: PostResumeAudioSampleRequest) -> Bool {
+        guard activeRoute == .media else { return false }
+        return media.captureBufferedPreInterjectionAudioSample(request)
+    }
+
+    @discardableResult
+    public func armPostResumeAudioSample(_ request: PostResumeAudioSampleRequest) -> Bool {
+        guard activeRoute == .media else { return false }
+        return media.armPostResumeAudioSample(request)
+    }
+
     public func seek(toMediaTimeMs mediaTimeMs: Int) throws {
         activeRoute = .media
         try media.seek(toMediaTimeMs: mediaTimeMs)
@@ -3031,6 +3155,12 @@ public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
     }
 
     public func transcribeAligned(audioPath: String) async throws -> AlignedInterjectionTranscript {
+        try await SpeechRecognitionQueue.shared.run {
+            try await self.transcribeAlignedWithoutQueue(audioPath: audioPath)
+        }
+    }
+
+    private func transcribeAlignedWithoutQueue(audioPath: String) async throws -> AlignedInterjectionTranscript {
         #if canImport(Speech)
         let status = await requestAuthorization()
         guard status == .authorized else {
@@ -3298,6 +3428,12 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
     public init() {}
 
     public func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+        try await SpeechRecognitionQueue.shared.run {
+            try await self.transcribeSourceAudioWithoutQueue(url: url, itemId: itemId, durationMs: durationMs)
+        }
+    }
+
+    private func transcribeSourceAudioWithoutQueue(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
         #if canImport(Speech) && canImport(AVFoundation)
         let status = await requestAuthorization()
         guard status == .authorized else {
@@ -3308,20 +3444,38 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         }
         if #available(iOS 26.0, macOS 26.0, *),
            await longFormSpeechTranscriptionIsSupported() {
-            return try await transcribeLongFormTimeline(
-                url: url,
-                itemId: itemId,
-                timelineDurationMs: durationMs,
-                timelineOffsetMs: 0
+            return try await SpeechRecognitionQueue.shared.recognizeSource(
+                preferred: {
+                    try await self.transcribeLongFormTimeline(
+                        url: url,
+                        itemId: itemId,
+                        timelineDurationMs: durationMs,
+                        timelineOffsetMs: 0
+                    )
+                },
+                legacy: { try await self.transcribeSourceAudioLegacy(url: url, itemId: itemId, durationMs: durationMs) }
             )
         }
+        return try await SpeechRecognitionQueue.shared.recognizeSource(
+            preferred: nil,
+            legacy: { try await self.transcribeSourceAudioLegacy(url: url, itemId: itemId, durationMs: durationMs) })
+        #else
+        throw SessionKitError.persistenceFailed("speech_recognition_unavailable")
+        #endif
+    }
+
+    #if canImport(Speech) && canImport(AVFoundation)
+    private func transcribeSourceAudioLegacy(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
         guard let recognizer = SFSpeechRecognizer(), recognizer.isAvailable else {
             throw SessionKitError.persistenceFailed("speech_recognizer_unavailable")
         }
         guard recognizer.supportsOnDeviceRecognition else {
             throw SessionKitError.persistenceFailed("on_device_speech_recognition_unavailable")
         }
-        let chunks = try await audioChunks(for: url, itemId: itemId, durationMs: durationMs)
+        let chunks: [SourceAudioChunk]
+        do { chunks = try await audioChunks(for: url, itemId: itemId, durationMs: durationMs) }
+        catch is CancellationError { throw CancellationError() }
+        catch { throw SourceSpeechRecognitionFailure.inputUnavailable }
         var stitchedSegments: [MediaTimelineSegment] = []
         var stitchedChapters: [MediaTimelineChapter] = []
         var stitchedDurationMs = durationMs
@@ -3347,8 +3501,54 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
             chapters: stitchedChapters.sorted { $0.startMs < $1.startMs },
             durationMs: stitchedDurationMs
         )
+    }
+    #endif
+
+    public func acquireSourceAudioWindow(
+        url: URL, itemId: String, anchorMediaTimeMs: Int, durationMs: Int?,
+        windowBeforeMs: Int, windowAfterMs: Int
+    ) async throws -> SourceAudioWindowAcquisition {
+        #if canImport(AVFoundation)
+        guard url.isFileURL || ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
+            throw SessionKitError.persistenceFailed("source_audio_url_unsupported")
+        }
+        if url.isFileURL, !FileManager.default.fileExists(atPath: url.path) {
+            throw SessionKitError.persistenceFailed("source_audio_file_missing")
+        }
+        let asset = AVURLAsset(url: url)
+        let loadedDuration = try await asset.load(.duration)
+        let loadedDurationMs = Int((max(0, CMTimeGetSeconds(loadedDuration)) * 1_000).rounded())
+        let effectiveDurationMs = durationMs ?? loadedDurationMs
+        let startMs = max(0, anchorMediaTimeMs - windowBeforeMs)
+        let endMs = min(max(startMs + 1, effectiveDurationMs), anchorMediaTimeMs + windowAfterMs)
+        let caches = try FileManager.default.url(
+            for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true
+        )
+        let windowDirectory = caches
+            .appending(path: "SourceAudioTranscriptionWindows/\(itemId)", directoryHint: .isDirectory)
+            .appending(path: "window-\(anchorMediaTimeMs)-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: windowDirectory, withIntermediateDirectories: true)
+        let localWindowURL = windowDirectory.appending(path: "source-window.m4a")
+        if !FileManager.default.fileExists(atPath: localWindowURL.path) {
+            try await exportChunk(
+                asset: asset, offsetMs: startMs,
+                lengthMs: max(1, endMs - startMs), outputURL: localWindowURL
+            )
+        }
+        guard let size = try? localWindowURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              size > 0 else {
+            throw SessionKitError.persistenceFailed("source_audio_window_empty")
+        }
+        let measured = try await Self.measureExportedSourceWindow(
+            at: localWindowURL, requestedStartMs: startMs, requestedEndMs: endMs
+        )
+        return SourceAudioWindowAcquisition(
+            localAudioURL: localWindowURL, sourceStartMs: measured.startMs, sourceEndMs: measured.endMs,
+            provenance: url.isFileURL ? .downloadedSourceReference : .sourceWindowReference,
+            cleanupDirectoryURL: windowDirectory
+        )
         #else
-        throw SessionKitError.persistenceFailed("speech_recognition_unavailable")
+        throw SessionKitError.persistenceFailed("source_audio_window_acquisition_unavailable")
         #endif
     }
 
@@ -3397,15 +3597,77 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
                 outputURL: localWindowURL
             )
         }
+        let measured = try await Self.measureExportedSourceWindow(
+            at: localWindowURL, requestedStartMs: startMs, requestedEndMs: endMs
+        )
+        return try await transcribeAcquiredSourceAudioWindow(
+            SourceAudioWindowAcquisition(
+                localAudioURL: localWindowURL, sourceStartMs: measured.startMs,
+                sourceEndMs: measured.endMs,
+                provenance: url.isFileURL ? .downloadedSourceReference : .sourceWindowReference
+            ), itemId: itemId, durationMs: durationMs
+        )
+        #else
+        throw SessionKitError.persistenceFailed("speech_recognition_unavailable")
+        #endif
+    }
+
+    public func transcribeAcquiredSourceAudioWindow(
+        _ acquisition: SourceAudioWindowAcquisition, itemId: String, durationMs: Int?
+    ) async throws -> TranscriptTimeline {
+        try await SpeechRecognitionQueue.shared.run {
+            try await self.transcribeAcquiredSourceAudioWindowWithoutQueue(
+                acquisition, itemId: itemId, durationMs: durationMs)
+        }
+    }
+
+    private func transcribeAcquiredSourceAudioWindowWithoutQueue(
+        _ acquisition: SourceAudioWindowAcquisition, itemId: String, durationMs: Int?
+    ) async throws -> TranscriptTimeline {
+        #if canImport(Speech) && canImport(AVFoundation)
+        let status = await requestAuthorization()
+        guard status == .authorized else {
+            throw SessionKitError.persistenceFailed("speech_recognition_not_authorized")
+        }
+        let localWindowURL = acquisition.localAudioURL
+        guard localWindowURL.isFileURL,
+              let size = try? localWindowURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              size > 0 else {
+            throw SessionKitError.persistenceFailed("acquired_source_window_missing")
+        }
         if #available(iOS 26.0, macOS 26.0, *),
            await longFormSpeechTranscriptionIsSupported() {
-            return try await transcribeLongFormTimeline(
-                url: localWindowURL,
-                itemId: itemId,
-                timelineDurationMs: durationMs ?? effectiveDurationMs,
-                timelineOffsetMs: startMs
-            )
+            return try await SpeechRecognitionQueue.shared.recognizeSource(
+                preferred: {
+                    try await self.transcribeLongFormTimeline(
+                        url: localWindowURL, itemId: itemId,
+                        timelineDurationMs: durationMs ?? acquisition.sourceEndMs,
+                        timelineOffsetMs: acquisition.sourceStartMs)
+                },
+                legacy: {
+                    try await self.transcribeAcquiredSourceAudioWindowLegacy(
+                        acquisition, itemId: itemId, durationMs: durationMs)
+                })
         }
+        return try await SpeechRecognitionQueue.shared.recognizeSource(
+            preferred: nil,
+            legacy: {
+                try await self.transcribeAcquiredSourceAudioWindowLegacy(
+                    acquisition, itemId: itemId, durationMs: durationMs)
+            })
+        #else
+        throw SessionKitError.persistenceFailed("speech_recognition_unavailable")
+        #endif
+    }
+
+    #if canImport(Speech) && canImport(AVFoundation)
+    private func transcribeAcquiredSourceAudioWindowLegacy(
+        _ acquisition: SourceAudioWindowAcquisition, itemId: String, durationMs: Int?
+    ) async throws -> TranscriptTimeline {
+        let localWindowURL = acquisition.localAudioURL
+        let startMs = acquisition.sourceStartMs
+        let lengthMs = max(1, acquisition.sourceEndMs - startMs)
+        let windowDirectory = localWindowURL.deletingLastPathComponent()
         guard let recognizer = SFSpeechRecognizer(), recognizer.isAvailable else {
             throw SessionKitError.persistenceFailed("speech_recognizer_unavailable")
         }
@@ -3423,12 +3685,12 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         for (index, range) in ranges.enumerated() {
             let chunkURL = windowDirectory.appending(path: "chunk-\(String(format: "%04d", index)).m4a")
             if !FileManager.default.fileExists(atPath: chunkURL.path) {
-                try await exportChunk(
-                    asset: localWindowAsset,
-                    offsetMs: range.startMs,
-                    lengthMs: range.lengthMs,
-                    outputURL: chunkURL
-                )
+                do {
+                    try await exportChunk(
+                        asset: localWindowAsset, offsetMs: range.startMs,
+                        lengthMs: range.lengthMs, outputURL: chunkURL)
+                } catch is CancellationError { throw CancellationError() }
+                catch { throw SourceSpeechRecognitionFailure.inputUnavailable }
             }
             let chunk = SourceAudioChunk(
                 url: chunkURL,
@@ -3455,12 +3717,10 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         return TranscriptTimeline(
             segments: stitchedSegments.sorted { $0.startMs < $1.startMs },
             chapters: stitchedChapters.sorted { $0.startMs < $1.startMs },
-            durationMs: durationMs ?? effectiveDurationMs
+            durationMs: durationMs ?? acquisition.sourceEndMs
         )
-        #else
-        throw SessionKitError.persistenceFailed("speech_recognition_unavailable")
-        #endif
     }
+    #endif
 
     public func transcribeSourceAudioWindowWithEvidence(
         url: URL,
@@ -3491,11 +3751,14 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
             .appending(path: "source-window.m4a")
         let startMs = max(0, anchorMediaTimeMs - windowBeforeMs)
         let endMs = min(durationMs ?? Int.max, anchorMediaTimeMs + windowAfterMs)
+        let measured = try await Self.measureExportedSourceWindow(
+            at: localWindowURL, requestedStartMs: startMs, requestedEndMs: endMs
+        )
         return SourceAudioWindowTranscription(
             timeline: timeline,
             localAudioURL: FileManager.default.fileExists(atPath: localWindowURL.path) ? localWindowURL : nil,
-            sourceStartMs: startMs,
-            sourceEndMs: max(startMs, endMs),
+            sourceStartMs: measured.startMs,
+            sourceEndMs: measured.endMs,
             provenance: url.isFileURL ? .downloadedSourceReference : .sourceWindowReference
         )
         #else
@@ -3509,6 +3772,56 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         #endif
     }
 
+    // AAC export can round a time range to sample boundaries, and a broken or
+    // truncated export can be much shorter than requested. Keep the measured
+    // media bounds as evidence; never round a short result up to full coverage.
+    static func measuredSourceWindowBounds(
+        requestedStartMs: Int, requestedEndMs: Int,
+        playableStartOffsetMs: Int, playableEndOffsetMs: Int
+    ) throws -> (startMs: Int, endMs: Int) {
+        let requestedLength = requestedEndMs - requestedStartMs
+        guard requestedLength > 0, playableStartOffsetMs >= 0,
+              playableEndOffsetMs > playableStartOffsetMs else {
+            throw SessionKitError.persistenceFailed("source_audio_window_playable_range_invalid")
+        }
+        // AVAssetExportSession uses a 600 Hz time scale and AAC frames can
+        // introduce roughly 23 ms of rounding at 44.1 kHz. 250 ms is a
+        // conservative quality bound; even a smaller deficit stays unverified.
+        let missingLeadingMs = playableStartOffsetMs
+        let missingTrailingMs = max(0, requestedLength - playableEndOffsetMs)
+        guard missingLeadingMs <= 250, missingTrailingMs <= 250 else {
+            throw SessionKitError.persistenceFailed("source_audio_window_export_short")
+        }
+        return (
+            startMs: requestedStartMs + playableStartOffsetMs,
+            endMs: requestedStartMs + min(requestedLength, playableEndOffsetMs)
+        )
+    }
+
+    #if canImport(AVFoundation)
+    private static func measureExportedSourceWindow(
+        at url: URL, requestedStartMs: Int, requestedEndMs: Int
+    ) async throws -> (startMs: Int, endMs: Int) {
+        let asset = AVURLAsset(url: url)
+        guard let track = try await asset.loadTracks(withMediaType: .audio).first else {
+            throw SessionKitError.persistenceFailed("source_audio_window_audio_track_missing")
+        }
+        let trackRange = try await track.load(.timeRange)
+        let containerDuration = try await asset.load(.duration)
+        let trackStart = CMTimeGetSeconds(trackRange.start)
+        let trackEnd = CMTimeGetSeconds(CMTimeRangeGetEnd(trackRange))
+        let containerEnd = CMTimeGetSeconds(containerDuration)
+        guard trackStart.isFinite, trackEnd.isFinite, containerEnd.isFinite else {
+            throw SessionKitError.persistenceFailed("source_audio_window_playable_range_invalid")
+        }
+        return try measuredSourceWindowBounds(
+            requestedStartMs: requestedStartMs, requestedEndMs: requestedEndMs,
+            playableStartOffsetMs: Int((max(0, trackStart) * 1_000).rounded(.up)),
+            playableEndOffsetMs: Int((min(trackEnd, containerEnd) * 1_000).rounded(.down))
+        )
+    }
+    #endif
+
     #if canImport(Speech) && canImport(AVFoundation)
     @available(iOS 26.0, macOS 26.0, *)
     private func transcribeLongFormTimeline(
@@ -3518,6 +3831,17 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         timelineOffsetMs: Int
     ) async throws -> TranscriptTimeline {
         let passages = try await transcribeLongFormSpeechFile(at: url)
+        return try Self.projectLongFormPassages(
+            passages, itemId: itemId, timelineDurationMs: timelineDurationMs,
+            timelineOffsetMs: timelineOffsetMs
+        )
+    }
+
+    @available(iOS 26.0, macOS 26.0, *)
+    static func projectLongFormPassages(
+        _ passages: [LongFormSpeechPassage], itemId: String,
+        timelineDurationMs: Int?, timelineOffsetMs: Int
+    ) throws -> TranscriptTimeline {
         var segments: [MediaTimelineSegment] = []
         for passage in passages {
             let timedText = passage.timedText.isEmpty

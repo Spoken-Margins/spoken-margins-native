@@ -1,5 +1,6 @@
 import XCTest
 import SessionKit
+import AppIntents
 @testable import SpokenMarginsApp
 
 @MainActor
@@ -49,5 +50,22 @@ final class PKMWorkflowTests: XCTestCase {
         XCTAssertEqual(try ListeningEditionStore.application().load(itemID: edition.itemID)?.scenes[0].summary, "Summary")
         model.importListeningEditionData(try edition.encoded(), replaceMap: true)
         XCTAssertEqual(try ListeningEditionStore.application().load(itemID: edition.itemID)?.scenes[0].summary, "Changed")
+    }
+
+    func testShortcutIntentImportsAndOpensEditionWithoutURLLaunch() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed(); model.declineCurrentTerms()
+        let priorModel = ListeningEditionShortcutBridge.model
+        ListeningEditionShortcutBridge.model = model
+        defer { ListeningEditionShortcutBridge.model = priorModel }
+        let edition = ListeningEdition(title: "Shortcut article", text: "Source " + UUID().uuidString,
+            generator: "Ask ChatGPT", overview: "Overview", scenes: [.init(title: "One", description: "Description", summary: "Summary", startBlock: 1, endBlock: 1)])
+        defer { try? FileManager.default.removeItem(at: ListeningEditionStore.application().file(edition.itemID)) }
+        let intent = ImportListeningEditionIntent()
+        intent.file = IntentFile(data: try edition.encoded(), filename: "Listening Edition.json", type: .json)
+        _ = try await intent.perform()
+        XCTAssertEqual(model.selectedItem.id, edition.itemID)
+        XCTAssertEqual(try ListeningEditionStore.application().load(itemID: edition.itemID), edition)
+        XCTAssertEqual(model.libraryItems.filter { $0.id == edition.itemID }.count, 1)
     }
 }

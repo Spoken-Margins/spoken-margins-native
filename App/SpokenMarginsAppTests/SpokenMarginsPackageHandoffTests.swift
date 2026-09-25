@@ -1,4 +1,5 @@
 import XCTest
+import AVFoundation
 @testable import SessionKit
 import SessionKitAudio
 import SessionKitPersistence
@@ -6,6 +7,35 @@ import SessionKitSharing
 @testable import SpokenMarginsApp
 
 final class SpokenMarginsPackageHandoffTests: XCTestCase {
+    func testRealRecipientWindowExportKeepsMeasuredSourceBoundsAtMiddleAndEpisodeEnd() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-real-window-export")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("recipient.wav")
+        try writeSilentRecipientAudio(to: source)
+        let itemID = "real-window-\(UUID().uuidString)"
+        let caches = try FileManager.default.url(
+            for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let windowRoot = caches.appending(path: "SourceAudioTranscriptionWindows/\(itemID)")
+        defer { try? FileManager.default.removeItem(at: windowRoot) }
+        let client = SystemSourceTranscriptionClient()
+
+        for (anchor, before, after, expectedStart, expectedEnd) in [
+            (15_000, 5_000, 5_000, 10_000, 20_000),
+            (299_000, 2_000, 4_000, 297_000, 300_000)
+        ] {
+            let window = try await client.acquireSourceAudioWindow(
+                url: source, itemId: itemID, anchorMediaTimeMs: anchor,
+                durationMs: 300_000, windowBeforeMs: before, windowAfterMs: after)
+            let bytes = try Data(contentsOf: window.localAudioURL)
+            XCTAssertFalse(bytes.isEmpty)
+            XCTAssertEqual(window.provenance, .downloadedSourceReference)
+            XCTAssertGreaterThanOrEqual(window.sourceStartMs, expectedStart)
+            XCTAssertLessThanOrEqual(window.sourceStartMs, expectedStart + 100)
+            XCTAssertGreaterThanOrEqual(window.sourceEndMs, expectedEnd - 100)
+            XCTAssertLessThanOrEqual(window.sourceEndMs, expectedEnd)
+        }
+    }
+
     func testPackageHandoffPreservesExactBytesUntilConsumed() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("spoken-margins-package-handoff-tests-\(UUID().uuidString)", isDirectory: true)
@@ -85,6 +115,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
             displayText: nil,
             status: "active"
         )]
+        try model.persistSelectedInterjectionsForSharingTests()
         let coordinator = Build23SharingCoordinator(model: model)
         coordinator.send(.begin)
         coordinator.send(.advanceToReview)
@@ -168,6 +199,36 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
     }
 
     @MainActor
+    func testPodcastPackageCreatesReferencedEpisodeWithoutPublisherPageFetch() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-offline-publisher-page")
+        let databaseURL = root.appendingPathComponent("recipient.sqlite")
+        let packageURL = root.appendingPathComponent("referenced-episode.spokenmargins")
+        let manifest = try writePodcastPackage(to: packageURL, packageID: "package-reference-with-enclosure")
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        let model = Gate1AppModel(
+            sourceLinkResolver: FailingPackagePodcastLinkResolver(),
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: databaseURL
+        )
+        model.resetAndSeed()
+
+        model.handleIncomingURL(packageURL)
+        XCTAssertNil(model.spokenMarginsPackageImportReview?.matchingItemId)
+        model.confirmSpokenMarginsPackageImport()
+        try await waitForImportToFinish(model)
+
+        let imported = try XCTUnwrap(model.libraryItems.first(where: { $0.title == Self.podcastTitle }))
+        let item = try store.loadItem(id: imported.id)
+        let layer = try XCTUnwrap(store.loadImportedCommentaryLayer(packageDigest: try XCTUnwrap(manifest.contentDigest)))
+        XCTAssertEqual(item.externalReference, Self.podcastURL)
+        XCTAssertEqual(item.media?.url, Self.podcastAudioURL)
+        XCTAssertEqual(layer.itemId, item.id)
+        XCTAssertNotEqual(layer.sourceResolutionStatus, .wrongSource)
+        XCTAssertNil(model.spokenMarginsPackageImportError)
+        XCTAssertEqual(model.diagnostics["lastSharedPodcastAcquisition"], "package_reference_after_resolution_failure")
+    }
+
+    @MainActor
     func testReopeningCorruptedWrongSourcePackageRepairsItsItemAssociation() async throws {
         let root = try temporaryDirectory(named: "spoken-margins-package-repair")
         // Background model work can retain SQLite; let the process close it before cleanup.
@@ -234,6 +295,18 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
             ),
             relocated
         )
+        XCTAssertEqual(
+            Gate1AppModel.resolvedInterjectionAudioURL(
+                for: stalePath,
+                applicationSupportDirectory: support
+            ),
+            relocated,
+            "The imported Margin voice player must use the relocated file, not the stale container path."
+        )
+        XCTAssertNil(Gate1AppModel.resolvedInterjectionAudioURL(
+            for: "/old/container/Library/Application Support/SpokenMargins/IncomingPackages/package/assets/missing.m4a",
+            applicationSupportDirectory: support
+        ))
     }
 
     func testWeakerPodcastEvidenceRetainsPositionOnlyForSameKnownAudioEdition() throws {
@@ -250,6 +323,25 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let moved = ImportedAnchorResolution(evidenceClass: .acousticVerified, localMediaTimeMs: 65_000)
         XCTAssertEqual(Gate1AppModel.podcastResolution(previous: previous, proposed: moved,
             previousEdition: "old", currentEdition: "new", hasTranscript: true), moved)
+    }
+
+    func testRecipientTranscriptRejectsSameURLAfterAudioBytesChange() throws {
+        let root = try temporaryDirectory(named: "recipient-edition-swap")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("episode.m4a")
+        try Data("first audio edition".utf8).write(to: source)
+        let transcriptEdition = try Gate1AppModel.verifiedRecipientEditionDigest(at: source, expected: nil)
+        XCTAssertEqual(
+            try Gate1AppModel.verifiedRecipientEditionDigest(at: source, expected: transcriptEdition),
+            transcriptEdition
+        )
+
+        try Data("replacement audio edition".utf8).write(to: source, options: .atomic)
+        XCTAssertThrowsError(try Gate1AppModel.verifiedRecipientEditionDigest(
+            at: source, expected: transcriptEdition
+        )) { error in
+            XCTAssertTrue(String(describing: error).contains("recipient_transcript_edition_changed"))
+        }
     }
 
     func testReplacingRecipientEditionInvalidatesDurablePlacementsAndProjection() throws {
@@ -347,8 +439,8 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         try await waitForImportToFinish(model)
 
         let item = try XCTUnwrap(model.libraryItems.first(where: { $0.title == Self.podcastTitle }))
-        let localURL = root.appendingPathComponent("recipient.mp3")
-        try Data("recipient-edition".utf8).write(to: localURL)
+        let localURL = root.appendingPathComponent("recipient.wav")
+        try writeSilentRecipientAudio(to: localURL)
         let store = try model.libraryStoreForTesting()
         addTeardownBlock { [weak model, weak store] in
             // Startup work may outlive this case. Never unlink an open SQLite/WAL
@@ -363,11 +455,16 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         XCTAssertTrue(PodcastTranscriptAnchorResolver.hasUsableContext(importedMargin.anchorEvidence))
         model.podcastLocalAssetDidBecomeReady(itemId: item.id, url: localURL)
         for _ in 0..<250 {
-            if await transcriber.fullRequestCount() > 0 { break }
+            if await transcriber.windowRequestCount() > 0 { break }
             try await Task.sleep(for: .milliseconds(20))
         }
         let fullRequestCount = await transcriber.fullRequestCount()
-        XCTAssertEqual(fullRequestCount, 1)
+        let initialWindowCount = await transcriber.windowRequestCount()
+        XCTAssertEqual(fullRequestCount, 0)
+        XCTAssertGreaterThan(initialWindowCount, 0)
+        let transcriptJobID = await transcriber.lastRequestedItemID()
+        XCTAssertTrue(transcriptJobID?.hasPrefix("recipient-") == true)
+        XCTAssertNotEqual(transcriptJobID, item.id)
 
         for _ in 0..<250 {
             if try store.loadImportedCommentaryLayer(packageDigest: digest)?.sourceResolutionStatus == .resolved {
@@ -381,8 +478,121 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         XCTAssertEqual(layer.sourceResolutionStatus, .resolved)
         XCTAssertEqual(margin.resolution.evidenceClass, .transcriptVerified)
         XCTAssertEqual(margin.resolution.localMediaTimeMs, 5_500)
+        let completedWindowCount = await transcriber.windowRequestCount()
+        XCTAssertGreaterThan(completedWindowCount, 1)
         XCTAssertNil(try store.loadTranscriptTimeline(itemId: item.id))
-        XCTAssertEqual(model.diagnostics["recipientAlignmentTranscript:\(item.id)"], "consumed_and_deleted")
+        XCTAssertEqual(model.diagnostics["recipientAlignmentTranscript:\(item.id)"], "complete_audio_deleted")
+    }
+
+    @MainActor
+    func testRecipientRecoveryResumesOnlyUnfinishedWindowsAfterBootstrap() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-recipient-resume")
+        let databaseURL = root.appendingPathComponent("recipient.sqlite")
+        let packageURL = root.appendingPathComponent("recipient-resume.spokenmargins")
+        _ = try writePodcastPackage(to: packageURL, packageID: "package-recipient-resume")
+        let original = Gate1AppModel(
+            sourceLinkResolver: podcastResolver(), audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: databaseURL)
+        original.resetAndSeed()
+        original.handleIncomingURL(packageURL)
+        original.confirmSpokenMarginsPackageImport()
+        try await waitForImportToFinish(original)
+        let item = try XCTUnwrap(original.libraryItems.first(where: { $0.title == Self.podcastTitle }))
+        let localURL = root.appendingPathComponent("recipient.wav")
+        try writeSilentRecipientAudio(to: localURL)
+        let duration = try await Gate1AppModel.recipientSourceDurationMs(at: localURL)
+        let digest = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: localURL)
+        let store = try original.libraryStoreForTesting()
+        var job = RecipientTranscriptRecoveryJob(
+            itemId: item.id, editionSHA256: digest, durationMs: duration,
+            localSourcePath: localURL.path,
+            windows: [.init(startMs: 0, endMs: 1_000), .init(startMs: 1_000, endMs: duration)])
+        job.windows[0].timeline = TranscriptTimeline(segments: [], chapters: [], durationMs: duration)
+        try store.saveRecipientTranscriptRecoveryJob(job)
+
+        let transcriber = PackageAnchorTranscriptionClient()
+        let resumed = Gate1AppModel(
+            sourceLinkResolver: podcastResolver(), audioPlaybackClient: NoopAudioPlaybackClient(),
+            sourceTranscriptionClient: transcriber, databaseURLOverride: databaseURL)
+        resumed.bootstrapLibraryIfNeeded()
+        for _ in 0..<250 {
+            if try store.loadRecipientTranscriptRecoveryJob(itemId: item.id)?.status == .complete { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let completed = try XCTUnwrap(store.loadRecipientTranscriptRecoveryJob(itemId: item.id))
+        XCTAssertEqual(completed.id, job.id)
+        XCTAssertEqual(completed.status, .complete)
+        XCTAssertEqual(completed.windows[0], job.windows[0])
+        let requests = await transcriber.windowRequestCount()
+        XCTAssertEqual(requests, 1, "The persisted first window must not be transcribed again")
+        let fullRequests = await transcriber.fullRequestCount()
+        XCTAssertEqual(fullRequests, 0)
+        addTeardownBlock { [weak original, weak resumed, weak store] in
+            if original == nil, resumed == nil, store == nil {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
+    }
+
+    @MainActor
+    func testReplacementReadyDuringRecipientSweepStartsNewEditionAfterOldWindow() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-recipient-replacement")
+        let databaseURL = root.appendingPathComponent("recipient.sqlite")
+        let packageURL = root.appendingPathComponent("recipient-replacement.spokenmargins")
+        let manifest = try writePodcastPackage(to: packageURL, packageID: "package-recipient-replacement")
+        let transcriber = PackageAnchorTranscriptionClient(paused: true)
+        let model = Gate1AppModel(
+            sourceLinkResolver: podcastResolver(),
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            sourceTranscriptionClient: transcriber,
+            databaseURLOverride: databaseURL
+        )
+        model.resetAndSeed()
+        model.handleIncomingURL(packageURL)
+        model.confirmSpokenMarginsPackageImport()
+        try await waitForImportToFinish(model)
+
+        let item = try XCTUnwrap(model.libraryItems.first(where: { $0.title == Self.podcastTitle }))
+        let localURL = root.appendingPathComponent("recipient.wav")
+        try writeSilentRecipientAudio(to: localURL)
+        let store = try model.libraryStoreForTesting()
+        addTeardownBlock { [weak model, weak store] in
+            if model == nil, store == nil {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
+        let packageDigest = try XCTUnwrap(manifest.contentDigest)
+        let oldDigest = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: localURL)
+        model.podcastLocalAssetDidBecomeReady(itemId: item.id, url: localURL)
+        for _ in 0..<250 {
+            if await transcriber.windowRequestCount() > 0 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let requestCount = await transcriber.windowRequestCount()
+        XCTAssertEqual(requestCount, 1)
+        let replacementURL = root.appendingPathComponent("replacement.wav")
+        try writeSilentRecipientAudio(to: replacementURL, firstSample: 0.25)
+        try FileManager.default.removeItem(at: localURL)
+        try FileManager.default.moveItem(at: replacementURL, to: localURL)
+        let newDigest = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: localURL)
+        XCTAssertNotEqual(newDigest, oldDigest)
+        model.podcastLocalAssetDidBecomeReady(itemId: item.id, url: localURL)
+        await transcriber.release()
+
+        for _ in 0..<250 {
+            if await transcriber.windowRequestCount() > 1,
+               try store.loadImportedCommentaryLayer(packageDigest: packageDigest)?.sourceResolutionStatus == .resolved {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let layer = try XCTUnwrap(store.loadImportedCommentaryLayer(packageDigest: packageDigest))
+        let margin = try XCTUnwrap(store.loadImportedCommentaryInterjections(layerId: layer.id).first)
+        XCTAssertEqual(layer.sourceResolutionStatus, .resolved)
+        XCTAssertEqual(layer.resolvedRecipientEditionSHA256, newDigest)
+        XCTAssertEqual(margin.resolution.evidenceClass, .transcriptVerified)
+        let finalWindowCount = await transcriber.windowRequestCount()
+        XCTAssertGreaterThan(finalWindowCount, 1)
     }
 
     private static let podcastTitle = "Can you spot the imported story?"
@@ -455,6 +665,15 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         return root
     }
 
+    private func writeSilentRecipientAudio(to url: URL, firstSample: Float = 0) throws {
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 8_000, channels: 1))
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        let second = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8_000))
+        second.frameLength = 8_000
+        second.floatChannelData?[0][0] = firstSample
+        for _ in 0..<300 { try file.write(from: second) }
+    }
+
     @MainActor
     private func waitForImportToFinish(_ model: Gate1AppModel) async throws {
         for _ in 0..<250 {
@@ -469,11 +688,35 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
 }
 
 private actor PackageAnchorTranscriptionClient: SourceTranscriptionClient {
-    private var requestCount = 0
+    private var fullRequests = 0
+    private var windowRequests = 0
+    private var requestedItemID: String?
+    private var paused: Bool
+    private var pendingCompletion: CheckedContinuation<Void, Never>?
+
+    init(paused: Bool = false) {
+        self.paused = paused
+    }
 
     func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
-        requestCount += 1
-        return TranscriptTimeline(
+        fullRequests += 1
+        throw SessionKitError.persistenceFailed("full_source_transcription_must_not_run")
+    }
+
+    func transcribeSourceAudioWindowWithEvidence(
+        url: URL, itemId: String, anchorMediaTimeMs: Int, durationMs: Int?,
+        windowBeforeMs: Int, windowAfterMs: Int
+    ) async throws -> SourceAudioWindowTranscription {
+        windowRequests += 1
+        requestedItemID = itemId
+        if paused {
+            await withCheckedContinuation { continuation in
+                pendingCompletion = continuation
+            }
+        }
+        let startMs = max(0, anchorMediaTimeMs - windowBeforeMs)
+        let endMs = min(durationMs ?? Int.max, anchorMediaTimeMs + windowAfterMs)
+        let timeline = TranscriptTimeline(
             segments: [
                 .init(
                     id: "recipient-prefix",
@@ -491,10 +734,29 @@ private actor PackageAnchorTranscriptionClient: SourceTranscriptionClient {
             chapters: [],
             durationMs: durationMs
         )
+        return SourceAudioWindowTranscription(
+            timeline: timeline, localAudioURL: nil,
+            sourceStartMs: startMs, sourceEndMs: endMs,
+            provenance: .downloadedSourceReference
+        )
     }
 
     func fullRequestCount() -> Int {
-        requestCount
+        fullRequests
+    }
+
+    func windowRequestCount() -> Int {
+        windowRequests
+    }
+
+    func lastRequestedItemID() -> String? {
+        requestedItemID
+    }
+
+    func release() {
+        paused = false
+        pendingCompletion?.resume()
+        pendingCompletion = nil
     }
 }
 
@@ -519,5 +781,11 @@ private final class PackagePodcastLinkResolver: LinkResolutionClient {
             candidates: result.candidates,
             failureReason: result.failureReason
         )
+    }
+}
+
+private final class FailingPackagePodcastLinkResolver: LinkResolutionClient {
+    func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult {
+        throw URLError(.badServerResponse)
     }
 }

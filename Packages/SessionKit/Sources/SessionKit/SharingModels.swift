@@ -672,6 +672,7 @@ public struct SharedInterjectionRepresentation: Codable, Equatable, Sendable, Id
 
 public struct SharedInterjectionPackageRecord: Codable, Equatable, Sendable {
     public var conversation: MarginConversation? = nil
+    public var podcastEvidenceOutcome: PodcastEvidenceOutcomeSummary? = nil
     public let packageScopedId: String
     public let createdAt: Date
     public let anchor: PortableAnchorEvidence
@@ -683,17 +684,45 @@ public struct SharedInterjectionPackageRecord: Codable, Equatable, Sendable {
         createdAt: Date,
         anchor: PortableAnchorEvidence,
         defaultRepresentationId: String,
-        representations: [SharedInterjectionRepresentation]
+        representations: [SharedInterjectionRepresentation],
+        podcastEvidenceOutcome: PodcastEvidenceOutcomeSummary? = nil
     ) {
         self.packageScopedId = packageScopedId
         self.createdAt = createdAt
         self.anchor = anchor
         self.defaultRepresentationId = defaultRepresentationId
         self.representations = representations
+        self.podcastEvidenceOutcome = podcastEvidenceOutcome
     }
 
     public var defaultRepresentation: SharedInterjectionRepresentation? {
         representations.first { $0.id == defaultRepresentationId }
+    }
+}
+
+/// Safe sender disposition; absent on older packages means unknown legacy state.
+public struct PodcastEvidenceOutcomeSummary: Codable, Equatable, Sendable {
+    public enum Disposition: String, Codable, Sendable {
+        case included, partial, pending, unavailable, intentionalOptOut = "intentional_opt_out"
+    }
+
+    public let schemaVersion: String
+    public let disposition: Disposition
+    public let includedRoles: [PodcastAnchorEvidenceWindowRole]
+    public let includedProvenance: [PodcastAnchorEvidenceProvenance]
+    public let reasonCategory: String?
+
+    public init(
+        disposition: Disposition,
+        includedRoles: [PodcastAnchorEvidenceWindowRole] = [],
+        includedProvenance: [PodcastAnchorEvidenceProvenance] = [],
+        reasonCategory: String? = nil
+    ) {
+        self.schemaVersion = "podcast-evidence-outcome.v1"
+        self.disposition = disposition
+        self.includedRoles = includedRoles
+        self.includedProvenance = includedProvenance
+        self.reasonCategory = reasonCategory
     }
 }
 

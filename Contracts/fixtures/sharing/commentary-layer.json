@@ -16,6 +16,13 @@
         "machineEvidenceAssetIds": []
       },
       "defaultRepresentationId": "representation-0001-original",
+      "podcastEvidenceOutcome": {
+        "schemaVersion": "podcast-evidence-outcome.v1",
+        "disposition": "partial",
+        "includedRoles": ["pre_interjection"],
+        "includedProvenance": ["observed_decoded_playback"],
+        "reasonCategory": "capture_unavailable"
+      },
       "representations": [
         {
           "id": "representation-0001-original",

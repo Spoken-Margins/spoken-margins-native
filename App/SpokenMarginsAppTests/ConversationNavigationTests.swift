@@ -1,5 +1,6 @@
 import XCTest
 import AVFoundation
+import ShazamKit
 import MediaPlayer
 import PDFKit
 import UIKit
@@ -11,6 +12,210 @@ import SessionKitPersistence
 
 @MainActor
 final class ConversationNavigationTests: XCTestCase {
+    func testForegroundKeepsLiveCaptureWhileColdStartReclassifiesIt() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        try store.saveSession(Session(
+            id: "session", itemId: "podcast", status: "in_progress", phase: .itemPlayback,
+            currentTargetType: .transcriptBackedMedia, currentTargetId: "podcast",
+            position: Position(mediaTimeMs: 20_000), completionPercent: 20, playbackRate: 1
+        ))
+        let margin = Interjection(
+            id: "ij-live", itemId: "podcast", sessionId: "session", targetType: .item,
+            targetId: "podcast", createdAt: Date(), roughPercent: 20,
+            anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 20_000),
+            audioPath: "voice.m4a", audioStatus: "saved", transcriptionStatus: "pending",
+            transcript: nil, cleanedTranscript: nil, displayText: nil, status: "active",
+            podcastAnchorCaptureWindows: [
+                .init(role: .preInterjection, state: .unavailable, attempt: 1, anchorMediaTimeMs: 20_000),
+                .init(role: .postResume, state: .collecting, attempt: 1, anchorMediaTimeMs: 20_000)
+            ]
+        )
+        try store.saveInterjection(margin)
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        try model.reconcilePodcastAnchorEvidence(store: store, interruptedJobs: false)
+        try model.reconcilePodcastAnchorEvidence(store: store, interruptedJobs: false)
+        var restored = try XCTUnwrap(store.loadInterjections(sessionId: "session").first)
+        XCTAssertEqual(restored.podcastAnchorCaptureWindows?.last?.state, .collecting)
+        XCTAssertEqual(restored.podcastAnchorCaptureWindows?.last?.attempt, 1)
+        try model.reconcilePodcastAnchorEvidence(store: store, interruptedJobs: true)
+        restored = try XCTUnwrap(store.loadInterjections(sessionId: "session").first)
+        XCTAssertEqual(restored.podcastAnchorCaptureWindows?.last?.state, .retryableFailure)
+        XCTAssertEqual(restored.podcastAnchorCaptureWindows?.last?.attempt, 1)
+    }
+
+    func testExactLocalRecoveryRequiresOriginalProducingEdition() {
+        XCTAssertFalse(Gate1AppModel.canRecoverOriginalPodcastEdition(
+            storedProducingDigest: nil, candidateDigest: "downloaded-later"
+        ))
+        XCTAssertFalse(Gate1AppModel.canRecoverOriginalPodcastEdition(
+            storedProducingDigest: "heard-edition", candidateDigest: "new-ad-edition"
+        ))
+        XCTAssertTrue(Gate1AppModel.canRecoverOriginalPodcastEdition(
+            storedProducingDigest: "heard-edition", candidateDigest: "heard-edition"
+        ))
+    }
+
+    func testPodcastRestartReconciliationPreservesValidSiblingAndInvalidatesMissingSignature() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try SQLiteSessionStore(path: root.appending(path: "library.sqlite").path)
+        let session = Session(
+            id: "session", itemId: "podcast", status: "finished", phase: .finished,
+            currentTargetType: .transcriptBackedMedia, currentTargetId: "podcast",
+            position: Position(mediaTimeMs: 20_000), completionPercent: 20, playbackRate: 1
+        )
+        try store.saveSession(session)
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 8_000, channels: 1))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 64_000))
+        buffer.frameLength = 64_000
+        let samples = try XCTUnwrap(buffer.floatChannelData?[0])
+        for frame in 0..<64_000 { samples[frame] = Float(0.2 * sin(2 * .pi * 220 * Double(frame) / 8_000)) }
+        let generator = SHSignatureGenerator()
+        try generator.append(buffer, at: nil)
+        let data = generator.signature().dataRepresentation
+        XCTAssertFalse(data.isEmpty)
+        let validURL = root.appending(path: "pre.shazamsignature")
+        try data.write(to: validURL)
+        let missingURL = root.appending(path: "post.shazamsignature")
+        let margin = Interjection(
+            id: "ij-1", itemId: "podcast", sessionId: session.id,
+            targetType: .item, targetId: "podcast", createdAt: Date(), roughPercent: 20,
+            anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 20_000),
+            audioPath: "voice.m4a", audioStatus: "saved", transcriptionStatus: "failed",
+            transcript: nil, cleanedTranscript: nil, displayText: nil, status: "active",
+            podcastAnchorEvidence: [
+                .init(id: "pre", localPath: validURL.path, durationMs: 8_000,
+                      anchorOffsetMs: 8_000, provenance: .observedDecodedPlayback, windowRole: .preInterjection),
+                .init(id: "post", localPath: missingURL.path, durationMs: 8_000,
+                      anchorOffsetMs: 0, provenance: .observedDecodedPlayback, windowRole: .postResume)
+            ],
+            sourceExactEditionSHA256: "known-edition",
+            podcastAnchorCaptureWindows: [
+                .init(role: .preInterjection, state: .committed, attempt: 1, anchorMediaTimeMs: 20_000),
+                .init(role: .postResume, state: .committed, attempt: 1, anchorMediaTimeMs: 20_000)
+            ]
+        )
+        try store.saveInterjection(margin)
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: root.appending(path: "library.sqlite"))
+        try model.reconcilePodcastAnchorEvidence(store: store, interruptedJobs: true)
+        let restored = try XCTUnwrap(store.loadInterjections(sessionId: session.id).first)
+        XCTAssertEqual(restored.podcastAnchorEvidence?.map(\.id), ["pre"])
+        XCTAssertEqual(restored.podcastAnchorCaptureWindows?.first?.state, .committed)
+        XCTAssertEqual(restored.podcastAnchorCaptureWindows?.last?.state, .retryableFailure)
+        XCTAssertEqual(restored.podcastAnchorEvidenceCaptureStatus, .pendingPostResumeSample)
+        XCTAssertEqual(restored.sourceExactEditionSHA256, "known-edition")
+        XCTAssertEqual(restored.transcriptionStatus, "failed", "ASR failure must not discard acoustic evidence")
+    }
+
+    func testPodcastEvidenceOmissionConsentTracksReviewedSelectionAndAssetState() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let evidenceURL = root.appending(path: "pre.shazamsignature")
+        var margin = Interjection(
+            id: "ij-001", itemId: "podcast", sessionId: "session-one",
+            targetType: .item, targetId: "podcast", createdAt: Date(), roughPercent: 20,
+            anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 20_000),
+            audioPath: "voice.m4a", audioStatus: "saved", transcriptionStatus: "transcribed",
+            transcript: "Review me", cleanedTranscript: nil, displayText: nil, status: "active",
+            podcastAnchorEvidence: [.init(
+                id: "pre", localPath: evidenceURL.path, durationMs: 12_000,
+                anchorOffsetMs: 12_000, provenance: .observedDecodedPlayback,
+                windowRole: .preInterjection
+            )],
+            podcastAnchorCaptureWindows: [
+                .init(role: .preInterjection, state: .committed, attempt: 1, anchorMediaTimeMs: 20_000),
+                .init(role: .postResume, state: .unavailable, attempt: 1, anchorMediaTimeMs: 20_000)
+            ]
+        )
+        var draft = ShareInterjectionDraft(
+            interjection: margin, approvedTranscript: "Review me",
+            representationChoice: .original, anchorBefore: "", anchorAfter: ""
+        )
+        let missing = Gate1AppModel.podcastEvidenceExportDisposition([draft])
+        let key = Gate1AppModel.podcastEvidenceAssetKey(
+            try XCTUnwrap(margin.podcastAnchorEvidence?.first), sessionId: margin.sessionId, interjectionId: margin.id
+        )
+        XCTAssertTrue(missing.isDegraded)
+        XCTAssertEqual(missing.omittedAssetKeys, [key])
+        try Data("sample".utf8).write(to: evidenceURL)
+        let present = Gate1AppModel.podcastEvidenceExportDisposition([draft])
+        XCTAssertTrue(present.omittedAssetKeys.isEmpty)
+        XCTAssertNotEqual(missing.fingerprint, present.fingerprint)
+        let partial = Gate1AppModel.podcastEvidenceOutcome(
+            for: margin, includedEvidence: try XCTUnwrap(margin.podcastAnchorEvidence),
+            omittedAssetKeys: [], optedOut: false
+        )
+        XCTAssertEqual(partial.disposition, .partial)
+        XCTAssertEqual(partial.reasonCategory, "capture_unavailable")
+        XCTAssertEqual(partial.includedRoles, [.preInterjection])
+        let optOut = Gate1AppModel.podcastEvidenceOutcome(
+            for: margin, includedEvidence: [], omittedAssetKeys: [], optedOut: true
+        )
+        XCTAssertEqual(optOut.disposition, .intentionalOptOut)
+        XCTAssertEqual(optOut.reasonCategory, "user_opt_out")
+        draft.approvedTranscript = "Different reviewed text"
+        XCTAssertNotEqual(present.fingerprint, Gate1AppModel.podcastEvidenceExportDisposition([draft]).fingerprint)
+        margin.sessionId = "session-two"
+        draft.interjection = margin
+        XCTAssertNotEqual(present.fingerprint, Gate1AppModel.podcastEvidenceExportDisposition([draft]).fingerprint)
+    }
+
+    func testExportRejectsPersistedEvidenceChangeAfterDegradedReview() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let db = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: db)
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: db.path)
+        let item = Item(id: "changing-podcast", title: "Changing podcast", mediaType: "podcast", text: nil,
+            externalReference: "https://example.com/episode", status: "ready",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://example.com/episode.mp3", durationMs: 120_000))
+        try store.saveItem(item)
+        model.openItem(id: item.id)
+        var margin = Interjection(
+            id: "changing-margin", itemId: item.id, sessionId: "sharing-session",
+            targetType: .item, targetId: item.id, createdAt: Date(), roughPercent: 20,
+            anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 20_000),
+            audioPath: nil, audioStatus: "none", transcriptionStatus: "transcribed",
+            transcript: "Reviewed words", cleanedTranscript: nil, displayText: nil, status: "active",
+            podcastAnchorCaptureWindows: [
+                .init(role: .preInterjection, state: .unavailable, attempt: 1, anchorMediaTimeMs: 20_000),
+                .init(role: .postResume, state: .unavailable, attempt: 1, anchorMediaTimeMs: 20_000)
+            ]
+        )
+        try store.saveInterjection(margin)
+        model.sharingState.drafts = [ShareInterjectionDraft(
+            interjection: margin, approvedTranscript: "Reviewed words", representationChoice: .original,
+            anchorBefore: "", anchorAfter: ""
+        )]
+        XCTAssertTrue(model.authorizeDegradedPodcastEvidenceForCurrentSelection())
+        let consent = model.sharingState.degradedPodcastEvidenceConsentFingerprint
+        let evidenceURL = root.appending(path: "new-evidence.shazamsignature")
+        try Data("new persisted evidence".utf8).write(to: evidenceURL)
+        margin.podcastAnchorEvidence = [.init(
+            id: "new-pre", localPath: evidenceURL.path, durationMs: 10_000,
+            anchorOffsetMs: 10_000, provenance: .observedDecodedPlayback,
+            windowRole: .preInterjection
+        )]
+        try store.saveInterjection(margin)
+        XCTAssertEqual(model.sharingState.drafts.first?.interjection.podcastAnchorEvidence?.count, nil,
+                       "The reviewed draft must remain stale for this regression")
+        model.exportSharedInterjections(presentsReadySheet: false)
+        XCTAssertNotEqual(consent, Gate1AppModel.podcastEvidenceExportDisposition([
+            ShareInterjectionDraft(interjection: margin, approvedTranscript: "Reviewed words",
+                                  representationChoice: .original, anchorBefore: "", anchorAfter: "")
+        ]).fingerprint)
+        XCTAssertTrue(model.sharingState.errorMessage?.contains("podcast_positioning_evidence_pending") == true)
+        XCTAssertNil(model.sharedSpokenMarginsPackageURL)
+    }
+
     func testRecursiveWrittenRepliesKeepCaptureCoordinatesAndPlayExactParentChain() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -46,6 +251,41 @@ final class ConversationNavigationTests: XCTestCase {
         XCTAssertEqual(model.snapshot.currentTextStart, 170)
         model.beginReply(to: a, written: true); model.cancelWrittenMargin()
         XCTAssertNil(model.replyCaptureParent)
+    }
+
+    func testTwoTargetWrittenReplyKeepsCaptureAnchorAndPlaysSharedAncestorOnce() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: root.appending(path: "library.sqlite"))
+        model.ttsVoiceSelection = .system
+        model.resetAndSeed(); model.startItem(id: "item-pill")
+        model.seekText(toCharOffset: 80)
+        model.beginWrittenMargin(); model.saveWrittenMargin(text: "Cole")
+        let cole = try XCTUnwrap(model.selectedItem.interjections.first { $0.transcript == "Cole" })
+        model.beginReply(to: cole, written: true); model.saveWrittenMargin(text: "Alex")
+        let alex = try XCTUnwrap(model.selectedItem.interjections.first { $0.transcript == "Alex" })
+        model.beginReply(to: cole, written: true); model.saveWrittenMargin(text: "Blair")
+        let blair = try XCTUnwrap(model.selectedItem.interjections.first { $0.transcript == "Blair" })
+        let alexNode = try model.ensureConversationSnapshot(alex)
+        let blairNode = try model.ensureConversationSnapshot(blair)
+        model.seekText(toCharOffset: 170)
+        try model.beginReply(to: [alexNode, blairNode], written: true)
+        XCTAssertEqual(model.replyCaptureParents.map(\.id), [alexNode.id, blairNode.id])
+        model.saveWrittenMargin(text: "Casey")
+        let casey = try XCTUnwrap(model.selectedItem.interjections.first { $0.transcript == "Casey" })
+        XCTAssertEqual(casey.anchor.startChar, 170)
+        XCTAssertEqual(casey.conversation?.parents, [alexNode.conversation.reference, blairNode.conversation.reference])
+        model.conversationContextSeconds = 0
+        model.playConversationMargin(casey, withContext: true)
+        XCTAssertEqual(model.conversationCurrentMargin?.transcript, "Cole")
+        XCTAssertEqual(model.conversationThreadQueue.map(\.transcript), ["Alex", "Blair", "Casey"])
+        model.returnFromConversation()
+        XCTAssertEqual(model.snapshot.currentTextStart, 170)
+        model.prepareShareInterjections()
+        for draft in model.sharingState.drafts { model.setShareDraftIncluded(draft.id, included: draft.id == casey.id) }
+        let coleNode = try model.ensureConversationSnapshot(cole)
+        XCTAssertEqual(Set(model.forwardedReplyContext.map(\.id)), Set([alexNode.id, blairNode.id, coleNode.id]))
     }
 
     func testContextEditsPreserveAnchorRejectCyclesAndKeepPreviousRevision() throws {
@@ -132,8 +372,6 @@ final class ConversationNavigationTests: XCTestCase {
         model.conversationContextSeconds = 120
         XCTAssertTrue(model.snapshot.canSkimForward)
         model.skimForward()
-        XCTAssertNotNil(model.conversationLeadIn)
-        model.skimForward()
         XCTAssertNil(model.conversationLeadIn)
         XCTAssertEqual(model.conversationCurrentMargin?.transcript, "An earlier observation")
         XCTAssertEqual(model.snapshot.sessionId, newSession, "Listening to an old Margin must not reopen or rewrite its session")
@@ -143,7 +381,7 @@ final class ConversationNavigationTests: XCTestCase {
         XCTAssertEqual(model.snapshot.currentTextStart, 0)
     }
 
-    func testSecondTapKeepsDestinationEvenIfContextPassesAnotherMargin() throws {
+    func testSecondSkimTapAdvancesDirectlyToNextMargin() throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.ttsVoiceSelection = .system
         model.resetAndSeed()
@@ -157,11 +395,12 @@ final class ConversationNavigationTests: XCTestCase {
         model.seekText(toCharOffset: 0)
         model.conversationScope = .margins
         model.skimForward()
-        let target = try XCTUnwrap(model.conversationLeadIn?.destination)
+        let target = try XCTUnwrap(model.conversationCurrentMargin)
+        XCTAssertEqual(target.transcript, "First")
+        XCTAssertNil(model.conversationLeadIn)
         model.skimForward()
-        XCTAssertEqual(model.conversationCurrentMargin?.id, target.id)
-        model.skimForward()
-        XCTAssertNotEqual(model.conversationLeadIn?.destination.id ?? model.conversationCurrentMargin?.id, target.id)
+        XCTAssertEqual(model.conversationCurrentMargin?.transcript, "Second")
+        XCTAssertNotEqual(model.conversationCurrentMargin?.id, target.id)
     }
 
     func testManualSeekCancelsPinnedContextAndUnresolvedSharedPositionsAreNotSkimTargets() throws {
@@ -175,7 +414,7 @@ final class ConversationNavigationTests: XCTestCase {
         model.seekText(toCharOffset: 0)
         model.conversationScope = .margins
         model.skimForward()
-        XCTAssertNotNil(model.conversationLeadIn)
+        XCTAssertNotNil(model.conversationCurrentMargin)
         model.seekText(toCharOffset: 40)
         XCTAssertNil(model.conversationLeadIn)
         XCTAssertNil(model.conversationCurrentMargin)
@@ -220,7 +459,7 @@ final class ConversationNavigationTests: XCTestCase {
         XCTAssertNotEqual(model.snapshot.targetId, item.id, "The engine uses the media URL as target")
         XCTAssertEqual(model.selectedItem.id, item.id)
         model.conversationScope = .margins
-        model.skimForward()
+        model.playConversationMargin(SharedMarginRow(interjection: note, layer: layer, itemTitle: item.title), withContext: true)
         XCTAssertEqual(model.conversationLeadIn?.destination.position, 300_000)
         XCTAssertEqual(model.snapshot.currentMediaTimeMs, 180_000)
         XCTAssertEqual(model.skimForwardDestinationMs, 300_000)
@@ -229,7 +468,7 @@ final class ConversationNavigationTests: XCTestCase {
         XCTAssertTrue(model.reconcileConversationLeadIn(current: reached))
         XCTAssertNil(model.conversationLeadIn)
         XCTAssertEqual(model.conversationCurrentMargin?.transcript, note.approvedTranscript)
-        XCTAssertEqual(model.snapshot.currentMediaTimeMs, 300_000)
+        XCTAssertEqual(model.snapshot.currentMediaTimeMs, 300_000, "Context arrival must bookmark the Margin before its voice")
         XCTAssertNil(model.pendingImportedCommentary, "Explicit arrival must not also prompt")
         model.conversationScope = .newMargins
         XCTAssertTrue(model.conversationDestinations.isEmpty, "Displayed text is no longer new")
@@ -239,6 +478,170 @@ final class ConversationNavigationTests: XCTestCase {
         model.setImportedCommentaryLayerMuted(layer.id, muted: true)
         XCTAssertFalse(model.snapshot.canSkimForward)
         XCTAssertTrue(model.conversationDestinations.isEmpty)
+
+        model.setImportedCommentaryLayerMuted(layer.id, muted: false)
+        model.playConversationMargin(SharedMarginRow(interjection: note, layer: layer, itemTitle: item.title), withContext: true)
+        XCTAssertNotNil(model.conversationLeadIn)
+        let stalled = model.snapshot
+        XCTAssertTrue(model.reconcileConversationLeadIn(current: stalled, now: ProcessInfo.processInfo.systemUptime + 9))
+        XCTAssertNil(model.conversationLeadIn, "A non-advancing source must not hold the Margin indefinitely")
+        XCTAssertEqual(model.conversationCurrentMargin?.transcript, note.approvedTranscript)
+    }
+
+    func testFinishingOneMarginResumesAtItsPositionAndSkimsToTheNext() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.ttsVoiceSelection = .system
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.seekText(toCharOffset: 100)
+        model.beginWrittenMargin(); model.saveWrittenMargin(text: "First")
+        model.seekText(toCharOffset: 180)
+        model.beginWrittenMargin(); model.saveWrittenMargin(text: "Second")
+        model.seekText(toCharOffset: 0)
+        model.conversationScope = .margins
+        model.conversationContextSeconds = 0
+        model.skimForward()
+        XCTAssertEqual(model.conversationCurrentMargin?.transcript, "First")
+
+        model.resumeSourceFromConversation()
+        XCTAssertNil(model.conversationCurrentMargin)
+        XCTAssertEqual(model.snapshot.currentTextStart, 100, "Returning to source after a Margin must not rewind to the pre-Skim origin")
+        XCTAssertTrue(model.snapshot.canSkimForward)
+        model.skimForward()
+        XCTAssertEqual(model.conversationCurrentMargin?.transcript, "Second", "The completed Margin must not be offered again")
+    }
+
+    func testExplicitSkimPlaysSharedVoiceEvenWhenPassiveAutoPlayIsOff() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let audioURL = root.appending(path: "shared-voice.caf")
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 240_000))
+        buffer.frameLength = buffer.frameCapacity
+        let file = try AVAudioFile(forWriting: audioURL, settings: format.settings)
+        try file.write(from: buffer)
+        let database = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: database)
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: database.path)
+        let item = Item(id: "shared-episode", title: "Shared episode", mediaType: "podcast", text: nil,
+            externalReference: "https://example.com/episode", status: "ready",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://example.com/episode.mp3", durationMs: 900_000))
+        try store.saveItem(item)
+        let layer = ImportedCommentaryLayer(id: "friends", itemId: item.id, packageDigest: "digest", packageId: "package",
+            itemIdentity: SharedItemIdentity(itemType: .podcast, title: item.title), displayLabel: "Shanti",
+            importedAt: Date(), sourceResolutionStatus: .resolved, isEnabled: true, revealMode: .companion)
+        try store.saveImportedCommentaryLayer(layer)
+        for (id, position) in [("first", 300_000), ("second", 400_000)] {
+            try store.saveImportedCommentaryInterjection(ImportedCommentaryInterjection(
+                id: id, layerId: layer.id, packageScopedId: id, createdAt: Date(),
+                anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: position),
+                approvedTranscript: id, audioPath: audioURL.path,
+                resolution: ImportedAnchorResolution(evidenceClass: .transcriptVerified, localMediaTimeMs: position, confidence: 1)
+            ))
+        }
+        model.startItem(id: item.id)
+        model.conversationScope = .margins
+        model.conversationContextSeconds = 0
+        XCTAssertFalse(model.importedCommentaryAutoPlayEnabled)
+        model.skimForward()
+        XCTAssertEqual(model.playingImportedCommentary?.interjection.id, "first")
+        XCTAssertNil(model.pendingImportedCommentary, "An explicit Skim tap requests playback")
+        XCTAssertNil(model.conversationLeadIn)
+        XCTAssertEqual(model.snapshot.currentMediaTimeMs, 300_000, "Verified Skim must move the podcast bookmark")
+        XCTAssertTrue(model.isRespondingToMargin)
+        model.skimForward()
+        XCTAssertEqual(model.playingImportedCommentary?.interjection.id, "second")
+        XCTAssertEqual(model.snapshot.currentMediaTimeMs, 400_000)
+    }
+
+    func testExplicitPodcastSkimStartsLocalRecordingAtItsSourcePositionWithoutLeadIn() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let database = root.appending(path: "library.sqlite")
+        let audioURL = root.appending(path: "own-margin.caf")
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 240_000))
+        buffer.frameLength = buffer.frameCapacity
+        let file = try AVAudioFile(forWriting: audioURL, settings: format.settings)
+        try file.write(from: buffer)
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: database)
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: database.path)
+        let item = Item(id: "local-episode", title: "Local episode", mediaType: "podcast", text: nil,
+            externalReference: "https://example.com/episode", status: "ready",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://example.com/episode.mp3", durationMs: 900_000))
+        try store.saveItem(item)
+        model.startItem(id: item.id)
+        let sessionID = try XCTUnwrap(model.snapshot.sessionId)
+        let note = Interjection(id: "own-voice", itemId: item.id, sessionId: sessionID, targetType: .item,
+            targetId: item.id, createdAt: Date(), roughPercent: 33,
+            anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 300_000),
+            audioPath: audioURL.path, audioStatus: "recorded", transcriptionStatus: "transcribed",
+            transcript: "My own recording", cleanedTranscript: nil, displayText: nil, status: "active")
+        try store.saveInterjection(note)
+        model.openItem(id: item.id)
+        model.conversationScope = .newMargins
+        XCTAssertTrue(model.conversationDestinations.isEmpty, "A capture made on this installation is already familiar")
+        model.conversationScope = .margins
+        model.conversationContextSeconds = 120
+        model.skimForward()
+        XCTAssertEqual(model.conversationCurrentMargin?.transcript, "My own recording")
+        XCTAssertEqual(model.playingInterjectionAudioId, note.id)
+        XCTAssertNil(model.conversationLeadIn)
+        XCTAssertEqual(model.snapshot.currentMediaTimeMs, 300_000, "Explicit Skim must bookmark the verified source position before voice starts")
+        model.skipCurrentMarginToEnd()
+        XCTAssertNil(model.conversationCurrentMargin)
+        XCTAssertEqual(model.snapshot.currentMediaTimeMs, 300_000, "Skipping voice must leave the podcast at the Margin")
+        XCTAssertFalse(model.heardConversationMargins.contains("local:\(sessionID):own-voice"), "Skipping voice is not a listening completion")
+    }
+
+    func testUnmatchedImportsRemainReachableWithoutSeekingTheSource() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let audioURL = root.appending(path: "unmatched-voice.caf")
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 240_000))
+        buffer.frameLength = buffer.frameCapacity
+        let file = try AVAudioFile(forWriting: audioURL, settings: format.settings)
+        try file.write(from: buffer)
+        let database = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: database)
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: database.path)
+        let item = Item(id: "unmatched-episode", title: "Unmatched episode", mediaType: "podcast", text: nil,
+            externalReference: "https://example.com/unmatched", status: "ready",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://example.com/unmatched.mp3", durationMs: 900_000))
+        try store.saveItem(item)
+        let layer = ImportedCommentaryLayer(id: "friends", itemId: item.id, packageDigest: "digest", packageId: "package",
+            itemIdentity: SharedItemIdentity(itemType: .podcast, title: item.title), displayLabel: "Cole",
+            importedAt: Date(), sourceResolutionStatus: .contextOnly, isEnabled: true, revealMode: .companion)
+        try store.saveImportedCommentaryLayer(layer)
+        for (id, percent) in [("later", 57), ("earlier", 42)] {
+            try store.saveImportedCommentaryInterjection(ImportedCommentaryInterjection(
+                id: id, layerId: layer.id, packageScopedId: id, createdAt: Date(),
+                anchorEvidence: PortableAnchorEvidence(anchorType: .media, roughPercent: percent),
+                approvedTranscript: id, audioPath: audioURL.path,
+                resolution: ImportedAnchorResolution(evidenceClass: .unresolved)
+            ))
+        }
+        model.startItem(id: item.id)
+        model.conversationScope = .margins
+        XCTAssertTrue(model.snapshot.canSkimForward)
+        XCTAssertEqual(model.skimForwardTitle, "Listen next unmatched · Cole")
+        XCTAssertTrue(model.conversationDestinations.isEmpty)
+        let sourcePosition = model.snapshot.currentMediaTimeMs
+        model.skimForward()
+        XCTAssertEqual(model.playingImportedCommentary?.interjection.id, "earlier")
+        XCTAssertNil(model.pendingImportedCommentary)
+        XCTAssertEqual(model.snapshot.currentMediaTimeMs, sourcePosition)
+        XCTAssertTrue(model.snapshot.canSkimForward)
+        model.skimForward()
+        XCTAssertEqual(model.playingImportedCommentary?.interjection.id, "later")
+        XCTAssertEqual(model.snapshot.currentMediaTimeMs, sourcePosition)
     }
 
     func testLocalVoiceMarginOwnsPauseResumeAndManualSeekStopsRecordingPlayback() throws {

@@ -111,6 +111,36 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         try save(kind: "item", id: item.id, sessionId: nil, itemId: item.id, value: item)
     }
 
+    // Additive private record kind in schema 5; old libraries have no jobs.
+    public func loadRecipientTranscriptRecoveryJob(itemId: String) throws -> RecipientTranscriptRecoveryJob? {
+        try loadOptional(kind: "recipient_transcript_recovery", id: itemId)
+    }
+
+    public func loadRecipientTranscriptRecoveryJobs() throws -> [RecipientTranscriptRecoveryJob] {
+        try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at, id;",
+                  ["recipient_transcript_recovery"])
+    }
+
+    public func saveRecipientTranscriptRecoveryJob(
+        _ job: RecipientTranscriptRecoveryJob, replacingExisting: Bool = false
+    ) throws {
+        try withTransaction {
+            guard job.isValid, try loadItem(id: job.itemId).deletedAt == nil else {
+                throw SessionKitError.persistenceFailed("recipient_recovery_invalid_job")
+            }
+            if let previous = try loadRecipientTranscriptRecoveryJob(itemId: job.itemId),
+               previous.id != job.id, !replacingExisting {
+                throw SessionKitError.persistenceFailed("recipient_recovery_superseded")
+            }
+            try save(kind: "recipient_transcript_recovery", id: job.itemId,
+                     sessionId: nil, itemId: job.itemId, value: job)
+        }
+    }
+
+    public func deleteRecipientTranscriptRecoveryJob(itemId: String) throws {
+        try deleteRecords(kind: "recipient_transcript_recovery", itemId: itemId)
+    }
+
     public func loadListeningMap(itemId: String) throws -> ListeningMap? {
         let maps: [ListeningMap] = try loadByItem(kind: "listening_map", itemId: itemId)
         return maps.first
@@ -306,6 +336,18 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
             itemId: layer?.itemId,
             value: interjection
         )
+    }
+
+    public func saveImportedCommentaryPositionConfirmation(
+        layer: ImportedCommentaryLayer, interjection: ImportedCommentaryInterjection
+    ) throws {
+        guard interjection.layerId == layer.id else {
+            throw SessionKitError.persistenceFailed("imported_position_layer_mismatch")
+        }
+        try withTransaction {
+            try saveImportedCommentaryLayer(layer)
+            try saveImportedCommentaryInterjection(interjection)
+        }
     }
 
     public func saveTurn(_ turn: ConversationTurn) throws {
@@ -549,6 +591,63 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
 
     public func saveOwnedOfflineAsset(_ asset: OwnedOfflineAsset) throws {
         try save(kind: "owned_offline_asset", id: asset.id, sessionId: nil, itemId: asset.itemId, value: asset)
+    }
+
+    /// Commit the Margin's evidence references and their protected ledger rows
+    /// in one SQLite transaction. The signature files have already been
+    /// validated and atomically installed by the capture path.
+    public func commitPodcastAnchorEvidence(
+        _ interjection: Interjection,
+        ownedAssets: [OwnedOfflineAsset]
+    ) throws {
+        try commitPodcastAnchorEvidence(interjection, ownedAssets: ownedAssets, afterLedgerWrites: nil)
+    }
+
+    // The injected failure is a store-boundary test seam: it runs inside the
+    // transaction after the ledger writes and before the Margin reference.
+    func commitPodcastAnchorEvidence(
+        _ interjection: Interjection,
+        ownedAssets: [OwnedOfflineAsset],
+        afterLedgerWrites: (() throws -> Void)?
+    ) throws {
+        guard Set(ownedAssets.map(\.id)).count == ownedAssets.count else {
+            throw SessionKitError.persistenceFailed("podcast_anchor_duplicate_owned_asset")
+        }
+        for asset in ownedAssets {
+            let matchesEvidence = (interjection.podcastAnchorEvidence ?? []).contains { evidence in
+                evidence.localPath.hasSuffix("/" + asset.relativePath)
+                    && evidence.byteCount.map(Int64.init) == asset.byteCount
+                    && evidence.checksumSHA256 == asset.checksumSHA256
+            }
+            guard asset.itemId == interjection.itemId,
+                  asset.category == .fingerprintMap,
+                  asset.protections.contains(.interjection),
+                  !asset.isReproducible,
+                  matchesEvidence else {
+                throw SessionKitError.persistenceFailed("podcast_anchor_owned_asset_mismatch")
+            }
+        }
+        try withTransaction {
+            let previous = try loadInterjections(sessionId: interjection.sessionId)
+                .first(where: { $0.id == interjection.id })
+            for evidence in interjection.podcastAnchorEvidence ?? [] {
+                // Older records may predate owned-asset tracking. Preserve an
+                // unchanged reference, but require every newly installed or
+                // changed reference to arrive with its protected ledger row.
+                if (previous?.podcastAnchorEvidence ?? []).contains(evidence) { continue }
+                let hasNewLedgerRow = ownedAssets.contains { asset in
+                    evidence.localPath.hasSuffix("/" + asset.relativePath)
+                        && evidence.byteCount.map(Int64.init) == asset.byteCount
+                        && evidence.checksumSHA256 == asset.checksumSHA256
+                }
+                guard hasNewLedgerRow else {
+                    throw SessionKitError.persistenceFailed("podcast_anchor_new_evidence_without_owned_asset")
+                }
+            }
+            for asset in ownedAssets { try saveOwnedOfflineAsset(asset) }
+            try afterLedgerWrites?()
+            try saveInterjection(interjection)
+        }
     }
 
     public func loadOwnedOfflineAssets() throws -> [OwnedOfflineAsset] {

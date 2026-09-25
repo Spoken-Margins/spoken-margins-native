@@ -74,7 +74,16 @@ public struct ListeningEdition: Codable, Equatable, Sendable {
     }
     public static func decode(_ data: Data) throws -> ListeningEdition {
         guard data.count <= 8_000_000 else { throw EditionError.invalid("Listening edition exceeds 8 MB.") }
-        return try JSONDecoder().decode(Self.self, from: data).validated()
+        let normalized = try normalizedJSON(data, context: "Listening edition")
+        do {
+            return try JSONDecoder().decode(Self.self, from: normalized).validated()
+        } catch let error as DecodingError {
+            if let object = try? JSONSerialization.jsonObject(with: normalized) as? [String: Any],
+               object["overview"] != nil, object["scenes"] != nil, object["text"] == nil {
+                throw EditionError.invalid("This is a Listening Map response, not a complete Listening Edition. Pass the Ask ChatGPT result to Assemble Listening Edition, then pass its output to Import Listening Edition.")
+            }
+            throw EditionError.invalid("Listening edition JSON: \(Self.describe(error))")
+        }
     }
     public func encoded() throws -> Data {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -101,14 +110,45 @@ public struct ListeningEdition: Codable, Equatable, Sendable {
     }
     public static func assemble(title: String, sourceURL: String?, text: String, generator: String, mapJSON: String) throws -> ListeningEdition {
         struct Output: Decodable { let overview: String; let scenes: [Scene] }
-        var raw = mapJSON.trimmingCharacters(in: .whitespacesAndNewlines)
-        if raw.hasPrefix("```"), let firstNewline = raw.firstIndex(of: "\n"), raw.hasSuffix("```") {
-            raw = String(raw[raw.index(after: firstNewline)...].dropLast(3))
-        }
-        guard raw.utf8.count <= 3_000_000 else { throw EditionError.invalid("Model response exceeds 3 MB.") }
-        let output = try JSONDecoder().decode(Output.self, from: Data(raw.utf8))
+        guard mapJSON.utf8.count <= 3_000_000 else { throw EditionError.invalid("Model response exceeds 3 MB.") }
+        let normalized = try normalizedJSON(Data(mapJSON.utf8), context: "Model response")
+        let output: Output
+        do { output = try JSONDecoder().decode(Output.self, from: normalized) }
+        catch let error as DecodingError { throw EditionError.invalid("Model response JSON: \(describe(error))") }
         return try Self(title: title, sourceURL: sourceURL, text: text, generator: generator,
                         overview: output.overview, scenes: output.scenes).validated()
+    }
+
+    private static func normalizedJSON(_ data: Data, context: String) throws -> Data {
+        guard var raw = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            throw EditionError.invalid("\(context) must contain UTF-8 JSON.")
+        }
+        if raw.hasPrefix("```") {
+            guard let firstNewline = raw.firstIndex(of: "\n"), raw.hasSuffix("```") else {
+                throw EditionError.invalid("\(context) has an incomplete Markdown code fence. Return only JSON or a complete fenced JSON block.")
+            }
+            raw = String(raw[raw.index(after: firstNewline)...].dropLast(3)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard raw.first == "{", raw.last == "}" else {
+            throw EditionError.invalid("\(context) must be one JSON object. Remove any introduction or text after the JSON.")
+        }
+        return Data(raw.utf8)
+    }
+
+    private static func describe(_ error: DecodingError) -> String {
+        let path: String
+        switch error {
+        case .keyNotFound(let key, let context):
+            path = (context.codingPath.map(\.stringValue) + [key.stringValue]).joined(separator: ".")
+            return "missing required field \(path)."
+        case .typeMismatch(_, let context), .valueNotFound(_, let context):
+            path = context.codingPath.map(\.stringValue).joined(separator: ".")
+            return "invalid value at \(path.isEmpty ? "root" : path)."
+        case .dataCorrupted(let context):
+            return "invalid JSON syntax or value: \(context.debugDescription)"
+        @unknown default:
+            return "could not be decoded."
+        }
     }
 }
 public enum EditionError: Error, LocalizedError {

@@ -1,0 +1,11 @@
+# Two-parent reply is unavailable in the current packet contract
+
+**Historical blocker, now resolved:** after the owner authorized the extension, conversation v2, the app path, and three exact-link packets were implemented. See `owner-packet-handoff.md` for current status. The findings below describe the earlier v1 contract.
+
+The requested Casey packet requires two exact parent-revision links to Alex and Blair. The current `spoken-margins.conversation.v1` contract has only a single optional `parent: MarginReference` in `Packages/SessionKit/Sources/SessionKit/MarginConversation.swift`. `Contracts/schemas/shared-commentary-layer.schema.json` permits exactly one `parent` value, a reference or null, and rejects unknown fields. `MarginConversationGraph.ancestors` and the app's `ConversationContextEditor` also traverse that one parent. The existing tests cover two sibling replies to one root, then one descendant of one sibling; they do not cover a multi-parent node.
+
+Giving Casey one parent and mentioning the other in the transcript would not test two-parent import or playback. Adding a second field to the archive alone would also fail the current reader and would leave store and UI behavior undefined. The linked instructions explicitly say to report this blocker rather than fake a second link or change production code. No Nano model was downloaded, and no generated audio or response packets were created after this check, preserving the owner's usage budget.
+
+The smallest decision is whether the owner wants a **one-parent trial now**, where Casey replies to one exact revision while addressing both replies in speech, or a **release-plan change for a real two-parent conversation node**, requiring coordinated schema, validator, runtime, persistence, UI and regression work before packet generation. A one-parent trial can still exercise voice playback, recursive reply, forwarding, deduplication and outbound export, but it cannot validate the requested two-parent relationship.
+
+No simulator or XCTest rerun was used to establish this: it follows directly from the current type, schema and traversal implementation. No app failure was observed. The original supplied archive remains unchanged; its preliminary ZIP and descriptor integrity checks passed previously, and native import has not been run in this execution.

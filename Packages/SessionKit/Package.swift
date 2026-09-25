@@ -16,7 +16,8 @@ let package = Package(
         .library(name: "SessionKitAI", targets: ["SessionKitAI"]),
         .library(name: "SessionKitSupertonic", targets: ["SessionKitSupertonic"]),
         .library(name: "SessionKitEPUB", targets: ["SessionKitEPUB"]),
-        .library(name: "SessionKitFeeds", targets: ["SessionKitFeeds"])
+        .library(name: "SessionKitFeeds", targets: ["SessionKitFeeds"]),
+        .executable(name: "CoopPacketGenerator", targets: ["CoopPacketGenerator"])
     ],
     dependencies: [
         .package(
@@ -69,6 +70,10 @@ let package = Package(
         .target(
             name: "SessionKitFeeds",
             dependencies: ["SessionKit"]
+        ),
+        .executableTarget(
+            name: "CoopPacketGenerator",
+            dependencies: ["SessionKit", "SessionKitSharing"]
         ),
         .testTarget(
             name: "SessionKitTests",

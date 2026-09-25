@@ -6,6 +6,7 @@ struct ExperienceMarginDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var pendingNavigation: NavigationIntent?
     @State private var replyNode: MarginConversationSnapshot?
+    @State private var replyNodes: [MarginConversationSnapshot] = []
     @State private var showsManagement = false
     @State private var actionFeedback: UserFeedbackEvent?
     let row: MarginRow
@@ -39,8 +40,8 @@ struct ExperienceMarginDetailView: View {
                     Button("Voice reply", systemImage: "mic") { pendingNavigation = .replyVoice; dismiss() }
                     Button("Written reply", systemImage: "square.and.pencil") { pendingNavigation = .replyWritten; dismiss() }
                 }.disabled(current.interjection.targetType != .item)
-                ConversationRepliesSection(reference: current.interjection.conversation?.reference) { node, written in
-                    replyNode = node; pendingNavigation = written ? .replyWritten : .replyVoice; dismiss()
+                ConversationRepliesSection(reference: current.interjection.conversation?.reference) { nodes, written in
+                    replyNodes = nodes; pendingNavigation = written ? .replyWritten : .replyVoice; dismiss()
                 } listen: { node in
                     replyNode = node; pendingNavigation = .archivedConversation; dismiss()
                 }
@@ -139,7 +140,9 @@ struct ExperienceMarginDetailView: View {
                 switch pendingNavigation {
                 case .archivedConversation: if let replyNode { model.playConversationSnapshot(replyNode) }
                 case .replyVoice, .replyWritten:
-                    if let replyNode { model.beginArchivedReply(to: replyNode, written: pendingNavigation == .replyWritten) }
+                    if !replyNodes.isEmpty {
+                        model.beginArchivedReply(to: replyNodes, written: pendingNavigation == .replyWritten)
+                    }
                     else { model.beginReply(to: current.interjection, written: pendingNavigation == .replyWritten) }
                 case .moment: model.playMarginMoment(current)
                 case .context: model.playConversationMargin(current.interjection, withContext: true)

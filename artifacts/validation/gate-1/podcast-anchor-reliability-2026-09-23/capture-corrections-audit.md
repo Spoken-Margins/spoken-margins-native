@@ -1,0 +1,13 @@
+# Capture-corrections audit
+
+Reviewed the handoff and targeted source/test hunks against frozen diff SHA-256 `cb76291c498b91ffc0792ec9a69df71ad03489cc609a685029600a4d62e1d8fa` (matches). No tests/builds were run.
+
+1. **PASS — attempt and edition fencing.** `SessionEngine` checks expected role generation and anchor in the loaded-record mutation; app completion/failure callbacks check per-role generation before persisting. `testPodcastCaptureRejectsStaleAttemptAndEditionWithoutOverwritingCommittedFlank` rejects old generation, wrong edition, and stale failure while accepting the current attempt and preserving the sibling role. This is an adequate counterexample for the reported attempt-1/attempt-2 overwrite. Boundary caveat: both app and engine helpers accept callbacks when the durable role window is absent (`return true` / `continue`). The active path now saves pending state before starting capture, so this does not reproduce in the new flow; consider rejecting a generation-bearing callback with a missing role row if the contract is intended to be fail-closed for legacy/corrupt state too.
+
+2. **PASS — queued gap isolation.** The callback captures callback and continuity epochs, and invalidation clears accumulators only while both still match. `testQueuedOldPlaybackGapCannotClearRearmedCaptureAfterSeek` holds the worker, seeks/rearms the same Margin, then drains the old gap and asserts the new accumulator remains. This directly exercises the delayed-invalidation race.
+
+3. **PASS — exact pre-window interval.** `trimmedChunks` copies only PCM frames in the requested media-time interval before signing. `testBufferedPreWindowTrimsOversizedChunkAndEpisodeEdge` covers a 20-second chunk trimmed to a 12-second middle window and to a five-second episode-edge window, asserting duration and anchor offset; that falsifies the former whole-overlap-buffer behavior.
+
+4. **PASS for new writes — role/schema alignment.** Capture-window `Role` now admits only pre/post, and attempts to update it with source-reference roles leave state unchanged. The focused test checks this; the strict schema still allows only those two roles and at most two windows. Compatibility caveat: synthesized Codable decoding will reject a persisted `source_window_before/after` capture-window role from an older build. The handoff reports no known records of that shape and no migration; if such records are discovered, add a decode migration rather than losing the containing Interjection.
+
+No other directly introduced correctness defect was found in these four corrections. The handoff’s expected corpus skip and no-simulator limitation are consistent with the recorded verification; they do not substitute for product-owner flow validation.

@@ -1,0 +1,10 @@
+# Protocol and offset correction audit — 2026-09-23
+
+**PASS.** The two reported gaps are closed on the frozen tree; no additional correctness defect found in this bounded review.
+
+- The default `acquireSourceAudioWindow` carries the legacy evidence result’s transcript into `SourceAudioWindowAcquisition`; the default `transcribeAcquiredSourceAudioWindow` returns that same timeline. `testLegacySourceWindowAcquisitionCarriesItsTranscriptWithoutSecondFetch` uses a conformer that implements only the legacy evidence method, asserts timeline equality and the 33-second source start, and asserts that method ran once. This catches transcript loss and a repeated legacy evidence fetch.
+- Production acquired-window ASR passes `sourceStartMs` once into `transcribeLongFormTimeline`; that method calls `projectLongFormPassages` once, where local segment times receive one offset. `testAcquiredWindowLongFormProjectionAppliesSourceOffsetExactlyOnce` uses local 1–2 second times and a 33-second offset, asserting 34–35 seconds and unchanged full-source duration. The assertions fail for either a missing or doubled offset. The current host is macOS 26.6.2, so the test’s availability guard executes its assertions. The test exercises the exact pure projection used by production; it does not invoke live SpeechAnalyzer.
+- The fast manifest is verified (328 package tests passed, one expected corpus skip) and selects both new SessionKit tests. The app manifest is verified (476 passed, zero failed or skipped) and selects the acquired-window app regression. Both use input SHA-256 `8962815a2717f9ad9e395591d5f2b1de32d3f4648e98c522d4061f7e2374ca01`.
+- Handoff, focused/fast/app logs, manifests, and `protocol-offset-working-tree.diff` are present. The snapshot SHA-256 matches the handoff: `19f348a248329ec7cc92f693e90b9573cd41e18ed3a1c897488e4a91ab863271`.
+
+The older chunk-recognizer offset path remains verified by source inspection (`sourceStartMs + range.startMs` followed by one `offsetTimeline`); this audit did not exercise OS speech recognition or acoustic matching.

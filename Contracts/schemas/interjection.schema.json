@@ -59,6 +59,42 @@
     "captureKind": { "type": ["string", "null"], "enum": ["audio", "written", null] },
     "isStarredForSharing": { "type": ["boolean", "null"] },
     "privateSharingNote": { "type": ["string", "null"], "maxLength": 500 },
+    "sourceExactEditionSHA256": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+    "podcastAnchorEvidence": {
+      "type": ["array", "null"],
+      "maxItems": 20,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "localPath", "durationMs", "anchorOffsetMs"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "localPath": { "type": "string", "minLength": 1 },
+          "durationMs": { "type": "integer", "minimum": 1 },
+          "anchorOffsetMs": { "type": "integer", "minimum": -600000, "maximum": 600000 },
+          "provenance": { "enum": ["decoded_playback_stream", "exact_local_playback_edition", "observed_decoded_playback", "source_window_reference", "downloaded_source_reference", null] },
+          "windowRole": { "enum": ["pre_interjection", "post_resume", "source_window_before", "source_window_after", null] },
+          "byteCount": { "type": ["integer", "null"], "minimum": 1 },
+          "checksumSHA256": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" }
+        }
+      }
+    },
+    "podcastAnchorCaptureWindows": {
+      "type": ["array", "null"],
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "state", "attempt", "anchorMediaTimeMs"],
+        "properties": {
+          "role": { "enum": ["pre_interjection", "post_resume"] },
+          "state": { "enum": ["waiting", "collecting", "deriving", "committed", "retryableFailure", "unavailable"] },
+          "attempt": { "type": "integer", "minimum": 0, "maximum": 3 },
+          "anchorMediaTimeMs": { "type": "integer", "minimum": 0 },
+          "firstFailureReason": { "type": ["string", "null"] },
+          "latestFailureReason": { "type": ["string", "null"] }
+        }
+      }
+    },
     "alignedTranscript": {
       "type": ["object", "null"],
       "additionalProperties": false,

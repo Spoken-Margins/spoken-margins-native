@@ -1,6 +1,12 @@
 import SwiftUI
 import SessionKit
 
+enum SharedMarginLayerTint {
+    static let colors: [Color] = [AppColors.plum, AppColors.green, AppColors.ochre, .indigo, .teal]
+
+    static func color(at index: Int) -> Color { colors[index % colors.count] }
+}
+
 enum Build23ImportedLayerPresentation {
     static let provenanceSymbolName = "person.crop.circle"
 
@@ -136,10 +142,11 @@ private struct Build23ImportedLayerList: View, Equatable {
     }
 
     private func layerCard(_ layer: Build23ImportedLayerSnapshot) -> some View {
-        ExperienceSurface(tint: AppColors.plum.opacity(0.08)) {
+        let tint = SharedMarginLayerTint.color(at: layers.firstIndex(where: { $0.id == layer.id }) ?? 0)
+        return ExperienceSurface(tint: tint.opacity(0.09)) {
             VStack(alignment: .leading, spacing: 16) {
-                provenanceHeader(layer)
-                if showsMargins { marginRail(layer) }
+                provenanceHeader(layer, tint: tint)
+                if showsMargins { marginRail(layer, tint: tint) }
 
                 DisclosureGroup("Layer options") {
                     VStack(alignment: .leading, spacing: 12) {
@@ -156,7 +163,7 @@ private struct Build23ImportedLayerList: View, Equatable {
         }
     }
 
-    private func provenanceHeader(_ layer: Build23ImportedLayerSnapshot) -> some View {
+    private func provenanceHeader(_ layer: Build23ImportedLayerSnapshot, tint: Color) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Label {
                 VStack(alignment: .leading, spacing: 2) {
@@ -165,11 +172,11 @@ private struct Build23ImportedLayerList: View, Equatable {
                         .foregroundStyle(AppColors.text)
                     Text("Separate imported layer")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(AppColors.plum)
+                        .foregroundStyle(tint)
                 }
             } icon: {
                 Image(systemName: Build23ImportedLayerPresentation.provenanceSymbolName)
-                    .foregroundStyle(AppColors.plum)
+                    .foregroundStyle(tint)
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(Text(
@@ -248,7 +255,7 @@ private struct Build23ImportedLayerList: View, Equatable {
     }
 
     @ViewBuilder
-    private func marginRail(_ layer: Build23ImportedLayerSnapshot) -> some View {
+    private func marginRail(_ layer: Build23ImportedLayerSnapshot, tint: Color) -> some View {
         LazyVStack(alignment: .leading, spacing: 10) {
             Text("Margin placement")
                 .font(.headline)
@@ -260,13 +267,13 @@ private struct Build23ImportedLayerList: View, Equatable {
                     .foregroundStyle(AppColors.secondaryText)
             } else {
                 ForEach(layer.margins) { margin in
-                    marginCard(margin, layerID: layer.id)
+                    marginCard(margin, layerID: layer.id, tint: tint)
                 }
             }
         }
     }
 
-    private func marginCard(_ margin: Build23ImportedMarginSnapshot, layerID: String) -> some View {
+    private func marginCard(_ margin: Build23ImportedMarginSnapshot, layerID: String, tint: Color) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(margin.reviewedText)
                 .font(.body)
@@ -298,16 +305,38 @@ private struct Build23ImportedLayerList: View, Equatable {
                 .buttonStyle(SecondaryButtonStyle())
                 .accessibilityIdentifier("build23.imported.margin.\(margin.id).listen")
             }
+            if margin.canReviewPosition {
+                Button {
+                    coordinator.send(.listenAroundPosition(layerID: layerID, marginID: margin.id))
+                } label: {
+                    Label(margin.listenAroundLabel, systemImage: "waveform.path")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .accessibilityIdentifier("build23.imported.margin.\(margin.id).listen-around")
+
+                if margin.canConfirmPosition {
+                    Text("After listening, confirm the position shown in your episode. This is your choice, not audio verification.")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                    Button {
+                        coordinator.send(.confirmPosition(layerID: layerID, marginID: margin.id))
+                    } label: {
+                        Label("Confirm current source position", systemImage: "checkmark.circle")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .accessibilityIdentifier("build23.imported.margin.\(margin.id).confirm-position")
+                }
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(AppColors.panel)
+                .fill(tint.opacity(0.08))
         )
         .overlay {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(AppColors.border, lineWidth: 1)
+                .stroke(tint.opacity(0.45), lineWidth: 1)
         }
     }
 
