@@ -17,20 +17,20 @@ Labels used below:
 
 ## Summary
 
-| # | Finding | Evidence | New in 29? | Priority |
-|---|---|---|---|---|
-| 1 | Podcast anchor capture never produces evidence on a streamed episode, and possibly on downloaded ones too | Device + Code | No. Build 28 never ran capture at all | Blocks the anchor goal |
-| 2 | Capture failures can't be diagnosed: the reason is overwritten, Margin IDs collide, diagnostics are lost on relaunch, and the export doesn't identify the build | Device + Code | No | Do first; it's cheap and unblocks 1 |
-| 3 | Source context transcription fails on streams ("Operation Stopped"), so shared Margins carry no text context | Device + Code | No | High |
-| 4 | Importing a shared podcast packet fails with a raw `shared_podcast_item_is_ambiguous` error (Omny / Odd Lots) | Reproduced + Code | No, same in Build 28 | High |
-| 5 | Shared Margins that aren't placed can't be navigated to; the recipient has to scrub blindly | Device + Code | No | High (slice 6) |
-| 6 | "Play this moment" plays the source from the Margin's anchor and never plays the Margin | Device + Code | No, this is how it was built | Product decision |
-| 7 | Resuming after a spoken Margin on a stream takes 2.6–9.3 s (1.1 s on a downloaded episode) | Device + Code | Unknown | Medium |
-| 8 | Main thread freezes for 1.6–2.7 s roughly every 17 s | Device; cause is inference | Unknown | Medium |
-| 9 | A PDF download stamp is still read aloud when the page number shares its line | Device + Reproduced | Fix is new in 29 but incomplete | Low, easy |
-| 10 | A web article pasted into "Link or Podcast" is rejected as "not a playable podcast/audio file" | Reproduced + Code | No | Medium |
-| 11 | The microphone-denied banner says "interjections" | Reproduced | No | Low |
-| 12 | App-hosted tests write test data into the simulator app's real container | Reproduced | No | Low |
+| # | Issue | Finding | Evidence | New in 29? | Priority |
+|---|---|---|---|---|---|
+| 1 | #154 | Podcast anchor capture never produces evidence on a streamed episode, and possibly on downloaded ones too | Device + Code | No. Build 28 never ran capture at all | Blocks the anchor goal |
+| 2 | #155 | Capture failures can't be diagnosed: the reason is overwritten, Margin IDs collide, diagnostics are lost on relaunch, and the export doesn't identify the build | Device + Code | No | Do first; it's cheap and unblocks 1 |
+| 3 | #156 | Source context transcription fails on streams ("Operation Stopped"), so shared Margins carry no text context | Device + Code | No | High |
+| 4 | #157 | Importing a shared podcast packet fails with a raw `shared_podcast_item_is_ambiguous` error (Omny / Odd Lots) | Reproduced + Code | No, same in Build 28 | High |
+| 5 | #158 | Shared Margins that aren't placed can't be navigated to; the recipient has to scrub blindly | Device + Code | No | High (slice 6) |
+| 6 | #159 | "Play this moment" plays the source from the Margin's anchor and never plays the Margin | Device + Code | No, this is how it was built | Product decision |
+| 7 | #160 | Resuming after a spoken Margin on a stream takes 2.6–9.3 s (1.1 s on a downloaded episode) | Device + Code | Unknown | Medium |
+| 8 | #161 | Main thread freezes for 1.6–2.7 s roughly every 17 s | Device; cause is inference | Unknown | Medium |
+| 9 | #162 | A PDF download stamp is still read aloud when the page number shares its line | Device + Reproduced | Fix is new in 29 but incomplete | Low, easy |
+| 10 | #144 | A web article pasted into "Link or Podcast" is rejected as "not a playable podcast/audio file" | Reproduced + Code | No | Medium |
+| 11 | #163 | The microphone-denied banner says "interjections" | Reproduced | No | Low |
+| 12 | #164 | App-hosted tests write test data into the simulator app's real container | Reproduced | No | Low |
 
 ## What passed
 
