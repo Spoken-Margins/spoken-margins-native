@@ -5,7 +5,13 @@ import CryptoKit
 /// and off-main. Fields at call sites are state/counters, never source content.
 @MainActor
 final class DeveloperDiagnosticRecording {
-    static let buildIdentity = "device-diagnostics-20260908-C"
+    /// The app version and build number, e.g. "0.1 (29)", so an export proves which build produced it.
+    static let buildIdentity: String = {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let version = info["CFBundleShortVersionString"] as? String ?? "unknown"
+        let build = info["CFBundleVersion"] as? String ?? "unknown"
+        return "\(version) (\(build))"
+    }()
     struct Event: Codable, Sendable {
         let time: String
         let elapsedMs: Int

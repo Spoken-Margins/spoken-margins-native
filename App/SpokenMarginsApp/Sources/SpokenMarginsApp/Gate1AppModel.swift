@@ -6828,6 +6828,19 @@ final class Gate1AppModel: ObservableObject {
         "\(interjection.sessionId)::\(interjection.id)"
     }
 
+    /// Margin IDs repeat per session, so per-Margin diagnostics carry a hashed session token.
+    static func marginDiagnosticKey(_ name: String, sessionId: String, interjectionId: String) -> String {
+        PodcastAnchorCaptureDiagnostics.marginKey(name, sessionId: sessionId, interjectionId: interjectionId)
+    }
+
+    static func marginDiagnosticKey(_ name: String, _ interjection: Interjection) -> String {
+        marginDiagnosticKey(name, sessionId: interjection.sessionId, interjectionId: interjection.id)
+    }
+
+    static func marginDiagnosticKey(_ name: String, _ request: PostResumeAudioSampleRequest) -> String {
+        marginDiagnosticKey(name, sessionId: request.sessionId, interjectionId: request.interjectionId)
+    }
+
     func isPlayingInterjectionAudio(_ interjection: Interjection) -> Bool {
         playingInterjectionAudioId == interjection.id && playingInterjectionAudioSessionID == interjection.sessionId
     }
@@ -7430,6 +7443,13 @@ final class Gate1AppModel: ObservableObject {
         var safe = diagnostics
             .filter { !Self.diagnosticKeyMayContainUserContent($0.key) }
             .mapValues(Self.redactedDiagnosticValue)
+        if let store {
+            let stored = PodcastAnchorCaptureDiagnostics.exportEntries(
+                sessions: (try? store.loadSessions()) ?? [],
+                interjections: { try store.loadInterjections(sessionId: $0) }
+            )
+            safe.merge(stored.mapValues(Self.redactedDiagnosticValue)) { _, stored in stored }
+        }
         safe["developerBuild"] = developerDiagnosticBuild
         safe["developerRecording"] = developerRecording.exportJSON()
         safe["playbackEvents"] = playbackEventRecording.exportJSON()
@@ -12202,19 +12222,19 @@ final class Gate1AppModel: ObservableObject {
                 refreshSelectedItem()
                 refreshMarginRows()
                 if reportsResult { reportConfirmation("Source context recovered.") }
-                diagnostics["sourceWindowTranscription:\(interjection.id)"] = "complete:stored_transcript"
-                diagnostics["sourceWindowContextProvenance:\(interjection.id)"] = "stored_transcript"
+                diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "complete:stored_transcript"
+                diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", interjection)] = "stored_transcript"
             }
             return true
         }
         if reportsResult { reportConfirmation("Recovering source context…") }
-        diagnostics["sourceWindowTranscription:\(interjection.id)"] = "scheduled"
+        diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "scheduled"
         let transcriptionURL = (item.media?.sourceType == .nativeMediaFile ? resolvedOwnedAudiobookURL(for: item) : nil)
             ?? importedPodcastRecipientLocalURLs[item.id]
             ?? podcastDownloadCoordinator?.validatedLocalURL(for: item.id)
             ?? canonicalSourceURL
         let provenance = transcriptionURL.isFileURL ? "downloaded_local_audio" : "bounded_remote_window"
-        diagnostics["sourceWindowContextProvenance:\(interjection.id)"] = provenance
+        diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", interjection)] = provenance
         pendingSourceContextInterjectionIds.insert(Self.marginIdentity(interjection))
         run { engine in
             snapshot = try engine.sourceWindowContextPending(interjectionId: interjection.id, sessionId: interjection.sessionId)
@@ -12287,9 +12307,9 @@ final class Gate1AppModel: ObservableObject {
                         }
                         self.refreshSelectedItem()
                         self.refreshMarginRows()
-                        self.diagnostics["sourceWindowTranscription:\(interjectionId)"] = "complete:speech_window"
-                        self.diagnostics["sourceWindowContextProvenance:\(interjectionId)"] = provenance
-                        self.diagnostics["sourceWindowSignature:\(interjectionId)"] = referenceEvidence.isEmpty
+                        self.diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", sessionId: interjection.sessionId, interjectionId: interjectionId)] = "complete:speech_window"
+                        self.diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", sessionId: interjection.sessionId, interjectionId: interjectionId)] = provenance
+                        self.diagnostics[Self.marginDiagnosticKey("sourceWindowSignature", sessionId: interjection.sessionId, interjectionId: interjectionId)] = referenceEvidence.isEmpty
                             ? "unavailable:\(referenceEvidenceFailure ?? "temporary_audio_unavailable")"
                             : "complete:\(referenceEvidence.count)"
                         self.pendingSourceContextInterjectionIds.remove(Self.marginIdentity(interjection))
@@ -12298,8 +12318,8 @@ final class Gate1AppModel: ObservableObject {
                 }
             } catch {
                 await MainActor.run {
-                    self.diagnostics["sourceWindowTranscription:\(interjectionId)"] = "failed:\(error.localizedDescription)"
-                    self.diagnostics["sourceWindowContextProvenance:\(interjectionId)"] = "unavailable"
+                    self.diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", sessionId: interjection.sessionId, interjectionId: interjectionId)] = "failed:\(error.localizedDescription)"
+                    self.diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", sessionId: interjection.sessionId, interjectionId: interjectionId)] = "unavailable"
                     self.pendingSourceContextInterjectionIds.remove(Self.marginIdentity(interjection))
                     self.run { engine in
                         self.snapshot = try engine.sourceWindowContextUnavailable(interjectionId: interjectionId, sessionId: interjection.sessionId)
@@ -12357,16 +12377,16 @@ final class Gate1AppModel: ObservableObject {
         recordAnchorCaptureDiagnostics(for: interjection)
         switch interjection.podcastAnchorEvidenceCaptureStatus {
         case .pendingPostResumeSample:
-            diagnostics["podcastAnchorEvidence:\(interjection.id)"] = "sampling:decoded_playback_post_resume"
+            diagnostics[Self.marginDiagnosticKey("podcastAnchorEvidence", interjection)] = "sampling:decoded_playback_post_resume"
         case .pendingExactLocalCapture:
-            diagnostics["podcastAnchorEvidence:\(interjection.id)"] = "sampling:exact_local_playback_edition"
+            diagnostics[Self.marginDiagnosticKey("podcastAnchorEvidence", interjection)] = "sampling:exact_local_playback_edition"
         case .ready:
             break
         case .unavailable, nil:
             schedulePodcastAnchorEvidenceCapture(for: interjection)
         }
-        diagnostics["interjectionAudioAtCapture:\(interjection.id)"] = interjectionAudioEvidence(for: audioPath)
-        diagnostics["interjectionTranscription:\(interjection.id)"] = "scheduled"
+        diagnostics[Self.marginDiagnosticKey("interjectionAudioAtCapture", interjection)] = interjectionAudioEvidence(for: audioPath)
+        diagnostics[Self.marginDiagnosticKey("interjectionTranscription", interjection)] = "scheduled"
         Task {
             do {
                 let alignedTranscript = try await alignedInterjectionTranscriptionHandler?(audioPath)
@@ -12393,7 +12413,7 @@ final class Gate1AppModel: ObservableObject {
                         }
                         refreshSelectedItem()
                         refreshMarginRows()
-                        diagnostics["interjectionTranscription:\(interjection.id)"] = "complete"
+                        diagnostics[Self.marginDiagnosticKey("interjectionTranscription", interjection)] = "complete"
                         reportSuccess("Transcribed interjection.")
                     }
                     retryingInterjectionTranscriptionIds.remove(Self.marginIdentity(interjection))
@@ -12404,7 +12424,7 @@ final class Gate1AppModel: ObservableObject {
                     let failure = String(describing: error)
                     let wasRetry = retryingInterjectionTranscriptionIds.contains(Self.marginIdentity(interjection))
                     if wasRetry {
-                        diagnostics["interjectionTranscription:\(interjection.id)"] = "retry_failed:\(failure)"
+                        diagnostics[Self.marginDiagnosticKey("interjectionTranscription", interjection)] = "retry_failed:\(failure)"
                         diagnostics["lastInterjectionTranscriptionFailure"] = "\(interjection.id):\(failure)"
                         reportFailure("Saved audio and current transcript kept. Retranscription failed.")
                     } else {
@@ -12412,7 +12432,7 @@ final class Gate1AppModel: ObservableObject {
                             snapshot = try engine.transcriptionFailed(interjectionId: interjection.id, sessionId: interjection.sessionId, error: failure)
                             refreshSelectedItem()
                         refreshMarginRows()
-                            diagnostics["interjectionTranscription:\(interjection.id)"] = "failed:\(failure)"
+                            diagnostics[Self.marginDiagnosticKey("interjectionTranscription", interjection)] = "failed:\(failure)"
                             diagnostics["lastInterjectionTranscriptionFailure"] = "\(interjection.id):\(failure)"
                             reportFailure("Audio saved. Transcript failed.")
                         }
@@ -12441,7 +12461,7 @@ final class Gate1AppModel: ObservableObject {
             )
             return
         }
-        diagnostics["podcastAnchorEvidence:\(interjection.id)"] = "scheduled"
+        diagnostics[Self.marginDiagnosticKey("podcastAnchorEvidence", interjection)] = "scheduled"
         let request = PostResumeAudioSampleRequest(
             interjectionId: interjection.id,
             sessionId: interjection.sessionId,
@@ -12485,7 +12505,7 @@ final class Gate1AppModel: ObservableObject {
                             evidence: captured,
                             sourceExactEditionSHA256: digestAfterCapture
                         )
-                        self?.diagnostics["podcastAnchorEvidence:\(interjection.id)"] = "complete:\(captured.count)"
+                        self?.diagnostics[Self.marginDiagnosticKey("podcastAnchorEvidence", interjection)] = "complete:\(captured.count)"
                     } catch {
                         self?.markPodcastAnchorEvidenceUnavailable(
                             request: request,
@@ -12529,7 +12549,7 @@ final class Gate1AppModel: ObservableObject {
                     )],
                     sourceExactEditionSHA256: nil
                 )
-                diagnostics["podcastAnchorEvidence:\(capture.request.interjectionId)"] =
+                diagnostics[Self.marginDiagnosticKey("podcastAnchorEvidence", capture.request)] =
                     "complete:decoded_playback_\(capture.windowRole.rawValue):bytes=\(capture.signatureData.count)"
             } catch {
                 markPodcastAnchorEvidenceUnavailable(
@@ -12547,8 +12567,8 @@ final class Gate1AppModel: ObservableObject {
                     "persistence_failed:\(error.localizedDescription)"
             }
         case .failed(let request, let reason):
-            if let interjection = storedInterjection(request: request) {
-                diagnostics["podcastAnchorEvidence:\(request.interjectionId)"] = "stream_failed:\(reason)"
+            if let interjection = recordPodcastAnchorEvidenceFailureReason(request: request, reason: "stream_failed:\(reason)") {
+                diagnostics[Self.marginDiagnosticKey("podcastAnchorEvidence", request)] = "stream_failed:\(reason)"
                 schedulePodcastAnchorEvidenceCapture(for: interjection)
             } else {
                 markPodcastAnchorEvidenceUnavailable(request: request, reason: reason)
@@ -12672,7 +12692,6 @@ final class Gate1AppModel: ObservableObject {
         interjection.podcastAnchorEvidence = merged.sorted { $0.id < $1.id }
         interjection.sourceExactEditionSHA256 = sourceExactEditionSHA256
         interjection.podcastAnchorEvidenceCaptureStatus = .ready
-        interjection.podcastAnchorEvidenceFailureReason = nil
         if interjection.anchorContextStatus == .pending {
             interjection.anchorContextStatus = .unavailable
         }
@@ -12691,16 +12710,20 @@ final class Gate1AppModel: ObservableObject {
               var interjection = records.first(where: {
                   $0.id == request.interjectionId && $0.itemId == request.itemId
               }) else {
-            diagnostics["podcastAnchorEvidence:\(request.interjectionId)"] = "unavailable:\(reason)"
+            diagnostics[Self.marginDiagnosticKey("podcastAnchorEvidence", request)] = "unavailable:\(reason)"
             return
         }
         interjection.podcastAnchorEvidenceCaptureStatus = .unavailable
-        interjection.podcastAnchorEvidenceFailureReason = reason
+        interjection.podcastAnchorEvidenceFailureReason = PodcastAnchorCaptureDiagnostics.appendingFailureReason(
+            reason,
+            to: interjection.podcastAnchorEvidenceFailureReason
+        )
         try? store.saveInterjection(interjection)
         if activeItemId == request.itemId {
             refreshSelectedItem()
         }
-        diagnostics["podcastAnchorEvidence:\(request.interjectionId)"] = "unavailable:\(reason)"
+        diagnostics[Self.marginDiagnosticKey("podcastAnchorEvidence", request)] =
+            "unavailable:\(interjection.podcastAnchorEvidenceFailureReason ?? reason)"
         scheduleSourceWindowContextIfNeeded(for: interjection)
     }
 
@@ -12711,11 +12734,24 @@ final class Gate1AppModel: ObservableObject {
                   $0.id == request.interjectionId && $0.itemId == request.itemId
               }) else { return }
         interjection.podcastAnchorEvidenceCaptureStatus = .pendingExactLocalCapture
-        interjection.podcastAnchorEvidenceFailureReason = nil
         try? store.saveInterjection(interjection)
         if activeItemId == request.itemId {
             refreshSelectedItem()
         }
+    }
+
+    /// Stores a failure without changing capture status, so a fallback that runs next can't hide it.
+    private func recordPodcastAnchorEvidenceFailureReason(
+        request: PostResumeAudioSampleRequest,
+        reason: String
+    ) -> Interjection? {
+        guard var interjection = storedInterjection(request: request) else { return nil }
+        interjection.podcastAnchorEvidenceFailureReason = PodcastAnchorCaptureDiagnostics.appendingFailureReason(
+            reason,
+            to: interjection.podcastAnchorEvidenceFailureReason
+        )
+        try? store?.saveInterjection(interjection)
+        return interjection
     }
 
     func prepareExportShareInterjections() {
@@ -13720,7 +13756,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func recordAnchorCaptureDiagnostics(for interjection: Interjection) {
-        diagnostics["interjectionAnchorAtCapture:\(interjection.id)"] = [
+        diagnostics[Self.marginDiagnosticKey("interjectionAnchorAtCapture", interjection)] = [
             "type=\(interjection.anchor.anchorType.rawValue)",
             "media_time=\(interjection.anchor.mediaTimeMs == nil ? "missing" : "present")",
             "segment=\(interjection.anchor.transcriptSegmentId == nil ? "missing" : "present")",

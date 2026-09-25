@@ -735,7 +735,7 @@ final class SourceLinkImportTests: XCTestCase {
         model.dispatchGate2CompactCommand(.finishInterjection)
         let request = await transcriber.waitForWindowRequest()
         try await waitFor("source window context to attach") {
-            model.diagnostics["sourceWindowTranscription:ij-001"] == "complete:speech_window"
+            model.marginDiagnostic("sourceWindowTranscription", interjectionId: "ij-001") == "complete:speech_window"
         }
 
         XCTAssertEqual(request.anchorMediaTimeMs, 123_000)
@@ -745,7 +745,7 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorBefore, "Earlier context. Minute before. Interjection context.")
         XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorAfter, "Minute after. Later context.")
         XCTAssertEqual(model.selectedItem.interjections.first?.anchorContextStatus, .ready)
-        XCTAssertEqual(model.diagnostics["sourceWindowContextProvenance:ij-001"], "bounded_remote_window")
+        XCTAssertEqual(model.marginDiagnostic("sourceWindowContextProvenance", interjectionId: "ij-001"), "bounded_remote_window")
     }
 
     func testInterjectionTranscriptionFinishesBeforeSourceWindowTranscriptionStarts() async throws {
@@ -791,12 +791,12 @@ final class SourceLinkImportTests: XCTestCase {
         await interjectionTranscriber.complete(with: "My recorded note.")
         _ = await sourceTranscriber.waitForWindowRequest()
         try await waitFor("both transcription stages to finish") {
-            model.diagnostics["sourceWindowTranscription:ij-001"] == "complete:speech_window"
+            model.marginDiagnostic("sourceWindowTranscription", interjectionId: "ij-001") == "complete:speech_window"
         }
 
-        XCTAssertEqual(model.diagnostics["interjectionTranscription:ij-001"], "complete")
+        XCTAssertEqual(model.marginDiagnostic("interjectionTranscription", interjectionId: "ij-001"), "complete")
         XCTAssertEqual(
-            model.diagnostics["interjectionAnchorAtCapture:ij-001"],
+            model.marginDiagnostic("interjectionAnchorAtCapture", interjectionId: "ij-001"),
             "type=media;media_time=present;segment=missing;before=missing;after=missing;context=pending"
         )
         XCTAssertEqual(model.selectedItem.interjections.first?.transcript, "My recorded note.")
@@ -962,12 +962,12 @@ final class SourceLinkImportTests: XCTestCase {
         }
 
         XCTAssertFalse(model.retryingInterjectionTranscriptionIds.contains(interjection.id))
-        XCTAssertEqual(model.diagnostics["interjectionTranscription:\(interjection.id)"], "complete")
+        XCTAssertEqual(model.diagnostics[Gate1AppModel.marginDiagnosticKey("interjectionTranscription", interjection)], "complete")
 
         let recovered = try XCTUnwrap(model.selectedItem.interjections.first)
         model.retryInterjectionTranscription(recovered)
         try await waitFor("failed retry evidence") {
-            model.diagnostics["interjectionTranscription:\(interjection.id)"]?.hasPrefix("retry_failed:") == true
+            model.diagnostics[Gate1AppModel.marginDiagnosticKey("interjectionTranscription", interjection)]?.hasPrefix("retry_failed:") == true
         }
 
         XCTAssertEqual(model.selectedItem.interjections.first?.transcript, "The complete saved interjection is restored from its original audio.")
@@ -2616,4 +2616,11 @@ private final class AliasedFeedURLProtocol: URLProtocol, @unchecked Sendable {
         client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}
+}
+
+private extension Gate1AppModel {
+    /// Per-Margin diagnostics are keyed by a session token; these tests run a single session.
+    func marginDiagnostic(_ name: String, interjectionId: String) -> String? {
+        diagnostics.first { $0.key.hasPrefix("\(name):") && $0.key.hasSuffix("/\(interjectionId)") }?.value
+    }
 }

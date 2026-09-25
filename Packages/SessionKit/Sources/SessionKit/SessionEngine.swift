@@ -1556,6 +1556,14 @@ public final class SessionEngine {
                 interjection.podcastAnchorEvidenceFailureReason = "decoded_playback_sample_unavailable"
                 try repository.saveInterjection(interjection)
                 lastMediaPercentageRepair = nil
+            } else if !capturedPreWindow || !armedPostWindow {
+                // One window still runs; record the one that didn't so a later success can't hide it.
+                interjection.podcastAnchorEvidenceFailureReason = PodcastAnchorCaptureDiagnostics.appendingFailureReason(
+                    capturedPreWindow ? "post_window_not_armed" : "pre_window_not_captured",
+                    to: interjection.podcastAnchorEvidenceFailureReason
+                )
+                try repository.saveInterjection(interjection)
+                lastMediaPercentageRepair = nil
             }
         }
         try transcriber.scheduleTranscription(interjection: interjection)
@@ -2091,7 +2099,6 @@ public final class SessionEngine {
             interjection.podcastAnchorEvidence = evidence
             interjection.sourceExactEditionSHA256 = sourceExactEditionSHA256
             interjection.podcastAnchorEvidenceCaptureStatus = .ready
-            interjection.podcastAnchorEvidenceFailureReason = nil
         }
         return snapshot
     }
@@ -2104,7 +2111,10 @@ public final class SessionEngine {
     ) throws -> SessionSnapshot {
         try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
             interjection.podcastAnchorEvidenceCaptureStatus = .unavailable
-            interjection.podcastAnchorEvidenceFailureReason = reason
+            interjection.podcastAnchorEvidenceFailureReason = PodcastAnchorCaptureDiagnostics.appendingFailureReason(
+                reason,
+                to: interjection.podcastAnchorEvidenceFailureReason
+            )
         }
         return snapshot
     }

@@ -2620,6 +2620,51 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertNil(interjection.podcastAnchorEvidenceFailureReason)
     }
 
+    func testMissedPreWindowIsRecordedAndSurvivesALaterFailure() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "post-resume-anchor",
+            displayName: "Post-resume podcast anchor",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["native_media"],
+                "interjection": ["record_audio", "capture_media_anchor"]
+            ]
+        )
+        let item = Item(
+            id: "episode-pre-missed",
+            title: "Pre-window missed",
+            mediaType: "audio",
+            text: nil,
+            externalReference: "https://example.com/episode",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://cdn.example.com/episode.mp3", durationMs: 900_000)
+        )
+        let audio = RecordingAudioClient()
+        audio.acceptsPostResumeSamples = true
+        audio.acceptsPreInterjectionSamples = false
+        let repository = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repository, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentMediaTimeValue = 321_000
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: "interjections/pre-missed.m4a")
+        let request = try XCTUnwrap(audio.postResumeSampleRequests.first)
+        var interjection = try XCTUnwrap(try repository.loadInterjections(sessionId: request.sessionId).first)
+        XCTAssertEqual(interjection.podcastAnchorEvidenceCaptureStatus, .pendingPostResumeSample)
+        XCTAssertEqual(interjection.podcastAnchorEvidenceFailureReason, "pre_window_not_captured")
+
+        _ = try engine.podcastAnchorEvidenceFailed(
+            interjectionId: interjection.id,
+            sessionId: request.sessionId,
+            reason: "post_resume_timeout"
+        )
+        interjection = try XCTUnwrap(try repository.loadInterjections(sessionId: request.sessionId).first)
+        XCTAssertEqual(interjection.podcastAnchorEvidenceCaptureStatus, .unavailable)
+        XCTAssertEqual(interjection.podcastAnchorEvidenceFailureReason, "pre_window_not_captured | post_resume_timeout")
+    }
+
     func testSourceAnchorContextSlicesOneWholeEpisodeSegmentByMediaTime() throws {
         let words = (0..<600).map { String(format: "token%03d", $0) }
         let timeline = TranscriptTimeline(
@@ -6426,6 +6471,7 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     var backgroundAudioStates: [Bool] = []
     var playbackVolumes: [Float] = []
     var acceptsPostResumeSamples = false
+    var acceptsPreInterjectionSamples: Bool?
     var postResumeSampleRequests: [PostResumeAudioSampleRequest] = []
     var preInterjectionSampleRequests: [PostResumeAudioSampleRequest] = []
     var eventLog: [String] = []
@@ -6569,7 +6615,7 @@ private final class RecordingAudioClient: AudioPlaybackClient {
 
     func captureBufferedPreInterjectionAudioSample(_ request: PostResumeAudioSampleRequest) -> Bool {
         preInterjectionSampleRequests.append(request)
-        return acceptsPostResumeSamples
+        return acceptsPreInterjectionSamples ?? acceptsPostResumeSamples
     }
 }
 
