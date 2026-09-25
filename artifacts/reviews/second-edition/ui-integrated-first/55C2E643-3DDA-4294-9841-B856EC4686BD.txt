@@ -1,5 +1,0 @@
-Query chain:
- →Find: Target Application 'com.spokenmargins.native'
-  ↪︎Find: Descendants matching type Any
-    ↪︎Find: Elements matching predicate 'identifier BEGINSWITH "build23.imported.layer." AND identifier ENDSWITH ".provenance"'
-      ↪︎Find: First Match

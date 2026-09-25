@@ -1,3 +1,0 @@
-com.apple.private.appintents.live-entities.read: created
-com.apple.private.appintents.live-entities.write: created
-com.apple.security.app-sandbox: created

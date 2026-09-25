@@ -1,6 +1,0 @@
-{
-  "App/SpokenMarginsAppTests/Gate1AppModelWorkflowTests.swift": "1badbbd6187729d63b76cdbf691e98dfe5007734a13751b3681773d7fa098343",
-  "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift": "8016c03f48f34156544c609db4d18e806d38d7246df84cd80fc07a0cde6ea4e7",
-  "Packages/SessionKit/Sources/SessionKitPersistence/SQLiteSessionStore.swift": "665b69cdccbbef7d7119a10b7bb5cd69adfdaba1b2013c676f14af175b09c97f",
-  "App/SpokenMarginsAppTests/SpokenMarginsPackageHandoffTests.swift": "a0604bebf0c46ec95bcab49dbc63956ea5162a6095206ceae1ac5eafccffc452"
-}

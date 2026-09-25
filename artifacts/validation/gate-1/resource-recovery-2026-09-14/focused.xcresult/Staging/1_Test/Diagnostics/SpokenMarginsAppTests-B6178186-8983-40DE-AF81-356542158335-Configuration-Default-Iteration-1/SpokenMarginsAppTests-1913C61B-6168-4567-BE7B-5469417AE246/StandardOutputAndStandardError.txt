@@ -1,4 +1,0 @@
-
-
-*** If you believe this error represents a bug, please attach the result bundle at /Users/colemiller/Documents/GitHub/spoken-margins-native/artifacts/validation/gate-1/resource-recovery-2026-09-14/focused.xcresult
-

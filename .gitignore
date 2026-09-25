@@ -8,9 +8,6 @@ node_modules/
 dist/
 coverage/
 .venv/
-artifacts/releases/
-
-artifacts/test-runs/
 __pycache__/
 
 # Local review/simulator recordings; keep video binaries out of Git.
@@ -22,3 +19,13 @@ __pycache__/
 *.[mM][kK][vV]
 *.[mM][pP][eE][gG]
 *.[mM][pP][gG]
+
+# Test, build, and validation evidence stays local (or on the external drive).
+# Summarize results in commit messages, PRs, or issues instead of committing them.
+artifacts/
+*.xcresult/
+*.xcarchive/
+*.ipa
+*.dSYM/
+*.ips
+*.logarchive/

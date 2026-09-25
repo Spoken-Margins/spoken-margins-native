@@ -1,4 +1,0 @@
-Bundle 'com.apple.CoreSimulator':
-	path: /Library/Developer/PrivateFrameworks/CoreSimulator.framework
-	version:1051.55
-

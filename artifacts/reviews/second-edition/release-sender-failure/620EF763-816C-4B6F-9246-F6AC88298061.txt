@@ -1,4 +1,0 @@
-Query chain:
- →Find: Target Application 'com.spokenmargins.native'
-  ↪︎Find: Descendants matching type Any
-    ↪︎Find: Elements matching predicate '"build23.sender.recipient.verified-preview" IN identifiers'
