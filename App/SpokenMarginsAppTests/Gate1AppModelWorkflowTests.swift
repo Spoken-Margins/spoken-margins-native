@@ -106,7 +106,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         }
         model.openHome()
         XCTAssertEqual(model.screen, .home)
-        await fulfillment(of: [readStarted], timeout: 2)
+        // Checks ordering, not speed; the seeded Library read takes ~2 s on a simulator.
+        await fulfillment(of: [readStarted], timeout: 10)
         model.libraryItems = [LibraryItemRow(id: "newer-item", title: "Newer state", status: "Ready", canDelete: true)]
         release.continuation.yield(())
         release.continuation.finish()
