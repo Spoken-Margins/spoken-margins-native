@@ -58,7 +58,11 @@ Tests that pass while the app is broken usually fake the exact boundary that bro
 
 The scripted UI route plans (`--plan ui`, `speech-canary`, `release`) are retired from routine use. They were slow, prone to crashing the simulator, and missed the failures the owner found. Use journeys instead.
 
-If simulator system processes start crashing, stop, shut that simulator down, and report. Don't reboot in a loop or switch devices to get around it.
+**Simulator crashes: use judgment.** The real hazard is a crash flood: many identical system-process crashes within a minute, which spam the owner's screen with dialogs (once about 20 in 10 seconds).
+
+- **Stop for a flood.** If you see three or more crashes of the same process within a minute, stop, shut that simulator down, and report. Don't reboot in a loop, and don't switch devices to get around it.
+- **Continue after a lone crash.** A single system-process crash can be noted and work can continue. Keep going on the same simulator or another one, and mention the crash in the report.
+- **Automated handling.** `scripts/verify-tests.py` records isolated crashes as warnings and stops only on a flood.
 
 Status words:
 

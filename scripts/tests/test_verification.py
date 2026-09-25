@@ -18,12 +18,32 @@ spec.loader.exec_module(verification)
 
 
 class VerificationTests(unittest.TestCase):
-    def test_any_simulator_crash_stops_command_and_shuts_down(self):
+    def crash_reports(self, *names):
+        reports = iter([Path(name) for name in names])
+        return lambda *args: next(reports, None)
+
+    def test_single_simulator_crash_is_recorded_and_command_continues(self):
         with tempfile.TemporaryDirectory() as temporary:
             run = verification.Run(Path(temporary) / 'run', 'test')
             run.manifest['destination'] = {'udid': 'synthetic-device'}
             run.crash_baseline = {}
-            with patch.object(verification, 'new_crash', return_value=Path('WidgetRenderer_Default.ips')), \
+            crash = 'AppIntentsLiveEntityService-2026-09-24-223752.ips'
+            with patch.object(verification, 'new_crash', side_effect=self.crash_reports(crash)), \
+                    patch.object(verification.subprocess, 'run') as shutdown:
+                run.command('crash-check', [sys.executable, '-c', 'import time; time.sleep(1)'])
+                shutdown.assert_not_called()
+            step = run.manifest['steps'][-1]
+            self.assertEqual(step['simulator_crash_reports'], [crash])
+            self.assertNotIn('simulator_crash_report', step)
+            self.assertEqual(step['exit_code'], 0)
+
+    def test_repeated_identical_simulator_crashes_stop_command_and_shut_down(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'test')
+            run.manifest['destination'] = {'udid': 'synthetic-device'}
+            run.crash_baseline = {}
+            crashes = [f'WidgetRenderer_Default-2026-09-24-10000{i}.ips' for i in range(3)]
+            with patch.object(verification, 'new_crash', side_effect=self.crash_reports(*crashes)), \
                     patch.object(verification.subprocess, 'run') as shutdown:
                 shutdown.return_value.returncode = 0
                 with self.assertRaises(RuntimeError):
@@ -31,7 +51,7 @@ class VerificationTests(unittest.TestCase):
                 self.assertEqual(shutdown.call_args.args[0],
                                  ['xcrun', 'simctl', 'shutdown', 'synthetic-device'])
             step = run.manifest['steps'][-1]
-            self.assertEqual(step['simulator_crash_report'], 'WidgetRenderer_Default.ips')
+            self.assertEqual(step['simulator_crash_report'], crashes[-1])
             self.assertEqual(step['exit_code'], 124)
 
     def simulator_inventory(self):

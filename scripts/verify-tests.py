@@ -120,10 +120,32 @@ class Run:
                          'branch': capture(['git', 'branch', '--show-current']),
                          'input_sha256': input_identity(), 'status': 'running', 'steps': []}
         self.crash_baseline = None
+        self.crash_times = {}
         self.save()
 
     def save(self):
         (self.output / 'manifest.json').write_text(json.dumps(self.manifest, indent=2) + '\n')
+
+    # A lone system-process crash is recorded and the run continues. Only a flood of
+    # identical crashes (the pattern that spams crash dialogs) stops and shuts down.
+    CRASH_FLOOD_COUNT = 3
+    CRASH_FLOOD_WINDOW_SECONDS = 60
+
+    def note_crash(self, entry, report):
+        try:
+            self.crash_baseline[report] = (report.stat().st_mtime_ns, report.stat().st_size)
+        except OSError:
+            self.crash_baseline[report] = (0, 0)
+        process = re.sub(r'-\d{4}-\d{2}-\d{2}-\d{6}.*$', '', report.name)
+        now = time.monotonic()
+        self.crash_times.setdefault(process, []).append(now)
+        entry.setdefault('simulator_crash_reports', []).append(str(report))
+        recent = [t for t in self.crash_times[process] if now - t <= self.CRASH_FLOOD_WINDOW_SECONDS]
+        if len(recent) >= self.CRASH_FLOOD_COUNT:
+            entry['simulator_crash_report'] = str(report)
+            return True
+        print(f'warning: simulator process crashed once ({process}); continuing', flush=True)
+        return False
 
     def command(self, name, args, timeout=180, expected=None, allowed_skips=(), tests=False):
         entry = {'name': name, 'command': args, 'timeout_seconds': timeout,
@@ -145,8 +167,8 @@ class Run:
             try:
                 while True:
                     if device and (report := new_crash(reports, self.crash_baseline, device)):
-                        entry['simulator_crash_report'] = str(report)
-                        raise InterruptedError('Simulator process crashed')
+                        if self.note_crash(entry, report):
+                            raise InterruptedError('Repeated simulator process crashes')
                     remaining = timeout - (time.monotonic() - start)
                     if remaining <= 0:
                         raise subprocess.TimeoutExpired(args, timeout)
