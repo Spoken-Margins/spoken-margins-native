@@ -1,0 +1,69 @@
+name: SpokenMarginsDesktopHost
+options:
+  bundleIdPrefix: com.spokenmargins
+  deploymentTarget:
+    macOS: "15.0"
+packages:
+  SessionKit:
+    path: Packages/SessionKit
+targets:
+  DesktopCore:
+    type: framework
+    platform: macOS
+    sources:
+      - path: App/SpokenMarginsDesktop/Sources/DesktopCore
+    dependencies:
+      - package: SessionKit
+        product: SessionKit
+      - package: SessionKit
+        product: SessionKitPersistence
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.desktop.core
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "6.0"
+  SpokenMarginsDesktop:
+    type: application
+    platform: macOS
+    sources:
+      - path: App/SpokenMarginsDesktop/Sources/SpokenMarginsDesktop
+      - path: App/SpokenMarginsApp/Resources/Supertonic
+        type: folder
+        buildPhase: resources
+      - path: App/SpokenMarginsDesktop/Resources/chatterbox_worker.py
+        buildPhase: resources
+    dependencies:
+      - target: DesktopCore
+      - target: SpokenMarginsDesktopBrowserExtension
+      - package: SessionKit
+        product: SessionKitAudio
+      - package: SessionKit
+        product: SessionKitSupertonic
+    settings:
+      base:
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: J8SWC6J3VY
+        PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.desktop
+        INFOPLIST_FILE: App/SpokenMarginsDesktop/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsDesktop/SpokenMarginsDesktop.entitlements
+        SWIFT_VERSION: "6.0"
+        ENABLE_HARDENED_RUNTIME: YES
+        ENABLE_DEBUG_DYLIB: NO
+  SpokenMarginsDesktopBrowserExtension:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: App/SpokenMarginsDesktopBrowserExtension/Sources
+      - path: App/SpokenMarginsDesktopBrowserExtension/Resources
+      - path: App/SharedResources/browserTextCapture.js
+        buildPhase: resources
+    settings:
+      base:
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: J8SWC6J3VY
+        CURRENT_PROJECT_VERSION: "5"
+        PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.desktop.browser
+        INFOPLIST_FILE: App/SpokenMarginsDesktopBrowserExtension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsDesktopBrowserExtension/SpokenMarginsDesktopBrowserExtension.entitlements
+        SWIFT_VERSION: "6.0"
+        ENABLE_DEBUG_DYLIB: NO

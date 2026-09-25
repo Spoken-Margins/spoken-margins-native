@@ -1,0 +1,794 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0183C73F84FFC05709F69A1E /* RecordingControlPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30B2AC40A9B166B9FA2CCD3 /* RecordingControlPanel.swift */; };
+		01D69164A1BAE61C73BE51BD /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = 3F6075DD580B43C5961D6E6A /* popup.js */; };
+		0F0E249100E0AFC8A74A66E9 /* SpokenMarginsDesktopApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DB6B751E7865FDD59D5369A /* SpokenMarginsDesktopApp.swift */; };
+		0F57B398CF4F8DA1A7EFA8BB /* DesktopVoiceCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CD1E4371E528F353C596D2F /* DesktopVoiceCatalog.swift */; };
+		1AAAA833763FDD71604256B8 /* DesktopAudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85034F4469FC25DCC8B5BFD9 /* DesktopAudio.swift */; };
+		1F05F6D5B3028E404B117710 /* DesktopSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64E683AFC3360813864696B5 /* DesktopSessionStore.swift */; };
+		23170D73EF018EF4B85F3CF1 /* SpokenMarginsDesktopBrowserExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 953C315E83B2003E995FBC92 /* SpokenMarginsDesktopBrowserExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		23F627CE353DCF3037545FF1 /* DesktopNeuralSpeech.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0CB6ED5B0E0034C3C54EB95 /* DesktopNeuralSpeech.swift */; };
+		2597BBBC4764DE2FB9BE6514 /* DesktopVoiceOnboarding.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85891C3904CE2118A6187F3E /* DesktopVoiceOnboarding.swift */; };
+		27CF291D8CB128A28731903A /* DesktopChatterboxService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1CA8429299AD4D377EFC90F /* DesktopChatterboxService.swift */; };
+		2AF3C2A7F4A0C7C970D50BBD /* DesktopTextNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FCE00705DD226C4DD18ADE5 /* DesktopTextNavigation.swift */; };
+		330D3BA8ED3EDA36D1F97C52 /* SessionKitSupertonic in Frameworks */ = {isa = PBXBuildFile; productRef = 2AB5D4EC27CB0361354AAAFC /* SessionKitSupertonic */; };
+		4E92B2026A788933D789F89A /* browserTextCapture.js in Resources */ = {isa = PBXBuildFile; fileRef = 741BEC3C70AF8359F32D2504 /* browserTextCapture.js */; };
+		51D9F4323ED9E6FF03D3C640 /* DesktopSpeechChunker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1EAC32162C2F43D20D8DDEA /* DesktopSpeechChunker.swift */; };
+		52A7EA833743F5AC929EA71F /* Supertonic in Resources */ = {isa = PBXBuildFile; fileRef = 28171B6EF2478D139778B919 /* Supertonic */; };
+		659DEAE064E4C7F76E4172EC /* DesktopModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57BD4E73E346EBE5B6DA4436 /* DesktopModel.swift */; };
+		6805B51A9C4511A67D0FD946 /* DesktopBrowserInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFE68B2BE4C4510A56760546 /* DesktopBrowserInbox.swift */; };
+		7B58A7CCB2287F65DEA13D46 /* SessionKit in Frameworks */ = {isa = PBXBuildFile; productRef = A29200CB89F18EE8AB570A40 /* SessionKit */; };
+		7B8FD965BD44BABE1FDC291E /* DesktopCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = AB6EB596216B9F6D10E9C6FA /* DesktopCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		7DDBB433859D467DF01CD617 /* DesktopChapterSummaryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 809A0F03E38B8C86C54C3B3E /* DesktopChapterSummaryStore.swift */; };
+		8DD2E2CAC86772CC24783A51 /* ChatterboxResourcePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15E31B9F0E730986DE284862 /* ChatterboxResourcePolicy.swift */; };
+		B310F2A3F07D036AE78704E9 /* SessionKitPersistence in Frameworks */ = {isa = PBXBuildFile; productRef = 7C616B79C7F282BCFEA9410E /* SessionKitPersistence */; };
+		C7D99807376FF36FED30C662 /* popup.html in Resources */ = {isa = PBXBuildFile; fileRef = B8B65C89A751B23CFFF7C30B /* popup.html */; };
+		CB164409959682D99DBE74CB /* DesktopSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C252E658846C0DEFEF3EAE7 /* DesktopSettingsView.swift */; };
+		CB2A91659F371FFF576AAEEA /* SessionKitAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 75EBC3CF47DE7DCEA929695D /* SessionKitAudio */; };
+		DE4DD8FAC005D93478FB2B9E /* DesktopChapterSummarizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C527CE2E763723F6DEB160B5 /* DesktopChapterSummarizer.swift */; };
+		DF8A69096109F97322CC7676 /* CompanionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BDED03D880B84870768BE27 /* CompanionView.swift */; };
+		E2854D92B113614E7B764F9F /* DesktopCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AB6EB596216B9F6D10E9C6FA /* DesktopCore.framework */; };
+		ECB2C3E2951812F2404CEA5E /* DesktopDesign.swift in Sources */ = {isa = PBXBuildFile; fileRef = F57A609CDB5FFA833A34325B /* DesktopDesign.swift */; };
+		ED4E994F34EC699100119FF9 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 925A7EDBFC38F59D4758D2B3 /* manifest.json */; };
+		F82002648A61A8293FE2A335 /* popup.css in Resources */ = {isa = PBXBuildFile; fileRef = 1F5B13BF89E4D82BFBD451A5 /* popup.css */; };
+		F84919B648AC3FE4FEF7C359 /* chatterbox_worker.py in Resources */ = {isa = PBXBuildFile; fileRef = 01DC66935ED866D29CB12890 /* chatterbox_worker.py */; };
+		FDBE0D59AF30F561385028DD /* DesktopSafariExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E4E577C9C0D6362C5282231 /* DesktopSafariExtensionHandler.swift */; };
+		FE42D41469B85B7987904E7D /* DesktopURLRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF1EEA8578FDF1FAA2CA0BAB /* DesktopURLRouter.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		B1D04C81F18D79743CD3783C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = ADE58DC63E49184777E2156C /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 54FE8E4651FB3CF39788F95F;
+			remoteInfo = SpokenMarginsDesktopBrowserExtension;
+		};
+		E55C7C0EE2B77BC21CFA567C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = ADE58DC63E49184777E2156C /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 9DDB9B946177D2F08B3D309F;
+			remoteInfo = DesktopCore;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		D7D52D012D123581A2B2AFD7 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				7B8FD965BD44BABE1FDC291E /* DesktopCore.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FC34332AE60BC6B16C5D19C5 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				23170D73EF018EF4B85F3CF1 /* SpokenMarginsDesktopBrowserExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		01B6409B74413E02AC25B593 /* SessionKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SessionKit; path = Packages/SessionKit; sourceTree = SOURCE_ROOT; };
+		01DC66935ED866D29CB12890 /* chatterbox_worker.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = chatterbox_worker.py; sourceTree = "<group>"; };
+		0C252E658846C0DEFEF3EAE7 /* DesktopSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopSettingsView.swift; sourceTree = "<group>"; };
+		15E31B9F0E730986DE284862 /* ChatterboxResourcePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatterboxResourcePolicy.swift; sourceTree = "<group>"; };
+		1F5B13BF89E4D82BFBD451A5 /* popup.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = popup.css; sourceTree = "<group>"; };
+		28171B6EF2478D139778B919 /* Supertonic */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Supertonic; path = App/SpokenMarginsApp/Resources/Supertonic; sourceTree = SOURCE_ROOT; };
+		3CD1E4371E528F353C596D2F /* DesktopVoiceCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopVoiceCatalog.swift; sourceTree = "<group>"; };
+		3F6075DD580B43C5961D6E6A /* popup.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = popup.js; sourceTree = "<group>"; };
+		3FCE00705DD226C4DD18ADE5 /* DesktopTextNavigation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopTextNavigation.swift; sourceTree = "<group>"; };
+		57BD4E73E346EBE5B6DA4436 /* DesktopModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopModel.swift; sourceTree = "<group>"; };
+		5BDED03D880B84870768BE27 /* CompanionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionView.swift; sourceTree = "<group>"; };
+		5C7617325F554EFA30BA8C5A /* SpokenMarginsDesktop.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SpokenMarginsDesktop.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5E4E577C9C0D6362C5282231 /* DesktopSafariExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopSafariExtensionHandler.swift; sourceTree = "<group>"; };
+		64E683AFC3360813864696B5 /* DesktopSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopSessionStore.swift; sourceTree = "<group>"; };
+		741BEC3C70AF8359F32D2504 /* browserTextCapture.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = browserTextCapture.js; sourceTree = "<group>"; };
+		7DB6B751E7865FDD59D5369A /* SpokenMarginsDesktopApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpokenMarginsDesktopApp.swift; sourceTree = "<group>"; };
+		809A0F03E38B8C86C54C3B3E /* DesktopChapterSummaryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopChapterSummaryStore.swift; sourceTree = "<group>"; };
+		85034F4469FC25DCC8B5BFD9 /* DesktopAudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopAudio.swift; sourceTree = "<group>"; };
+		85891C3904CE2118A6187F3E /* DesktopVoiceOnboarding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopVoiceOnboarding.swift; sourceTree = "<group>"; };
+		925A7EDBFC38F59D4758D2B3 /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
+		953C315E83B2003E995FBC92 /* SpokenMarginsDesktopBrowserExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SpokenMarginsDesktopBrowserExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1EAC32162C2F43D20D8DDEA /* DesktopSpeechChunker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopSpeechChunker.swift; sourceTree = "<group>"; };
+		AB6EB596216B9F6D10E9C6FA /* DesktopCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = DesktopCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		B30B2AC40A9B166B9FA2CCD3 /* RecordingControlPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingControlPanel.swift; sourceTree = "<group>"; };
+		B8B65C89A751B23CFFF7C30B /* popup.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = popup.html; sourceTree = "<group>"; };
+		C527CE2E763723F6DEB160B5 /* DesktopChapterSummarizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopChapterSummarizer.swift; sourceTree = "<group>"; };
+		CF1EEA8578FDF1FAA2CA0BAB /* DesktopURLRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopURLRouter.swift; sourceTree = "<group>"; };
+		CFE68B2BE4C4510A56760546 /* DesktopBrowserInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopBrowserInbox.swift; sourceTree = "<group>"; };
+		F0CB6ED5B0E0034C3C54EB95 /* DesktopNeuralSpeech.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopNeuralSpeech.swift; sourceTree = "<group>"; };
+		F1CA8429299AD4D377EFC90F /* DesktopChatterboxService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopChatterboxService.swift; sourceTree = "<group>"; };
+		F57A609CDB5FFA833A34325B /* DesktopDesign.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopDesign.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		02CEC4AAB9561AB2B65E5C7A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7B58A7CCB2287F65DEA13D46 /* SessionKit in Frameworks */,
+				B310F2A3F07D036AE78704E9 /* SessionKitPersistence in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8DE1387C5E36B62D162C272D /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E2854D92B113614E7B764F9F /* DesktopCore.framework in Frameworks */,
+				CB2A91659F371FFF576AAEEA /* SessionKitAudio in Frameworks */,
+				330D3BA8ED3EDA36D1F97C52 /* SessionKitSupertonic in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		138B5A91A49E2F563A6BF17C /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				925A7EDBFC38F59D4758D2B3 /* manifest.json */,
+				1F5B13BF89E4D82BFBD451A5 /* popup.css */,
+				B8B65C89A751B23CFFF7C30B /* popup.html */,
+				3F6075DD580B43C5961D6E6A /* popup.js */,
+			);
+			name = Resources;
+			path = App/SpokenMarginsDesktopBrowserExtension/Resources;
+			sourceTree = "<group>";
+		};
+		17F0495353180DE95C23D391 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				5E4E577C9C0D6362C5282231 /* DesktopSafariExtensionHandler.swift */,
+			);
+			name = Sources;
+			path = App/SpokenMarginsDesktopBrowserExtension/Sources;
+			sourceTree = "<group>";
+		};
+		1AD62688F24CE55B3F1F017A /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				85034F4469FC25DCC8B5BFD9 /* DesktopAudio.swift */,
+				C527CE2E763723F6DEB160B5 /* DesktopChapterSummarizer.swift */,
+				F1CA8429299AD4D377EFC90F /* DesktopChatterboxService.swift */,
+				F0CB6ED5B0E0034C3C54EB95 /* DesktopNeuralSpeech.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		6C7138D75A567D2C64A7651E /* SharedResources */ = {
+			isa = PBXGroup;
+			children = (
+				741BEC3C70AF8359F32D2504 /* browserTextCapture.js */,
+			);
+			name = SharedResources;
+			path = App/SharedResources;
+			sourceTree = "<group>";
+		};
+		A20EE0B239E64614B01697F4 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				01B6409B74413E02AC25B593 /* SessionKit */,
+			);
+			path = Packages;
+			sourceTree = "<group>";
+		};
+		A36B580146753879D2886728 /* DesktopCore */ = {
+			isa = PBXGroup;
+			children = (
+				15E31B9F0E730986DE284862 /* ChatterboxResourcePolicy.swift */,
+				CFE68B2BE4C4510A56760546 /* DesktopBrowserInbox.swift */,
+				809A0F03E38B8C86C54C3B3E /* DesktopChapterSummaryStore.swift */,
+				64E683AFC3360813864696B5 /* DesktopSessionStore.swift */,
+				A1EAC32162C2F43D20D8DDEA /* DesktopSpeechChunker.swift */,
+				3FCE00705DD226C4DD18ADE5 /* DesktopTextNavigation.swift */,
+				3CD1E4371E528F353C596D2F /* DesktopVoiceCatalog.swift */,
+				85891C3904CE2118A6187F3E /* DesktopVoiceOnboarding.swift */,
+			);
+			name = DesktopCore;
+			path = App/SpokenMarginsDesktop/Sources/DesktopCore;
+			sourceTree = "<group>";
+		};
+		C6CC6FCE5ABD7E5BA9AE590B /* Stores */ = {
+			isa = PBXGroup;
+			children = (
+				57BD4E73E346EBE5B6DA4436 /* DesktopModel.swift */,
+			);
+			path = Stores;
+			sourceTree = "<group>";
+		};
+		CE493D5A8D6CD1AC09F572A5 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				CF1EEA8578FDF1FAA2CA0BAB /* DesktopURLRouter.swift */,
+				7DB6B751E7865FDD59D5369A /* SpokenMarginsDesktopApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		E3622F12D193E37344F2AB5E /* SpokenMarginsDesktop */ = {
+			isa = PBXGroup;
+			children = (
+				CE493D5A8D6CD1AC09F572A5 /* App */,
+				1AD62688F24CE55B3F1F017A /* Services */,
+				C6CC6FCE5ABD7E5BA9AE590B /* Stores */,
+				F0338C5231593A7FEBAF8091 /* Views */,
+			);
+			name = SpokenMarginsDesktop;
+			path = App/SpokenMarginsDesktop/Sources/SpokenMarginsDesktop;
+			sourceTree = "<group>";
+		};
+		E793975CEC0ABFF628EF7444 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				01DC66935ED866D29CB12890 /* chatterbox_worker.py */,
+			);
+			name = Resources;
+			path = App/SpokenMarginsDesktop/Resources;
+			sourceTree = "<group>";
+		};
+		EE471D1896B387C19A8F372A = {
+			isa = PBXGroup;
+			children = (
+				28171B6EF2478D139778B919 /* Supertonic */,
+				A36B580146753879D2886728 /* DesktopCore */,
+				A20EE0B239E64614B01697F4 /* Packages */,
+				E793975CEC0ABFF628EF7444 /* Resources */,
+				138B5A91A49E2F563A6BF17C /* Resources */,
+				6C7138D75A567D2C64A7651E /* SharedResources */,
+				17F0495353180DE95C23D391 /* Sources */,
+				E3622F12D193E37344F2AB5E /* SpokenMarginsDesktop */,
+				F96DA9F4FB125DD9BD59DA6B /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		F0338C5231593A7FEBAF8091 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				5BDED03D880B84870768BE27 /* CompanionView.swift */,
+				F57A609CDB5FFA833A34325B /* DesktopDesign.swift */,
+				0C252E658846C0DEFEF3EAE7 /* DesktopSettingsView.swift */,
+				B30B2AC40A9B166B9FA2CCD3 /* RecordingControlPanel.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		F96DA9F4FB125DD9BD59DA6B /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				AB6EB596216B9F6D10E9C6FA /* DesktopCore.framework */,
+				5C7617325F554EFA30BA8C5A /* SpokenMarginsDesktop.app */,
+				953C315E83B2003E995FBC92 /* SpokenMarginsDesktopBrowserExtension.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		54FE8E4651FB3CF39788F95F /* SpokenMarginsDesktopBrowserExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A5444CA60BEF4ABEFC46CF7E /* Build configuration list for PBXNativeTarget "SpokenMarginsDesktopBrowserExtension" */;
+			buildPhases = (
+				5C2DC4F61CB4CEC7750EF670 /* Sources */,
+				47E860E39C59862AB47D9B66 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SpokenMarginsDesktopBrowserExtension;
+			packageProductDependencies = (
+			);
+			productName = SpokenMarginsDesktopBrowserExtension;
+			productReference = 953C315E83B2003E995FBC92 /* SpokenMarginsDesktopBrowserExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		9DDB9B946177D2F08B3D309F /* DesktopCore */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9A9836B8D09CF8DB92F4107B /* Build configuration list for PBXNativeTarget "DesktopCore" */;
+			buildPhases = (
+				0963F92CD11D70FE11DB70E3 /* Sources */,
+				02CEC4AAB9561AB2B65E5C7A /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = DesktopCore;
+			packageProductDependencies = (
+				A29200CB89F18EE8AB570A40 /* SessionKit */,
+				7C616B79C7F282BCFEA9410E /* SessionKitPersistence */,
+			);
+			productName = DesktopCore;
+			productReference = AB6EB596216B9F6D10E9C6FA /* DesktopCore.framework */;
+			productType = "com.apple.product-type.framework";
+		};
+		FD2BD7C04E3694D3BC93EB38 /* SpokenMarginsDesktop */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 28F4038BAA118A81F3C638C6 /* Build configuration list for PBXNativeTarget "SpokenMarginsDesktop" */;
+			buildPhases = (
+				EA302CEEE9F370B199B35D26 /* Sources */,
+				40D367F436370EDE8CFD73AB /* Resources */,
+				8DE1387C5E36B62D162C272D /* Frameworks */,
+				FC34332AE60BC6B16C5D19C5 /* Embed Foundation Extensions */,
+				D7D52D012D123581A2B2AFD7 /* Embed Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				6B44C4DB7B9DE6EEE3EC0D11 /* PBXTargetDependency */,
+				1EE9A98A5345BCD78B69F715 /* PBXTargetDependency */,
+			);
+			name = SpokenMarginsDesktop;
+			packageProductDependencies = (
+				75EBC3CF47DE7DCEA929695D /* SessionKitAudio */,
+				2AB5D4EC27CB0361354AAAFC /* SessionKitSupertonic */,
+			);
+			productName = SpokenMarginsDesktop;
+			productReference = 5C7617325F554EFA30BA8C5A /* SpokenMarginsDesktop.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		ADE58DC63E49184777E2156C /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					54FE8E4651FB3CF39788F95F = {
+						DevelopmentTeam = J8SWC6J3VY;
+						ProvisioningStyle = Automatic;
+					};
+					FD2BD7C04E3694D3BC93EB38 = {
+						DevelopmentTeam = J8SWC6J3VY;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 9F03803BAFF5E713BCEBD052 /* Build configuration list for PBXProject "SpokenMarginsDesktopHost" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = EE471D1896B387C19A8F372A;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				BF230AB8D4EFFEC929AC6D5E /* XCLocalSwiftPackageReference "Packages/SessionKit" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = F96DA9F4FB125DD9BD59DA6B /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				9DDB9B946177D2F08B3D309F /* DesktopCore */,
+				FD2BD7C04E3694D3BC93EB38 /* SpokenMarginsDesktop */,
+				54FE8E4651FB3CF39788F95F /* SpokenMarginsDesktopBrowserExtension */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		40D367F436370EDE8CFD73AB /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				52A7EA833743F5AC929EA71F /* Supertonic in Resources */,
+				F84919B648AC3FE4FEF7C359 /* chatterbox_worker.py in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		47E860E39C59862AB47D9B66 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4E92B2026A788933D789F89A /* browserTextCapture.js in Resources */,
+				ED4E994F34EC699100119FF9 /* manifest.json in Resources */,
+				F82002648A61A8293FE2A335 /* popup.css in Resources */,
+				C7D99807376FF36FED30C662 /* popup.html in Resources */,
+				01D69164A1BAE61C73BE51BD /* popup.js in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		0963F92CD11D70FE11DB70E3 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8DD2E2CAC86772CC24783A51 /* ChatterboxResourcePolicy.swift in Sources */,
+				6805B51A9C4511A67D0FD946 /* DesktopBrowserInbox.swift in Sources */,
+				7DDBB433859D467DF01CD617 /* DesktopChapterSummaryStore.swift in Sources */,
+				1F05F6D5B3028E404B117710 /* DesktopSessionStore.swift in Sources */,
+				51D9F4323ED9E6FF03D3C640 /* DesktopSpeechChunker.swift in Sources */,
+				2AF3C2A7F4A0C7C970D50BBD /* DesktopTextNavigation.swift in Sources */,
+				0F57B398CF4F8DA1A7EFA8BB /* DesktopVoiceCatalog.swift in Sources */,
+				2597BBBC4764DE2FB9BE6514 /* DesktopVoiceOnboarding.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5C2DC4F61CB4CEC7750EF670 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FDBE0D59AF30F561385028DD /* DesktopSafariExtensionHandler.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EA302CEEE9F370B199B35D26 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DF8A69096109F97322CC7676 /* CompanionView.swift in Sources */,
+				1AAAA833763FDD71604256B8 /* DesktopAudio.swift in Sources */,
+				DE4DD8FAC005D93478FB2B9E /* DesktopChapterSummarizer.swift in Sources */,
+				27CF291D8CB128A28731903A /* DesktopChatterboxService.swift in Sources */,
+				ECB2C3E2951812F2404CEA5E /* DesktopDesign.swift in Sources */,
+				659DEAE064E4C7F76E4172EC /* DesktopModel.swift in Sources */,
+				23F627CE353DCF3037545FF1 /* DesktopNeuralSpeech.swift in Sources */,
+				CB164409959682D99DBE74CB /* DesktopSettingsView.swift in Sources */,
+				FE42D41469B85B7987904E7D /* DesktopURLRouter.swift in Sources */,
+				0183C73F84FFC05709F69A1E /* RecordingControlPanel.swift in Sources */,
+				0F0E249100E0AFC8A74A66E9 /* SpokenMarginsDesktopApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		1EE9A98A5345BCD78B69F715 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 54FE8E4651FB3CF39788F95F /* SpokenMarginsDesktopBrowserExtension */;
+			targetProxy = B1D04C81F18D79743CD3783C /* PBXContainerItemProxy */;
+		};
+		6B44C4DB7B9DE6EEE3EC0D11 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 9DDB9B946177D2F08B3D309F /* DesktopCore */;
+			targetProxy = E55C7C0EE2B77BC21CFA567C /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		1FD31CE8EF53BA462220FD39 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsDesktopBrowserExtension/SpokenMarginsDesktopBrowserExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 5;
+				DEVELOPMENT_TEAM = J8SWC6J3VY;
+				ENABLE_DEBUG_DYLIB = NO;
+				INFOPLIST_FILE = App/SpokenMarginsDesktopBrowserExtension/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.desktop.browser;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		63AA33363A6F039AD1F73155 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsDesktop/SpokenMarginsDesktop.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = J8SWC6J3VY;
+				ENABLE_DEBUG_DYLIB = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = App/SpokenMarginsDesktop/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.desktop;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		70FE3D1C0310D47BBC497F98 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsDesktopBrowserExtension/SpokenMarginsDesktopBrowserExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 5;
+				DEVELOPMENT_TEAM = J8SWC6J3VY;
+				ENABLE_DEBUG_DYLIB = NO;
+				INFOPLIST_FILE = App/SpokenMarginsDesktopBrowserExtension/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.desktop.browser;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		7E66C6E90E3EA9D702201CC6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		81084C08F830E1A894DF31DF /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		9AE90779644336D46B646C38 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/SpokenMarginsDesktop/SpokenMarginsDesktop.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = J8SWC6J3VY;
+				ENABLE_DEBUG_DYLIB = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = App/SpokenMarginsDesktop/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.desktop;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		C5C76566F9A1D6F90DCE4D7E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "";
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				GENERATE_INFOPLIST_FILE = YES;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.desktop.core;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+				VERSIONING_SYSTEM = "apple-generic";
+			};
+			name = Debug;
+		};
+		DFDA08F53F6537C217CA7D0A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "";
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				GENERATE_INFOPLIST_FILE = YES;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.spokenmargins.desktop.core;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+				VERSIONING_SYSTEM = "apple-generic";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		28F4038BAA118A81F3C638C6 /* Build configuration list for PBXNativeTarget "SpokenMarginsDesktop" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				63AA33363A6F039AD1F73155 /* Debug */,
+				9AE90779644336D46B646C38 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		9A9836B8D09CF8DB92F4107B /* Build configuration list for PBXNativeTarget "DesktopCore" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C5C76566F9A1D6F90DCE4D7E /* Debug */,
+				DFDA08F53F6537C217CA7D0A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		9F03803BAFF5E713BCEBD052 /* Build configuration list for PBXProject "SpokenMarginsDesktopHost" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				81084C08F830E1A894DF31DF /* Debug */,
+				7E66C6E90E3EA9D702201CC6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		A5444CA60BEF4ABEFC46CF7E /* Build configuration list for PBXNativeTarget "SpokenMarginsDesktopBrowserExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				70FE3D1C0310D47BBC497F98 /* Debug */,
+				1FD31CE8EF53BA462220FD39 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		BF230AB8D4EFFEC929AC6D5E /* XCLocalSwiftPackageReference "Packages/SessionKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/SessionKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		2AB5D4EC27CB0361354AAAFC /* SessionKitSupertonic */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SessionKitSupertonic;
+		};
+		75EBC3CF47DE7DCEA929695D /* SessionKitAudio */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SessionKitAudio;
+		};
+		7C616B79C7F282BCFEA9410E /* SessionKitPersistence */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SessionKitPersistence;
+		};
+		A29200CB89F18EE8AB570A40 /* SessionKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SessionKit;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = ADE58DC63E49184777E2156C /* Project object */;
+}

@@ -101,6 +101,7 @@ public enum SupertonicNarrationError: Error, LocalizedError, Equatable {
 /// A serial, reusable Supertonic runtime. The four ONNX sessions are loaded lazily
 /// and retained across chunks until `unload()` is called.
 public final class SupertonicNarrationRenderer: @unchecked Sendable {
+    public static var supportedLanguages: Set<String> { Set(AVAILABLE_LANGS) }
     private final class RenderCancellationToken: @unchecked Sendable {
         private let lock = NSLock()
         private var cancelled = false

@@ -1,0 +1,8 @@
+{
+  "manifest_version": 3,
+  "name": "Spoken Margins for Safari",
+  "description": "Listen to a webpage in Spoken Margins Desktop.",
+  "version": "0.1",
+  "permissions": ["activeTab", "nativeMessaging", "scripting"],
+  "action": {"default_title": "Spoken Margins", "default_popup": "popup.html"}
+}
