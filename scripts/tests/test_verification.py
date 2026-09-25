@@ -94,6 +94,23 @@ class VerificationTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             verification.select_simulator(devices, device='27')
 
+    def test_app_tests_use_a_dedicated_runner_not_the_booted_journey_simulator(self):
+        devices = self.simulator_inventory()
+        devices['com.apple.CoreSimulator.SimRuntime.iOS-27'][0]['state'] = 'Booted'
+        runner, template = verification.dedicated_simulator(devices)
+        self.assertIsNone(runner)
+        self.assertEqual(template['udid'], '27')
+        devices['com.apple.CoreSimulator.SimRuntime.iOS-26'].append({
+            'udid': 'runner', 'name': verification.TEST_RUNNER_NAME, 'state': 'Shutdown', 'isAvailable': True,
+            'deviceTypeIdentifier': 'com.apple.CoreSimulator.SimDeviceType.iPhone-17',
+        })
+        runner, template = verification.dedicated_simulator(devices)
+        self.assertEqual(runner['udid'], 'runner')
+        self.assertIsNone(template)
+        runner, template = verification.dedicated_simulator(devices, ios=27)
+        self.assertIsNone(runner, 'a runner on another OS is not reused when an OS is required')
+        self.assertEqual(template['udid'], '27')
+
     def test_simulator_minimum_matches_shipping_targets(self):
         import re
         project = (inventory.ROOT / 'project.yml').read_text()

@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import platform
+import plistlib
 from pathlib import Path
 import re
 import signal
@@ -55,6 +56,25 @@ def select_simulator(devices, device=None, ios=None):
         raise RuntimeError(f'No matching supported simulator (iOS {MINIMUM_IOS_MAJOR}+). '
                            'Supply --ios or --device with an available supported destination.')
     return sorted(candidates, key=lambda candidate: candidate[:3], reverse=True)[0][3]
+
+
+TEST_RUNNER_NAME = 'SpokenMargins Test Runner'
+
+
+def dedicated_simulator(devices, ios=None):
+    """App-hosted tests write into the app's container, so they never share the journey simulator (#164).
+
+    Returns (runner, None) when the runner exists, else (None, template) to create it from: the newest
+    supported iPhone, ignoring which simulators happen to be booted.
+    """
+    runners = {runtime: [entry for entry in group if entry.get('name') == TEST_RUNNER_NAME]
+               for runtime, group in devices.items()}
+    try:
+        return select_simulator(runners, ios=ios), None
+    except RuntimeError:
+        unbooted = {runtime: [dict(entry, state='Shutdown') for entry in group]
+                    for runtime, group in devices.items()}
+        return None, select_simulator(unbooted, ios=ios)
 
 
 def capture(command):
@@ -239,7 +259,17 @@ class Run:
             raise RuntimeError('Inputs changed before Xcode verification')
         scheme, name, timeout = PLANS[plan]
         devices = json.loads(capture(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
-        chosen = select_simulator(devices, device, ios)
+        if device:
+            chosen = select_simulator(devices, device, ios)
+        else:
+            chosen, template = dedicated_simulator(devices, ios)
+            if chosen is None:
+                self.command('simulator-create', ['xcrun', 'simctl', 'create', TEST_RUNNER_NAME,
+                             template['deviceTypeIdentifier'], template['runtime']], timeout=60)
+                devices = json.loads(capture(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
+                chosen, _ = dedicated_simulator(devices, ios)
+                if chosen is None:
+                    raise RuntimeError(f'Could not create the {TEST_RUNNER_NAME} simulator')
         self.manifest['destination'] = chosen
         self.command('generate', ['xcodegen', 'generate'])
         identity = input_identity()
@@ -261,14 +291,27 @@ class Run:
             stamp.write_text(json.dumps({'key': cache_key}) + '\n')
         self.command('bundle-contracts', [sys.executable, 'scripts/verify-bundle.py',
                      str(derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app')])
-        if chosen['state'] != 'Booted':
-            self.command('simulator-boot', ['xcrun', 'simctl', 'boot', chosen['udid']], timeout=60)
-        self.command('simulator-ready', ['xcrun', 'simctl', 'bootstatus', chosen['udid'], '-b'], timeout=180)
-        expected = plan_tests(ROOT, name)
-        self.command('xcode-tests', base + ['test-without-building', '-parallel-testing-enabled', 'NO',
-                     '-collect-test-diagnostics', 'never',
-                     '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(self.output / 'tests.xcresult')],
-                     timeout=timeout, expected=expected, tests=True)
+        booted_here = chosen['state'] != 'Booted'
+        try:
+            if booted_here:
+                self.command('simulator-boot', ['xcrun', 'simctl', 'boot', chosen['udid']], timeout=60)
+            self.command('simulator-ready', ['xcrun', 'simctl', 'bootstatus', chosen['udid'], '-b'], timeout=180)
+            if chosen.get('name') == TEST_RUNNER_NAME:
+                # Start from an empty app container so earlier runs' data can't leak into this one.
+                app = derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app'
+                bundle_id = plistlib.loads((app / 'Info.plist').read_bytes())['CFBundleIdentifier']
+                subprocess.run(['xcrun', 'simctl', 'uninstall', chosen['udid'], bundle_id],
+                               cwd=ROOT, capture_output=True, timeout=60)
+            expected = plan_tests(ROOT, name)
+            self.command('xcode-tests', base + ['test-without-building', '-parallel-testing-enabled', 'NO',
+                         '-collect-test-diagnostics', 'never',
+                         '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(self.output / 'tests.xcresult')],
+                         timeout=timeout, expected=expected, tests=True)
+        finally:
+            if booted_here:
+                # Don't leave an idle simulator holding memory after the run.
+                subprocess.run(['xcrun', 'simctl', 'shutdown', chosen['udid']],
+                               cwd=ROOT, capture_output=True, timeout=60)
         if input_identity() != identity:
             raise RuntimeError('Inputs changed during testing; rerun on a stable source state')
 
