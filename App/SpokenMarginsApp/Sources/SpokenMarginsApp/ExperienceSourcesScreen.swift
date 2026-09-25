@@ -106,6 +106,8 @@ struct ExperienceSourcesScreen: View {
     private var feedURLField: some View {
         TextField("Paste an RSS feed link", text: $model.followedSourceURL)
             .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .textContentType(.URL)
             .keyboardType(.URL)
             .submitLabel(.go)
             .focused($feedURLIsFocused)

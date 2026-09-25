@@ -839,6 +839,8 @@ private struct HomeScreen: View {
                 HStack {
                     TextField("HTTPS feed URL", text: $model.followedSourceURL)
                         .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .textContentType(.URL)
                         .keyboardType(.URL)
                         .focused($focusedField, equals: .followedSource)
                         .accessibilityIdentifier("sources.follow.url")
@@ -1161,6 +1163,8 @@ private struct HomeScreen: View {
             TextField("Podcast, RSS, or audio URL", text: $model.sourceLinkURL)
                 .textFieldStyle(.roundedBorder)
                 .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .textContentType(.URL)
                 .keyboardType(.URL)
                 .focused($focusedField, equals: .sourceLink)
                 .submitLabel(.go)

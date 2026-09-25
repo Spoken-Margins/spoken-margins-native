@@ -246,6 +246,8 @@ struct ExperienceAddSourceFlow: View {
                 TextField("Podcast, RSS, audio, or web URL", text: $model.sourceLinkURL)
                     .textFieldStyle(.roundedBorder)
                     .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .textContentType(.URL)
                     .keyboardType(.URL)
                     .focused($focusedField, equals: .link)
                     .accessibilityIdentifier("sourceLink.url.field")
