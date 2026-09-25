@@ -247,7 +247,7 @@ private struct Gate2LiveActivityView: View {
                             .background(Color.white.opacity(0.16))
                             .clipShape(Circle())
                     }
-                    .accessibilityLabel(state.isRecording ? "Finish interjection" : "Interject")
+                    .accessibilityLabel(state.isRecording ? "Finish Margin" : "Add a Margin")
                 }
             }
             .buttonStyle(.plain)

@@ -2422,8 +2422,8 @@ final class Gate1AppModel: ObservableObject {
     private func makeAppOverviewSample() throws -> (Item, ListeningMap) {
         let itemId = Self.welcomeSampleItemId
         let optionalAIOverview = remoteProviderExperienceEnabled
-            ? "Summarize Notes synthesizes the interjections in this session. Discuss answers a question using relevant source and session context. Both are optional and require your OpenAI API key, network access, and separate permission to send content."
-            : "Summarize Notes synthesizes the interjections in this session with Apple’s on-device model when available. Remote discussion and third-party API keys are disabled; you can copy your notes to another chatbot and paste its response back into Spoken Margins."
+            ? "Summarize Notes synthesizes the Margins in this session. Discuss answers a question using relevant source and session context. Both are optional and require your OpenAI API key, network access, and separate permission to send content."
+            : "Summarize Notes synthesizes the Margins in this session with Apple’s on-device model when available. Remote discussion and third-party API keys are disabled; you can copy your notes to another chatbot and paste its response back into Spoken Margins."
         let markdown = """
         # Welcome to Spoken Margins
 
@@ -2464,7 +2464,7 @@ final class Gate1AppModel: ObservableObject {
         guard var map = parsed.deterministicListeningMap(itemId: itemId) else {
             throw SessionKitError.persistenceFailed("welcome_sample_listening_map_missing")
         }
-        map.overview = "Take a guided tour of the Listening Map, playback navigation, spoken interjections, and the three ways to add your own sources."
+        map.overview = "Take a guided tour of the Listening Map, playback navigation, spoken Margins, and the three ways to add your own sources."
         return (item, map)
     }
 
@@ -6124,7 +6124,7 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         guard snapshot.skimBridgeState == nil else {
-            reportWarning("Interjections are unavailable while a scene summary is playing. Pause or cancel Skim first.")
+            reportWarning("Margins are unavailable while a scene summary is playing. Pause or cancel Skim first.")
             return
         }
         guard !recordingNavigationIsLocked else { return }
@@ -6132,7 +6132,7 @@ final class Gate1AppModel: ObservableObject {
         pendingVoiceCaptureRequestID = voiceCaptureRequestID
         recordingPermissionDenied = false
         isRequestingRecordingPermission = true
-        statusMessage = "Starting interjection..."
+        statusMessage = "Starting Margin..."
         lastError = nil
         diagnostics["lastInterjectionTap"] = "begin"
         let requestedAt = Date()
@@ -6165,7 +6165,7 @@ final class Gate1AppModel: ObservableObject {
                 recordingPresentationContext = nil
                 pendingVoiceCaptureRequestID = nil
                 recordingPermissionDenied = true
-                reportFailure("Microphone access is required to record interjections. Enable microphone access in Settings and try again.")
+                reportFailure("Microphone access is required to record Margins. Enable microphone access in Settings and try again.")
                 return
             }
             startInterjectionRecording(requestedAt: requestedAt, captureID: voiceCaptureRequestID)
@@ -6191,7 +6191,7 @@ final class Gate1AppModel: ObservableObject {
                 )
                 let latencyMs = max(0, Int(Date().timeIntervalSince(requestedAt) * 1000))
                 diagnostics["lastInterjectionRecordingStartLatencyMs"] = "\(latencyMs)"
-                reportSuccess("Recording interjection.")
+                reportSuccess("Recording Margin.")
             }
         }
         if !snapshot.isRecording {
@@ -6241,7 +6241,7 @@ final class Gate1AppModel: ObservableObject {
             if let interjection = latestInterjectionNeedingTranscription() {
                 scheduleTranscription(for: interjection)
             }
-            reportConfirmation("Interjection saved. Transcription is continuing in the background.")
+            reportConfirmation("Margin saved. Transcription is continuing in the background.")
         }
         if !snapshot.isRecording {
             recordingPresentationContext = nil
@@ -6267,7 +6267,7 @@ final class Gate1AppModel: ObservableObject {
         run { engine in
             snapshot = try engine.cancelInterjection()
             refreshSelectedItem()
-            reportSuccess("Cancelled interjection.")
+            reportSuccess("Cancelled Margin.")
         }
         if !snapshot.isRecording {
             recordingPresentationContext = nil
@@ -6411,7 +6411,7 @@ final class Gate1AppModel: ObservableObject {
                 return
             }
             guard canSummarizeInterjections else {
-                reportFailure("An interjection summary already exists for this session.")
+                reportFailure("A Margin summary already exists for this session.")
                 return
             }
             syncPlaybackProgressForLifecycle()
@@ -6435,7 +6435,7 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         guard canSummarizeInterjections else {
-            reportFailure("An interjection summary already exists for this session.")
+            reportFailure("A Margin summary already exists for this session.")
             return
         }
         syncPlaybackProgressForLifecycle()
@@ -6806,16 +6806,16 @@ final class Gate1AppModel: ObservableObject {
                 targetId: targetId
             ))
             guard !export.interjections.isEmpty else {
-                reportFailure("No interjections are available for that target.")
+                reportFailure("No Margins are available for that target.")
                 return
             }
             let text = try renderExport(export, format: format)
             #if canImport(UIKit)
             UIPasteboard.general.string = text
-            reportConfirmation("Copied target interjections.")
+            reportConfirmation("Copied target Margins.")
             #else
             exportPreview = text
-            reportSuccess("Built target interjection export.")
+            reportSuccess("Built target Margin export.")
             #endif
         }
     }
@@ -6835,10 +6835,10 @@ final class Gate1AppModel: ObservableObject {
             let text = try renderExport(export, format: format)
             #if canImport(UIKit)
             UIPasteboard.general.string = text
-            reportConfirmation("Copied interjection with its anchors.")
+            reportConfirmation("Copied Margin with its anchors.")
             #else
             exportPreview = text
-            reportSuccess("Built interjection export.")
+            reportSuccess("Built Margin export.")
             #endif
         }
     }
@@ -6882,12 +6882,12 @@ final class Gate1AppModel: ObservableObject {
 
     func retryInterjectionTranscription(_ interjection: Interjection) {
         guard interjection.captureKind != .written, interjection.audioPath != nil else {
-            reportFailure("The saved interjection audio is unavailable.")
+            reportFailure("The saved Margin audio is unavailable.")
             return
         }
         guard retryingInterjectionTranscriptionIds.insert(Self.marginIdentity(interjection)).inserted else { return }
         scheduleTranscription(for: interjection)
-        reportConfirmation("Retranscribing the saved interjection audio.")
+        reportConfirmation("Retranscribing the saved Margin audio.")
     }
 
     func toggleInterjectionAudioPlayback(_ interjection: Interjection) {
@@ -6901,7 +6901,7 @@ final class Gate1AppModel: ObservableObject {
         guard let audioPath = interjection.audioPath,
               let url = resolvedInterjectionAudioURL(for: audioPath),
               FileManager.default.fileExists(atPath: url.path) else {
-            reportFailure("The saved interjection recording is unavailable.")
+            reportFailure("The saved Margin recording is unavailable.")
             return
         }
         if snapshot.status.isPlaybackActive {
@@ -6943,10 +6943,10 @@ final class Gate1AppModel: ObservableObject {
             reportConfirmation("Playing recording.")
         } catch {
             stopInterjectionAudioPlayback()
-            reportFailure(error, context: "Interjection playback failed")
+            reportFailure(error, context: "Margin playback failed")
         }
         #else
-        reportFailure("Interjection playback is unavailable on this device.")
+        reportFailure("Margin playback is unavailable on this device.")
         #endif
     }
 
@@ -7318,7 +7318,7 @@ final class Gate1AppModel: ObservableObject {
         run { engine in
             snapshot = try engine.deleteInterjection(interjectionId: interjection.id, sessionId: interjection.sessionId)
             refreshSelectedItem()
-            reportSuccess("Deleted interjection.")
+            reportSuccess("Deleted Margin.")
         }
         refreshMarginRows()
     }
@@ -7527,7 +7527,7 @@ final class Gate1AppModel: ObservableObject {
                 let granted = await SystemRecordingClient.requestRecordPermission()
                 guard granted else {
                     isRequestingRecordingPermission = false
-                    reportFailure("Microphone access is required to record interjections from compact controls.")
+                    reportFailure("Microphone access is required to record Margins from compact controls.")
                     return
                 }
                 performGate2CompactCommand(command, chapterId: chapterId, mediaTimeMs: mediaTimeMs, playbackRate: playbackRate, origin: origin)
@@ -9284,7 +9284,7 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["gate3WatchLastCommand"] = request.command.rawValue
             diagnostics["gate3WatchLastResult"] = "disabled_until_watch_recording"
             updateGate3WatchState()
-            reportFailure("Watch interjection is disabled until Watch-owned or background-safe recording is available.")
+            reportFailure("Recording a Margin from Watch is disabled until Watch-owned or background-safe recording is available.")
             return
         }
         guard gate3WatchSnapshot()?.availableCommands.contains(request.command) == true else {
@@ -9308,7 +9308,7 @@ final class Gate1AppModel: ObservableObject {
             Task {
                 let granted = await SystemRecordingClient.requestRecordPermission()
                 guard granted else {
-                    reportFailure("Microphone access is required to record interjections from Watch.")
+                    reportFailure("Microphone access is required to record Margins from Watch.")
                     updateGate3WatchState()
                     return
                 }
@@ -9402,7 +9402,7 @@ final class Gate1AppModel: ObservableObject {
             case .skipBack, .skipForward, .seekToMediaTime, .jumpToChapter:
                 restoreSkimOriginBeforeCanonicalTransport()
             case .beginInterjection:
-                reportWarning("Interjections are unavailable while a scene summary is playing.")
+                reportWarning("Margins are unavailable while a scene summary is playing.")
                 return
             case .setPlaybackRate:
                 if let playbackRate { setMediaPlaybackRate(playbackRate) }
@@ -11485,7 +11485,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func submitLocalSummary(turnId: String, contexts: [String]) {
-        statusMessage = "Summarizing interjections on device."
+        statusMessage = "Summarizing Margins on device."
         lastError = nil
         Task {
             do {
@@ -12444,7 +12444,7 @@ final class Gate1AppModel: ObservableObject {
                         refreshSelectedItem()
                         refreshMarginRows()
                         diagnostics[Self.marginDiagnosticKey("interjectionTranscription", interjection)] = "complete"
-                        reportSuccess("Transcribed interjection.")
+                        reportSuccess("Transcribed Margin.")
                     }
                     retryingInterjectionTranscriptionIds.remove(Self.marginIdentity(interjection))
                     scheduleSourceWindowContextIfNeeded(for: interjection)

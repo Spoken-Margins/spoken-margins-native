@@ -114,7 +114,7 @@ struct Gate1RootView: View {
             Button("Open AI Settings", action: model.openAISettingsFromSummaryPrompt)
             Button("Not Now", role: .cancel) {}
         } message: {
-            Text("Summarize Notes uses your OpenAI API key to turn this session’s interjections into a spoken debrief. Your session and saved position have not changed.")
+            Text("Summarize Notes uses your OpenAI API key to turn this session’s Margins into a spoken debrief. Your session and saved position have not changed.")
         }
     }
 }
@@ -341,7 +341,7 @@ private struct AIDataSharingConsentView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     Label("Send this content to OpenAI?", systemImage: "hand.raised.fill")
                         .font(.title2.bold())
-                    Text("A live AI request can include the source text needed for the task, your interjection transcripts, the current follow-up, nearby anchors, and recent conversation turns.")
+                    Text("A live AI request can include the source text needed for the task, your Margin transcripts, the current follow-up, nearby anchors, and recent conversation turns.")
                     Text("Spoken Margins does not send recorded audio, local file paths, or internal database identifiers. Requests disable OpenAI response storage. You can revoke permission or delete your API key in Settings.")
                         .foregroundStyle(AppColors.secondaryText)
                     Link("Read the Privacy Policy", destination: AppLinks.privacy)
@@ -386,7 +386,7 @@ private struct HelpScreen: View {
                     }
                     .padding(.vertical, 4)
                     OnboardingChecklistRow(
-                        title: "Make your first interjection",
+                        title: "Make your first Margin",
                         isComplete: model.isOnboardingStepComplete(.firstInterjection)
                     )
                     OnboardingChecklistRow(
@@ -431,21 +431,21 @@ private struct HelpScreen: View {
                     Text("Continue Listening resumes your most recent unfinished session. Start New Session creates a separate listening pass with its own notes.")
                     Text("The X in the mini-player saves your place, stops playback, and hides the mini-player. It does not delete the session.")
                 }
-                Section("Interjections") {
-                    Text("Tap Interject, speak your note, then tap Done. The note stays attached to the session and the point you were hearing.")
+                Section("Margins") {
+                    Text("Tap the record button on the mini player, or Add a Margin on Now Playing, speak your note, then tap Save & resume. The Margin stays attached to the point you were hearing.")
                     Text("Playback restarts before transcription runs in the background. A short pause can still occur while the app saves the recording and switches the audio session back to playback.")
-                    Text("Open Timeline and tap an interjection to review its recording or transcript.")
+                    Text("Open the Margins tab and tap a Margin to hear its recording or read its transcript.")
                 }
                 Section("Optional AI") {
                     if model.remoteProviderExperienceEnabled {
-                        Text("Summarize Notes synthesizes the interjections in the current session. Discuss answers a question using relevant source and session context.")
-                        Text("Both features require your OpenAI API key, network access, and separate permission to send content. Listening, interjections, the timeline, and export work without AI.")
+                        Text("Summarize Notes synthesizes the Margins in the current session. Discuss answers a question using relevant source and session context.")
+                        Text("Both features require your OpenAI API key, network access, and separate permission to send content. Listening, Margins, the timeline, and export work without AI.")
                         Button("Open AI Settings", action: model.openAISettingsFromOnboarding)
                             .accessibilityIdentifier("help.aiSettings.button")
                     } else {
                         Text("Summarize Notes uses Apple’s on-device Foundation Model when available. Listening Maps use publisher chapters for podcasts and deterministic structure for native text.")
                         Text("AI-generated Listening Maps are reserved for a future server-hosted option and are not included in this release.")
-                        Text("Discuss and third-party API settings are disabled. Copy your interjections to another chatbot and paste its response into the Conversation section if you want that workflow.")
+                        Text("Discuss and third-party API settings are disabled. Copy your Margins to another chatbot and paste its response into the Conversation section if you want that workflow.")
                         LabeledContent("Availability", value: model.localFoundationModelAvailabilityDescription)
                     }
                 }
@@ -1788,7 +1788,7 @@ private struct ItemScreen: View {
                                     Text(sessionProgressDescription(session))
                                         .font(.subheadline)
                                         .foregroundStyle(AppColors.secondaryText)
-                                    Text("\(row.interjectionCount) \(row.interjectionCount == 1 ? "interjection" : "interjections") · \(humanizedItemStatus(session.status))")
+                                    Text("\(row.interjectionCount) \(row.interjectionCount == 1 ? "Margin" : "Margins") · \(humanizedItemStatus(session.status))")
                                         .font(.caption)
                                         .foregroundStyle(AppColors.secondaryText)
                                     if let preview = row.interjectionPreview {
@@ -1855,7 +1855,7 @@ private struct ItemScreen: View {
                     }
                     Button("Cancel", role: .cancel) {}
                 } message: {
-                    Text("Your unfinished session and its interjections will remain available to resume.")
+                    Text("Your unfinished session and its Margins will remain available to resume.")
                 }
             }
             Button(action: model.openExport) {
@@ -3181,7 +3181,7 @@ private struct PlaybackScreen: View {
             }
             if timelineEntries.isEmpty {
                 ProductPanel {
-                    Text("No chapters or interjections yet.")
+                    Text("No chapters or Margins yet.")
                         .foregroundStyle(AppColors.secondaryText)
                 }
             } else {
@@ -3607,7 +3607,7 @@ private struct GuidedOnboardingPlaybackCard: View {
     private var stageContent: some View {
         switch model.guidedOnboardingStage {
         case .practiceInterjection:
-            Text("Practice making an interjection")
+            Text("Practice making an Margin")
                 .font(.title3.bold())
             Text("Let the welcome source play until an idea occurs to you, then record a short note. Spoken Margins will anchor it to this listening session.")
                 .foregroundStyle(AppColors.secondaryText)
@@ -3624,7 +3624,7 @@ private struct GuidedOnboardingPlaybackCard: View {
         case .reviewTimeline:
             Text("Use the timeline")
                 .font(.title3.bold())
-            Text("Tap your saved interjection to review it, or tap any source chapter to jump there. Either action completes this step.")
+            Text("Tap your saved Margin to review it, or tap any source chapter to jump there. Either action completes this step.")
                 .foregroundStyle(AppColors.secondaryText)
             Button("Show Timeline", action: showTimeline)
                 .buttonStyle(PrimaryButtonStyle())
@@ -3937,7 +3937,7 @@ private struct SettingsScreen: View {
                         LabeledContent("Processing", value: "On device")
                             .accessibilityIdentifier("settings.ai.processing")
                         LabeledContent("Apple Foundation Model", value: model.localFoundationModelAvailabilityDescription)
-                        Text("Interjection summaries stay on this device. Publisher podcast chapters and deterministic native-text Listening Maps do not require AI. AI-generated Listening Maps, remote providers, and API keys are disabled in this release.")
+                        Text("Margin summaries stay on this device. Publisher podcast chapters and deterministic native-text Listening Maps do not require AI. AI-generated Listening Maps, remote providers, and API keys are disabled in this release.")
                             .font(.caption)
                             .foregroundStyle(AppColors.secondaryText)
                             .accessibilityIdentifier("settings.ai.releaseBoundary")
@@ -4166,7 +4166,7 @@ private struct BatchExportScreen: View {
                         ProductPanel {
                             VStack(alignment: .leading, spacing: 14) {
                                 Picker("Sessions", selection: $model.batchExportFilter) {
-                                    Text("With Interjections").tag(BatchSessionExportFilter.withInterjections)
+                                    Text("With Margins").tag(BatchSessionExportFilter.withInterjections)
                                     Text("All Sessions").tag(BatchSessionExportFilter.all)
                                 }
                                 .pickerStyle(.segmented)
@@ -4254,7 +4254,7 @@ private struct BatchExportScreen: View {
                     Text(model.batchExportFilter == .withInterjections ? "No sessions with interjections" : "No sessions yet")
                         .font(.headline)
                     if model.batchExportFilter == .withInterjections, !model.batchExportRows.isEmpty {
-                        Text("Choose All Sessions to include listening sessions without interjections.")
+                        Text("Choose All Sessions to include listening sessions without Margins.")
                             .font(.subheadline)
                             .foregroundStyle(AppColors.secondaryText)
                     }
@@ -4279,7 +4279,7 @@ private struct BatchExportScreen: View {
                                     Text(sessionDateDescription(row.session))
                                         .font(.subheadline)
                                         .foregroundStyle(AppColors.secondaryText)
-                                    Text("\(sessionProgressDescription(row.session)) · \(row.interjectionCount) \(row.interjectionCount == 1 ? "interjection" : "interjections") · \(humanizedItemStatus(row.session.status))")
+                                    Text("\(sessionProgressDescription(row.session)) · \(row.interjectionCount) \(row.interjectionCount == 1 ? "Margin" : "Margins") · \(humanizedItemStatus(row.session.status))")
                                         .font(.caption)
                                         .foregroundStyle(AppColors.secondaryText)
                                 }
