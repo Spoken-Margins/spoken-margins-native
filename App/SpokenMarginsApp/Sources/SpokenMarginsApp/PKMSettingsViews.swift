@@ -11,13 +11,13 @@ struct MarginOutputSettingsSection: View {
                 Label(model.hasBatchExportFolder ? model.batchExportFolderName : "Choose Output Folder", systemImage: "folder")
             }
             Button("Send Test Note", action: model.testMarginOutput).disabled(!model.hasBatchExportFolder)
-            Toggle("Automatically Save Margins", isOn: $model.automaticMarginOutputEnabled)
+            Toggle("Save Margins to Notes Folder", isOn: $model.automaticMarginOutputEnabled)
                 .disabled(!model.hasBatchExportFolder)
                 .onChange(of: model.automaticMarginOutputEnabled) { _, _ in model.automaticMarginOutputChanged() }
             Button("Retry Delivery") { Task { await model.deliverAutomaticMargins() } }
                 .disabled(!model.automaticMarginOutputEnabled)
             Text(model.marginOutputStatus).font(.footnote)
-            Text("Select an Obsidian vault folder or any writable Files folder. Text Margins are saved while the app is active and retried when you return. Existing Margins are included. Audio recordings and full source text are excluded. Your folder provider may sync files to its cloud.").font(.footnote).foregroundStyle(.secondary)
+            Text("Writes each text Margin as a Markdown note in the folder you choose, such as an Obsidian vault. It doesn’t change how Margins play. Notes are written while the app is active and retried when you return. Existing Margins are included. Audio recordings and full source text are excluded. Your folder provider may sync files to its cloud.").font(.footnote).foregroundStyle(.secondary)
         }
         .fileImporter(isPresented: $choosingFolder, allowedContentTypes: [.folder]) { result in
             switch result {

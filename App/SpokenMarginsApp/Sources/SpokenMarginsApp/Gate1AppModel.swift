@@ -9750,6 +9750,17 @@ final class Gate1AppModel: ObservableObject {
         automaticMarginWriter = writer
         return writer
     }
+    private var automaticMarginGatherMaxMs = 0
+
+    private func recordAutomaticMarginGather(ms: Int, sessions: Int, notes: Int) {
+        automaticMarginGatherMaxMs = max(automaticMarginGatherMaxMs, ms)
+        diagnostics["automaticMarginGather"] = "lastMs=\(ms);maxMs=\(automaticMarginGatherMaxMs);sessions=\(sessions);notes=\(notes)"
+        // The always-on log keeps 300 events; only slow passes are worth one.
+        if ms >= 500 {
+            recordDeveloperDiagnostic("marginOutput.gather", ["ms": String(ms), "sessions": String(sessions), "notes": String(notes)])
+        }
+    }
+
     func deliverAutomaticMargins() async {
         guard automaticMarginOutputEnabled, !isDeliveringMargins, !snapshot.isRecording, let store else { return }
         isDeliveringMargins = true
@@ -9759,7 +9770,11 @@ final class Gate1AppModel: ObservableObject {
             if engine == nil { installEngine(try makeEngine(store: store)) }
             guard let engine else { return }
             var notes: [AutomaticMarginWriter.Note] = []
-            for session in try store.loadSessions() {
+            // #161: the owner's phone froze 1.6–2.7 s about every 17 s with this setting on. Time the main-actor
+            // gathering so an exported log can confirm or rule out this loop before it is moved off main.
+            let gatherStarted = ProcessInfo.processInfo.systemUptime
+            let sessions = try store.loadSessions()
+            for session in sessions {
                 guard let item = try? store.loadItem(id: session.itemId), item.deletedAt == nil else { continue }
                 for margin in try store.loadInterjections(sessionId: session.id) where margin.status == "active" {
                     guard !(margin.cleanedTranscript ?? margin.transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
@@ -9771,6 +9786,11 @@ final class Gate1AppModel: ObservableObject {
                     notes.append(.init(id: session.id + ":" + margin.id, markdown: markdown))
                 }
             }
+            recordAutomaticMarginGather(
+                ms: Int((ProcessInfo.processInfo.systemUptime - gatherStarted) * 1000),
+                sessions: sessions.count,
+                notes: notes.count
+            )
             let count = try await marginWriter().deliver(notes, to: folder, destinationID: marginOutputDestinationID)
             marginOutputStatus = "\(count) Margins saved to \(folder.lastPathComponent). Last checked \(Date().formatted(date: .omitted, time: .shortened))."
         } catch { marginOutputStatus = "Delivery needs attention: \(error.localizedDescription)" }

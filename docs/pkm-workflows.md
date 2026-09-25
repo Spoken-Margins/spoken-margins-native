@@ -24,7 +24,7 @@ Retrying the same source retains its item and existing sessions. A changed map f
 
 ## Margins → Obsidian or another folder
 
-In Settings → Margin Output, choose a folder inside your Obsidian vault using Files, then Send Test Note. Enable Automatically Save Margins. Existing and new active text Margins are exported as individual Markdown files, including source/session identity, position and bounded source context. Recordings and full source text are excluded. Recorded Margins need a transcript before delivery.
+In Settings → Margin Output, choose a folder inside your Obsidian vault using Files, then Send Test Note. Turn on Save Margins to Notes Folder. Existing and new active text Margins are exported as individual Markdown files, including source/session identity, position and bounded source context. Recordings and full source text are excluded. Recorded Margins need a transcript before delivery.
 
 Delivery checks while the app is active (about every 15 seconds), pauses during recording, and retries when the app becomes active. Retry Delivery runs a check immediately. It is not an always-running background sync service. Canonical Library data survives a failed folder write. Disabled delivery leaves existing files in place. File providers may upload the folder according to their own settings.
 
