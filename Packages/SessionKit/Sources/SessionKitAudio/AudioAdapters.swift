@@ -1640,6 +1640,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private var postResumeEvidenceAudioMix: AVAudioMix?
     private var continuousEvidenceTapTracksObservation: NSKeyValueObservation?
     public var postResumePodcastEvidenceHandler: (@Sendable (PostResumePodcastEvidenceCaptureResult) -> Void)?
+    /// Receives the minute before and after each Margin as the listener heard it (#156).
+    public var heardSourceWindowHandler: (@Sendable (HeardAudioWindow) -> Void)?
     #endif
     private let remoteCommandHandler: (@Sendable (CompactControlCommand, Int?, Double?) -> Void)?
     private let interruptionHandler: (@Sendable (AudioPlaybackInterruptionEvent) -> Void)?
@@ -2389,7 +2391,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             },
             becameIdle: {},
             continuousCollection: true,
-            itemId: mediaContext.itemId
+            itemId: mediaContext.itemId,
+            heardWindowHandler: { [weak self] window in self?.heardSourceWindowHandler?(window) }
         )
         do {
             let tap = try PostResumePodcastEvidenceTapFactory.make(context: context)

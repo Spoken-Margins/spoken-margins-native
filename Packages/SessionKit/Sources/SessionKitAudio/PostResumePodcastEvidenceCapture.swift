@@ -60,6 +60,7 @@ public enum PostResumePodcastEvidenceCaptureResult: Sendable {
 /// share this tap and receive the same decoded playback buffers independently.
 final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
     typealias ResultHandler = @Sendable (PostResumePodcastEvidenceCaptureResult) -> Void
+    typealias HeardWindowHandler = @Sendable (HeardAudioWindow) -> Void
 
     private final class Accumulator: @unchecked Sendable {
         let request: PostResumeAudioSampleRequest
@@ -94,6 +95,10 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
     private var sparseSchedule = SparseFingerprintSchedule()
     private var pendingStablePostSeekStartMs: Int?
     private var generatingLandmarkKeys: Set<String> = []
+    /// The minute before and after each Margin, as heard, for source-context transcription (#156).
+    private var heardRecorder: HeardAudioWindowRecorder?
+    private var heardDownsampleFactor = 1
+    private let heardWindowHandler: HeardWindowHandler?
 
     var retainsContinuousCollection: Bool { continuousCollection }
 
@@ -101,12 +106,19 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
         resultHandler: @escaping ResultHandler,
         becameIdle: @escaping @Sendable () -> Void,
         continuousCollection: Bool = false,
-        itemId: String? = nil
+        itemId: String? = nil,
+        heardWindowHandler: HeardWindowHandler? = nil
     ) {
         self.resultHandler = resultHandler
         self.becameIdle = becameIdle
         self.continuousCollection = continuousCollection
         self.itemId = itemId
+        self.heardWindowHandler = heardWindowHandler
+    }
+
+    private func deliver(_ windows: [HeardAudioWindow]) {
+        guard !windows.isEmpty, let heardWindowHandler else { return }
+        completionQueue.async { windows.forEach(heardWindowHandler) }
     }
 
     func arm(_ request: PostResumeAudioSampleRequest) -> Bool {
@@ -130,6 +142,8 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
     }
 
     func captureBufferedPreInterjection(_ request: PostResumeAudioSampleRequest) -> Bool {
+        // Called when a Margin finishes and before playback resumes, so the rolling minute ends at the anchor.
+        lock.withLock { heardRecorder?.begin(request) }
         let endMs = request.anchorMediaTimeMs - 5_000
         let startMs = endMs - request.targetDurationMs
         guard startMs >= 0 else { return false }
@@ -156,6 +170,8 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
     }
 
     func noteSeek(at date: Date = Date()) {
+        let heard = lock.withLock { heardRecorder?.noteSeek() ?? [] }
+        deliver(heard)
         lock.withLock {
             sparseSchedule.noteSeek(at: date)
             pendingStablePostSeekStartMs = nil
@@ -172,6 +188,11 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
     func prepare(processingFormat: UnsafePointer<AudioStreamBasicDescription>) {
         lock.withLock {
             format = AVAudioFormat(streamDescription: processingFormat)
+            if continuousCollection, let format, heardRecorder == nil,
+               format.commonFormat == .pcmFormatFloat32 {
+                heardDownsampleFactor = HeardAudioDownsampler.factor(for: format.sampleRate)
+                heardRecorder = HeardAudioWindowRecorder(sampleRate: format.sampleRate / Double(heardDownsampleFactor))
+            }
         }
     }
 
@@ -190,6 +211,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
         guard frameCount > 0 else { return }
         var completed: [Accumulator] = []
         var failed: [(Accumulator, String)] = []
+        var heardFinished: [HeardAudioWindow] = []
         let becameEmpty = lock.withLock { () -> Bool in
             guard let format,
                   let buffer = AVAudioPCMBuffer(
@@ -214,6 +236,17 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
                 ))
                 let oldestAllowed = mediaTimeMs + max(1, durationMs) - 20_000
                 ring.removeAll { $0.endMediaTimeMs < oldestAllowed }
+            }
+            if let mediaTimeMs, heardRecorder != nil, let channelData = buffer.floatChannelData {
+                let stride = buffer.stride
+                let channels = stride > 1
+                    ? [UnsafePointer(channelData[0])]
+                    : (0..<Int(format.channelCount)).map { UnsafePointer(channelData[$0]) }
+                let mono = HeardAudioDownsampler.mono(
+                    channels: channels, interleavedStride: stride,
+                    frameCount: Int(frameCount), factor: heardDownsampleFactor
+                )
+                heardFinished = heardRecorder?.append(samples: mono, startMediaTimeMs: mediaTimeMs) ?? []
             }
             for (id, accumulator) in accumulators {
                 do {
@@ -252,6 +285,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
             return accumulators.isEmpty && (!completed.isEmpty || !failed.isEmpty)
         }
 
+        deliver(heardFinished)
         for accumulator in completed {
             finish(accumulator)
         }
@@ -273,6 +307,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
         for accumulator in cancelled {
             resultHandler(.failed(request: accumulator.request, reason: reason))
         }
+        deliver(lock.withLock { heardRecorder?.finishAll(reason: "stopped") ?? [] })
         lock.withLock {
             ring.removeAll()
             generatingLandmarkKeys.removeAll()

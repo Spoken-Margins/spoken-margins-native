@@ -804,6 +804,8 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var marginMomentTitle = "Your Margin"
     @Published private(set) var marginMomentPositionIsApproximate = false
     private var marginMomentConductor: MarginMomentConductor?
+    /// Heard audio around streamed Margins, written to temporary files until transcribed (#156). Keyed by margin identity.
+    private var heardSourceWindows: [String: [(url: URL, startMediaTimeMs: Int, durationMs: Int)]] = [:]
 
     var activePlaybackIsPlaying: Bool {
         if playingImportedCommentary != nil { return !importedCommentaryIsPaused }
@@ -10938,6 +10940,9 @@ final class Gate1AppModel: ObservableObject {
                 self?.recordDeveloperDiagnostic("media.start", fields)
             }
         }
+        client.heardSourceWindowHandler = { [weak self] window in
+            Task { @MainActor [weak self] in self?.handleHeardSourceWindow(window) }
+        }
         client.playbackStallTraceHandler = { [weak self] fields in
             Task { @MainActor [weak self] in
                 // #166: the clock froze on a stream while the app showed "playing"; this records the player's state.
@@ -12406,6 +12411,131 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    /// The tap hands over what was heard around a Margin: write it to temporary files, then transcribe if the
+    /// Margin's own note transcription has finished (otherwise that completion schedules this).
+    func handleHeardSourceWindow(_ window: HeardAudioWindow) {
+        let key = HeardAudioWindowRecorder.key(window.request)
+        let diagnosticKey = Self.marginDiagnosticKey("heardSourceWindow", sessionId: window.request.sessionId, interjectionId: window.request.interjectionId)
+        do {
+            let caches = try FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            let directory = caches.appending(path: "HeardSourceWindows/\(UUID().uuidString)", directoryHint: .isDirectory)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            var files: [(url: URL, startMediaTimeMs: Int, durationMs: Int)] = []
+            for (index, segment) in window.segments.enumerated() where window.durationMs(of: segment) >= 2_000 {
+                let url = directory.appending(path: "segment-\(index).caf")
+                try Self.writeHeardSegment(segment.samples, sampleRate: window.sampleRate, to: url)
+                files.append((url, segment.startMediaTimeMs, window.durationMs(of: segment)))
+            }
+            let totalMs = files.reduce(0) { $0 + $1.durationMs }
+            diagnostics[diagnosticKey] = "captured:\(totalMs)ms;segments=\(files.count);before=\(window.coversBeforeAnchor ? 1 : 0);after=\(window.coversAfterAnchor ? 1 : 0);end=\(window.endReason)"
+            guard !files.isEmpty else {
+                try? FileManager.default.removeItem(at: directory)
+                return
+            }
+            heardSourceWindows[key] = files
+        } catch {
+            diagnostics[diagnosticKey] = "write_failed:\(error.localizedDescription)"
+            return
+        }
+        guard let store,
+              let interjection = try? store.loadInterjections(sessionId: window.request.sessionId)
+                .first(where: { $0.id == window.request.interjectionId }) else { return }
+        if interjection.anchorContextStatus != .ready {
+            scheduleSourceWindowContextIfNeeded(for: interjection)
+        }
+    }
+
+    private nonisolated static func writeHeardSegment(_ samples: [Float], sampleRate: Double, to url: URL) throws {
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)),
+              let channel = buffer.floatChannelData?[0] else {
+            throw SessionKitError.persistenceFailed("heard_audio_buffer_unavailable")
+        }
+        buffer.frameLength = AVAudioFrameCount(samples.count)
+        samples.withUnsafeBufferPointer { channel.update(from: $0.baseAddress!, count: samples.count) }
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        try file.write(from: buffer)
+    }
+
+    /// No heard audio yet: the tap delivers it about a minute after playback resumes. If it never arrives (the
+    /// listener stopped, or the tap wasn't running), say so instead of leaving context pending forever.
+    private func awaitHeardSourceWindow(for interjection: Interjection) {
+        let key = Self.marginIdentity(interjection)
+        diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "waiting:heard_audio"
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(240))
+            guard let self, self.heardSourceWindows[key] == nil,
+                  !self.pendingSourceContextInterjectionIds.contains(key),
+                  let store = self.store,
+                  let current = try? store.loadInterjections(sessionId: interjection.sessionId).first(where: { $0.id == interjection.id }),
+                  current.anchorContextStatus != .ready else { return }
+            self.diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "failed:heard_audio_unavailable"
+            self.run { engine in
+                self.snapshot = try engine.sourceWindowContextUnavailable(interjectionId: interjection.id, sessionId: interjection.sessionId)
+                self.refreshMarginRows()
+            }
+        }
+    }
+
+    private func transcribeHeardSourceWindow(
+        _ files: [(url: URL, startMediaTimeMs: Int, durationMs: Int)],
+        for interjection: Interjection,
+        itemId: String,
+        reportsResult: Bool
+    ) {
+        let key = Self.marginIdentity(interjection)
+        guard pendingSourceContextInterjectionIds.insert(key).inserted else { return }
+        diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "scheduled:heard_audio"
+        diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", interjection)] = "heard_stream_audio"
+        if reportsResult { reportConfirmation("Recovering source context…") }
+        run { engine in
+            snapshot = try engine.sourceWindowContextPending(interjectionId: interjection.id, sessionId: interjection.sessionId)
+        }
+        Task { [weak self] in
+            guard let self else { return }
+            var parts: [(startMediaTimeMs: Int, timeline: MediaTimeline)] = []
+            var failure: String?
+            for file in files {
+                // A unique folder per segment: the transcriber reuses an existing export in the same folder.
+                let scratchID = "heard-\(UUID().uuidString)"
+                do {
+                    let analysis = try await self.sourceTranscriptionClient.transcribeSourceAudioWindowWithEvidence(
+                        url: file.url, itemId: scratchID, anchorMediaTimeMs: 0, durationMs: file.durationMs,
+                        windowBeforeMs: 0, windowAfterMs: file.durationMs
+                    )
+                    parts.append((file.startMediaTimeMs, analysis.timeline))
+                } catch {
+                    failure = error.localizedDescription
+                }
+                if let caches = try? FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: false) {
+                    try? FileManager.default.removeItem(at: caches.appending(path: "SourceAudioTranscriptionWindows/\(scratchID)"))
+                }
+            }
+            if let directory = files.first?.url.deletingLastPathComponent() {
+                try? FileManager.default.removeItem(at: directory)
+            }
+            await MainActor.run {
+                self.heardSourceWindows[key] = nil
+                self.pendingSourceContextInterjectionIds.remove(key)
+                let timeline = HeardAudioWindow.episodeTimeline(parts)
+                let transcriptionKey = Self.marginDiagnosticKey("sourceWindowTranscription", interjection)
+                self.run { engine in
+                    if timeline.segments.isEmpty {
+                        self.snapshot = try engine.sourceWindowContextUnavailable(interjectionId: interjection.id, sessionId: interjection.sessionId)
+                        self.diagnostics[transcriptionKey] = "failed:heard_audio:\(failure ?? "no_speech")"
+                        if reportsResult { self.reportWarning("Source context could not be recovered from the audio you heard.") }
+                    } else {
+                        self.snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjection.id, sessionId: interjection.sessionId, timeline: timeline)
+                        self.diagnostics[transcriptionKey] = "complete:heard_audio:\(timeline.segments.count)_segments"
+                        if reportsResult { self.reportConfirmation("Source context recovered.") }
+                    }
+                    self.refreshSelectedItem()
+                    self.refreshMarginRows()
+                }
+            }
+        }
+    }
+
     @discardableResult
     private func scheduleSourceWindowContextIfNeeded(for interjection: Interjection, reportsResult: Bool = false) -> Bool {
         guard interjection.captureKind != .written,
@@ -12446,12 +12576,25 @@ final class Gate1AppModel: ObservableObject {
             }
             return true
         }
-        if reportsResult { reportConfirmation("Recovering source context…") }
-        diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "scheduled"
         let transcriptionURL = (item.media?.sourceType == .nativeMediaFile ? resolvedOwnedAudiobookURL(for: item) : nil)
             ?? importedPodcastRecipientLocalURLs[item.id]
             ?? podcastDownloadCoordinator?.validatedLocalURL(for: item.id)
             ?? canonicalSourceURL
+        if !transcriptionURL.isFileURL {
+            // #156: a window can't be cut from a stream after the fact (AVFoundation stops the export). Use the
+            // minute before and after the Margin that the player's tap kept, once it has been handed over.
+            if let heard = heardSourceWindows[Self.marginIdentity(interjection)] {
+                transcribeHeardSourceWindow(heard, for: interjection, itemId: item.id, reportsResult: reportsResult)
+            } else if reportsResult {
+                // A manual retry comes long after the heard audio was used or dropped.
+                reportWarning("Context for a streamed episode comes from the audio around the Margin as you heard it, and that's no longer available. Download the episode to recover it.")
+            } else {
+                awaitHeardSourceWindow(for: interjection)
+            }
+            return true
+        }
+        if reportsResult { reportConfirmation("Recovering source context…") }
+        diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "scheduled"
         let provenance = transcriptionURL.isFileURL ? "downloaded_local_audio" : "bounded_remote_window"
         diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", interjection)] = provenance
         pendingSourceContextInterjectionIds.insert(Self.marginIdentity(interjection))
