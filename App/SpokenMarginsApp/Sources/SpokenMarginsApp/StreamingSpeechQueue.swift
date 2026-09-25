@@ -70,6 +70,10 @@ final class StreamingSpeechQueue {
 
     func pauseForInterjection() {
         guard !isPausedForInterjection else { return }
+        // The speech client is the shared audio router. Stopping it when no streamed unit is speaking also stops a
+        // playing podcast, discarding its player, audio tap and buffer, so every Margin lost its anchor evidence
+        // and resumed from a fresh stream request. Only stop speech this queue is actually driving.
+        let ownsSpeech = current != nil || worker != nil
         isPausedForInterjection = true
         worker?.cancel()
         worker = nil
@@ -77,7 +81,7 @@ final class StreamingSpeechQueue {
             pending.insert(current, at: 0)
             self.current = nil
         }
-        try? speech.stop()
+        if ownsSpeech { try? speech.stop() }
     }
 
     /// Cancels streamed-unit ownership after the canonical session has handled a
