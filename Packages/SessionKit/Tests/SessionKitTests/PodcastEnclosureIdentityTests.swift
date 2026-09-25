@@ -25,3 +25,32 @@ final class PodcastEnclosureIdentityTests: XCTestCase {
         XCTAssertNil(PodcastEnclosureIdentity.key("ftp://example.com/a.mp3"))
     }
 }
+
+final class LinkResolutionArticleFallbackTests: XCTestCase {
+    private func result(status: LinkResolutionStatus, reason: String?, audioURL: String?) -> LinkResolutionResult {
+        let candidate = LinkResolutionCandidate(
+            sourceLink: SourceLink(url: "https://en.wikipedia.org/wiki/Marginalia", provider: "en.wikipedia.org", role: "discovery"),
+            title: "Marginalia",
+            audioURL: audioURL,
+            confidence: 0.3
+        )
+        return LinkResolutionResult(
+            requestId: "r",
+            status: status,
+            originalLink: candidate.sourceLink,
+            selectedCandidate: nil,
+            candidates: [candidate],
+            failureReason: reason
+        )
+    }
+
+    func testAPageWithNoAudioIsOfferedToTheArticleReader() {
+        XCTAssertTrue(result(status: .needsReview, reason: "audio_enclosure_not_found", audioURL: nil).foundNoAudio)
+    }
+
+    func testPodcastReviewAndAmbiguityAreNotTreatedAsArticles() {
+        XCTAssertFalse(result(status: .needsReview, reason: "audio_enclosure_not_found", audioURL: "https://cdn.example.com/a.mp3").foundNoAudio)
+        XCTAssertFalse(result(status: .needsReview, reason: "rss_episode_ambiguous", audioURL: nil).foundNoAudio)
+        XCTAssertFalse(result(status: .needsReview, reason: "spotify_specific_episode_required", audioURL: nil).foundNoAudio)
+    }
+}

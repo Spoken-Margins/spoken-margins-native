@@ -1487,3 +1487,13 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         canSkimBackward = false
     }
 }
+
+extension LinkResolutionResult {
+    /// The link reached a page or feed, but nothing there is playable audio. The page may be a readable article.
+    public var foundNoAudio: Bool {
+        status != .playable
+            && selectedCandidate?.audioURL == nil
+            && !candidates.contains { $0.audioURL != nil }
+            && ["audio_enclosure_not_found", "unsupported_link_type"].contains(failureReason ?? "")
+    }
+}
