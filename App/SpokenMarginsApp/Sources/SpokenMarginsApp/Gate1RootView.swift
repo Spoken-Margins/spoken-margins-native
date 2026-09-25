@@ -2068,6 +2068,7 @@ private struct PlaybackScreen: View {
                             capturePermissionRecovery
                             importedCommentaryControl
                             marginMomentControl
+                            sharedMarginPlacementControl
                             recentMarginPreview
                             if model.shouldShowGuidedOnboardingCoach {
                                 GuidedOnboardingPlaybackCard {
@@ -2590,6 +2591,53 @@ private struct PlaybackScreen: View {
             .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
             .accessibilityElement(children: .contain)
         }
+    }
+
+    /// Placing a shared Margin by ear (#158): listen, then mark the moment.
+    @ViewBuilder
+    private var sharedMarginPlacementControl: some View {
+        if let placement = model.sharedMarginPlacement {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Finding a shared Margin's spot", systemImage: "ear")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Text("\(SharedMarginDetailView.suggestionCaption(placement)) Tap when you hear the moment it's about.")
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.85))
+                    .fixedSize(horizontal: false, vertical: true)
+                // The time shows what will be saved, so a stalled clock is visible before confirming.
+                Button(
+                    model.snapshot.currentMediaTimeMs.map { "This is the spot · \(Self.playbackPositionLabel($0))" } ?? "This is the spot",
+                    systemImage: "mappin.and.ellipse",
+                    action: model.confirmSharedMarginPlacement
+                )
+                    .buttonStyle(PrimaryButtonStyle())
+                    .contentTransition(.numericText())
+                    .accessibilityIdentifier("sharedMarginPlacement.confirm")
+                HStack(spacing: 16) {
+                    Button("Hear their Margin", systemImage: "play.circle", action: model.playSharedMarginBeingPlaced)
+                        .accessibilityIdentifier("sharedMarginPlacement.hear")
+                    Spacer()
+                    Button("Cancel", action: model.cancelSharedMarginPlacement)
+                        .accessibilityIdentifier("sharedMarginPlacement.cancel")
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.85))
+                .frame(minHeight: 44)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
+            .accessibilityElement(children: .contain)
+        }
+    }
+
+    /// Matches the scrubber, which shows whole seconds elapsed.
+    private static func playbackPositionLabel(_ ms: Int) -> String {
+        let seconds = max(0, ms / 1000)
+        return seconds >= 3600
+            ? String(format: "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
+            : String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 
     private static func marginMomentCountdown(_ ms: Int) -> String {
