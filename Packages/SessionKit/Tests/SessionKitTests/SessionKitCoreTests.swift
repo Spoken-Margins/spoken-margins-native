@@ -3502,6 +3502,34 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(postFailureTick.currentMediaTimeMs, 602_500)
     }
 
+    func testRoutedPodcastCaptureForwardsOnlyOnActiveMediaRoute() throws {
+        let speech = RecordingAudioClient()
+        let media = RecordingAudioClient()
+        media.acceptsPostResumeSamples = true
+        // Call through the protocol type, as SessionEngine does, so a missing
+        // forwarding method would dispatch to the silent protocol default.
+        let routed: any AudioPlaybackClient = RoutedAudioPlaybackClient(speech: speech, media: media)
+        let first = PostResumeAudioSampleRequest(interjectionId: "ij-001", sessionId: "first", itemId: "episode", anchorMediaTimeMs: 20_000, targetDurationMs: 12_000)
+        let second = PostResumeAudioSampleRequest(interjectionId: "ij-001", sessionId: "second", itemId: "episode", anchorMediaTimeMs: 40_000, targetDurationMs: 12_000)
+
+        XCTAssertFalse(routed.captureBufferedPreInterjectionAudioSample(first))
+        XCTAssertFalse(routed.armPostResumeAudioSample(first))
+        XCTAssertTrue(media.postResumeSampleRequests.isEmpty)
+        try routed.play(targetId: "episode", fromMediaTimeMs: 20_000)
+        XCTAssertTrue(routed.captureBufferedPreInterjectionAudioSample(first))
+        XCTAssertTrue(routed.armPostResumeAudioSample(first))
+        XCTAssertTrue(routed.armPostResumeAudioSample(second))
+        XCTAssertEqual(media.preInterjectionSampleRequests, [first])
+        XCTAssertEqual(media.postResumeSampleRequests, [first, second])
+        XCTAssertTrue(speech.postResumeSampleRequests.isEmpty)
+        try routed.play(targetId: "speech", from: 0)
+        XCTAssertFalse(routed.armPostResumeAudioSample(first))
+        XCTAssertEqual(media.postResumeSampleRequests, [first, second])
+        media.acceptsPostResumeSamples = false
+        try routed.play(targetId: "episode", fromMediaTimeMs: 40_000)
+        XCTAssertFalse(routed.armPostResumeAudioSample(second))
+    }
+
     func testPausedMediaDestinationCanBeStagedWithoutPlayerSeekAndResumedThere() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
@@ -6399,6 +6427,7 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     var playbackVolumes: [Float] = []
     var acceptsPostResumeSamples = false
     var postResumeSampleRequests: [PostResumeAudioSampleRequest] = []
+    var preInterjectionSampleRequests: [PostResumeAudioSampleRequest] = []
     var eventLog: [String] = []
     var failNextPlay = false
 
@@ -6535,6 +6564,11 @@ private final class RecordingAudioClient: AudioPlaybackClient {
     func armPostResumeAudioSample(_ request: PostResumeAudioSampleRequest) -> Bool {
         postResumeSampleRequests.append(request)
         eventLog.append("arm_post_resume_sample")
+        return acceptsPostResumeSamples
+    }
+
+    func captureBufferedPreInterjectionAudioSample(_ request: PostResumeAudioSampleRequest) -> Bool {
+        preInterjectionSampleRequests.append(request)
         return acceptsPostResumeSamples
     }
 }

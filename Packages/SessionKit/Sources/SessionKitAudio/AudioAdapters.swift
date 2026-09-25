@@ -2699,6 +2699,20 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
         activeRoute == .media ? media.currentMediaTimeMs() : nil
     }
 
+    // Podcast anchor evidence comes from the media player's audio. Without explicit
+    // forwarding these calls hit the protocol defaults and silently return false.
+    @discardableResult
+    public func captureBufferedPreInterjectionAudioSample(_ request: PostResumeAudioSampleRequest) -> Bool {
+        guard activeRoute == .media else { return false }
+        return media.captureBufferedPreInterjectionAudioSample(request)
+    }
+
+    @discardableResult
+    public func armPostResumeAudioSample(_ request: PostResumeAudioSampleRequest) -> Bool {
+        guard activeRoute == .media else { return false }
+        return media.armPostResumeAudioSample(request)
+    }
+
     public func currentPlaybackDurationMs() -> Int? {
         activeRoute == .media ? media.currentPlaybackDurationMs() : nil
     }
