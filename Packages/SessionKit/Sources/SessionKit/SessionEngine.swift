@@ -595,6 +595,28 @@ public final class SessionEngine {
         return snapshot
     }
 
+    /// Records a media destination while paused when no player exists yet (for example,
+    /// after restoring a session). The next playback start opens the source at this position.
+    /// Active playback must use seekMedia so a real player seek is acknowledged.
+    @discardableResult
+    public func stagePausedMediaPosition(toMediaTimeMs mediaTimeMs: Int) throws -> SessionSnapshot {
+        try requireNavigationAllowed("stagePausedMediaPosition")
+        try requirePlayback("stagePausedMediaPosition")
+        guard snapshot.status == .paused,
+              let session = currentSession,
+              session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia else {
+            throw SessionKitError.invalidCommandForState("stagePausedMediaPosition")
+        }
+        let updated = mediaSession(session, movedTo: mediaTimeMs)
+        currentSession = updated
+        try persistSession(updated)
+        protectPlaybackPosition(for: updated)
+        lastMediaSeekRequest = nil
+        lastMediaSeekResolution = nil
+        publish(status: .paused, phase: updated.phase)
+        return snapshot
+    }
+
     @discardableResult
     public func seekText(toCharOffset charOffset: Int) throws -> SessionSnapshot {
         try requireNavigationAllowed("seekText")

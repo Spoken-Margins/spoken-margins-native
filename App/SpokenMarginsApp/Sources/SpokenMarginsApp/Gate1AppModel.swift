@@ -4748,7 +4748,7 @@ final class Gate1AppModel: ObservableObject {
         protectSummaryBridgeAsset(bridge.summaryAssetId, protected: false)
         do {
             snapshot.skimBridgeState = nil
-            snapshot = try engine.seekMedia(toMediaTimeMs: bridge.destinationMediaTimeMs)
+            snapshot = try seekOrStageMedia(engine, toMediaTimeMs: bridge.destinationMediaTimeMs)
             if bridge.destinationSceneId == nil {
                 snapshot = try engine.pause()
                 reportConfirmation("Finished the final scene summary.")
@@ -4792,7 +4792,7 @@ final class Gate1AppModel: ObservableObject {
         protectSummaryBridgeAsset(bridge.summaryAssetId, protected: false)
         snapshot.skimBridgeState = nil
         guard restoringOrigin, let engine else { return }
-        snapshot = (try? engine.seekMedia(toMediaTimeMs: bridge.originMediaTimeMs)) ?? snapshot
+        snapshot = (try? seekOrStageMedia(engine, toMediaTimeMs: bridge.originMediaTimeMs)) ?? snapshot
         if resumeSource && bridge.wasSourcePlaying {
             snapshot = (try? engine.resumePlayback()) ?? snapshot
         } else {
@@ -4969,7 +4969,7 @@ final class Gate1AppModel: ObservableObject {
         clearPendingAutoPlayTurns()
         run { engine in
             _ = try ensureSessionForSelectedItem(engine)
-            snapshot = try engine.seekMedia(toMediaTimeMs: scene.startMs)
+            snapshot = try seekOrStageMedia(engine, toMediaTimeMs: scene.startMs)
             if !snapshot.status.isPlaybackActive {
                 snapshot = try engine.resumePlayback()
             }
@@ -5798,11 +5798,22 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    /// Seeks the source player, or records the destination when a restored paused session
+    /// has no player yet; the next playback start then opens the source there.
+    private func seekOrStageMedia(_ engine: SessionEngine, toMediaTimeMs mediaTimeMs: Int) throws -> SessionSnapshot {
+        do {
+            return try engine.seekMedia(toMediaTimeMs: mediaTimeMs)
+        } catch SessionKitError.invalidCommandForState(let reason)
+            where reason == "media_seek_player_unavailable" && engine.snapshot.status == .paused {
+            return try engine.stagePausedMediaPosition(toMediaTimeMs: mediaTimeMs)
+        }
+    }
+
     func seekMedia(toMediaTimeMs mediaTimeMs: Int) {
         recordDeveloperDiagnostic("seek.media.request", ["timeMs": String(mediaTimeMs)])
         restoreSkimOriginBeforeCanonicalTransport()
         run { engine in
-            snapshot = try engine.seekMedia(toMediaTimeMs: mediaTimeMs)
+            snapshot = try seekOrStageMedia(engine, toMediaTimeMs: mediaTimeMs)
             recordMediaSeekEvidence(from: engine)
             refreshSelectedItem()
         }

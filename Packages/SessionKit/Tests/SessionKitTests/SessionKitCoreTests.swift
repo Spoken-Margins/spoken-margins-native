@@ -3502,6 +3502,34 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(postFailureTick.currentMediaTimeMs, 602_500)
     }
 
+    func testPausedMediaDestinationCanBeStagedWithoutPlayerSeekAndResumedThere() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media"]]
+        )
+        let item = Item(
+            id: "item-paused-margin-seek", title: "Paused Margin Seek",
+            mediaType: TargetType.transcriptBackedMedia.rawValue, text: nil,
+            externalReference: "https://example.com/episode", status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://example.com/episode.mp3", durationMs: 600_000)
+        )
+        let audio = DelayedPositionAudioClient()
+        let repository = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(profile: profile, repository: repository, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        _ = try engine.pause()
+        let staged = try engine.stagePausedMediaPosition(toMediaTimeMs: 240_000)
+        XCTAssertEqual(staged.status, .paused)
+        XCTAssertEqual(staged.currentMediaTimeMs, 240_000)
+        XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 240_000)
+        XCTAssertTrue(audio.navigationSeekPositions.isEmpty, "No player seek should be requested for a deferred source start")
+        _ = try engine.resumePlayback()
+        XCTAssertEqual(audio.mediaPlayPositions.last, 240_000)
+        XCTAssertThrowsError(try engine.stagePausedMediaPosition(toMediaTimeMs: 300_000))
+    }
     func testLiveTextSeekKeepsRequestedOffsetWhileSpeechReportsOldOffset() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
