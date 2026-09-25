@@ -123,11 +123,17 @@ struct Gate1RootView: View {
 private struct Build23SenderSharingHost: View {
     @EnvironmentObject private var model: Gate1AppModel
     @ObservedObject var coordinator: Build23SharingCoordinator
+    #if DEBUG
+    private static let showsRecipientTestTool = true
+    #else
+    private static let showsRecipientTestTool = false
+    #endif
 
     var body: some View {
         Build23SenderSharingExperience(coordinator: coordinator)
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                if coordinator.verifiedShareFileURL != nil {
+                // QA tool only: TestFlight and App Store builds use the Release configuration.
+                if Self.showsRecipientTestTool, coordinator.verifiedShareFileURL != nil {
                     VStack(spacing: 10) {
                         Divider()
                         Button("Create recipient test session", systemImage: "person.2.badge.plus") {
