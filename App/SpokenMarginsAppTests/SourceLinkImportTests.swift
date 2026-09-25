@@ -39,6 +39,28 @@ final class SourceLinkImportTests: XCTestCase {
     }
     #endif
 
+    func testMiniPlayerNamesThePlayingItemWhileAnotherItemPageIsOpen() throws {
+        // Seen on Build 29: browsing to another item while listening relabelled the mini player.
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let other = "item-browser-other-page"
+        XCTAssertTrue(model.importBrowserText(BrowserTextHandoff(
+            itemId: other,
+            captureMode: .selectedText,
+            source: BrowserTextSource(url: "https://example.com/other", title: "Another Page"),
+            text: "Text of another page.",
+            requestedContinuation: BrowserTextContinuation(startSession: false, preferredPlaybackOwner: "browser_or_app")
+        )))
+        let playing = "item-pill"
+        model.startItem(id: playing)
+        XCTAssertEqual(model.snapshot.itemId, playing)
+        let playingTitle = model.playbackItemHeaderTitle
+        model.openItem(id: other)
+        XCTAssertEqual(model.selectedItem.id, other)
+        XCTAssertNotEqual(model.selectedItem.title, playingTitle)
+        XCTAssertEqual(model.playbackItemHeaderTitle, playingTitle)
+    }
+
     private var temporaryDirectories: [URL] = []
 
     func testDescriptionChaptersAcceptLinkedParenthesesAndPreserveTitleColons() throws {

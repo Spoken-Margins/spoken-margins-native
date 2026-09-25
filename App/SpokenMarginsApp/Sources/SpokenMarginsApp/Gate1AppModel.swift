@@ -8748,7 +8748,13 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var playbackItemHeaderTitle: String {
-        selectedItem.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        // The mini player appears on every screen, so it names what is playing, not whichever item page is open.
+        if let playingId = snapshot.itemId, playingId != selectedItem.id {
+            let title = (libraryItems.first { $0.id == playingId }?.title ?? snapshot.title ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !title.isEmpty { return title }
+        }
+        return selectedItem.title.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     var playbackChapterHeaderTitle: String? {
