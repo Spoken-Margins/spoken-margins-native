@@ -11,6 +11,12 @@ These are the checks that decide whether a build works. Unit tests protect the p
   - You cannot hear audio. A clock that advances shows the app believes it is playing, not that the right words are audible, so mark audible content "owner to confirm".
 - **Owner on the phone.** Run the same journeys, listening. This is the only way a journey becomes `human_validated`.
 
+Simulator driving pitfalls observed September 24:
+- After typing text with the simulator tool, take a screenshot and confirm the whole value is present before tapping a submit button. Keystrokes and taps travel on different channels, so a quick tap can arrive before queued keystrokes. The app then receives a truncated URL, which shows up as a 404, `-1011` or "couldn't provide anything at that address" error rather than a real app bug.
+- The app's Paste button reads the simulator pasteboard. `xcrun simctl pbcopy` did not reach it, so type values instead.
+- iOS keyboard tips can appear over the keyboard and swallow the next tap. Screenshot before tapping near the bottom of the screen.
+- Wait a few seconds after launch before the first tap. A cold Debug launch can show a blank screen for about 5 s.
+
 Use a Library that already has content, not only a fresh install. Many of the worst bugs appeared only with real history: old containers, earlier builds' data, long episodes.
 
 Steps are written in terms of what the listener wants, not exact button labels, so they stay valid as the UI changes.
