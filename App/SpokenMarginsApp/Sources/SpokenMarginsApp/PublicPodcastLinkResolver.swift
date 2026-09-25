@@ -893,9 +893,15 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
 
     private func resolveEpisodePage(_ url: URL, request: LinkResolutionRequest) throws -> LinkResolutionResult? {
         guard let data = try? fetch(url),
-              let html = String(data: data, encoding: .utf8),
-              let metadata = episodePageMetadata(in: html, pageURL: url) else {
+              let html = String(data: data, encoding: .utf8) else {
             return nil
+        }
+        guard let metadata = episodePageMetadata(in: html, pageURL: url) else {
+            guard let feedURL = linkedFeedURL(in: html, pageURL: url),
+                  let feedData = try? fetch(feedURL),
+                  let item = feedItem(linkedFrom: url, in: RSSFeedParser().parse(data: feedData)) else { return nil }
+            return playable(request: request, provider: "rss", candidate: linkedFeedCandidate(
+                item, feedURL: feedURL, collections: resolvedChapterCollections(for: item)))
         }
         let collections = resolvedChapterCollections(for: RSSFeedItem(chapterLinks: metadata.chapterLinks))
         return playable(
@@ -911,9 +917,16 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         requestTimeoutSeconds: TimeInterval
     ) async throws -> LinkResolutionResult? {
         guard let data = try? await fetchAsync(url, timeout: requestTimeoutSeconds),
-              let html = String(data: data, encoding: .utf8),
-              let metadata = episodePageMetadata(in: html, pageURL: url) else {
+              let html = String(data: data, encoding: .utf8) else {
             return nil
+        }
+        guard let metadata = episodePageMetadata(in: html, pageURL: url) else {
+            guard let feedURL = linkedFeedURL(in: html, pageURL: url),
+                  let feedData = try? await fetchAsync(feedURL, timeout: requestTimeoutSeconds),
+                  let item = feedItem(linkedFrom: url, in: RSSFeedParser().parse(data: feedData)) else { return nil }
+            let collections = await resolvedChapterCollections(for: item, requestTimeoutSeconds: requestTimeoutSeconds)
+            return playable(request: request, provider: "rss", candidate: linkedFeedCandidate(
+                item, feedURL: feedURL, collections: collections))
         }
         let collections = await resolvedChapterCollections(
             for: RSSFeedItem(chapterLinks: metadata.chapterLinks),
@@ -923,6 +936,68 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             request: request,
             provider: "episode_page",
             candidate: episodePageCandidate(metadata: metadata, pageURL: url, collections: collections)
+        )
+    }
+
+    // Some hosts (Omny, for one) put no play metadata on the episode page, but link the show's feed. The page is
+    // only trusted to name its own feed item: the item must link back to this exact page, never a nearby title.
+    private func linkedFeedURL(in html: String, pageURL: URL) -> URL? {
+        let range = NSRange(html.startIndex..<html.endIndex, in: html)
+        let patterns = [
+            #"<link\b[^>]*\btype\s*=\s*["']application/rss\+xml["'][^>]*\bhref\s*=\s*["']([^"']+)["']"#,
+            #"<link\b[^>]*\bhref\s*=\s*["']([^"']+)["'][^>]*\btype\s*=\s*["']application/rss\+xml["']"#,
+            #""RssFeed"\s*:\s*"(https://[^"\\]+)""#,
+            #"\bhref\s*=\s*["'](https://[^"']+\.rss)["']"#
+        ]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+                  let match = regex.firstMatch(in: html, range: range),
+                  let valueRange = Range(match.range(at: 1), in: html),
+                  let url = URL(string: decodeHTMLEntities(String(html[valueRange])), relativeTo: pageURL)?.absoluteURL,
+                  url.scheme?.lowercased() == "https" else { continue }
+            return url
+        }
+        return nil
+    }
+
+    private func feedItem(linkedFrom pageURL: URL, in items: [RSSFeedItem]) -> RSSFeedItem? {
+        guard let page = comparablePageURL(pageURL.absoluteString) else { return nil }
+        let matches = items.filter { item in
+            [item.link, item.guid].contains { comparablePageURL($0) == page }
+                && !(item.enclosureURL ?? "").isEmpty
+        }
+        guard matches.count == 1, var item = matches.first else { return nil }
+        item.isExactMatch = true
+        return item
+    }
+
+    private func comparablePageURL(_ value: String?) -> String? {
+        guard let value, var components = URLComponents(string: value.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let scheme = components.scheme?.lowercased(), scheme == "https" || scheme == "http",
+              let host = components.host?.lowercased() else { return nil }
+        components.query = nil
+        components.fragment = nil
+        var path = components.path
+        while path.hasSuffix("/") && path.count > 1 { path.removeLast() }
+        return host + path
+    }
+
+    private func linkedFeedCandidate(
+        _ item: RSSFeedItem,
+        feedURL: URL,
+        collections: [PublisherChapterCollection]
+    ) -> LinkResolutionCandidate {
+        LinkResolutionCandidate(
+            sourceLink: SourceLink(url: feedURL.absoluteString, provider: "rss", title: item.feedTitle, role: "canonical_feed"),
+            title: item.title ?? title(from: feedURL),
+            showTitle: item.feedTitle,
+            durationMs: item.durationMs,
+            publishedAt: item.publishedAt,
+            audioURL: item.enclosureURL,
+            transcriptLinks: item.transcriptLinks,
+            chapterLinks: item.chapterLinks,
+            publisherChapterCollections: collections,
+            confidence: 0.96
         )
     }
 
@@ -1026,6 +1101,7 @@ struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             .replacingOccurrences(of: "&#34;", with: "\"")
             .replacingOccurrences(of: "&apos;", with: "'")
             .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&#x27;", with: "'")
             .replacingOccurrences(of: "&lt;", with: "<")
             .replacingOccurrences(of: "&gt;", with: ">")
             .replacingOccurrences(of: "&amp;", with: "&")

@@ -198,6 +198,112 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
     }
 
     @MainActor
+    func testPodcastPackageUsesItsOwnEnclosureWhenThePageLookupFindsNoAudio() async throws {
+        // Omny-style: the page resolves, but only to a title with no audio (#157).
+        let (model, store, manifest) = try makePackageImport(
+            named: "lookup-without-audio",
+            resolver: reviewResolver(candidates: [LinkResolutionCandidate(
+                sourceLink: SourceLink(url: Self.podcastURL, provider: "podcasts.example.com", role: "discovery"),
+                title: "Can you spot the imported story&#x27; - Example Show",
+                confidence: 0.3
+            )])
+        )
+        model.confirmSpokenMarginsPackageImport()
+        try await waitForImportToFinish(model)
+
+        let imported = try XCTUnwrap(model.libraryItems.first(where: { $0.title == Self.podcastTitle }))
+        XCTAssertEqual(try store.loadItem(id: imported.id).media?.url, Self.podcastAudioURL)
+        XCTAssertNotNil(try store.loadImportedCommentaryLayer(packageDigest: try XCTUnwrap(manifest.contentDigest)))
+        XCTAssertNil(model.spokenMarginsPackageImportError)
+        XCTAssertEqual(model.diagnostics["lastSharedPodcastAcquisition"], "package_reference_after_lookup_without_audio")
+    }
+
+    @MainActor
+    func testPodcastPackageMatchesATrackingWrappedEnclosureDespiteAdLengthDifference() async throws {
+        let wrapped = "https://dts.podtrac.com/redirect.mp3/chtbl.com/track/ABC/cdn.example.com/imported-story.mp3?utm_source=feed"
+        let (model, store, _) = try makePackageImport(
+            named: "wrapped-enclosure",
+            resolver: reviewResolver(candidates: [
+                LinkResolutionCandidate(
+                    sourceLink: SourceLink(url: "https://podcasts.example.com/feed.xml", provider: "rss", role: "canonical_feed"),
+                    title: "Can you spot the imported story? (rerun)",
+                    durationMs: 420_000,
+                    audioURL: wrapped,
+                    confidence: 0.8
+                ),
+                LinkResolutionCandidate(
+                    sourceLink: SourceLink(url: "https://podcasts.example.com/feed.xml", provider: "rss", role: "canonical_feed"),
+                    title: "A different episode",
+                    durationMs: 300_000,
+                    audioURL: "https://cdn.example.com/different-story.mp3",
+                    confidence: 0.8
+                )
+            ])
+        )
+        model.confirmSpokenMarginsPackageImport()
+        try await waitForImportToFinish(model)
+
+        let imported = try XCTUnwrap(model.libraryItems.first(where: { $0.title.hasPrefix("Can you spot the imported story") }))
+        XCTAssertEqual(try store.loadItem(id: imported.id).media?.url, wrapped)
+        XCTAssertNil(model.spokenMarginsPackageImportError)
+    }
+
+    @MainActor
+    func testAmbiguousPodcastPackageShowsASentenceNotAnInternalCode() async throws {
+        let (model, _, _) = try makePackageImport(
+            named: "ambiguous",
+            resolver: reviewResolver(candidates: ["one", "two"].map { name in
+                LinkResolutionCandidate(
+                    sourceLink: SourceLink(url: "https://podcasts.example.com/feed.xml", provider: "rss", role: "canonical_feed"),
+                    title: "Episode \(name)",
+                    audioURL: "https://cdn.example.com/\(name).mp3",
+                    confidence: 0.5
+                )
+            })
+        )
+        model.confirmSpokenMarginsPackageImport()
+        for _ in 0..<250 where model.spokenMarginsPackageImportError == nil {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let message = try XCTUnwrap(model.spokenMarginsPackageImportError)
+        XCTAssertEqual(message, SharedMarginsImportMessage.userFacing(SessionKitError.persistenceFailed("shared_podcast_item_is_ambiguous")))
+        XCTAssertFalse(message.contains("_"), message)
+        XCTAssertEqual(model.diagnostics["lastSpokenMarginsPackageImport"], "failed:persistence_failed:shared_podcast_item_is_ambiguous")
+    }
+
+    @MainActor
+    private func makePackageImport(
+        named name: String,
+        resolver: LinkResolutionClient
+    ) throws -> (Gate1AppModel, SQLiteSessionStore, SpokenMarginsPackageManifest) {
+        let root = try temporaryDirectory(named: "spoken-margins-\(name)")
+        let databaseURL = root.appendingPathComponent("recipient.sqlite")
+        let packageURL = root.appendingPathComponent("\(name).spokenmargins")
+        let manifest = try writePodcastPackage(to: packageURL, packageID: "package-\(name)")
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: databaseURL
+        )
+        model.resetAndSeed()
+        model.handleIncomingURL(packageURL)
+        XCTAssertNil(model.spokenMarginsPackageImportReview?.matchingItemId)
+        return (model, store, manifest)
+    }
+
+    private func reviewResolver(candidates: [LinkResolutionCandidate]) -> PackagePodcastLinkResolver {
+        PackagePodcastLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .needsReview,
+            originalLink: SourceLink(url: Self.podcastURL, provider: "podcasts.example.com", role: "discovery"),
+            selectedCandidate: nil,
+            candidates: candidates,
+            failureReason: "audio_enclosure_not_found"
+        ))
+    }
+
+    @MainActor
     func testReopeningCorruptedWrongSourcePackageRepairsItsItemAssociation() async throws {
         let root = try temporaryDirectory(named: "spoken-margins-package-repair")
         // Background model work can retain SQLite; let the process close it before cleanup.

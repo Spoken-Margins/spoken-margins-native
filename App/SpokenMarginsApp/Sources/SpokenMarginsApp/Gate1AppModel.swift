@@ -7744,7 +7744,7 @@ final class Gate1AppModel: ObservableObject {
                 reportConfirmation("Source matched. Review the shared Margins before importing.")
             }
         } catch {
-            spokenMarginsPackageImportError = error.localizedDescription
+            spokenMarginsPackageImportError = SharedMarginsImportMessage.userFacing(error)
             diagnostics["lastSpokenMarginsPackageImport"] = "source_reconciliation_failed:\(error.localizedDescription)"
         }
     }
@@ -7831,7 +7831,7 @@ final class Gate1AppModel: ObservableObject {
                 self.reportConfirmation("Imported shared Margins. Playback has not started.")
             } catch {
                 self.isImportingSpokenMarginsPackage = false
-                self.spokenMarginsPackageImportError = error.localizedDescription
+                self.spokenMarginsPackageImportError = SharedMarginsImportMessage.userFacing(error)
                 self.diagnostics["lastSpokenMarginsPackageImport"] = "failed:\(error.localizedDescription)"
                 self.reportFailure(error, context: "Shared Margins import failed")
             }
@@ -7990,21 +7990,32 @@ final class Gate1AppModel: ObservableObject {
             result = packageResult
         }
         if result.status == .needsReview {
+            // Enclosures match by the file behind their tracking redirects. Duration only breaks ties: shows with
+            // dynamic ads report different lengths for the same episode.
             let exactEnclosureMatches = result.candidates.filter {
-                normalizedSharingURL($0.audioURL) == normalizedSharingURL(item.enclosureURL)
+                PodcastEnclosureIdentity.sameFile($0.audioURL, item.enclosureURL)
             }
-            let titleDurationMatches = result.candidates.filter {
-                $0.title.compare(item.title, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
-                    && durationIsCompatible($0.durationMs, item.durationMs)
+            let titleMatches = result.candidates.filter {
+                $0.audioURL != nil
+                    && $0.title.compare(item.title, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
             }
-            let selected = exactEnclosureMatches.count == 1
-                ? exactEnclosureMatches.first
-                : (titleDurationMatches.count == 1 ? titleDurationMatches.first : nil)
-            guard let selected else {
+            let titleDurationMatches = titleMatches.filter { durationIsCompatible($0.durationMs, item.durationMs) }
+            let selected = exactEnclosureMatches.count == 1 ? exactEnclosureMatches.first
+                : titleMatches.count == 1 ? titleMatches.first
+                : titleDurationMatches.count == 1 ? titleDurationMatches.first
+                : nil
+            if let selected {
+                result.status = .playable
+                result.selectedCandidate = selected
+            } else if !result.candidates.contains(where: { $0.audioURL != nil }),
+                      let packageResult = packagePodcastLinkResolution(item: item, request: request) {
+                // The lookup found the page but no audio at all, so there is nothing to confuse the packet's own
+                // enclosure with. Placement still needs recipient evidence.
+                diagnostics["lastSharedPodcastAcquisition"] = "package_reference_after_lookup_without_audio"
+                result = packageResult
+            } else {
                 throw SessionKitError.persistenceFailed("shared_podcast_item_is_ambiguous")
             }
-            result.status = .playable
-            result.selectedCandidate = selected
         }
         guard result.status == .playable,
               let importedItem = try persistResolvedSourceLinkInBackground(request: request, result: result) else {

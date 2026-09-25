@@ -106,6 +106,45 @@ final class SourceLinkImportTests: XCTestCase {
         }
     }
 
+    func testEpisodePageWithoutPlayMetadataResolvesThroughItsLinkedFeed() async throws {
+        // Omny episode pages carry no inline play metadata but link the show feed (#157).
+        let pageURL = "https://omny.fm/shows/odd-lots/hollywood-was-cooked-before-ai-and-now-its-only-getting-worse"
+        let resolver = try omnyFixtureResolver()
+        let request = LinkResolutionRequest(id: "omny-page", inputURL: pageURL, sourceSurface: "spoken_margins_package", createdAt: Date())
+        for result in [try resolver.resolve(request), try await resolver.resolveAsync(request)] {
+            XCTAssertEqual(result.status, .playable)
+            let candidate = try XCTUnwrap(result.selectedCandidate)
+            XCTAssertEqual(candidate.title, "Hollywood Was Cooked Before AI, and Now It's Only Getting Worse")
+            XCTAssertTrue(candidate.audioURL?.contains("77d27e49-f26e-4c79-8913-b4cf01192cf5/audio.mp3") == true)
+            XCTAssertEqual(candidate.sourceLink.url, "https://omny.fm/shows/odd-lots/playlists/podcast.rss")
+        }
+    }
+
+    func testLinkedFeedIsNotTrustedForAPageItDoesNotList() async throws {
+        let resolver = try omnyFixtureResolver()
+        let request = LinkResolutionRequest(
+            id: "omny-unlisted",
+            inputURL: "https://omny.fm/shows/odd-lots/an-episode-missing-from-the-feed",
+            sourceSurface: "paste",
+            createdAt: Date()
+        )
+        let result = try await resolver.resolveAsync(request)
+        XCTAssertNotEqual(result.status, .playable, "a nearby Hollywood episode must not be picked by title similarity")
+        XCTAssertNil(result.candidates.compactMap(\.audioURL).first)
+    }
+
+    private func omnyFixtureResolver() throws -> PublicPodcastLinkResolver {
+        let bundle = Bundle(for: SourceLinkImportTests.self)
+        let page = try Data(contentsOf: XCTUnwrap(bundle.url(forResource: "omny-episode-page", withExtension: "html")))
+        let feed = try Data(contentsOf: XCTUnwrap(bundle.url(forResource: "omny-odd-lots-feed", withExtension: "xml")))
+        let fetch: @Sendable (URL) throws -> Data = { url in
+            if url.absoluteString == "https://omny.fm/shows/odd-lots/playlists/podcast.rss" { return feed }
+            if url.host == "omny.fm", url.path.hasPrefix("/shows/odd-lots/") { return page }
+            throw URLError(.badServerResponse)
+        }
+        return PublicPodcastLinkResolver(fetch: fetch, asynchronousFetch: { try fetch($0) })
+    }
+
     override func tearDownWithError() throws {
         for directory in temporaryDirectories {
             try? FileManager.default.removeItem(at: directory)
