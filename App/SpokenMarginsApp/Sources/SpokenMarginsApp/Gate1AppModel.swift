@@ -797,9 +797,14 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var playingImportedCommentary: ImportedCommentaryPrompt?
     @Published private(set) var importedCommentaryIsPaused = false
     private let importedMarginRemoteControls = ImportedMarginRemoteControls()
+    /// "Play this moment" (#159). The sequence is published for the playback screen; the conductor runs it.
+    @Published private(set) var marginMoment: MarginMomentSequence?
+    @Published private(set) var marginMomentVoiceIsPaused = false
+    private var marginMomentConductor: MarginMomentConductor?
 
     var activePlaybackIsPlaying: Bool {
         if playingImportedCommentary != nil { return !importedCommentaryIsPaused }
+        if marginMomentConductor?.isPlayingVoice == true { return !marginMomentVoiceIsPaused }
         return snapshot.skimBridgeState?.status == .playing || snapshot.status.isPlaybackActive
     }
 
@@ -1719,6 +1724,7 @@ final class Gate1AppModel: ObservableObject {
                             self.offerFollowSuggestionIfEligible(itemId: itemId, store: store)
                         }
                         self.reconcileImportedCommentary(previous: previousSnapshot, current: updated)
+                        self.observeMarginMoment(updated)
                         let playedPendingTurn = self.playPendingTurnIfReady(completedCurrentAudio: completedCurrentAudio)
                         if completedCurrentAudio && !playedPendingTurn {
                             self.closeCompletedSessionIfReady()
@@ -2172,12 +2178,14 @@ final class Gate1AppModel: ObservableObject {
             // URL registration is separate from selection; the engine owns exact
             // target validation and the reversible playback transaction.
             try prepareSourceMediaPlayback(itemId: session.itemId)
+            endMarginMoment()
             snapshot = try engine.playInterjectionAnchor(interjection)
             streamingSpeechQueue.relinquishToCanonicalPlayback()
             stopInterjectionAudioPlayback()
             activeItemId = session.itemId
             selectedItem = detail
             if previousItemID != session.itemId { resetMixWithOtherAudioForNewSession() }
+            startMarginMomentIfSpoken(interjection, store: store)
             screen = .playback
             lastError = nil
             return true
@@ -2187,6 +2195,84 @@ final class Gate1AppModel: ObservableObject {
             reportFailure(error, context: "Could not play this Margin's position")
             return false
         }
+    }
+
+    /// Spoken podcast Margins get the full moment: lead-in, the Margin inline, then the item's other spoken
+    /// Margins as playback reaches them. Written Margins and text items keep playing from the anchor.
+    private func startMarginMomentIfSpoken(_ interjection: Interjection, store: SQLiteSessionStore) {
+        guard Self.isInlineSpokenMargin(interjection), let anchorMs = interjection.anchor.mediaTimeMs else { return }
+        let sessions: [Session] = (try? store.loadSessions(itemId: interjection.itemId)) ?? []
+        let spoken: [Interjection] = sessions
+            .flatMap { session -> [Interjection] in (try? store.loadInterjections(sessionId: session.id)) ?? [] }
+            .filter(Self.isInlineSpokenMargin)
+        var voiceURLs: [String: URL] = [:]
+        for margin in spoken + [interjection] {
+            if let path = margin.audioPath { voiceURLs[Self.marginIdentity(margin)] = resolvedInterjectionAudioURL(for: path) }
+        }
+        let sequence = MarginMomentSequence(
+            itemId: interjection.itemId,
+            target: MarginMomentAnchor(marginId: Self.marginIdentity(interjection), mediaTimeMs: anchorMs),
+            otherMargins: spoken.map {
+                MarginMomentAnchor(marginId: Self.marginIdentity($0), mediaTimeMs: $0.anchor.mediaTimeMs ?? 0)
+            }
+        )
+        let conductor = MarginMomentConductor(
+            sequence: sequence,
+            source: .init(
+                pause: { [weak self] in self?.pause() },
+                resume: { [weak self] in self?.resumePlayback() },
+                seek: { [weak self] in self?.seekMedia(toMediaTimeMs: $0) }
+            ),
+            voiceURL: { voiceURLs[$0] }
+        )
+        conductor.voiceRate = Float(Self.marginPlaybackRate(itemPlaybackRate: snapshot.playbackRate))
+        conductor.prepareAudioSession = {
+            #if os(iOS)
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+            try AVAudioSession.sharedInstance().setActive(true)
+            #endif
+        }
+        conductor.onVoiceUnavailable = { [weak self] (marginId: String, reason: String) in
+            self?.diagnostics["marginMoment.voiceUnavailable"] = "\(marginId):\(reason)"
+            self?.reportWarning("That Margin's recording couldn't play, so listening continues.")
+        }
+        conductor.onChange = { [weak self, weak conductor] in
+            guard let self, let conductor, self.marginMomentConductor === conductor else { return }
+            self.marginMoment = conductor.sequence
+            self.marginMomentVoiceIsPaused = conductor.isVoicePaused
+        }
+        marginMomentConductor = conductor
+        conductor.start()
+        diagnostics["marginMoment"] = "started:lead_in_ms=\(anchorMs - sequence.startMediaTimeMs);others=\(sequence.unplayed.count - 1)"
+    }
+
+    private nonisolated static func isInlineSpokenMargin(_ margin: Interjection) -> Bool {
+        guard margin.status == "active", margin.captureKind != .written, margin.targetType == .item else { return false }
+        return margin.anchor.mediaTimeMs != nil && margin.audioPath != nil
+    }
+
+    /// "Play it now" on the coming-up cue.
+    func playMarginMomentNow() {
+        marginMomentConductor?.playTargetNow()
+    }
+
+    /// Stops the Margin that's playing and continues the item.
+    func skipMarginMomentVoice() {
+        marginMomentConductor?.skipVoice()
+    }
+
+    /// Stops playing Margins inline. The item keeps its current play state.
+    func endMarginMoment() {
+        marginMomentConductor?.cancel()
+        marginMomentConductor = nil
+        marginMoment = nil
+        marginMomentVoiceIsPaused = false
+    }
+
+    private func observeMarginMoment(_ current: SessionSnapshot) {
+        guard let conductor = marginMomentConductor else { return }
+        guard current.itemId == conductor.sequence.itemId else { return endMarginMoment() }
+        conductor.observe(mediaTimeMs: current.currentMediaTimeMs)
     }
 
     private func tryRefreshOfflineStorageUsage() {
@@ -3722,6 +3808,10 @@ final class Gate1AppModel: ObservableObject {
             setImportedCommentaryPaused(!importedCommentaryIsPaused)
             return
         }
+        if let conductor = marginMomentConductor, conductor.isPlayingVoice {
+            conductor.setVoicePaused(!conductor.isVoicePaused)
+            return
+        }
         if snapshot.phase == .finished, let itemID = snapshot.itemId {
             startNewSession(id: itemID)
             return
@@ -3742,6 +3832,10 @@ final class Gate1AppModel: ObservableObject {
     func pause() {
         if playingImportedCommentary != nil {
             setImportedCommentaryPaused(true)
+            return
+        }
+        if let conductor = marginMomentConductor, conductor.isPlayingVoice, !conductor.isVoicePaused {
+            conductor.setVoicePaused(true)
             return
         }
         if snapshot.skimBridgeState != nil {
@@ -3916,6 +4010,10 @@ final class Gate1AppModel: ObservableObject {
     func resumePlayback() {
         if playingImportedCommentary != nil {
             setImportedCommentaryPaused(false)
+            return
+        }
+        if let conductor = marginMomentConductor, conductor.isVoicePaused {
+            conductor.setVoicePaused(false)
             return
         }
         if snapshot.skimBridgeState != nil {
@@ -6135,6 +6233,10 @@ final class Gate1AppModel: ObservableObject {
             reportWarning("Return to Source before recording a Margin.")
             return
         }
+        guard marginMomentConductor?.isPlayingVoice != true else {
+            reportWarning("Skip or finish the Margin that's playing before recording a new one.")
+            return
+        }
         guard snapshot.skimBridgeState == nil else {
             reportWarning("Margins are unavailable while a scene summary is playing. Pause or cancel Skim first.")
             return
@@ -7134,14 +7236,15 @@ final class Gate1AppModel: ObservableObject {
         let prompts = importedCommentaryPrompts(includeAnnounced: false)
         let crossed = prompts.filter { prompt in
             if let anchor = prompt.interjection.resolution.localMediaTimeMs,
-               let before = previous.currentMediaTimeMs,
-               let after = current.currentMediaTimeMs {
-                return before <= anchor && after >= anchor && after > before
+               previous.currentMediaTimeMs != nil, current.currentMediaTimeMs != nil {
+                return PlaybackAnchorCrossing.isCrossed(
+                    anchor: anchor, before: previous.currentMediaTimeMs, after: current.currentMediaTimeMs
+                )
             }
-            if let anchor = prompt.interjection.resolution.localStartChar,
-               let before = previous.currentTextStart,
-               let after = current.currentTextStart {
-                return before <= anchor && after >= anchor && after > before
+            if let anchor = prompt.interjection.resolution.localStartChar {
+                return PlaybackAnchorCrossing.isCrossed(
+                    anchor: anchor, before: previous.currentTextStart, after: current.currentTextStart
+                )
             }
             return false
         }.sorted {
