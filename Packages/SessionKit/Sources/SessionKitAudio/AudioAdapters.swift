@@ -1627,6 +1627,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private var postResumeEvidenceTapContext: PostResumePodcastEvidenceTapContext?
     private weak var postResumeEvidenceItem: AVPlayerItem?
     private var postResumeEvidenceAudioMix: AVAudioMix?
+    private var continuousEvidenceTapTracksObservation: NSKeyValueObservation?
     public var postResumePodcastEvidenceHandler: (@Sendable (PostResumePodcastEvidenceCaptureResult) -> Void)?
     #endif
     private let remoteCommandHandler: (@Sendable (CompactControlCommand, Int?, Double?) -> Void)?
@@ -1782,11 +1783,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             observeCompletion(for: item)
             installPlayerStateObserver()
             installTimeObserver()
-            if Thread.isMainThread {
-                MainActor.assumeIsolated {
-                    installContinuousPodcastEvidenceTapIfPossible(on: item)
-                }
-            }
+            installContinuousPodcastEvidenceTapWhenTracksLoad(on: item)
         }
         #if os(iOS) || os(watchOS)
         try configureStreamAudioSession()
@@ -2234,15 +2231,50 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         #endif
     }
 
+    /// A new `AVPlayerItem` has no tracks yet, so the tap can't be installed when the item is created. Watch
+    /// `tracks` and install once the audio track appears; before this, the continuous tap never installed and
+    /// every pre-window capture failed (#154).
+    private func installContinuousPodcastEvidenceTapWhenTracksLoad(on item: AVPlayerItem) {
+        #if canImport(AVFoundation) && canImport(MediaToolbox) && canImport(ShazamKit) && !os(watchOS)
+        continuousEvidenceTapTracksObservation?.invalidate()
+        continuousEvidenceTapTracksObservation = item.observe(\.tracks, options: [.initial, .new]) { [weak self, weak item] _, _ in
+            let install = {
+                guard let self, let item, self.player?.currentItem === item else { return }
+                MainActor.assumeIsolated {
+                    if self.installContinuousPodcastEvidenceTapIfPossible(on: item) {
+                        self.continuousEvidenceTapTracksObservation?.invalidate()
+                        self.continuousEvidenceTapTracksObservation = nil
+                    }
+                }
+            }
+            if Thread.isMainThread { install() } else { DispatchQueue.main.async(execute: install) }
+        }
+        #else
+        _ = item
+        #endif
+    }
+
     #if canImport(AVFoundation) && canImport(MediaToolbox) && canImport(ShazamKit) && !os(watchOS)
+    /// True once a tap is attached to the current item; exposed for host tests.
+    var hasPodcastEvidenceTapOnCurrentItem: Bool {
+        postResumeEvidenceTapContext != nil && postResumeEvidenceItem != nil && postResumeEvidenceItem === player?.currentItem
+    }
+
+    /// Returns true when there's nothing left to wait for: a tap is attached, or this item never gets one.
     @MainActor
-    private func installContinuousPodcastEvidenceTapIfPossible(on item: AVPlayerItem) {
+    @discardableResult
+    private func installContinuousPodcastEvidenceTapIfPossible(on item: AVPlayerItem) -> Bool {
         guard let mediaContext,
               mediaContext.targetType == .transcriptBackedMedia,
+              mediaContext.sourceType == .remoteStream || mediaContext.sourceType == .nativeMediaFile else {
+            return true
+        }
+        guard postResumeEvidenceTapContext == nil else { return true }
+        guard
+              mediaContext.targetType == .transcriptBackedMedia,
               mediaContext.sourceType == .remoteStream || mediaContext.sourceType == .nativeMediaFile,
-              postResumeEvidenceTapContext == nil,
               let assetTrack = item.tracks.compactMap({ $0.assetTrack }).first(where: { $0.mediaType == .audio }) else {
-            return
+            return false
         }
         let context = PostResumePodcastEvidenceTapContext(
             resultHandler: { [weak self] result in
@@ -2267,6 +2299,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             context.cancelAll(reason: "continuous_decoded_playback_tap_install_failed:\(error.localizedDescription)")
             removePostResumeEvidenceTap()
         }
+        return true
     }
 
     private func removePostResumeEvidenceTap() {
