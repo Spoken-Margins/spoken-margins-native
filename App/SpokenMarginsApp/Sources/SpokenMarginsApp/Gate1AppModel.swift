@@ -14357,8 +14357,8 @@ final class Gate1AppModel: ObservableObject {
 
     private func reportFailure(_ error: Error, context: String? = nil) {
         let message: String
-        if let urlError = error as? URLError, urlError.code == .timedOut {
-            message = "The request timed out. Please try again."
+        if let urlError = error as? URLError {
+            message = Self.userFacingMessage(for: urlError)
         } else if let localized = error as? LocalizedError,
            let description = localized.errorDescription {
             message = description
@@ -14366,6 +14366,25 @@ final class Gate1AppModel: ObservableObject {
             message = String(describing: error)
         }
         reportFailure([context, message].compactMap { $0 }.joined(separator: ": "))
+    }
+
+    /// URLError's default description is a raw domain/code string, which is not useful to a listener.
+    nonisolated static func userFacingMessage(for urlError: URLError) -> String {
+        switch urlError.code {
+        case .timedOut:
+            return "The request timed out. Please try again."
+        case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed, .internationalRoamingOff:
+            return "You appear to be offline. Check your connection and try again."
+        case .badServerResponse, .fileDoesNotExist, .resourceUnavailable, .zeroByteResource:
+            return "The server couldn’t provide anything at that address. Check the link and try again."
+        case .badURL, .unsupportedURL, .cannotFindHost, .dnsLookupFailed, .cannotConnectToHost:
+            return "That address couldn’t be reached. Check the link and try again."
+        case .secureConnectionFailed, .serverCertificateUntrusted, .serverCertificateHasBadDate,
+             .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot, .clientCertificateRejected:
+            return "A secure connection to that site couldn’t be made."
+        default:
+            return "The network request failed. Please try again."
+        }
     }
 
     private func reportFailure(_ message: String) {

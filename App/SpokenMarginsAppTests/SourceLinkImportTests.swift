@@ -8,6 +8,22 @@ import UIKit
 
 @MainActor
 final class SourceLinkImportTests: XCTestCase {
+    func testNetworkFailureShowsReadableMessageInsteadOfRawURLError() {
+        let model = Gate1AppModel(
+            sourceLinkResolver: ThrowingAppLinkResolver(error: URLError(.badServerResponse)),
+            audioPlaybackClient: NoopAudioPlaybackClient()
+        )
+        model.resetAndSeed()
+
+        XCTAssertFalse(model.importSourceLink(urlString: "https://example.com/missing-episode", sourceSurface: "paste"))
+
+        let message = model.lastError
+        XCTAssertEqual(message, "Source link import failed: The server couldn’t provide anything at that address. Check the link and try again.")
+        XCTAssertFalse(message?.contains("NSURLErrorDomain") ?? true)
+        XCTAssertEqual(Gate1AppModel.userFacingMessage(for: URLError(.timedOut)), "The request timed out. Please try again.")
+        XCTAssertEqual(Gate1AppModel.userFacingMessage(for: URLError(.notConnectedToInternet)), "You appear to be offline. Check your connection and try again.")
+    }
+
     private var temporaryDirectories: [URL] = []
 
     func testDescriptionChaptersAcceptLinkedParenthesesAndPreserveTitleColons() throws {
@@ -2300,6 +2316,14 @@ private struct SourceLinkFoundationModelStub: LocalFoundationModelClient {
     }
     func summarizeListeningMap(labels: [LocalListeningMapLabel]) async throws -> String {
         "A bounded map overview."
+    }
+}
+
+private struct ThrowingAppLinkResolver: LinkResolutionClient {
+    var error: Error
+
+    func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult {
+        throw error
     }
 }
 
