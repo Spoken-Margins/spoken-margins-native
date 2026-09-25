@@ -271,6 +271,22 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         XCTAssertEqual(model.diagnostics["lastSpokenMarginsPackageImport"], "failed:persistence_failed:shared_podcast_item_is_ambiguous")
     }
 
+    func testUnreadablePacketSaysWhichVersionAndLogsTheFailingField() throws {
+        // The parked co-op build wrote representation kinds this build doesn't know, e.g. forwarded_audio_and_text.
+        struct Representation: Decodable { let kind: SharedInterjectionRepresentationKind }
+        struct Record: Decodable { let representations: [Representation] }
+        let json = Data(#"{"representations":[{"kind":"forwarded_audio_and_text"}]}"#.utf8)
+        do {
+            _ = try JSONDecoder().decode(Record.self, from: json)
+            XCTFail("expected a decoding error")
+        } catch {
+            XCTAssertEqual(SharedMarginsImportMessage.userFacing(error), SharedMarginsImportMessage.unreadablePackageMessage)
+            let detail = SharedMarginsImportMessage.diagnosticDetail(error)
+            XCTAssertTrue(detail.hasPrefix("decoding:representations.0.kind:"), detail)
+            XCTAssertTrue(detail.contains("forwarded_audio_and_text"), detail)
+        }
+    }
+
     @MainActor
     private func makePackageImport(
         named name: String,

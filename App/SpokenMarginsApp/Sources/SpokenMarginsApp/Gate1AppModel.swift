@@ -7725,8 +7725,8 @@ final class Gate1AppModel: ObservableObject {
             return true
         } catch {
             if let workingDirectory { try? FileManager.default.removeItem(at: workingDirectory) }
-            diagnostics["lastSpokenMarginsPackageImport"] = "rejected:\(error.localizedDescription)"
-            reportFailure(error, context: "Shared Margins package could not be opened")
+            diagnostics["lastSpokenMarginsPackageImport"] = "rejected:\(SharedMarginsImportMessage.diagnosticDetail(error))"
+            reportFailure(SharedMarginsImportMessage.userFacing(error))
             return false
         }
     }

@@ -4,6 +4,10 @@ import SessionKit
 /// Turns a shared-Margins import failure into a sentence for the import sheet. Internal codes stay in diagnostics.
 enum SharedMarginsImportMessage {
     static func userFacing(_ error: Error) -> String {
+        if error is DecodingError {
+            // For example a packet from the parked co-op build, which used a Margin type this build doesn't know.
+            return unreadablePackageMessage
+        }
         if let urlError = error as? URLError {
             return Gate1AppModel.userFacingMessage(for: urlError)
         }
@@ -29,6 +33,21 @@ enum SharedMarginsImportMessage {
         // Codes like "rss_episode_ambiguous" are for diagnostics, not people.
         let looksLikeCode = !description.contains(" ") && (description.contains("_") || description.contains(":"))
         return looksLikeCode ? genericMessage : description
+    }
+
+    static let unreadablePackageMessage = "These Margins were made by a newer or test version of Spoken Margins, and this version can't read them."
+
+    /// Diagnostics detail for an import failure. A decoding error's own message ("isn't in the correct format")
+    /// hides which field failed, so record the coding path and the value's problem instead.
+    static func diagnosticDetail(_ error: Error) -> String {
+        guard let decoding = error as? DecodingError else { return error.localizedDescription }
+        switch decoding {
+        case .dataCorrupted(let context), .keyNotFound(_, let context), .typeMismatch(_, let context), .valueNotFound(_, let context):
+            let path = context.codingPath.map { $0.intValue.map(String.init) ?? $0.stringValue }.joined(separator: ".")
+            return "decoding:\(path):\(context.debugDescription.prefix(160))"
+        @unknown default:
+            return "decoding:\(error.localizedDescription)"
+        }
     }
 
     static let genericMessage = "Couldn’t import these Margins. Try again, or add the item to your Library first."
