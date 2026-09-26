@@ -2133,6 +2133,64 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertTrue(markdown.contains("Source Type: remote_stream"))
     }
 
+    /// Paid feeds carry a subscriber secret in their links (#168); exports leave the device.
+    func testMarginMarkdownAndJSONExportsCarryNoPrivateFeedSecret() throws {
+        let secret = "pAtReOnSeCrEt7f3a9c2e41b8d6"
+        let enclosureURL = "https://c10.patreonusercontent.com/4/patreon-media/p/post/98765/a1/episode.mp3?token-time=1790000000&token-hash=\(secret)"
+        let item = Item(
+            id: "item-private-feed",
+            title: "Episode 12: The Private One",
+            mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil,
+            externalReference: "https://www.patreon.com/rss/someshow?auth=\(secret)",
+            status: "ready",
+            externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: enclosureURL, durationMs: 3_600_000)
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let engine = SessionEngine(
+            profile: RuntimeCapabilityProfile(
+                id: "phone-tablet-online",
+                displayName: "Phone/Tablet Online",
+                capabilities: [
+                    "sync": ["canonical_persistence"],
+                    "playback": ["native_media"],
+                    "interjection": ["record_audio", "capture_media_anchor"]
+                ]
+            ),
+            repository: repo,
+            audio: audio
+        )
+        _ = try engine.startSession(itemId: item.id)
+        audio.currentMediaTimeValue = 600_000
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: "interjections/private.m4a")
+        let noteId = try XCTUnwrap(try repo.loadInterjections(sessionId: engine.currentSession?.id ?? "").first?.id)
+
+        let export = try engine.buildExport(options: ExportOptions(
+            includeFullText: false,
+            includeReference: true,
+            includeListeningMap: false,
+            includeInterjections: true
+        ))
+        let single = try engine.buildExport(options: ExportOptions(
+            sessionId: engine.currentSession?.id,
+            includeFullText: false, includeReference: true, includeListeningMap: false,
+            includeInterjections: true, includeTurns: false,
+            scope: "selected_interjections", interjectionIds: [noteId]
+        ))
+        let outputs = [
+            SessionExportMarkdownRenderer.render(export),
+            SessionExportMarkdownRenderer.renderMargin(single, createdAt: Date(timeIntervalSince1970: 1_777_000_000)),
+            String(decoding: try JSONEncoder().encode(export), as: UTF8.self)
+        ]
+        XCTAssertFalse(outputs[1].isEmpty)
+        for output in outputs {
+            XCTAssertFalse(output.contains(secret), output)
+        }
+    }
+
     func testNativeAudioInterjectionFreezesClockBeforeSavingAndResumesAtExactAnchor() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",

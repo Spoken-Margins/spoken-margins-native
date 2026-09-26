@@ -2348,8 +2348,8 @@ public final class SessionEngine {
             item: ExportItem(
                 id: item.id,
                 title: item.title,
-                externalReference: options.includeReference ? item.externalReference : nil,
-                sourceURL: options.includeReference ? item.media?.url : nil,
+                externalReference: options.includeReference ? ShareableLinkPolicy.shareableLink(item.externalReference) : nil,
+                sourceURL: options.includeReference ? ShareableLinkPolicy.shareableLink(item.media?.url) : nil,
                 mediaSourceType: item.media?.sourceType.rawValue,
                 includedFullText: exposesFullSourceText,
                 text: exposesFullSourceText ? item.text : nil,
