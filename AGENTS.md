@@ -9,7 +9,7 @@ Replace this section when the focus changes; do not append to it.
 - **Baseline:** Build 29, tag `testflight/0.1-build-29` (`fcc4974`), is the last shipped build (internal TestFlight, 2026-09-25). `main` points at it plus docs-only commits.
 - **Working branch:** start a feature branch off `main` for Build 30 work. `anchor-reliability` is merged into `main`.
 - **Goal:** shared podcast Margins land at the right place for the recipient. Device capture and placement are owner-validated on Build 29; remaining work and status: [docs/podcast-anchor-plan.md](docs/podcast-anchor-plan.md).
-- **Build 30 candidates:** stream source context (#156), "Play this moment" (#159), jump to an unplaced shared Margin (#158), the one-handed reach pass (#141, #145-#149, #151).
+- **Build 30 candidates:** stream source context (#156), "Play this moment" (#159), jump to an unplaced shared Margin (#158), keep private feed links out of shared packets (#168), the one-handed reach pass (#141, #145-#149, #151).
 - **Parked, reference only:**
   - `park/co-op-2026-09-24`: failed co-op attempt plus in-progress anchor work. Do not merge it; port pieces by hand. Its packets use a Margin kind this build can't read.
   - `codex/desktop`: macOS companion prototype.
