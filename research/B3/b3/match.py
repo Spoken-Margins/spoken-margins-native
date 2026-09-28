@@ -35,7 +35,9 @@ EPISODE_NUMBER = [
     re.compile(r"\b(?:episode|ep\.?)\s*(\d{1,5})\b", re.I),
 ]
 APPLE_SHOW_LINK = re.compile(r"podcasts\.apple\.com/[^\s\"']*?/id(\d{6,12})")
-CLIP_WORDS = re.compile(r"\b(clip|clips|highlights?|preview|trailer|shorts?|teaser|excerpt)\b", re.I)
+# Words that mark a cut rather than an episode. Not "short": titles say "Short Kings";
+# YouTube Shorts are recognized by their link and their length.
+CLIP_WORDS = re.compile(r"\b(clip|clips|highlights?|preview|trailer|teaser|excerpt)\b", re.I)
 
 
 @dataclass
