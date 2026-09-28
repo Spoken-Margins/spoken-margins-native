@@ -1,0 +1,205 @@
+import Foundation
+
+// Seam I14 (owner: C2 `voice`): which engine speaks and why, the one rate rule, and how
+// structured-document roles (I13) sound. Every narration path follows it; C1 M3 reads the
+// role rules. See docs/workstreams/interfaces.md.
+//
+// Invariants (#183):
+// - Power state alone (Low Power Mode, charging) never changes the voice.
+// - Any fallback has a reason the listener can see and diagnostics can log, and the chosen
+//   voice comes back once that reason clears.
+// - Rate is one number: the listener's multiplier. System speech never also applies the
+//   Accessibility speaking rate.
+// - Chunk boundaries never show as pause and resume.
+
+/// Device heat, as `ProcessInfo.ThermalState` reports it.
+public enum SpeechThermalLevel: String, Codable, Equatable, Sendable {
+    case nominal, fair, serious, critical
+}
+
+/// What the device reports when an engine is chosen.
+public struct SpeechEngineConditions: Equatable, Sendable {
+    public var thermal: SpeechThermalLevel
+    public var isLowPowerModeEnabled: Bool
+    /// Nil when the app can't tell (battery monitoring unavailable).
+    public var isOnExternalPower: Bool?
+    /// Within the backoff after an iOS memory warning.
+    public var isRecoveringFromMemoryWarning: Bool
+
+    public init(
+        thermal: SpeechThermalLevel = .nominal,
+        isLowPowerModeEnabled: Bool = false,
+        isOnExternalPower: Bool? = nil,
+        isRecoveringFromMemoryWarning: Bool = false
+    ) {
+        self.thermal = thermal
+        self.isLowPowerModeEnabled = isLowPowerModeEnabled
+        self.isOnExternalPower = isOnExternalPower
+        self.isRecoveringFromMemoryWarning = isRecoveringFromMemoryWarning
+    }
+
+    /// For diagnostics: records power state next to the decision, so a device report shows
+    /// whether charging or Low Power Mode coincided with a fallback. Never includes text.
+    public var logDescription: String {
+        let power = isOnExternalPower.map { $0 ? "external" : "battery" } ?? "unknown"
+        return "thermal=\(thermal.rawValue) lowPower=\(isLowPowerModeEnabled) power=\(power) memoryBackoff=\(isRecoveringFromMemoryWarning)"
+    }
+}
+
+/// Why narration is using a voice other than the one the listener chose.
+public enum SpeechFallbackReason: String, Codable, Equatable, Sendable {
+    case deviceTooWarm = "device_too_warm"
+    case memoryWarning = "memory_warning"
+    /// The on-device voice couldn't render the next passage in time.
+    case renderTooSlow = "render_too_slow"
+    case playbackFailed = "playback_failed"
+    case listenerStoppedGeneration = "listener_stopped_generation"
+
+    /// Maps the Supertonic client's failure codes. `resourceBlock` is the policy's answer at
+    /// the moment of the fallback, which names the resource that refused rendering.
+    public init(supertonicCode: String, resourceBlock: SpeechFallbackReason?) {
+        switch supertonicCode {
+        case "supertonic_resource_pressure": self = resourceBlock ?? .deviceTooWarm
+        case "supertonic_render_timeout": self = .renderTooSlow
+        default: self = .playbackFailed
+        }
+    }
+
+    /// Heat and memory pressure pass; the chosen voice comes back by itself once they clear.
+    /// A slow or failed render would likely fail again, so it waits for the listener's Retry.
+    public var returnsAutomatically: Bool {
+        self == .deviceTooWarm || self == .memoryWarning
+    }
+
+    /// One line for the player, saying why and what happens next.
+    public var listenerExplanation: String {
+        switch self {
+        case .deviceTooWarm:
+            "Using the iOS voice while this iPhone is too warm. Your voice comes back the next time you press play after it cools."
+        case .memoryWarning:
+            "Using the iOS voice after an iOS memory warning. Your voice comes back the next time you press play, after about a minute."
+        case .renderTooSlow:
+            "Using the iOS voice because the on-device voice couldn't keep up. Tap Retry to try it again."
+        case .playbackFailed:
+            "Using the iOS voice because the on-device voice hit a playback problem. Tap Retry to try it again."
+        case .listenerStoppedGeneration:
+            "Generation stopped · using the iOS system voice"
+        }
+    }
+}
+
+public enum SpeechEnginePolicy {
+    /// Nil when the on-device voice may render. Low Power Mode and charging are not reasons:
+    /// the listener chose the voice, and narration is the task they asked for (#183).
+    public static func onDeviceRenderingBlock(_ conditions: SpeechEngineConditions) -> SpeechFallbackReason? {
+        if conditions.isRecoveringFromMemoryWarning { return .memoryWarning }
+        if conditions.thermal == .serious || conditions.thermal == .critical { return .deviceTooWarm }
+        return nil
+    }
+
+    /// Whether the chosen voice should replace the fallback at the next play.
+    public static func restoresChosenVoice(after reason: SpeechFallbackReason, conditions: SpeechEngineConditions) -> Bool {
+        reason.returnsAutomatically && onDeviceRenderingBlock(conditions) == nil
+    }
+}
+
+/// The listener's speed is one multiplier, and every engine plays at that speed.
+///
+/// `AVSpeechUtterance.rate` isn't proportional to speed. Measured on macOS 26 with
+/// `AVSpeechSynthesizer.write` (Samantha and Eddy, 2026-09-28), rate 0.875 (the old mapping for
+/// 1.75×) spoke at 3.1× and 1.0 at 4×. The table below inverts the average of those curves, so
+/// system speech lands within about 10% of the chosen speed from 0.5× to 2×.
+public enum SpeechRateRule {
+    /// `AVSpeechUtteranceDefaultSpeechRate`: normal speed.
+    public static let systemDefaultRate: Float = 0.5
+    public static let multiplierRange: ClosedRange<Double> = 0.5...2.0
+
+    /// (speed multiplier, AVSpeech rate) pairs, from the measurement above.
+    static let systemRateTable: [(multiplier: Double, rate: Float)] = [
+        (0.5, 0.07), (0.75, 0.31), (1.0, 0.5), (1.25, 0.545), (1.5, 0.585), (1.75, 0.62), (2.0, 0.665)
+    ]
+
+    /// System speech never borrows the Accessibility speaking rate, which would multiply the
+    /// listener's speed (#183: 1.5 × 1.75).
+    public static let systemSpeechUsesAccessibilitySettings = false
+
+    public static func clampedMultiplier(_ multiplier: Double) -> Double {
+        guard multiplier.isFinite else { return 1 }
+        return min(multiplierRange.upperBound, max(multiplierRange.lowerBound, multiplier))
+    }
+
+    /// The `AVSpeechUtterance.rate` that speaks at `multiplier` times normal speed.
+    public static func systemSpeechRate(forMultiplier multiplier: Double) -> Float {
+        let target = clampedMultiplier(multiplier)
+        let table = systemRateTable
+        guard let upperIndex = table.firstIndex(where: { $0.multiplier >= target }) else {
+            return table[table.count - 1].rate
+        }
+        guard upperIndex > 0 else { return table[0].rate }
+        let lower = table[upperIndex - 1]
+        let upper = table[upperIndex]
+        let fraction = Float((target - lower.multiplier) / (upper.multiplier - lower.multiplier))
+        return lower.rate + (upper.rate - lower.rate) * fraction
+    }
+
+    /// The app stores speed as `multiplier × 0.5` ("speechRate", in the units of
+    /// `AVSpeechUtteranceDefaultSpeechRate`). This reads that stored value as a multiplier.
+    public static func multiplier(forStoredRate storedRate: Float) -> Double {
+        guard storedRate > 0 else { return 1 }
+        return clampedMultiplier(Double(storedRate / systemDefaultRate))
+    }
+}
+
+/// How the speech path voices a structured-document segment (I13 `role`).
+public enum SpokenRoleTreatment: Equatable, Sendable {
+    /// Read the text.
+    case read
+    /// Say `lead`, then read the text.
+    case announce(lead: String)
+    /// Say `notice` instead of the text, so the listener knows something was left out.
+    case replace(notice: String)
+    /// Leave it out silently.
+    case skip
+}
+
+/// How the speech path voices an inline marker inside a segment (I13 `marker.kind`).
+public enum SpokenMarkerTreatment: Equatable, Sendable {
+    case readAsPrinted
+    case silent
+}
+
+/// I14 role rules for I13 documents. Roles are advisory (I13); these rules decide the sound.
+/// Web articles keep `SpeechTextNormalizer`'s own handling. Unknown roles and markers are read.
+public enum DocumentSpeechRules {
+    public static func treatment(forRole role: String) -> SpokenRoleTreatment {
+        switch role {
+        case "title", "heading", "abstract", "body", "unknown":
+            return .read
+        case "caption":
+            // A caption usually opens with its own label ("Figure 2."), so the lead is short.
+            return .announce(lead: "Caption.")
+        case "table":
+            return .replace(notice: "Table skipped.")
+        case "equation":
+            return .replace(notice: "Equation skipped.")
+        case "footnote", "reference", "front_matter", "back_matter", "page_header", "page_footer":
+            // Footnotes and the bibliography break the flow of the argument; affiliations,
+            // running headers and page numbers are never worth hearing.
+            return .skip
+        default:
+            return .read
+        }
+    }
+
+    public static func treatment(forMarker kind: String) -> SpokenMarkerTreatment {
+        switch kind {
+        case "citation", "footnote":
+            // "[12]" and "Smith et al., 2020" interrupt the sentence; the reference list is skipped anyway.
+            return .silent
+        case "math", "figure_reference", "table_reference":
+            return .readAsPrinted
+        default:
+            return .readAsPrinted
+        }
+    }
+}

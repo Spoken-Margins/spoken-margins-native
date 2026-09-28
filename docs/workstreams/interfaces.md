@@ -132,6 +132,10 @@ This page sets **what crosses each seam and what must stay true**. It deliberate
   - a single effective-rate rule;
   - how each I13 role is spoken: skipped, announced ("Figure 2: …"), or read, and how citation and footnote markers sound.
 - **Invariants:** power state alone never silently changes the voice (#183). Any fallback has a visible, loggable reason, and the chosen voice comes back when the reason clears. Rate is one number: the app's rate is never multiplied by the system accessibility rate. Chunk boundaries never show as pause/resume.
+- **Published (C2 M1):** `SessionKit/SpeechEngineSelection.swift`:
+  - `SpeechEnginePolicy` and `SpeechFallbackReason`: which engine renders, and why.
+  - `SpeechRateRule`: one multiplier, with a measured curve for system speech.
+  - `DocumentSpeechRules`: how each I13 role and marker kind sounds, keyed by the raw strings in C1's draft schema.
 
 ## I15. Stable UI identifiers
 
