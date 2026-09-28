@@ -58,7 +58,7 @@ Roles are advisory. **I14 decides how each role sounds.** The "likely treatment"
 | `page_header`, `page_footer` | Running heads, page numbers, download stamps | skip |
 | `unknown` | The extractor couldn't tell | read |
 
-The baseline report (`results/REPORT.md`) says why these roles matter. With no handling, a reference list costs a median of 9.7 minutes of listening per paper.
+The baseline report (`results/REPORT.md`) says why these roles matter. With no handling, a reference list costs a median of 9.3 minutes of listening per paper.
 
 ## Invariants
 
