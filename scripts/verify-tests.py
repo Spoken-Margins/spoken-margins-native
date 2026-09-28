@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Named verification plans with bounded processes and auditable execution evidence."""
 import argparse
+import contextlib
 import datetime
 import fcntl
 import hashlib
@@ -16,6 +17,7 @@ import sys
 import time
 
 from check_posterboard_repair import new_crash
+from lane_slots import build_slot
 
 from test_inventory import ROOT, plan_tests, swift_tests, validate
 
@@ -27,6 +29,9 @@ PLANS = {
     'speech-canary': ('SpokenMarginsUISeams', 'SpeechCanary', 1000),
     'release': ('SpokenMarginsReleaseTests', 'Release', 3600),
 }
+
+# A run waits at most this long for a Mac-wide build slot, then fails rather than hanging.
+BUILD_SLOT_WAIT_SECONDS = 1800
 
 # Keep aligned with project.yml and the SessionKit iOS deployment target.
 MINIMUM_IOS_MAJOR = 26
@@ -173,7 +178,6 @@ class Run:
         self.manifest['steps'].append(entry)
         self.save()
         print(f'{name} …', flush=True)
-        start = time.monotonic()
         device = self.manifest.get('destination', {}).get('udid')
         reports = Path.home() / 'Library/Logs/DiagnosticReports'
         if device and self.crash_baseline is None:
@@ -181,7 +185,13 @@ class Run:
                 raise RuntimeError('Simulator crash reports are unavailable')
             self.crash_baseline = {p: (p.stat().st_mtime_ns, p.stat().st_size)
                                    for p in reports.glob('*.ips')}
-        with (self.output / f'{name}.log').open('w') as log:
+        # xcodebuild shares the Mac-wide build slots with every session; the wait isn't timed.
+        slot = build_slot(f'verify-tests {self.manifest["plan"]} {name}', max_wait=BUILD_SLOT_WAIT_SECONDS) \
+            if args[0] == 'xcodebuild' else contextlib.nullcontext()
+        with (self.output / f'{name}.log').open('w') as log, slot as held:
+            if held:
+                entry['build_slot'] = held
+            start = time.monotonic()
             process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
                                        start_new_session=True)
             try:
@@ -243,6 +253,8 @@ class Run:
         self.command('contracts', [sys.executable, 'scripts/validate-contracts.py'])
         self.command('surfaces', [sys.executable, 'scripts/validate-surface-contracts.py'])
         self.command('inventory', [sys.executable, 'scripts/test_inventory.py'])
+        if not (ROOT / 'node_modules').exists():
+            raise RuntimeError('node_modules is missing in this worktree; run scripts/setup-worktree.sh')
         self.command('browser', ['npm', 'run', 'test:browser-extraction'])
         expected = set()
         for target in ('SessionKitTests', 'SessionKitTraceTests'):
@@ -346,8 +358,8 @@ def main():
                 raise RuntimeError('Inputs changed during verification; rerun on a stable source state')
             run.manifest['status'] = 'verified'
             return 0
-        except (RuntimeError, subprocess.SubprocessError, OSError) as error:
-            run.manifest.update(status='failed_or_incomplete', error=str(error))
+        except (RuntimeError, subprocess.SubprocessError, OSError, KeyboardInterrupt) as error:
+            run.manifest.update(status='failed_or_incomplete', error=str(error) or repr(error))
             print(error, file=sys.stderr)
             return 1
         finally:
