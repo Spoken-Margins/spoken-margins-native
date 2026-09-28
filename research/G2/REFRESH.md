@@ -36,7 +36,7 @@ Products also appear, get acquired or shut down (Pocket closed 2025-07-08, Genev
 
 ## Refresh procedure
 
-1. `python3 research/G2/comparison/scripts/recheck.py [ids…] > artifacts/recheck.txt` (`artifacts/` is git-ignored). A `QUOTE-GONE` line means the product changed, the page moved, or the page renders with JavaScript. A `FETCH-FAILED` line means the page blocks scripts; open it in a browser.
+1. `python3 research/G2/comparison/scripts/recheck.py [ids…] > artifacts/recheck.txt` (`artifacts/` is git-ignored). A `QUOTE-GONE` line means the product changed, the page moved, or the page renders with JavaScript. A `FETCH-FAILED` line means the page blocks scripts; open it in a browser. On 2026-09-28 margin.fm refused scripted connections, and glasp.co and help.elevenlabs.io sometimes return 403.
 2. For each flagged source, and for every field in the "Often" rows above, a person reads the page and then:
    - if nothing changed, sets `checked` to today;
    - if something changed, updates `value`, `detail` and the verbatim `quote`, and sets `checked` to today;

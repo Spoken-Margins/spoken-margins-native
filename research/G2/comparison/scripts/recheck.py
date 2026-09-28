@@ -13,6 +13,8 @@ import json
 import pathlib
 import re
 import sys
+import time
+import urllib.error
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -27,8 +29,15 @@ def normalise(text: str) -> str:
 
 def fetch(url: str) -> str:
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (spoken-margins G2 source recheck)"})
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        return resp.read().decode("utf-8", "replace")
+    for wait in (15, 30, 60, None):  # the App Store rate-limits bursts with HTTP 429
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                return resp.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as exc:
+            if exc.code != 429 or wait is None:
+                raise
+            time.sleep(wait)
+    raise AssertionError("unreachable")
 
 
 def main() -> int:

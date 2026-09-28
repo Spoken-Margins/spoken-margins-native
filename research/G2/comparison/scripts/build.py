@@ -14,6 +14,39 @@ from validate import validate_app  # noqa: E402
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
+SYMBOL = {"yes": "●", "partial": "◐", "no": "○", "unknown": "?"}
+COLUMNS = [
+    ("plays_podcasts", "Podcasts"), ("reads_web_articles_aloud", "Articles aloud"), ("reads_pdfs_aloud", "PDFs aloud"),
+    ("voice_notes_anchored", "Spoken note at moment"), ("text_notes_anchored", "Typed note at moment"),
+    ("hands_free_capture", "Hands-free capture"), ("transcripts", "Transcripts"), ("ai_summaries", "AI summaries"),
+    ("export_markdown_pkm", "Export to notes"), ("share_note_at_moment", "Share note at moment"),
+    ("group_listening", "Groups"), ("on_device_privacy", "On-device"), ("account_required", "Account needed"),
+]
+
+
+def render_table(apps: list[dict], checked: list[str]) -> str:
+    """A phone-readable view of comparison.json. Every cell's source is in the JSON."""
+    lines = [
+        "# App comparison (generated)",
+        "",
+        f"Generated from `comparison.json` by `comparison/scripts/build.py`; don't edit by hand. Sources checked {checked[0]} to {checked[-1]}. "
+        "Every cell has a source, date and quote in `comparison/apps/<id>.json`, and the notes there carry caveats this table drops.",
+        "",
+        "● yes · ◐ partial · ○ no · ? unknown (not documented either way). \"Account needed\" ● means an account is required.",
+        "",
+        "| App | " + " | ".join(label for _, label in COLUMNS) + " | Price (cheapest paid) |",
+        "|---" * (len(COLUMNS) + 2) + "|",
+    ]
+    for app in sorted(apps, key=lambda a: (a["id"] != "spoken-margins", a["name"].lower())):
+        cells = [SYMBOL.get(app["claims"][f]["value"], "?") for f, _ in COLUMNS]
+        price = str(app["claims"]["price_paid"]["value"]).replace("|", "/")
+        lines.append(f"| {app['name']} | " + " | ".join(cells) + f" | {price} |")
+    lines += ["", "## Platforms", ""]
+    for app in sorted(apps, key=lambda a: a["name"].lower()):
+        lines.append(f"- **{app['name']}**: {app['claims']['platforms']['value']}")
+    return "\n".join(lines) + "\n"
+
+
 def main() -> int:
     apps, errors = [], []
     for path in sorted((ROOT / "apps").glob("*.json")):
@@ -31,6 +64,7 @@ def main() -> int:
         "apps": apps,
     }
     (ROOT.parent / "comparison.json").write_text(json.dumps(out, indent=2, ensure_ascii=False) + "\n")
+    (ROOT.parent / "comparison.md").write_text(render_table(apps, checked))
     print(f"wrote comparison.json: {len(apps)} apps, checks {checked[0]}..{checked[-1]}")
     return 0
 

@@ -1,0 +1,264 @@
+{
+  "id": "obsidian",
+  "name": "Obsidian (mobile)",
+  "vendor": "Dynalist Inc. (Obsidian)",
+  "category": "notes",
+  "website": "https://obsidian.md",
+  "why_listed": "Listeners who already keep a Markdown vault would record voice memos or type notes in Obsidian while listening elsewhere, instead of using Spoken Margins' anchored Margins.",
+  "claims": {
+    "platforms": {
+      "value": "iOS, iPadOS, Android, macOS, Windows, Linux (no web app)",
+      "detail": "Native apps on all desktop and mobile platforms; files are local Markdown.",
+      "sources": [
+        {
+          "url": "https://obsidian.md/download",
+          "title": "Download - Obsidian",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "iOS App Store Android Google Play APK Windows Universal Mac Universal Linux AppImage"
+        },
+        {
+          "url": "https://apps.apple.com/us/app/obsidian-connected-notes/id1557175442",
+          "title": "Obsidian - Connected Notes App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Requires iPadOS 15.6 or later."
+        }
+      ]
+    },
+    "price_free_tier": {
+      "value": "Free: the full app, no sign-up, no limits",
+      "detail": "The app itself is free for personal and commercial use; Sync and Publish are optional paid services.",
+      "sources": [
+        {
+          "url": "https://obsidian.md/pricing",
+          "title": "Pricing - Obsidian",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Free without limits. No sign-up required. No strings attached."
+        }
+      ],
+      "note": "US page, USD."
+    },
+    "price_paid": {
+      "value": "Sync: USD 4/month billed annually or USD 5/month billed monthly",
+      "detail": "Optional Sync add-on (end-to-end encrypted, shared vaults). Publish is USD 8–10/site/month; Catalyst (USD 25 one-time) and Commercial (USD 50/user/year) are voluntary licences.",
+      "sources": [
+        {
+          "url": "https://obsidian.md/pricing",
+          "title": "Pricing - Obsidian",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Sync $4 USD Per user, per month, billed annually $5 USD Per user, per month, billed monthly"
+        }
+      ],
+      "note": "US page, USD. Sync is not needed if the vault is in iCloud (App Store lists iCloud vaults)."
+    },
+    "plays_podcasts": {
+      "value": "no",
+      "detail": "Plays audio files embedded in notes; no podcast feed subscription.",
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/obsidianmd/obsidian-help/master/en/Files%20and%20folders/Accepted%20file%20formats.md",
+          "title": "Accepted file formats (Obsidian Help, official obsidian-help repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "**Audio**: `.flac`, `.m4a`, `.mp3`, `.ogg`, `.wav`, `.webm`, `.3gp`"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/obsidianmd/obsidian-help/master/en/Plugins/Core%20plugins.md",
+          "title": "Core plugins (Obsidian Help, official obsidian-help repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Core plugins are officially built and supported by the Obsidian team, and are included within the application."
+        }
+      ],
+      "note": "Judged on the app and its core plugins only; the Core plugins page lists every built-in plugin and none does this. Community plugins (e.g. text-to-speech or transcription plugins) were not assessed."
+    },
+    "reads_web_articles_aloud": {
+      "value": "no",
+      "detail": "No built-in text-to-speech. The Web Viewer core plugin opens links, and the separate Web Clipper saves pages as Markdown.",
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/obsidianmd/obsidian-help/master/en/Plugins/Core%20plugins.md",
+          "title": "Core plugins (Obsidian Help, official obsidian-help repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Open external links in Obsidian."
+        }
+      ],
+      "note": "Judged on the app and its core plugins only; the Core plugins page lists every built-in plugin and none does this. Community plugins (e.g. text-to-speech or transcription plugins) were not assessed."
+    },
+    "reads_pdfs_aloud": {
+      "value": "no",
+      "detail": "Opens and embeds PDFs, but has no built-in read-aloud.",
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/obsidianmd/obsidian-help/master/en/Files%20and%20folders/Accepted%20file%20formats.md",
+          "title": "Accepted file formats (Obsidian Help, official obsidian-help repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "**PDF**: `.pdf`"
+        }
+      ],
+      "note": "Judged on the app and its core plugins only; the Core plugins page lists every built-in plugin and none does this. Community plugins (e.g. text-to-speech or transcription plugins) were not assessed."
+    },
+    "voice_notes_anchored": {
+      "value": "partial",
+      "detail": "The Audio recorder core plugin records into the active note, but the recording is added at the end of the note, not tied to a point in a source. Linking it to a moment is up to the user.",
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/obsidianmd/obsidian-help/master/en/Plugins/Audio%20recorder.md",
+          "title": "Audio recorder (Obsidian Help, official obsidian-help repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Obsidian saves the recorded audio file to your vault and [[Embed files|embeds]] it at the end of the active note."
+        },
+        {
+          "url": "https://raw.githubusercontent.com/obsidianmd/obsidian-help/master/en/Plugins/Core%20plugins.md",
+          "title": "Core plugins (Obsidian Help, official obsidian-help repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Record and save audio recordings directly in a note."
+        }
+      ],
+      "note": "Help pages read as Markdown source from Obsidian's official obsidian-help GitHub repo, which publishes help.obsidian.md. The help page says the plugin needs a microphone on 'your computer'; mobile support is not stated there."
+    },
+    "text_notes_anchored": {
+      "value": "partial",
+      "detail": "Notes can link or embed a specific PDF page (#page=N); no core way to anchor a note to an audio timestamp or a text position in a web article.",
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/obsidianmd/obsidian-help/master/en/Linking%20notes%20and%20files/Embed%20files.md",
+          "title": "Embed files (Obsidian Help, official obsidian-help repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "You can also open a specific page in the PDF by adding `#page=N` to the link destination"
+        }
+      ],
+      "note": "Help pages read as Markdown source from Obsidian's official obsidian-help GitHub repo, which publishes help.obsidian.md. Judged on the app and its core plugins only; the Core plugins page lists every built-in plugin and none does this. Community plugins (e.g. text-to-speech or transcription plugins) were not assessed."
+    },
+    "hands_free_capture": {
+      "value": "unknown",
+      "detail": "No headphone, Watch, lock-screen or CarPlay capture found in the App Store listing or core plugin list.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/obsidian-connected-notes/id1557175442",
+          "title": "Obsidian - Connected Notes App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://raw.githubusercontent.com/obsidianmd/obsidian-help/master/en/Plugins/Core%20plugins.md",
+          "title": "Core plugins (Obsidian Help, official obsidian-help repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Checked the App Store feature list and the core plugin list; iOS Shortcuts or widgets were not investigated."
+    },
+    "transcripts": {
+      "value": "no",
+      "detail": "No built-in transcription.",
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/obsidianmd/obsidian-help/master/en/Plugins/Core%20plugins.md",
+          "title": "Core plugins (Obsidian Help, official obsidian-help repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "This page lists the core plugins that come installed with Obsidian."
+        }
+      ],
+      "note": "Judged on the app and its core plugins only; the Core plugins page lists every built-in plugin and none does this. Community plugins (e.g. text-to-speech or transcription plugins) were not assessed."
+    },
+    "ai_summaries": {
+      "value": "no",
+      "detail": "No built-in AI summaries.",
+      "sources": [
+        {
+          "url": "https://raw.githubusercontent.com/obsidianmd/obsidian-help/master/en/Plugins/Core%20plugins.md",
+          "title": "Core plugins (Obsidian Help, official obsidian-help repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "This page lists the core plugins that come installed with Obsidian."
+        }
+      ],
+      "note": "Judged on the app and its core plugins only; the Core plugins page lists every built-in plugin and none does this. Community plugins (e.g. text-to-speech or transcription plugins) were not assessed."
+    },
+    "export_markdown_pkm": {
+      "value": "yes",
+      "detail": "Notes are plain Markdown files in a local folder, so they are the export format.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/obsidian-connected-notes/id1557175442",
+          "title": "Obsidian - Connected Notes App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Obsidian is a powerful knowledge base that works on top of a local folder of plain text Markdown files."
+        }
+      ]
+    },
+    "share_note_at_moment": {
+      "value": "partial",
+      "detail": "With a Sync shared vault, a collaborator can open a note whose link jumps to a PDF page; nothing opens audio at a moment, and there is no importable share file.",
+      "sources": [
+        {
+          "url": "https://obsidian.md/pricing",
+          "title": "Pricing - Obsidian",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Collaborate on shared vaults"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/obsidianmd/obsidian-help/master/en/Linking%20notes%20and%20files/Embed%20files.md",
+          "title": "Embed files (Obsidian Help, official obsidian-help repo)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "You can also open a specific page in the PDF by adding `#page=N` to the link destination"
+        }
+      ],
+      "note": "Composite of two features; needs both people on paid Sync."
+    },
+    "group_listening": {
+      "value": "partial",
+      "detail": "Shared vaults through paid Sync; no group annotation or listening features.",
+      "sources": [
+        {
+          "url": "https://obsidian.md/pricing",
+          "title": "Pricing - Obsidian",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Collaborate on shared vaults"
+        }
+      ]
+    },
+    "on_device_privacy": {
+      "value": "yes",
+      "detail": "Data stays in a local folder on the device; no account and no telemetry; Sync is end-to-end encrypted.",
+      "sources": [
+        {
+          "url": "https://obsidian.md/pricing",
+          "title": "Pricing - Obsidian",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "You can use our apps without sharing any personal information, and your data is stored locally on your device, making it inaccessible to us."
+        }
+      ]
+    },
+    "account_required": {
+      "value": "no",
+      "detail": "No sign-up needed for the app; an account is needed only for Sync, Publish or licences.",
+      "sources": [
+        {
+          "url": "https://obsidian.md/pricing",
+          "title": "Pricing - Obsidian",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Free without limits. No sign-up required."
+        }
+      ]
+    }
+  }
+}

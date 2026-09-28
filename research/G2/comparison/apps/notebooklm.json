@@ -3,7 +3,7 @@
   "name": "Google NotebookLM (Gemini Notebook)",
   "vendor": "Google LLC",
   "category": "ai-research",
-  "website": "https://notebooklm.google",
+  "website": "https://notebook.google",
   "why_listed": "People who want PDFs, articles and YouTube videos turned into AI podcast-style Audio Overviews, summaries and Q&A, and shared as a notebook with collaborators, would use NotebookLM instead of Spoken Margins.",
   "claims": {
     "platforms": {
@@ -32,7 +32,7 @@
           "quote": "Gemini Notebook is available in browser to all users above the age of consent"
         }
       ],
-      "note": "NotebookLM now appears as 'Gemini Notebook' on Google's help center and App Store (same app id 6737527615 and help URLs under /notebooklm/)."
+      "note": "NotebookLM now appears as 'Gemini Notebook' on Google's help center and App Store (same app id 6737527615 and help URLs under /notebooklm/). notebooklm.google now redirects to notebook.google (checked 2026-09-28)."
     },
     "price_free_tier": {
       "value": "Free with a Google account: 100 notebooks, 50 sources per notebook, 50 chats/day, 3 Audio Overviews/day",
