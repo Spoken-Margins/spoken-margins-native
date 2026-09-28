@@ -58,6 +58,18 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertEqual(spoken.count, listenable.sourceOffsets.count)
     }
 
+    func testATableSplitByAPageBreakIsAnnouncedOnce() {
+        let doc = document([
+            StructuredDocumentLine(text: "Before.", role: .body, pageIndex: 0),
+            StructuredDocumentLine(text: "P1 14 9", role: .table, pageIndex: 0),
+            StructuredDocumentLine(text: "Journal 3", role: .pageFooter, pageIndex: 0),
+            StructuredDocumentLine(text: "P2 9 4", role: .table, pageIndex: 1),
+            StructuredDocumentLine(text: "Between.", role: .body, pageIndex: 1),
+            StructuredDocumentLine(text: "P3 1 2", role: .table, pageIndex: 1),
+        ])
+        XCTAssertEqual(StructuredDocumentSpeech.spokenLines(doc), ["Before.", "Table not read.", "Between.", "Table not read."])
+    }
+
     func testSuperscriptMarkersFollowCleaningAndAreSilent() throws {
         let doc = document([
             StructuredDocumentLine(text: "Vitamin  D matters12 and so do diets.a", role: .body, pageIndex: 0, superscripts: [18..<20, 37..<38]),

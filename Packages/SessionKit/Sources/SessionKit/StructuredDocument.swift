@@ -324,8 +324,11 @@ public enum StructuredDocumentSpeech {
             case .skip:
                 continue
             case .announceAndSkip(let notice):
-                result.append(announcement(notice, at: range.lowerBound))
-                lastNotice = nil
+                // Two tables in a row, split only by a page header, get one notice.
+                if lastNotice != notice {
+                    result.append(announcement(notice, at: range.lowerBound))
+                }
+                lastNotice = notice
             case .skipWithNoticeOnce(let notice):
                 if lastNotice != notice {
                     result.append(announcement(notice, at: range.lowerBound))
