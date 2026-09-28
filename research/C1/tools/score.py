@@ -299,7 +299,9 @@ def render_marker(truth: Truth, spoken: Spoken, pos, first_at: dict[int, int], m
     if a is None:
         return "context_missing"
     b = a + 1
-    while b < len(pos) and pos[b] is None:
+    # The gap runs to the next body word: an author-year citation can align
+    # to the reference list by its words, but here it is a marker.
+    while b < len(pos) and (pos[b] is None or truth.roles[pos[b]] not in BODY_ROLES):
         b += 1
     gap = list(range(a + 1, min(b, a + 1 + 12)))
     if not gap:
@@ -317,8 +319,13 @@ def render_marker(truth: Truth, spoken: Spoken, pos, first_at: dict[int, int], m
             claimed[g] = kind
         return "spoken_label"
     label = tokens_of(marker["label"])
-    if label and words[:len(label)] == label and not all(t.isdigit() for t in label):
-        for g in gap[:len(label)]:
+    if label and words[0] == label[0] and not all(t.isdigit() for t in label):
+        # Author-year groups like "(Wang, Vinocur & Altman, 2003; Li et al., 2023)".
+        allowed = set(label) | {"and", "et", "al", "e", "g", "see", "also"}
+        n = 0
+        while n < len(words) and words[n] in allowed:
+            n += 1
+        for g in gap[:n]:
             claimed[g] = kind
         return "label_read"
     if words[0].isdigit() or (len(words[0]) == 1 and marker["kind"] == "footnote"):
@@ -353,14 +360,18 @@ def _categorize(truth: Truth, text: str):
 
     claimed: dict[int, str] = {}
     marker_outcomes = {"citation": Counter(), "footnote": Counter()}
-    seen_sites = set()
+    # Markers with nothing but punctuation between them, like [3, 4] or
+    # (Li, 2020; Wu, 2021), are one site with the labels joined.
+    sites: dict[tuple, dict] = {}
     for marker in truth.markers:
         if marker["role"] not in BODY_ROLES:
             continue
         site = (marker["kind"], marker["before"])
-        if site in seen_sites:
-            continue  # a group like [3, 4] is one site
-        seen_sites.add(site)
+        if site in sites:
+            sites[site]["label"] += " " + marker["label"]
+        else:
+            sites[site] = dict(marker)
+    for site, marker in sites.items():
         marker_outcomes[marker["kind"]][render_marker(truth, spoken, pos, first_at, marker, claimed)] += 1
 
     line_class = classify_lines(spoken)
@@ -431,8 +442,10 @@ def score(truth: Truth, text: str) -> dict:
         if i1 - i0 - 1 < 3 or p1 != p0 + 1:
             continue
         run = Counter(category[i0 + 1:i1])
-        for marker_kind in ("citation_markers", "footnote_markers"):
-            run.pop(marker_kind, None)
+        # Markers and inline math sit where the truth has them; they cost as
+        # words, not as an interruption of the sentence.
+        for in_place in ("citation_markers", "footnote_markers", "math", "inline_residue"):
+            run.pop(in_place, None)
         if sum(run.values()) < 3:
             continue
         kind = run.most_common(1)[0][0]
