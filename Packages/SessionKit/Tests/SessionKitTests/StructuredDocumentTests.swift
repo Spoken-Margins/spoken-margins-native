@@ -70,6 +70,15 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertEqual(StructuredDocumentSpeech.spokenLines(doc), ["Before.", "Table not read.", "Between.", "Table not read."])
     }
 
+    func testTextInsideAFigureIsSilentAndItsCaptionIsRead() {
+        let doc = document([
+            StructuredDocumentLine(text: "Figure 2. Sessions by hour.", role: .caption),
+            StructuredDocumentLine(text: "0 6 12 18 24", role: .figureText),
+            StructuredDocumentLine(text: "Most sessions were early.", role: .body),
+        ])
+        XCTAssertEqual(StructuredDocumentSpeech.spokenLines(doc), ["Figure 2. Sessions by hour.", "Most sessions were early."])
+    }
+
     func testSuperscriptMarkersFollowCleaningAndAreSilent() throws {
         let doc = document([
             StructuredDocumentLine(text: "Vitamin  D matters12 and so do diets.a", role: .body, pageIndex: 0, superscripts: [18..<20, 37..<38]),

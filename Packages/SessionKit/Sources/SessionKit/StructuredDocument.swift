@@ -17,6 +17,8 @@ public struct StructuredDocument: Codable, Equatable, Sendable {
         case backMatter = "back_matter"
         case pageHeader = "page_header"
         case pageFooter = "page_footer"
+        /// Text printed inside a figure (axis ticks, panel labels, screenshots).
+        case figureText = "figure_text"
         case unknown
     }
 
@@ -248,7 +250,9 @@ public enum StructuredDocumentBuilder {
 ///
 /// Until C2's `DocumentSpeechRules` (#221) reaches `next`, these are C1's copy of
 /// the published table, with the owner's rule for the title page (#191): author
-/// names are read, the rest of the title page is skipped silently.
+/// names are read, the rest of the title page is skipped silently. Text inside a
+/// figure is skipped: its caption announces the figure ("Figure 2."). That role is
+/// C1's proposal to C2 (#191).
 public enum StructuredDocumentSpeech {
     public enum Treatment: Equatable, Sendable {
         case read
@@ -270,7 +274,7 @@ public enum StructuredDocumentSpeech {
             return .announceAndSkip(notice: "Equation not read.")
         case .reference:
             return .skipWithNoticeOnce(notice: "References skipped.")
-        case .footnote, .pageHeader, .pageFooter, .frontMatter:
+        case .footnote, .pageHeader, .pageFooter, .frontMatter, .figureText:
             return .skip
         }
     }

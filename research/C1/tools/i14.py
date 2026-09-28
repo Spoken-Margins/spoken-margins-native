@@ -54,6 +54,7 @@ ROLE_RULES = {
     "front_matter": "silent",  # owner: the rest of the title page is skipped; silently is C1's proposal to C2
     "back_matter": "announce", # proposed: "Back matter skipped." once per run
     "equation": "announce",    # proposed: "Equation."
+    "figure_text": "silent",   # C1 proposal: text inside a figure; its caption announces the figure
     "unknown": "read",         # proposed
 }
 SILENT_MARKERS = {"citation", "footnote"}

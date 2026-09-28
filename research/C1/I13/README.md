@@ -57,6 +57,7 @@ Roles are advisory. **I14 decides how each role sounds.** The "likely treatment"
 | `front_matter` | Affiliations, emails, identifiers, dates, licence lines | skip (C1 proposes silently; C2 to confirm) |
 | `back_matter` | Acknowledgements, funding, contributions, competing interests, data availability, reviewer reports | skip |
 | `page_header`, `page_footer` | Running heads, page numbers, download stamps | skip |
+| `figure_text` | Text printed inside a figure: axis ticks, panel labels, screenshots | skip; the caption announces the figure (C1 proposal, C2 to confirm) |
 | `unknown` | The extractor couldn't tell | read |
 
 The baseline report (`results/REPORT.md`) says why these roles matter. With no handling, a reference list costs a median of 9.3 minutes of listening per paper.
