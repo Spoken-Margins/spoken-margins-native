@@ -9,6 +9,8 @@ dist/
 coverage/
 .venv/
 __pycache__/
+# Claude Code and Remote Control create stream worktrees here.
+.claude/worktrees/
 
 # Local review/simulator recordings; keep video binaries out of Git.
 *.[mM][pP]4
