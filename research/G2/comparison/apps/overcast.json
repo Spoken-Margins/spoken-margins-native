@@ -1,0 +1,302 @@
+{
+  "id": "overcast",
+  "name": "Overcast",
+  "vendor": "Overcast Radio, LLC",
+  "category": "podcast",
+  "website": "https://overcast.fm",
+  "why_listed": "Privacy-minded Apple podcast listeners who share short clips with timestamp links would use Overcast instead of Spoken Margins.",
+  "claims": {
+    "platforms": {
+      "value": "iOS, iPadOS, watchOS, macOS (Apple silicon, via App Store), CarPlay; overcast.fm web pages for shared episodes",
+      "detail": "Apple platforms only.",
+      "sources": [
+        {
+          "url": "https://overcast.fm/",
+          "title": "Overcast",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "iPhone, iPad, and Apple Watch"
+        },
+        {
+          "url": "https://apps.apple.com/us/app/overcast/id888422857",
+          "title": "Overcast - App Store (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "App Store listing (WebFetch summary) lists iPhone/iPad iOS 18+, Mac macOS 15+ with M1 or later, Apple Watch and CarPlay. No Android or Windows app found."
+    },
+    "price_free_tier": {
+      "value": "Full player free, funded by ads that promote other podcasts.",
+      "detail": "Free with ads; Premium adds stats, 48-hour history/undo, extra audio effects and ad removal.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/overcast/id888422857",
+          "title": "Overcast - App Store (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Overcast is funded by ads that promote other podcasts."
+        }
+      ]
+    },
+    "price_paid": {
+      "value": "Overcast Premium: US App Store lists in-app purchases at USD 19.99 and USD 29.99; period not shown on listing",
+      "detail": "Premium is an annual subscription per the overcast.fm home page.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/overcast/id888422857",
+          "title": "Overcast - App Store (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Overcast Premium $19.99"
+        },
+        {
+          "url": "https://overcast.fm/",
+          "title": "Overcast",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Overcast.fm home page mentions an annual subscription but shows no price. Press from Nov 2024 reported USD 14.99/year; the App Store's current figures differ and the period of each was not shown, so the cheapest plan is unconfirmed."
+    },
+    "plays_podcasts": {
+      "value": "yes",
+      "detail": "Full podcast player using standard RSS feeds.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/overcast/id888422857",
+          "title": "Overcast - App Store (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Smart Speed saves time without distorting the audio"
+        }
+      ]
+    },
+    "reads_web_articles_aloud": {
+      "value": "unknown",
+      "detail": "No article reading feature found.",
+      "sources": [
+        {
+          "url": "https://overcast.fm/",
+          "title": "Overcast",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://apps.apple.com/us/app/overcast/id888422857",
+          "title": "Overcast - App Store (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Checked home page and App Store listing; nothing about reading articles aloud."
+    },
+    "reads_pdfs_aloud": {
+      "value": "unknown",
+      "detail": "No PDF reading feature found.",
+      "sources": [
+        {
+          "url": "https://overcast.fm/",
+          "title": "Overcast",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://apps.apple.com/us/app/overcast/id888422857",
+          "title": "Overcast - App Store (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Checked home page and App Store listing; nothing about PDFs."
+    },
+    "voice_notes_anchored": {
+      "value": "unknown",
+      "detail": "No note or bookmark feature found.",
+      "sources": [
+        {
+          "url": "https://overcast.fm/",
+          "title": "Overcast",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://apps.apple.com/us/app/overcast/id888422857",
+          "title": "Overcast - App Store (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Checked home page and App Store listing including recent release notes; no notes or bookmarks mentioned."
+    },
+    "text_notes_anchored": {
+      "value": "unknown",
+      "detail": "No note or bookmark feature found.",
+      "sources": [
+        {
+          "url": "https://overcast.fm/",
+          "title": "Overcast",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://apps.apple.com/us/app/overcast/id888422857",
+          "title": "Overcast - App Store (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Checked home page and App Store listing including recent release notes; no notes or bookmarks mentioned."
+    },
+    "hands_free_capture": {
+      "value": "unknown",
+      "detail": "No hands-free moment capture found; the Watch app and CarPlay are for playback.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/overcast/id888422857",
+          "title": "Overcast - App Store (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "App Store listing mentions a standalone Apple Watch app and CarPlay for playback only."
+    },
+    "transcripts": {
+      "value": "yes",
+      "detail": "Live-scrolling transcripts for most podcasts, free for everyone; iOS 26 devices can generate missing ones.",
+      "sources": [
+        {
+          "url": "https://9to5mac.com/2026/04/08/overcast-launches-podcast-transcripts-in-new-app-update-for-iphone/",
+          "title": "Overcast launches podcast transcripts in new app update for iPhone - 9to5Mac",
+          "published": "2026-04-08",
+          "checked": "2026-09-28",
+          "quote": "Developer Marco Arment says transcripts are available for 'most podcasts,' but even if a show doesn't have a transcript yet, AI-compatible devices running iOS 26 can create the transcript automatically."
+        },
+        {
+          "url": "https://apps.apple.com/us/app/overcast/id888422857",
+          "title": "Overcast - App Store (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Transcripts! (Many more transcript features coming in the future, too. Gotta start somewhere, though!)"
+        }
+      ],
+      "note": "Press source used because the vendor's own pages have only a release-note line."
+    },
+    "ai_summaries": {
+      "value": "no",
+      "detail": "AI summaries and automatic chapters are on the developer's roadmap, not shipped as of the pages read.",
+      "sources": [
+        {
+          "url": "https://9to5mac.com/2026/04/08/overcast-launches-podcast-transcripts-in-new-app-update-for-iphone/",
+          "title": "Overcast launches podcast transcripts in new app update for iPhone - 9to5Mac",
+          "published": "2026-04-08",
+          "checked": "2026-09-28",
+          "quote": "Arment has shared that the following enhancements are on his roadmap: Transcript search, AI-based transcript analysis such as summaries, automatic chapters, etc."
+        }
+      ],
+      "note": "Roadmap as of April 2026; App Store release notes through 2026-08-24 mention no summaries."
+    },
+    "export_markdown_pkm": {
+      "value": "unknown",
+      "detail": "No export to note apps found. Transcripts can be exported as SRT.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/overcast/id888422857",
+          "title": "Overcast - App Store (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "App Store 'What's New' (2026.8.1) mentions transcript SRT export per WebFetch summary; no Obsidian/Notion/Readwise/Markdown export found."
+    },
+    "share_note_at_moment": {
+      "value": "partial",
+      "detail": "Share audio or video clips up to a minute, or an overcast.fm link queued to the clip's timestamp; no note travels with it.",
+      "sources": [
+        {
+          "url": "https://marco.org/2019/04/27/overcast-clip-sharing",
+          "title": "Clip sharing with Overcast – Marco.org",
+          "published": "2019-04-27",
+          "checked": "2026-09-28",
+          "quote": "you can now share audio or video clips, up to a minute each, from any public podcast."
+        },
+        {
+          "url": "https://apps.apple.com/us/app/overcast/id888422857",
+          "title": "Overcast - App Store (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Fixed missing artwork in clip-sharing and stalls while exporting clips"
+        }
+      ],
+      "note": "Timestamped links look like overcast.fm/+id/44:22 per the post; landing pages show badges for other podcast apps."
+    },
+    "group_listening": {
+      "value": "unknown",
+      "detail": "No group or shared annotation feature found.",
+      "sources": [
+        {
+          "url": "https://overcast.fm/",
+          "title": "Overcast",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://apps.apple.com/us/app/overcast/id888422857",
+          "title": "Overcast - App Store (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Checked home page and App Store listing; nothing either way."
+    },
+    "on_device_privacy": {
+      "value": "partial",
+      "detail": "Accounts are anonymous by default (no email/password), and the app has no third-party analytics, ad services or tracking code.",
+      "sources": [
+        {
+          "url": "https://overcast.fm/privacy",
+          "title": "Overcast's privacy policy",
+          "published": "2022-12-14",
+          "checked": "2026-09-28",
+          "quote": "New Overcast accounts are created anonymously, without email addresses or passwords."
+        },
+        {
+          "url": "https://apps.apple.com/us/app/overcast/id888422857",
+          "title": "Overcast - App Store (US)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Overcast has world-class privacy, with no third-party analytics, ad services, or tracking code."
+        }
+      ],
+      "note": "Listening data (podcasts, episodes, activity) is still synced to Overcast servers; this is no-account-required privacy, not on-device-only storage. Rated partial under FIELDS.md's definition: no-account use, but listening data syncs to Overcast's servers."
+    },
+    "account_required": {
+      "value": "no",
+      "detail": "An anonymous account is created automatically; email and password are optional.",
+      "sources": [
+        {
+          "url": "https://overcast.fm/privacy",
+          "title": "Overcast's privacy policy",
+          "published": "2022-12-14",
+          "checked": "2026-09-28",
+          "quote": "New Overcast accounts are created anonymously, without email addresses or passwords."
+        }
+      ],
+      "note": "Accounts are anonymous by default; see the on_device_privacy detail."
+    }
+  }
+}

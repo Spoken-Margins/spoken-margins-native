@@ -1,0 +1,12 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no' ?>
+<opml version="2.0">
+  <head>
+    <title>AntennaPod Subscriptions</title>
+    <dateCreated>28 Sep 26 10:00:00 +0000</dateCreated>
+  </head>
+  <body>
+    <outline text="In Our Time" title="In Our Time" type="rss" xmlUrl="https://podcasts.files.bbci.co.uk/b006qykl.rss" htmlUrl="https://www.bbc.co.uk/programmes/b006qykl" />
+    <outline text="Philosophize This!" title="Philosophize This!" type="rss" xmlUrl="https://feeds.megaphone.fm/QCD6036500916" htmlUrl="https://www.philosophizethis.org" />
+    <outline text="The Daily" title="The Daily" type="rss" xmlUrl="https://feeds.simplecast.com/Sl5CSM3S" htmlUrl="https://www.nytimes.com/the-daily" />
+  </body>
+</opml>

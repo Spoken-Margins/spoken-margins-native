@@ -1,0 +1,10 @@
+
+
+
+{
+ "resultCount":1,
+ "results": [
+{"wrapperType":"track", "kind":"podcast", "artistId":284341002, "collectionId":1318335827, "trackId":1318335827, "artistName":"Omnibus", "collectionName":"Omnibus", "trackName":"Omnibus", "collectionCensoredName":"Omnibus", "trackCensoredName":"Omnibus", "artistViewUrl":"https://podcasts.apple.com/us/artist/iheartradio/284341002?uo=4", "collectionViewUrl":"https://podcasts.apple.com/us/podcast/omnibus/id1318335827?uo=4", "feedUrl":"https://audioboom.com/channels/5127257.rss", "trackViewUrl":"https://podcasts.apple.com/us/podcast/omnibus/id1318335827?uo=4", "artworkUrl30":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/ce/29/dc/ce29dc79-ba2a-a483-c3d7-c64a8644ad72/mza_9433894594853742699.png/30x30bb.jpg", "artworkUrl60":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/ce/29/dc/ce29dc79-ba2a-a483-c3d7-c64a8644ad72/mza_9433894594853742699.png/60x60bb.jpg", "artworkUrl100":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/ce/29/dc/ce29dc79-ba2a-a483-c3d7-c64a8644ad72/mza_9433894594853742699.png/100x100bb.jpg", "collectionPrice":0.00, "trackPrice":0.00, "collectionHdPrice":0, "releaseDate":"2026-09-22T07:08:00Z", "collectionExplicitness":"notExplicit", "trackExplicitness":"cleaned", "trackCount":701, "trackTimeMillis":4633, "country":"USA", "currency":"USD", "primaryGenreName":"History", "contentAdvisoryRating":"Clean", "artworkUrl600":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/ce/29/dc/ce29dc79-ba2a-a483-c3d7-c64a8644ad72/mza_9433894594853742699.png/600x600bb.jpg", "genreIds":["1487", "26", "1324"], "genres":["History", "Podcasts", "Society & Culture"]}]
+}
+
+

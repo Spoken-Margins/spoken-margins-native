@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "source-resolution.v1",
+  "input": {"kind": "query", "value": "radiolab"},
+  "resolverId": "catalog_search",
+  "candidates": [
+    {
+      "id": "catalog_search:apple-152249110",
+      "kind": "podcast_feed",
+      "contentKind": "podcast",
+      "title": "Radiolab",
+      "author": "WNYC Studios",
+      "feed": {"url": "https://feeds.simplecast.com/EmVW7VGp", "isPrivate": false},
+      "confidence": "likely",
+      "score": 0.97,
+      "reason": "Title matches the search exactly",
+      "resolverId": "catalog_search",
+      "catalogEntryId": "apple-152249110",
+      "externalIds": {"applePodcastsId": "152249110"}
+    },
+    {
+      "id": "catalog_search:radiolab-presents-more-perfect",
+      "kind": "podcast_feed",
+      "contentKind": "podcast",
+      "title": "More Perfect",
+      "author": "WNYC Studios",
+      "feed": {"url": "https://feeds.simplecast.com/8TLqQLJs", "isPrivate": false},
+      "confidence": "possible",
+      "score": 0.41,
+      "reason": "Same publisher; description mentions Radiolab",
+      "resolverId": "catalog_search"
+    }
+  ]
+}

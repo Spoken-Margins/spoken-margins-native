@@ -1,0 +1,229 @@
+{
+ "schemaVersion": "source-catalog.v1",
+ "catalogId": "fixture-top-podcasts",
+ "contentVersion": 1,
+ "title": "Popular podcasts",
+ "generatedAt": "2026-09-28T12:19:05Z",
+ "locale": "en-US",
+ "provenance": [
+  {
+   "id": "apple-top-us-news",
+   "kind": "apple_top_chart",
+   "url": "https://itunes.apple.com/us/rss/toppodcasts/limit=40/genre=1489/json",
+   "country": "us",
+   "appleGenreId": 1489,
+   "chartUpdatedAt": "2026-09-28T05:17:56-07:00",
+   "fetchedAt": "2026-09-28T12:19:01Z"
+  },
+  {
+   "id": "apple-top-us-comedy",
+   "kind": "apple_top_chart",
+   "url": "https://itunes.apple.com/us/rss/toppodcasts/limit=40/genre=1303/json",
+   "country": "us",
+   "appleGenreId": 1303,
+   "chartUpdatedAt": "2026-09-28T05:17:57-07:00",
+   "fetchedAt": "2026-09-28T12:19:02Z"
+  },
+  {
+   "id": "apple-top-us-science",
+   "kind": "apple_top_chart",
+   "url": "https://itunes.apple.com/us/rss/toppodcasts/limit=40/genre=1533/json",
+   "country": "us",
+   "appleGenreId": 1533,
+   "chartUpdatedAt": "2026-09-28T05:17:58-07:00",
+   "fetchedAt": "2026-09-28T12:19:03Z"
+  },
+  {
+   "id": "itunes-lookup",
+   "kind": "itunes_lookup",
+   "url": "https://itunes.apple.com/lookup",
+   "country": "us",
+   "fetchedAt": "2026-09-28T12:19:05Z"
+  }
+ ],
+ "subjects": [
+  {
+   "id": "news",
+   "title": "News",
+   "appleGenreId": 1489
+  },
+  {
+   "id": "comedy",
+   "title": "Comedy",
+   "appleGenreId": 1303
+  },
+  {
+   "id": "science",
+   "title": "Science",
+   "appleGenreId": 1533
+  }
+ ],
+ "starterRows": [
+  {
+   "subjectId": "science",
+   "title": "Start with Science",
+   "entryIds": [
+    "apple-1150124880"
+   ],
+   "curatedBy": "owner"
+  }
+ ],
+ "entries": [
+  {
+   "id": "apple-1200361736",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Daily",
+   "author": "The New York Times",
+   "feedURL": "https://feeds.simplecast.com/Sl5CSM3S",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/ab/64/66/ab6466a9-9a7d-e20e-7a3d-bc5be37d29ce/mza_15084852813176276273.jpg/600x600bb.jpg",
+   "subjects": [
+    "news"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-news",
+     "rank": 1
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1200361736"
+   },
+   "provenanceIds": [
+    "apple-top-us-news",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1192761536",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Pod Save America",
+   "author": "Pod Save America",
+   "feedURL": "https://audioboom.com/channels/5166624.rss",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/44/dc/61/44dc6141-25e9-5bb3-e19e-a2337233d19e/mza_5506771870755587769.jpg/600x600bb.jpg",
+   "subjects": [
+    "news"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-news",
+     "rank": 2
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1192761536"
+   },
+   "provenanceIds": [
+    "apple-top-us-news",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1150124880",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Something You Should Know",
+   "author": "Mike Carruthers | OmniCast Media",
+   "feedURL": "https://rss.pdrl.fm/60a606/feeds.megaphone.fm/WWO9761275037",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/96/57/ca/9657caf6-6375-d5ba-585b-eb2f5c9fbf8e/mza_3992023160251207455.jpeg/600x600bb.jpg",
+   "subjects": [
+    "science"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-science",
+     "rank": 1
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1150124880"
+   },
+   "provenanceIds": [
+    "apple-top-us-science",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-152249110",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Radiolab",
+   "author": "WNYC Studios",
+   "feedURL": "https://feeds.simplecast.com/EmVW7VGp",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/2b/b2/4d/2bb24d28-f3bb-916f-6bf3-9e125ba5219b/mza_4476298389845914795.jpg/600x600bb.jpg",
+   "subjects": [
+    "science"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-science",
+     "rank": 2
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "152249110"
+   },
+   "provenanceIds": [
+    "apple-top-us-science",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-360084272",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "The Joe Rogan Experience",
+   "author": "Joe Rogan",
+   "feedURL": "https://feeds.megaphone.fm/GLT1412515089",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts211/v4/ac/39/c4/ac39c4f9-9a22-06b4-442e-ed5d9715b09f/mza_16971090484056979646.jpg/600x600bb.jpg",
+   "subjects": [
+    "comedy"
+   ],
+   "explicit": true,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-comedy",
+     "rank": 1
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "360084272"
+   },
+   "provenanceIds": [
+    "apple-top-us-comedy",
+    "itunes-lookup"
+   ]
+  },
+  {
+   "id": "apple-1795483480",
+   "kind": "podcast_feed",
+   "contentKind": "podcast",
+   "title": "Good Hang with Amy Poehler",
+   "author": "The Ringer",
+   "feedURL": "https://feeds.megaphone.fm/good-hang-with-amy-poehler",
+   "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/2b/94/bb/2b94bb6e-44f1-9d57-7748-b7456072806d/mza_1064202164981856225.jpg/600x600bb.jpg",
+   "subjects": [
+    "comedy"
+   ],
+   "explicit": false,
+   "chartPositions": [
+    {
+     "provenanceId": "apple-top-us-comedy",
+     "rank": 2
+    }
+   ],
+   "externalIds": {
+    "applePodcastsId": "1795483480"
+   },
+   "provenanceIds": [
+    "apple-top-us-comedy",
+    "itunes-lookup"
+   ]
+  }
+ ]
+}
