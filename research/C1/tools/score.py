@@ -47,6 +47,9 @@ import unicodedata
 from collections import Counter, defaultdict
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import i14  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 GT_DIR = ROOT / "cache" / "gt"
 RESULTS = ROOT / "results"
@@ -411,7 +414,20 @@ def _categorize(truth: Truth, text: str):
         else:
             role = truth.roles[p]
             category.append("body" if role in BODY_ROLES else role)
+    # I14 announcements ("References skipped.", "Figure 2.") are the app
+    # telling the listener what it skipped: not clutter, not body.
+    for i in range(len(category)):
+        if is_announcement(spoken.lines[spoken.line_of[i]]):
+            category[i] = "announcement"
     return spoken, category, pos, first_at, marker_outcomes
+
+
+FLOAT_LABEL = re.compile(r"(?i)^(?:figure|fig\.?|table|scheme|box|chart)\s*s?\d+[a-z]?\.$")
+
+
+def is_announcement(line: str) -> bool:
+    line = line.strip()
+    return line in i14.ANNOUNCEMENTS or bool(FLOAT_LABEL.match(line))
 
 
 def score(truth: Truth, text: str) -> dict:
@@ -490,11 +506,20 @@ def score(truth: Truth, text: str) -> dict:
         "mid_sentence_interruptions": dict(mid_sentence),
         "hyphen_breaks": spoken.hyphen_joins,
         "citations": dict(marker_outcomes["citation"]),
+        # I14: numeric and parenthetical citations and footnote markers are silent.
+        "markers_silent_share": silent_share(marker_outcomes),
         "footnote_markers": dict(marker_outcomes["footnote"]),
         "captions": {"total": len(captions), "read": captions_read},
         "tables": {"total": len(tables), "cells_read_aloud": tables_read},
         "listener_cost_seconds": {k: round(v, 1) for k, v in cost.items()},
     }
+
+
+def silent_share(outcomes: dict) -> float | None:
+    """Of the marker sites that could be judged, the share spoken as I14 asks: not at all."""
+    judged = sum(n for kind in outcomes.values() for outcome, n in kind.items() if outcome != "context_missing")
+    silent = sum(kind.get("silent", 0) for kind in outcomes.values())
+    return round(silent / judged, 4) if judged else None
 
 
 def main() -> None:

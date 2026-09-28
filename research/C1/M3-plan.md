@@ -62,14 +62,13 @@ Two bugs are part of M3:
 
 Every step except 0 needs the Mac (PDFKit, SessionKit tests, the lane). The cloud prepares the scorer side and reviews.
 
-**Step 0 (cloud): make the scorer I14-aware.**
+**Step 0 (cloud): make the scorer I14-aware.** Done.
 
-Today the scorer counts any announcement ("References skipped", "Table not read", "Figure 2.") as unattributed words, and treats a silent citation as merely "silent".
-
-- Add an `announcement` category, not counted as clutter.
-- Make "silent" the I14-correct outcome for numeric and parenthetical citations and footnote markers.
-- Add a Python reference of the I14 projection that turns an I13 document into spoken text. Scoring an I13 document then measures exactly what the app will say.
-- Teach `c1-extract` to write I13 output beside the markdown.
+- `tools/i14.py` projects an I13 document to what's said under I14: roles read, announced or skipped, and citation and footnote markers silent.
+- The scorer counts I14's announcements ("References skipped.", "Table not read.", "Figure 2.") as `announcement`, not as clutter.
+- It reports `markers_silent_share`, the share of markers spoken as I14 asks (not at all).
+- Ground truth run through the projection (`gt-i14` in the report) scores **4.8% median clutter, 0.1% missing, 100% of markers silent**. That's the floor M3 can approach. What's left is math read aloud and the author list.
+- Scoring the app's I13 output needs `c1-extract` to write it, which comes with step 2.
 
 **Step 1 (Mac): guard existing Margins before anything changes.** This lands first, alone.
 

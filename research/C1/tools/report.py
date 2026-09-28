@@ -11,10 +11,17 @@ import statistics
 from collections import Counter, defaultdict
 from pathlib import Path
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import score  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "results"
 MANIFEST = ROOT / "corpus" / "manifest.json"
-ORDER = ["app-baseline", "pymupdf-raw", "pdfminer"]
+ORDER = ["app-baseline", "pymupdf-raw", "pdfminer", "gt-i14"]
+# Not an extractor: ground truth projected through I14 (tools/i14.py). It is
+# the floor a perfect extractor could reach under I14's rules.
+NOTES = {"gt-i14": "ground truth spoken per I14: the floor for M3"}
 
 PLAIN = {
     "reference": "Reference list read aloud",
@@ -48,6 +55,10 @@ def median(values):
     return statistics.median(values) if values else None
 
 
+def fmt_ms(value):
+    return "–" if value is None else f"{value:.0f} ms"
+
+
 def pct(value):
     return "–" if value is None else f"{100 * value:.1f}%"
 
@@ -78,7 +89,7 @@ def extractor_section(name: str, run: dict, manifest: dict) -> list[str]:
         f"- Median clutter rate: **{pct(run['summary']['median_clutter_rate'])}** of spoken words",
         f"- Median missing body text: **{pct(run['summary']['median_missing_body_rate'])}**",
         f"- Median reading-order breaks: {median([r['order_breaks_per_1000_body_words'] for r in scored.values()]):.2f} per 1000 body words",
-        f"- Median extraction time: {median([r.get('elapsed_ms') for r in papers.values()]):.0f} ms",
+        f"- Median extraction time: {fmt_ms(median([r.get('elapsed_ms') for r in papers.values()]))}",
         "",
         "### Failure categories ranked by listener cost",
         "",
@@ -164,11 +175,17 @@ def extractor_section(name: str, run: dict, manifest: dict) -> list[str]:
 
 
 def comparison(runs: dict) -> list[str]:
-    lines = ["## Comparison", "", "| Extractor | Median clutter | Median missing | No text |", "| --- | ---: | ---: | ---: |"]
+    lines = ["## Comparison", "",
+             "| Extractor | Median clutter | Median missing | Markers silent (I14) | No text |",
+             "| --- | ---: | ---: | ---: | ---: |"]
     for name, run in runs.items():
         none = sum(1 for r in run["papers"].values() if r.get("spoken_words", 0) == 0)
-        lines.append(f"| {name} | {pct(run['summary']['median_clutter_rate'])} | "
-                     f"{pct(run['summary']['median_missing_body_rate'])} | {none} |")
+        silent = median([r.get("markers_silent_share", score.silent_share(
+            {"citation": r.get("citations", {}), "footnote": r.get("footnote_markers", {})}))
+            for r in run["papers"].values()])
+        label = f"{name} ({NOTES[name]})" if name in NOTES else name
+        lines.append(f"| {label} | {pct(run['summary']['median_clutter_rate'])} | "
+                     f"{pct(run['summary']['median_missing_body_rate'])} | {pct(silent)} | {none} |")
     return lines + [""]
 
 
