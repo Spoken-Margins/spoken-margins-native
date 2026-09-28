@@ -167,12 +167,18 @@ enum Gate2LiveActivityPolicy {
         return snapshot.status == .paused && adoptedSessionId == sessionId
     }
 
+    /// `isFirstPassInProcess`: activities left by an earlier process (killed in the background, so
+    /// `willTerminate` never ran) are ended by the first idle pass after launch, whatever their session.
     static func shouldEndInactive(
         activitySessionId: String,
         activityId: String,
         inactiveSessionId: String?,
-        trackedActivityId: String?
+        trackedActivityId: String?,
+        isFirstPassInProcess: Bool = false
     ) -> Bool {
+        if isFirstPassInProcess {
+            return true
+        }
         if let inactiveSessionId {
             return activitySessionId == inactiveSessionId
         }
@@ -230,6 +236,7 @@ protocol Gate2LiveActivityControlling: AnyObject {
 
     func publish(
         _ snapshot: CompactControlSnapshot,
+        staleDate: Date?,
         sharedMarginPrompt: Gate2SharedMarginActivityPrompt?,
         upcomingSharedMargins: [Gate2LiveActivityNavigationEntry]
     )
@@ -256,6 +263,13 @@ final class Gate2CompactControlController {
     private var queuedCommandHandler: (@MainActor (CompactControlCommand, String, String?, Int?, Double?) -> Void)?
     private var queuedApplicationCommandHandler: (@MainActor (String, String?) -> Bool)?
     private let liveActivity: any Gate2LiveActivityControlling
+    private var liveActivityLifecycle = LiveActivityLifecycle()
+    private var liveActivityLifecycleStatus = "none"
+    private var idleDeadlineTask: Task<Void, Never>?
+    private let now: () -> Date
+    #if canImport(AVFoundation) && os(iOS)
+    private var audioInterruptionObserver: Gate2AudioInterruptionEndObserver?
+    #endif
     private let liveSpeechNowPlaying = Gate2LiveSpeechNowPlayingController()
     private var nowPlayingEnabled = true
     private var lastPublishedSnapshot: CompactControlSnapshot?
@@ -265,8 +279,18 @@ final class Gate2CompactControlController {
     private(set) var lastApplicationCommand = "none"
     private(set) var lastResult = "none"
 
-    init(liveActivity: (any Gate2LiveActivityControlling)? = nil) {
+    init(
+        liveActivity: (any Gate2LiveActivityControlling)? = nil,
+        now: @escaping () -> Date = Date.init,
+        notificationCenter: NotificationCenter = .default
+    ) {
         self.liveActivity = liveActivity ?? Gate2LiveActivityController()
+        self.now = now
+        #if canImport(AVFoundation) && os(iOS)
+        audioInterruptionObserver = Gate2AudioInterruptionEndObserver(center: notificationCenter) { [weak self] shouldResume in
+            self?.handleAudioInterruptionEnded(shouldResume: shouldResume)
+        }
+        #endif
     }
 
     var snapshot: CompactControlSnapshot? {
@@ -342,6 +366,17 @@ final class Gate2CompactControlController {
         publishCurrentSnapshot(force: true)
     }
 
+    /// Another app kept the audio after an interruption: a paused Live Activity goes now rather
+    /// than waiting out the idle limit. A phone call ends with `shouldResume`, so it stays.
+    func handleAudioInterruptionEnded(shouldResume: Bool) {
+        guard case .end(let reason)? = liveActivityLifecycle.audioInterruptionEnded(shouldResume: shouldResume) else {
+            return
+        }
+        liveActivity.endAll()
+        liveActivityLifecycleStatus = "ended_\(reason.rawValue)"
+        scheduleIdleDeadlineCheck()
+    }
+
     func setNowPlayingEnabled(_ enabled: Bool) {
         guard nowPlayingEnabled != enabled else { return }
         nowPlayingEnabled = enabled
@@ -369,6 +404,7 @@ final class Gate2CompactControlController {
             "gate2LastRemoteCommand": liveSpeechNowPlaying.lastRemoteCommand,
             "gate2LastRemoteCommandDetail": liveSpeechNowPlaying.lastRemoteCommandDetail,
             "gate2LiveActivity": liveActivity.status,
+            "gate2LiveActivityLifecycle": liveActivityLifecycleStatus,
             "gate2LastCommand": lastCommand?.rawValue ?? "none",
             "gate2LastCommandOrigin": lastCommandOrigin,
             "gate2LastApplicationCommand": lastApplicationCommand,
@@ -414,11 +450,47 @@ final class Gate2CompactControlController {
         } else {
             liveSpeechNowPlaying.end()
         }
-        liveActivity.publish(
-            snapshot,
-            sharedMarginPrompt: sharedMarginPrompt,
-            upcomingSharedMargins: upcomingSharedMargins
+        publishLiveActivity(snapshot)
+    }
+
+    private func publishLiveActivity(_ snapshot: CompactControlSnapshot) {
+        let decision = liveActivityLifecycle.observe(
+            sessionId: snapshot.sessionId,
+            isListening: snapshot.status.isPlaybackActive || snapshot.isRecording,
+            isPaused: snapshot.status == .paused,
+            now: now()
         )
+        switch decision {
+        case .show(let staleDate):
+            liveActivity.publish(
+                snapshot,
+                staleDate: staleDate,
+                sharedMarginPrompt: sharedMarginPrompt,
+                upcomingSharedMargins: upcomingSharedMargins
+            )
+            liveActivityLifecycleStatus = staleDate == nil ? "live" : "paused_idle_deadline"
+        case .end(let reason):
+            liveActivity.endAll()
+            liveActivityLifecycleStatus = "ended_\(reason.rawValue)"
+        case .hidden(let reason):
+            liveActivityLifecycleStatus = "ended_\(reason.rawValue)"
+        }
+        scheduleIdleDeadlineCheck()
+    }
+
+    /// Ends a paused activity at its deadline while the process is running. When the app is
+    /// suspended this doesn't fire; the stale date changes the card's look instead, and the next
+    /// refresh (returning to the foreground) ends it.
+    private func scheduleIdleDeadlineCheck() {
+        idleDeadlineTask?.cancel()
+        idleDeadlineTask = nil
+        guard let deadline = liveActivityLifecycle.idleDeadline else { return }
+        let delay = max(0, deadline.timeIntervalSince(now()))
+        idleDeadlineTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
+            self?.publishCurrentSnapshot(force: true)
+        }
     }
 
     nonisolated static func hasEquivalentSurfaceState(
@@ -466,12 +538,14 @@ final class Gate2CompactControlController {
 private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
     private var activityId: String?
     private var adoptedSessionId: String?
+    private var hasSweptEarlierProcess = false
     private var publishGeneration = 0
     private var activityTask: Task<Void, Never>?
     private(set) var status = "not_started"
 
     func publish(
         _ snapshot: CompactControlSnapshot,
+        staleDate: Date?,
         sharedMarginPrompt: Gate2SharedMarginActivityPrompt?,
         upcomingSharedMargins: [Gate2LiveActivityNavigationEntry]
     ) {
@@ -491,6 +565,8 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
            snapshot.status.isPlaybackActive || snapshot.isRecording {
             adoptedSessionId = sessionId
         }
+        // Set only once a sweep has run: a pass superseded by a newer publish sweeps nothing.
+        let isFirstPassInProcess = !hasSweptEarlierProcess
         guard Gate2LiveActivityPolicy.shouldMaintain(snapshot, adoptedSessionId: adoptedSessionId),
               let sessionId = snapshot.sessionId else {
             let inactiveSessionId = snapshot.sessionId
@@ -504,8 +580,10 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
                 guard generation == publishGeneration else { return }
                 let endedCount = await Self.endInactiveActivities(
                     inactiveSessionId: inactiveSessionId,
-                    trackedActivityId: trackedActivityId
+                    trackedActivityId: trackedActivityId,
+                    isFirstPassInProcess: isFirstPassInProcess
                 )
+                hasSweptEarlierProcess = true
                 guard generation == publishGeneration else { return }
                 activityId = nil
                 status = endedCount > 0 ? "ended" : "not_ready"
@@ -532,7 +610,9 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
         activityTask = Task { @MainActor in
             await previousActivityTask?.value
             guard generation == publishGeneration else { return }
-            let result = await Self.publishActivity(sessionId: sessionId, state: state)
+            // Publishing ends every other session's activity and any duplicate, so it is a sweep too.
+            let result = await Self.publishActivity(sessionId: sessionId, state: state, staleDate: staleDate)
+            hasSweptEarlierProcess = true
             guard generation == publishGeneration else { return }
             activityId = result.activityId
             status = result.status
@@ -575,9 +655,10 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
     #if canImport(ActivityKit)
     private nonisolated static func publishActivity(
         sessionId: String,
-        state: Gate2LiveActivityAttributes.ContentState
+        state: Gate2LiveActivityAttributes.ContentState,
+        staleDate: Date?
     ) async -> (activityId: String?, status: String) {
-        let content = ActivityContent(state: state, staleDate: nil)
+        let content = ActivityContent(state: state, staleDate: staleDate)
         let activities = Activity<Gate2LiveActivityAttributes>.activities
         var matchingActivities: [Activity<Gate2LiveActivityAttributes>] = []
         var endedCount = 0
@@ -609,13 +690,18 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
         }
     }
 
-    private nonisolated static func endInactiveActivities(inactiveSessionId: String?, trackedActivityId: String?) async -> Int {
+    private nonisolated static func endInactiveActivities(
+        inactiveSessionId: String?,
+        trackedActivityId: String?,
+        isFirstPassInProcess: Bool = false
+    ) async -> Int {
         var endedCount = 0
         for activity in Activity<Gate2LiveActivityAttributes>.activities where Gate2LiveActivityPolicy.shouldEndInactive(
             activitySessionId: activity.attributes.sessionId,
             activityId: activity.id,
             inactiveSessionId: inactiveSessionId,
-            trackedActivityId: trackedActivityId
+            trackedActivityId: trackedActivityId,
+            isFirstPassInProcess: isFirstPassInProcess
         ) {
             await end(activity)
             endedCount += 1
@@ -629,6 +715,29 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
     }
     #endif
 }
+
+#if canImport(AVFoundation) && os(iOS)
+/// Reports when an `AVAudioSession` interruption ends, and whether the system says playback may resume.
+private final class Gate2AudioInterruptionEndObserver {
+    private let center: NotificationCenter
+    private var token: NSObjectProtocol?
+
+    init(center: NotificationCenter, onEnded: @escaping @MainActor @Sendable (_ shouldResume: Bool) -> Void) {
+        self.center = center
+        token = center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { notification in
+            guard let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  AVAudioSession.InterruptionType(rawValue: rawType) == .ended else { return }
+            let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+            let shouldResume = AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume)
+            MainActor.assumeIsolated { onEnded(shouldResume) }
+        }
+    }
+
+    deinit {
+        if let token { center.removeObserver(token) }
+    }
+}
+#endif
 
 @MainActor
 private final class Gate2LiveSpeechNowPlayingController {

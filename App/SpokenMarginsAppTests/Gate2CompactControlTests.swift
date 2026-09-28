@@ -1,3 +1,4 @@
+import AVFoundation
 import XCTest
 @testable import SessionKit
 @testable import SpokenMarginsApp
@@ -521,6 +522,96 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertTrue(Gate2LiveActivityPolicy.shouldEndInactive(activitySessionId: "session-any", activityId: "activity-1", inactiveSessionId: nil, trackedActivityId: "activity-1"))
     }
 
+    /// C3 M1: a process killed in the background never runs `willTerminate`, so its activity is
+    /// orphaned. The first idle pass after launch ends it even when it belongs to another session.
+    func testFirstIdlePassAfterLaunchEndsActivitiesFromAnEarlierProcess() {
+        XCTAssertTrue(Gate2LiveActivityPolicy.shouldEndInactive(
+            activitySessionId: "session-killed",
+            activityId: "activity-orphan",
+            inactiveSessionId: "session-restored",
+            trackedActivityId: nil,
+            isFirstPassInProcess: true
+        ))
+        XCTAssertFalse(Gate2LiveActivityPolicy.shouldEndInactive(
+            activitySessionId: "session-other",
+            activityId: "activity-2",
+            inactiveSessionId: "session-restored",
+            trackedActivityId: nil,
+            isFirstPassInProcess: false
+        ), "later passes still end only the inactive session's activity")
+    }
+
+    /// C3 M1: a paused Live Activity carries a stale date and ends after the idle limit, then
+    /// stays ended until listening resumes.
+    func testPausedLiveActivityCarriesAStaleDateAndEndsAfterTheIdleLimit() {
+        let clock = TestClock()
+        let liveActivity = RecordingLiveActivityController()
+        let controller = Gate2CompactControlController(
+            liveActivity: liveActivity,
+            now: { clock.now },
+            notificationCenter: NotificationCenter()
+        )
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            gate2CompactControls: controller
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        XCTAssertEqual(model.snapshot.status, .playing)
+        XCTAssertNil(liveActivity.lastStaleDate, "no stale date while playing")
+
+        model.dispatchGate2CompactCommand(.pause)
+        XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertEqual(liveActivity.lastStaleDate, clock.now.addingTimeInterval(LiveActivityLifecycle.pausedIdleLimit))
+
+        let endsBeforeDeadline = liveActivity.endAllCallCount
+        clock.now = clock.now.addingTimeInterval(LiveActivityLifecycle.pausedIdleLimit - 1)
+        model.refreshLockScreenSurfacesForLifecycle()
+        XCTAssertEqual(liveActivity.endAllCallCount, endsBeforeDeadline, "still inside the idle limit")
+
+        clock.now = clock.now.addingTimeInterval(1)
+        model.refreshLockScreenSurfacesForLifecycle()
+        XCTAssertEqual(liveActivity.endAllCallCount, endsBeforeDeadline + 1)
+        XCTAssertEqual(controller.diagnostics()["gate2LiveActivityLifecycle"], "ended_idle_limit")
+
+        let publishesWhileEnded = liveActivity.publishCallCount
+        model.refreshLockScreenSurfacesForLifecycle()
+        XCTAssertEqual(liveActivity.publishCallCount, publishesWhileEnded, "a paused refresh doesn't bring it back")
+
+        model.dispatchGate2CompactCommand(.play)
+        XCTAssertGreaterThan(liveActivity.publishCallCount, publishesWhileEnded, "resuming shows it again")
+        XCTAssertNil(liveActivity.lastStaleDate)
+    }
+
+    /// C3 M1: when another app keeps the audio (the interruption ends without `shouldResume`), the
+    /// paused activity ends at once. A phone call ends with `shouldResume`, so the activity stays.
+    func testInterruptionEndingWithoutResumeEndsThePausedLiveActivity() {
+        let center = NotificationCenter()
+        let liveActivity = RecordingLiveActivityController()
+        let controller = Gate2CompactControlController(liveActivity: liveActivity, notificationCenter: center)
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            gate2CompactControls: controller
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.dispatchGate2CompactCommand(.pause)
+        let endsBefore = liveActivity.endAllCallCount
+
+        center.post(name: AVAudioSession.interruptionNotification, object: nil, userInfo: [
+            AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.ended.rawValue,
+            AVAudioSessionInterruptionOptionKey: AVAudioSession.InterruptionOptions.shouldResume.rawValue
+        ])
+        XCTAssertEqual(liveActivity.endAllCallCount, endsBefore, "a phone call keeps the activity")
+
+        center.post(name: AVAudioSession.interruptionNotification, object: nil, userInfo: [
+            AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.ended.rawValue,
+            AVAudioSessionInterruptionOptionKey: UInt(0)
+        ])
+        XCTAssertEqual(liveActivity.endAllCallCount, endsBefore + 1)
+        XCTAssertEqual(controller.diagnostics()["gate2LiveActivityLifecycle"], "ended_interruption_without_resume")
+    }
+
     func testLiveActivityPolicyRetainsInterjectionButRemovesSuspensionUnsafeControls() {
         let snapshot = compactSnapshot(
             targetType: TargetType.transcriptBackedMedia.rawValue,
@@ -742,19 +833,27 @@ final class Gate2CompactControlTests: XCTestCase {
 }
 
 @MainActor
+private final class TestClock {
+    var now = Date(timeIntervalSinceReferenceDate: 800_000_000)
+}
+
+@MainActor
 private final class RecordingLiveActivityController: Gate2LiveActivityControlling {
     private(set) var status = "recording"
     private(set) var endAllCallCount = 0
     private(set) var publishCallCount = 0
+    private(set) var lastStaleDate: Date?
     private(set) var lastSharedMarginPrompt: Gate2SharedMarginActivityPrompt?
     private(set) var lastUpcomingSharedMargins: [Gate2LiveActivityNavigationEntry] = []
 
     func publish(
         _ snapshot: CompactControlSnapshot,
+        staleDate: Date?,
         sharedMarginPrompt: Gate2SharedMarginActivityPrompt?,
         upcomingSharedMargins: [Gate2LiveActivityNavigationEntry]
     ) {
         publishCallCount += 1
+        lastStaleDate = staleDate
         lastSharedMarginPrompt = sharedMarginPrompt
         lastUpcomingSharedMargins = upcomingSharedMargins
     }
