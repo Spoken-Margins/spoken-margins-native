@@ -8,9 +8,9 @@ cd "$(dirname "$0")/.."
 .venv/bin/pip install -q -r requirements.txt
 .venv/bin/pip install -q https://huggingface.co/spacy/en_core_web_sm/resolve/main/en_core_web_sm-any-py3-none-any.whl
 ./fetch_models.sh
-rm -rf results.linux && [ -d results ] && mv results results.linux || true
 ./run_all.sh
 ./mac/samantha.sh
+.venv/bin/python intelligibility.py
 .venv/bin/python build_page.py
-.venv/bin/python summarize.py > results/summary.md
+.venv/bin/python summarize.py darwin > results/darwin/summary.md
 echo "Done. Commit results/ and listening/, then republish listening/index.html to the same artifact URL (see README)."

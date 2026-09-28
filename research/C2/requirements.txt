@@ -13,3 +13,5 @@ phonemizer
 espeakng-loader
 # spaCy English model for misaki (from Hugging Face):
 # https://huggingface.co/spacy/en_core_web_sm/resolve/main/en_core_web_sm-any-py3-none-any.whl
+faster-whisper
+jiwer

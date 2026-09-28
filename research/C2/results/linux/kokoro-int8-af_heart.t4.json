@@ -1,0 +1,32 @@
+{
+  "engine": "kokoro-int8-af_heart",
+  "threads": 4,
+  "cpu": "x86_64",
+  "load_s": 1.91,
+  "passages": {
+    "p1-narrative": {
+      "ttfa_s": 11.297,
+      "render_s": 31.295,
+      "audio_s": 18.33,
+      "rtf": 1.707,
+      "chunks": 3
+    },
+    "p2-scientific": {
+      "ttfa_s": 44.667,
+      "render_s": 74.118,
+      "audio_s": 40.21,
+      "rtf": 1.843,
+      "chunks": 2
+    },
+    "p3-conversational": {
+      "ttfa_s": 3.238,
+      "render_s": 30.373,
+      "audio_s": 17.63,
+      "rtf": 1.723,
+      "chunks": 3
+    }
+  },
+  "rtf": 1.783,
+  "speed_x": 0.56,
+  "ttfa_s_median": 11.297
+}
