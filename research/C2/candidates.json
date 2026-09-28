@@ -1,0 +1,11 @@
+[
+  {"label": "supertonic3-int8-M2-8step", "name": "Supertonic 3 INT8, 8 steps (today)", "size": "0 (bundled, 148 MB)", "verdict": "OK (MIT code, OpenRAIL-M model, no phonemizer). Already shipping behind the Terms gate."},
+  {"label": "supertonic3-int8-M2-4step", "name": "Supertonic 3 INT8, 4 steps", "size": "0", "verdict": "OK, same model."},
+  {"label": "kokoro-fp32-af_heart", "name": "Kokoro-82M fp32", "size": "326 MB + 6 MB lexicon", "verdict": "OK *if* espeak-ng fallback is replaced (Apache weights, Apache misaki lexicon; espeak fallback GPL)."},
+  {"label": "kokoro-int8-af_heart", "name": "Kokoro-82M int8", "size": "92 MB + 6 MB lexicon", "verdict": "Same as Kokoro fp32."},
+  {"label": "kitten-nano-fp32-0.8-Jasper", "name": "KittenTTS nano 0.8 fp32", "size": "57 MB + 3 MB voices", "verdict": "Weights OK (Apache). Front end is espeak-ng (GPL); needs a non-GPL G2P that mimics espeak IPA."},
+  {"label": "kitten-nano-0.8-Jasper", "name": "KittenTTS nano 0.8 int8", "size": "24 MB + 3 MB voices", "verdict": "Same as Kitten fp32."},
+  {"label": "piper-en_US-ljspeech-high", "name": "Piper ljspeech high", "size": "114 MB + espeak data", "verdict": "Blocked as-is: piper1 engine is GPL-3 and phonemizes with espeak-ng (GPL). Voice data public domain."},
+  {"label": "piper-en_US-lessac-medium", "name": "Piper lessac medium", "size": "63 MB + espeak data", "verdict": "Blocked: GPL front end, and the lessac voice is research-only (Blizzard 2013 licence)."},
+  {"label": "pocket-alba", "name": "Kyutai Pocket TTS (alba)", "size": "219 MB fp32 + 6 MB voice", "verdict": "OK (MIT code, CC-BY-4.0 weights, alba voice CC-BY-4.0, no phonemizer). Needs attribution. Avoid built-in voices from Expresso/EARS (non-commercial). Needs a non-PyTorch runtime on iOS."}
+]

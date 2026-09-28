@@ -1,0 +1,19 @@
+{
+  "passages": [
+    {
+      "id": "p1-narrative",
+      "title": "Narrative",
+      "text": "The ferry left Anacortes a little after seven, and by the time it cleared the harbor the fog had already begun to lift. Maria stood at the rail with her coffee going cold, watching the islands come up out of the grey one at a time. She had made this crossing a hundred times, but never once, she realized, had she actually looked."
+    },
+    {
+      "id": "p2-scientific",
+      "title": "Scientific",
+      "text": "In a randomized, double-blind trial of 1,284 adults (mean age 61.3 years), daily supplementation with 2,000 IU of vitamin D3 did not reduce the incidence of type 2 diabetes compared with placebo (hazard ratio, 0.88; 95% CI, 0.75 to 1.04; p = 0.12). Serum 25-hydroxyvitamin D rose from 28 to 54 ng/mL. These findings are consistent with earlier meta-analyses [12, 14] but contrast with observational data reported by Pittas et al."
+    },
+    {
+      "id": "p3-conversational",
+      "title": "Essay with dialogue",
+      "text": "\"Honestly?\" she said. \"I don't think the problem is the software. It's that nobody reads the manual.\" He laughed, but she wasn't joking. Here's the thing: when a tool is hard to use, we blame ourselves first, then the tool, and only much later the people who decided it should work that way. Why is that?"
+    }
+  ]
+}
