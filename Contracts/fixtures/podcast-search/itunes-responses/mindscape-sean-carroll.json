@@ -1,0 +1,10 @@
+
+
+
+{
+ "resultCount":1,
+ "results": [
+{"wrapperType":"track", "kind":"podcast", "collectionId":1406534739, "trackId":1406534739, "artistName":"Sean Carroll", "collectionName":"Sean Carroll's Mindscape: Science, Society, Philosophy, Culture, Arts, and Ideas", "trackName":"Sean Carroll's Mindscape: Science, Society, Philosophy, Culture, Arts, and Ideas", "collectionCensoredName":"Sean Carroll's Mindscape: Science, Society, Philosophy, Culture, Arts, and Ideas", "trackCensoredName":"Sean Carroll's Mindscape: Science, Society, Philosophy, Culture, Arts, and Ideas", "collectionViewUrl":"https://podcasts.apple.com/us/podcast/sean-carrolls-mindscape-science-society-philosophy/id1406534739?uo=4", "feedUrl":"https://rss.libsyn.com/shows/604590/destinations/5264190.xml", "trackViewUrl":"https://podcasts.apple.com/us/podcast/sean-carrolls-mindscape-science-society-philosophy/id1406534739?uo=4", "artworkUrl30":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts125/v4/d3/22/95/d32295a0-f278-1807-9fde-5698c30aac30/mza_16649100911920251614.jpeg/30x30bb.jpg", "artworkUrl60":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts125/v4/d3/22/95/d32295a0-f278-1807-9fde-5698c30aac30/mza_16649100911920251614.jpeg/60x60bb.jpg", "artworkUrl100":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts125/v4/d3/22/95/d32295a0-f278-1807-9fde-5698c30aac30/mza_16649100911920251614.jpeg/100x100bb.jpg", "collectionPrice":0.00, "trackPrice":0.00, "collectionHdPrice":0, "releaseDate":"2026-09-21T10:51:00Z", "collectionExplicitness":"notExplicit", "trackExplicitness":"cleaned", "trackCount":446, "trackTimeMillis":4109, "country":"USA", "currency":"USD", "primaryGenreName":"Physics", "contentAdvisoryRating":"Clean", "artworkUrl600":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts125/v4/d3/22/95/d32295a0-f278-1807-9fde-5698c30aac30/mza_16649100911920251614.jpeg/600x600bb.jpg", "genreIds":["1542", "26", "1533"], "genres":["Physics", "Podcasts", "Science"]}]
+}
+
+

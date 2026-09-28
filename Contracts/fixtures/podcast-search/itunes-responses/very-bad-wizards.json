@@ -1,0 +1,10 @@
+
+
+
+{
+ "resultCount":1,
+ "results": [
+{"wrapperType":"track", "kind":"podcast", "collectionId":557975157, "trackId":557975157, "artistName":"Tamler Sommers & David Pizarro", "collectionName":"Very Bad Wizards", "trackName":"Very Bad Wizards", "collectionCensoredName":"Very Bad Wizards", "trackCensoredName":"Very Bad Wizards", "collectionViewUrl":"https://podcasts.apple.com/us/podcast/very-bad-wizards/id557975157?uo=4", "feedUrl":"https://rss.libsyn.com/shows/474285/destinations/4022211.xml", "trackViewUrl":"https://podcasts.apple.com/us/podcast/very-bad-wizards/id557975157?uo=4", "artworkUrl30":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts125/v4/ec/81/05/ec810579-2ae9-70c4-2e06-a6e817063a1b/mza_8507663316150949613.jpg/30x30bb.jpg", "artworkUrl60":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts125/v4/ec/81/05/ec810579-2ae9-70c4-2e06-a6e817063a1b/mza_8507663316150949613.jpg/60x60bb.jpg", "artworkUrl100":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts125/v4/ec/81/05/ec810579-2ae9-70c4-2e06-a6e817063a1b/mza_8507663316150949613.jpg/100x100bb.jpg", "collectionPrice":0.00, "trackPrice":0.00, "collectionHdPrice":0, "releaseDate":"2026-09-22T19:20:00Z", "collectionExplicitness":"notExplicit", "trackExplicitness":"explicit", "trackCount":355, "trackTimeMillis":5864, "country":"USA", "currency":"USD", "primaryGenreName":"Philosophy", "contentAdvisoryRating":"Explicit", "artworkUrl600":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts125/v4/ec/81/05/ec810579-2ae9-70c4-2e06-a6e817063a1b/mza_8507663316150949613.jpg/600x600bb.jpg", "genreIds":["1443", "26", "1324"], "genres":["Philosophy", "Podcasts", "Society & Culture"]}]
+}
+
+

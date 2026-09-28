@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "podcast-search-test-list.schema.json",
+  "title": "Podcast name search test list (B1 M2)",
+  "description": "Queries a listener might type, each with the right show named by a person: the start of its title and part of its publisher name.",
+  "type": "object",
+  "required": [
+    "description",
+    "names"
+  ],
+  "properties": {
+    "description": {
+      "type": "string"
+    },
+    "names": {
+      "type": "array",
+      "minItems": 50,
+      "items": {
+        "type": "object",
+        "required": [
+          "query",
+          "expectedTitle",
+          "expectedArtist",
+          "tier"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedTitle": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedArtist": {
+            "type": "string",
+            "minLength": 1
+          },
+          "tier": {
+            "enum": [
+              "popular",
+              "niche"
+            ]
+          },
+          "note": {
+            "type": "string"
+          },
+          "correctedAfterRecording": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

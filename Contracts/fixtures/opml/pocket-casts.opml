@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<opml version="1.0">
+<head>
+<title>Pocket Casts Feeds</title>
+</head>
+<body>
+<outline text="feeds">
+<outline type="rss" text="The Daily" xmlUrl="https://feeds.simplecast.com/Sl5CSM3S" />
+<outline type="rss" text="Stuff You Should Know" xmlUrl="https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/a91018a4-ea4f-4130-bf55-ae270180c327/44710ecc-10bb-48d1-93c7-ae270180c33e/podcast.rss" />
+<outline type="rss" text="Science Vs" xmlUrl="https://feeds.megaphone.fm/sciencevs" />
+<outline type="rss" text="Hidden Brain" xmlUrl="https://feeds.simplecast.com/kwWc0lhf" />
+</outline>
+</body>
+</opml>

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "itunes-search-response.schema.json",
+  "title": "Recorded iTunes Search API response (third-party)",
+  "description": "Apple's response as recorded, so fields are open. Only what ITunesSearchSourceResolver reads is constrained.",
+  "type": "object",
+  "required": ["resultCount", "results"],
+  "properties": {
+    "resultCount": {"type": "integer", "minimum": 0},
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "collectionId": {"type": "integer"},
+          "collectionName": {"type": "string"},
+          "artistName": {"type": "string"},
+          "feedUrl": {"type": "string"},
+          "artworkUrl600": {"type": "string"},
+          "artworkUrl100": {"type": "string"}
+        }
+      }
+    }
+  }
+}

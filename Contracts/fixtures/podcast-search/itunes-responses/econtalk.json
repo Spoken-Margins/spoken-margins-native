@@ -1,0 +1,10 @@
+
+
+
+{
+ "resultCount":1,
+ "results": [
+{"wrapperType":"track", "kind":"podcast", "artistId":1294494739, "collectionId":135066958, "trackId":135066958, "artistName":"Russ Roberts", "collectionName":"EconTalk", "trackName":"EconTalk", "collectionCensoredName":"EconTalk", "trackCensoredName":"EconTalk", "artistViewUrl":"https://podcasts.apple.com/us/artist/hoover-institution/1294494739?uo=4", "collectionViewUrl":"https://podcasts.apple.com/us/podcast/econtalk/id135066958?uo=4", "feedUrl":"https://feeds.simplecast.com/wgl4xEgL", "trackViewUrl":"https://podcasts.apple.com/us/podcast/econtalk/id135066958?uo=4", "artworkUrl30":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts115/v4/a0/13/c5/a013c54f-362a-670d-a75c-1c5486dfc40f/mza_6055952261821533990.jpg/30x30bb.jpg", "artworkUrl60":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts115/v4/a0/13/c5/a013c54f-362a-670d-a75c-1c5486dfc40f/mza_6055952261821533990.jpg/60x60bb.jpg", "artworkUrl100":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts115/v4/a0/13/c5/a013c54f-362a-670d-a75c-1c5486dfc40f/mza_6055952261821533990.jpg/100x100bb.jpg", "collectionPrice":0.00, "trackPrice":0.00, "collectionHdPrice":0, "releaseDate":"2026-09-21T10:30:00Z", "collectionExplicitness":"notExplicit", "trackExplicitness":"cleaned", "trackCount":1069, "trackTimeMillis":3892, "country":"USA", "currency":"USD", "primaryGenreName":"Courses", "contentAdvisoryRating":"Clean", "artworkUrl600":"https://is1-ssl.mzstatic.com/image/thumb/Podcasts115/v4/a0/13/c5/a013c54f-362a-670d-a75c-1c5486dfc40f/mza_6055952261821533990.jpg/600x600bb.jpg", "genreIds":["1501", "26", "1304", "1533", "1535"], "genres":["Courses", "Podcasts", "Education", "Science", "Social Sciences"]}]
+}
+
+

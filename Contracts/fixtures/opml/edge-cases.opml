@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head><title>Mixed &amp; Messy</title></head>
+  <body>
+    <outline text="Tech">
+      <outline type="rss" text="Accidental Tech Podcast" xmlurl="https://cdn.atp.fm/rss/public?wtvryzdm"/>
+      <outline text="Nested">
+        <outline type="rss" text="Hello Internet" xmlUrl="http://www.hellointernet.fm/podcast?format=rss"/>
+      </outline>
+    </outline>
+    <outline type="rss" text="Science &amp; Society" xmlUrl="https://example.org/science&amp;society.xml"/>
+    <outline type="rss" text="Patron Feed" xmlUrl="https://www.patreon.com/rss/exampleshow?auth=Zx81kq0P2mNw7rT4yB6vC9dF3hJ5lA1s"/>
+    <outline type="rss" text="The Daily again" xmlUrl="https://FEEDS.simplecast.com/Sl5CSM3S/"/>
+    <outline type="rss" text="The Daily" xmlUrl="https://feeds.simplecast.com/Sl5CSM3S"/>
+    <outline type="rss" text="No feed URL"/>
+    <outline type="rss" text="Not a web feed" xmlUrl="ftp://example.com/feed.xml"/>
+    <outline type="link" text="A bookmark" url="https://example.com/"/>
+  </body>
+</opml>
