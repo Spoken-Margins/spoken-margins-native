@@ -39,10 +39,11 @@ def _describe(holder):
 
 
 @contextlib.contextmanager
-def build_slot(label, out=sys.stderr):
+def build_slot(label, out=sys.stderr, max_wait=None):
     """Wait for a free slot, hold it for the body of the with-block, then release it.
 
-    Yields {'slot': index, 'waited_seconds': seconds}. Waiting has no deadline: queueing is the point.
+    Yields {'slot': index, 'waited_seconds': seconds}. By default waiting has no deadline, because
+    queueing is the point; with max_wait (seconds) it raises TimeoutError instead of waiting longer.
     """
     directory = state_dir()
     directory.mkdir(parents=True, exist_ok=True)
@@ -72,6 +73,9 @@ def build_slot(label, out=sys.stderr):
                 handle.close()
             return
         now = time.monotonic()
+        if max_wait is not None and now - started >= max_wait:
+            busy = '; '.join(_describe(h) for h in holders(directory)) or 'holders unknown'
+            raise TimeoutError(f'no build slot free within {max_wait:.0f}s: {busy}')
         if last_note is None or now - last_note >= NOTE_EVERY_SECONDS:
             busy = '; '.join(_describe(h) for h in holders(directory)) or 'holders unknown'
             print(f'[lane] waiting for a build slot, {SLOTS}/{SLOTS} busy ({now - started:.0f}s so far): {busy}',

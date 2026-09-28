@@ -30,6 +30,9 @@ PLANS = {
     'release': ('SpokenMarginsReleaseTests', 'Release', 3600),
 }
 
+# A run waits at most this long for a Mac-wide build slot, then fails rather than hanging.
+BUILD_SLOT_WAIT_SECONDS = 1800
+
 # Keep aligned with project.yml and the SessionKit iOS deployment target.
 MINIMUM_IOS_MAJOR = 26
 
@@ -183,8 +186,8 @@ class Run:
             self.crash_baseline = {p: (p.stat().st_mtime_ns, p.stat().st_size)
                                    for p in reports.glob('*.ips')}
         # xcodebuild shares the Mac-wide build slots with every session; the wait isn't timed.
-        slot = build_slot(f'verify-tests {self.manifest["plan"]} {name}') if args[0] == 'xcodebuild' \
-            else contextlib.nullcontext()
+        slot = build_slot(f'verify-tests {self.manifest["plan"]} {name}', max_wait=BUILD_SLOT_WAIT_SECONDS) \
+            if args[0] == 'xcodebuild' else contextlib.nullcontext()
         with (self.output / f'{name}.log').open('w') as log, slot as held:
             if held:
                 entry['build_slot'] = held
@@ -353,8 +356,8 @@ def main():
                 raise RuntimeError('Inputs changed during verification; rerun on a stable source state')
             run.manifest['status'] = 'verified'
             return 0
-        except (RuntimeError, subprocess.SubprocessError, OSError) as error:
-            run.manifest.update(status='failed_or_incomplete', error=str(error))
+        except (RuntimeError, subprocess.SubprocessError, OSError, KeyboardInterrupt) as error:
+            run.manifest.update(status='failed_or_incomplete', error=str(error) or repr(error))
             print(error, file=sys.stderr)
             return 1
         finally:

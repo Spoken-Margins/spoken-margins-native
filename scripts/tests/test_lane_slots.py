@@ -1,3 +1,4 @@
+import contextlib
 import importlib.util
 import json
 import os
@@ -77,6 +78,22 @@ class BuildSlotTests(unittest.TestCase):
         _, err = process.communicate(timeout=30)
         self.assertEqual(self.runs()[0]['argv'], ['-version'])
         self.assertNotIn('build slot', err)
+
+    def test_build_options_are_not_mistaken_for_information_calls(self):
+        _, err = self.wrapper('-scheme', 'S', '-showBuildTimingSummary', 'build').communicate(timeout=30)
+        self.assertIn('build slot 1/2 acquired', err)
+        self.assertIn('-derivedDataPath', self.runs()[0]['argv'])
+
+    def test_a_bounded_wait_gives_up_with_the_holders_named(self):
+        sys.path.insert(0, str(SCRIPTS))
+        import lane_slots
+        with unittest.mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(self.dir / 'bounded')}), \
+                unittest.mock.patch.object(lane_slots, 'POLL_SECONDS', 0.05), contextlib.ExitStack() as held:
+            for _ in range(lane_slots.SLOTS):
+                held.enter_context(lane_slots.build_slot('holder', out=open(os.devnull, 'w')))
+            with self.assertRaisesRegex(TimeoutError, 'no build slot free within 0s: pid'):
+                with lane_slots.build_slot('waiter', out=open(os.devnull, 'w'), max_wait=0.2):
+                    self.fail('acquired a third slot')
 
     def test_exit_status_is_passed_through_and_the_slot_is_released(self):
         failing = self.wrapper('build', env={**self.env, 'FAKE_EXIT': '65', 'FAKE_SECONDS': '0.1'})

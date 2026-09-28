@@ -19,9 +19,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lane_slots import build_slot  # noqa: E402
 
 NO_BUILD_FLAGS = {'-version', '-list', '-showsdks', '-showBuildSettings', '-showdestinations',
-                  '-showTestPlans', '-showBuildTimingSummary', '-help', '-usage', '-license',
-                  '-checkFirstLaunchStatus', '-runFirstLaunch', '-exportArchive', '-exportLocalizations',
-                  '-importLocalizations', '-exportNotarizedApp', '-create-xcframework'}
+                  '-showTestPlans', '-help', '-h', '-usage', '-license', '-checkFirstLaunchStatus',
+                  '-runFirstLaunch', '-exportArchive', '-importLocalizations', '-exportNotarizedApp',
+                  '-create-xcframework'}
 
 
 def worktree_root():
