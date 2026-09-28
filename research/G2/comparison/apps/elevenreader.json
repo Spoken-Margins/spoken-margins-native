@@ -1,0 +1,267 @@
+{
+  "id": "elevenreader",
+  "name": "ElevenReader",
+  "vendor": "ElevenLabs, Inc.",
+  "category": "read-aloud",
+  "website": "https://elevenreader.io",
+  "why_listed": "Listeners who want PDFs, articles and books read aloud in very natural AI voices, plus AI 'podcast' summaries, would pick ElevenReader instead of Spoken Margins.",
+  "claims": {
+    "platforms": {
+      "value": "iOS, iPadOS, Android, web, Chrome extension",
+      "detail": "iPhone and iPad app (iOS/iPadOS 18+), Android app, a web reader at elevenreader.io and a Chrome extension. No macOS or Windows app found.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/elevenreader-read-books-aloud/id6479373050",
+          "title": "ElevenReader: Read Books Aloud App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Requires iOS 18.0 or later. iPad Requires iPadOS 18.0 or later."
+        },
+        {
+          "url": "https://elevenreader.io/pricing",
+          "title": "Pricing | ElevenReader",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Sign Up Free Online Free for Students Get the iOS App Get the Android App Get the Chrome Extension"
+        }
+      ],
+      "note": "The App Store listing's Mac/Vision tabs are store navigation, not compatibility; its Compatibility section lists iPhone and iPad only."
+    },
+    "price_free_tier": {
+      "value": "Free: 10 hours/month of text-to-audio for your own files, 1,000+ voices, free audiobooks, web/mobile sync, bookmarks",
+      "detail": "Free hours are spent only when new audio is generated from your own imports; they reset monthly.",
+      "sources": [
+        {
+          "url": "https://elevenreader.io/pricing",
+          "title": "Pricing | ElevenReader",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Free $0/mo Listen with 10 hours of text-to-audio every month"
+        }
+      ],
+      "note": "US page, USD."
+    },
+    "price_paid": {
+      "value": "Web: Ultra USD 11/month or USD 8.25/month billed annually. App Store (US) also lists Plus Monthly USD 10.00 and Plus Annual USD 96.00, Ultra Annual USD 99.00",
+      "detail": "The web pricing page shows one paid plan (Ultra). The App Store in-app purchase list also shows a cheaper Plus plan and hour packs (10 hours for USD 5.00).",
+      "sources": [
+        {
+          "url": "https://elevenreader.io/pricing",
+          "title": "Pricing | ElevenReader",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "UltraSave $33/year $11$8.25/mo billed annually"
+        },
+        {
+          "url": "https://apps.apple.com/us/app/elevenreader-read-books-aloud/id6479373050",
+          "title": "ElevenReader: Read Books Aloud App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Ultra Monthly $11.00 Ultra Annual $99.00 Plus Monthly $10.00 10 Hour Pack $5.00 Plus Annual $96.00"
+        }
+      ],
+      "note": "US pages, USD. What the Plus plan includes is not described on the pages read."
+    },
+    "plays_podcasts": {
+      "value": "unknown",
+      "detail": "ElevenReader generates AI podcasts (GenFM) from your documents and mentions 'feeds' in its Explore library, but no vendor page read describes subscribing to external podcast RSS feeds.",
+      "sources": [
+        {
+          "url": "https://elevenreader.io/pricing",
+          "title": "Pricing | ElevenReader",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "You are not charged for listening to any of the thousands of free books or feeds in the Explore library."
+        },
+        {
+          "url": "https://elevenlabs.io/blog/genfm-on-elevenreader",
+          "title": "ElevenLabs — GenFM Now Playing on ElevenReader",
+          "published": "2024-11-27",
+          "checked": "2026-09-28",
+          "quote": "You can now generate smart personal podcasts from your PDFs, articles, ebooks, docs or imported text within our iOS app."
+        }
+      ],
+      "note": "The ElevenLabs help center (help.elevenlabs.io) returned 403 to both curl and WebFetch, so help articles could not be checked."
+    },
+    "reads_web_articles_aloud": {
+      "value": "yes",
+      "detail": "Import article links (or highlight text with the Chrome extension) and listen in AI voices.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/elevenreader-read-books-aloud/id6479373050",
+          "title": "ElevenReader: Read Books Aloud App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Upload any PDF, doc, ePub, or article link. ElevenReader transforms text to audio in seconds."
+        }
+      ]
+    },
+    "reads_pdfs_aloud": {
+      "value": "yes",
+      "detail": "PDF read-aloud is a core feature.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/elevenreader-read-books-aloud/id6479373050",
+          "title": "ElevenReader: Read Books Aloud App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Read PDFs aloud — reports, study notes, research papers"
+        }
+      ]
+    },
+    "voice_notes_anchored": {
+      "value": "unknown",
+      "detail": "Notes are attached to bookmarks; release notes say adding a note pauses playback 'so you can write', which suggests typed notes. No recorded audio note feature found.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/elevenreader-read-books-aloud/id6479373050",
+          "title": "ElevenReader: Read Books Aloud App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Undo a bookmark from the saved toast. Adding a note now pauses so you can write."
+        }
+      ],
+      "note": "Checked the App Store description and release notes, elevenreader.io home and pricing pages; no audio or voice-note feature found. Help center (help.elevenlabs.io) returned 403."
+    },
+    "text_notes_anchored": {
+      "value": "yes",
+      "detail": "Bookmarks mark a place in the text/audio and can carry a note.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/elevenreader-read-books-aloud/id6479373050",
+          "title": "ElevenReader: Read Books Aloud App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Bookmarks — never lose your place and add notes"
+        }
+      ],
+      "note": "Exact anchoring (text position vs. audio time) not described."
+    },
+    "hands_free_capture": {
+      "value": "unknown",
+      "detail": "CarPlay support covers browsing and playback control; no page says a bookmark or note can be captured from CarPlay, headphones, Watch or the Lock Screen.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/elevenreader-read-books-aloud/id6479373050",
+          "title": "ElevenReader: Read Books Aloud App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Listen in the car with CarPlay — browse recents and your library, pick chapters and voices, and control playback from the dash."
+        }
+      ],
+      "note": "Checked the App Store description and release notes and elevenreader.io pages; CarPlay is described only for browsing and playback control. Help center returned 403."
+    },
+    "transcripts": {
+      "value": "unknown",
+      "detail": "The app shows the source text with highlighting during read-aloud; no evidence it plays podcast audio, so a podcast transcript was not found.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/elevenreader-read-books-aloud/id6479373050",
+          "title": "ElevenReader: Read Books Aloud App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Text highlighting — perfect for dyslexia, ADHD, and learning support"
+        }
+      ],
+      "note": "Third-party guides say GenFM shows a transcript of its generated podcasts; not confirmed on a vendor page."
+    },
+    "ai_summaries": {
+      "value": "yes",
+      "detail": "GenFM turns a document or article into a two-host AI podcast that covers its key ideas (a spoken summary), not a written summary.",
+      "sources": [
+        {
+          "url": "https://elevenlabs.io/blog/genfm-on-elevenreader",
+          "title": "ElevenLabs — GenFM Now Playing on ElevenReader",
+          "published": "2024-11-27",
+          "checked": "2026-09-28",
+          "quote": "Our GenFM podcasts adapt to the most relevant ideas and insights from your reads, and are voiced by AI co-hosts matched with your content."
+        }
+      ],
+      "note": "Launched on iOS; the post said Android would follow. No written summaries or chapter generation found."
+    },
+    "export_markdown_pkm": {
+      "value": "unknown",
+      "detail": "No vendor page found on exporting notes or bookmarks. The pricing FAQ says generated audio cannot be exported.",
+      "sources": [
+        {
+          "url": "https://elevenreader.io/pricing",
+          "title": "Pricing | ElevenReader",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "No — audio files can’t be exported from the app."
+        }
+      ],
+      "note": "The quote is about audio, not notes. Help center blocked (403)."
+    },
+    "share_note_at_moment": {
+      "value": "unknown",
+      "detail": "Collections can be shared by link and authors can share published books, but no page describes sharing a note or clip that opens at a specific point.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/elevenreader-read-books-aloud/id6479373050",
+          "title": "ElevenReader: Read Books Aloud App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Share a collection with a link. Anyone with the link can open it in ElevenReader."
+        }
+      ],
+      "note": "A search snippet mentions 'clipping and sharing', but its source page was not identified or read, so it is not used."
+    },
+    "group_listening": {
+      "value": "unknown",
+      "detail": "No group, book-club or shared-annotation feature found. Sharing a collection link shares titles, not annotations, and the vendor says there is no family plan.",
+      "sources": [
+        {
+          "url": "https://elevenreader.io/pricing",
+          "title": "Pricing | ElevenReader",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "No, we do not currently offer a “Friends & Family Plan.”"
+        }
+      ],
+      "note": "The pricing FAQ is about account sharing, not group features, and the help center could not be read (403), so this is not marked 'no'."
+    },
+    "on_device_privacy": {
+      "value": "no",
+      "detail": "Text is converted to audio on ElevenLabs servers (hours are metered per conversion), and the App Store privacy label lists data linked to the user and identifiers used for tracking.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/elevenreader-read-books-aloud/id6479373050",
+          "title": "ElevenReader: Read Books Aloud App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "The following data may be used to track you across apps and websites owned by other companies: Identifiers"
+        },
+        {
+          "url": "https://elevenreader.io/pricing",
+          "title": "Pricing | ElevenReader",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Hours are spent based on the amount of text characters converted, the voice you select, and the speed at which you listen."
+        }
+      ],
+      "note": "Privacy label is self-reported and not verified by Apple."
+    },
+    "account_required": {
+      "value": "unknown",
+      "detail": "The site pushes 'Sign up free' and the privacy label collects email, name and user ID for app functionality, but no page read states that an account is mandatory to use the app.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/elevenreader-read-books-aloud/id6479373050",
+          "title": "ElevenReader: Read Books Aloud App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Fixed a captcha issue blocking email signup"
+        },
+        {
+          "url": "https://help.elevenlabs.io/hc/en-us/sections/26165356474897-ElevenReader",
+          "title": "ElevenReader – ElevenLabs (help center)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Help center returned 403. A search-result snippet from help.elevenlabs.io (Chrome extension article) says users who are not signed in are prompted to log in before importing content; the page itself could not be read. Likely 'yes' but unconfirmed."
+    }
+  }
+}

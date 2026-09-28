@@ -1,0 +1,287 @@
+{
+  "id": "readwise-reader",
+  "name": "Readwise Reader",
+  "vendor": "Readwise, Inc",
+  "category": "read-it-later",
+  "website": "https://readwise.io/read",
+  "why_listed": "Heavy readers who highlight articles, PDFs and podcast transcripts and push them into Obsidian or Notion would pick Readwise Reader instead of Spoken Margins.",
+  "claims": {
+    "platforms": {
+      "value": "iOS, iPadOS, Android, web, macOS, Windows, browser extensions (Chrome, Firefox, Safari), e-ink mode",
+      "detail": "Mobile apps for iOS and Android, a web app, Mac and Windows desktop apps, browser extensions and an e-ink viewing mode.",
+      "sources": [
+        {
+          "url": "https://readwise.io/read",
+          "title": "Readwise Reader | The first read-it-later app built for power readers.",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Reader is cross-platform, with mobile apps for iOS and Android; web apps & browser extensions for Chrome, Firefox, and Safari; desktop apps for Mac & Windows"
+        },
+        {
+          "url": "https://apps.apple.com/us/app/readwise-reader/id1567599761",
+          "title": "Readwise Reader App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Requires iOS 16.0 or later. iPad Requires iPadOS 16.0 or later."
+        }
+      ],
+      "note": "Search results describe the desktop apps as alpha builds on the download page; the docs page read (docs.readwise.io/get-started/desktop-apps) just says 'Yes!' to native macOS and Windows apps."
+    },
+    "price_free_tier": {
+      "value": "No free tier: 30-day free trial, no credit card required",
+      "detail": "Reader is included in a Readwise subscription after a 30-day trial.",
+      "sources": [
+        {
+          "url": "https://readwise.io/pricing/reader",
+          "title": "Reader Pricing | Readwise",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Readwise is free for first 30 days. After the free trial, Readwise costs a small monthly fee."
+        },
+        {
+          "url": "https://readwise.io/read",
+          "title": "Readwise Reader | The first read-it-later app built for power readers.",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "You can try Reader and Readwise with a free 30-day trial, no credit card required."
+        }
+      ],
+      "note": "US page, USD. 50% discount offered to students, educators, non-profits and some countries on request."
+    },
+    "price_paid": {
+      "value": "USD 9.99/month billed annually, or USD 12.99 billed monthly (web). App Store (US) lists Reader Monthly Plan USD 8.99, Reader Monthly USD 12.99, Reader Annual Plan USD 95.90, Reader Yearly USD 119.99",
+      "detail": "One plan, 'Readwise (includes Reader)', covering both apps.",
+      "sources": [
+        {
+          "url": "https://readwise.io/pricing/reader",
+          "title": "Reader Pricing | Readwise",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Readwise (includes Reader) $9.99 /mo billed annually ($12.99 billed monthly)"
+        },
+        {
+          "url": "https://apps.apple.com/us/app/readwise-reader/id1567599761",
+          "title": "Readwise Reader App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Reader Monthly Plan $8.99 Reader Monthly $12.99 Reader Annual Plan $95.90 Reader Yearly $119.99"
+        }
+      ],
+      "note": "US pages, USD. Which App Store in-app price a new user is offered is not stated; the lower ones may be legacy plans."
+    },
+    "plays_podcasts": {
+      "value": "partial",
+      "detail": "Reader can subscribe to podcast RSS feeds and save episodes shared from Spotify, Overcast or Apple Podcasts, but only as transcripts: it deliberately does not play podcast audio.",
+      "sources": [
+        {
+          "url": "https://docs.readwise.io/reader/docs/faqs/adding-new-content",
+          "title": "Adding Content to Reader - Readwise Docs",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "We intentionally built this feature to allow Reader to be a podcast companion, rather than a full podcast player."
+        },
+        {
+          "url": "https://docs.readwise.io/reader/docs/faqs/adding-new-content",
+          "title": "Adding Content to Reader - Readwise Docs",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "If you subscribe to any podcasts using RSS, you can manually trigger the transcription for each episode."
+        }
+      ],
+      "note": "The same page has the heading \"Why can't I listen to my podcast inside of Reader?\"."
+    },
+    "reads_web_articles_aloud": {
+      "value": "yes",
+      "detail": "Built-in text-to-speech reads any saved document, including web articles, on mobile and web.",
+      "sources": [
+        {
+          "url": "https://docs.readwise.io/reader/docs/faqs/text-to-speech",
+          "title": "Text-to-Speech (TTS) - Readwise Docs",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Text-to-speech enables you to listen to virtually any document using the highest quality AI voices the big tech companies have to offer."
+        }
+      ],
+      "note": "TTS does not work offline; speech is generated on request."
+    },
+    "reads_pdfs_aloud": {
+      "value": "yes",
+      "detail": "TTS works on PDFs, but only in text view; starting it switches the PDF to text view.",
+      "sources": [
+        {
+          "url": "https://docs.readwise.io/reader/docs/faqs/text-to-speech",
+          "title": "Text-to-Speech (TTS) - Readwise Docs",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Note that text-to-speech only works on PDFs in text view."
+        }
+      ]
+    },
+    "voice_notes_anchored": {
+      "value": "unknown",
+      "detail": "Notes are typed on highlights or on the document. No recorded or dictated voice-note feature found in the Reader documentation.",
+      "sources": [
+        {
+          "url": "https://docs.readwise.io/reader/llms.txt",
+          "title": "Readwise Reader Documentation (full text for LLMs)",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Searched the full Reader docs dump (llms.txt) for 'voice note', 'dictat', 'record', 'audio note': no matches about notes. Not marked 'no' because the docs are FAQ-style, not an exhaustive feature list."
+    },
+    "text_notes_anchored": {
+      "value": "yes",
+      "detail": "Highlight a passage (or a YouTube/podcast transcript segment) and attach a typed note or tag; document-level notes are also supported.",
+      "sources": [
+        {
+          "url": "https://docs.readwise.io/reader/docs/faqs/highlights-tags-notes",
+          "title": "Highlights, Tags, and Notes - Readwise Docs",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "If you want to highlight a paragraph, tap H. Once highlighted, you can tap T to tag the highlight or N to add a note."
+        },
+        {
+          "url": "https://docs.readwise.io/reader/docs/faqs/videos",
+          "title": "Videos - Readwise Docs",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "you'll be able to watch it alongside its time-synced transcript and take notes and highlights as it plays."
+        }
+      ]
+    },
+    "hands_free_capture": {
+      "value": "yes",
+      "detail": "While listening with TTS, an AirPods double- or triple-tap can be set to highlight the passage being read.",
+      "sources": [
+        {
+          "url": "https://docs.readwise.io/reader/docs/faqs/text-to-speech",
+          "title": "Text-to-Speech (TTS) - Readwise Docs",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "To enable highlighting via triple tap, navigate to Account settings and then to Headphone gestures."
+        }
+      ],
+      "note": "Applies to TTS listening, not podcasts (Reader does not play podcast audio). Captures a highlight, not a note."
+    },
+    "transcripts": {
+      "value": "yes",
+      "detail": "Podcast episodes saved or subscribed via RSS get a generated transcript you can read, highlight and chat with.",
+      "sources": [
+        {
+          "url": "https://docs.readwise.io/reader/docs/faqs/adding-new-content",
+          "title": "Adding Content to Reader - Readwise Docs",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "You can share a podcast link to Reader to save a high-quality transcript of the content in your Reader Library"
+        }
+      ],
+      "note": "For RSS-subscribed episodes the transcript is loaded manually per episode ('Load transcript')."
+    },
+    "ai_summaries": {
+      "value": "yes",
+      "detail": "Ghostreader auto-summarizes saved documents and answers questions about them; included in the subscription (GPT-5 Mini by default).",
+      "sources": [
+        {
+          "url": "https://docs.readwise.io/reader/docs/faqs/ghostreader",
+          "title": "Ghostreader - Readwise Docs",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Auto-summarization of documents saved to your library is included as part of your Readwise subscription."
+        }
+      ],
+      "note": "Feed items are only auto-summarized with your own OpenAI API key."
+    },
+    "export_markdown_pkm": {
+      "value": "yes",
+      "detail": "Highlights sync to Readwise, which exports to Notion, Obsidian, Roam, Logseq, Evernote and others; a document's notes and highlights can also be downloaded as Markdown.",
+      "sources": [
+        {
+          "url": "https://docs.readwise.io/reader/docs/faqs/exporting",
+          "title": "Exporting - Readwise Docs",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Download annotations: Downloads the document’s notes and highlights as a markdown file."
+        },
+        {
+          "url": "https://readwise.io/pricing/reader",
+          "title": "Reader Pricing | Readwise",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Export your highlights to Notion, Obsidian, and more"
+        }
+      ]
+    },
+    "share_note_at_moment": {
+      "value": "partial",
+      "detail": "A public link shows the whole annotated document with your highlights and notes in place; single highlights can be shared as images. Not available for uploaded PDFs and EPUBs, and it is a web view of text, not a jump to a moment in audio.",
+      "sources": [
+        {
+          "url": "https://docs.readwise.io/reader/docs/faqs/sharing",
+          "title": "Sharing - Readwise Docs",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Reader creates a public link, and anyone with that link can view the document along with your highlights, notes, and tags."
+        }
+      ],
+      "note": "Docs: \"for privacy reasons, this option isn't available on certain user-uploaded documents such as EPUBs and PDFs.\""
+    },
+    "group_listening": {
+      "value": "unknown",
+      "detail": "Sharing is one-way (public annotated links and 'bundles' of documents others can add). No shared group annotation, team library or book-club feature found in the docs.",
+      "sources": [
+        {
+          "url": "https://docs.readwise.io/reader/docs/faqs/sharing",
+          "title": "Sharing - Readwise Docs",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Bundles are collections of documents with pretty landing pages that can easily be shared with others."
+        }
+      ],
+      "note": "Searched the Reader docs (llms.txt) for 'group', 'team', 'collaborat': only matches about grouping documents or feeds. Not marked 'no' because the docs are not an exhaustive feature list."
+    },
+    "on_device_privacy": {
+      "value": "no",
+      "detail": "Content syncs through a Readwise account and TTS is generated on request by a server. The vendor calls the web app 'local-first' and works offline, and says it never sells data, but does not claim notes stay on the device.",
+      "sources": [
+        {
+          "url": "https://docs.readwise.io/reader/docs/faqs/text-to-speech",
+          "title": "Text-to-Speech (TTS) - Readwise Docs",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Since the speech is generated on request to allow for quicker playback and better performance, text-to-speech can't be used while your device is offline."
+        },
+        {
+          "url": "https://readwise.io/read",
+          "title": "Readwise Reader | The first read-it-later app built for power readers.",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Reader syncs across a powerful, local-first web app, iOS app, and Android app."
+        }
+      ],
+      "note": "App Store privacy label lists email, name, user ID and user content as data linked to the user; no tracking data listed."
+    },
+    "account_required": {
+      "value": "yes",
+      "detail": "Reader runs on a Readwise account shared with Readwise; the site's sign-up prompt says an account is needed to continue.",
+      "sources": [
+        {
+          "url": "https://readwise.io/read",
+          "title": "Readwise Reader | The first read-it-later app built for power readers.",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Your account is shared, so every highlight you make in Reader lands in Readwise instantly."
+        },
+        {
+          "url": "https://readwise.io/read",
+          "title": "Readwise Reader | The first read-it-later app built for power readers.",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Create an account to continue"
+        }
+      ],
+      "note": "Inferred from the account-based model and sign-up prompt; there is no free tier, and use continues via subscription after a trial."
+    }
+  }
+}

@@ -1,0 +1,281 @@
+{
+  "id": "speechify",
+  "name": "Speechify",
+  "vendor": "Speechify Inc.",
+  "category": "read-aloud",
+  "website": "https://speechify.com",
+  "why_listed": "Students and people with dyslexia or ADHD who mainly want PDFs, docs and articles read aloud with light highlighting and notes would pick Speechify instead of Spoken Margins.",
+  "claims": {
+    "platforms": {
+      "value": "iOS, iPadOS, visionOS, Android, macOS, Windows, web, Chrome and Edge extensions",
+      "detail": "Native iPhone/iPad app (also on Apple Vision), Android app, Mac and Windows desktop apps, a web app and browser extensions.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/speechify-text-to-speech-pdf/id1209815023",
+          "title": "Speechify – Text to Speech PDF App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Requires iOS 17.0 or later. iPad Requires iPadOS 17.0 or later. Apple Vision Requires visionOS 1.0 or later."
+        },
+        {
+          "url": "https://speechify.com/blog/how-to-take-notes-within-speechify/",
+          "title": "How to Take Notes Within Speechify | Speechify",
+          "published": "2025-09-15",
+          "checked": "2026-09-28",
+          "quote": "across its text to speech iOS, Android, Chrome Extension, web app, and Mac desktop apps."
+        },
+        {
+          "url": "https://speechify.com/pricing/",
+          "title": "Speechify Pricing for the Free & Premium TTS Plans | Speechify",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Download for macOS Download for Windows"
+        }
+      ],
+      "note": "Windows app is listed in the pricing page navigation and footer; the platform list is from vendor pages, not tested."
+    },
+    "price_free_tier": {
+      "value": "Free: text to speech only, up to 1.5x speed, 10 robotic-sounding voices",
+      "detail": "The free plan reads text aloud with basic voices; AI summaries, scanning and premium voices are Premium-only.",
+      "sources": [
+        {
+          "url": "https://speechify.com/pricing/",
+          "title": "Speechify Pricing for the Free & Premium TTS Plans | Speechify",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Listen at speeds up to 1.5x Listen anywhere 10 robotic sounding voices Text to speech features only"
+        }
+      ],
+      "note": "US page, USD."
+    },
+    "price_paid": {
+      "value": "USD 29/month or USD 139/year (web, Premium); App Store lists in-app purchases from USD 11.99 (Premium Monthly) to USD 159.99",
+      "detail": "Premium is the only consumer paid plan on the pricing page. The web page shows $29/month billed monthly and $139/year when yearly billing is selected.",
+      "sources": [
+        {
+          "url": "https://speechify.com/pricing/",
+          "title": "Speechify Pricing for the Free & Premium TTS Plans | Speechify",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Premium MOST POPULAR $29 /Month"
+        },
+        {
+          "url": "https://apps.apple.com/us/app/speechify-text-to-speech-pdf/id1209815023",
+          "title": "Speechify – Text to Speech PDF App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Premium $139.99 Speechify Premium $159.99 Premium $139.99 Premium Monthly $11.99"
+        }
+      ],
+      "note": "US pages, USD. The $139/year figure is the yearly toggle value in the pricing page's own data (priceYearly \"$139\"), not visible text in the default monthly view. App Store in-app purchase names do not state billing periods, and several Premium prices are listed ($55.99, $79.99, $139.99, $159.99), so the in-app price actually offered may differ from the web price."
+    },
+    "plays_podcasts": {
+      "value": "unknown",
+      "detail": "Vendor pages describe AI-generated podcasts (turning text into a podcast-style show), not subscribing to podcast RSS feeds.",
+      "sources": [
+        {
+          "url": "https://speechify.com/pricing/",
+          "title": "Speechify Pricing for the Free & Premium TTS Plans | Speechify",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "AI PodcastsCreate natural sounding AI podcasts, instantly"
+        },
+        {
+          "url": "https://apps.apple.com/us/app/speechify-text-to-speech-pdf/id1209815023",
+          "title": "Speechify – Text to Speech PDF App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "No vendor page found describing podcast feed subscription or playback. A third-party YouTube video titled 'How to Add Podcast Links to Speechify' exists but was not verified. Not marked 'no' because no comprehensive feature list rules it out."
+    },
+    "reads_web_articles_aloud": {
+      "value": "yes",
+      "detail": "Reads articles and web pages aloud; the app accepts web links and the browser extensions read pages in place.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/speechify-text-to-speech-pdf/id1209815023",
+          "title": "Speechify – Text to Speech PDF App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Text to speech from Speechify lets you listen to docs, articles, PDFs, email, and various other formats — anything you read."
+        }
+      ]
+    },
+    "reads_pdfs_aloud": {
+      "value": "yes",
+      "detail": "PDF read-aloud is a headline feature, with word-by-word highlighting.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/speechify-text-to-speech-pdf/id1209815023",
+          "title": "Speechify – Text to Speech PDF App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Speechify – Text to Speech PDF Read Aloud Books, Docs & PDFs"
+        }
+      ]
+    },
+    "voice_notes_anchored": {
+      "value": "unknown",
+      "detail": "Notes are described as typed notes attached to highlighted text. Speechify also sells voice typing (dictation), but no page says dictation works inside anchored notes or that audio notes are stored.",
+      "sources": [
+        {
+          "url": "https://speechify.com/news/speechify-introduces-notes-feature/",
+          "title": "Speechify Introduces Notes Feature | Speechify",
+          "published": "2025-09-04",
+          "checked": "2026-09-28",
+          "quote": "Tap “Add a Note” to attach a personalized annotation. Type your note and click “Done.”"
+        }
+      ],
+      "note": "No recorded (audio) note feature found on vendor pages."
+    },
+    "text_notes_anchored": {
+      "value": "yes",
+      "detail": "Highlight a passage, pick a colour and attach a typed note; notes are reviewed in a Highlights & Notes list. Anchored to text, not to a playback time.",
+      "sources": [
+        {
+          "url": "https://speechify.com/news/speechify-introduces-notes-feature/",
+          "title": "Speechify Introduces Notes Feature | Speechify",
+          "published": "2025-09-04",
+          "checked": "2026-09-28",
+          "quote": "The Highlights and Notes features are available now on both Web and iOS, giving users the ability to annotate their documents, articles, and study materials"
+        }
+      ],
+      "note": "Web and iOS only per the announcement. The App Store listing also lists \"Save audio bookmarks\"."
+    },
+    "hands_free_capture": {
+      "value": "unknown",
+      "detail": "No vendor page found describing capture of a moment by headphone gesture, Apple Watch, Lock Screen or CarPlay.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/speechify-text-to-speech-pdf/id1209815023",
+          "title": "Speechify – Text to Speech PDF App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": ""
+        },
+        {
+          "url": "https://speechify.com/news/speechify-introduces-notes-feature/",
+          "title": "Speechify Introduces Notes Feature | Speechify",
+          "published": "2025-09-04",
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "App Store lists \"Save audio bookmarks\" but does not say how they are triggered."
+    },
+    "transcripts": {
+      "value": "unknown",
+      "detail": "Speechify shows the source text with synced highlighting, but no evidence was found that it plays podcast audio, so a podcast transcript does not apply as far as we could tell.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/speechify-text-to-speech-pdf/id1209815023",
+          "title": "Speechify – Text to Speech PDF App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "The text is highlighted and perfectly synced, word for word, with the voice reader to help you read along."
+        }
+      ],
+      "note": "Quote is about read-along of text documents, not transcripts of podcast audio."
+    },
+    "ai_summaries": {
+      "value": "yes",
+      "detail": "AI summaries and chat about documents are Premium features.",
+      "sources": [
+        {
+          "url": "https://speechify.com/pricing/",
+          "title": "Speechify Pricing for the Free & Premium TTS Plans | Speechify",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "AI Summaries & Chats"
+        }
+      ],
+      "note": "Premium only."
+    },
+    "export_markdown_pkm": {
+      "value": "unknown",
+      "detail": "No vendor page found describing export of highlights or notes to Markdown, Notion, Obsidian, Readwise or Logseq. The pricing page lists cloud-storage import integrations, which are for bringing files in.",
+      "sources": [
+        {
+          "url": "https://speechify.com/pricing/",
+          "title": "Speechify Pricing for the Free & Premium TTS Plans | Speechify",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Google Drive, Dropbox, Microsoft OneDrive Integrations"
+        },
+        {
+          "url": "https://speechify.com/news/speechify-introduces-notes-feature/",
+          "title": "Speechify Introduces Notes Feature | Speechify",
+          "published": "2025-09-04",
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "A third-party blog (articlecast.ai) claims highlights cannot be bulk exported; not used as evidence."
+    },
+    "share_note_at_moment": {
+      "value": "unknown",
+      "detail": "No vendor page found describing sharing a note or clip that opens at the same point for another person.",
+      "sources": [
+        {
+          "url": "https://speechify.com/news/speechify-introduces-notes-feature/",
+          "title": "Speechify Introduces Notes Feature | Speechify",
+          "published": "2025-09-04",
+          "checked": "2026-09-28",
+          "quote": ""
+        }
+      ],
+      "note": "Checked the notes announcement, the notes how-to blog post, the pricing page and the App Store listing; none describes sharing a note or clip at a position."
+    },
+    "group_listening": {
+      "value": "unknown",
+      "detail": "Speechify sells Teams/Enterprise/EDU plans, but no page found describing shared annotations or group reading.",
+      "sources": [
+        {
+          "url": "https://speechify.com/pricing/",
+          "title": "Speechify Pricing for the Free & Premium TTS Plans | Speechify",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "Speechify for Enterprise & EDU"
+        }
+      ],
+      "note": "Checked the pricing page, App Store listing and notes pages; no shared-annotation or group feature described. Enterprise/EDU pages were not read."
+    },
+    "on_device_privacy": {
+      "value": "no",
+      "detail": "No on-device claim found. The App Store privacy label says identifiers may be used to track users across other companies' apps and websites, and the library syncs through the cloud.",
+      "sources": [
+        {
+          "url": "https://apps.apple.com/us/app/speechify-text-to-speech-pdf/id1209815023",
+          "title": "Speechify – Text to Speech PDF App - App Store",
+          "published": null,
+          "checked": "2026-09-28",
+          "quote": "The following data may be used to track you across apps and websites owned by other companies: Identifiers"
+        }
+      ],
+      "note": "Privacy label is self-reported by the developer and not verified by Apple."
+    },
+    "account_required": {
+      "value": "partial",
+      "detail": "An account is needed to save and sync files to the library, and the notes how-to starts with signing up; whether any reading works without an account is not stated clearly.",
+      "sources": [
+        {
+          "url": "https://speechify.com/blog/create-an-account/",
+          "title": "Create an account | Speechify",
+          "published": "2023-09-26",
+          "checked": "2026-09-28",
+          "quote": "A Speechify account lets you save things to your library and syncs them across your phone and desktop Chrome extension."
+        },
+        {
+          "url": "https://speechify.com/blog/how-to-take-notes-within-speechify/",
+          "title": "How to Take Notes Within Speechify | Speechify",
+          "published": "2025-09-15",
+          "checked": "2026-09-28",
+          "quote": "Download the Speechify iOS app from the App Store and sign up for an account."
+        }
+      ],
+      "note": "The account help page is from 2023; the current app flow was not tested."
+    }
+  }
+}
