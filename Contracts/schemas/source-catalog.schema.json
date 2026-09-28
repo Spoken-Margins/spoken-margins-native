@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "source-catalog.schema.json",
+  "title": "Source catalog (seam I2)",
+  "description": "Sources a listener has not followed yet: the first-run drawer's popular podcasts and, later, suggestions. The app ships a bundled snapshot and refreshes it from a remote catalog without an app update (#69). Readers ignore unknown fields and unknown enum values so the remote catalog can grow. Following an entry follows its feedURL through the normal follow path; nothing here downloads episodes.",
+  "type": "object",
+  "required": ["schemaVersion", "catalogId", "contentVersion", "title", "generatedAt", "provenance", "subjects", "entries"],
+  "properties": {
+    "schemaVersion": {"const": "source-catalog.v1"},
+    "catalogId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"},
+    "contentVersion": {"type": "integer", "minimum": 1, "description": "Increases on every published change. The app keeps whichever of bundled and cached has the higher version."},
+    "title": {"type": "string", "minLength": 1, "maxLength": 80},
+    "generatedAt": {"type": "string", "format": "date-time"},
+    "locale": {"type": "string", "maxLength": 16, "description": "Chart market the snapshot came from, for example en-US."},
+    "provenance": {
+      "type": "array", "minItems": 1, "maxItems": 64,
+      "description": "Where and when the entries came from. Entries point here by id.",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "fetchedAt"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"},
+          "kind": {"type": "string", "description": "Known values: apple_top_chart, itunes_lookup, podcast_index, hand_curated. Readers treat other values as opaque.", "maxLength": 40},
+          "url": {"type": "string", "format": "uri", "pattern": "^https://"},
+          "country": {"type": "string", "maxLength": 8},
+          "appleGenreId": {"type": "integer"},
+          "chartUpdatedAt": {"type": "string", "format": "date-time"},
+          "fetchedAt": {"type": "string", "format": "date-time"},
+          "note": {"type": "string", "maxLength": 500}
+        },
+        "additionalProperties": false
+      }
+    },
+    "subjects": {
+      "type": "array", "minItems": 1, "maxItems": 40,
+      "description": "Filter chips, in display order.",
+      "items": {
+        "type": "object",
+        "required": ["id", "title"],
+        "properties": {
+          "id": {"$ref": "#/$defs/subjectId"},
+          "title": {"type": "string", "minLength": 1, "maxLength": 40},
+          "appleGenreId": {"type": "integer"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "starterRows": {
+      "type": "array", "maxItems": 40,
+      "description": "Hand-picked rows per subject that the owner edits in the remote catalog. The drawer shows a subject's starter row before the rest of that subject's entries.",
+      "items": {
+        "type": "object",
+        "required": ["subjectId", "title", "entryIds"],
+        "properties": {
+          "subjectId": {"$ref": "#/$defs/subjectId"},
+          "title": {"type": "string", "minLength": 1, "maxLength": 60},
+          "entryIds": {"type": "array", "maxItems": 20, "uniqueItems": true, "items": {"$ref": "#/$defs/entryId"}},
+          "curatedBy": {"type": "string", "description": "owner, or chart-seed while the owner hasn't edited the row.", "maxLength": 40}
+        },
+        "additionalProperties": false
+      }
+    },
+    "entries": {
+      "type": "array", "minItems": 1, "maxItems": 2000,
+      "items": {"$ref": "#/$defs/entry"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "subjectId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"},
+    "entryId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,79}$"},
+    "entry": {
+      "type": "object",
+      "required": ["id", "kind", "contentKind", "title", "feedURL", "subjects", "provenanceIds"],
+      "properties": {
+        "id": {"$ref": "#/$defs/entryId"},
+        "kind": {"type": "string", "description": "How it is followed. Same values as followed-source subscription.source.kind (podcast_feed, article_feed, website), plus bridged_site for B4. Readers skip entries whose kind they can't follow.", "maxLength": 40},
+        "contentKind": {"type": "string", "description": "What it is, for D3's filters. Known values: podcast, article, newsletter, paper, news, video. Readers treat other values as opaque.", "maxLength": 40},
+        "title": {"type": "string", "minLength": 1, "maxLength": 200},
+        "author": {"type": "string", "maxLength": 200},
+        "feedURL": {"type": "string", "format": "uri", "pattern": "^https://", "description": "Public feed. Catalogs never carry private feeds (#168)."},
+        "artworkURL": {"type": "string", "format": "uri", "pattern": "^https://"},
+        "websiteURL": {"type": "string", "format": "uri", "pattern": "^https://"},
+        "summary": {"type": "string", "maxLength": 600},
+        "subjects": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": {"$ref": "#/$defs/subjectId"}, "description": "First is the primary subject."},
+        "explicit": {"type": "boolean"},
+        "chartPositions": {
+          "type": "array", "maxItems": 40,
+          "items": {
+            "type": "object",
+            "required": ["provenanceId", "rank"],
+            "properties": {"provenanceId": {"type": "string"}, "rank": {"type": "integer", "minimum": 1}},
+            "additionalProperties": false
+          }
+        },
+        "externalIds": {
+          "type": "object",
+          "properties": {
+            "applePodcastsId": {"type": "string", "pattern": "^[0-9]+$"},
+            "podcastIndexId": {"type": "string", "pattern": "^[0-9]+$"},
+            "podcastGuid": {"type": "string", "maxLength": 64}
+          },
+          "additionalProperties": false
+        },
+        "provenanceIds": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    }
+  }
+}
