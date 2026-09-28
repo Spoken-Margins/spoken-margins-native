@@ -74,17 +74,27 @@ final class SpeechEngineSelectionTests: XCTestCase {
         XCTAssertFalse(SpeechRateRule.systemSpeechUsesAccessibilitySettings)
     }
 
-    func testDocumentRolesAndMarkersHaveOneSpokenTreatmentEach() {
+    /// Mirrors the published I14 table on next (docs/workstreams/interfaces.md, #218).
+    func testDocumentRolesFollowThePublishedI14Table() {
         XCTAssertEqual(DocumentSpeechRules.treatment(forRole: "body"), .read)
-        XCTAssertEqual(DocumentSpeechRules.treatment(forRole: "heading"), .read)
-        XCTAssertEqual(DocumentSpeechRules.treatment(forRole: "caption"), .announce(lead: "Caption."))
-        XCTAssertEqual(DocumentSpeechRules.treatment(forRole: "table"), .replace(notice: "Table skipped."))
-        XCTAssertEqual(DocumentSpeechRules.treatment(forRole: "equation"), .replace(notice: "Equation skipped."))
-        for skipped in ["footnote", "reference", "front_matter", "back_matter", "page_header", "page_footer"] {
+        XCTAssertEqual(DocumentSpeechRules.treatment(forRole: "heading"), .readWithPauses(before: 0.7, after: 0.4))
+        XCTAssertEqual(DocumentSpeechRules.treatment(forRole: "caption"), .announceLabelThenRead)
+        XCTAssertEqual(DocumentSpeechRules.treatment(forRole: "table"), .announceAndSkip(notice: "Table not read."))
+        XCTAssertEqual(DocumentSpeechRules.treatment(forRole: "reference"), .skipWithNoticeOnce(notice: "References skipped."))
+        for skipped in ["footnote", "page_header", "page_footer"] {
             XCTAssertEqual(DocumentSpeechRules.treatment(forRole: skipped), .skip, skipped)
         }
         XCTAssertEqual(DocumentSpeechRules.treatment(forRole: "a_role_added_later"), .read, "unknown roles are read, never lost")
+    }
 
+    func testOnlyHeadersFootersAndFootnotesAreEverSilent() {
+        let roles = ["title", "heading", "abstract", "body", "caption", "table", "footnote", "equation", "reference",
+                     "front_matter", "back_matter", "page_header", "page_footer", "unknown"]
+        let silent = roles.filter { DocumentSpeechRules.treatment(forRole: $0) == .skip }
+        XCTAssertEqual(Set(silent), ["footnote", "page_header", "page_footer"])
+    }
+
+    func testCitationAndFootnoteMarkersAreSilentAndOtherMarkersRead() {
         XCTAssertEqual(DocumentSpeechRules.treatment(forMarker: "citation"), .silent)
         XCTAssertEqual(DocumentSpeechRules.treatment(forMarker: "footnote"), .silent)
         XCTAssertEqual(DocumentSpeechRules.treatment(forMarker: "figure_reference"), .readAsPrinted)

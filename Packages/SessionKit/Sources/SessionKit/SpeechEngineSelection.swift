@@ -150,15 +150,22 @@ public enum SpeechRateRule {
     }
 }
 
-/// How the speech path voices a structured-document segment (I13 `role`).
+/// How the speech path voices a structured-document segment (I13 `role`). Mirrors the published
+/// table in docs/workstreams/interfaces.md (I14, "how each kind of text is spoken").
 public enum SpokenRoleTreatment: Equatable, Sendable {
-    /// Read the text.
+    /// Read as written.
     case read
-    /// Say `lead`, then read the text.
-    case announce(lead: String)
-    /// Say `notice` instead of the text, so the listener knows something was left out.
-    case replace(notice: String)
-    /// Leave it out silently.
+    /// Read with silence around it. The role's name is never spoken.
+    case readWithPauses(before: TimeInterval, after: TimeInterval)
+    /// Say the label the text opens with ("Figure 2."), pause, then the rest. Read where the
+    /// reading order places it, never inside a sentence.
+    case announceLabelThenRead
+    /// Say the label and caption, then `notice`; the content itself is skipped.
+    /// ("Table 3: Baseline characteristics. Table not read.")
+    case announceAndSkip(notice: String)
+    /// Say `notice` once for a run of these segments, then skip them ("References skipped.").
+    case skipWithNoticeOnce(notice: String)
+    /// Leave it out without a word.
     case skip
 }
 
@@ -168,24 +175,31 @@ public enum SpokenMarkerTreatment: Equatable, Sendable {
     case silent
 }
 
-/// I14 role rules for I13 documents. Roles are advisory (I13); these rules decide the sound.
-/// Web articles keep `SpeechTextNormalizer`'s own handling. Unknown roles and markers are read.
+/// I14 role rules for I13 documents, keyed by the raw role and marker strings in C1's draft
+/// schema. Roles are advisory (I13); these rules decide the sound. A role's text never disappears
+/// silently except running headers and footers (and footnotes, which are skipped in place).
+/// Web articles keep `SpeechTextNormalizer`'s own handling.
 public enum DocumentSpeechRules {
     public static func treatment(forRole role: String) -> SpokenRoleTreatment {
         switch role {
-        case "title", "heading", "abstract", "body", "unknown":
+        case "body", "title", "abstract", "unknown":
             return .read
+        case "heading":
+            return .readWithPauses(before: 0.7, after: 0.4)
         case "caption":
-            // A caption usually opens with its own label ("Figure 2."), so the lead is short.
-            return .announce(lead: "Caption.")
+            return .announceLabelThenRead
         case "table":
-            return .replace(notice: "Table skipped.")
+            return .announceAndSkip(notice: "Table not read.")
         case "equation":
-            return .replace(notice: "Equation skipped.")
-        case "footnote", "reference", "front_matter", "back_matter", "page_header", "page_footer":
-            // Footnotes and the bibliography break the flow of the argument; affiliations,
-            // running headers and page numbers are never worth hearing.
+            // Not in the published table. Treated like a table so it isn't dropped silently.
+            return .announceAndSkip(notice: "Equation not read.")
+        case "reference":
+            return .skipWithNoticeOnce(notice: "References skipped.")
+        case "footnote", "page_header", "page_footer":
             return .skip
+        case "front_matter", "back_matter":
+            // Not in the published table. Read, so nothing disappears silently, until C2 decides.
+            return .read
         default:
             return .read
         }
@@ -194,10 +208,9 @@ public enum DocumentSpeechRules {
     public static func treatment(forMarker kind: String) -> SpokenMarkerTreatment {
         switch kind {
         case "citation", "footnote":
-            // "[12]" and "Smith et al., 2020" interrupt the sentence; the reference list is skipped anyway.
+            // Numeric and parenthetical citations and footnote markers are silent. A narrative
+            // citation's name is sentence text, not a marker, so it is still read.
             return .silent
-        case "math", "figure_reference", "table_reference":
-            return .readAsPrinted
         default:
             return .readAsPrinted
         }

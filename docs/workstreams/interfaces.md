@@ -135,7 +135,7 @@ This page sets **what crosses each seam and what must stay true**. It deliberate
 - **Published (C2 M1):** `SessionKit/SpeechEngineSelection.swift`:
   - `SpeechEnginePolicy` and `SpeechFallbackReason`: which engine renders, and why.
   - `SpeechRateRule`: one multiplier, with a measured curve for system speech.
-  - `DocumentSpeechRules`: how each I13 role and marker kind sounds, keyed by the raw strings in C1's draft schema.
+  - `DocumentSpeechRules`: the role and marker rules below, keyed by the raw strings in C1's draft schema. The text normalization below (numbers, statistics, units, Greek letters) isn't implemented in Swift yet.
 
 ### Published: how each kind of text is spoken (C2, 2026-09-28)
 
